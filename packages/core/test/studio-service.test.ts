@@ -109,10 +109,7 @@ describe("high-cost jobs wait for approval", () => {
       action: "job.start",
       subject: { type: "job", id: out.job.id },
     });
-    expect(out.next[0]).toMatchObject({
-      tool: STUDIX_TOOLS.approve,
-      arguments: { approvalId: out.approval?.id },
-    });
+    expect(out.next[0]).toMatchObject({ tool: STUDIX_TOOLS.getJob, arguments: { jobId: out.job.id } });
 
     const editorTry = await rejects(
       studio.approve(ctx, { approvalId: out.approval!.id, decision: "approved" }),

@@ -36,9 +36,11 @@ export function nextActionsForJob(job: Job, approval?: Approval): NextAction[] {
       return approval?.status === "pending"
         ? [
             {
-              tool: STUDIX_TOOLS.approve,
-              arguments: { approvalId: approval.id, decision: "approved" },
-              reason: `A workspace reviewer must approve: ${approval.reason}`,
+              // Only a signed-in person can decide, so an agent waits; it cannot approve for itself.
+              tool: STUDIX_TOOLS.getJob,
+              arguments: { jobId: job.id },
+              reason: `Waiting for a workspace member to approve in the Studix dashboard: ${approval.reason}`,
+              pollAfterMs: JOB_POLL_INTERVAL_MS,
             },
           ]
         : [];

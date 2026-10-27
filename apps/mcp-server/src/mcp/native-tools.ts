@@ -176,7 +176,7 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.approve,
     title: "Decide approval",
     description:
-      "Approve or reject a pending approval (e.g. a job parked over budget). Publish/delete approvals need the dashboard.",
+      "Decide a pending approval. Only a signed-in person may decide: API keys (all MCP clients) get FORBIDDEN, so ask a workspace member to use the dashboard, then poll studix_get_job.",
     input: z.object({
       approvalId: Id,
       decision: z.enum(["approved", "rejected"]),

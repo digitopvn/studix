@@ -3,7 +3,6 @@ import type { Approval, ApprovalAction, ApprovalSubject } from "../entities/revi
 import { decideFailClosed } from "../ports/approval-policy.ts";
 import { actorRef, assertPermission, type Permission, type TenantContext } from "../tenant.ts";
 import type { ResolvedStudioDeps } from "./studio-input.ts";
-import { STUDIX_TOOLS } from "./studio-types.ts";
 
 type Deps = ResolvedStudioDeps;
 
@@ -73,9 +72,8 @@ function approvalRequiredError(approval: Approval): StudixError {
       action: approval.action,
       subjectType: approval.subject.type,
       subjectId: approval.subject.id,
-      next: { tool: STUDIX_TOOLS.approve, arguments: { approvalId: approval.id, decision: "approved" } },
     },
-    suggestedAction: "Ask a workspace reviewer to approve the request in the dashboard, then retry.",
+    suggestedAction: "Ask a workspace member to approve the request in the Studix dashboard, then retry.",
   });
 }
 
@@ -94,7 +92,8 @@ export async function ensureActionApproved(
   if (!requirement.required) return { required: false };
 
   const latest = await deps.approvals.findLatest(ctx, input.subject, input.action);
-  if (latest?.status === "approved") return { required: true, approval: latest };
+  if (latest?.status === "approved" && latest.decidedBy?.type === "user")
+    return { required: true, approval: latest };
   if (latest?.status === "rejected") {
     throw new StudixError("FORBIDDEN", `${input.action} was rejected by a reviewer`, {
       details: { approvalId: latest.id, comment: latest.comment },

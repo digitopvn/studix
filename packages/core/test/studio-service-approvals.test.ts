@@ -101,7 +101,7 @@ describe("publish without approval is blocked", () => {
     });
     const view = await studio.getJob(ctx, job.id);
     expect(view.approval).toMatchObject({ id: approval.id, action: "publish", status: "pending" });
-    expect(view.next[0]).toMatchObject({ tool: "studix_approve", arguments: { approvalId: approval.id } });
+    expect(view.next[0]).toMatchObject({ tool: "studix_get_job", arguments: { jobId: job.id } });
   });
 
   it("does not gate cheap actions", async () => {
