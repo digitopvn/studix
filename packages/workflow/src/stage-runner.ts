@@ -116,7 +116,13 @@ export async function runStages(
       signal,
       outputs,
       fenced: async (write) => {
-        const result = await queue.transact(job, workerId, (tx) => write(deps.stageRepos(tx, deps.clock)));
+        // A stage detached by cancel, deadline or shutdown keeps running; refuse its writes before and
+        // after the row lock so they cannot land next to the executor's terminal write.
+        signal.throwIfAborted();
+        const result = await queue.transact(job, workerId, (tx) => {
+          signal.throwIfAborted();
+          return write(deps.stageRepos(tx, deps.clock));
+        });
         if (!result.held) throw new LeaseLostError();
         return result.value;
       },

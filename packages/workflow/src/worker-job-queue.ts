@@ -62,7 +62,9 @@ export interface WorkerJobQueue {
   /**
    * Run business writes (projects, renders) in a transaction that holds the job row locked while
    * ownership is verified, so they apply only while `workerId` still holds this attempt. `held: false`
-   * means nothing ran and nothing was written.
+   * means nothing ran and nothing was written. Lock order is job row first, then the rows `write`
+   * touches (projects, renders); anything that locks those first and then cascades to jobs must
+   * cancel or lock the job before it.
    */
   transact<T>(
     job: Job,

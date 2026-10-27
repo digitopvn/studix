@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { WorkflowDefinition } from "./workflow-types.ts";
 
 export interface VideoPublishWorkflowDeps {
-  renders: RenderRepository;
+  renders: Pick<RenderRepository, "get">;
   /** Unset until a publisher is configured; publish jobs then fail after the approval gate. */
   publisher?: PublisherAdapter;
 }

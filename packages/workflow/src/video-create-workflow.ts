@@ -29,8 +29,9 @@ export interface VideoCreateWorkflowDeps {
   planner: Planner;
   renderer: RendererAdapter;
   storage: StorageAdapter;
-  projects: ProjectRepository;
-  renders: RenderRepository;
+  /** Read-only: writes go through `StageContext.fenced`. */
+  projects: Pick<ProjectRepository, "get" | "getVersion">;
+  renders: Pick<RenderRepository, "get">;
   /** Local scratch root; each job attempt renders into `<workRoot>/<jobId>/attempt-<n>`. */
   workRoot: string;
   /** COGS per rendered output second (compute cost). Defaults to 0 until measured. */
