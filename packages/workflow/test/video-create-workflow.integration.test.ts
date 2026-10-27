@@ -82,13 +82,15 @@ describe("video.create workflow on Postgres", () => {
     const ctx = await tenant(db.current, "crash");
     const { job } = await enqueueCreate(db.current, ctx);
     const plan = fakePlanner();
-    // Worker A never heartbeats and its renderer hangs: it behaves like a process that died mid-render.
+    // Worker A's heartbeats never reach the database and its renderer hangs: it behaves like a process
+    // that died mid-render, but the watchdog still believes the lease is renewed.
     const a = createTestWorker(db.current, "worker-a", {
       planner: plan.planner,
       renderer: fakeRenderer({ hold: "forever" }).renderer,
       leaseMs: 3000,
-      heartbeatIntervalMs: 60_000,
+      heartbeatIntervalMs: 1000,
     });
+    a.queue.heartbeat = async () => ({ held: true, cancelRequested: false });
     const claimed = (await a.queue.claim("worker-a"))!;
     const aOutcome = a.executor.execute(claimed, "worker-a", a.shutdown.signal);
     await waitFor(async () => (await db.current.repos.jobs.get(ctx, job.id))?.stage === "render");
