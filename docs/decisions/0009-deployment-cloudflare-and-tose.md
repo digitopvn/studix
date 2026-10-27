@@ -43,8 +43,8 @@ move from `studix.digitop.ai` to `studix.io` later.
   change.
 - The dev proxy adds one hop and a second deploy target for the dev hostname.
 - Production costs a second database and Production-server resources.
-- TOSE still builds from Git, so a push that lands while a deploy waits is
-  built in its place; the job warns when the built commit differs.
+- TOSE builds the branch tip, not a given commit, so the deploy checks the tip
+  against the tested commit before each build and fails if TOSE built another.
 - TOSE capabilities (no-port worker, restarts, rollback) were verified at
   deploy time ([DEPLOYMENT.md](../DEPLOYMENT.md#tose-environments)).
 

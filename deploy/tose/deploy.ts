@@ -5,7 +5,10 @@
  *
  *   TOSE_API_KEY=... TOSE_WORKSPACE=wearetopgroup node deploy/tose/deploy.ts studix-prod-app studix-prod-worker
  *
- * Optional: EXPECTED_SHA warns when TOSE built a different commit (a newer push on the branch),
+ * TOSE always builds the branch tip, not a given commit. With EXPECTED_SHA (the commit CI tested)
+ * plus GITHUB_REPOSITORY, GITHUB_REF_NAME and GITHUB_TOKEN, the script skips a build when the tip
+ * has moved on (the newer push's own run deploys it after its CI) and fails if TOSE still built
+ * another commit, so an untested commit never goes out unnoticed.
  * TOSE_DEPLOY_TIMEOUT_SECONDS bounds the wait per project (default 1800).
  * Never prints the API key; logs project, deployment id, commit and status only.
  */
@@ -14,9 +17,13 @@ const API = process.env.TOSE_API_URL ?? "https://api-v2.tose.sh";
 const apiKey = required("TOSE_API_KEY");
 const workspace = required("TOSE_WORKSPACE");
 const expectedSha = process.env.EXPECTED_SHA;
-const timeoutMs = Number(process.env.TOSE_DEPLOY_TIMEOUT_SECONDS ?? 1800) * 1000;
+const timeoutSeconds = Number(process.env.TOSE_DEPLOY_TIMEOUT_SECONDS ?? 1800);
+if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+  throw new Error("TOSE_DEPLOY_TIMEOUT_SECONDS must be a positive number");
+}
 const POLL_MS = 10_000;
-const FAILED = new Set(["failed", "error", "stopped", "cancelled", "canceled", "superseded"]);
+// Statuses the TOSE CLI knows: pending, building, deploying, running (live), failed, stopped.
+const FAILED = new Set(["failed", "error", "stopped", "cancelled", "canceled"]);
 
 interface Deployment {
   id: string;
@@ -32,41 +39,77 @@ function required(name: string): string {
   return value;
 }
 
-/** TOSE API call with retries on network errors and 5xx (the API sits behind Cloudflare). */
-async function tose<T>(method: string, path: string): Promise<T> {
-  const url = `${API}/api/workspaces/${workspace}/projects/${path}`;
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 4; attempt++) {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The API answers bare, as `{deployment}` or as `{success, data}` (the shape the TOSE CLI unwraps). */
+function unwrapDeployment(body: unknown, what: string): Deployment {
+  let value = body as Record<string, unknown> | null;
+  if (value?.success === false)
+    throw new Error(`${what}: ${String(value.error ?? value.message ?? "rejected")}`);
+  if (value?.data && typeof value.data === "object") value = value.data as Record<string, unknown>;
+  if (value?.deployment && typeof value.deployment === "object")
+    value = value.deployment as Record<string, unknown>;
+  if (typeof value?.id !== "string" || typeof value.status !== "string") {
+    throw new Error(`${what}: unexpected response shape`);
+  }
+  return value as unknown as Deployment;
+}
+
+async function call(method: string, path: string): Promise<unknown> {
+  const res = await fetch(`${API}/api/workspaces/${workspace}/projects/${path}`, {
+    method,
+    headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
+    body: method === "POST" ? "{}" : undefined,
+    signal: AbortSignal.timeout(60_000),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw Object.assign(new Error(`${method} ${path}: HTTP ${res.status} ${text.slice(0, 200)}`), {
+      retryable: res.status >= 500,
+    });
+  }
+  // Commit messages can carry raw control characters that make the JSON invalid.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+  return JSON.parse(text.replace(/[\u0000-\u001f]/g, " "));
+}
+
+/** Reads are retried on network errors and 5xx (the API sits behind Cloudflare). */
+async function read(path: string): Promise<unknown> {
+  for (let attempt = 1; ; attempt++) {
     try {
-      const res = await fetch(url, {
-        method,
-        headers: { "X-API-Key": apiKey },
-        signal: AbortSignal.timeout(60_000),
-      });
-      const text = await res.text();
-      if (res.status >= 500) throw new Error(`HTTP ${res.status}`);
-      if (!res.ok)
-        throw Object.assign(new Error(`${method} ${path}: HTTP ${res.status} ${text.slice(0, 200)}`), {
-          fatal: true,
-        });
-      // Commit messages can carry raw control characters that make the JSON invalid.
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
-      return JSON.parse(text.replace(/[\u0000-\u001f]/g, " ")) as T;
+      return await call("GET", path);
     } catch (error) {
-      if ((error as { fatal?: boolean }).fatal) throw error;
-      lastError = error;
+      const retryable = (error as { retryable?: boolean }).retryable ?? true;
+      if (!retryable || attempt === 4) throw error;
       await sleep(attempt * 3000);
     }
   }
-  throw new Error(`${method} ${path} failed after retries: ${String(lastError)}`);
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** The commit at the tip of the deployed branch, or undefined outside GitHub Actions. */
+async function branchTip(): Promise<string | undefined> {
+  const { GITHUB_REPOSITORY: repo, GITHUB_REF_NAME: branch, GITHUB_TOKEN: token } = process.env;
+  if (!repo || !branch || !token) return undefined;
+  const res = await fetch(`https://api.github.com/repos/${repo}/branches/${encodeURIComponent(branch)}`, {
+    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new Error(`GitHub branch lookup: HTTP ${res.status}`);
+  return ((await res.json()) as { commit: { sha: string } }).commit.sha;
+}
 
-async function deploy(project: string): Promise<void> {
+/** Returns false when the branch moved past the tested commit, leaving the deploy to the newer run. */
+async function deploy(project: string): Promise<boolean> {
+  const tip = expectedSha ? await branchTip() : undefined;
+  if (expectedSha && tip && tip !== expectedSha) {
+    console.log(
+      `::notice::${project}: branch is at ${tip.slice(0, 7)}, not the tested ${expectedSha.slice(0, 7)}; the newer push's run deploys it`,
+    );
+    return false;
+  }
   const started = Date.now();
-  const triggered = await tose<Deployment & { deployment?: Deployment }>("POST", `${project}/deploy`);
-  let deployment = triggered.deployment ?? triggered;
+  // Not retried: a POST that timed out may still have started a build, and a retry would start a second one.
+  let deployment = unwrapDeployment(await call("POST", `${project}/deploy`), `${project} deploy`);
   console.log(`${project}: deployment ${deployment.id} started (${deployment.status})`);
   while (deployment.status !== "running") {
     if (FAILED.has(deployment.status)) {
@@ -74,26 +117,32 @@ async function deploy(project: string): Promise<void> {
         `${project}: deployment ${deployment.id} ${deployment.status}: ${deployment.error_message ?? "no message"}`,
       );
     }
-    if (Date.now() - started > timeoutMs) {
+    if (Date.now() - started > timeoutSeconds * 1000) {
       throw new Error(
-        `${project}: deployment ${deployment.id} still ${deployment.status} after ${timeoutMs / 1000}s`,
+        `${project}: deployment ${deployment.id} still ${deployment.status} after ${timeoutSeconds}s`,
       );
     }
     await sleep(POLL_MS);
-    deployment = await tose<Deployment>("GET", `${project}/deployments/${deployment.id}`);
+    deployment = unwrapDeployment(
+      await read(`${project}/deployments/${deployment.id}`),
+      `${project} deployment`,
+    );
   }
   const sha = deployment.git_commit_sha ?? "unknown";
   console.log(
     `${project}: live in ${Math.round((Date.now() - started) / 1000)}s, ${deployment.git_branch ?? "?"}@${sha.slice(0, 7)}`,
   );
   if (expectedSha && sha !== expectedSha) {
-    console.log(
-      `::warning::${project} built ${sha.slice(0, 7)}, not ${expectedSha.slice(0, 7)} (a newer push on the branch)`,
+    throw new Error(
+      `${project}: TOSE built ${sha.slice(0, 7)}, not the tested ${expectedSha.slice(0, 7)}; stopping here`,
     );
   }
+  return true;
 }
 
 const projects = process.argv.slice(2);
 if (projects.length === 0) throw new Error("usage: node deploy/tose/deploy.ts <project>...");
 // In order: the app applies migrations on start, so it goes before the worker.
-for (const project of projects) await deploy(project);
+for (const project of projects) {
+  if (!(await deploy(project))) break;
+}

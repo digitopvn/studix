@@ -17,12 +17,15 @@ jobs:
 
   deploy:
     needs: ci
+    # Manual runs from other branches still run CI but deploy nothing.
+    if: github.ref_name == 'dev' || github.ref_name == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment:
       name: ${{ github.ref_name == 'main' && 'production' || 'dev' }}
       url: ${{ vars.STUDIX_APP_URL }}
-    # One deploy per branch at a time; a newer push waits instead of cancelling a rollout.
+    # A started rollout is never cancelled; a newer push queues behind it (GitHub keeps only the
+    # newest queued run, and a newer push also cancels an older run's unfinished CI).
     concurrency:
       group: deploy-${{ github.ref_name }}
       cancel-in-progress: false
@@ -35,8 +38,12 @@ jobs:
         env:
           TOSE_API_KEY: ${{ secrets.TOSE_API_KEY }}
           TOSE_WORKSPACE: ${{ vars.TOSE_WORKSPACE }}
+          APP_PROJECT: ${{ vars.TOSE_APP_PROJECT }}
+          WORKER_PROJECT: ${{ vars.TOSE_WORKER_PROJECT }}
+          # Lets the script skip a build when the branch moved past the commit CI tested.
           EXPECTED_SHA: ${{ github.sha }}
-        run: node deploy/tose/deploy.ts "${{ vars.TOSE_APP_PROJECT }}" "${{ vars.TOSE_WORKER_PROJECT }}"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node deploy/tose/deploy.ts "$APP_PROJECT" "$WORKER_PROJECT"
       - name: Health check
         env:
           APP_URL: ${{ vars.STUDIX_APP_URL }}

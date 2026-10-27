@@ -108,8 +108,14 @@ resources prefixed `studix-`.
 deploys production. It runs `ci.yml` first and deploys only if it passes, then
 `deploy/tose/deploy.ts` triggers a TOSE build of the app project, waits until it
 is live (the app migrates on start), does the same for the worker, and checks
-`/healthz` and `/readyz` on the public hostname. One deploy per branch runs at a
-time; a newer push waits rather than cancelling a rollout.
+`/healthz` and `/readyz` on the public hostname.
+
+TOSE builds the branch tip, not a chosen commit. Before each build the script
+checks that the tip is still the commit CI tested; if a newer push landed, it
+stops and leaves the deploy to that push's run (the app may then be one commit
+ahead of the worker until it finishes). If TOSE still built another commit (a
+push in the seconds between check and build), the job fails so someone looks.
+A started rollout is never cancelled; a newer push queues behind it.
 
 The GitHub environments `dev` and `production` hold what the job needs, and
 each accepts deployments only from its own branch:

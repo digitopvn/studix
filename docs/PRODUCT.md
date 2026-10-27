@@ -84,7 +84,7 @@ is in [ROADMAP.md](ROADMAP.md#p0-done-means).
 - Workspace API keys, tenant isolation, approval gate for publish.
 - MCP-in-MCP tool search, inspect and execute against a mock third-party server.
 - `DecisionRouter` with OpenRouter and TypeSafeAI adapters; live calls opt-in.
-- Marketing skeleton on Cloudflare; app and worker on TOSE staging; Docker
+- Marketing skeleton on Cloudflare; app and worker on TOSE (dev and production); Docker
   Compose for local and self-host.
 
 ## What P0 does not deliver
