@@ -1,6 +1,6 @@
-import type { Job, JobPatch, JobQueue, JobRepository, Stage, TenantContext } from "@studix/core";
+import type { Job, JobFence, JobPatch, JobQueue, JobRepository, Stage, TenantContext } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, type SQL } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -56,6 +56,16 @@ function toStage(row: StageRow): Stage {
     createdAt: row.createdAt,
   };
 }
+
+const leaseLost = (jobId: string) =>
+  new StudixError("CONFLICT", `job ${jobId} is no longer owned by this worker attempt`, {
+    retryable: false,
+    details: { reason: "lease_lost" },
+  });
+
+/** The row condition of a fence: the same (locked_by, attempts, running) triple the worker queue guards its writes with. */
+const fenced = (fence: JobFence): SQL =>
+  and(eq(jobs.lockedBy, fence.workerId), eq(jobs.attempts, fence.attempt), eq(jobs.status, "running"))!;
 
 /**
  * Tenant-scoped job persistence. Implements the read/update repository and the producer side of the
@@ -129,16 +139,20 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
             ctx,
             eq(jobs.id, id),
             options.expectStatus ? inArray(jobs.status, [...options.expectStatus]) : undefined,
+            options.fence ? fenced(options.fence) : undefined,
           ),
         )
         .returning();
+      if (!rows[0] && options.fence) {
+        // A missing row is NOT_FOUND; an existing one that no longer matches the fence lost its lease.
+        if (!(await getRow(ctx, id))) return conflictOrMissing(ctx, id, []);
+        throw leaseLost(id);
+      }
       if (!rows[0]) return conflictOrMissing(ctx, id, options.expectStatus ?? []);
       return toJob(rows[0]);
     },
 
-    async upsertStage(ctx, input) {
-      if (!(await getRow(ctx, input.jobId)))
-        throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
+    async upsertStage(ctx, input, fence) {
       const values = {
         status: input.status,
         output: input.output ?? null,
@@ -146,24 +160,49 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
         startedAt: input.startedAt ?? null,
         finishedAt: input.finishedAt ?? null,
       };
-      const rows = await db
-        .insert(stages)
-        .values({
-          id: newId("stg"),
-          ...tenantValues(ctx),
-          jobId: input.jobId,
-          name: input.name,
-          attempt: input.attempt,
-          ...values,
-          createdAt: clock.now(),
-        })
-        .onConflictDoUpdate({
-          target: [stages.jobId, stages.name, stages.attempt],
-          set: values,
-          setWhere: scoped(stages, ctx),
-        })
-        .returning();
-      return toStage(first(rows, "stage"));
+      const write = async (conn: Pick<StudixDb, "insert">) =>
+        toStage(
+          first(
+            await conn
+              .insert(stages)
+              .values({
+                id: newId("stg"),
+                ...tenantValues(ctx),
+                jobId: input.jobId,
+                name: input.name,
+                attempt: input.attempt,
+                ...values,
+                createdAt: clock.now(),
+              })
+              .onConflictDoUpdate({
+                target: [stages.jobId, stages.name, stages.attempt],
+                set: values,
+                setWhere: scoped(stages, ctx),
+              })
+              .returning(),
+            "stage",
+          ),
+        );
+      if (!fence) {
+        if (!(await getRow(ctx, input.jobId)))
+          throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
+        return write(db);
+      }
+      // Hold a share lock on the job row while writing, so a claim by another worker (which updates the
+      // row) cannot slip in between the ownership check and the stage write.
+      return db.transaction(async (tx) => {
+        const owner = await tx
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(scoped(jobs, ctx, eq(jobs.id, input.jobId), fenced(fence)))
+          .for("share");
+        if (!owner[0]) {
+          if (!(await getRow(ctx, input.jobId)))
+            throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
+          throw leaseLost(input.jobId);
+        }
+        return write(tx);
+      });
     },
 
     async listStages(ctx, jobId) {

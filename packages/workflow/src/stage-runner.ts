@@ -1,5 +1,13 @@
 import { toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
-import type { Approval, BillingPolicy, Job, JobRepository, Stage, TenantContext } from "@studix/core";
+import type {
+  Approval,
+  BillingPolicy,
+  Job,
+  JobFence,
+  JobRepository,
+  Stage,
+  TenantContext,
+} from "@studix/core";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
 import type { StageContext, StageDefinition, StageOutput, WorkflowDefinition } from "./workflow-types.ts";
@@ -72,6 +80,9 @@ export async function runStages(
 ): Promise<StagesOutcome> {
   const saved = checkpoints(await deps.jobs.listStages(ctx, job.id));
   const outputs: Record<string, StageOutput> = {};
+  // Every job/stage write of this attempt is conditional on still owning the job, so a worker that stalled
+  // past its lease and resumed cannot overwrite what the worker that reclaimed the job has recorded.
+  const fence: JobFence = { workerId: ctx.actor.id, attempt: job.attempts };
   let spentCents = job.spentCents;
   const total = workflow.stages.length;
 
@@ -95,7 +106,7 @@ export async function runStages(
         if (now - lastProgressAt < (deps.progressIntervalMs ?? 1000)) return;
         lastProgressAt = now;
         const progress = (index + Math.min(Math.max(p, 0), 1)) / total;
-        deps.jobs.update(ctx, job.id, { progress }).catch((err) => {
+        deps.jobs.update(ctx, job.id, { progress }, { fence }).catch((err) => {
           deps.logger.warn("progress update failed", { jobId: job.id, error: String(err) });
         });
       },
@@ -129,14 +140,12 @@ export async function runStages(
     }
 
     const startedAt = deps.clock.now();
-    await deps.jobs.update(ctx, job.id, { stage: stage.name, progress: index / total });
-    await deps.jobs.upsertStage(ctx, {
-      jobId: job.id,
-      name: stage.name,
-      attempt: job.attempts,
-      status: "running",
-      startedAt,
-    });
+    await deps.jobs.update(ctx, job.id, { stage: stage.name, progress: index / total }, { fence });
+    await deps.jobs.upsertStage(
+      ctx,
+      { jobId: job.id, name: stage.name, attempt: job.attempts, status: "running", startedAt },
+      fence,
+    );
     let output: StageOutput;
     try {
       const result = await untilAborted(stage.run(sctx), signal);
@@ -162,29 +171,37 @@ export async function runStages(
     } catch (err) {
       const reason: unknown = signal.aborted ? signal.reason : err;
       const error = toStudixError(reason);
-      await deps.jobs.upsertStage(ctx, {
-        jobId: job.id,
-        name: stage.name,
-        attempt: job.attempts,
-        status: error.code === "CANCELLED" ? "cancelled" : "failed",
-        error: error.toJSON(),
-        startedAt,
-        finishedAt: deps.clock.now(),
-      });
+      await deps.jobs.upsertStage(
+        ctx,
+        {
+          jobId: job.id,
+          name: stage.name,
+          attempt: job.attempts,
+          status: error.code === "CANCELLED" ? "cancelled" : "failed",
+          error: error.toJSON(),
+          startedAt,
+          finishedAt: deps.clock.now(),
+        },
+        fence,
+      );
       throw new StageFailure(stage, error);
     }
 
     spentCents = toBudgetCents(await deps.ledger.jobCostCents(ctx, job.id));
-    await deps.jobs.update(ctx, job.id, { spentCents, progress: (index + 1) / total });
-    await deps.jobs.upsertStage(ctx, {
-      jobId: job.id,
-      name: stage.name,
-      attempt: job.attempts,
-      status: "succeeded",
-      output,
-      startedAt,
-      finishedAt: deps.clock.now(),
-    });
+    await deps.jobs.update(ctx, job.id, { spentCents, progress: (index + 1) / total }, { fence });
+    await deps.jobs.upsertStage(
+      ctx,
+      {
+        jobId: job.id,
+        name: stage.name,
+        attempt: job.attempts,
+        status: "succeeded",
+        output,
+        startedAt,
+        finishedAt: deps.clock.now(),
+      },
+      fence,
+    );
     outputs[stage.name] = output;
     if (job.budgetCents !== undefined && spentCents > job.budgetCents) {
       throw budgetError(

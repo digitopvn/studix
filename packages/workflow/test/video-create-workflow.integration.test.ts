@@ -107,8 +107,9 @@ describe("video.create workflow on Postgres", () => {
     expect(done).toMatchObject({ status: "succeeded", attempts: 2 });
     const stages = await db.current.repos.jobs.listStages(ctx, job.id);
     expect(stages.filter((s) => s.name === "plan")).toHaveLength(1);
+    // The stale attempt's failure write is rejected, so its row keeps the last state the owner recorded.
     expect(stages.filter((s) => s.name === "render").map((s) => [s.attempt, s.status])).toEqual([
-      [1, "failed"],
+      [1, "running"],
       [2, "succeeded"],
     ]);
     expect((await db.current.repos.renders.listByProject(ctx, done.projectId!)).items).toHaveLength(1);

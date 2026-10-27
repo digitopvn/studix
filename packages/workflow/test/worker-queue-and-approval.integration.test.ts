@@ -49,6 +49,45 @@ async function enqueuePublish(ctx: TenantContext): Promise<Job> {
 }
 
 describe("worker queue", () => {
+  it("rejects job and stage writes from a worker attempt that no longer owns the job", async () => {
+    const { queue: producer, jobs } = db.current.repos;
+    const ctx = await tenant(db.current, "fence");
+    const job = (await producer.enqueue(ctx, { kind: "noop", payload: {}, createdBy: human })).job;
+    const worker = createWorkerJobQueue(db.current.db, { leaseMs: 100 });
+    const stage = { jobId: job.id, name: "plan", attempt: 1, status: "running" as const };
+
+    const first = (await worker.claim("worker-a"))!;
+    const fenceA = { workerId: "worker-a", attempt: first.attempts };
+    await jobs.update(ctx, job.id, { progress: 0.5 }, { fence: fenceA });
+    await jobs.upsertStage(ctx, stage, fenceA);
+
+    // worker-a stalls past its lease and worker-b reclaims the job.
+    await new Promise((r) => setTimeout(r, 150));
+    const second = (await worker.claim("worker-b"))!;
+    expect(second.attempts).toBe(2);
+
+    const stale = { code: "CONFLICT", details: { reason: "lease_lost" } };
+    await expect(jobs.update(ctx, job.id, { spentCents: 99 }, { fence: fenceA })).rejects.toMatchObject(
+      stale,
+    );
+    await expect(jobs.upsertStage(ctx, { ...stage, status: "succeeded" }, fenceA)).rejects.toMatchObject(
+      stale,
+    );
+    expect((await jobs.get(ctx, job.id))?.spentCents).toBe(0);
+    expect((await jobs.listStages(ctx, job.id))[0]?.status).toBe("running");
+
+    const fenceB = { workerId: "worker-b", attempt: second.attempts };
+    await jobs.update(ctx, job.id, { spentCents: 3 }, { fence: fenceB });
+    await jobs.upsertStage(ctx, { ...stage, attempt: 2, status: "succeeded" }, fenceB);
+    expect((await jobs.get(ctx, job.id))?.spentCents).toBe(3);
+
+    await expect(jobs.upsertStage(ctx, { ...stage, jobId: "job_missing" }, fenceB)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    // Leave nothing claimable behind for the next tests.
+    expect(await worker.complete(second, "worker-b", {})).toBe(true);
+  });
+
   it("never lets concurrent workers claim the same job", async () => {
     const ctx = await tenant(db.current, "concurrent");
     for (let i = 0; i < 30; i++) {

@@ -25,9 +25,17 @@ export type JobPatch = Partial<
   clear?: Array<"stage" | "result" | "error" | "lockedBy" | "leaseExpiresAt">;
 };
 
+/** Identifies the worker attempt a write belongs to; the write only lands while that attempt still owns the job. */
+export interface JobFence {
+  workerId: string;
+  attempt: number;
+}
+
 export interface JobUpdateOptions {
   /** Compare-and-set: fail with CONFLICT unless the current status is one of these. */
   expectStatus?: readonly JobStatus[];
+  /** Fail with CONFLICT (details.reason "lease_lost") unless the job is running, locked by this worker on this attempt. */
+  fence?: JobFence;
 }
 
 /** Read and tenant-scoped mutation of jobs. Creation goes through JobQueue.enqueue. */
@@ -39,8 +47,11 @@ export interface JobRepository {
     query?: PageRequest & { projectId?: string; status?: JobStatus },
   ): Promise<Page<Job>>;
   update(ctx: TenantContext, id: string, patch: JobPatch, options?: JobUpdateOptions): Promise<Job>;
-  /** Insert or update the stage row identified by (jobId, name, attempt). */
-  upsertStage(ctx: TenantContext, stage: Omit<NewRecord<Stage>, "id">): Promise<Stage>;
+  /**
+   * Insert or update the stage row identified by (jobId, name, attempt). With a fence, the write fails
+   * with CONFLICT (details.reason "lease_lost") unless that worker attempt still owns the job.
+   */
+  upsertStage(ctx: TenantContext, stage: Omit<NewRecord<Stage>, "id">, fence?: JobFence): Promise<Stage>;
   listStages(ctx: TenantContext, jobId: string): Promise<Stage[]>;
 }
 

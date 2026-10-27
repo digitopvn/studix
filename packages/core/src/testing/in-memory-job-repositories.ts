@@ -3,16 +3,32 @@ import type { Job, Render, Stage, WorkflowRun } from "../entities/job.ts";
 import { isTerminalJobStatus } from "../entities/job.ts";
 import type { JobQueue } from "../ports/job-queue.ts";
 import type {
+  JobFence,
   JobRepository,
   RenderRepository,
   WorkflowRunRepository,
 } from "../repositories/job-repository.ts";
+import type { TenantContext } from "../tenant.ts";
 import { InMemoryTenantTable } from "./in-memory-table.ts";
+
+const leaseLost = (jobId: string) =>
+  new StudixError("CONFLICT", `job ${jobId} is no longer owned by this worker attempt`, {
+    retryable: false,
+    details: { reason: "lease_lost" },
+  });
 
 /** In-memory jobs: implements both the read/update repository and the producer-side queue. */
 export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; queue: JobQueue } {
   const jobs = new InMemoryTenantTable<Job>("job", clock);
   const stages = new InMemoryTenantTable<Stage>("stg", clock, false);
+
+  const assertFence = (ctx: TenantContext, jobId: string, fence: JobFence | undefined) => {
+    if (!fence) return;
+    const job = jobs.get(ctx, jobId);
+    if (job?.status !== "running" || job.lockedBy !== fence.workerId || job.attempts !== fence.attempt) {
+      throw leaseLost(jobId);
+    }
+  };
 
   const repo: JobRepository = {
     async get(ctx, id) {
@@ -32,6 +48,7 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
     },
     async update(ctx, id, patch, options = {}) {
       const current = jobs.require(ctx, id);
+      assertFence(ctx, id, options.fence);
       if (options.expectStatus && !options.expectStatus.includes(current.status)) {
         throw new StudixError("CONFLICT", `job ${id} is ${current.status}`, {
           details: { status: current.status, expected: options.expectStatus },
@@ -42,7 +59,8 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
       for (const field of clear) next[field] = undefined;
       return jobs.update(ctx, id, next);
     },
-    async upsertStage(ctx, input) {
+    async upsertStage(ctx, input, fence) {
+      assertFence(ctx, input.jobId, fence);
       const existing = stages.filter(
         ctx,
         (s) => s.jobId === input.jobId && s.name === input.name && s.attempt === input.attempt,
