@@ -17,7 +17,7 @@ import {
   toJob,
   upsertStageRow,
 } from "@studix/database";
-import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared";
+import { type Clock, StudixError, type StudixErrorPayload, systemClock } from "@studix/shared";
 import { and, asc, eq, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
 
 const { jobs, approvals, stages } = schema;
@@ -108,6 +108,12 @@ export interface WorkerJobQueue {
    * the studio service resumes itself) was granted by a human or rejected. Returns the count.
    */
   resumeDecidedApprovals(): Promise<number>;
+  /**
+   * Close pending approvals that expired while their job is parked in waiting_approval, and fail the job
+   * (nobody can decide an expired request, so it would never move again). A job that still has another live
+   * pending request keeps waiting. Returns the number of jobs failed.
+   */
+  failExpiredApprovals(): Promise<number>;
 }
 
 export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOptions): WorkerJobQueue {
@@ -164,7 +170,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         result = { status: "existing", approval: latest };
         return;
       }
-      const approval = await approvalRepo.create(ctx, {
+      const opened = await approvalRepo.open(ctx, {
         action: request.action,
         subject,
         reason: request.reason,
@@ -172,6 +178,12 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         requestedBy: actorRef(ctx.actor),
         expiresAt: new Date(now.getTime() + request.ttlMs),
       });
+      // A studio request for the same job and action can have opened it between the read and the insert.
+      if (!opened.created) {
+        result = { status: "existing", approval: opened.approval };
+        return;
+      }
+      const approval = opened.approval;
       await createAuditRepository(tx, clock).append(ctx, {
         actor: actorRef(ctx.actor),
         action: "approval.requested",
@@ -355,6 +367,81 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         )
         .returning({ id: jobs.id });
       return rows.length;
+    },
+
+    async failExpiredApprovals() {
+      const now = clock.now();
+      return db.transaction(async (tx) => {
+        const closed = await tx
+          .update(approvals)
+          .set({ status: "expired", decidedAt: now })
+          .where(
+            and(
+              eq(approvals.status, "pending"),
+              eq(approvals.subjectType, "job"),
+              lte(approvals.expiresAt, now),
+              sql`exists (
+                select 1 from ${jobs} j
+                where j.id = ${approvals.subjectId} and j.workspace_id = ${approvals.workspaceId}
+                  and j.organization_id = ${approvals.organizationId} and j.status = 'waiting_approval'
+              )`,
+            ),
+          )
+          .returning({
+            id: approvals.id,
+            action: approvals.action,
+            jobId: approvals.subjectId,
+            workspaceId: approvals.workspaceId,
+            organizationId: approvals.organizationId,
+          });
+        const audit = createAuditRepository(tx, clock);
+        const systemActor = { type: "system" as const, id: "approval-sweeper" };
+        const failedJobs = new Set<string>();
+        for (const approval of closed) {
+          const ctx: TenantContext = {
+            organizationId: approval.organizationId,
+            workspaceId: approval.workspaceId,
+            actor: systemActor,
+          };
+          await audit.append(ctx, {
+            actor: actorRef(systemActor),
+            action: "approval.expired",
+            subjectType: "job",
+            subjectId: approval.jobId,
+            data: { approvalId: approval.id, action: approval.action },
+          });
+          if (failedJobs.has(approval.jobId)) continue;
+          const error = new StudixError(
+            "TIMEOUT",
+            `${approval.action} approval expired before a reviewer decided`,
+            {
+              retryable: false,
+              suggestedAction:
+                "Submit the job again and ask a reviewer to approve it before the request expires.",
+              details: { reason: "approval_expired", approvalId: approval.id },
+            },
+          ).toJSON();
+          const failed = await tx
+            .update(jobs)
+            .set({ status: "failed", error, finishedAt: now, updatedAt: now })
+            .where(
+              and(
+                eq(jobs.id, approval.jobId),
+                eq(jobs.workspaceId, approval.workspaceId),
+                eq(jobs.organizationId, approval.organizationId),
+                eq(jobs.status, "waiting_approval"),
+                sql`not exists (
+                  select 1 from ${approvals} a
+                  where a.workspace_id = ${jobs.workspaceId} and a.subject_type = 'job'
+                    and a.subject_id = ${jobs.id} and a.status = 'pending'
+                )`,
+              ),
+            )
+            .returning({ id: jobs.id });
+          if (failed.length === 1) failedJobs.add(approval.jobId);
+        }
+        return failedJobs.size;
+      });
     },
   };
 }

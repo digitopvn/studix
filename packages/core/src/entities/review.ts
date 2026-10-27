@@ -51,6 +51,11 @@ export interface Approval extends TenantOwned {
   subject: ApprovalSubject;
   status: ApprovalStatus;
   reason: string;
+  /**
+   * Distinguishes independent requests for the same subject and action (e.g. one connector tool + argument
+   * set per approval). Only one pending approval may exist per subject, action and scope key.
+   */
+  scopeKey?: string;
   estimatedCostCents?: number;
   requestedBy: ActorRef;
   decidedBy?: ActorRef;

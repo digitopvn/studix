@@ -46,9 +46,7 @@ export async function openApproval(
   input: { action: ApprovalAction; subject: ApprovalSubject; reason: string; estimatedCostCents?: number },
 ): Promise<Approval> {
   const now = deps.clock.now();
-  const latest = await deps.approvals.findLatest(ctx, input.subject, input.action);
-  if (latest && isPendingAndLive(latest, now)) return latest;
-  const approval = await deps.approvals.create(ctx, {
+  const { approval, created } = await deps.approvals.open(ctx, {
     action: input.action,
     subject: input.subject,
     reason: input.reason,
@@ -56,6 +54,7 @@ export async function openApproval(
     requestedBy: actorRef(ctx.actor),
     expiresAt: new Date(now.getTime() + deps.defaults.approvalTtlMs),
   });
+  if (!created) return approval;
   await deps.audit.append(ctx, {
     actor: actorRef(ctx.actor),
     action: "approval.requested",

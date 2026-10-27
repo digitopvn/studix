@@ -19,6 +19,23 @@ export function createInMemoryApprovalRepository(clock: Clock): ApprovalReposito
     async create(ctx, input) {
       return approvals.insert(ctx, { ...input, status: "pending" });
     },
+    async open(ctx, input) {
+      const now = clock.now();
+      const sameRequest = (a: Approval) =>
+        a.status === "pending" &&
+        a.subject.type === input.subject.type &&
+        a.subject.id === input.subject.id &&
+        a.action === input.action &&
+        (a.scopeKey ?? "") === (input.scopeKey ?? "");
+      for (const stale of approvals.filter(ctx, sameRequest)) {
+        if (stale.expiresAt !== undefined && stale.expiresAt <= now) {
+          approvals.update(ctx, stale.id, { status: "expired", decidedAt: now });
+        }
+      }
+      const existing = approvals.filter(ctx, sameRequest)[0];
+      if (existing) return { approval: existing, created: false };
+      return { approval: approvals.insert(ctx, { ...input, status: "pending" }), created: true };
+    },
     async get(ctx, id) {
       return approvals.get(ctx, id);
     },

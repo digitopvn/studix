@@ -128,6 +128,7 @@ stateDiagram-v2
   running --> queued: lease expired (worker crash) -> recovered
   running --> waiting_approval: policy requires approval
   waiting_approval --> queued: approved
+  waiting_approval --> failed: approval expired
   running --> succeeded
   running --> failed: terminal error or retries exhausted
   queued --> cancelled: cancel
