@@ -1,6 +1,6 @@
 import { testTenant } from "@studix/core/testing";
-import { describe, expect, it } from "vitest";
-import { DecisionRouter, FakeDecisionAdapter, RulesAdapter } from "../src/index.ts";
+import { describe, expect, it, vi } from "vitest";
+import { DecisionRouter, FakeDecisionAdapter, RulesAdapter, SINK_TIMEOUT_MS } from "../src/index.ts";
 import { CONTRACT_KIND, CONTRACT_VALID_OUTPUT, contractRequest } from "../src/testing/index.ts";
 import { useInMemoryTracing } from "./otel-in-memory-tracing.ts";
 import { testRouter, unavailable } from "./router-test-helpers.ts";
@@ -200,6 +200,24 @@ describe("DecisionRouter telemetry", () => {
     const result = await router.decide(contractRequest());
     expect(result).toMatchObject({ providerId: "fake" });
     expect(result.executionId).toBeUndefined();
+  });
+
+  it("stops waiting for a hung execution sink and omits the execution id", async () => {
+    vi.useFakeTimers();
+    try {
+      const router = new DecisionRouter({
+        providers: [valid()],
+        defaultRoute: ["fake"],
+        sink: { record: () => new Promise<void>(() => {}) },
+      });
+      const pending = router.decide(contractRequest());
+      await vi.advanceTimersByTimeAsync(SINK_TIMEOUT_MS + 1);
+      const result = await pending;
+      expect(result.providerId).toBe("fake");
+      expect(result.executionId).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns the id of the winning attempt's execution so usage can reference it", async () => {

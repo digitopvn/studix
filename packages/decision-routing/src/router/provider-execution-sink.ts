@@ -54,6 +54,9 @@ export function buildExecutionRecord(
   };
 }
 
+/** A hung sink must not hold a decision past its deadline; a row that may not have landed is never referenced. */
+export const SINK_TIMEOUT_MS = 2_000;
+
 /**
  * Record one execution and return its id, or undefined when there is no sink or the sink failed.
  * A failing sink is logged (redacted) and never breaks the decision.
@@ -67,7 +70,15 @@ export async function recordExecution(
   if (!sink) return undefined;
   try {
     const record = buildExecutionRecord(request, outcome);
-    await sink.record(request.tenant, record);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("provider execution sink timed out")), SINK_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([Promise.resolve(sink.record(request.tenant, record)), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
     return record.id;
   } catch (error) {
     logger?.error("provider execution sink failed", {
