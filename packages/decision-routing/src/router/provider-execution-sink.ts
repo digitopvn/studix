@@ -75,7 +75,13 @@ export async function recordExecution(
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error("sink timed out")), SINK_TIMEOUT_MS);
     });
-    write.catch(() => {});
+    // A write that outlives the timeout cannot be cancelled; keep its late failure visible.
+    write.catch((error: unknown) =>
+      logger?.error("provider execution sink failed after timeout", {
+        provider: outcome.providerId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
     await Promise.race([write, timeout]);
     return record.id;
   } catch (error) {

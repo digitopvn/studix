@@ -26,11 +26,11 @@ export function createVideoPlanner(deps: VideoPlannerDeps): Planner {
     let planned = brief;
     if (needsBriefDraft(brief)) {
       const decided = await decideBriefDraft(deps.decisions, brief, ctx, signal, deps.briefDecision);
-      if (decided.usage) usage.push(decided.usage);
+      usage.push(decided.usage);
       if (decided.fallbackReason) {
         log.warn("brief decision fell back", {
           jobId: ctx.jobId,
-          provider: decided.usage?.provider,
+          provider: decided.usage.provider,
           reason: decided.fallbackReason,
         });
       }

@@ -1,4 +1,4 @@
-import { toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
+import { executionUsageDedupeKey, toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
 import type { Approval, BillingPolicy, Job, JobRepository, Stage, TenantContext } from "@studix/core";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
@@ -144,12 +144,18 @@ export async function runStages(
       output = result.output;
       for (const usage of result.usage ?? []) {
         await deps.ledger.record(ctx, {
-          dedupeKey: usageDedupeKey({
-            jobId: job.id,
-            stage: stage.name,
-            attempt: job.attempts,
-            item: usage.item,
-          }),
+          dedupeKey: usage.providerExecutionId
+            ? executionUsageDedupeKey({
+                jobId: job.id,
+                stage: stage.name,
+                executionId: usage.providerExecutionId,
+              })
+            : usageDedupeKey({
+                jobId: job.id,
+                stage: stage.name,
+                attempt: job.attempts,
+                item: usage.item,
+              }),
           kind: usage.kind,
           quantity: usage.quantity,
           unit: usage.unit,

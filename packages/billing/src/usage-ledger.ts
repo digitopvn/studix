@@ -43,6 +43,26 @@ export interface UsageLedger {
 const KEY_PART = /^[\w.:-]+$/;
 
 /**
+ * Attempt-independent key for usage tied to one provider execution: the same execution is one cost no
+ * matter how many stage attempts report it (e.g. a retry served from the decision idempotency cache).
+ */
+export function executionUsageDedupeKey(parts: {
+  jobId: string;
+  stage: string;
+  executionId: string;
+}): string {
+  for (const value of [parts.jobId, parts.stage, parts.executionId]) {
+    if (!KEY_PART.test(value)) {
+      throw new StudixError(
+        "VALIDATION",
+        "usage key parts may only contain letters, digits, '_', '.', ':', '-'",
+      );
+    }
+  }
+  return `${parts.jobId}:${parts.stage}:exec:${parts.executionId}`;
+}
+
+/**
  * Dedupe key derived from job, stage, attempt and the usage item (e.g. provider execution id or
  * "render"). A stage that re-runs on a new attempt really incurred the cost again, so the attempt is
  * part of the key; re-recording within the same attempt is deduplicated.

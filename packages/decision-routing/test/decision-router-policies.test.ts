@@ -1,7 +1,7 @@
 import { testTenant } from "@studix/core/testing";
 import { describe, expect, it, vi } from "vitest";
 import { DecisionRouter, FakeDecisionAdapter, RulesAdapter } from "../src/index.ts";
-import { SINK_TIMEOUT_MS } from "../src/router/provider-execution-sink.ts";
+import { type ProviderExecutionSink, SINK_TIMEOUT_MS } from "../src/router/provider-execution-sink.ts";
 import { CONTRACT_KIND, CONTRACT_VALID_OUTPUT, contractRequest } from "../src/testing/index.ts";
 import { useInMemoryTracing } from "./otel-in-memory-tracing.ts";
 import { testRouter, unavailable } from "./router-test-helpers.ts";
@@ -22,14 +22,22 @@ describe("DecisionRouter idempotency", () => {
     expect(fake.invocations).toHaveLength(1);
   });
 
-  it("marks replays as free and drops their execution link so the bill is not counted twice", async () => {
-    const { router } = testRouter([valid()]);
+  it("keeps the original cost and execution link on a replay so the ledger can dedupe by execution", async () => {
+    const executions: string[] = [];
+    const sink: ProviderExecutionSink = {
+      record: (_ctx, execution) => void executions.push(String(execution.id)),
+    };
+    const { router } = testRouter([valid()], { sink });
     const request = contractRequest();
     const first = await router.decide(request);
     const second = await router.decide({ ...request });
-    expect(first.costCents).toBeGreaterThan(0);
-    expect(second.costCents).toBe(0);
-    expect(second.providerExecutionId).toBeUndefined();
+    expect(first.providerExecutionId).toBeDefined();
+    expect(second).toMatchObject({
+      replayed: true,
+      costCents: first.costCents,
+      providerExecutionId: first.providerExecutionId,
+    });
+    expect(executions).toHaveLength(1);
   });
 
   it("shares one in-flight call between concurrent callers", async () => {

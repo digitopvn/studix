@@ -42,10 +42,13 @@ export interface DecisionRouterOptions {
 
 const MAX_BACKOFF_MS = 5_000;
 
-/** A cached result costs nothing again and its execution is already attributed to the call that ran it. */
+/**
+ * A cached result describes the one provider call that was made. It keeps that call's cost and execution
+ * id so a caller whose first run never reached the ledger can still bill it; `replayed` tells callers
+ * that no new spend happened, and the ledger dedupes by execution id.
+ */
 function asReplay<T>(result: DecisionResult<T>): DecisionResult<T> {
-  const { providerExecutionId: _first, ...rest } = result;
-  return { ...rest, costCents: 0, replayed: true };
+  return { ...result, replayed: true };
 }
 
 /**
