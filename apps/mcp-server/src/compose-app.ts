@@ -169,6 +169,7 @@ export async function composeApp(
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,
+    rateLimitStore: repos.rateLimits,
   };
   if (!deps.storage) logger.warn("S3_BUCKET is not set; playback URLs are unavailable");
 

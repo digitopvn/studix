@@ -83,6 +83,7 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
       signedUrlTtlSeconds: 600,
     },
     storage: fakeSigner,
+    rateLimitStore: repos.rateLimits,
     activity: createActivityRecorder(repos.activity, { logger }),
     readiness: [{ name: "database", check: async () => void (await db.client`select 1`) }],
     ...overrides,

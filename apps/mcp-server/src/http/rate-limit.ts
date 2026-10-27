@@ -1,8 +1,11 @@
+import type { RateLimitRepository } from "@studix/database";
+import type { Logger } from "@studix/shared";
 import type { NextFunction, Request, Response } from "express";
 
 /**
- * In-memory token bucket (per process). Adequate for P0's single app replica; a multi-replica deployment
- * needs a shared store (documented in the deployment notes), because each replica keeps its own buckets.
+ * Token buckets. `createSharedLimiter` keeps them in Postgres so every app replica draws from the same
+ * bucket and restarts do not reset it; the in-memory limiter (per process) is the fallback used when no
+ * store is wired or the store is unreachable.
  */
 export interface TokenBucketOptions {
   /** Burst size. */
@@ -18,7 +21,7 @@ export interface TakeResult {
 }
 
 export interface TokenBucketLimiter {
-  take(key: string): TakeResult;
+  take(key: string): TakeResult | Promise<TakeResult>;
 }
 
 /** Buckets kept before idle (full) ones are pruned. */
@@ -27,7 +30,7 @@ const PRUNE_THRESHOLD = 10_000;
 export function createTokenBucketLimiter(
   options: TokenBucketOptions,
   now: () => number = Date.now,
-): TokenBucketLimiter {
+): { take(key: string): TakeResult } {
   if (!(options.capacity >= 1) || !(options.refillPerSecond > 0)) {
     throw new RangeError("token bucket needs capacity >= 1 and refillPerSecond > 0");
   }
@@ -66,14 +69,72 @@ export function createTokenBucketLimiter(
   };
 }
 
+/** Buckets idle this long are full again under every default limit, so they can be dropped. */
+const SHARED_PRUNE_IDLE_SECONDS = 3600;
+const SHARED_PRUNE_EVERY_MS = 10 * 60_000;
+
+/**
+ * Token bucket in the shared store. If the store fails, the call is decided by a per-process bucket
+ * instead (degraded: limits multiply by replica count, but the endpoint stays bounded and available).
+ */
+export function createSharedLimiter(
+  store: RateLimitRepository,
+  options: TokenBucketOptions,
+  logger: Logger,
+  now: () => number = Date.now,
+): TokenBucketLimiter {
+  const fallback = createTokenBucketLimiter(options, now);
+  let lastPrune = now();
+  let pruning = false;
+
+  const maybePrune = () => {
+    if (pruning || now() - lastPrune < SHARED_PRUNE_EVERY_MS) return;
+    pruning = true;
+    lastPrune = now();
+    store
+      .prune(SHARED_PRUNE_IDLE_SECONDS)
+      .catch((err: unknown) => logger.warn("rate limit prune failed", { error: errorMessage(err) }))
+      .finally(() => {
+        pruning = false;
+      });
+  };
+
+  return {
+    async take(key) {
+      try {
+        const { allowed, tokens } = await store.take(key, options);
+        maybePrune();
+        return allowed
+          ? { allowed, retryAfterSeconds: 0 }
+          : { allowed, retryAfterSeconds: Math.ceil((1 - tokens) / options.refillPerSecond) };
+      } catch (err) {
+        logger.warn("shared rate limit unavailable, using the per-process bucket", {
+          error: errorMessage(err),
+        });
+        return fallback.take(key);
+      }
+    },
+  };
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** Express middleware answering 429 with Retry-After when the caller's bucket is empty. */
 export function rateLimit(
   limiter: TokenBucketLimiter,
   scope: string,
   keyOf: (req: Request) => string = (req) => req.ip ?? req.socket.remoteAddress ?? "unknown",
 ) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const result = limiter.take(`${scope}:${keyOf(req)}`);
+  return async (req: Request, res: Response, next: NextFunction) => {
+    let result: TakeResult;
+    try {
+      result = await limiter.take(`${scope}:${keyOf(req)}`);
+    } catch (err) {
+      next(err);
+      return;
+    }
     if (result.allowed) {
       next();
       return;

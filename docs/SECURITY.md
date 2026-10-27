@@ -32,6 +32,21 @@ Owner: `packages/auth`.
   resolve to a membership and then a workspace.
 - Inbound OAuth for AI clients: [ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md).
 
+## Rate limiting
+
+Owner: `apps/mcp-server` (`http/rate-limit.ts`), store in `packages/database`.
+
+- Token buckets live in the Postgres table `rate_limit_buckets`, updated with one
+  atomic upsert on the database clock, so limits hold across app replicas and
+  survive restarts.
+- Keys: `/mcp` per client IP before the key is checked (unauthenticated floods)
+  and per workspace after; `/api/auth` and `/api` per client IP. The IP comes
+  from `STUDIX_TRUST_PROXY`, so set it when the app runs behind an ingress.
+- If the store is unreachable the limiter logs a warning and decides with a
+  per-process bucket, so limits temporarily multiply by replica count but the
+  endpoints stay available and bounded.
+- Idle buckets are pruned opportunistically (idle for an hour, far beyond refill).
+
 ## Inbound vs outbound credentials
 
 Two independent trust boundaries:

@@ -174,14 +174,14 @@ AI client --(inbound credential: stx_ key)--> /mcp
 
 ## Trust boundaries
 
-| Boundary                      | Crossing                 | Control                                                                                 |
-| ----------------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
-| Internet -> app               | AI client, browser       | TLS, host allow-list from `STUDIX_*_URL`, API key or session, per-workspace rate limits |
-| App -> tenant data            | Every repository call    | `TenantContext` required; no unscoped query API                                         |
-| App/worker -> third-party MCP | Outbound connector call  | URL policy (SSRF, DNS rebinding, redirects), secretRef, caps, re-authorization          |
-| Worker -> model providers     | Decision and media calls | Server-held credentials, redaction, budget, timeouts                                    |
-| Worker -> agent runtime       | Pi session               | Process/pod isolation, not a path guard; no shell, no secrets in prompt                 |
-| Storage -> client             | Artifact download        | Short-lived signed URLs, tenant-prefixed keys                                           |
+| Boundary                      | Crossing                 | Control                                                                                                                         |
+| ----------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Internet -> app               | AI client, browser       | TLS, host allow-list from `STUDIX_*_URL`, API key or session, per-workspace (`/mcp`) and per-IP rate limits, shared in Postgres |
+| App -> tenant data            | Every repository call    | `TenantContext` required; no unscoped query API                                                                                 |
+| App/worker -> third-party MCP | Outbound connector call  | URL policy (SSRF, DNS rebinding, redirects), secretRef, caps, re-authorization                                                  |
+| Worker -> model providers     | Decision and media calls | Server-held credentials, redaction, budget, timeouts                                                                            |
+| Worker -> agent runtime       | Pi session               | Process/pod isolation, not a path guard; no shell, no secrets in prompt                                                         |
+| Storage -> client             | Artifact download        | Short-lived signed URLs, tenant-prefixed keys                                                                                   |
 
 Details and threat list: [SECURITY.md](SECURITY.md).
 

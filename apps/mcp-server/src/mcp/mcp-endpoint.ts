@@ -128,6 +128,8 @@ export function mountMcpEndpoint(
   deps: AppDeps,
   artifacts: ArtifactUrlDeps,
   guards: express.RequestHandler[],
+  /** Handlers that run once the bearer key is verified (e.g. per-workspace rate limiting). */
+  authenticatedGuards: (workspaceKey: (req: Request) => string) => express.RequestHandler[] = () => [],
 ) {
   const onerror = (error: Error) => deps.logger.error("mcp transport error", { error: error.message });
   const handler = createMcpHandler(({ authInfo }) => buildMcpServer(deps, artifacts, authInfo), {
@@ -162,7 +164,17 @@ export function mountMcpEndpoint(
     }
   };
 
-  app.all("/mcp", ...guards, authenticate, express.json({ limit: MCP_MAX_BODY_BYTES }), (req, res) => {
-    void node(req, res, req.body);
-  });
+  const workspaceKey = (req: Request) =>
+    authFrom((req as Request & { auth?: AuthInfo }).auth).tenant.workspaceId;
+
+  app.all(
+    "/mcp",
+    ...guards,
+    authenticate,
+    ...authenticatedGuards(workspaceKey),
+    express.json({ limit: MCP_MAX_BODY_BYTES }),
+    (req, res) => {
+      void node(req, res, req.body);
+    },
+  );
 }

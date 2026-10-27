@@ -1,6 +1,8 @@
+import type { RateLimitRepository } from "@studix/database";
+import { createLogger } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import { dashboardCsp } from "../src/http/dashboard-static.ts";
-import { createTokenBucketLimiter } from "../src/http/rate-limit.ts";
+import { createSharedLimiter, createTokenBucketLimiter } from "../src/http/rate-limit.ts";
 import { hostnameOf, originOf, uniqueHostnames } from "../src/http/request-guards.ts";
 
 describe("token bucket limiter", () => {
@@ -20,6 +22,52 @@ describe("token bucket limiter", () => {
   it("rejects nonsensical options", () => {
     expect(() => createTokenBucketLimiter({ capacity: 0, refillPerSecond: 1 })).toThrow(RangeError);
     expect(() => createTokenBucketLimiter({ capacity: 1, refillPerSecond: 0 })).toThrow(RangeError);
+  });
+});
+
+describe("shared limiter", () => {
+  const logger = createLogger({}, { level: "error" });
+  const options = { capacity: 1, refillPerSecond: 0.5 };
+
+  it("derives the retry hint from the store's remaining tokens", async () => {
+    const store: RateLimitRepository = {
+      take: async () => ({ allowed: false, tokens: 0.25 }),
+      prune: async () => 0,
+    };
+    const result = await createSharedLimiter(store, options, logger).take("k");
+    expect(result).toEqual({ allowed: false, retryAfterSeconds: 2 });
+  });
+
+  it("falls back to a per-process bucket when the store fails", async () => {
+    const store: RateLimitRepository = {
+      take: async () => {
+        throw new Error("connection refused");
+      },
+      prune: async () => 0,
+    };
+    const limiter = createSharedLimiter(store, options, logger);
+    expect((await limiter.take("k")).allowed).toBe(true);
+    expect((await limiter.take("k")).allowed).toBe(false);
+  });
+
+  it("prunes idle buckets at most once per interval", async () => {
+    let now = 0;
+    let pruned = 0;
+    const store: RateLimitRepository = {
+      take: async () => ({ allowed: true, tokens: 1 }),
+      prune: async () => {
+        pruned++;
+        return 0;
+      },
+    };
+    const limiter = createSharedLimiter(store, options, logger, () => now);
+    await limiter.take("k");
+    expect(pruned).toBe(0);
+    now += 11 * 60_000;
+    await limiter.take("k");
+    await limiter.take("k");
+    await new Promise((r) => setImmediate(r));
+    expect(pruned).toBe(1);
   });
 });
 
