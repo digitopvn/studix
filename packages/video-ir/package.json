@@ -1,0 +1,17 @@
+{
+  "name": "@studix/video-ir",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fixtures/*.json": "./fixtures/*.json"
+  },
+  "scripts": {
+    "schemas:export": "tsx scripts/export-json-schemas.ts"
+  },
+  "dependencies": {
+    "@studix/shared": "workspace:*",
+    "zod": "4.6.7"
+  }
+}

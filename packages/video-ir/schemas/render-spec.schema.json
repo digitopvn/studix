@@ -1,0 +1,49 @@
+{
+  "$id": "studix:render-spec",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "preset": {
+      "type": "string",
+      "enum": [
+        "preview",
+        "final"
+      ]
+    },
+    "container": {
+      "type": "string",
+      "const": "mp4"
+    },
+    "videoCodec": {
+      "type": "string",
+      "const": "h264"
+    },
+    "audioCodec": {
+      "type": "string",
+      "const": "aac"
+    },
+    "scale": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "crf": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 51
+    },
+    "fps": {
+      "type": "integer",
+      "minimum": 12,
+      "maximum": 120
+    }
+  },
+  "required": [
+    "preset",
+    "container",
+    "videoCodec",
+    "audioCodec",
+    "scale",
+    "crf"
+  ]
+}

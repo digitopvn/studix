@@ -1,0 +1,188 @@
+{
+  "$id": "studix:creative-brief",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "language": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"
+    },
+    "objective": {
+      "type": "string",
+      "enum": [
+        "awareness",
+        "launch",
+        "promotion",
+        "explainer",
+        "social",
+        "other"
+      ]
+    },
+    "audience": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "tone": {
+      "maxItems": 8,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 60
+      }
+    },
+    "keyMessages": {
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "callToAction": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "aspectRatio": {
+      "type": "string",
+      "enum": [
+        "9:16",
+        "16:9",
+        "1:1"
+      ]
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 600000
+    },
+    "brand": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "tagline": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "palette": {
+          "type": "object",
+          "properties": {
+            "primary": {
+              "type": "string",
+              "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+            },
+            "secondary": {
+              "type": "string",
+              "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+            },
+            "accent": {
+              "type": "string",
+              "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+            },
+            "background": {
+              "type": "string",
+              "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+            },
+            "foreground": {
+              "type": "string",
+              "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+            },
+            "muted": {
+              "type": "string",
+              "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+            }
+          },
+          "required": [
+            "primary",
+            "background",
+            "foreground"
+          ]
+        },
+        "fonts": {
+          "type": "object",
+          "properties": {
+            "heading": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "required": [
+            "heading",
+            "body"
+          ]
+        },
+        "logoAssetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "voice": {
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        },
+        "rules": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      },
+      "required": [
+        "name",
+        "palette",
+        "fonts"
+      ]
+    },
+    "references": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    },
+    "constraints": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    }
+  },
+  "required": [
+    "prompt"
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "title": "Product promo with media assets",
+  "language": "en",
+  "format": { "aspectRatio": "16:9", "width": 1920, "height": 1080, "fps": 30, "durationMs": 8000 },
+  "brand": {
+    "name": "Northwind",
+    "palette": { "primary": "#0f62fe", "background": "#0b0d12", "foreground": "#ffffff" },
+    "fonts": { "heading": "Inter", "body": "Inter" },
+    "logoAssetId": "logo"
+  },
+  "assets": [
+    {
+      "id": "logo",
+      "kind": "image",
+      "storageKey": "assets/ast_logo/v1/logo.png",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "mime": "image/png",
+      "width": 512,
+      "height": 512,
+      "provenance": { "source": "brand" }
+    },
+    {
+      "id": "hero",
+      "kind": "image",
+      "storageKey": "assets/ast_hero/v1/hero.webp",
+      "sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+      "mime": "image/webp",
+      "provenance": {
+        "source": "generated",
+        "provider": "multix",
+        "model": "image-model",
+        "prompt": "A sleek product on a dark studio background"
+      }
+    },
+    {
+      "id": "music",
+      "kind": "audio",
+      "uri": "https://cdn.example.com/music/upbeat.mp3",
+      "sha256": "fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13",
+      "mime": "audio/mpeg",
+      "durationMs": 30000,
+      "provenance": {
+        "source": "stock",
+        "license": "royalty-free",
+        "sourceUrl": "https://cdn.example.com/music/upbeat.mp3"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "id": "hero-scene",
+      "role": "hook",
+      "durationMs": 5000,
+      "background": { "assetId": "hero" },
+      "shots": [
+        {
+          "id": "hero-image",
+          "type": "image",
+          "startMs": 0,
+          "durationMs": 5000,
+          "assetId": "hero",
+          "alt": "Product hero",
+          "fit": "cover"
+        },
+        {
+          "id": "hero-title",
+          "type": "title",
+          "startMs": 500,
+          "durationMs": 4500,
+          "text": "Meet Northwind",
+          "subtitle": "Built for speed"
+        }
+      ],
+      "transitionOut": { "kind": "cut", "durationMs": 0 }
+    },
+    {
+      "id": "end-card",
+      "role": "outro",
+      "durationMs": 3000,
+      "shots": [
+        { "id": "end-logo", "type": "logo", "startMs": 0, "durationMs": 3000 },
+        { "id": "end-cta", "type": "cta", "startMs": 1000, "durationMs": 2000, "text": "Try it free" }
+      ]
+    }
+  ],
+  "timeline": {
+    "entries": [{ "sceneId": "hero-scene", "startMs": 0 }, { "sceneId": "end-card", "startMs": 5000 }]
+  },
+  "audio": [
+    {
+      "id": "bg-music",
+      "kind": "music",
+      "assetId": "music",
+      "startMs": 0,
+      "durationMs": 8000,
+      "volume": 0.6,
+      "fadeOutMs": 1000
+    }
+  ]
+}
