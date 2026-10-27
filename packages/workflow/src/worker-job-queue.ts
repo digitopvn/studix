@@ -109,8 +109,9 @@ export interface WorkerJobQueue {
    */
   resumeDecidedApprovals(): Promise<number>;
   /**
-   * Close pending job approvals past their expiry and fail the parked jobs waiting on them, so a request
-   * nobody answered does not park its job forever. Returns the number of jobs failed.
+   * Close pending job approvals past their expiry and fail parked jobs whose latest request expired with
+   * none pending, so a request nobody answered does not park its job forever. Run after
+   * resumeDecidedApprovals. Returns the number of jobs failed.
    */
   failExpiredApprovals(): Promise<number>;
 }
@@ -339,50 +340,60 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
 
     async failExpiredApprovals() {
       const now = clock.now();
-      return db.transaction(async (tx) => {
-        const lapsed = await tx
-          .update(approvals)
-          .set({ status: "expired", decidedAt: now })
-          .where(
-            and(
-              eq(approvals.status, "pending"),
-              eq(approvals.subjectType, "job"),
-              isNotNull(approvals.expiresAt),
-              lte(approvals.expiresAt, now),
-            ),
+      // Close lapsed requests first, then decide from job state: a request may also have been closed by a
+      // reviewer's late click or by openPending, so the sweep cannot rely on seeing the status change.
+      await db
+        .update(approvals)
+        .set({ status: "expired", decidedAt: now })
+        .where(
+          and(
+            eq(approvals.status, "pending"),
+            eq(approvals.subjectType, "job"),
+            isNotNull(approvals.expiresAt),
+            lte(approvals.expiresAt, now),
+          ),
+        );
+      // Latest expired request of the parked job, if the job has no pending request left to wait on.
+      const lapsedAction = sql<string | null>`(
+        select a.action from ${approvals} a
+        where a.workspace_id = "jobs"."workspace_id" and a.subject_type = 'job'
+          and a.subject_id = "jobs"."id" and a.status = 'expired'
+          and a.id = (
+            select max(b.id) from ${approvals} b
+            where b.workspace_id = a.workspace_id and b.subject_type = 'job'
+              and b.subject_id = a.subject_id and b.action = a.action
           )
-          .returning({ jobId: approvals.subjectId, action: approvals.action });
-        if (lapsed.length === 0) return 0;
-        const rows = await tx
-          .update(jobs)
-          .set({
-            status: "failed",
-            lockedBy: null,
-            leaseExpiresAt: null,
-            finishedAt: now,
-            updatedAt: now,
-            error: {
-              code: "TIMEOUT",
-              message: "The approval request expired before a reviewer decided it",
-              retryable: false,
-              suggestedAction: "Submit the job again and ask a reviewer to decide the new request in time.",
-              details: { reason: "approval_expired", actions: [...new Set(lapsed.map((a) => a.action))] },
-            },
-          })
-          .where(
-            and(
-              eq(jobs.status, "waiting_approval"),
-              inArray(jobs.id, [...new Set(lapsed.map((a) => a.jobId))]),
-              // A job with another live pending request is still being waited on.
-              sql`not exists (
-                select 1 from ${approvals} p
-                where p.subject_type = 'job' and p.subject_id = "jobs"."id" and p.status = 'pending'
-              )`,
-            ),
-          )
-          .returning({ id: jobs.id });
-        return rows.length;
-      });
+        order by a.id desc limit 1
+      )`;
+      const rows = await db
+        .update(jobs)
+        .set({
+          status: "failed",
+          lockedBy: null,
+          leaseExpiresAt: null,
+          finishedAt: now,
+          updatedAt: now,
+          error: sql`jsonb_build_object(
+            'code', 'TIMEOUT',
+            'message', 'The approval request expired before a reviewer decided it',
+            'retryable', false,
+            'suggestedAction', 'Submit the job again and ask a reviewer to decide the new request in time.',
+            'details', jsonb_build_object('reason', 'approval_expired', 'action', ${lapsedAction})
+          )`,
+        })
+        .where(
+          and(
+            eq(jobs.status, "waiting_approval"),
+            sql`${lapsedAction} is not null`,
+            sql`not exists (
+              select 1 from ${approvals} p
+              where p.workspace_id = "jobs"."workspace_id" and p.subject_type = 'job'
+                and p.subject_id = "jobs"."id" and p.status = 'pending'
+            )`,
+          ),
+        )
+        .returning({ id: jobs.id });
+      return rows.length;
     },
 
     async resumeDecidedApprovals() {

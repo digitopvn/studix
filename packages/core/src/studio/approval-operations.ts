@@ -135,7 +135,8 @@ export async function decideApproval(
   if (approval.status === "pending" && !isPendingAndLive(approval, now)) {
     await deps.approvals.decide(ctx, approval.id, { status: "expired", decidedAt: now });
     throw new StudixError("CONFLICT", "approval request expired", {
-      suggestedAction: "Request approval again.",
+      suggestedAction:
+        "Request approval again; a parked job whose request expired is failed, so submit it again.",
     });
   }
   const decided = await deps.approvals.decide(ctx, approval.id, {

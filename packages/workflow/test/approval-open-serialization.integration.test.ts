@@ -119,4 +119,31 @@ describe("failExpiredApprovals", () => {
       await db.current.repos.approvals.findLatest(ctx, { type: "job", id: parked.id }, "publish"),
     ).toMatchObject({ status: "expired" });
   });
+
+  it("fails a parked job whose request was already closed as expired by someone else", async () => {
+    const ctx = await tenant(db.current, "expired-elsewhere");
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    const job = await enqueueJob(ctx);
+    const claimed = (await queue.claim("w"))!;
+    const opened = await queue.requestApproval(claimed, "w", {
+      action: "publish",
+      reason: "needs review",
+      ttlMs: 60_000,
+    });
+    expect(opened.status).toBe("created");
+    expect(await queue.park(claimed, "w")).toBe(true);
+    // A reviewer's late click (or openPending) closes the lapsed row before the sweep sees it pending.
+    const { approvals } = db.current.repos;
+    const id = (await approvals.findLatest(ctx, { type: "job", id: job.id }, "publish"))!.id;
+    await db.current.db
+      .update(schema.approvals)
+      .set({ status: "expired", decidedAt: new Date() })
+      .where(eq(schema.approvals.id, id));
+
+    expect(await queue.failExpiredApprovals()).toBe(1);
+    expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({
+      status: "failed",
+      error: { code: "TIMEOUT", details: { action: "publish" } },
+    });
+  });
 });
