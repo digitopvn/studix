@@ -9,9 +9,15 @@ import type { ArtifactUrlDeps } from "./artifact-urls.ts";
 import { mountDashboardStatic } from "./http/dashboard-static.ts";
 import { mountHealthRoutes } from "./http/health-routes.ts";
 import { apiErrorHandler } from "./http/http-errors.ts";
-import { createTokenBucketLimiter, DEFAULT_RATE_LIMITS, rateLimit } from "./http/rate-limit.ts";
+import {
+  createSharedLimiter,
+  createTokenBucketLimiter,
+  DEFAULT_RATE_LIMITS,
+  rateLimit,
+  type TokenBucketOptions,
+} from "./http/rate-limit.ts";
 import { corsAndOriginGuard, originOf, securityHeaders, uniqueHostnames } from "./http/request-guards.ts";
-import { mountMcpEndpoint } from "./mcp/mcp-endpoint.ts";
+import { mountMcpEndpoint, workspaceKey } from "./mcp/mcp-endpoint.ts";
 
 /** Dashboard JSON bodies are small; videos are never uploaded through /api in P0. */
 const API_BODY_LIMIT = "256kb";
@@ -38,9 +44,13 @@ export function createApp(deps: AppDeps): Express {
     logger: deps.logger,
   };
   const limits = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
-  const authLimiter = createTokenBucketLimiter(limits.auth);
-  const mcpLimiter = createTokenBucketLimiter(limits.mcp);
-  const apiLimiter = createTokenBucketLimiter(limits.api);
+  const limiterFor = (options: TokenBucketOptions) =>
+    deps.rateLimitStore
+      ? createSharedLimiter(deps.rateLimitStore, options, deps.logger)
+      : createTokenBucketLimiter(options);
+  const authLimiter = limiterFor(limits.auth);
+  const mcpLimiter = limiterFor(limits.mcp);
+  const apiLimiter = limiterFor(limits.api);
   const originGuard = corsAndOriginGuard([...new Set([originOf(deps.appUrl), originOf(deps.publicUrl)])]);
 
   app.use(hostHeaderValidation(uniqueHostnames(deps.allowedHosts)));
@@ -48,7 +58,14 @@ export function createApp(deps: AppDeps): Express {
 
   mountHealthRoutes(app, { version: SERVER_VERSION, checks: deps.readiness ?? [], logger: deps.logger });
 
-  mountMcpEndpoint(app, deps, artifacts, [originGuard, rateLimit(mcpLimiter, "mcp")]);
+  // Per client IP before authentication (unauthenticated floods), then per workspace once the key is verified.
+  mountMcpEndpoint(
+    app,
+    deps,
+    artifacts,
+    [originGuard, rateLimit(mcpLimiter, "mcp-ip")],
+    [rateLimit(mcpLimiter, "mcp", workspaceKey)],
+  );
 
   app.use("/api", originGuard, (_req, res, next) => {
     res.set("Cache-Control", "no-store");

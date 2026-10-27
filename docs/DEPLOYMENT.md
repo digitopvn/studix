@@ -87,6 +87,14 @@ worker mid-render (evidence in issue #1 and [METRICS.md](METRICS.md)).
 - Database: TOSE managed PostgreSQL `studix-staging-pg` (`tose db list`). Both
   projects get its internal connection URL as `DATABASE_URL`. The app applies
   migrations on start (`STUDIX_MIGRATE_ON_START=true` on the app only).
+- Rate limits: token buckets live in the `rate_limit_buckets` Postgres table, so
+  every app replica shares one balance and restarts do not reset it. `/mcp` is
+  limited per client IP before authentication and per workspace after it;
+  `/api/auth` and `/api` are limited per client IP (set `STUDIX_TRUST_PROXY` so
+  the IP is the client's). If the database is unreachable the limiter lets
+  requests through (logged) rather than failing them. Idle rows are pruned
+  every ten minutes. `createApp` without `rateLimitStore` keeps per-process
+  buckets (tests, embedding).
 - Storage: R2 bucket `studix-staging`, S3 API with path-style addressing.
 - Secrets: set per project with `tose env push <file> --project <name>` from a
   file outside the repo (mode 600, deleted afterwards). Both projects share

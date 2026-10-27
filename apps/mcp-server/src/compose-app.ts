@@ -19,6 +19,7 @@ import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
+import { startRateLimitPruner } from "./http/rate-limit.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -169,10 +170,13 @@ export async function composeApp(
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,
+    rateLimitStore: repos.rateLimits,
   };
   if (!deps.storage) logger.warn("S3_BUCKET is not set; playback URLs are unavailable");
 
+  const pruner = startRateLimitPruner(repos.rateLimits, logger);
   const close = async () => {
+    pruner.stop();
     integrations.storage?.destroy();
     await handle.close();
   };

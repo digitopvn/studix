@@ -102,6 +102,12 @@ function listedToolNames(deps: AppDeps, native: string[]): string[] {
   return deps.metaTools ? [...native, ...META_TOOL_NAMES] : native;
 }
 
+/** Workspace the request authenticated into; the rate-limit key once `authenticate` has run. */
+export function workspaceKey(req: Request): string {
+  const tenant = (req as Request & { auth?: StudixAuthInfo }).auth?.extra.tenant;
+  return tenant?.workspaceId ?? "unknown";
+}
+
 function sendUnauthenticated(res: Response, error: StudixError): void {
   res
     .status(HTTP_STATUS.UNAUTHENTICATED)
@@ -128,6 +134,7 @@ export function mountMcpEndpoint(
   deps: AppDeps,
   artifacts: ArtifactUrlDeps,
   guards: express.RequestHandler[],
+  afterAuth: express.RequestHandler[] = [],
 ) {
   const onerror = (error: Error) => deps.logger.error("mcp transport error", { error: error.message });
   const handler = createMcpHandler(({ authInfo }) => buildMcpServer(deps, artifacts, authInfo), {
@@ -162,7 +169,14 @@ export function mountMcpEndpoint(
     }
   };
 
-  app.all("/mcp", ...guards, authenticate, express.json({ limit: MCP_MAX_BODY_BYTES }), (req, res) => {
-    void node(req, res, req.body);
-  });
+  app.all(
+    "/mcp",
+    ...guards,
+    authenticate,
+    ...afterAuth,
+    express.json({ limit: MCP_MAX_BODY_BYTES }),
+    (req, res) => {
+      void node(req, res, req.body);
+    },
+  );
 }

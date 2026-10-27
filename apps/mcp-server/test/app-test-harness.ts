@@ -51,7 +51,10 @@ export interface TestApp {
  * Real HTTP app on a fresh, migrated Postgres database: Postgres repositories, StudioService, API keys and
  * Better Auth exactly as composed in production; only storage/connectors/meta-tools are injected by tests.
  */
-export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<TestApp> {
+export async function startTestApp(
+  overrides: Partial<AppDeps> & { sharedRateLimits?: boolean } = {},
+): Promise<TestApp> {
+  const { sharedRateLimits, ...depOverrides } = overrides;
   const db = await createTestDatabase();
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -85,7 +88,8 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
     storage: fakeSigner,
     activity: createActivityRecorder(repos.activity, { logger }),
     readiness: [{ name: "database", check: async () => void (await db.client`select 1`) }],
-    ...overrides,
+    ...(sharedRateLimits ? { rateLimitStore: repos.rateLimits } : {}),
+    ...depOverrides,
   };
   const app = createApp(deps);
   const server: Server = await new Promise((resolve) => {

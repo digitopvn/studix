@@ -1,8 +1,11 @@
+import type { RateLimitRepository } from "@studix/database";
+import type { Logger } from "@studix/shared";
 import type { NextFunction, Request, Response } from "express";
 
 /**
- * In-memory token bucket (per process). Adequate for P0's single app replica; a multi-replica deployment
- * needs a shared store (documented in the deployment notes), because each replica keeps its own buckets.
+ * Token buckets. `createTokenBucketLimiter` keeps them in process memory (single replica, tests); behind more
+ * than one replica use `createSharedLimiter`, whose buckets live in Postgres so every replica draws on the same
+ * balance and a restart does not reset it.
  */
 export interface TokenBucketOptions {
   /** Burst size. */
@@ -18,7 +21,7 @@ export interface TakeResult {
 }
 
 export interface TokenBucketLimiter {
-  take(key: string): TakeResult;
+  take(key: string): TakeResult | Promise<TakeResult>;
 }
 
 /** Buckets kept before idle (full) ones are pruned. */
@@ -27,7 +30,7 @@ const PRUNE_THRESHOLD = 10_000;
 export function createTokenBucketLimiter(
   options: TokenBucketOptions,
   now: () => number = Date.now,
-): TokenBucketLimiter {
+): { take(key: string): TakeResult } {
   if (!(options.capacity >= 1) || !(options.refillPerSecond > 0)) {
     throw new RangeError("token bucket needs capacity >= 1 and refillPerSecond > 0");
   }
@@ -66,14 +69,52 @@ export function createTokenBucketLimiter(
   };
 }
 
+/**
+ * Limiter over the shared Postgres store. A store failure lets the request through (logged): the limiter is
+ * abuse protection, and an unreachable database already fails the request's real work.
+ */
+export function createSharedLimiter(
+  store: RateLimitRepository,
+  options: TokenBucketOptions,
+  logger: Pick<Logger, "warn">,
+): TokenBucketLimiter {
+  return {
+    async take(key) {
+      try {
+        return await store.take(key, options);
+      } catch (err) {
+        logger.warn("rate limit store unavailable, allowing request", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return { allowed: true, retryAfterSeconds: 0 };
+      }
+    },
+  };
+}
+
+/** Delete idle shared buckets now and then; call `stop()` on shutdown. */
+export function startRateLimitPruner(
+  store: RateLimitRepository,
+  logger: Pick<Logger, "warn">,
+  everyMs = 10 * 60_000,
+): { stop(): void } {
+  const timer = setInterval(() => {
+    store.prune().catch((err) => {
+      logger.warn("rate limit prune failed", { error: err instanceof Error ? err.message : String(err) });
+    });
+  }, everyMs);
+  timer.unref();
+  return { stop: () => clearInterval(timer) };
+}
+
 /** Express middleware answering 429 with Retry-After when the caller's bucket is empty. */
 export function rateLimit(
   limiter: TokenBucketLimiter,
   scope: string,
   keyOf: (req: Request) => string = (req) => req.ip ?? req.socket.remoteAddress ?? "unknown",
 ) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const result = limiter.take(`${scope}:${keyOf(req)}`);
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const result = await limiter.take(`${scope}:${keyOf(req)}`);
     if (result.allowed) {
       next();
       return;

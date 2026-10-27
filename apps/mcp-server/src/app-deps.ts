@@ -6,6 +6,7 @@ import type {
   StudioService,
   WorkspaceRepository,
 } from "@studix/core";
+import type { RateLimitRepository } from "@studix/database";
 import type { ActivityRecorder } from "@studix/observability";
 import type { Logger } from "@studix/shared";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
@@ -66,6 +67,8 @@ export interface AppDeps {
   mediaOrigins?: string[];
   /** Express `trust proxy` setting (hop count) so rate limits see the client IP behind an ingress. */
   trustProxy?: number | boolean;
+  /** Shared (Postgres) rate-limit buckets so every replica draws on one balance; omit for per-process buckets. */
+  rateLimitStore?: RateLimitRepository;
   rateLimits?: { auth?: TokenBucketOptions; mcp?: TokenBucketOptions; api?: TokenBucketOptions };
 }
 
