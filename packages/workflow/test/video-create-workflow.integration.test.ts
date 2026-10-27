@@ -114,13 +114,41 @@ describe("video.create workflow on Postgres", () => {
     expect((await db.current.repos.renders.listByProject(ctx, done.projectId!)).items).toHaveLength(1);
   });
 
+  it("rides out a single failed heartbeat without losing the attempt", async () => {
+    const ctx = await tenant(db.current, "hb-blip");
+    const { job } = await enqueueCreate(db.current, ctx);
+    const base = fakeRenderer().renderer;
+    const a = createTestWorker(db.current, "worker-blip", {
+      // The render outlives several lease periods, so the lease must keep being renewed.
+      renderer: {
+        ...base,
+        render: async (ir, opts) => {
+          await new Promise((r) => setTimeout(r, 3500));
+          return base.render(ir, opts);
+        },
+      },
+      leaseMs: 1500,
+      heartbeatIntervalMs: 500,
+    });
+    const realHeartbeat = a.queue.heartbeat;
+    let beats = 0;
+    a.queue.heartbeat = async (...args) => {
+      if (++beats === 1) throw new Error("database blip");
+      return realHeartbeat(...args);
+    };
+    const claimed = (await a.queue.claim("worker-blip"))!;
+    expect(await a.executor.execute(claimed, "worker-blip", a.shutdown.signal)).toBe("succeeded");
+    expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({ status: "succeeded", attempts: 1 });
+  });
+
   it("abandons an attempt before its lease lapses when heartbeats keep failing", async () => {
     const ctx = await tenant(db.current, "hb-fail");
     const { job } = await enqueueCreate(db.current, ctx);
     const a = createTestWorker(db.current, "worker-hb", {
       renderer: fakeRenderer({ hold: "forever" }).renderer,
+      // Production ratio: the worker beats every lease/3.
       leaseMs: 1500,
-      heartbeatIntervalMs: 100,
+      heartbeatIntervalMs: 500,
     });
     a.queue.heartbeat = async () => {
       throw new Error("database unreachable");

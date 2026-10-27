@@ -35,6 +35,10 @@ export interface JobExecutor {
 
 /** setTimeout overflows above 2^31-1 ms; longer deadlines are re-checked at claim time. */
 const MAX_TIMER_MS = 2_147_000_000;
+/** Stop this long before the lease lapses when it cannot be renewed (capped at one heartbeat interval). */
+const LEASE_SAFETY_MARGIN_MS = 5_000;
+/** Delay before retrying a failed heartbeat (capped at a fifth of the heartbeat interval). */
+const HEARTBEAT_RETRY_MS = 1_000;
 
 type StopReason = "cancel" | "timeout" | "shutdown" | "lease_lost";
 
@@ -101,33 +105,50 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       if (shutdown.aborted) onShutdown();
       shutdown.addEventListener("abort", onShutdown, { once: true });
 
-      // If heartbeats keep failing (database unreachable, hung query), stop before the lease can lapse:
-      // past that point another worker may claim the job and both would run it.
+      // Renew the lease every interval; after a failed beat retry sooner, so one database blip costs
+      // nothing. A separate watchdog stops the attempt shortly before the lease would lapse (all beats
+      // failing or hung): past that point another worker may claim the job and both would run it.
       let leaseExpiresAt = job.leaseExpiresAt?.getTime();
-      const leaseAtRisk = () =>
-        leaseExpiresAt !== undefined && clock.now().getTime() >= leaseExpiresAt - deps.heartbeatIntervalMs;
-      let beating = false;
-      const heartbeat = setInterval(() => {
+      const safetyMarginMs = Math.min(deps.heartbeatIntervalMs, LEASE_SAFETY_MARGIN_MS);
+      const retryMs = Math.min(Math.ceil(deps.heartbeatIntervalMs / 5), HEARTBEAT_RETRY_MS);
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      const armWatchdog = () => {
+        clearTimeout(watchdog);
+        if (leaseExpiresAt === undefined) return;
+        const ms = leaseExpiresAt - safetyMarginMs - clock.now().getTime();
+        watchdog = setTimeout(
+          () => {
+            log.warn("lease could not be renewed in time, abandoning the attempt");
+            abort("lease_lost");
+          },
+          Math.max(0, Math.min(MAX_TIMER_MS, ms)),
+        );
+      };
+      let beatTimer: ReturnType<typeof setTimeout> | undefined;
+      const scheduleBeat = (ms: number) => {
+        if (!stop) beatTimer = setTimeout(beat, ms);
+      };
+      const beat = () => {
         if (stop) return;
-        if (leaseAtRisk()) {
-          log.warn("lease could not be renewed in time, abandoning the attempt");
-          abort("lease_lost");
-          return;
-        }
-        if (beating) return;
-        beating = true;
+        // Armed from the first beat on: a beat that hangs or keeps failing must not outlive the lease.
+        if (watchdog === undefined) armWatchdog();
         queue
           .heartbeat(job, workerId)
           .then((hb) => {
-            if (!hb.held) abort("lease_lost");
-            else if (hb.cancelRequested) abort("cancel");
-            if (hb.leaseExpiresAt) leaseExpiresAt = hb.leaseExpiresAt.getTime();
+            if (!hb.held) return abort("lease_lost");
+            if (hb.cancelRequested) return abort("cancel");
+            if (hb.leaseExpiresAt) {
+              leaseExpiresAt = hb.leaseExpiresAt.getTime();
+              armWatchdog();
+            }
+            scheduleBeat(deps.heartbeatIntervalMs);
           })
-          .catch((err) => log.warn("heartbeat failed", { error: String(err) }))
-          .finally(() => {
-            beating = false;
+          .catch((err) => {
+            log.warn("heartbeat failed, retrying", { error: String(err) });
+            scheduleBeat(retryMs);
           });
-      }, deps.heartbeatIntervalMs);
+      };
+      scheduleBeat(deps.heartbeatIntervalMs);
       const deadline = job.deadlineAt
         ? setTimeout(
             () => abort("timeout"),
@@ -164,7 +185,8 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
         log.error("job failed", { code: error.code, message: error.message });
         return await settle(queue.fail(job, workerId, error.toJSON()), "failed");
       } finally {
-        clearInterval(heartbeat);
+        clearTimeout(beatTimer);
+        clearTimeout(watchdog);
         if (deadline) clearTimeout(deadline);
         shutdown.removeEventListener("abort", onShutdown);
       }
