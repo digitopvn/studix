@@ -1,0 +1,32 @@
+{
+  "name": "studix",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MCP-first AI video production harness.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:live": "vitest run --project live",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "db:generate": "pnpm --filter @studix/database db:generate",
+    "db:migrate": "pnpm --filter @studix/database db:migrate",
+    "schemas:export": "pnpm --filter @studix/video-ir schemas:export"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@types/node": "24.19.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

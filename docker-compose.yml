@@ -1,0 +1,61 @@
+# Local development and integration-test dependencies.
+#   docker compose up -d postgres minio   # minio-init creates the bucket once minio is healthy
+#   docker compose down                   # add -v to drop the data volumes
+# Host ports are fixed and offset (55432, 59000, 59001) so they never clash with other local stacks.
+# Credentials below are local-only development values, not secrets.
+name: studix
+
+services:
+  postgres:
+    image: postgres:16.15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: studix
+      POSTGRES_PASSWORD: studix
+      POSTGRES_DB: studix
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studix -d studix"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The upstream minio/minio Docker Hub images are no longer published; pgsty/minio is a maintained
+  # rebuild of the same server. Any S3-compatible endpoint works (R2 in staging).
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: studix
+      MINIO_ROOT_PASSWORD: studix-local-secret
+    ports:
+      - "127.0.0.1:59000:9000"
+      - "127.0.0.1:59001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio-init:
+    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 studix studix-local-secret &&
+        mc mb --ignore-existing local/studix-local &&
+        mc mb --ignore-existing local/studix-test
+    restart: "no"
+
+volumes:
+  postgres-data:
+  minio-data:
