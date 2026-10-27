@@ -174,11 +174,12 @@ export async function composeApp(
   };
   if (!deps.storage) logger.warn("S3_BUCKET is not set; playback URLs are unavailable");
 
+  const app = createApp(deps);
   const pruner = startRateLimitPruner(repos.rateLimits, logger);
   const close = async () => {
     pruner.stop();
     integrations.storage?.destroy();
     await handle.close();
   };
-  return { app: createApp(deps), config, appEnv, logger, close };
+  return { app, config, appEnv, logger, close };
 }

@@ -69,7 +69,12 @@ export interface AppDeps {
   trustProxy?: number | boolean;
   /** Shared (Postgres) rate-limit buckets so every replica draws on one balance; omit for per-process buckets. */
   rateLimitStore?: RateLimitRepository;
-  rateLimits?: { auth?: TokenBucketOptions; mcp?: TokenBucketOptions; api?: TokenBucketOptions };
+  rateLimits?: {
+    auth?: TokenBucketOptions;
+    mcpIp?: TokenBucketOptions;
+    mcp?: TokenBucketOptions;
+    api?: TokenBucketOptions;
+  };
 }
 
 export const SERVER_NAME = "studix";

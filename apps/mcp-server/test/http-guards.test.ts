@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dashboardCsp } from "../src/http/dashboard-static.ts";
-import { createTokenBucketLimiter } from "../src/http/rate-limit.ts";
+import { createSharedLimiter, createTokenBucketLimiter } from "../src/http/rate-limit.ts";
 import { hostnameOf, originOf, uniqueHostnames } from "../src/http/request-guards.ts";
 
 describe("token bucket limiter", () => {
@@ -42,5 +42,32 @@ describe("dashboard CSP", () => {
     expect(csp).toContain("script-src 'self'");
     expect(csp).toContain("object-src 'none'");
     expect(csp).not.toContain("unsafe-eval");
+  });
+});
+
+describe("shared limiter", () => {
+  const options = { capacity: 2, refillPerSecond: 0.001 };
+  const logger = { warn: () => {} };
+
+  it("refuses from the local bucket without calling the store, and lets requests through when the store fails", async () => {
+    let calls = 0;
+    const store = {
+      take: async () => {
+        calls += 1;
+        throw new Error("down");
+      },
+      prune: async () => 0,
+    };
+    const limiter = createSharedLimiter(store, options, logger);
+    expect((await limiter.take("k")).allowed).toBe(true);
+    expect((await limiter.take("k")).allowed).toBe(true);
+    expect((await limiter.take("k")).allowed).toBe(false);
+    expect(calls).toBe(2);
+  });
+
+  it("lets the request through when the store hangs", async () => {
+    const store = { take: () => new Promise<never>(() => {}), prune: async () => 0 };
+    const limiter = createSharedLimiter(store, options, logger);
+    expect((await limiter.take("k")).allowed).toBe(true);
   });
 });

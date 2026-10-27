@@ -9,6 +9,7 @@ describe("shared rate limits (Postgres buckets)", () => {
     app = await startTestApp({
       sharedRateLimits: true,
       rateLimits: {
+        mcpIp: { capacity: 100, refillPerSecond: 0.001 },
         mcp: { capacity: BURST, refillPerSecond: 0.001 },
         auth: { capacity: 2, refillPerSecond: 0.001 },
       },
@@ -39,6 +40,19 @@ describe("shared rate limits (Postgres buckets)", () => {
 
     const rows = await app.db.client`select key from rate_limit_buckets where key like 'mcp:%'`;
     expect(rows.map((r) => r.key)).toContain(`mcp:${ctx.workspaceId}`);
+
+    // Another workspace from the same IP still has its own full bucket.
+    const otherKey = await app.createKey(await app.provisionTenant("rl-mcp-other"));
+    const other = await fetch(`${app.base}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${otherKey}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    });
+    expect(other.status).not.toBe(429);
   });
 
   it("limits /api/auth per client IP", async () => {

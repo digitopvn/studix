@@ -49,6 +49,7 @@ export function createApp(deps: AppDeps): Express {
       ? createSharedLimiter(deps.rateLimitStore, options, deps.logger)
       : createTokenBucketLimiter(options);
   const authLimiter = limiterFor(limits.auth);
+  const mcpIpLimiter = limiterFor(limits.mcpIp);
   const mcpLimiter = limiterFor(limits.mcp);
   const apiLimiter = limiterFor(limits.api);
   const originGuard = corsAndOriginGuard([...new Set([originOf(deps.appUrl), originOf(deps.publicUrl)])]);
@@ -63,7 +64,7 @@ export function createApp(deps: AppDeps): Express {
     app,
     deps,
     artifacts,
-    [originGuard, rateLimit(mcpLimiter, "mcp-ip")],
+    [originGuard, rateLimit(mcpIpLimiter, "mcp-ip")],
     [rateLimit(mcpLimiter, "mcp", workspaceKey)],
   );
 

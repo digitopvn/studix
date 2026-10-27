@@ -14,7 +14,7 @@ export interface BucketDecision {
   retryAfterSeconds: number;
 }
 
-/** A bucket untouched this long is full again for every configured limit, so its row can go. */
+/** A bucket untouched this long is full again for any limit with capacity/refill under an hour, so its row can go. */
 const IDLE_ROW_TTL = "1 hour";
 
 export interface RateLimitRepository {
@@ -31,14 +31,14 @@ export function createRateLimitRepository(db: StudixDb): RateLimitRepository {
         throw new RangeError("token bucket needs capacity >= 1 and refillPerSecond > 0");
       }
       // `refilled` is the balance after topping up since the last write; the row keeps one token fewer when allowed.
-      const refilled = sql`least(${spec.capacity}::float8, b.tokens + extract(epoch from (now() - b.updated_at)) * ${spec.refillPerSecond}::float8)`;
+      const refilled = sql`least(${spec.capacity}::float8, b.tokens + greatest(0, extract(epoch from (now() - b.updated_at))) * ${spec.refillPerSecond}::float8)`;
       const rows = await db.execute<{ tokens: number; allowed: boolean }>(sql`
         insert into rate_limit_buckets as b (key, tokens, allowed, updated_at)
         values (${key}, ${spec.capacity}::float8 - 1, true, now())
         on conflict (key) do update set
           allowed = ${refilled} >= 1,
           tokens = case when ${refilled} >= 1 then ${refilled} - 1 else ${refilled} end,
-          updated_at = now()
+          updated_at = greatest(b.updated_at, now())
         returning tokens, allowed`);
       const row = rows[0];
       if (!row) throw new Error("rate limit bucket update returned no row");
@@ -46,10 +46,11 @@ export function createRateLimitRepository(db: StudixDb): RateLimitRepository {
       return { allowed: false, retryAfterSeconds: Math.ceil((1 - row.tokens) / spec.refillPerSecond) };
     },
     async prune() {
-      const rows = await db.execute<{ key: string }>(
-        sql`delete from rate_limit_buckets where updated_at < now() - ${IDLE_ROW_TTL}::interval returning key`,
-      );
-      return rows.length;
+      const rows = await db.execute<{ removed: number }>(sql`
+        with gone as (
+          delete from rate_limit_buckets where updated_at < now() - ${IDLE_ROW_TTL}::interval returning 1
+        ) select count(*)::int as removed from gone`);
+      return rows[0]?.removed ?? 0;
     },
   };
 }

@@ -69,24 +69,44 @@ export function createTokenBucketLimiter(
   };
 }
 
+/** How long the shared store may take before the request is let through. */
+const STORE_TIMEOUT_MS = 150;
+const WARN_EVERY_MS = 30_000;
+
 /**
- * Limiter over the shared Postgres store. A store failure lets the request through (logged): the limiter is
- * abuse protection, and an unreachable database already fails the request's real work.
+ * Limiter over the shared Postgres store, fronted by a per-process bucket of the same size so floods are
+ * refused without touching the database. A store error or a slow answer lets the request through (logged,
+ * at most every 30s): the limiter is abuse protection and must not take the app down with the database.
  */
 export function createSharedLimiter(
   store: RateLimitRepository,
   options: TokenBucketOptions,
   logger: Pick<Logger, "warn">,
 ): TokenBucketLimiter {
+  const local = createTokenBucketLimiter(options);
+  let lastWarn = 0;
+  const failOpen = (reason: string): TakeResult => {
+    const at = Date.now();
+    if (at - lastWarn >= WARN_EVERY_MS) {
+      lastWarn = at;
+      logger.warn("rate limit store unavailable, allowing request", { error: reason });
+    }
+    return { allowed: true, retryAfterSeconds: 0 };
+  };
   return {
     async take(key) {
+      const first = local.take(key);
+      if (!first.allowed) return first;
+      let timer: NodeJS.Timeout | undefined;
       try {
-        return await store.take(key, options);
-      } catch (err) {
-        logger.warn("rate limit store unavailable, allowing request", {
-          error: err instanceof Error ? err.message : String(err),
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("store timed out")), STORE_TIMEOUT_MS);
         });
-        return { allowed: true, retryAfterSeconds: 0 };
+        return await Promise.race([store.take(key, options), timeout]);
+      } catch (err) {
+        return failOpen(err instanceof Error ? err.message : String(err));
+      } finally {
+        clearTimeout(timer);
       }
     },
   };
@@ -136,7 +156,9 @@ export function rateLimit(
 export const DEFAULT_RATE_LIMITS = {
   /** Sign-in/sign-up: small burst, slow refill (credential stuffing). */
   auth: { capacity: 20, refillPerSecond: 0.2 },
-  /** MCP traffic: polling clients make many small calls. */
+  /** MCP traffic per client IP before the key is verified; looser because clients share egress IPs. */
+  mcpIp: { capacity: 600, refillPerSecond: 20 },
+  /** MCP traffic per workspace: polling clients make many small calls. */
   mcp: { capacity: 120, refillPerSecond: 4 },
   /** Dashboard JSON API. */
   api: { capacity: 240, refillPerSecond: 8 },
