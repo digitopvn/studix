@@ -73,6 +73,7 @@ export async function decideBriefDraft(
     idempotencyKey: `${ctx.jobId}:${VIDEO_BRIEF_DECISION}`,
     signal,
     jobId: ctx.jobId,
+    stageId: "plan",
   });
   return {
     draft: result.output,
