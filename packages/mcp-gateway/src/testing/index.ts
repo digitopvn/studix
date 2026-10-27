@@ -16,6 +16,8 @@ export function createStaticSecretResolver(
   const resolutions: Array<{ workspaceId: string; connectorId: string; secretRef: string }> = [];
   return {
     resolutions,
+    // Registration is unrestricted here; tenant isolation is asserted at resolve time.
+    authorize() {},
     async resolve(ctx, owner, secretRef) {
       resolutions.push({ workspaceId: ctx.workspaceId, connectorId: owner.connectorId, secretRef });
       const token = secrets[ctx.workspaceId]?.[secretRef];

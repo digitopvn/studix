@@ -103,6 +103,7 @@ export function createConnectorAdmin(rt: GatewayRuntime): ConnectorAdmin {
       authorizeCall(call, GATEWAY_PERMISSIONS.manage);
       const parsed = parseInput(AddConnectorInput, input);
       const url = rt.urlPolicy.validate(parsed.url);
+      if (parsed.secretRef) rt.secrets.authorize(call.tenant, { url: url.toString() }, parsed.secretRef);
       const toolPolicy =
         parsed.toolPolicy === undefined ? EMPTY_TOOL_POLICY : validateToolPolicy(parsed.toolPolicy);
       const existing = await rt.connectors.list(call.tenant);

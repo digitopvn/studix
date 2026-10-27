@@ -49,6 +49,13 @@ Connector and BYOK credentials are stored encrypted and referenced by an opaque
 the server it belongs to, and only after the origin check. Tool schemas, search
 results, traces and errors carry the reference at most, never the value.
 
+P0 ships only operator-held references (`env:STUDIX_CONNECTOR_SECRET_<NAME>`).
+Each one must be bound with `<NAME>_WORKSPACES` (who may reference it) and
+`<NAME>_ORIGIN` (the only origin it is sent to); an unbound reference is
+refused when the connector is added and again at resolve time. Without that
+binding any self-registered workspace could point a connector at its own
+server and receive the operator's token.
+
 ## MCP-in-MCP connectors
 
 Owner: `packages/mcp-gateway`
