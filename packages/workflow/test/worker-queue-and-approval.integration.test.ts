@@ -175,6 +175,50 @@ describe("fenced attempt writes", () => {
   });
 });
 
+describe("fenced business commits", () => {
+  it("applies project writes only for the current owner and rolls back on error", async () => {
+    const ctx = await tenant(db.current, "commit");
+    const { repos } = db.current;
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    const stale = (await queue.claim("stalled"))!;
+
+    const owned = await queue.commit(stale, "stalled", (r, c) =>
+      r.projects.update(c, project.id, { status: "rendering" }),
+    );
+    expect(owned).toMatchObject({ held: true, value: { status: "rendering" } });
+
+    // An error inside the commit undoes every write made in it.
+    await expect(
+      queue.commit(stale, "stalled", async (r, c) => {
+        await r.projects.update(c, project.id, { status: "failed" });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect((await repos.projects.get(ctx, project.id))?.status).toBe("rendering");
+
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    const fresh = (await queue.claim("fresh"))!;
+    for (const [held, worker] of [
+      [stale, "stalled"],
+      [stale, "fresh"], // right worker id, previous attempt
+    ] as const) {
+      const late = await queue.commit(held, worker, (r, c) =>
+        r.projects.update(c, project.id, { status: "in_review" }),
+      );
+      expect(late).toEqual({ held: false });
+    }
+    expect((await repos.projects.get(ctx, project.id))?.status).toBe("rendering");
+
+    const current = await queue.commit(fresh, "fresh", (r, c) =>
+      r.projects.update(c, project.id, { status: "in_review" }),
+    );
+    expect(current).toMatchObject({ held: true });
+    expect((await repos.projects.get(ctx, project.id))?.status).toBe("in_review");
+    await repos.queue.cancel(ctx, job.id);
+  });
+});
+
 describe("publish approval gate", () => {
   it("blocks publishing until a human approves, across a worker restart", async () => {
     const ctx = await tenant(db.current, "publish");

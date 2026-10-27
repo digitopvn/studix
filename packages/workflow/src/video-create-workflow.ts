@@ -112,21 +112,28 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
             // Deterministic id: a re-run after a crash finds the version instead of adding another.
             const id = jobScopedId("pver", s.job.id);
             const existing = await deps.projects.getVersion(s.ctx, id);
-            const version =
-              existing ??
-              (await deps.projects.createVersion(s.ctx, {
-                id,
-                projectId: payload.projectId,
-                ir,
-                source: "planner",
-                createdBy: { type: "system", id: s.ctx.actor.id },
-              }));
-            versionId = version.id;
+            versionId = existing
+              ? existing.id
+              : await s.commit(
+                  async (repos, ctx) =>
+                    (
+                      await repos.projects.createVersion(ctx, {
+                        id,
+                        projectId: payload.projectId,
+                        ir,
+                        source: "planner",
+                        createdBy: { type: "system", id: ctx.actor.id },
+                      })
+                    ).id,
+                );
           }
-          await deps.projects.update(s.ctx, payload.projectId, {
-            currentVersionId: versionId,
-            status: "rendering",
-          });
+          const resolved = versionId;
+          await s.commit((repos, ctx) =>
+            repos.projects.update(ctx, payload.projectId, {
+              currentVersionId: resolved,
+              status: "rendering",
+            }),
+          );
           return { output: { versionId } };
         },
       },
@@ -215,21 +222,23 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
           const renderId = jobScopedId("rnd", s.job.id);
           const spec = resolveRenderSpec(payload.renderPreset);
           const existing = await deps.renders.get(s.ctx, renderId);
-          if (!existing) {
-            await deps.renders.create(s.ctx, {
-              id: renderId,
-              projectId: payload.projectId,
-              versionId,
-              jobId: s.job.id,
-              preset: spec.preset,
-              spec,
-              status: "succeeded",
-              storageKey: uploaded.storageKey,
-              probe: { ...rendered.probe, bytes: uploaded.bytes },
-              completedAt: clock.now(),
-            });
-          }
-          await deps.projects.update(s.ctx, payload.projectId, { status: "in_review" });
+          await s.commit(async (repos, ctx) => {
+            if (!existing) {
+              await repos.renders.create(ctx, {
+                id: renderId,
+                projectId: payload.projectId,
+                versionId,
+                jobId: s.job.id,
+                preset: spec.preset,
+                spec,
+                status: "succeeded",
+                storageKey: uploaded.storageKey,
+                probe: { ...rendered.probe, bytes: uploaded.bytes },
+                completedAt: clock.now(),
+              });
+            }
+            await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+          });
           await rm(jobDir(s.job.id), { recursive: true, force: true });
           return {
             output: {

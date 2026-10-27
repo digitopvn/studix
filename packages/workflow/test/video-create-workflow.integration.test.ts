@@ -115,6 +115,49 @@ describe("video.create workflow on Postgres", () => {
     expect((await db.current.repos.renders.listByProject(ctx, done.projectId!)).items).toHaveLength(1);
   });
 
+  it("does not apply a stalled worker's project writes after another worker finished the job", async () => {
+    const ctx = await tenant(db.current, "stall-write");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const { repos } = db.current;
+    // Worker A reads the project in validate_ir and then freezes (GC pause, frozen pod) before writing.
+    let wake!: () => void;
+    const frozen = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    const a = createTestWorker(db.current, "worker-a", {
+      projects: {
+        ...repos.projects,
+        getVersion: async (c, id) => {
+          await frozen;
+          return repos.projects.getVersion(c, id);
+        },
+      },
+      leaseMs: 1500,
+      heartbeatIntervalMs: 60_000,
+    });
+    const claimed = (await a.queue.claim("worker-a"))!;
+    const aOutcome = a.executor.execute(claimed, "worker-a", a.shutdown.signal);
+    await waitFor(async () => (await repos.jobs.get(ctx, job.id))?.stage === "validate_ir");
+
+    const b = createTestWorker(db.current, "worker-b");
+    const reclaimed = await waitFor(() => b.queue.claim("worker-b"));
+    expect(await b.executor.execute(reclaimed, "worker-b", b.shutdown.signal)).toBe("succeeded");
+    const finished = (await repos.projects.get(ctx, project.id))!;
+    expect(finished.status).toBe("in_review");
+    const versions = await repos.projects.listVersions(ctx, project.id);
+    expect(versions.items).toHaveLength(1);
+
+    wake();
+    expect(await aOutcome).toBe("lease_lost");
+    // Without the fence A would set status back to "rendering" and leave the project stuck there.
+    expect(await repos.projects.get(ctx, project.id)).toMatchObject({
+      status: "in_review",
+      currentVersionId: finished.currentVersionId,
+    });
+    expect((await repos.projects.listVersions(ctx, project.id)).items).toHaveLength(1);
+    expect((await repos.jobs.get(ctx, job.id))?.status).toBe("succeeded");
+  });
+
   it("abandons an attempt before its lease lapses when heartbeats keep failing", async () => {
     const ctx = await tenant(db.current, "hb-fail");
     const { job } = await enqueueCreate(db.current, ctx);

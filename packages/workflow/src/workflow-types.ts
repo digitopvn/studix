@@ -1,5 +1,6 @@
 import type { Approval, ApprovalAction, Job, TenantContext } from "@studix/core";
 import type { CreativeBrief, VideoIR } from "@studix/video-ir";
+import type { FencedRepositories } from "./worker-job-queue.ts";
 
 /** JSON-safe stage output; stored as the stage checkpoint. */
 export type StageOutput = Record<string, unknown>;
@@ -32,6 +33,13 @@ export interface StageContext {
   outputs: Readonly<Record<string, StageOutput>>;
   /** Approval that authorized this stage, when it is approval-gated. */
   approval?: Approval;
+  /**
+   * Run business writes (projects, renders) only while this worker still owns the job at this attempt.
+   * `write` gets repositories bound to one transaction that is locked against reclaim; a stage that
+   * outlived its attempt gets a `LeaseLostError` (or the abort reason) and nothing is written. Stages
+   * must make business writes through this, never through repositories captured at wiring time.
+   */
+  commit<T>(write: (repos: FencedRepositories, ctx: TenantContext) => Promise<T>): Promise<T>;
   /** Report progress inside the stage (0..1); persisted with throttling. */
   reportProgress(progress: number): void;
 }

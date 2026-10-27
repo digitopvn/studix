@@ -1,6 +1,8 @@
 import { createUsageLedger, type UsageInput } from "@studix/billing";
-import type { Job, JobPatch, TenantContext } from "@studix/core";
+import type { Job, JobPatch, ProjectRepository, RenderRepository, TenantContext } from "@studix/core";
 import {
+  createProjectRepository,
+  createRenderRepository,
   createUsageRepository,
   type DbExecutor,
   type StudixDb,
@@ -16,6 +18,12 @@ type JobSet = Partial<typeof jobs.$inferInsert>;
 
 /** A stage row written on behalf of a claimed attempt (the tenant and job come from the job). */
 export type StageWrite = Omit<Parameters<typeof upsertStageRow>[3], "jobId" | "attempt">;
+
+/** Business repositories bound to the transaction of a fenced commit. */
+export interface FencedRepositories {
+  projects: ProjectRepository;
+  renders: RenderRepository;
+}
 
 export interface WorkerJobQueueOptions {
   /** How long a claim is valid without a heartbeat. */
@@ -59,6 +67,16 @@ export interface WorkerJobQueue {
   writeStage(job: Job, workerId: string, stage: StageWrite): Promise<boolean>;
   /** Record one usage event (idempotent by its dedupe key). */
   recordUsage(job: Job, workerId: string, usage: UsageInput): Promise<boolean>;
+  /**
+   * Run business writes (projects, renders) in one transaction that holds the job row locked after the
+   * same ownership check. Nothing is written, and `held` is false, once another worker owns the job; a
+   * throw from `write` rolls the whole commit back.
+   */
+  commit<T>(
+    job: Job,
+    workerId: string,
+    write: (repos: FencedRepositories, ctx: TenantContext) => Promise<T>,
+  ): Promise<{ held: true; value: T } | { held: false }>;
   complete(job: Job, workerId: string, result: Record<string, unknown>): Promise<boolean>;
   fail(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
   cancel(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
@@ -95,11 +113,11 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     )!;
 
   /** Run `write` in a transaction that holds the job row locked while ownership is verified. */
-  const fenced = async (
+  const fencedValue = async <T>(
     job: Job,
     workerId: string,
-    write: (tx: DbExecutor, ctx: TenantContext) => Promise<unknown>,
-  ): Promise<boolean> => {
+    write: (tx: DbExecutor, ctx: TenantContext) => Promise<T>,
+  ): Promise<{ held: true; value: T } | { held: false }> => {
     const ctx: TenantContext = {
       organizationId: job.organizationId,
       workspaceId: job.workspaceId,
@@ -107,11 +125,16 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     };
     return db.transaction(async (tx) => {
       const held = await tx.select({ id: jobs.id }).from(jobs).where(owned(job, workerId)).for("update");
-      if (held.length === 0) return false;
-      await write(tx, ctx);
-      return true;
+      if (held.length === 0) return { held: false as const };
+      return { held: true as const, value: await write(tx, ctx) };
     });
   };
+
+  const fenced = async (
+    job: Job,
+    workerId: string,
+    write: (tx: DbExecutor, ctx: TenantContext) => Promise<unknown>,
+  ): Promise<boolean> => (await fencedValue(job, workerId, write)).held;
 
   const finish = async (job: Job, workerId: string, set: JobSet): Promise<boolean> => {
     const rows = await db
@@ -206,6 +229,14 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     recordUsage: (job, workerId, usage) =>
       fenced(job, workerId, (tx, ctx) =>
         createUsageLedger(createUsageRepository(tx, clock)).record(ctx, usage),
+      ),
+
+    commit: (job, workerId, write) =>
+      fencedValue(job, workerId, (tx, ctx) =>
+        write(
+          { projects: createProjectRepository(tx, clock), renders: createRenderRepository(tx, clock) },
+          ctx,
+        ),
       ),
 
     complete: (job, workerId, result) =>

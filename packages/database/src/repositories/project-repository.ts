@@ -1,7 +1,7 @@
 import type { ProjectRepository, ProjectVersion, VideoProject } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
 import { desc, eq, max } from "drizzle-orm";
-import type { StudixDb } from "../client.ts";
+import type { DbExecutor } from "../client.ts";
 import { projectVersions, videoProjects } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
 
@@ -39,7 +39,7 @@ function toVersion(row: VersionRow): ProjectVersion {
   };
 }
 
-export function createProjectRepository(db: StudixDb, clock: Clock): ProjectRepository {
+export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRepository {
   return {
     async create(ctx, input) {
       const now = clock.now();
