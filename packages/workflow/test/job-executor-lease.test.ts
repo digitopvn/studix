@@ -11,6 +11,7 @@ const { createJobExecutor } = await import("../src/job-executor.ts");
 
 const LEASE_MS = 30_000;
 const INTERVAL_MS = 1_000;
+const MARGIN_MS = INTERVAL_MS; // min(interval, 5s)
 
 const job = { id: "job_1", kind: "video.create", attempts: 1, maxAttempts: 3 } as unknown as Job;
 const logger = { info() {}, warn() {}, error() {}, debug() {}, child: () => logger };
@@ -96,8 +97,7 @@ describe("job executor lease heartbeat", () => {
     const { queue, executor } = setup({ heartbeat: async () => Promise.reject(new Error("db down")) });
     blockStages();
     const run = executor.execute(job, "w1", new AbortController().signal);
-    // Margin is min(interval, 5s) = 1s, so the watchdog fires at lease - 1s.
-    await vi.advanceTimersByTimeAsync(LEASE_MS - INTERVAL_MS - 1);
+    await vi.advanceTimersByTimeAsync(LEASE_MS - MARGIN_MS - 1);
     expect(queue.complete).not.toHaveBeenCalled();
     let outcome: string | undefined;
     void run.then((o) => {
@@ -129,6 +129,21 @@ describe("job executor lease heartbeat", () => {
       outcome = o;
     });
     await vi.advanceTimersByTimeAsync(LEASE_MS);
+    expect(outcome).toBe("lease_lost");
+  });
+
+  it("counts the initial lease from when the claim was sent, not from when execute started", async () => {
+    const { executor } = setup({ heartbeat: async () => Promise.reject(new Error("db down")) });
+    blockStages();
+    const claimSentAt = new Date(Date.now() - 2_000); // a slow claim round trip
+    const run = executor.execute(job, "w1", new AbortController().signal, undefined, claimSentAt);
+    let outcome: string | undefined;
+    void run.then((o) => {
+      outcome = o;
+    });
+    await vi.advanceTimersByTimeAsync(LEASE_MS - MARGIN_MS - 2_000 - 1);
+    expect(outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
     expect(outcome).toBe("lease_lost");
   });
 

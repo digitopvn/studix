@@ -30,7 +30,14 @@ export interface JobExecutor {
    * `draining` marks that the process is stopping: an attempt that fails after it fired is released
    * too, because the failure is usually collateral (e.g. Puppeteer closes Chrome on SIGTERM).
    */
-  execute(job: Job, workerId: string, shutdown: AbortSignal, draining?: AbortSignal): Promise<JobOutcome>;
+  execute(
+    job: Job,
+    workerId: string,
+    shutdown: AbortSignal,
+    draining?: AbortSignal,
+    /** When the claim was sent, on the worker clock: the lease starts no earlier. Defaults to now. */
+    claimSentAt?: Date,
+  ): Promise<JobOutcome>;
 }
 
 /** setTimeout overflows above 2^31-1 ms; longer deadlines are re-checked at claim time. */
@@ -61,6 +68,8 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
   }
   const safetyMarginMs = Math.min(deps.heartbeatIntervalMs, LEASE_SAFETY_MARGIN_MS);
   const { leaseMs } = deps.queue;
+  if (!Number.isInteger(leaseMs) || leaseMs <= 0)
+    throw new RangeError("queue.leaseMs must be a positive integer");
   if (deps.heartbeatIntervalMs >= leaseMs - safetyMarginMs) {
     throw new RangeError(
       `heartbeatIntervalMs (${deps.heartbeatIntervalMs}) must be shorter than the lease (${leaseMs}) minus the safety margin (${safetyMarginMs})`,
@@ -71,7 +80,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
   const { queue, clock, logger } = deps;
 
   return {
-    async execute(job, workerId, shutdown, draining) {
+    async execute(job, workerId, shutdown, draining, claimSentAt) {
       const log = logger.child({ jobId: job.id, kind: job.kind, attempt: job.attempts, workerId });
       const ctx: TenantContext = {
         organizationId: job.organizationId,
@@ -118,7 +127,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       // The database applies a renewal no earlier than the moment it was sent, so the lease is valid
       // until at least (send time + leaseMs). Both ends of that span are read from this worker's clock,
       // which keeps the watchdog independent of the skew between worker and database clocks.
-      let leaseValidUntil = clock.now().getTime() + leaseMs;
+      let leaseValidUntil = (claimSentAt ?? clock.now()).getTime() + leaseMs;
       const retryMs = Math.min(Math.ceil(deps.heartbeatIntervalMs / 5), HEARTBEAT_RETRY_MS);
       let watchdog: ReturnType<typeof setTimeout> | undefined;
       // Set once the attempt settles: a beat still in flight then must not schedule more timers.

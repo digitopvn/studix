@@ -61,7 +61,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
   // Lease expiry is written and compared with the database clock so worker clock skew cannot make one
   // worker steal a live lease or keep a dead one alive. `now()` is the transaction start, which is the
   // statement itself here.
-  const leaseUntil = () => sql`now() + ${options.leaseMs} * interval '1 millisecond'`;
+  const leaseUntil = () => sql`now() + ${options.leaseMs}::float8 * interval '1 millisecond'`;
 
   const owned = (job: Job, workerId: string): SQL =>
     and(

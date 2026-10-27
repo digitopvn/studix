@@ -1,6 +1,7 @@
 import type { TenantContext } from "@studix/core";
 import { withTestDatabase } from "@studix/database/testing";
 import { describe, expect, it } from "vitest";
+import { createWorkerJobQueue } from "../src/index.ts";
 import {
   createTestWorker,
   enqueueCreate,
@@ -208,6 +209,26 @@ describe("video.create workflow on Postgres", () => {
     expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({
       status: "failed",
       error: { code: "INTERNAL", retryable: false, details: { reason: "lease_expired", lockedBy: "a" } },
+    });
+  });
+
+  it("decides lease ownership on the database clock, whatever the worker clocks say", async () => {
+    const ctx = await tenant(db.current, "skew");
+    const { job } = await enqueueCreate(db.current, ctx, { maxAttempts: 3 });
+    const a = createTestWorker(db.current, "a", { leaseMs: 1000 });
+    await a.queue.claim("a");
+    const skew = (ms: number) =>
+      createWorkerJobQueue(db.current.db, { leaseMs: 1000, clock: { now: () => new Date(Date.now() + ms) } });
+    // A worker ten minutes ahead must not see A's live lease as expired.
+    expect(await skew(10 * 60_000).claim("fast")).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 1100));
+    // A worker ten minutes behind must still see the lapsed lease as expired.
+    const reclaimed = await skew(-10 * 60_000).claim("slow");
+    expect(reclaimed).toMatchObject({ id: job.id, attempts: 2, lockedBy: "slow" });
+    await a.queue.cancel(reclaimed!, "slow", {
+      code: "CANCELLED",
+      message: "test cleanup",
+      retryable: false,
     });
   });
 
