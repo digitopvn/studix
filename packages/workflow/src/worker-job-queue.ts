@@ -16,6 +16,8 @@ export interface HeartbeatResult {
   /** False when this worker no longer owns the job (lease expired and someone else claimed it). */
   held: boolean;
   cancelRequested: boolean;
+  /** The renewed lease expiry, when held. */
+  leaseExpiresAt?: Date;
 }
 
 /**
@@ -113,9 +115,13 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         .update(jobs)
         .set({ leaseExpiresAt: leaseUntil(), updatedAt: clock.now() })
         .where(owned(job, workerId))
-        .returning({ cancelRequested: jobs.cancelRequested });
+        .returning({ cancelRequested: jobs.cancelRequested, leaseExpiresAt: jobs.leaseExpiresAt });
       return rows[0]
-        ? { held: true, cancelRequested: rows[0].cancelRequested }
+        ? {
+            held: true,
+            cancelRequested: rows[0].cancelRequested,
+            ...(rows[0].leaseExpiresAt ? { leaseExpiresAt: rows[0].leaseExpiresAt } : {}),
+          }
         : { held: false, cancelRequested: false };
     },
 

@@ -101,15 +101,27 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       if (shutdown.aborted) onShutdown();
       shutdown.addEventListener("abort", onShutdown, { once: true });
 
+      // If heartbeats keep failing (database unreachable, hung query), stop before the lease can lapse:
+      // past that point another worker may claim the job and both would run it.
+      let leaseExpiresAt = job.leaseExpiresAt?.getTime();
+      const leaseAtRisk = () =>
+        leaseExpiresAt !== undefined && clock.now().getTime() >= leaseExpiresAt - deps.heartbeatIntervalMs;
       let beating = false;
       const heartbeat = setInterval(() => {
-        if (beating || stop) return;
+        if (stop) return;
+        if (leaseAtRisk()) {
+          log.warn("lease could not be renewed in time, abandoning the attempt");
+          abort("lease_lost");
+          return;
+        }
+        if (beating) return;
         beating = true;
         queue
           .heartbeat(job, workerId)
           .then((hb) => {
             if (!hb.held) abort("lease_lost");
             else if (hb.cancelRequested) abort("cancel");
+            if (hb.leaseExpiresAt) leaseExpiresAt = hb.leaseExpiresAt.getTime();
           })
           .catch((err) => log.warn("heartbeat failed", { error: String(err) }))
           .finally(() => {

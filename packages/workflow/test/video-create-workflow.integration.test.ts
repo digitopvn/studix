@@ -114,6 +114,31 @@ describe("video.create workflow on Postgres", () => {
     expect((await db.current.repos.renders.listByProject(ctx, done.projectId!)).items).toHaveLength(1);
   });
 
+  it("abandons an attempt before its lease lapses when heartbeats keep failing", async () => {
+    const ctx = await tenant(db.current, "hb-fail");
+    const { job } = await enqueueCreate(db.current, ctx);
+    const a = createTestWorker(db.current, "worker-hb", {
+      renderer: fakeRenderer({ hold: "forever" }).renderer,
+      leaseMs: 1500,
+      heartbeatIntervalMs: 100,
+    });
+    a.queue.heartbeat = async () => {
+      throw new Error("database unreachable");
+    };
+    const claimed = (await a.queue.claim("worker-hb"))!;
+    const outcome = await a.executor.execute(claimed, "worker-hb", a.shutdown.signal);
+    expect(outcome).toBe("lease_lost");
+    // It stopped while it still owned the job, so no second worker could have been running it.
+    const current = (await db.current.repos.jobs.get(ctx, job.id))!;
+    expect(current.lockedBy).toBe("worker-hb");
+    expect(current.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+    await a.queue.cancel(claimed, "worker-hb", {
+      code: "CANCELLED",
+      message: "test cleanup",
+      retryable: false,
+    });
+  });
+
   it("fails a job whose lease expired on its last attempt", async () => {
     const ctx = await tenant(db.current, "exhausted");
     const { job } = await enqueueCreate(db.current, ctx, { maxAttempts: 1 });
