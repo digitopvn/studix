@@ -197,8 +197,11 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           .where(scoped(jobs, ctx, eq(jobs.id, input.jobId), fenced(fence)))
           .for("share");
         if (!owner[0]) {
-          if (!(await getRow(ctx, input.jobId)))
-            throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
+          const exists = await tx
+            .select({ id: jobs.id })
+            .from(jobs)
+            .where(scoped(jobs, ctx, eq(jobs.id, input.jobId)));
+          if (!exists[0]) throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
           throw leaseLost(input.jobId);
         }
         return write(tx);

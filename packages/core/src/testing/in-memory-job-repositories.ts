@@ -24,8 +24,8 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
 
   const assertFence = (ctx: TenantContext, jobId: string, fence: JobFence | undefined) => {
     if (!fence) return;
-    const job = jobs.get(ctx, jobId);
-    if (job?.status !== "running" || job.lockedBy !== fence.workerId || job.attempts !== fence.attempt) {
+    const job = jobs.require(ctx, jobId);
+    if (job.status !== "running" || job.lockedBy !== fence.workerId || job.attempts !== fence.attempt) {
       throw leaseLost(jobId);
     }
   };

@@ -155,6 +155,11 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
           return await settle(queue.fail(job, workerId, STOP_ERRORS.timeout().toJSON()), "failed");
 
         const error = err instanceof StageFailure ? err.error : toStudixError(err);
+        // A fenced stage/spend write found another worker owning the job: nothing of ours may be written.
+        if (error.code === "CONFLICT" && error.details?.reason === "lease_lost") {
+          log.warn("job lease lost during a stage write");
+          return "lease_lost";
+        }
         const retryAllowed = !(err instanceof StageFailure && err.stage.retry === "never");
         if (error.retryable && retryAllowed && job.attempts < job.maxAttempts) {
           const runAfter = new Date(clock.now().getTime() + retryDelayMs(job.attempts, backoff));

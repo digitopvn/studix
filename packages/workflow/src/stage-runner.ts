@@ -78,11 +78,32 @@ export async function runStages(
   workflow: WorkflowDefinition,
   signal: AbortSignal,
 ): Promise<StagesOutcome> {
-  const saved = checkpoints(await deps.jobs.listStages(ctx, job.id));
+  const existing = await deps.jobs.listStages(ctx, job.id);
+  const saved = checkpoints(existing);
   const outputs: Record<string, StageOutput> = {};
   // Every job/stage write of this attempt is conditional on still owning the job, so a worker that stalled
   // past its lease and resumed cannot overwrite what the worker that reclaimed the job has recorded.
   const fence: JobFence = { workerId: ctx.actor.id, attempt: job.attempts };
+  // Stages an earlier attempt left running were abandoned (its worker died or lost the lease): close them
+  // so the job view does not show them as running forever.
+  for (const stale of existing) {
+    if (stale.status !== "running" || stale.attempt >= job.attempts) continue;
+    await deps.jobs.upsertStage(
+      ctx,
+      {
+        jobId: job.id,
+        name: stale.name,
+        attempt: stale.attempt,
+        status: "failed",
+        error: new StudixError("UNAVAILABLE", "Attempt abandoned before the stage finished", {
+          details: { reason: "attempt_abandoned" },
+        }).toJSON(),
+        startedAt: stale.startedAt,
+        finishedAt: deps.clock.now(),
+      },
+      fence,
+    );
+  }
   let spentCents = job.spentCents;
   const total = workflow.stages.length;
 
