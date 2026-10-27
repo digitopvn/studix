@@ -123,7 +123,7 @@ export class StudioService {
     });
   }
 
-  /** Approve or reject. Publish/delete approvals require a signed-in user; system actors never approve. */
+  /** Approve or reject. Every decision needs a signed-in user; API keys and system actors get FORBIDDEN. */
   approve(ctx: TenantContext, input: DecideApprovalInput): Promise<Approval> {
     return decideApproval(this.deps, ctx, parseInput(DecideApprovalInput, input, "approval decision"));
   }
