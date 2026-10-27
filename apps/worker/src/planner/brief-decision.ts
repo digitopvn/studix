@@ -52,7 +52,7 @@ export async function decideBriefDraft(
   ctx: PlannerContext,
   signal: AbortSignal,
   options: BriefDecisionOptions = {},
-): Promise<{ draft: BriefDraft; usage: PlanUsage; fallbackReason?: string }> {
+): Promise<{ draft: BriefDraft; usage?: PlanUsage; fallbackReason?: string }> {
   const cap = options.budgetCents ?? DEFAULT_BRIEF_DECISION_BUDGET_CENTS;
   const input: BriefDecisionInput = {
     prompt: brief.prompt,
@@ -75,18 +75,22 @@ export async function decideBriefDraft(
     jobId: ctx.jobId,
     stageId: "plan",
   });
+  // A replay from the idempotency cache made no provider call; its cost was ledgered with the first run.
+  const usage: PlanUsage | undefined = result.replayed
+    ? undefined
+    : {
+        provider: result.providerId,
+        model: result.model,
+        costCents: result.costCents,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        latencyMs: result.latencyMs,
+        operation: VIDEO_BRIEF_DECISION,
+        ...(result.providerExecutionId ? { providerExecutionId: result.providerExecutionId } : {}),
+      };
   return {
     draft: result.output,
-    usage: {
-      provider: result.providerId,
-      model: result.model,
-      costCents: result.costCents,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      latencyMs: result.latencyMs,
-      operation: VIDEO_BRIEF_DECISION,
-      ...(result.providerExecutionId ? { providerExecutionId: result.providerExecutionId } : {}),
-    },
+    ...(usage ? { usage } : {}),
     ...(result.fallbackReason ? { fallbackReason: result.fallbackReason } : {}),
   };
 }

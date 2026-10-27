@@ -53,6 +53,9 @@ export function buildExecutionRecord(
   };
 }
 
+/** Upper bound on how long a sink write may hold the decision on its critical path. */
+export const SINK_TIMEOUT_MS = 2_000;
+
 /**
  * Record one execution; a failing sink is logged (redacted) and never breaks the decision.
  * Returns the stored execution id, or undefined when nothing was stored, so callers only link
@@ -66,8 +69,14 @@ export async function recordExecution(
 ): Promise<string | undefined> {
   if (!sink) return undefined;
   const record = buildExecutionRecord(request, outcome);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await sink.record(request.tenant, record);
+    const write = Promise.resolve(sink.record(request.tenant, record));
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("sink timed out")), SINK_TIMEOUT_MS);
+    });
+    write.catch(() => {});
+    await Promise.race([write, timeout]);
     return record.id;
   } catch (error) {
     logger?.error("provider execution sink failed", {
@@ -76,5 +85,7 @@ export async function recordExecution(
       error: error instanceof Error ? error.message : String(error),
     });
     return undefined;
+  } finally {
+    clearTimeout(timer);
   }
 }

@@ -90,6 +90,8 @@ export interface DecisionResult<T> {
   traceId: string;
   /** Provider execution recorded for the winning attempt, for linking usage events to it. */
   providerExecutionId?: string;
+  /** True when served from the idempotency cache: no provider call, no cost, no new execution. */
+  replayed?: true;
 }
 
 /** Stable adapter interface implemented by every decision provider (and by DecisionRouter). */

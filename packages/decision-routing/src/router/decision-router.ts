@@ -42,6 +42,12 @@ export interface DecisionRouterOptions {
 
 const MAX_BACKOFF_MS = 5_000;
 
+/** A cached result costs nothing again and its execution is already attributed to the call that ran it. */
+function asReplay<T>(result: DecisionResult<T>): DecisionResult<T> {
+  const { providerExecutionId: _first, ...rest } = result;
+  return { ...rest, costCents: 0, replayed: true };
+}
+
 /**
  * Jev policy layer: per-kind provider chains, per-call budget and deadline, bounded retries of retryable
  * failures, fallback on failure / invalid output / budget, circuit breaking, idempotency, execution
@@ -87,8 +93,11 @@ export class DecisionRouter implements DecisionProvider {
     if (!this.#cache) return this.#route(request, chain);
     const { tenant, kind, idempotencyKey } = request;
     const key = `${tenant.organizationId}:${tenant.workspaceId}:${kind}:${idempotencyKey}`;
-    return this.#cache.run(key, fingerprintOf({ input: request.input, version: request.schemaVersion }), () =>
-      this.#route(request, chain),
+    return this.#cache.run(
+      key,
+      fingerprintOf({ input: request.input, version: request.schemaVersion }),
+      () => this.#route(request, chain),
+      asReplay,
     );
   }
 
