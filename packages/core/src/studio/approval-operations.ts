@@ -7,9 +7,6 @@ import { STUDIX_TOOLS } from "./studio-types.ts";
 
 type Deps = ResolvedStudioDeps;
 
-/** Actions whose approval must come from a signed-in human, never an API key. */
-const HUMAN_ONLY_ACTIONS: ReadonlySet<ApprovalAction> = new Set(["publish", "delete"]);
-
 /** Permission needed to perform (not approve) an action. */
 export function permissionForAction(action: ApprovalAction): Permission {
   return action === "publish" ? "publish" : "project:write";
@@ -124,7 +121,8 @@ export async function decideApproval(
   assertPermission(ctx, "approval:decide");
   const approval = await deps.approvals.get(ctx, input.approvalId);
   if (!approval) throw new StudixError("NOT_FOUND", `approval ${input.approvalId} not found`);
-  if (HUMAN_ONLY_ACTIONS.has(approval.action) && ctx.actor.type !== "user") {
+  // Every approval is a human decision: an agent holding an API key must not clear its own gate.
+  if (ctx.actor.type !== "user") {
     throw new StudixError("FORBIDDEN", `${approval.action} approvals must be granted by a signed-in person`, {
       suggestedAction: "Approve this request in the Studix dashboard.",
     });

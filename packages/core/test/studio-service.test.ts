@@ -119,6 +119,14 @@ describe("high-cost jobs wait for approval", () => {
     );
     expect(editorTry.code).toBe("FORBIDDEN");
 
+    // An API key with the decide permission still cannot clear its own cost gate.
+    const agentKey = withActor(ctx, { type: "apiKey", id: "key_1", scopes: ["approval:decide"] });
+    const keyTry = await rejects(
+      studio.approve(agentKey, { approvalId: out.approval!.id, decision: "approved" }),
+    );
+    expect(keyTry.code).toBe("FORBIDDEN");
+    expect((await studio.getJob(ctx, out.job.id)).status).toBe("waiting_approval");
+
     const reviewer = withActor(ctx, { type: "user", id: "usr_reviewer", role: "reviewer" });
     const approved = await studio.approve(reviewer, { approvalId: out.approval!.id, decision: "approved" });
     expect(approved).toMatchObject({ status: "approved", decidedBy: { type: "user", id: "usr_reviewer" } });
