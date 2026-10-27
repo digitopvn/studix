@@ -70,6 +70,24 @@ merged.
 | multix video, voice, music and SFX not wired end to end         | Cannot claim those modalities                       | Contract + shell only in P0; P2 wiring                                                                                   |
 | Dashboard partial; search and billing planned/partial           | Reviewers and admins need a working surface         | P0 project/job/trace/connector views; search and billing in later phases                                                 |
 
+## File-level port record
+
+Files carried over from the pinned commit and adapted (paths relative to each repository root):
+
+| Source (`motion-mcp`)                         | Studix file                                                                                  |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `packages/hyperframes-adapter/src/util.ts`    | `packages/renderers/src/hyperframes/html-utils.ts`                                           |
+| `packages/hyperframes-adapter/src/fonts.ts`   | `packages/renderers/src/hyperframes/bundled-fonts.ts`                                        |
+| `packages/hyperframes-adapter/src/motion.ts`  | `packages/renderers/src/hyperframes/scene-timeline.ts`                                       |
+| `packages/hyperframes-adapter/src/compile.ts` | `packages/renderers/src/hyperframes/compile-composition.ts`, `scene-composition.ts`          |
+| `packages/hyperframes-adapter/src/render.ts`  | `packages/renderers/src/hyperframes/producer-render.ts`                                      |
+| `packages/media/src/ffmpeg.ts`                | `packages/renderers/src/ffmpeg/ffmpeg-probe.ts` (finishing in `ffmpeg-finish.ts` follows it) |
+| `packages/media/src/capability-matrix.ts`     | `packages/providers/src/multix-capability-catalog.ts` (metadata only)                        |
+| `packages/storage/src/r2-store.ts`            | `packages/storage/src/s3-storage-adapter.ts` (generalized to any S3 endpoint)                |
+| `Dockerfile`                                  | `Dockerfile` (one image, `STUDIX_ROLE=app\|worker`)                                          |
+
+Everything else was written for Studix against the contracts above.
+
 ## Branding and hostname rule
 
 Runnable code (apps, packages, Dockerfile, infra, CI) must contain no `motion`
