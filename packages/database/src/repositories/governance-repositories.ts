@@ -117,6 +117,14 @@ export function createApprovalRepository(db: StudixDb, clock: Clock): ApprovalRe
       if (!current) throw new StudixError("NOT_FOUND", `approval ${id} not found`);
       throw new StudixError("CONFLICT", `approval ${id} is already ${current.status}`);
     },
+    async consume(ctx, id) {
+      const rows = await db
+        .update(approvals)
+        .set({ status: "consumed" })
+        .where(scoped(approvals, ctx, eq(approvals.id, id), eq(approvals.status, "approved")))
+        .returning({ id: approvals.id });
+      return rows.length === 1;
+    },
   };
   return repo;
 }

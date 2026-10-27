@@ -30,7 +30,15 @@ export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 export const APPROVAL_SUBJECT_TYPES = ["project", "project_version", "job", "render", "asset"] as const;
 export type ApprovalSubjectType = (typeof APPROVAL_SUBJECT_TYPES)[number];
 
-export const APPROVAL_STATUSES = ["pending", "approved", "rejected", "expired", "cancelled"] as const;
+/** `consumed`: a single-use approval (a mutating connector call) that has already been spent. */
+export const APPROVAL_STATUSES = [
+  "pending",
+  "approved",
+  "rejected",
+  "expired",
+  "cancelled",
+  "consumed",
+] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 
 export interface ApprovalSubject {

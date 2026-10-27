@@ -45,6 +45,12 @@ export function createInMemoryApprovalRepository(clock: Clock): ApprovalReposito
       }
       return approvals.update(ctx, id, decision);
     },
+    async consume(ctx, id) {
+      const current = approvals.get(ctx, id);
+      if (current?.status !== "approved") return false;
+      approvals.update(ctx, id, { status: "consumed" });
+      return true;
+    },
   };
 }
 

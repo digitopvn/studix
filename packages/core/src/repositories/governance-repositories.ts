@@ -35,6 +35,11 @@ export interface ApprovalRepository {
   ): Promise<Page<Approval>>;
   /** Transition a pending approval; throws CONFLICT if it is no longer pending. */
   decide(ctx: TenantContext, id: string, decision: ApprovalDecision): Promise<Approval>;
+  /**
+   * Atomically spend an approved single-use approval (approved -> consumed). Returns false when it was
+   * not in `approved` state, so of two concurrent callers exactly one gets true.
+   */
+  consume(ctx: TenantContext, id: string): Promise<boolean>;
 }
 
 export type NewReview = Omit<NewRecord<Review>, "status">;
