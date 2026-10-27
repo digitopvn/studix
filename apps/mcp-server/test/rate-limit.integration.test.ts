@@ -12,7 +12,10 @@ describe("rate limits shared across replicas", () => {
   beforeAll(async () => {
     a = await startTestApp({
       trustProxy: 1,
-      rateLimits: { mcp: { capacity: 3, refillPerSecond: 0.001 } },
+      rateLimits: {
+        mcpIp: { capacity: 3, refillPerSecond: 0.001 },
+        mcp: { capacity: 3, refillPerSecond: 0.001 },
+      },
     });
     const port = await freePort();
     baseB = `http://127.0.0.1:${port}`;

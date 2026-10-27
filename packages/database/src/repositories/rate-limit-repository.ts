@@ -43,11 +43,13 @@ export function createRateLimitRepository(db: StudixDb): RateLimitRepository {
       return { allowed: row.granted, tokens: Number(row.tokens) };
     },
     async prune(idleSeconds) {
-      const rows = await db.execute(sql`
-        delete from ${rateLimitBuckets}
-        where updated_at < now() - ${idleSeconds}::float8 * interval '1 second'
-        returning key`);
-      return rows.length;
+      const rows = await db.execute<{ n: number }>(sql`
+        with removed as (
+          delete from ${rateLimitBuckets}
+          where updated_at < now() - ${idleSeconds}::float8 * interval '1 second'
+          returning 1)
+        select count(*)::int as n from removed`);
+      return rows[0]?.n ?? 0;
     },
   };
 }

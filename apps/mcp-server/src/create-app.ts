@@ -49,7 +49,7 @@ export function createApp(deps: AppDeps): Express {
   const limiterFor = (options: TokenBucketOptions) =>
     store ? createSharedLimiter(store, options, deps.logger) : createTokenBucketLimiter(options);
   const authLimiter = limiterFor(limits.auth);
-  const mcpLimiter = limiterFor(limits.mcp);
+  const mcpIpLimiter = limiterFor(limits.mcpIp);
   const mcpWorkspaceLimiter = limiterFor(limits.mcp);
   const apiLimiter = limiterFor(limits.api);
   const originGuard = corsAndOriginGuard([...new Set([originOf(deps.appUrl), originOf(deps.publicUrl)])]);
@@ -59,7 +59,7 @@ export function createApp(deps: AppDeps): Express {
 
   mountHealthRoutes(app, { version: SERVER_VERSION, checks: deps.readiness ?? [], logger: deps.logger });
 
-  mountMcpEndpoint(app, deps, artifacts, [originGuard, rateLimit(mcpLimiter, "mcp")], (workspaceKey) => [
+  mountMcpEndpoint(app, deps, artifacts, [originGuard, rateLimit(mcpIpLimiter, "mcp")], (workspaceKey) => [
     rateLimit(mcpWorkspaceLimiter, "mcp-ws", workspaceKey),
   ]);
 

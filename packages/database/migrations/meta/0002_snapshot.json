@@ -1,5 +1,5 @@
 {
-  "id": "2b369fe2-d773-4309-b22f-03f6df166e6c",
+  "id": "2231520f-abf9-4043-a047-c06e9990b4c1",
   "prevId": "b447ee4c-3e0e-449f-a75e-eade6c44d0cb",
   "version": "7",
   "dialect": "postgresql",
@@ -2100,7 +2100,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "rate_limit_buckets_updated_idx": {
+          "name": "rate_limit_buckets_updated_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

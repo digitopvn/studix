@@ -2,7 +2,7 @@ import type { RateLimitRepository } from "@studix/database";
 import { createLogger } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import { dashboardCsp } from "../src/http/dashboard-static.ts";
-import { createSharedLimiter, createTokenBucketLimiter } from "../src/http/rate-limit.ts";
+import { clientKey, createSharedLimiter, createTokenBucketLimiter } from "../src/http/rate-limit.ts";
 import { hostnameOf, originOf, uniqueHostnames } from "../src/http/request-guards.ts";
 
 describe("token bucket limiter", () => {
@@ -50,6 +50,35 @@ describe("shared limiter", () => {
     expect((await limiter.take("k")).allowed).toBe(false);
   });
 
+  it("keeps refused keys away from the store until a token can exist again", async () => {
+    let now = 0;
+    let takes = 0;
+    const store: RateLimitRepository = {
+      take: async () => {
+        takes++;
+        return { allowed: false, tokens: 0 };
+      },
+      prune: async () => 0,
+    };
+    const limiter = createSharedLimiter(store, options, logger, () => now);
+    expect(await limiter.take("k")).toEqual({ allowed: false, retryAfterSeconds: 2 });
+    now += 1000;
+    expect(await limiter.take("k")).toEqual({ allowed: false, retryAfterSeconds: 1 });
+    expect(takes).toBe(1);
+    now += 1000;
+    await limiter.take("k");
+    expect(takes).toBe(2);
+  });
+
+  it("does not hold a request on a slow store", async () => {
+    const store: RateLimitRepository = {
+      take: () => new Promise(() => {}),
+      prune: async () => 0,
+    };
+    const limiter = createSharedLimiter(store, options, logger);
+    expect((await limiter.take("k")).allowed).toBe(true);
+  });
+
   it("prunes idle buckets at most once per interval", async () => {
     let now = 0;
     let pruned = 0;
@@ -68,6 +97,16 @@ describe("shared limiter", () => {
     await limiter.take("k");
     await new Promise((r) => setImmediate(r));
     expect(pruned).toBe(1);
+  });
+});
+
+describe("clientKey", () => {
+  it("leaves IPv4 alone, unwraps mapped addresses and groups IPv6 by /64", () => {
+    expect(clientKey("203.0.113.7")).toBe("203.0.113.7");
+    expect(clientKey("::ffff:203.0.113.7")).toBe("203.0.113.7");
+    expect(clientKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("2001:db8:1:2::9")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("2001:db8:1:2:ffff::1")).toBe("2001:db8:1:2::/64");
   });
 });
 

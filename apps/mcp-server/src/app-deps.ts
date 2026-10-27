@@ -69,7 +69,12 @@ export interface AppDeps {
   trustProxy?: number | boolean;
   /** Shared token-bucket store so limits hold across replicas; without it each process keeps its own buckets. */
   rateLimitStore?: RateLimitRepository;
-  rateLimits?: { auth?: TokenBucketOptions; mcp?: TokenBucketOptions; api?: TokenBucketOptions };
+  rateLimits?: {
+    auth?: TokenBucketOptions;
+    mcpIp?: TokenBucketOptions;
+    mcp?: TokenBucketOptions;
+    api?: TokenBucketOptions;
+  };
 }
 
 export const SERVER_NAME = "studix";

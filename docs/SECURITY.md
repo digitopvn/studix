@@ -39,13 +39,17 @@ Owner: `apps/mcp-server` (`http/rate-limit.ts`), store in `packages/database`.
 - Token buckets live in the Postgres table `rate_limit_buckets`, updated with one
   atomic upsert on the database clock, so limits hold across app replicas and
   survive restarts.
-- Keys: `/mcp` per client IP before the key is checked (unauthenticated floods)
-  and per workspace after; `/api/auth` and `/api` per client IP. The IP comes
-  from `STUDIX_TRUST_PROXY`, so set it when the app runs behind an ingress.
-- If the store is unreachable the limiter logs a warning and decides with a
-  per-process bucket, so limits temporarily multiply by replica count but the
-  endpoints stay available and bounded.
-- Idle buckets are pruned opportunistically (idle for an hour, far beyond refill).
+- Keys: `/mcp` per workspace after the key is verified (the real quota) plus a
+  generous per-IP flood guard before it (hosted AI clients share egress IPs
+  across tenants); `/api/auth` and `/api` per client IP. IPv6 clients share one
+  bucket per /64. The IP comes from `STUDIX_TRUST_PROXY`, so set it when the app
+  runs behind an ingress.
+- Refused keys are remembered in process until a token can exist again, so a
+  flood of refused requests costs no database writes.
+- If the store errors or takes longer than 250 ms, the call is decided by a
+  per-process bucket, so limits temporarily multiply by replica count but
+  requests are never held on the store. The warning is logged at most every 30 s.
+- Idle buckets (an hour, far beyond refill) are pruned by one pruner per process.
 
 ## Inbound vs outbound credentials
 

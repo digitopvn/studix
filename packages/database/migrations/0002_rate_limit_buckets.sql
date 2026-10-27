@@ -4,3 +4,5 @@ CREATE TABLE "rate_limit_buckets" (
 	"granted" boolean DEFAULT true NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
+--> statement-breakpoint
+CREATE INDEX "rate_limit_buckets_updated_idx" ON "rate_limit_buckets" USING btree ("updated_at");
