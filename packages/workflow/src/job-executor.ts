@@ -12,7 +12,7 @@ export type JobOutcome =
   | "waiting_approval"
   /** Given back to the queue on shutdown without consuming the attempt. */
   | "released"
-  /** Another worker owns the job now; nothing was written. */
+  /** Another worker owns the job now; no write after that point was applied. */
   | "lease_lost";
 
 export interface JobExecutorDeps extends StageRunnerDeps {

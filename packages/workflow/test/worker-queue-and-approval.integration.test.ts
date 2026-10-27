@@ -163,7 +163,7 @@ describe("fenced attempt writes", () => {
     const after = await repos.jobs.get(ctx, job.id);
     expect(after).toMatchObject({ stage: "plan", spentCents: 0, lockedBy: "fresh" });
     const stages = await repos.jobs.listStages(ctx, job.id);
-    expect(stages.map((s) => [s.attempt, s.status])).toEqual([[stale!.attempts, "running"]]);
+    expect(stages.map((s) => [s.attempt, s.status])).toEqual([[stale!.attempts, "failed"]]);
     expect((await db.current.repos.usage.list(ctx, { jobId: job.id })).items.map((u) => u.dedupeKey)).toEqual(
       ["own"],
     );

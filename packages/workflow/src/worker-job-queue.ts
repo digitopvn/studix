@@ -11,7 +11,7 @@ import {
 import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared";
 import { and, asc, eq, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
 
-const { jobs, approvals } = schema;
+const { jobs, approvals, stages } = schema;
 type JobSet = Partial<typeof jobs.$inferInsert>;
 
 /** A stage row written on behalf of a claimed attempt (the tenant and job come from the job). */
@@ -152,7 +152,27 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         })
         .where(inArray(jobs.id, candidate))
         .returning();
-      return rows[0] ? toJob(rows[0]) : undefined;
+      if (!rows[0]) return undefined;
+      // Stage rows still "running" from earlier attempts belong to workers that are gone or fenced out.
+      await db
+        .update(stages)
+        .set({
+          status: "failed",
+          finishedAt: now,
+          error: {
+            code: "CONFLICT",
+            message: "Attempt abandoned: the job was reclaimed by another worker",
+            retryable: true,
+          },
+        })
+        .where(
+          and(
+            eq(stages.jobId, rows[0].id),
+            eq(stages.status, "running"),
+            lt(stages.attempt, rows[0].attempts),
+          ),
+        );
+      return toJob(rows[0]);
     },
 
     async heartbeat(job, workerId) {

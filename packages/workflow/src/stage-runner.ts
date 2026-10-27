@@ -180,15 +180,21 @@ export async function runStages(
       const reason: unknown = signal.aborted ? signal.reason : err;
       const error = toStudixError(reason);
       if (err instanceof LeaseLostError) throw err;
-      await fenced(
-        queue.writeStage(job, workerId, {
-          name: stage.name,
-          status: error.code === "CANCELLED" ? "cancelled" : "failed",
-          error: error.toJSON(),
-          startedAt,
-          finishedAt: deps.clock.now(),
-        }),
-      );
+      try {
+        await fenced(
+          queue.writeStage(job, workerId, {
+            name: stage.name,
+            status: error.code === "CANCELLED" ? "cancelled" : "failed",
+            error: error.toJSON(),
+            startedAt,
+            finishedAt: deps.clock.now(),
+          }),
+        );
+      } catch (writeErr) {
+        if (writeErr instanceof LeaseLostError) throw writeErr;
+        // Keep the stage's own failure so its retry policy (e.g. publish: never) still applies.
+        deps.logger.warn("failed stage row could not be written", { jobId: job.id, error: String(writeErr) });
+      }
       throw new StageFailure(stage, error);
     }
 
