@@ -133,9 +133,12 @@ branch). Env-only changes need no build: `tose redeploy <project> -y`.
 ### Production hostname
 
 `studix-prod-app` carries `app.studix.digitop.ai` as a TOSE custom domain
-(TOSE issues the certificate). Cloudflare DNS has an A record to the address
-TOSE shows for the domain, **DNS-only** (not proxied), which is why production
-trusts one proxy hop.
+(TOSE issues the certificate once DNS points at it). Cloudflare DNS has an A
+record to the SGP1 ingress, the address the project's default domain
+(`wearetopgroup-studix-prod-app.tose.sh`) resolves to, **DNS-only** (not
+proxied), which is why production trusts one proxy hop. The `target_ip` the
+TOSE domains API reports was not reachable on 2026-10-27; trust the default
+domain's address instead.
 
 ### Dev hostname through a Cloudflare Worker
 
