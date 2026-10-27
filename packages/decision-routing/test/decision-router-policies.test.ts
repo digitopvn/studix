@@ -197,6 +197,16 @@ describe("DecisionRouter telemetry", () => {
         },
       },
     });
-    await expect(router.decide(contractRequest())).resolves.toMatchObject({ providerId: "fake" });
+    const result = await router.decide(contractRequest());
+    expect(result).toMatchObject({ providerId: "fake" });
+    expect(result.executionId).toBeUndefined();
+  });
+
+  it("returns the id of the winning attempt's execution so usage can reference it", async () => {
+    const { router, records } = testRouter([valid()]);
+    const result = await router.decide(contractRequest());
+    expect(records).toHaveLength(1);
+    expect(result.executionId).toBeDefined();
+    expect(records[0]?.execution.id).toBe(result.executionId);
   });
 });

@@ -98,6 +98,28 @@ describe("video planner", () => {
     expect(ir.brand?.name).toBe("Sương Mai");
   });
 
+  it("links the brief usage line to the provider execution recorded for the winning attempt", async () => {
+    const model = new FakeDecisionAdapter({
+      id: "openrouter",
+      fallback: { error: new StudixError("UNAVAILABLE", "down", { retryable: true }) },
+    });
+    const executions: { provider: string; status: string; id?: string }[] = [];
+    const rules = registerBriefRule(new RulesAdapter());
+    const decisions = new DecisionRouter({
+      providers: [model, rules],
+      routes: { "video.brief": ["openrouter", "rules"] },
+      maxAttemptsPerProvider: 1,
+      sink: { record: (_t, e) => void executions.push(e) },
+    });
+    const planner = createVideoPlanner({ decisions, logger });
+    const { usage } = await planner({ prompt: PROMPT }, ctx(), new AbortController().signal);
+    expect(executions.map((e) => [e.provider, e.status])).toEqual([
+      ["openrouter", "failed"],
+      ["rules", "succeeded"],
+    ]);
+    expect(usage[0]?.providerExecutionId).toBe(executions[1]?.id);
+  });
+
   it("skips the decision when the brief is already structured", async () => {
     const model = new FakeDecisionAdapter({ id: "openrouter" });
     const planner = createVideoPlanner({ decisions: rulesRouter(model), logger });

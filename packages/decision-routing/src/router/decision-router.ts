@@ -181,7 +181,7 @@ export class DecisionRouter implements DecisionProvider {
           costCents: result.costCents,
         });
         this.#breaker?.recordSuccess(provider.id);
-        await recordExecution(this.#sink, this.#logger, request, {
+        const executionId = await recordExecution(this.#sink, this.#logger, request, {
           providerId: provider.id,
           model: result.model,
           attempt,
@@ -189,7 +189,7 @@ export class DecisionRouter implements DecisionProvider {
           costCents: result.costCents,
           usage: result.usage,
         });
-        return result;
+        return executionId ? { ...result, executionId } : result;
       } catch (thrown) {
         const error = deadline.signal.aborted
           ? deadlineError(deadline, request.timeoutMs)

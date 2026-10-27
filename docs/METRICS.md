@@ -51,7 +51,7 @@ Measured on TOSE staging (`app.studix.digitop.ai`, Development server) at commit
 `video.brief=openrouter>rules`, model `openai/gpt-4o-mini`). Server times come
 from `jobs.created_at` to `jobs.finished_at`; decision rows come from
 `usage_events` of kind `provider.decision` (their `metadata` carries provider,
-model, latency and tokens). Small sample: treat as a smoke baseline, not an SLO.
+model, latency and tokens). Those jobs ran before the worker wrote `provider_executions`; from the fix for issue #4 every decision attempt (fallbacks and failures included) is a `provider_executions` row and the usage event's `provider_execution_id` points at the winning attempt. Small sample: treat as a smoke baseline, not an SLO.
 
 | Metric                             | Value                                         | Sample                     | Evidence                                                                                            |
 | ---------------------------------- | --------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------- |

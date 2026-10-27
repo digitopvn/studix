@@ -77,6 +77,8 @@ export interface DecisionResult<T> {
   usage: TokenUsage;
   /** Total estimated spend for this decision in cents, including failed attempts. */
   costCents: number;
+  /** Id of the provider execution row recorded for the winning attempt; absent without a sink or when recording failed. */
+  executionId?: string;
   /** Number of provider invocations made (all providers). */
   attempts: number;
   /** Ordered steps taken; empty when a single adapter is called directly. */

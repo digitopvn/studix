@@ -54,7 +54,17 @@ export async function loadWorkerPorts(
     logger: logger.child({ component: "hyperframes-renderer" }),
   });
   const rules = registerBriefRule(new RulesAdapter({ logger }));
-  const decisions = createDecisionRouterFromConfig(runtime.env, { rules, logger });
+  const { usage } = createRepositories(runtime.db);
+  const decisions = createDecisionRouterFromConfig(runtime.env, {
+    rules,
+    logger,
+    // Every provider attempt (fallbacks and failures included) becomes a provider_executions row.
+    sink: {
+      record: async (tenant, execution) => {
+        await usage.recordProviderExecution(tenant, execution);
+      },
+    },
+  });
   const brandLookup = gatewayBrandLookup(settings, runtime);
   logger.info("worker adapters ready", {
     storage: "s3",
