@@ -25,8 +25,12 @@ export interface JobExecutorDeps extends StageRunnerDeps {
 }
 
 export interface JobExecutor {
-  /** Run one claimed job to an outcome. `shutdown` aborts the attempt and releases the lease. */
-  execute(job: Job, workerId: string, shutdown: AbortSignal): Promise<JobOutcome>;
+  /**
+   * Run one claimed job to an outcome. `shutdown` aborts the attempt and releases the lease.
+   * `draining` marks that the process is stopping: an attempt that fails after it fired is released
+   * too, because the failure is usually collateral (e.g. Puppeteer closes Chrome on SIGTERM).
+   */
+  execute(job: Job, workerId: string, shutdown: AbortSignal, draining?: AbortSignal): Promise<JobOutcome>;
 }
 
 /** setTimeout overflows above 2^31-1 ms; longer deadlines are re-checked at claim time. */
@@ -56,7 +60,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
   const { queue, clock, logger } = deps;
 
   return {
-    async execute(job, workerId, shutdown) {
+    async execute(job, workerId, shutdown, draining) {
       const log = logger.child({ jobId: job.id, kind: job.kind, attempt: job.attempts, workerId });
       const ctx: TenantContext = {
         organizationId: job.organizationId,
@@ -128,7 +132,11 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
         return await settle(queue.complete(job, workerId, outcome.result), "succeeded");
       } catch (err) {
         if (stop === "lease_lost") return "lease_lost";
-        if (stop === "shutdown") return await settle(queue.release(job, workerId), "released");
+        if (stop === "shutdown" || (stop === undefined && draining?.aborted)) {
+          if (stop === undefined)
+            log.warn("job attempt failed while draining, releasing", { error: String(err) });
+          return await settle(queue.release(job, workerId), "released");
+        }
         if (stop === "cancel")
           return await settle(queue.cancel(job, workerId, STOP_ERRORS.cancel().toJSON()), "cancelled");
         if (stop === "timeout")

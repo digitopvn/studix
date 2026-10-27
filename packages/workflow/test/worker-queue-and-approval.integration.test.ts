@@ -96,6 +96,35 @@ describe("worker queue", () => {
     expect(pool.status()).toMatchObject({ running: false, activeJobs: 0 });
     await db.current.repos.queue.cancel(ctx, job.id);
   });
+  it("releases a job whose render fails while the pool drains instead of failing it", async () => {
+    const ctx = await tenant(db.current, "drain-crash");
+    const { job } = await enqueueCreate(db.current, ctx);
+    let crash!: () => void;
+    const crashed = new Promise<void>((resolve) => {
+      crash = resolve;
+    });
+    const worker = createTestWorker(db.current, "drain", {
+      renderer: fakeRenderer({ crash: crashed }).renderer,
+    });
+    const outcomes: JobOutcome[] = [];
+    const pool = createWorkerPool({
+      queue: worker.queue,
+      executor: worker.executor,
+      workerId: "drain",
+      concurrency: 1,
+      logger: silentLogger,
+      pollIntervalMs: 20,
+      onOutcome: (_id, outcome) => outcomes.push(outcome),
+    });
+    pool.start();
+    await waitFor(async () => (await db.current.repos.jobs.get(ctx, job.id))?.stage === "render");
+    const stopped = pool.stop(5_000);
+    crash();
+    await stopped;
+    expect(outcomes).toEqual(["released"]);
+    expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({ status: "queued", attempts: 0 });
+    await db.current.repos.queue.cancel(ctx, job.id);
+  });
 });
 
 describe("publish approval gate", () => {

@@ -44,6 +44,8 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
   const sweepMs = options.sweepIntervalMs ?? 5000;
   const { queue, executor, logger } = options;
   const shutdown = new AbortController();
+  /** Fires when stop() begins; attempts that fail from here on are released, not failed. */
+  const drain = new AbortController();
   const wakers = new Set<() => void>();
   let running = false;
   let draining = false;
@@ -86,7 +88,7 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
         }
         active++;
         try {
-          const outcome = await executor.execute(job, workerId, shutdown.signal);
+          const outcome = await executor.execute(job, workerId, shutdown.signal, drain.signal);
           options.onOutcome?.(job.id, outcome);
         } finally {
           active--;
@@ -114,6 +116,7 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
       if (!running) return;
       running = false;
       draining = true;
+      drain.abort();
       for (const wake of [...wakers]) wake();
       const all = Promise.all(loops);
       let timer: NodeJS.Timeout | undefined;

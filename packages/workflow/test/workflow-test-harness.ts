@@ -72,7 +72,14 @@ export function fakePlanner(options: { costCents?: number } = {}) {
 }
 
 /** Writes a small fake MP4. `hold` makes render wait until aborted (or forever when it ignores the signal). */
-export function fakeRenderer(options: { hold?: "until-abort" | "forever"; supported?: boolean } = {}) {
+export function fakeRenderer(
+  options: {
+    hold?: "until-abort" | "forever";
+    supported?: boolean;
+    /** Once settled, the render fails with a non-retryable error (a browser killed under it). */
+    crash?: Promise<void>;
+  } = {},
+) {
   const state = { calls: 0 };
   const renderer: RendererAdapter = {
     id: "fake-renderer",
@@ -83,6 +90,10 @@ export function fakeRenderer(options: { hold?: "until-abort" | "forever"; suppor
     async render(ir, opts) {
       state.calls++;
       opts.onProgress?.({ progress: 0.5, phase: "frames" });
+      if (options.crash) {
+        await options.crash;
+        throw new StudixError("INTERNAL", "Browser closed during render", { retryable: false });
+      }
       if (options.hold === "forever") await new Promise(() => {});
       if (options.hold === "until-abort") {
         await new Promise((_, reject) =>
