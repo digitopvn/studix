@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "title": "Giới thiệu thương hiệu Sương Mai Coffee",
+  "language": "vi",
+  "format": {
+    "aspectRatio": "9:16",
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "durationMs": 15000
+  },
+  "brand": {
+    "name": "Sương Mai Coffee",
+    "tagline": "Cà phê rang mộc từ Cầu Đất",
+    "palette": {
+      "primary": "#6b3e26",
+      "secondary": "#d9a066",
+      "accent": "#f2c94c",
+      "background": "#1c1410",
+      "foreground": "#fbf6ef",
+      "muted": "#8c7b6b"
+    },
+    "fonts": {
+      "heading": "Be Vietnam Pro",
+      "body": "Inter"
+    },
+    "voice": ["ấm áp", "mộc mạc", "tự tin"]
+  },
+  "assets": [],
+  "scenes": [
+    {
+      "id": "hook",
+      "role": "hook",
+      "durationMs": 3000,
+      "background": {
+        "color": "background"
+      },
+      "shots": [
+        {
+          "id": "hook-title",
+          "type": "title",
+          "startMs": 0,
+          "durationMs": 3000,
+          "text": "Mỗi sáng một tách mộc",
+          "style": {
+            "textStyle": "display",
+            "color": "foreground",
+            "align": "center",
+            "region": "middle"
+          },
+          "animation": {
+            "enter": "fade",
+            "exit": "fade",
+            "durationMs": 400
+          }
+        }
+      ],
+      "transitionOut": {
+        "kind": "fade",
+        "durationMs": 300
+      }
+    },
+    {
+      "id": "intro",
+      "role": "intro",
+      "durationMs": 4000,
+      "background": {
+        "color": "primary"
+      },
+      "shots": [
+        {
+          "id": "intro-logo",
+          "type": "logo",
+          "startMs": 0,
+          "durationMs": 4000,
+          "text": "Sương Mai",
+          "style": {
+            "color": "accent",
+            "region": "middle"
+          },
+          "animation": {
+            "enter": "scale",
+            "durationMs": 500
+          },
+          "assetId": "missing-logo"
+        },
+        {
+          "id": "intro-tagline",
+          "type": "text",
+          "startMs": 800,
+          "durationMs": 3200,
+          "text": "Cà phê rang mộc từ Cầu Đất",
+          "style": {
+            "textStyle": "heading",
+            "color": "foreground",
+            "region": "bottom"
+          },
+          "animation": {
+            "enter": "slide-up",
+            "durationMs": 400
+          }
+        }
+      ],
+      "transitionOut": {
+        "kind": "slide",
+        "durationMs": 300
+      }
+    },
+    {
+      "id": "feature",
+      "role": "feature",
+      "durationMs": 4500,
+      "background": {
+        "color": "background"
+      },
+      "shots": [
+        {
+          "id": "feature-1",
+          "type": "text",
+          "startMs": 0,
+          "durationMs": 2200,
+          "text": "100% Arabica trồng ở độ cao 1.500m",
+          "style": {
+            "textStyle": "heading",
+            "color": "foreground",
+            "region": "middle"
+          },
+          "animation": {
+            "enter": "slide-up",
+            "exit": "fade",
+            "durationMs": 300
+          }
+        },
+        {
+          "id": "feature-2",
+          "type": "text",
+          "startMs": 2300,
+          "durationMs": 2200,
+          "text": "Rang mới mỗi tuần, giao tận nơi",
+          "style": {
+            "textStyle": "heading",
+            "color": "secondary",
+            "region": "middle"
+          },
+          "animation": {
+            "enter": "slide-up",
+            "durationMs": 300
+          }
+        }
+      ],
+      "transitionOut": {
+        "kind": "fade",
+        "durationMs": 300
+      }
+    },
+    {
+      "id": "cta",
+      "role": "cta",
+      "durationMs": 3500,
+      "background": {
+        "color": "accent"
+      },
+      "shots": [
+        {
+          "id": "cta-button",
+          "type": "cta",
+          "startMs": 0,
+          "durationMs": 3500,
+          "text": "Đặt ngay hôm nay",
+          "url": "suongmai.example",
+          "style": {
+            "textStyle": "heading",
+            "color": "background",
+            "region": "middle",
+            "emphasis": "high"
+          },
+          "animation": {
+            "enter": "pop",
+            "durationMs": 400
+          }
+        }
+      ]
+    }
+  ],
+  "timeline": {
+    "entries": [
+      {
+        "sceneId": "hook",
+        "startMs": 0
+      },
+      {
+        "sceneId": "intro",
+        "startMs": 3000
+      },
+      {
+        "sceneId": "feature",
+        "startMs": 7000
+      },
+      {
+        "sceneId": "cta",
+        "startMs": 11500
+      }
+    ],
+    "markers": [
+      {
+        "id": "brand-reveal",
+        "atMs": 3000,
+        "label": "Brand reveal"
+      }
+    ]
+  },
+  "captions": {
+    "language": "vi",
+    "mode": "burned",
+    "position": "bottom",
+    "cues": [
+      {
+        "startMs": 0,
+        "endMs": 3000,
+        "text": "Mỗi sáng một tách mộc"
+      },
+      {
+        "startMs": 3000,
+        "endMs": 7000,
+        "text": "Sương Mai Coffee, rang mộc từ Cầu Đất"
+      },
+      {
+        "startMs": 11500,
+        "endMs": 15000,
+        "text": "Đặt ngay hôm nay"
+      }
+    ]
+  },
+  "metadata": {
+    "template": "brand-intro"
+  }
+}

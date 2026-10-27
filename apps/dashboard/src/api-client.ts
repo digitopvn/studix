@@ -1,0 +1,226 @@
+/**
+ * Typed client for the Studix dashboard JSON API. Same-origin only (`/api/*`); the session cookie is sent
+ * automatically. Errors arrive as `{ error: { code, message, suggestedAction? } }`.
+ */
+
+const WORKSPACE_KEY = "studix.workspace";
+const WORKSPACE_HEADER = "x-studix-workspace";
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly suggestedAction?: string,
+  ) {
+    super(message);
+  }
+}
+
+export function selectedWorkspace(): string | null {
+  return localStorage.getItem(WORKSPACE_KEY);
+}
+
+export function selectWorkspace(id: string | null): void {
+  if (id) localStorage.setItem(WORKSPACE_KEY, id);
+  else localStorage.removeItem(WORKSPACE_KEY);
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { accept: "application/json" };
+  const workspace = selectedWorkspace();
+  if (workspace && !path.startsWith("/api/auth/")) headers[WORKSPACE_HEADER] = workspace;
+  if (body !== undefined) headers["content-type"] = "application/json";
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      headers,
+      credentials: "same-origin",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(0, "NETWORK", "Cannot reach the Studix server. Check your connection and retry.");
+  }
+  const text = await res.text();
+  let payload: unknown;
+  try {
+    payload = text ? JSON.parse(text) : undefined;
+  } catch {
+    payload = undefined;
+  }
+  if (!res.ok) {
+    const record = (payload ?? {}) as {
+      error?: { code?: string; message?: string; suggestedAction?: string };
+    };
+    // Better Auth answers with { code, message } at the top level.
+    const flat = (payload ?? {}) as { code?: string; message?: string };
+    const error = record.error ?? flat;
+    throw new ApiError(
+      res.status,
+      error.code ?? `HTTP_${res.status}`,
+      error.message ?? res.statusText,
+      record.error?.suggestedAction,
+    );
+  }
+  return payload as T;
+}
+
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  organizationName: string;
+  role: string;
+}
+
+export interface Me {
+  user: { id: string; email: string; name: string };
+  role: string;
+  workspace?: { id: string; name: string };
+  organization?: { id: string; name: string };
+  workspaces: WorkspaceSummary[];
+  mcpUrl: string;
+}
+
+export interface Page<T> {
+  items: T[];
+  nextCursor?: string;
+}
+
+export interface Project {
+  id: string;
+  title: string;
+  status: string;
+  brief: { prompt?: string; aspectRatio?: string; durationMs?: number; language?: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StudixErrorPayload {
+  code: string;
+  message: string;
+  suggestedAction?: string;
+}
+
+export interface Stage {
+  name: string;
+  status: string;
+  attempt: number;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: StudixErrorPayload;
+}
+
+export interface Job {
+  id: string;
+  kind: string;
+  status: string;
+  projectId?: string;
+  stage?: string;
+  progress: number;
+  attempts?: number;
+  maxAttempts?: number;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  error?: StudixErrorPayload;
+  stages?: Stage[];
+  approval?: { id: string; action: string; status: string; reason: string };
+  budget?: { limitCents?: number; spentCents: number };
+  video?: { renderId: string; url: string; expiresAt: string; preset: string };
+  videoUnavailableReason?: string;
+}
+
+export interface ActivityEvent {
+  id: string;
+  name: string;
+  level: string;
+  message?: string;
+  stage?: string;
+  provider?: string;
+  durationMs?: number;
+  createdAt: string;
+}
+
+export interface RenderSummary {
+  id: string;
+  status: string;
+  preset: string;
+  jobId?: string;
+  url?: string;
+  urlExpiresAt?: string;
+  createdAt: string;
+}
+
+export interface ProjectDetail {
+  project: Project;
+  currentVersion?: { id: string; version: number; source: string; createdAt: string };
+  jobs: Job[];
+  renders: RenderSummary[];
+}
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  role: string;
+  scopes: string[];
+  status: "active" | "revoked" | "expired";
+  createdAt: string;
+  lastUsedAt?: string;
+  expiresAt?: string;
+}
+
+export interface Connector {
+  id: string;
+  name: string;
+  url: string;
+  status: "active" | "disabled" | "error";
+  toolCount?: number;
+  lastCheckedAt?: string;
+  lastError?: string;
+}
+
+export interface CreateVideoRequest {
+  prompt: string;
+  title?: string;
+  aspectRatio?: "16:9" | "9:16" | "1:1";
+  durationMs?: number;
+  language?: string;
+  budgetCents?: number;
+  idempotencyKey?: string;
+}
+
+const enc = encodeURIComponent;
+
+export const api = {
+  signIn: (email: string, password: string) =>
+    request("POST", "/api/auth/sign-in/email", { email, password }),
+  signUp: (name: string, email: string, password: string) =>
+    request("POST", "/api/auth/sign-up/email", { name, email, password }),
+  signOut: () => request("POST", "/api/auth/sign-out", {}),
+  me: () => request<Me>("GET", "/api/me"),
+  projects: () => request<Page<Project>>("GET", "/api/projects?limit=50"),
+  project: (id: string) => request<ProjectDetail>("GET", `/api/projects/${enc(id)}`),
+  createVideo: (input: CreateVideoRequest) =>
+    request<{ project: Project; job: Job; replayed: boolean }>("POST", "/api/projects", input),
+  jobs: () => request<Page<Job>>("GET", "/api/jobs?limit=50"),
+  job: (id: string) => request<{ job: Job; activity: ActivityEvent[] }>("GET", `/api/jobs/${enc(id)}`),
+  cancelJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/cancel`, {}),
+  decideApproval: (id: string, decision: "approved" | "rejected") =>
+    request("POST", `/api/approvals/${enc(id)}/decision`, { decision }),
+  apiKeys: () => request<{ items: ApiKey[] }>("GET", "/api/api-keys"),
+  createApiKey: (input: { name: string; role?: string; expiresAt?: string }) =>
+    request<{ apiKey: ApiKey; secret: string }>("POST", "/api/api-keys", input),
+  revokeApiKey: (id: string) => request<ApiKey>("DELETE", `/api/api-keys/${enc(id)}`),
+  connectors: () => request<{ items: Connector[] }>("GET", "/api/connectors"),
+  addConnector: (input: { name: string; url: string }) =>
+    request<Connector>("POST", "/api/connectors", input),
+  testConnector: (id: string) =>
+    request<{ ok: boolean; toolCount?: number; tools?: string[]; error?: string }>(
+      "POST",
+      `/api/connectors/${enc(id)}/test`,
+      {},
+    ),
+  disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
+};

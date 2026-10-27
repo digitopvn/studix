@@ -1,0 +1,21 @@
+{
+  "name": "@studix/workflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@studix/billing": "workspace:*",
+    "@studix/core": "workspace:*",
+    "@studix/database": "workspace:*",
+    "@studix/shared": "workspace:*",
+    "@studix/video-ir": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "vitest": "5.0.5"
+  }
+}

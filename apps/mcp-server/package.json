@@ -1,0 +1,35 @@
+{
+  "name": "@studix/mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node --import tsx src/main.ts",
+    "smoke": "node --import tsx scripts/smoke-video.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/express": "2.0.2",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
+    "@studix/auth": "workspace:*",
+    "@studix/core": "workspace:*",
+    "@studix/database": "workspace:*",
+    "@studix/mcp-gateway": "workspace:*",
+    "@studix/observability": "workspace:*",
+    "@studix/shared": "workspace:*",
+    "@studix/skills": "workspace:*",
+    "@studix/storage": "workspace:*",
+    "@studix/video-ir": "workspace:*",
+    "express": "5.3.0",
+    "tsx": "4.23.15",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@studix/mock-mcp": "workspace:*",
+    "@studix/renderers": "workspace:*",
+    "@types/express": "5.0.6",
+    "vitest": "5.0.5"
+  }
+}

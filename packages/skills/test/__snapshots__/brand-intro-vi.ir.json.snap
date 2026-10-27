@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "title": "Sương Mai Coffee",
+  "language": "vi",
+  "format": {
+    "aspectRatio": "9:16",
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "durationMs": 12000
+  },
+  "brand": {
+    "name": "Sương Mai Coffee",
+    "tagline": "Cà phê rang mộc từ Cầu Đất",
+    "palette": {
+      "primary": "#6b3e26",
+      "secondary": "#d9a066",
+      "accent": "#f2c94c",
+      "background": "#1c1410",
+      "foreground": "#fbf6ef"
+    },
+    "fonts": {
+      "heading": "Be Vietnam Pro",
+      "body": "Be Vietnam Pro"
+    }
+  },
+  "assets": [],
+  "scenes": [
+    {
+      "id": "title",
+      "role": "intro",
+      "durationMs": 3000,
+      "background": {
+        "color": "background"
+      },
+      "shots": [
+        {
+          "id": "title-card",
+          "startMs": 0,
+          "durationMs": 3000,
+          "style": {
+            "textStyle": "display",
+            "color": "foreground",
+            "align": "center",
+            "region": "middle"
+          },
+          "animation": {
+            "enter": "scale",
+            "durationMs": 500
+          },
+          "type": "title",
+          "text": "Sương Mai\nCoffee",
+          "subtitle": "Cà phê rang mộc từ Cầu Đất"
+        }
+      ],
+      "transitionOut": {
+        "kind": "fade",
+        "durationMs": 300
+      }
+    },
+    {
+      "id": "message-1",
+      "role": "feature",
+      "durationMs": 3000,
+      "background": {
+        "color": "primary"
+      },
+      "shots": [
+        {
+          "id": "message-1-text",
+          "startMs": 0,
+          "durationMs": 3000,
+          "style": {
+            "textStyle": "heading",
+            "color": "foreground",
+            "align": "center",
+            "region": "middle"
+          },
+          "animation": {
+            "enter": "slide-up",
+            "durationMs": 400
+          },
+          "type": "text",
+          "text": "100% Arabica trồng ở\nđộ cao 1.500m trên\ncao nguyên Lâm Đồng"
+        }
+      ],
+      "transitionOut": {
+        "kind": "slide",
+        "durationMs": 300
+      }
+    },
+    {
+      "id": "message-2",
+      "role": "feature",
+      "durationMs": 3000,
+      "background": {
+        "color": "background"
+      },
+      "shots": [
+        {
+          "id": "message-2-text",
+          "startMs": 0,
+          "durationMs": 3000,
+          "style": {
+            "textStyle": "heading",
+            "color": "foreground",
+            "align": "center",
+            "region": "middle"
+          },
+          "animation": {
+            "enter": "slide-up",
+            "durationMs": 400
+          },
+          "type": "text",
+          "text": "Rang mới mỗi tuần,\ngiao tận nơi\ntrong 24 giờ"
+        }
+      ],
+      "transitionOut": {
+        "kind": "fade",
+        "durationMs": 300
+      }
+    },
+    {
+      "id": "outro",
+      "role": "cta",
+      "durationMs": 3000,
+      "background": {
+        "color": "primary"
+      },
+      "shots": [
+        {
+          "id": "outro-logo",
+          "startMs": 0,
+          "durationMs": 3000,
+          "style": {
+            "textStyle": "heading",
+            "color": "accent",
+            "align": "center",
+            "region": "top"
+          },
+          "animation": {
+            "enter": "fade",
+            "durationMs": 400
+          },
+          "type": "logo",
+          "text": "Sương Mai Coffee"
+        },
+        {
+          "id": "outro-cta",
+          "startMs": 400,
+          "durationMs": 2600,
+          "style": {
+            "textStyle": "heading",
+            "color": "foreground",
+            "align": "center",
+            "region": "middle",
+            "emphasis": "high"
+          },
+          "animation": {
+            "enter": "pop",
+            "durationMs": 400
+          },
+          "type": "cta",
+          "text": "Đặt ngay hôm nay"
+        }
+      ]
+    }
+  ],
+  "timeline": {
+    "entries": [
+      {
+        "sceneId": "title",
+        "startMs": 0
+      },
+      {
+        "sceneId": "message-1",
+        "startMs": 3000
+      },
+      {
+        "sceneId": "message-2",
+        "startMs": 6000
+      },
+      {
+        "sceneId": "outro",
+        "startMs": 9000
+      }
+    ]
+  },
+  "metadata": {
+    "template": "brand-intro",
+    "templateVersion": 1,
+    "notes": [
+      "1 key message(s) left out to fit 2 message scenes"
+    ]
+  }
+}

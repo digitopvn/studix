@@ -1,0 +1,12 @@
+{
+  // Fronts the TOSE staging app with the public hostname. TOSE's Development cluster only serves
+  // *.local.diginext.site hosts, so this Worker owns app.studix.digitop.ai and forwards every
+  // request (UI, /api, /mcp streaming) to the TOSE default domain unchanged.
+  // Account id is not stored here; wrangler reads CLOUDFLARE_ACCOUNT_ID from the environment.
+  "name": "studix-app-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "vars": { "STUDIX_UPSTREAM_ORIGIN": "https://wearetopgroup-studix-app.local.diginext.site" },
+  "routes": [{ "pattern": "app.studix.digitop.ai", "custom_domain": true }],
+  "observability": { "enabled": true }
+}

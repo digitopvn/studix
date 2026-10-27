@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/.wrangler
+**/.data
+**/coverage
+**/*.log
+.git
+.github
+.claude
+.env
+.env.*
+!.env.example
+plans
+tmp

@@ -1,0 +1,141 @@
+{
+  "$id": "studix:video-ir-patch",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "ops": {
+      "minItems": 1,
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "add"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^(\\/[^/]*)+$"
+              },
+              "value": {}
+            },
+            "required": [
+              "op",
+              "path",
+              "value"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "remove"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^(\\/[^/]*)+$"
+              }
+            },
+            "required": [
+              "op",
+              "path"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "replace"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^(\\/[^/]*)+$"
+              },
+              "value": {}
+            },
+            "required": [
+              "op",
+              "path",
+              "value"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "move"
+              },
+              "from": {
+                "type": "string",
+                "pattern": "^(\\/[^/]*)+$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^(\\/[^/]*)+$"
+              }
+            },
+            "required": [
+              "op",
+              "from",
+              "path"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "copy"
+              },
+              "from": {
+                "type": "string",
+                "pattern": "^(\\/[^/]*)+$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^(\\/[^/]*)+$"
+              }
+            },
+            "required": [
+              "op",
+              "from",
+              "path"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "test"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^(\\/[^/]*)+$"
+              },
+              "value": {}
+            },
+            "required": [
+              "op",
+              "path",
+              "value"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "ops"
+  ]
+}

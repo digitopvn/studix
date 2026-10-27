@@ -1,0 +1,36 @@
+# STUDIX_ROLE=worker: claims jobs from Postgres, renders with HyperFrames + FFmpeg, uploads to S3.
+# Jobs survive pod restarts: leases expire and another worker resumes from the last checkpoint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studix-worker
+  labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: studix
+          env:
+            - { name: STUDIX_ROLE, value: worker }
+            - { name: STUDIX_MIGRATE_ON_START, value: "false" }
+          envFrom:
+            - secretRef: { name: studix-env }
+          ports:
+            - { name: health, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "1", memory: 1536Mi }
+            limits: { cpu: "2", memory: 3Gi }

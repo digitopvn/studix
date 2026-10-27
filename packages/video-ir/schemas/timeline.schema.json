@@ -1,0 +1,65 @@
+{
+  "$id": "studix:timeline",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "entries": {
+      "minItems": 1,
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "startMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600000
+          }
+        },
+        "required": [
+          "sceneId",
+          "startMs"
+        ]
+      }
+    },
+    "markers": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "atMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600000
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "id",
+          "atMs",
+          "label"
+        ]
+      }
+    }
+  },
+  "required": [
+    "entries"
+  ]
+}

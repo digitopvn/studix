@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Studix marketing site: static assets served by a small Worker. The Worker runs first so it can
+  // add security headers, answer /healthz and /config.json, and inject the app URL into the HTML.
+  // Account id is not stored here; wrangler reads CLOUDFLARE_ACCOUNT_ID from the environment.
+  "name": "studix-marketing",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "vars": { "STUDIX_APP_URL": "https://app.studix.digitop.ai" },
+  "routes": [{ "pattern": "studix.digitop.ai", "custom_domain": true }],
+  "observability": { "enabled": true }
+}
