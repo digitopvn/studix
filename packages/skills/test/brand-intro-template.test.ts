@@ -35,7 +35,7 @@ describe("brandIntroTemplate golden", () => {
     const ir = brandIntroTemplate(deepFreeze(structuredClone(viBrief)));
     expect(validateVideoIR(ir).ok).toBe(true);
     await expect(`${JSON.stringify(ir, null, 2)}\n`).toMatchFileSnapshot(
-      "./__snapshots__/brand-intro-vi.ir.json",
+      "./__snapshots__/brand-intro-vi.ir.json.snap",
     );
   });
 
