@@ -13,12 +13,18 @@
     "@studix/billing": "workspace:*",
     "@studix/core": "workspace:*",
     "@studix/database": "workspace:*",
+    "@studix/decision-routing": "workspace:*",
+    "@studix/mcp-gateway": "workspace:*",
+    "@studix/observability": "workspace:*",
+    "@studix/renderers": "workspace:*",
     "@studix/shared": "workspace:*",
+    "@studix/skills": "workspace:*",
+    "@studix/storage": "workspace:*",
+    "@studix/video-ir": "workspace:*",
     "@studix/workflow": "workspace:*",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@studix/video-ir": "workspace:*",
     "tsx": "4.23.15",
     "vitest": "5.0.5"
   }
