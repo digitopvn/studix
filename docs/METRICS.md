@@ -45,26 +45,35 @@ below say which one they count.
 
 ## Baseline results
 
-Values are filled from the staging demo run. Each filled row must cite its
-evidence (trace query or test run) and the commit measured.
+Measured on TOSE staging (`app.studix.digitop.ai`, Development server) at commit
+`9f0fc42`, 2026-10-27, from six `studix_create_video` jobs (the demo prompt in
+`apps/mcp-server/scripts/smoke-video.ts`, decision route
+`video.brief=openrouter>rules`, model `openai/gpt-4o-mini`). Server times come
+from `jobs.created_at` to `jobs.finished_at`; decision rows come from
+`usage_events` of kind `provider.decision` (their `metadata` carries provider,
+model, latency and tokens). Small sample: treat as a smoke baseline, not an SLO.
 
-| Metric                             | Value               | Sample  | Evidence |
-| ---------------------------------- | ------------------- | ------- | -------- |
-| Brief-to-preview latency (p50/p95) | pending measurement | pending | pending  |
-| Job success rate                   | pending measurement | pending | pending  |
-| Approval rate                      | pending measurement | pending | pending  |
-| Model calls per job                | pending measurement | pending | pending  |
-| Cost per job                       | pending measurement | pending | pending  |
-| Retries per job                    | pending measurement | pending | pending  |
-| User steps                         | pending measurement | pending | pending  |
-| Decision latency (p50/p95)         | pending measurement | pending | pending  |
-| Schema-valid rate                  | pending measurement | pending | pending  |
-| Provider success rate              | pending measurement | pending | pending  |
-| Fallback rate                      | pending measurement | pending | pending  |
-| Cost per decision                  | pending measurement | pending | pending  |
-| Tool search latency (p50/p95)      | pending measurement | pending | pending  |
-| Tool inspect latency (p50/p95)     | pending measurement | pending | pending  |
-| Tool execute latency (p50/p95)     | pending measurement | pending | pending  |
-| Downstream success rate            | pending measurement | pending | pending  |
-| Deny rate                          | pending measurement | pending | pending  |
-| `tools/list` size (tools / bytes)  | pending measurement | pending | pending  |
+| Metric                             | Value                                         | Sample                     | Evidence                                                                                            |
+| ---------------------------------- | --------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------- |
+| Brief-to-preview latency (p50/p95) | 17.6 s / 19.7 s server; 41-54 s at the client | 5 succeeded jobs           | `jobs` timestamps; client time from `pnpm smoke` includes sign-up                                   |
+| Job success rate                   | 5/6 (83%)                                     | 6 jobs                     | The failure was the restart bug fixed in `f033ed0`; 5/5 after the fix                               |
+| Approval rate                      | not applicable                                | 0 publish requests         | Staging demo does not publish                                                                       |
+| Model calls per job                | 1                                             | 6 jobs                     | One `provider.decision` usage event per job                                                         |
+| Cost per job                       | 0.0103 cents (model only)                     | 6 jobs, 0.0618 cents total | `usage_events.cost_cents`; render and storage are not priced yet                                    |
+| Retries per job                    | 0                                             | 5 succeeded jobs           | `jobs.attempts = 1`, every stage `attempt = 1`                                                      |
+| User steps                         | 1 create + polls                              | 6 jobs                     | `studix_create_video` then `studix_get_job` until `succeeded`                                       |
+| Decision latency (p50/p95)         | 2.22 s / 2.77 s                               | 6 decisions                | `usage_events.metadata.latencyMs`                                                                   |
+| Schema-valid rate                  | 6/6                                           | 6 decisions                | Every decision served first try, no retry recorded                                                  |
+| Provider success rate              | 6/6 (openrouter, `openai/gpt-4o-mini`)        | 6 decisions                | `usage_events.metadata.provider`                                                                    |
+| Fallback rate                      | 0/6                                           | 6 decisions                | No decision served by `rules`                                                                       |
+| Cost per decision                  | 0.0103 cents (445 in / 62 out tokens)         | 6 decisions                | `usage_events`                                                                                      |
+| Tool search latency (p50/p95)      | not measured on staging                       | none                       | Covered functionally by the gateway integration tests                                               |
+| Tool inspect latency (p50/p95)     | not measured on staging                       | none                       | As above                                                                                            |
+| Tool execute latency (p50/p95)     | not measured on staging                       | none                       | As above                                                                                            |
+| Downstream success rate            | not measured on staging                       | none                       | As above                                                                                            |
+| Deny rate                          | not measured on staging                       | none                       | As above                                                                                            |
+| `tools/list` size (tools / bytes)  | 9 tools                                       | every smoke run            | `pnpm smoke` output; the gateway integration test asserts downstream tools stay out of `tools/list` |
+
+Output per job: a 6 s, 1080x1920 MP4 of 143,372 bytes, rendered in about 13 s
+of wall time by one worker with 4 GiB memory (HyperFrames low-memory profile,
+software GPU).

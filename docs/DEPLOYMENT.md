@@ -11,7 +11,7 @@ config, `infra/` and the GitHub Actions workflows under `.github/workflows/`.
 | Surface                  | Where                                                            | Hostname                 |
 | ------------------------ | ---------------------------------------------------------------- | ------------------------ |
 | Marketing                | Cloudflare Worker static assets (account `digitop.vn@gmail.com`) | `studix.digitop.ai`      |
-| App (UI, `/api`, `/mcp`) | TOSE project `studix-app`                                        | `app.studix.digitop.ai`  |
+| App (UI, `/api`, `/mcp`) | TOSE project `studix-app`, fronted by Worker `studix-app-proxy`  | `app.studix.digitop.ai`  |
 | Worker                   | TOSE project `studix-worker`                                     | none (no public ingress) |
 | Database                 | TOSE managed PostgreSQL                                          | private                  |
 | Artifacts                | Cloudflare R2 bucket `studix-staging`                            | presigned URLs only      |
@@ -75,56 +75,100 @@ Helm/K8s manifests, when present, live under `infra/`.
 
 ## TOSE staging
 
-To be verified at deploy time: TOSE's build model (Dockerfile per project,
-build args), running a project without an exposed port (worker), probe
-configuration, secret injection, long-running jobs, SSE/streaming through
-ingress, egress, and rollback mechanics. Record evidence or open a blocker
-issue; do not mark this section verified from docs alone.
+Verified 2026-10-27 by deploying, running the smoke test and restarting the
+worker mid-render (evidence in issue #1 and [METRICS.md](METRICS.md)).
 
-- Workspace: `wearetopgroup` on DigitalOcean Kubernetes (`sgp1`). The workspace
-  hosts other production projects: touch only resources prefixed `studix-`.
-- Projects: `studix-app` (`STUDIX_ROLE=app`, HTTP port exposed) and
-  `studix-worker` (`STUDIX_ROLE=worker`). Both build from the root `Dockerfile`.
-- Auto-deploy: git-connected to the repo branch; a push triggers build and
-  deploy of both projects.
-- Database: TOSE managed PostgreSQL; its connection URL is injected into both
-  projects.
-- Storage: R2 bucket `studix-staging`; R2 credentials injected into both.
-- Domain: `app.studix.digitop.ai` is a Cloudflare DNS CNAME to the TOSE default
-  domain of `studix-app`; TLS terminates at TOSE ingress.
-- Probes on `studix-app`: liveness `GET /healthz` (process up), readiness
-  `GET /readyz` (database and storage reachable). Worker liveness depends on the
-  TOSE capability found above.
+- Workspace `wearetopgroup`, **Development** server. The workspace hosts other
+  production projects: touch only resources prefixed `studix-`.
+- Projects `studix-app` and `studix-worker`, both built by TOSE from the root
+  `Dockerfile` (linux/amd64) and git-connected to the deployed branch; a push
+  rebuilds and redeploys both. The worker has no public ingress; its
+  `/healthz` listens on `WORKER_HEALTH_PORT` (8081) inside the pod.
+- Database: TOSE managed PostgreSQL `studix-staging-pg` (`tose db list`). Both
+  projects get its internal connection URL as `DATABASE_URL`. The app applies
+  migrations on start (`STUDIX_MIGRATE_ON_START=true` on the app only).
+- Storage: R2 bucket `studix-staging`, S3 API with path-style addressing.
+- Secrets: set per project with `tose env push <file> --project <name>` from a
+  file outside the repo (mode 600, deleted afterwards). Both projects share
+  `BETTER_AUTH_SECRET`. Names are listed in `.env.example`; the staging-specific
+  ones are `STUDIX_ROLE`, `STUDIX_ALLOWED_HOSTS` (the TOSE default host, so the
+  proxy's upstream requests pass the host check) and `STUDIX_TRUST_PROXY=2`
+  (Cloudflare plus TOSE ingress).
+
+### Public hostname through a Cloudflare Worker
+
+TOSE's Development server only accepts custom domains one label below its dev
+base domain (`*.local.diginext.site`), so `app.studix.digitop.ai` cannot be
+attached to the project directly. The Worker in `deploy/cloudflare-app-proxy`
+owns that hostname as a Cloudflare custom domain and forwards every request
+(UI, `/api`, `/mcp` streaming) to `STUDIX_UPSTREAM_ORIGIN`, the project's TOSE
+default domain, setting `x-forwarded-host` and `x-forwarded-proto`.
+
+```bash
+cd deploy/cloudflare-app-proxy
+npx wrangler@4 deploy        # needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in the environment
+```
+
+Moving the project to a TOSE Production server would allow attaching the
+domain directly and retiring the Worker; that needs its own database and
+billing decision.
+
+### Worker shutdown
+
+On SIGTERM the worker stops claiming, lets the running attempt finish within
+the grace period, then aborts and releases the lease so another pod reclaims
+the job. An attempt that fails while the pool is draining (for example because
+Puppeteer closes Chrome on SIGTERM) is released, not failed
+(`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
+staging: `tose restart studix-worker` during a render left the job
+`succeeded` at attempt 1.
 
 ## Smoke test
 
 Run after every deploy, against the public hostname:
 
-1. `curl -sf https://app.studix.digitop.ai/healthz` and `/readyz` return 200.
-2. Dashboard loads and a test user can sign in.
-3. An MCP client lists tools at `https://app.studix.digitop.ai/mcp` with a
-   staging `stx_` key; a request without a key returns `UNAUTHENTICATED`.
-4. `studix_create_video` with the demo Vietnamese prompt returns a `jobId`;
-   `studix_get_job` reaches a preview URL that plays and expires as configured.
-5. Restart the worker mid-job; the job resumes and completes once.
-6. `curl -sI https://studix.digitop.ai` returns 200.
+```bash
+curl -sf https://app.studix.digitop.ai/healthz && curl -sf https://app.studix.digitop.ai/readyz
+STUDIX_SMOKE_URL=https://app.studix.digitop.ai pnpm --filter @studix/mcp-server smoke
+curl -sI https://studix.digitop.ai
+```
+
+`pnpm smoke` signs up a throwaway user, creates a staging `stx_` key, lists the
+MCP tools, calls `studix_create_video` with the Vietnamese demo prompt, polls
+`studix_get_job`, downloads the MP4 and reads the same project and job through
+the dashboard API. It prints ids, timings and sizes, never the key. To check a
+restart, run it and `tose restart studix-worker -y` once the job's render stage
+is running; the job must still end `succeeded`.
 
 ## Rollback
 
-- App and worker: redeploy the previous successful deployment of `studix-app`
-  and `studix-worker` in TOSE (exact control to be verified at deploy time).
-  Roll both back to the same commit.
+- App and worker: in the TOSE dashboard open each project's **Deployments**
+  tab and redeploy the previous successful deployment, or push a revert to the
+  deployed branch. Roll both projects back to the same commit.
 - Migrations are forward-only. Write them expand-then-contract so the previous
   image still runs against the new schema; that is what makes a code rollback
   safe without a database restore.
-- Marketing: redeploy the previous Worker version with Wrangler or the
-  Cloudflare dashboard.
+- Proxy Worker and marketing: `npx wrangler@4 rollback` in the Worker's
+  directory, or pick the previous version in the Cloudflare dashboard.
+- Configuration: `tose env push` the previous file, then `tose redeploy <project> -y`
+  (redeploys without rebuilding).
 
 ## Runbook
+
+```bash
+export TOSE_WORKSPACE=wearetopgroup
+tose status studix-app --json          # pods and health
+tose logs studix-worker                # live or build logs; runtime history is in the dashboard
+tose restart studix-worker -y          # restart pods, no rebuild
+tose redeploy studix-app -y            # redeploy current config
+tose db list --json                    # database id, then: tose db info <id> --json
+```
 
 | Symptom                 | Check                                                 | Action                                               |
 | ----------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
 | `/readyz` failing       | Database URL, managed Postgres status, R2 credentials | Fix secret or dependency; pods recover on next probe |
+| Hostname 5xx, TOSE fine | Proxy Worker logs (Cloudflare observability)          | Check `STUDIX_UPSTREAM_ORIGIN`; roll the Worker back |
+| `/mcp` rejects the host | `STUDIX_ALLOWED_HOSTS`, `STUDIX_APP_URL`              | Include the TOSE default host; redeploy              |
 | Jobs stay queued        | `studix-worker` running? recent worker logs           | Restart worker; leases expire and jobs are reclaimed |
 | Jobs fail at render     | Worker logs for Chromium/FFmpeg errors, memory limits | Raise worker resources or reduce concurrency         |
 | Preview URL 403         | URL expired or signing config changed                 | Call `studix_get_job` again for a fresh URL          |
@@ -138,8 +182,8 @@ Trace ids from MCP errors map to the dashboard trace view.
 
 Hostnames are configuration, so the cutover changes no business code:
 
-1. Attach `studix.io` (marketing) and `app.studix.io` (app) in Cloudflare and
-   TOSE alongside the old names.
+1. Attach `studix.io` (marketing Worker) and `app.studix.io` (proxy Worker
+   route, or the TOSE project on a Production server) alongside the old names.
 2. Update `STUDIX_PUBLIC_URL`, `STUDIX_APP_URL`, `STUDIX_MARKETING_URL`; the host
    allow-list, CORS, links and (later) OAuth redirect URIs derive from them.
 3. Redeploy, run the smoke test against the new hostnames.
