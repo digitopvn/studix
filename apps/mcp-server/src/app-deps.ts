@@ -1,0 +1,73 @@
+import type { ApiKeyService } from "@studix/auth";
+import type {
+  ActivityRepository,
+  JobRepository,
+  RenderRepository,
+  StudioService,
+  WorkspaceRepository,
+} from "@studix/core";
+import type { ActivityRecorder } from "@studix/observability";
+import type { Logger } from "@studix/shared";
+import type { TokenBucketOptions } from "./http/rate-limit.ts";
+import type {
+  ArtifactUrlSigner,
+  ConnectorAdmin,
+  DashboardAuthPort,
+  ReadinessCheck,
+  RegisterMetaTools,
+  SkillSummary,
+} from "./ports.ts";
+
+/** Product limits and defaults advertised by `studix_inspect` (values come from configuration). */
+export interface AppLimits {
+  defaultJobBudgetCents: number;
+  defaultJobDeadlineSeconds: number;
+  approvalCostThresholdCents: number;
+  signedUrlTtlSeconds: number;
+}
+
+/** Everything `createApp` needs. All adapters are injected; nothing here reads the environment. */
+export interface AppDeps {
+  logger: Logger;
+  /** Origin serving /mcp and /api (STUDIX_PUBLIC_URL). */
+  publicUrl: string;
+  /** Dashboard origin (STUDIX_APP_URL). */
+  appUrl: string;
+  /** Accepted Host header values (with or without port); see `allowedHosts()` in @studix/shared. */
+  allowedHosts: string[];
+
+  studio: StudioService;
+  repos: {
+    jobs: JobRepository;
+    renders: RenderRepository;
+    activity: ActivityRepository;
+    workspaces: WorkspaceRepository;
+  };
+  apiKeys: ApiKeyService;
+  dashboardAuth: DashboardAuthPort;
+  limits: AppLimits;
+
+  /** Artifact URL signing; without it playback URLs are reported as unavailable. */
+  storage?: ArtifactUrlSigner;
+  /** Workspace connectors (MCP-in-MCP); without it the connector API answers UNAVAILABLE. */
+  connectors?: ConnectorAdmin;
+  /** Meta-tool registration hook from the gateway; without it the meta-tools are not listed. */
+  metaTools?: RegisterMetaTools;
+  /** Activity/trace recorder for MCP and API mutations (best effort). */
+  activity?: ActivityRecorder;
+  /** Checks run by /readyz (database ping, storage, ...). */
+  readiness?: ReadinessCheck[];
+  /** Workflow templates listed by `studix_inspect`. */
+  skills?: SkillSummary[];
+
+  /** Built dashboard directory; when missing, browser navigations get a 503 page. */
+  dashboardDist?: string;
+  /** Extra origins media may load from in the dashboard CSP (object storage). */
+  mediaOrigins?: string[];
+  /** Express `trust proxy` setting (hop count) so rate limits see the client IP behind an ingress. */
+  trustProxy?: number | boolean;
+  rateLimits?: { auth?: TokenBucketOptions; mcp?: TokenBucketOptions; api?: TokenBucketOptions };
+}
+
+export const SERVER_NAME = "studix";
+export const SERVER_VERSION = "0.1.0";
