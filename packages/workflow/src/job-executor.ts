@@ -59,6 +59,13 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
   if (!Number.isInteger(deps.heartbeatIntervalMs) || deps.heartbeatIntervalMs < 10) {
     throw new RangeError("heartbeatIntervalMs must be an integer >= 10");
   }
+  const safetyMarginMs = Math.min(deps.heartbeatIntervalMs, LEASE_SAFETY_MARGIN_MS);
+  const { leaseMs } = deps.queue;
+  if (deps.heartbeatIntervalMs >= leaseMs - safetyMarginMs) {
+    throw new RangeError(
+      `heartbeatIntervalMs (${deps.heartbeatIntervalMs}) must be shorter than the lease (${leaseMs}) minus the safety margin (${safetyMarginMs})`,
+    );
+  }
   const registry = new Map(deps.workflows.map((w) => [w.kind, w]));
   const backoff = deps.retryBackoff ?? DEFAULT_RETRY_BACKOFF;
   const { queue, clock, logger } = deps;
@@ -108,8 +115,10 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       // Renew the lease every interval; after a failed beat retry sooner, so one database blip costs
       // nothing. A separate watchdog stops the attempt shortly before the lease would lapse (all beats
       // failing or hung): past that point another worker may claim the job and both would run it.
-      let leaseExpiresAt = job.leaseExpiresAt?.getTime();
-      const safetyMarginMs = Math.min(deps.heartbeatIntervalMs, LEASE_SAFETY_MARGIN_MS);
+      // The database applies a renewal no earlier than the moment it was sent, so the lease is valid
+      // until at least (send time + leaseMs). Both ends of that span are read from this worker's clock,
+      // which keeps the watchdog independent of the skew between worker and database clocks.
+      let leaseValidUntil = clock.now().getTime() + leaseMs;
       const retryMs = Math.min(Math.ceil(deps.heartbeatIntervalMs / 5), HEARTBEAT_RETRY_MS);
       let watchdog: ReturnType<typeof setTimeout> | undefined;
       // Set once the attempt settles: a beat still in flight then must not schedule more timers.
@@ -117,8 +126,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       const armWatchdog = () => {
         clearTimeout(watchdog);
         if (settled) return;
-        if (leaseExpiresAt === undefined) return;
-        const ms = leaseExpiresAt - safetyMarginMs - clock.now().getTime();
+        const ms = leaseValidUntil - safetyMarginMs - clock.now().getTime();
         watchdog = setTimeout(
           () => {
             log.warn("lease could not be renewed in time, abandoning the attempt");
@@ -135,16 +143,15 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
         if (stop || settled) return;
         // Armed from the first beat on: a beat that hangs or keeps failing must not outlive the lease.
         if (watchdog === undefined) armWatchdog();
+        const sentAt = clock.now().getTime();
         queue
           .heartbeat(job, workerId)
           .then((hb) => {
             if (settled) return;
             if (!hb.held) return abort("lease_lost");
             if (hb.cancelRequested) return abort("cancel");
-            if (hb.leaseExpiresAt) {
-              leaseExpiresAt = hb.leaseExpiresAt.getTime();
-              armWatchdog();
-            }
+            leaseValidUntil = sentAt + leaseMs;
+            armWatchdog();
             scheduleBeat(deps.heartbeatIntervalMs);
           })
           .catch((err) => {

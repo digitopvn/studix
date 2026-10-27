@@ -7,7 +7,7 @@ const { jobs, approvals } = schema;
 type JobSet = Partial<typeof jobs.$inferInsert>;
 
 export interface WorkerJobQueueOptions {
-  /** How long a claim is valid without a heartbeat. */
+  /** How long a claim is valid without a heartbeat. Lease expiry is evaluated on the database clock. */
   leaseMs: number;
   clock?: Clock;
 }
@@ -16,7 +16,7 @@ export interface HeartbeatResult {
   /** False when this worker no longer owns the job (lease expired and someone else claimed it). */
   held: boolean;
   cancelRequested: boolean;
-  /** The renewed lease expiry, when held. */
+  /** The renewed lease expiry on the database clock, when held. Informational: not comparable with the worker clock. */
   leaseExpiresAt?: Date;
 }
 
@@ -27,6 +27,8 @@ export interface HeartbeatResult {
  * new owner's state.
  */
 export interface WorkerJobQueue {
+  /** How long a claim or heartbeat keeps the lease, measured from the moment the database applies it. */
+  readonly leaseMs: number;
   /**
    * Claim the next runnable job: queued and due, or running with an expired lease (its worker died).
    * Increments attempts; jobs at maxAttempts are never claimed (see failExhaustedLeases).
@@ -56,7 +58,10 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     throw new RangeError("leaseMs must be an integer >= 100");
   }
   const clock = options.clock ?? systemClock;
-  const leaseUntil = () => new Date(clock.now().getTime() + options.leaseMs);
+  // Lease expiry is written and compared with the database clock so worker clock skew cannot make one
+  // worker steal a live lease or keep a dead one alive. `now()` is the transaction start, which is the
+  // statement itself here.
+  const leaseUntil = () => sql`now() + ${options.leaseMs} * interval '1 millisecond'`;
 
   const owned = (job: Job, workerId: string): SQL =>
     and(
@@ -78,6 +83,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
   };
 
   return {
+    leaseMs: options.leaseMs,
+
     async claim(workerId) {
       const now = clock.now();
       const candidate = db
@@ -87,7 +94,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           and(
             or(
               and(eq(jobs.status, "queued"), lte(jobs.runAfter, now)),
-              and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, now)),
+              and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, sql`now()`)),
             ),
             lt(jobs.attempts, jobs.maxAttempts),
           ),
@@ -164,7 +171,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         .where(
           and(
             eq(jobs.status, "running"),
-            lt(jobs.leaseExpiresAt, now),
+            lt(jobs.leaseExpiresAt, sql`now()`),
             sql`${jobs.attempts} >= ${jobs.maxAttempts}`,
           ),
         )
