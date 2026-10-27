@@ -30,7 +30,7 @@ async function post(path: string, body: unknown, cookie?: string): Promise<Respo
   });
 }
 
-async function createApiKey(): Promise<string> {
+async function createApiKey(): Promise<{ key: string; cookie: string }> {
   const id = randomBytes(6).toString("hex");
   const signUp = await post("/api/auth/sign-up/email", {
     email: `smoke-${id}@studix.invalid`,
@@ -44,7 +44,24 @@ async function createApiKey(): Promise<string> {
     .join("; ");
   const created = await post("/api/api-keys", { name: `smoke-${id}` }, cookie);
   if (created.status !== 201) throw new Error(`api key creation failed with HTTP ${created.status}`);
-  return ((await created.json()) as { secret: string }).secret;
+  return { key: ((await created.json()) as { secret: string }).secret, cookie };
+}
+
+/** Read the same project and job through the dashboard API the UI uses, as the signed-in user. */
+async function checkDashboard(cookie: string, projectId: string, jobId: string): Promise<void> {
+  const get = async (path: string) => {
+    const res = await fetch(`${base}${path}`, { headers: { cookie, origin: base } });
+    if (res.status !== 200) throw new Error(`dashboard ${path} returned HTTP ${res.status}`);
+    return res.json();
+  };
+  const project = (await get(`/api/projects/${projectId}`)) as { renders: { url?: string }[] };
+  const job = (await get(`/api/jobs/${jobId}`)) as { activity: unknown[] };
+  const playable = project.renders.find((r) => r.url);
+  if (!playable?.url) throw new Error("dashboard project has no playable render");
+  const res = await fetch(playable.url, { headers: { range: "bytes=0-1023" } });
+  console.log(
+    `dashboard: project ${project.renders.length} render(s), job ${job.activity.length} activity event(s); player source HTTP ${res.status} ${res.headers.get("content-type")}`,
+  );
 }
 
 async function call(client: Client, name: string, args: Record<string, unknown>): Promise<Envelope> {
@@ -55,7 +72,7 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 const started = Date.now();
 const health = await fetch(`${base}/healthz`);
 console.log(`healthz: HTTP ${health.status}`);
-const key = await createApiKey();
+const { key, cookie } = await createApiKey();
 const client = new Client({ name: "studix-smoke", version: "1.0.0" });
 await client.connect(
   new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
@@ -88,4 +105,5 @@ const bytes = (await mp4.arrayBuffer()).byteLength;
 console.log(
   `job ${jobId} succeeded in ${seconds}s; video HTTP ${mp4.status}, ${mp4.headers.get("content-type")}, ${bytes} bytes`,
 );
+await checkDashboard(cookie, String(created.data?.projectId), jobId);
 await client.close();
