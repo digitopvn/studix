@@ -52,6 +52,11 @@ Measured on TOSE staging (`app.studix.digitop.ai`, Development server) at commit
 from `jobs.created_at` to `jobs.finished_at`; decision rows come from
 `usage_events` of kind `provider.decision` (their `metadata` carries provider,
 model, latency and tokens). Small sample: treat as a smoke baseline, not an SLO.
+The worker now also writes one `provider_executions` row per decision attempt
+(retries, fallbacks and failures included, operation `decision.<kind>`) and links
+the winning attempt from the usage event's `provider_execution_id`; measurements
+taken after that change should read latency, schema-valid and fallback rates from
+`provider_executions` instead of `usage_events.metadata`.
 
 | Metric                             | Value                                         | Sample                     | Evidence                                                                                            |
 | ---------------------------------- | --------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------- |
