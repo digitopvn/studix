@@ -106,7 +106,19 @@ const withoutFinalPeriod = (s: string) => s.replace(/\.+$/u, "").trim();
 /** Extract a BriefDraft from a free-form prompt. Pure and deterministic. */
 export function draftBriefFromPrompt(prompt: string): BriefDraft {
   const sentences = sentencesOf(prompt);
-  const [instruction = "", ...rest] = sentences;
+  const [first = "", ...afterFirst] = sentences;
+  // "Make a video for X: point one, point two." carries its messages after the colon.
+  const colon = first.indexOf(":");
+  const instruction = colon > 0 ? first.slice(0, colon) : first;
+  const inlineItems =
+    colon > 0
+      ? first
+          .slice(colon + 1)
+          .split(/[,;]/u)
+          .map((item) => normalizeText(item))
+          .filter((item) => item.length > 0)
+      : [];
+  const rest = [...inlineItems, ...afterFirst];
   const brandName = brandNameOf(sentences);
   const audience = AUDIENCE.exec(instruction)?.[1]?.trim();
   let callToAction: string | undefined;

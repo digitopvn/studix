@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { OpenRouterAdapter, type OpenRouterAdapterOptions } from "../src/index.ts";
 import {
   CONTRACT_INVALID_OUTPUT,
@@ -137,6 +138,16 @@ describe("OpenRouterAdapter wire protocol", () => {
     await expect(adapter({ fetch: inBody.fetch }).decide(contractRequest())).rejects.toMatchObject({
       code: "UNAVAILABLE",
     });
+  });
+
+  it("treats null and empty-string optional fields as absent", async () => {
+    const schema = z.object({ title: z.string().min(1), cta: z.string().min(1).optional() });
+    const scripted = createScriptedFetch(() =>
+      jsonResponse(200, completion(JSON.stringify({ title: "Sương Mai", cta: "", note: null }))),
+    );
+    const request = { ...contractRequest(), schema, jsonSchema: undefined };
+    const result = await adapter({ fetch: scripted.fetch }).decide(request as never);
+    expect(result.output).toEqual({ title: "Sương Mai" });
   });
 
   it("rejects a malformed configuration without echoing the key", () => {

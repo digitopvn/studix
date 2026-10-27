@@ -13,6 +13,14 @@ const VI_PROMPT =
   "Rang mới mỗi tuần. Giao tận nơi trong 24 giờ. Đặt ngay hôm nay!";
 
 describe("draftBriefFromPrompt", () => {
+  it("reads comma-separated messages after a colon in a one-sentence prompt", () => {
+    const draft = draftBriefFromPrompt(
+      "Làm video giới thiệu thương hiệu cà phê Sương Mai: rang mộc, vị đậm, giao nhanh trong 30 phút.",
+    );
+    expect(draft.brandName).toBe("Sương Mai");
+    expect(draft.keyMessages).toEqual(["rang mộc", "vị đậm", "giao nhanh trong 30 phút"]);
+  });
+
   it("extracts brand, messages, CTA, audience and format from a Vietnamese prompt", () => {
     const draft = draftBriefFromPrompt(VI_PROMPT);
     expect(draft).toEqual({

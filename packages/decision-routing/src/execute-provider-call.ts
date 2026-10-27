@@ -35,12 +35,28 @@ export interface ExecuteProviderCallOptions {
 
 export const ZERO_USAGE: TokenUsage = Object.freeze({ inputTokens: 0, outputTokens: 0 });
 
+/**
+ * Models often fill optional fields with `null` or `""` instead of omitting them (and strict
+ * structured output forces every key to be present). Treat those as absent before validation;
+ * required fields still fail because they end up missing.
+ */
+function dropEmptyValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(dropEmptyValues);
+  if (value === null || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === null || (typeof entry === "string" && entry.trim() === "")) continue;
+    out[key] = dropEmptyValues(entry);
+  }
+  return out;
+}
+
 function parseOutput<T>(invocation: ProviderInvocation, schema: z.ZodType<T>): T {
   const spend = { costCents: invocation.costCents, usage: invocation.usage, model: invocation.model };
   let value = invocation.raw;
   if (invocation.encoding === "json-text") {
     try {
-      value = JSON.parse(String(value));
+      value = dropEmptyValues(JSON.parse(String(value)));
     } catch {
       throw decisionError("PROVIDER_ERROR", "schema_invalid", "Provider returned output that is not JSON", {
         retryable: true,
