@@ -74,14 +74,23 @@ guide, the per-error value is authoritative.
 | `studix_create_video` | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly. |
 | `studix_get_job`      | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                            |
 | `studix_get_project`  | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                        |
+| `studix_cancel_job`   | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                           |
+| `studix_approve`      | Record a decision on a pending approval (for example `video.publish`). Only a human user may approve; an API key gets `FORBIDDEN`.                                                                                                 |
 
 Behavior notes:
 
 - Passing a host-authored spec skips internal planning; Studix does not pay a
   creative model a second time.
-- Without a spec, the planner is `DecisionRouter.decide("video.plan")`, falling
-  back to the deterministic brand-intro template
+- Without a spec, one `DecisionRouter.decide("video.brief")` call turns the
+  prompt into a brief draft (route set by `DECISION_ROUTES`, e.g.
+  `video.brief=openrouter>rules`; the rules fallback is free and deterministic),
+  then the brand-intro template builds the IR without a second model call
   ([ADR-0003](decisions/0003-jev-decision-provider-adapter-and-routing-fallback.md)).
+- `studix_create_video` inputs: `prompt` or `brief` (one is required), `spec`,
+  `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
+  past it the job fails with `TIMEOUT`), `renderPreset`.
+- Publishing is gated: a publish job waits in `waiting_approval` until a human
+  approves it in the dashboard.
 - Re-sending `studix_create_video` with the same idempotency key in the same
   workspace returns the original job instead of a new one.
 
@@ -185,32 +194,34 @@ await client.connect(
 );
 const job = await client.callTool({
   name: "studix_create_video",
-  arguments: { brief: "Video giới thiệu thương hiệu cà phê Sương Mai, 15 giây, dọc 9:16" },
+  arguments: { prompt: "Video giới thiệu thương hiệu cà phê Sương Mai, 15 giây, dọc 9:16" },
 });
 ```
 
-Argument names are illustrative; read them from `studix_inspect` or the tool's
-`inputSchema`. The repo's TS client test is the executable reference.
+The repo's TS client tests (`apps/mcp-server/test/*.integration.test.ts`) are
+the executable reference.
 
 ### Python SDK
 
 ```python
 import asyncio, os
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 async def main():
     headers = {"Authorization": f"Bearer {os.environ['STUDIX_API_KEY']}"}
-    async with streamablehttp_client("https://app.studix.digitop.ai/mcp", headers=headers) as (r, w, _):
-        async with ClientSession(r, w) as s:
-            await s.initialize()
-            print(await s.call_tool("studix_inspect", {}))
+    async with create_mcp_http_client(headers=headers) as http:
+        async with streamable_http_client("https://app.studix.digitop.ai/mcp", http_client=http) as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                print(await s.call_tool("studix_inspect", {}))
 
 asyncio.run(main())
 ```
 
-Check the import path against the pinned `mcp` package version; the repo's
-Python client test is the executable reference.
+Verified with `mcp==2.3.0`
+(`apps/mcp-server/test/python/python-sdk-smoke-client.py`, run by the
+integration suite through `uv`).
 
 ### Example prompt
 
