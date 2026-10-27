@@ -4,6 +4,7 @@ import {
   type ApprovalPolicy,
   type ApprovalRepository,
   decideFailClosed,
+  isReusableApproval,
   type Job,
   type TenantContext,
 } from "@studix/core";
@@ -48,20 +49,17 @@ export async function checkApprovalGate(
 
   const now = deps.clock.now();
   const settle = (latest: Approval | undefined): ApprovalGateResult | undefined => {
-    if (latest?.status === "approved" && latest.decidedBy?.type === "user") {
-      return { status: "approved", approval: latest };
-    }
-    if (latest?.status === "rejected") {
+    if (!latest || !isReusableApproval(latest, now)) return undefined;
+    if (latest.status === "rejected") {
       throw new StudixError("FORBIDDEN", `${gate.action} was rejected by a reviewer`, {
         retryable: false,
         details: { approvalId: latest.id, comment: latest.comment },
         suggestedAction: "Address the reviewer's comment and submit a new job.",
       });
     }
-    if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
-      return { status: "waiting", approval: latest };
-    }
-    return undefined;
+    return latest.status === "approved"
+      ? { status: "approved", approval: latest }
+      : { status: "waiting", approval: latest };
   };
 
   const settled = settle(await deps.approvals.findLatest(ctx, subject, gate.action));

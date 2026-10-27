@@ -1,4 +1,4 @@
-export { permissionForAction } from "./approval-operations.ts";
+export { isReusableApproval, permissionForAction } from "./approval-operations.ts";
 export type { CreateVideoProjectResult } from "./create-video-project.ts";
 export * from "./job-view.ts";
 export * from "./studio-service.ts";

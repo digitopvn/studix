@@ -3,6 +3,7 @@ import {
   type Approval,
   type ApprovalAction,
   actorRef,
+  isReusableApproval,
   type Job,
   type JobPatch,
   type TenantContext,
@@ -237,11 +238,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         const approvals = createApprovalRepository(tx, clock);
         const subject = { type: "job" as const, id: job.id };
         const latest = await approvals.findLatest(ctx, subject, request.action);
-        const reusable =
-          latest?.status === "rejected" ||
-          (latest?.status === "approved" && latest.decidedBy?.type === "user") ||
-          (latest?.status === "pending" && (latest.expiresAt ?? request.expiresAt) > clock.now());
-        if (latest && reusable) {
+        if (latest && isReusableApproval(latest, clock.now())) {
           approval = latest;
           return;
         }

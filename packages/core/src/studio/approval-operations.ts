@@ -39,6 +39,19 @@ export function isPendingAndLive(approval: Approval, now: Date): boolean {
   return approval.status === "pending" && (approval.expiresAt === undefined || approval.expiresAt > now);
 }
 
+/**
+ * Whether a gated action should act on this approval instead of opening a new request: a live pending
+ * one, a rejection, or a grant by a signed-in human. Anything else (expired, consumed, or approved by a
+ * non-human actor) needs a fresh request.
+ */
+export function isReusableApproval(approval: Approval, now: Date): boolean {
+  return (
+    isPendingAndLive(approval, now) ||
+    approval.status === "rejected" ||
+    (approval.status === "approved" && approval.decidedBy?.type === "user")
+  );
+}
+
 /** Create a pending approval, or return the live pending one for the same subject and action. */
 export async function openApproval(
   deps: Deps,

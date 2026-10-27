@@ -199,21 +199,30 @@ describe("fenced attempt writes", () => {
     expect(again?.id).toBe(first?.id);
     expect(await audits()).toHaveLength(1);
 
+    // The request lapses, so only the fence stands between a late worker and a second approval.
+    await repos.approvals.decide(ctx, first!.id, { status: "expired", decidedAt: new Date() });
+
     // Another worker reclaims the job; the stalled one can neither open a new approval nor write an audit.
     await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
     const fresh = await queue.claim("fresh");
     expect(await queue.openApproval(stale!, "stalled", request)).toBeUndefined();
     expect(await queue.openApproval(stale!, "fresh", request)).toBeUndefined();
-    expect((await queue.openApproval(fresh!, "fresh", request))?.id).toBe(first?.id);
     expect(await audits()).toHaveLength(1);
+    expect((await repos.approvals.list(ctx, { subject: { type: "job", id: job.id } })).items).toHaveLength(1);
+
+    // The current owner opens a fresh request, with exactly one new audit entry.
+    const reopened = await queue.openApproval(fresh!, "fresh", request);
+    expect(reopened?.id).not.toBe(first?.id);
+    expect(reopened?.status).toBe("pending");
+    expect(await audits()).toHaveLength(2);
 
     // Once the job is finished, a straggler leaves no orphan approval behind.
     expect(await queue.complete(fresh!, "fresh", {})).toBe(true);
-    expect(
-      await queue.openApproval(fresh!, "fresh", { ...request, expiresAt: new Date(Date.now() + 1) }),
-    ).toBe(undefined);
+    await repos.approvals.decide(ctx, reopened!.id, { status: "expired", decidedAt: new Date() });
+    expect(await queue.openApproval(fresh!, "fresh", request)).toBeUndefined();
     const all = await repos.approvals.list(ctx, { subject: { type: "job", id: job.id } });
-    expect(all.items).toHaveLength(1);
+    expect(all.items).toHaveLength(2);
+    expect(await audits()).toHaveLength(2);
   });
 });
 
