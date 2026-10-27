@@ -9,6 +9,7 @@ import {
   type ProjectRepository,
   type PublisherAdapter,
   type RendererAdapter,
+  type RenderRepository,
   type StorageAdapter,
   type TenantContext,
 } from "@studix/core";
@@ -172,7 +173,8 @@ export interface WorkerOptions {
   storage?: StorageAdapter;
   publisher?: PublisherAdapter;
   /** Read-side project repository the workflow sees (stage writes always go through the fenced commit). */
-  projects?: ProjectRepository;
+  projects?: Pick<ProjectRepository, "get" | "getVersion">;
+  renders?: Pick<RenderRepository, "get">;
   leaseMs?: number;
   heartbeatIntervalMs?: number;
   renderCentsPerSecond?: number;
@@ -201,7 +203,7 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
         renderer: options.renderer ?? fakeRenderer().renderer,
         storage: options.storage ?? fakeStorage().storage,
         projects: options.projects ?? repos.projects,
-        renders: repos.renders,
+        renders: options.renders ?? repos.renders,
         workRoot: mkdtempSync(join(tmpdir(), "studix-worker-test-")),
         renderCentsPerSecond: options.renderCentsPerSecond,
       }),

@@ -29,8 +29,9 @@ export interface VideoCreateWorkflowDeps {
   planner: Planner;
   renderer: RendererAdapter;
   storage: StorageAdapter;
-  projects: ProjectRepository;
-  renders: RenderRepository;
+  /** Read side only: every write goes through `StageContext.commit` so it is fenced by job ownership. */
+  projects: Pick<ProjectRepository, "get" | "getVersion">;
+  renders: Pick<RenderRepository, "get">;
   /** Local scratch root; each job attempt renders into `<workRoot>/<jobId>/attempt-<n>`. */
   workRoot: string;
   /** COGS per rendered output second (compute cost). Defaults to 0 until measured. */
@@ -107,33 +108,27 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
           const ir = irOf(s);
           const planned = read(PlanOutput, s.outputs.plan, "plan checkpoint");
           const payload = payloadOf(s);
-          let versionId = planned.versionId;
-          if (!versionId) {
-            // Deterministic id: a re-run after a crash finds the version instead of adding another.
-            const id = jobScopedId("pver", s.job.id);
-            const existing = await deps.projects.getVersion(s.ctx, id);
-            versionId = existing
-              ? existing.id
-              : await s.commit(
-                  async (repos, ctx) =>
-                    (
-                      await repos.projects.createVersion(ctx, {
-                        id,
-                        projectId: payload.projectId,
-                        ir,
-                        source: "planner",
-                        createdBy: { type: "system", id: ctx.actor.id },
-                      })
-                    ).id,
-                );
-          }
-          const resolved = versionId;
-          await s.commit((repos, ctx) =>
-            repos.projects.update(ctx, payload.projectId, {
-              currentVersionId: resolved,
+          // Deterministic id: a re-run after a crash finds the version instead of adding another.
+          const newVersionId = planned.versionId ? undefined : jobScopedId("pver", s.job.id);
+          const versionId = planned.versionId ?? (newVersionId as string);
+          const needsVersion =
+            newVersionId !== undefined && !(await deps.projects.getVersion(s.ctx, versionId));
+          // One commit: the version and the project pointing at it land together or not at all.
+          await s.commit(async (repos, ctx) => {
+            if (needsVersion) {
+              await repos.projects.createVersion(ctx, {
+                id: versionId,
+                projectId: payload.projectId,
+                ir,
+                source: "planner",
+                createdBy: { type: "system", id: ctx.actor.id },
+              });
+            }
+            await repos.projects.update(ctx, payload.projectId, {
+              currentVersionId: versionId,
               status: "rendering",
-            }),
-          );
+            });
+          });
           return { output: { versionId } };
         },
       },

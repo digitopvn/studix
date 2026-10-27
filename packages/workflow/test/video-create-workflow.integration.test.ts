@@ -158,6 +158,40 @@ describe("video.create workflow on Postgres", () => {
     expect((await repos.jobs.get(ctx, job.id))?.status).toBe("succeeded");
   });
 
+  it("does not create a render from a stalled worker after another worker finalized the job", async () => {
+    const ctx = await tenant(db.current, "stall-render");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const { repos } = db.current;
+    let wake!: () => void;
+    const frozen = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    // Worker A freezes in finalize after reading "no render yet".
+    const a = createTestWorker(db.current, "worker-a", {
+      renders: {
+        get: async () => {
+          await frozen;
+          return undefined;
+        },
+      },
+      leaseMs: 1500,
+      heartbeatIntervalMs: 60_000,
+    });
+    const claimed = (await a.queue.claim("worker-a"))!;
+    const aOutcome = a.executor.execute(claimed, "worker-a", a.shutdown.signal);
+    await waitFor(async () => (await repos.jobs.get(ctx, job.id))?.stage === "finalize");
+
+    const b = createTestWorker(db.current, "worker-b");
+    const reclaimed = await waitFor(() => b.queue.claim("worker-b"));
+    expect(await b.executor.execute(reclaimed, "worker-b", b.shutdown.signal)).toBe("succeeded");
+
+    wake();
+    // A's create is refused by the fence (a CONFLICT on the render id would mean it reached the table).
+    expect(await aOutcome).toBe("lease_lost");
+    expect((await repos.renders.listByProject(ctx, project.id)).items).toHaveLength(1);
+    expect((await repos.projects.get(ctx, project.id))?.status).toBe("in_review");
+  });
+
   it("abandons an attempt before its lease lapses when heartbeats keep failing", async () => {
     const ctx = await tenant(db.current, "hb-fail");
     const { job } = await enqueueCreate(db.current, ctx);
