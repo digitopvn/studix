@@ -15,6 +15,12 @@ jobs failed on startup. Studix already needs PostgreSQL as its system of record.
   `@studix/database`.
 - Workers claim with `SELECT ... FOR UPDATE SKIP LOCKED`, take a lease and
   extend it with a heartbeat. An expired lease makes the job claimable again.
+- Every write made on behalf of an attempt is fenced: it runs in a transaction that
+  locks the job row and checks `locked_by`, `attempts` and `status = running`, and
+  writes nothing otherwise. This covers job progress, stage rows and usage events,
+  and the project and render writes a stage makes through `StageContext.fenced`
+  (the stage's repositories are bound to that transaction). A stalled worker that
+  wakes after another worker reclaimed the job gets `lease_lost` and changes nothing.
 - Each stage writes a checkpoint; recovery resumes at the last completed stage.
 - Enqueue takes an idempotency key, unique per workspace.
 - Per-workspace concurrency, cancellation, timeout and budget are checked at
