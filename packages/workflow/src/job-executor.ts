@@ -1,8 +1,7 @@
 import type { Job, TenantContext } from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
 import { DEFAULT_RETRY_BACKOFF, type RetryBackoffOptions, retryDelayMs } from "./retry-backoff.ts";
-import { runStages, StageFailure, type StageRunnerDeps } from "./stage-runner.ts";
-import type { WorkerJobQueue } from "./worker-job-queue.ts";
+import { LeaseLostError, runStages, StageFailure, type StageRunnerDeps } from "./stage-runner.ts";
 import type { WorkflowDefinition } from "./workflow-types.ts";
 
 export type JobOutcome =
@@ -17,7 +16,6 @@ export type JobOutcome =
   | "lease_lost";
 
 export interface JobExecutorDeps extends StageRunnerDeps {
-  queue: WorkerJobQueue;
   workflows: readonly WorkflowDefinition[];
   /** How often the lease is renewed and cancellation is polled; must be well below the lease. */
   heartbeatIntervalMs: number;
@@ -136,14 +134,17 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
         : undefined;
 
       try {
-        const outcome = await runStages(deps, ctx, job, workflow, controller.signal);
+        const outcome = await runStages(deps, ctx, job, workerId, workflow, controller.signal);
         if (outcome.status === "waiting_approval") {
           log.info("job waits for approval", { approvalId: outcome.approval.id, stage: outcome.stage });
           return await settle(queue.park(job, workerId), "waiting_approval");
         }
         return await settle(queue.complete(job, workerId, outcome.result), "succeeded");
       } catch (err) {
-        if (stop === "lease_lost") return "lease_lost";
+        if (stop === "lease_lost" || err instanceof LeaseLostError) {
+          if (stop === undefined) log.warn("a stage write was refused, job lease lost");
+          return "lease_lost";
+        }
         if (stop === "shutdown" || (stop === undefined && draining?.aborted)) {
           if (stop === undefined)
             log.warn("job attempt failed while draining, releasing", { error: String(err) });

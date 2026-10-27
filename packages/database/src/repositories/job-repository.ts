@@ -1,7 +1,7 @@
 import type { Job, JobPatch, JobQueue, JobRepository, Stage, TenantContext } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
 import { asc, desc, eq, inArray } from "drizzle-orm";
-import type { StudixDb } from "../client.ts";
+import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
 
@@ -55,6 +55,40 @@ function toStage(row: StageRow): Stage {
     finishedAt: opt(row.finishedAt),
     createdAt: row.createdAt,
   };
+}
+
+/** Insert or update the stage row (jobId, name, attempt); the caller has already checked the job exists. */
+export async function upsertStageRow(
+  db: DbExecutor,
+  clock: Clock,
+  ctx: TenantContext,
+  input: Parameters<JobRepository["upsertStage"]>[1],
+): Promise<Stage> {
+  const values = {
+    status: input.status,
+    output: input.output ?? null,
+    error: input.error ?? null,
+    startedAt: input.startedAt ?? null,
+    finishedAt: input.finishedAt ?? null,
+  };
+  const rows = await db
+    .insert(stages)
+    .values({
+      id: newId("stg"),
+      ...tenantValues(ctx),
+      jobId: input.jobId,
+      name: input.name,
+      attempt: input.attempt,
+      ...values,
+      createdAt: clock.now(),
+    })
+    .onConflictDoUpdate({
+      target: [stages.jobId, stages.name, stages.attempt],
+      set: values,
+      setWhere: scoped(stages, ctx),
+    })
+    .returning();
+  return toStage(first(rows, "stage"));
 }
 
 /**
@@ -139,31 +173,7 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
     async upsertStage(ctx, input) {
       if (!(await getRow(ctx, input.jobId)))
         throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
-      const values = {
-        status: input.status,
-        output: input.output ?? null,
-        error: input.error ?? null,
-        startedAt: input.startedAt ?? null,
-        finishedAt: input.finishedAt ?? null,
-      };
-      const rows = await db
-        .insert(stages)
-        .values({
-          id: newId("stg"),
-          ...tenantValues(ctx),
-          jobId: input.jobId,
-          name: input.name,
-          attempt: input.attempt,
-          ...values,
-          createdAt: clock.now(),
-        })
-        .onConflictDoUpdate({
-          target: [stages.jobId, stages.name, stages.attempt],
-          set: values,
-          setWhere: scoped(stages, ctx),
-        })
-        .returning();
-      return toStage(first(rows, "stage"));
+      return upsertStageRow(db, clock, ctx, input);
     },
 
     async listStages(ctx, jobId) {

@@ -1,10 +1,21 @@
-import type { Job } from "@studix/core";
-import { type StudixDb, schema, toJob } from "@studix/database";
+import { createUsageLedger, type UsageInput } from "@studix/billing";
+import type { Job, JobPatch, TenantContext } from "@studix/core";
+import {
+  createUsageRepository,
+  type DbExecutor,
+  type StudixDb,
+  schema,
+  toJob,
+  upsertStageRow,
+} from "@studix/database";
 import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared";
 import { and, asc, eq, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
 
 const { jobs, approvals } = schema;
 type JobSet = Partial<typeof jobs.$inferInsert>;
+
+/** A stage row written on behalf of a claimed attempt (the tenant and job come from the job). */
+export type StageWrite = Omit<Parameters<typeof upsertStageRow>[3], "jobId" | "attempt">;
 
 export interface WorkerJobQueueOptions {
   /** How long a claim is valid without a heartbeat. */
@@ -33,6 +44,21 @@ export interface WorkerJobQueue {
    */
   claim(workerId: string): Promise<Job | undefined>;
   heartbeat(job: Job, workerId: string): Promise<HeartbeatResult>;
+  /**
+   * Fenced writes: each applies only while `workerId` still holds the job at this attempt (running,
+   * `locked_by` and `attempts` unchanged), atomically with the ownership check. They return false, and
+   * write nothing, once another worker has reclaimed the job, so a stalled process that resumes late
+   * cannot touch stage rows, progress, or spend of an attempt it no longer owns.
+   */
+  updateProgress(
+    job: Job,
+    workerId: string,
+    patch: Pick<JobPatch, "stage" | "progress" | "spentCents">,
+  ): Promise<boolean>;
+  /** Upsert the stage row (job, name, this attempt). */
+  writeStage(job: Job, workerId: string, stage: StageWrite): Promise<boolean>;
+  /** Record one usage event (idempotent by its dedupe key). */
+  recordUsage(job: Job, workerId: string, usage: UsageInput): Promise<boolean>;
   complete(job: Job, workerId: string, result: Record<string, unknown>): Promise<boolean>;
   fail(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
   cancel(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
@@ -67,6 +93,25 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       eq(jobs.attempts, job.attempts),
       eq(jobs.status, "running"),
     )!;
+
+  /** Run `write` in a transaction that holds the job row locked while ownership is verified. */
+  const fenced = async (
+    job: Job,
+    workerId: string,
+    write: (tx: DbExecutor, ctx: TenantContext) => Promise<unknown>,
+  ): Promise<boolean> => {
+    const ctx: TenantContext = {
+      organizationId: job.organizationId,
+      workspaceId: job.workspaceId,
+      actor: { type: "system", id: workerId },
+    };
+    return db.transaction(async (tx) => {
+      const held = await tx.select({ id: jobs.id }).from(jobs).where(owned(job, workerId)).for("update");
+      if (held.length === 0) return false;
+      await write(tx, ctx);
+      return true;
+    });
+  };
 
   const finish = async (job: Job, workerId: string, set: JobSet): Promise<boolean> => {
     const rows = await db
@@ -124,6 +169,24 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           }
         : { held: false, cancelRequested: false };
     },
+
+    updateProgress: (job, workerId, patch) =>
+      fenced(job, workerId, (tx) =>
+        tx
+          .update(jobs)
+          .set({ ...patch, updatedAt: clock.now() })
+          .where(eq(jobs.id, job.id)),
+      ),
+
+    writeStage: (job, workerId, stage) =>
+      fenced(job, workerId, (tx, ctx) =>
+        upsertStageRow(tx, clock, ctx, { ...stage, jobId: job.id, attempt: job.attempts }),
+      ),
+
+    recordUsage: (job, workerId, usage) =>
+      fenced(job, workerId, (tx, ctx) =>
+        createUsageLedger(createUsageRepository(tx, clock)).record(ctx, usage),
+      ),
 
     complete: (job, workerId, result) =>
       finish(job, workerId, {
