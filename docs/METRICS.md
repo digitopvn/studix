@@ -56,7 +56,10 @@ The worker now also writes one `provider_executions` row per decision attempt
 (retries, fallbacks and failures included, operation `decision.<kind>`) and links
 the winning attempt from the usage event's `provider_execution_id`; measurements
 taken after that change should read latency, schema-valid and fallback rates from
-`provider_executions` instead of `usage_events.metadata`.
+`provider_executions` instead of `usage_events.metadata`. A plan stage retried in
+the same worker replays the cached decision (`DecisionResult.replayed`) and reports
+the original execution id; the ledger keys that usage by the execution id rather
+than the attempt, so one provider call is billed once.
 
 | Metric                             | Value                                         | Sample                     | Evidence                                                                                            |
 | ---------------------------------- | --------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------- |

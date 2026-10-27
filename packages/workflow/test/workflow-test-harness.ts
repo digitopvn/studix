@@ -59,13 +59,20 @@ export async function waitFor<T>(
   throw new Error("waitFor timed out");
 }
 
-export function fakePlanner(options: { costCents?: number } = {}) {
+export function fakePlanner(options: { costCents?: number; providerExecutionId?: string } = {}) {
   const state = { calls: 0 };
   const planner: Planner = async () => {
     state.calls++;
     return {
       ir: fixtureIr,
-      usage: [{ provider: "fake", model: "fake-1", costCents: options.costCents ?? 1.5 }],
+      usage: [
+        {
+          provider: "fake",
+          model: "fake-1",
+          costCents: options.costCents ?? 1.5,
+          ...(options.providerExecutionId ? { providerExecutionId: options.providerExecutionId } : {}),
+        },
+      ],
     };
   };
   return { planner, state };
@@ -173,6 +180,26 @@ export interface WorkerOptions {
   leaseMs?: number;
   heartbeatIntervalMs?: number;
   renderCentsPerSecond?: number;
+  /** Fail the first N checkpoint writes that mark the plan stage succeeded (after its usage was recorded). */
+  failPlanCheckpoints?: number;
+}
+
+function failingPlanCheckpoint(jobs: TestDatabase["repos"]["jobs"], failures: number) {
+  if (failures <= 0) return jobs;
+  let left = failures;
+  return new Proxy(jobs, {
+    get(target, prop, receiver) {
+      if (prop !== "upsertStage") return Reflect.get(target, prop, receiver);
+      return async (...args: Parameters<typeof target.upsertStage>) => {
+        const [, input] = args;
+        if (input.name === "plan" && input.status === "succeeded" && left > 0) {
+          left--;
+          throw new StudixError("UNAVAILABLE", "checkpoint store temporarily unavailable");
+        }
+        return target.upsertStage(...args);
+      };
+    },
+  });
 }
 
 /** One simulated worker process over the test database. */
@@ -181,7 +208,7 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
   const queue = createWorkerJobQueue(db.db, { leaseMs: options.leaseMs ?? 30_000 });
   const executor = createJobExecutor({
     queue,
-    jobs: repos.jobs,
+    jobs: failingPlanCheckpoint(repos.jobs, options.failPlanCheckpoints ?? 0),
     approvals: repos.approvals,
     audit: repos.audit,
     approvalPolicy: createDefaultApprovalPolicy({ costThresholdCents: 1000 }),

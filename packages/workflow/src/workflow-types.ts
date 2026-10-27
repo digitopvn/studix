@@ -13,6 +13,12 @@ export interface StageUsage {
   unit: string;
   costCents: number;
   providerExecutionId?: string;
+  /**
+   * Set false when `item` identifies one real provider call (e.g. embeds the provider execution id): a
+   * retry that replays that call then maps to the same ledger event instead of billing it again.
+   * Default true: a re-run on a new attempt really incurred the cost again.
+   */
+  attemptScoped?: boolean;
   metadata?: Record<string, unknown>;
 }
 

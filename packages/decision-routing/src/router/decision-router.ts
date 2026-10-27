@@ -87,9 +87,12 @@ export class DecisionRouter implements DecisionProvider {
     if (!this.#cache) return this.#route(request, chain);
     const { tenant, kind, idempotencyKey } = request;
     const key = `${tenant.organizationId}:${tenant.workspaceId}:${kind}:${idempotencyKey}`;
-    return this.#cache.run(key, fingerprintOf({ input: request.input, version: request.schemaVersion }), () =>
-      this.#route(request, chain),
+    const { value, replayed } = await this.#cache.run(
+      key,
+      fingerprintOf({ input: request.input, version: request.schemaVersion }),
+      () => this.#route(request, chain),
     );
+    return replayed ? { ...value, replayed: true } : value;
   }
 
   #route<T>(request: DecisionRequest<T>, chain: DecisionProvider[]): Promise<DecisionResult<T>> {
@@ -165,7 +168,6 @@ export class DecisionRouter implements DecisionProvider {
                 ...request,
                 budgetCents: remainingBudget,
                 timeoutMs: remainingMs,
-                signal: deadline.signal,
               }),
               deadline.signal,
             ),

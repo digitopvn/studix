@@ -83,7 +83,10 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
           return {
             output: { ir: planned.ir },
             usage: planned.usage.map((u, i) => ({
-              item: `decision-${i}`,
+              // A decision replayed from the router cache (plan retried in the same worker) reports the
+              // original execution id, so keying on it keeps one ledger line per real provider call.
+              item: u.providerExecutionId ? `decision-${u.providerExecutionId}` : `decision-${i}`,
+              attemptScoped: !u.providerExecutionId,
               kind: USAGE_KINDS.providerDecision,
               quantity: 1,
               unit: "call",

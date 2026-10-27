@@ -69,7 +69,8 @@ export async function decideBriefDraft(
     instructions: INSTRUCTIONS,
     budgetCents: Math.max(0, Math.min(cap, ctx.maxCostCents ?? cap)),
     timeoutMs: options.timeoutMs ?? DEFAULT_BRIEF_DECISION_TIMEOUT_MS,
-    // Stable per job: a retried plan stage within one process reuses the decision instead of paying twice.
+    // Stable per job: a retried plan stage within one process reuses the decision instead of calling the
+    // provider again. The replay carries the original providerExecutionId, which the ledger dedupes on.
     idempotencyKey: `${ctx.jobId}:${VIDEO_BRIEF_DECISION}`,
     signal,
     jobId: ctx.jobId,

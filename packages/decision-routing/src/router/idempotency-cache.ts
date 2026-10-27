@@ -34,7 +34,8 @@ export function fingerprintOf(value: unknown): string {
 /**
  * In-process idempotency for decisions: concurrent and repeated calls with the same key share one
  * provider call and one bill. Failures are not cached, so a retry with the same key runs again.
- * Reusing a key with a different input is a CONFLICT. Durable, cross-process idempotency belongs to the
+ * `replayed` tells the caller its result came from an earlier or concurrent call, so it can avoid billing
+ * the same provider call again. Reusing a key with a different input is a CONFLICT. Durable, cross-process idempotency belongs to the
  * job layer that persists decision results.
  */
 export class IdempotencyCache {
@@ -49,7 +50,7 @@ export class IdempotencyCache {
     this.#maxEntries = Math.max(1, Math.floor(options.maxEntries ?? 1000));
   }
 
-  run<T>(key: string, fingerprint: string, work: () => Promise<T>): Promise<T> {
+  run<T>(key: string, fingerprint: string, work: () => Promise<T>): Promise<{ value: T; replayed: boolean }> {
     const now = this.#clock.now().getTime();
     const existing = this.#entries.get(key);
     if (existing && (existing.expiresAt === undefined || existing.expiresAt > now)) {
@@ -61,7 +62,7 @@ export class IdempotencyCache {
           }),
         );
       }
-      return existing.promise as Promise<T>;
+      return (existing.promise as Promise<T>).then((value) => ({ value, replayed: true }));
     }
     this.#entries.delete(key);
     const entry: Entry = { fingerprint, promise: Promise.resolve() };
@@ -78,7 +79,7 @@ export class IdempotencyCache {
     entry.promise = promise;
     this.#entries.set(key, entry);
     this.#evict();
-    return promise;
+    return promise.then((value) => ({ value, replayed: false }));
   }
 
   #evict(): void {

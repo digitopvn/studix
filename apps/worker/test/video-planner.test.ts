@@ -86,6 +86,27 @@ describe("video planner", () => {
     ]);
   });
 
+  it("reports the original execution id when a retried plan replays the cached decision", async () => {
+    const model = new FakeDecisionAdapter({
+      id: "openrouter",
+      fallback: { output: { brandName: "Sương Mai", keyMessages: ["Rang mới mỗi tuần"] }, costCents: 2 },
+    });
+    const rules = registerBriefRule(new RulesAdapter());
+    const decisions = new DecisionRouter({
+      providers: [model, rules],
+      routes: { "video.brief": ["openrouter", "rules"] },
+      sink: { record: () => {} },
+    });
+    const planner = createVideoPlanner({ decisions, logger });
+    const planCtx = ctx();
+    const run = () => planner({ prompt: PROMPT }, planCtx, new AbortController().signal);
+    const first = await run();
+    const retried = await run();
+    expect(model.invocations).toHaveLength(1);
+    expect(first.usage[0]?.providerExecutionId).toMatch(/^pex_/);
+    expect(retried.usage).toEqual(first.usage);
+  });
+
   it("falls back to rules when the model provider fails and records the fallback provider", async () => {
     const model = new FakeDecisionAdapter({
       id: "openrouter",

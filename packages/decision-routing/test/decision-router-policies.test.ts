@@ -16,7 +16,8 @@ describe("DecisionRouter idempotency", () => {
     const request = contractRequest();
     const first = await router.decide(request);
     const second = await router.decide({ ...request });
-    expect(second).toBe(first);
+    expect(second).toEqual({ ...first, replayed: true });
+    expect(first.replayed).toBeUndefined();
     expect(fake.invocations).toHaveLength(1);
   });
 
@@ -28,7 +29,7 @@ describe("DecisionRouter idempotency", () => {
     const { router } = testRouter([fake]);
     const request = contractRequest();
     const [a, b] = await Promise.all([router.decide(request), router.decide({ ...request })]);
-    expect(a).toBe(b);
+    expect(b).toEqual({ ...a, replayed: true });
     expect(fake.invocations).toHaveLength(1);
   });
 

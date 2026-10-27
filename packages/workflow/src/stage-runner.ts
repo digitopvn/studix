@@ -147,7 +147,7 @@ export async function runStages(
           dedupeKey: usageDedupeKey({
             jobId: job.id,
             stage: stage.name,
-            attempt: job.attempts,
+            attempt: usage.attemptScoped === false ? 1 : job.attempts,
             item: usage.item,
           }),
           kind: usage.kind,

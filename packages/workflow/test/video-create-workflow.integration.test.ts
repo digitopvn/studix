@@ -208,6 +208,29 @@ describe("video.create workflow on Postgres", () => {
     expect(usage.map((u) => u.kind).sort()).toEqual(["provider.decision", "render.seconds", "storage.bytes"]);
   });
 
+  it("bills a decision once when the plan stage is retried after its usage was recorded", async () => {
+    const ctx = await tenant(db.current, "plan-retry");
+    const { job } = await enqueueCreate(db.current, ctx);
+    const execution = await db.current.repos.usage.recordProviderExecution(ctx, {
+      id: "pex_replayed",
+      provider: "fake",
+      operation: "decision.video.brief",
+      status: "succeeded",
+      latencyMs: 1,
+      costCents: 1.5,
+      attempt: 1,
+    });
+    const plan = fakePlanner({ providerExecutionId: execution.id });
+    const worker = createTestWorker(db.current, "w", { planner: plan.planner, failPlanCheckpoints: 1 });
+    expect((await worker.runOnce())?.outcome).toBe("retrying");
+    const second = await waitFor(() => worker.runOnce());
+    expect(second.outcome).toBe("succeeded");
+    expect(plan.state.calls).toBe(2);
+    const decisions = (await usageFor(ctx, job.id)).filter((u) => u.kind === "provider.decision");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ providerExecutionId: execution.id, costCents: 1.5 });
+  });
+
   it("fails immediately on non-retryable errors", async () => {
     const ctx = await tenant(db.current, "fatal");
     const { job } = await enqueueCreate(db.current, ctx);
