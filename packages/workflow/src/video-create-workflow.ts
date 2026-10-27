@@ -94,6 +94,8 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
                 model: u.model,
                 inputTokens: u.inputTokens,
                 outputTokens: u.outputTokens,
+                latencyMs: u.latencyMs,
+                operation: u.operation,
               },
             })),
           };
