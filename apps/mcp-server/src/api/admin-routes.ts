@@ -19,6 +19,19 @@ const AddConnectorBody = z
       .url()
       .max(2048)
       .refine((v) => /^https?:\/\//.test(v), "must be an http(s) URL"),
+    /** Name of an operator-held credential (`STUDIX_CONNECTOR_SECRET_<NAME>`), never the secret value. */
+    secretRef: z
+      .string()
+      .regex(/^[A-Za-z0-9:_./-]{1,200}$/)
+      .optional(),
+    /** Tools the workspace may use; without it the connector is registered but no tool is granted. */
+    toolPolicy: z
+      .object({
+        allow: z.array(z.string().min(1).max(100)).max(100).optional(),
+        deny: z.array(z.string().min(1).max(100)).max(100).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

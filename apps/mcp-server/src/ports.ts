@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { DashboardAuth } from "@studix/auth";
 import type { StorageAdapter, TenantContext } from "@studix/core";
-import type { Logger, StudixErrorPayload } from "@studix/shared";
+import type { Logger } from "@studix/shared";
 
 /**
  * Ports the HTTP app depends on. Adapters are injected at composition time (src/compose-app.ts), so the
@@ -29,13 +29,23 @@ export interface ConnectorView {
   status: ConnectorStatus;
   toolCount?: number;
   lastCheckedAt?: Date | string;
-  lastError?: StudixErrorPayload;
+  /** Human-readable reason of the last failed check (the dashboard renders it as text). */
+  lastError?: string;
   createdAt?: Date | string;
+}
+
+/** Which connector tools the workspace may discover and execute; a new connector allows none by default. */
+export interface ConnectorToolPolicyInput {
+  allow?: string[];
+  deny?: string[];
 }
 
 export interface AddConnectorInput {
   name: string;
   url: string;
+  /** Environment-backed credential reference (`STUDIX_CONNECTOR_SECRET_<NAME>`), never the secret itself. */
+  secretRef?: string;
+  toolPolicy?: ConnectorToolPolicyInput;
 }
 
 export interface ConnectorTestResult {
@@ -43,7 +53,8 @@ export interface ConnectorTestResult {
   toolCount?: number;
   /** Qualified tool names (`server.tool`) discovered during the test. */
   tools?: string[];
-  error?: StudixErrorPayload;
+  /** Human-readable failure reason (the dashboard renders it as text). */
+  error?: string;
 }
 
 /**
@@ -60,6 +71,8 @@ export interface ConnectorAdmin {
 export interface MetaToolDeps {
   /** Tenant of the authenticated API key for this request. */
   tenant: TenantContext;
+  /** Inbound gateway hop count from the `x-studix-gateway-depth` header (0 for direct clients). */
+  gatewayDepth: number;
   logger: Logger;
   /** Trace id the meta-tools should echo in their envelopes. */
   traceId: string;
@@ -82,4 +95,5 @@ export interface SkillSummary {
   id: string;
   title: string;
   description: string;
+  version?: number;
 }

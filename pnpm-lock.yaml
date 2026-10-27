@@ -78,12 +78,21 @@ importers:
       '@studix/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@studix/mcp-gateway':
+        specifier: workspace:*
+        version: link:../../packages/mcp-gateway
       '@studix/observability':
         specifier: workspace:*
         version: link:../../packages/observability
       '@studix/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@studix/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
+      '@studix/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@studix/video-ir':
         specifier: workspace:*
         version: link:../../packages/video-ir
@@ -100,6 +109,12 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 2.4.0
         version: 2.4.0
+      '@studix/mock-mcp':
+        specifier: workspace:*
+        version: link:../mock-mcp
+      '@studix/renderers':
+        specifier: workspace:*
+        version: link:../../packages/renderers
       '@types/express':
         specifier: 5.0.6
         version: 5.0.6
