@@ -22,6 +22,12 @@ jobs failed on startup. Studix already needs PostgreSQL as its system of record.
 - Approval waits are a persisted state, so they survive restarts. A worker opens an approval request and
   its `approval.requested` audit entry in one transaction that locks the job row and checks `locked_by`,
   `attempts` and `running`, reusing a live pending request, so a stale worker neither duplicates nor orphans one.
+- Every opener of an approval (worker gate, studio service, MCP gateway mutation gate) goes through
+  `ApprovalRepository.openPending`, which races on a partial unique index over
+  `(workspace, subject, action, request_key) WHERE status = 'pending'` instead of find-then-create, so
+  concurrent paths share one pending request. Lapsed pending rows are closed as `expired` first. The
+  worker sweep also fails parked jobs whose approval expired (`failExpiredApprovals`) rather than leaving
+  them in `waiting_approval` forever.
 - Mutating downstream calls with unknown outcome are not retried automatically.
 
 ## Consequences

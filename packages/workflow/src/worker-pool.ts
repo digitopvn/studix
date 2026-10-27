@@ -70,9 +70,15 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
     lastSweep = Date.now();
     const failed = await queue.failExhaustedLeases();
     const resumed = await queue.resumeDecidedApprovals();
+    const expired = await queue.failExpiredApprovals();
     lastContact = new Date();
-    if (failed || resumed)
-      logger.info("queue sweep", { failedExhaustedLeases: failed, resumedApprovals: resumed });
+    if (failed || resumed || expired) {
+      logger.info("queue sweep", {
+        failedExhaustedLeases: failed,
+        resumedApprovals: resumed,
+        failedExpiredApprovals: expired,
+      });
+    }
   };
 
   const loop = async (index: number) => {

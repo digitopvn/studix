@@ -1,0 +1,5 @@
+ALTER TABLE "approvals" ADD COLUMN "request_key" text DEFAULT '' NOT NULL;--> statement-breakpoint
+UPDATE "approvals" SET "request_key" = substring("reason" from 'execute mutating connector tool (.+)$') WHERE "action" = 'connector.execute' AND "reason" LIKE '%execute mutating connector tool %';--> statement-breakpoint
+UPDATE "approvals" SET "status" = 'expired', "decided_at" = now() WHERE "status" = 'pending' AND "expires_at" IS NOT NULL AND "expires_at" <= now();--> statement-breakpoint
+UPDATE "approvals" a SET "status" = 'expired', "decided_at" = now() WHERE a."status" = 'pending' AND EXISTS (SELECT 1 FROM "approvals" b WHERE b."status" = 'pending' AND b."workspace_id" = a."workspace_id" AND b."subject_type" = a."subject_type" AND b."subject_id" = a."subject_id" AND b."action" = a."action" AND b."request_key" = a."request_key" AND b."id" > a."id");--> statement-breakpoint
+CREATE UNIQUE INDEX "approvals_pending_uq" ON "approvals" USING btree ("workspace_id","subject_type","subject_id","action","request_key") WHERE "approvals"."status" = 'pending';

@@ -18,7 +18,7 @@ import {
   upsertStageRow,
 } from "@studix/database";
 import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared";
-import { and, asc, eq, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, lt, lte, or, type SQL, sql } from "drizzle-orm";
 
 const { jobs, approvals, stages } = schema;
 type JobSet = Partial<typeof jobs.$inferInsert>;
@@ -108,6 +108,11 @@ export interface WorkerJobQueue {
    * the studio service resumes itself) was granted by a human or rejected. Returns the count.
    */
   resumeDecidedApprovals(): Promise<number>;
+  /**
+   * Close pending job approvals past their expiry and fail the parked jobs waiting on them, so a request
+   * nobody answered does not park its job forever. Returns the number of jobs failed.
+   */
+  failExpiredApprovals(): Promise<number>;
 }
 
 export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOptions): WorkerJobQueue {
@@ -160,26 +165,30 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         result = { status: "decided", approval: latest };
         return;
       }
-      if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
-        result = { status: "existing", approval: latest };
+      const opened = await approvalRepo.openPending(
+        ctx,
+        {
+          action: request.action,
+          subject,
+          reason: request.reason,
+          estimatedCostCents: request.estimatedCostCents,
+          requestedBy: actorRef(ctx.actor),
+          expiresAt: new Date(now.getTime() + request.ttlMs),
+        },
+        now,
+      );
+      if (!opened.created) {
+        result = { status: "existing", approval: opened.approval };
         return;
       }
-      const approval = await approvalRepo.create(ctx, {
-        action: request.action,
-        subject,
-        reason: request.reason,
-        estimatedCostCents: request.estimatedCostCents,
-        requestedBy: actorRef(ctx.actor),
-        expiresAt: new Date(now.getTime() + request.ttlMs),
-      });
       await createAuditRepository(tx, clock).append(ctx, {
         actor: actorRef(ctx.actor),
         action: "approval.requested",
         subjectType: "job",
         subjectId: job.id,
-        data: { approvalId: approval.id, action: request.action, reason: request.reason },
+        data: { approvalId: opened.approval.id, action: request.action, reason: request.reason },
       });
-      result = { status: "created", approval };
+      result = { status: "created", approval: opened.approval };
     });
     return held ? result : { status: "lost" };
   };
@@ -326,6 +335,54 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         )
         .returning({ id: jobs.id });
       return rows.length;
+    },
+
+    async failExpiredApprovals() {
+      const now = clock.now();
+      return db.transaction(async (tx) => {
+        const lapsed = await tx
+          .update(approvals)
+          .set({ status: "expired", decidedAt: now })
+          .where(
+            and(
+              eq(approvals.status, "pending"),
+              eq(approvals.subjectType, "job"),
+              isNotNull(approvals.expiresAt),
+              lte(approvals.expiresAt, now),
+            ),
+          )
+          .returning({ jobId: approvals.subjectId, action: approvals.action });
+        if (lapsed.length === 0) return 0;
+        const rows = await tx
+          .update(jobs)
+          .set({
+            status: "failed",
+            lockedBy: null,
+            leaseExpiresAt: null,
+            finishedAt: now,
+            updatedAt: now,
+            error: {
+              code: "TIMEOUT",
+              message: "The approval request expired before a reviewer decided it",
+              retryable: false,
+              suggestedAction: "Submit the job again and ask a reviewer to decide the new request in time.",
+              details: { reason: "approval_expired", actions: [...new Set(lapsed.map((a) => a.action))] },
+            },
+          })
+          .where(
+            and(
+              eq(jobs.status, "waiting_approval"),
+              inArray(jobs.id, [...new Set(lapsed.map((a) => a.jobId))]),
+              // A job with another live pending request is still being waited on.
+              sql`not exists (
+                select 1 from ${approvals} p
+                where p.subject_type = 'job' and p.subject_id = "jobs"."id" and p.status = 'pending'
+              )`,
+            ),
+          )
+          .returning({ id: jobs.id });
+        return rows.length;
+      });
     },
 
     async resumeDecidedApprovals() {

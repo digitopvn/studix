@@ -114,10 +114,15 @@ export const approvals = pgTable(
     decidedAt: ts("decided_at"),
     comment: text("comment"),
     expiresAt: ts("expires_at"),
+    requestKey: text("request_key").notNull().default(""),
     createdAt: createdAt(),
   },
   (t) => [
     index("approvals_subject_idx").on(t.workspaceId, t.subjectType, t.subjectId, t.action, t.id),
+    // One open request per subject, action and key: every opener races on this index, not on a read.
+    uniqueIndex("approvals_pending_uq")
+      .on(t.workspaceId, t.subjectType, t.subjectId, t.action, t.requestKey)
+      .where(sql`${t.status} = 'pending'`),
     index("approvals_tenant_idx").on(t.workspaceId, t.organizationId, t.id),
   ],
 );

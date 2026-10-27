@@ -19,6 +19,22 @@ export function createInMemoryApprovalRepository(clock: Clock): ApprovalReposito
     async create(ctx, input) {
       return approvals.insert(ctx, { ...input, status: "pending" });
     },
+    async openPending(ctx, input, now) {
+      const key = input.requestKey ?? "";
+      const same = (a: Approval) =>
+        a.subject.type === input.subject.type &&
+        a.subject.id === input.subject.id &&
+        a.action === input.action &&
+        (a.requestKey ?? "") === key;
+      for (const lapsed of approvals.filter(ctx, same)) {
+        if (lapsed.status === "pending" && lapsed.expiresAt !== undefined && lapsed.expiresAt <= now) {
+          approvals.update(ctx, lapsed.id, { status: "expired", decidedAt: now });
+        }
+      }
+      const live = approvals.filter(ctx, same).find((a) => a.status === "pending");
+      if (live) return { approval: live, created: false };
+      return { approval: approvals.insert(ctx, { ...input, status: "pending" }), created: true };
+    },
     async get(ctx, id) {
       return approvals.get(ctx, id);
     },

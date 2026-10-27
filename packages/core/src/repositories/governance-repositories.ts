@@ -13,6 +13,12 @@ import type { Page, PageRequest } from "./pagination.ts";
 
 export type NewApproval = Omit<NewRecord<Approval>, "status" | "decidedBy" | "decidedAt" | "comment">;
 
+export interface OpenedApproval {
+  approval: Approval;
+  /** False when a live pending request for the same subject, action and key already existed. */
+  created: boolean;
+}
+
 export interface ApprovalDecision {
   status: Exclude<ApprovalStatus, "pending">;
   decidedBy?: ActorRef;
@@ -22,6 +28,13 @@ export interface ApprovalDecision {
 
 export interface ApprovalRepository {
   create(ctx: TenantContext, input: NewApproval): Promise<Approval>;
+  /**
+   * Open the pending request for (subject, action, requestKey), or return the live one that already
+   * exists. Pending requests past their `expiresAt` are closed as `expired` first. Atomic: of any number
+   * of concurrent callers exactly one gets `created: true`. Every code path that opens an approval must
+   * use this instead of find-then-create.
+   */
+  openPending(ctx: TenantContext, input: NewApproval, now: Date): Promise<OpenedApproval>;
   get(ctx: TenantContext, id: string): Promise<Approval | undefined>;
   /** Most recent approval for this subject and action, any status. */
   findLatest(

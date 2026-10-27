@@ -92,13 +92,19 @@ export async function enforceMutationApproval(
     });
   }
 
-  const created = await deps.approvals.create(ctx, {
-    action: "connector.execute",
-    subject,
-    reason: `${decision.reason}; execute mutating connector tool ${key}`,
-    requestedBy: actorRef(ctx.actor),
-  });
-  throw approvalRequired(qualifiedTool, created.id, decision.reason);
+  // The pending slot is per (subject, action, key), so concurrent identical calls share one request.
+  const { approval } = await deps.approvals.openPending(
+    ctx,
+    {
+      action: "connector.execute",
+      subject,
+      reason: `${decision.reason}; execute mutating connector tool ${key}`,
+      requestedBy: actorRef(ctx.actor),
+      requestKey: key,
+    },
+    deps.clock.now(),
+  );
+  throw approvalRequired(qualifiedTool, approval.id, decision.reason);
 }
 
 function approvalRequired(qualifiedTool: string, approvalId: string, reason: string): StudixError {

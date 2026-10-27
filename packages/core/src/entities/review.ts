@@ -57,4 +57,6 @@ export interface Approval extends TenantOwned {
   decidedAt?: Date;
   comment?: string;
   expiresAt?: Date;
+  /** Distinguishes concurrent requests for the same subject and action; at most one pending per key. */
+  requestKey?: string;
 }

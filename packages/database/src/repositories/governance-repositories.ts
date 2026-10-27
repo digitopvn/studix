@@ -3,11 +3,13 @@ import type {
   ApprovalRepository,
   AuditEvent,
   AuditRepository,
+  NewApproval,
   Review,
   ReviewRepository,
+  TenantContext,
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lte } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { approvals } from "../schema/jobs.ts";
 import { reviews } from "../schema/projects.ts";
@@ -30,31 +32,68 @@ function toApproval(row: typeof approvals.$inferSelect): Approval {
     decidedAt: opt(row.decidedAt),
     comment: opt(row.comment),
     expiresAt: opt(row.expiresAt),
+    requestKey: row.requestKey === "" ? undefined : row.requestKey,
     createdAt: row.createdAt,
   };
 }
 
 export function createApprovalRepository(db: DbExecutor, clock: Clock): ApprovalRepository {
+  const newRow = (ctx: TenantContext, input: NewApproval) => ({
+    id: input.id ?? newId("apr"),
+    ...tenantValues(ctx),
+    action: input.action,
+    subjectType: input.subject.type,
+    subjectId: input.subject.id,
+    status: "pending" as const,
+    reason: input.reason,
+    estimatedCostCents: input.estimatedCostCents ?? null,
+    requestedByType: input.requestedBy.type,
+    requestedById: input.requestedBy.id,
+    expiresAt: input.expiresAt ?? null,
+    requestKey: input.requestKey ?? "",
+    createdAt: clock.now(),
+  });
   const repo: ApprovalRepository = {
     async create(ctx, input) {
-      const rows = await db
-        .insert(approvals)
-        .values({
-          id: input.id ?? newId("apr"),
-          ...tenantValues(ctx),
-          action: input.action,
-          subjectType: input.subject.type,
-          subjectId: input.subject.id,
-          status: "pending",
-          reason: input.reason,
-          estimatedCostCents: input.estimatedCostCents ?? null,
-          requestedByType: input.requestedBy.type,
-          requestedById: input.requestedBy.id,
-          expiresAt: input.expiresAt ?? null,
-          createdAt: clock.now(),
-        })
-        .returning();
+      const rows = await db.insert(approvals).values(newRow(ctx, input)).returning();
       return toApproval(first(rows, "approval"));
+    },
+    async openPending(ctx, input, now) {
+      const key = input.requestKey ?? "";
+      const sameRequest = [
+        eq(approvals.subjectType, input.subject.type),
+        eq(approvals.subjectId, input.subject.id),
+        eq(approvals.action, input.action),
+        eq(approvals.requestKey, key),
+      ];
+      // A lapsed request still occupies the unique slot, so close it before inserting.
+      await db
+        .update(approvals)
+        .set({ status: "expired", decidedAt: now })
+        .where(
+          scoped(
+            approvals,
+            ctx,
+            ...sameRequest,
+            eq(approvals.status, "pending"),
+            isNotNull(approvals.expiresAt),
+            lte(approvals.expiresAt, now),
+          ),
+        );
+      const inserted = await db
+        .insert(approvals)
+        .values(newRow(ctx, input))
+        .onConflictDoNothing()
+        .returning();
+      if (inserted[0]) return { approval: toApproval(inserted[0]), created: true };
+      const existing = await db
+        .select()
+        .from(approvals)
+        .where(scoped(approvals, ctx, ...sameRequest, eq(approvals.status, "pending")))
+        .limit(1);
+      // The winner can be decided or expired between our failed insert and this read; callers re-check.
+      if (!existing[0]) return repo.openPending(ctx, input, now);
+      return { approval: toApproval(existing[0]), created: false };
     },
     async get(ctx, id) {
       const rows = await db
