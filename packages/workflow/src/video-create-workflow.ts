@@ -107,25 +107,23 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
           const ir = irOf(s);
           const planned = read(PlanOutput, s.outputs.plan, "plan checkpoint");
           const payload = payloadOf(s);
-          let versionId = planned.versionId;
-          if (!versionId) {
-            // Deterministic id: a re-run after a crash finds the version instead of adding another.
-            const id = jobScopedId("pver", s.job.id);
-            const existing = await deps.projects.getVersion(s.ctx, id);
-            const version =
-              existing ??
-              (await deps.projects.createVersion(s.ctx, {
-                id,
+          // Deterministic id: a re-run after a crash finds the version instead of adding another.
+          const versionId = planned.versionId ?? jobScopedId("pver", s.job.id);
+          const missing = !planned.versionId && !(await deps.projects.getVersion(s.ctx, versionId));
+          await s.fenced(async (r) => {
+            if (missing) {
+              await r.projects.createVersion(s.ctx, {
+                id: versionId,
                 projectId: payload.projectId,
                 ir,
                 source: "planner",
                 createdBy: { type: "system", id: s.ctx.actor.id },
-              }));
-            versionId = version.id;
-          }
-          await deps.projects.update(s.ctx, payload.projectId, {
-            currentVersionId: versionId,
-            status: "rendering",
+              });
+            }
+            await r.projects.update(s.ctx, payload.projectId, {
+              currentVersionId: versionId,
+              status: "rendering",
+            });
           });
           return { output: { versionId } };
         },
@@ -215,21 +213,23 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
           const renderId = jobScopedId("rnd", s.job.id);
           const spec = resolveRenderSpec(payload.renderPreset);
           const existing = await deps.renders.get(s.ctx, renderId);
-          if (!existing) {
-            await deps.renders.create(s.ctx, {
-              id: renderId,
-              projectId: payload.projectId,
-              versionId,
-              jobId: s.job.id,
-              preset: spec.preset,
-              spec,
-              status: "succeeded",
-              storageKey: uploaded.storageKey,
-              probe: { ...rendered.probe, bytes: uploaded.bytes },
-              completedAt: clock.now(),
-            });
-          }
-          await deps.projects.update(s.ctx, payload.projectId, { status: "in_review" });
+          await s.fenced(async (r) => {
+            if (!existing) {
+              await r.renders.create(s.ctx, {
+                id: renderId,
+                projectId: payload.projectId,
+                versionId,
+                jobId: s.job.id,
+                preset: spec.preset,
+                spec,
+                status: "succeeded",
+                storageKey: uploaded.storageKey,
+                probe: { ...rendered.probe, bytes: uploaded.bytes },
+                completedAt: clock.now(),
+              });
+            }
+            await r.projects.update(s.ctx, payload.projectId, { status: "in_review" });
+          });
           await rm(jobDir(s.job.id), { recursive: true, force: true });
           return {
             output: {

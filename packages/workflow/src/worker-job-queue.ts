@@ -59,6 +59,16 @@ export interface WorkerJobQueue {
   writeStage(job: Job, workerId: string, stage: StageWrite): Promise<boolean>;
   /** Record one usage event (idempotent by its dedupe key). */
   recordUsage(job: Job, workerId: string, usage: UsageInput): Promise<boolean>;
+  /**
+   * Run business writes (projects, renders) in a transaction that holds the job row locked while
+   * ownership is verified, so they apply only while `workerId` still holds this attempt. `held: false`
+   * means nothing ran and nothing was written.
+   */
+  transact<T>(
+    job: Job,
+    workerId: string,
+    write: (tx: DbExecutor, ctx: TenantContext) => Promise<T>,
+  ): Promise<{ held: true; value: T } | { held: false }>;
   complete(job: Job, workerId: string, result: Record<string, unknown>): Promise<boolean>;
   fail(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
   cancel(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
@@ -95,11 +105,11 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     )!;
 
   /** Run `write` in a transaction that holds the job row locked while ownership is verified. */
-  const fenced = async (
+  const transact = async <T>(
     job: Job,
     workerId: string,
-    write: (tx: DbExecutor, ctx: TenantContext) => Promise<unknown>,
-  ): Promise<boolean> => {
+    write: (tx: DbExecutor, ctx: TenantContext) => Promise<T>,
+  ): Promise<{ held: true; value: T } | { held: false }> => {
     const ctx: TenantContext = {
       organizationId: job.organizationId,
       workspaceId: job.workspaceId,
@@ -107,11 +117,15 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     };
     return db.transaction(async (tx) => {
       const held = await tx.select({ id: jobs.id }).from(jobs).where(owned(job, workerId)).for("update");
-      if (held.length === 0) return false;
-      await write(tx, ctx);
-      return true;
+      if (held.length === 0) return { held: false as const };
+      return { held: true as const, value: await write(tx, ctx) };
     });
   };
+  const fenced = async (
+    job: Job,
+    workerId: string,
+    write: (tx: DbExecutor, ctx: TenantContext) => Promise<unknown>,
+  ): Promise<boolean> => (await transact(job, workerId, write)).held;
 
   const finish = async (job: Job, workerId: string, set: JobSet): Promise<boolean> => {
     const rows = await db
@@ -207,6 +221,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       fenced(job, workerId, (tx, ctx) =>
         createUsageLedger(createUsageRepository(tx, clock)).record(ctx, usage),
       ),
+
+    transact,
 
     complete: (job, workerId, result) =>
       finish(job, workerId, {

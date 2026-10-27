@@ -1,4 +1,11 @@
-import type { Approval, ApprovalAction, Job, TenantContext } from "@studix/core";
+import type {
+  Approval,
+  ApprovalAction,
+  Job,
+  ProjectRepository,
+  RenderRepository,
+  TenantContext,
+} from "@studix/core";
 import type { CreativeBrief, VideoIR } from "@studix/video-ir";
 
 /** JSON-safe stage output; stored as the stage checkpoint. */
@@ -21,6 +28,12 @@ export interface StageResult {
   usage?: StageUsage[];
 }
 
+/** Repositories whose writes a stage may only make through `StageContext.fenced`. */
+export interface StageRepos {
+  projects: ProjectRepository;
+  renders: RenderRepository;
+}
+
 export interface StageContext {
   ctx: TenantContext;
   job: Job;
@@ -32,6 +45,13 @@ export interface StageContext {
   outputs: Readonly<Record<string, StageOutput>>;
   /** Approval that authorized this stage, when it is approval-gated. */
   approval?: Approval;
+  /**
+   * Run business writes atomically and only while this worker still owns the job at this attempt; the
+   * repositories passed to `write` are bound to that transaction. Throws `LeaseLostError`, writing
+   * nothing, once another worker has reclaimed the job. A stage keeps running after its attempt is
+   * abandoned, so every write to projects or renders must go through here.
+   */
+  fenced<T>(write: (repos: StageRepos) => Promise<T>): Promise<T>;
   /** Report progress inside the stage (0..1); persisted with throttling. */
   reportProgress(progress: number): void;
 }

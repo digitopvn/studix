@@ -16,10 +16,12 @@ import { createLogger, StudixError } from "@studix/shared";
 import { unwrapValidation, type VideoIR, validateVideoIR } from "@studix/video-ir";
 import {
   createJobExecutor,
+  createStageRepos,
   createVideoCreateWorkflow,
   createVideoPublishWorkflow,
   createWorkerJobQueue,
   type Planner,
+  type WorkflowDefinition,
 } from "../src/index.ts";
 
 export const fixtureIr: VideoIR = unwrapValidation(
@@ -173,6 +175,8 @@ export interface WorkerOptions {
   leaseMs?: number;
   heartbeatIntervalMs?: number;
   renderCentsPerSecond?: number;
+  /** Wraps the video.create workflow, e.g. to stall a stage. */
+  decorate?: (workflow: WorkflowDefinition) => WorkflowDefinition;
 }
 
 /** One simulated worker process over the test database. */
@@ -181,6 +185,7 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
   const queue = createWorkerJobQueue(db.db, { leaseMs: options.leaseMs ?? 30_000 });
   const executor = createJobExecutor({
     queue,
+    stageRepos: createStageRepos,
     jobs: repos.jobs,
     approvals: repos.approvals,
     audit: repos.audit,
@@ -193,15 +198,17 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
     heartbeatIntervalMs: options.heartbeatIntervalMs ?? 50,
     retryBackoff: { baseMs: 10, maxMs: 50 },
     workflows: [
-      createVideoCreateWorkflow({
-        planner: options.planner ?? fakePlanner().planner,
-        renderer: options.renderer ?? fakeRenderer().renderer,
-        storage: options.storage ?? fakeStorage().storage,
-        projects: repos.projects,
-        renders: repos.renders,
-        workRoot: mkdtempSync(join(tmpdir(), "studix-worker-test-")),
-        renderCentsPerSecond: options.renderCentsPerSecond,
-      }),
+      (options.decorate ?? ((w) => w))(
+        createVideoCreateWorkflow({
+          planner: options.planner ?? fakePlanner().planner,
+          renderer: options.renderer ?? fakeRenderer().renderer,
+          storage: options.storage ?? fakeStorage().storage,
+          projects: repos.projects,
+          renders: repos.renders,
+          workRoot: mkdtempSync(join(tmpdir(), "studix-worker-test-")),
+          renderCentsPerSecond: options.renderCentsPerSecond,
+        }),
+      ),
       createVideoPublishWorkflow({ renders: repos.renders, publisher: options.publisher }),
     ],
   });

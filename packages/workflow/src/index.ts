@@ -3,6 +3,7 @@ export * from "./file-digest.ts";
 export * from "./ir-asset-download.ts";
 export * from "./job-executor.ts";
 export * from "./retry-backoff.ts";
+export * from "./stage-repos.ts";
 export * from "./stage-runner.ts";
 export * from "./video-create-workflow.ts";
 export * from "./video-publish-workflow.ts";

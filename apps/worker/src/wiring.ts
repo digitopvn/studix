@@ -10,6 +10,7 @@ import { createRepositories, type StudixDb } from "@studix/database";
 import { type Clock, type Logger, systemClock } from "@studix/shared";
 import {
   createJobExecutor,
+  createStageRepos,
   createVideoCreateWorkflow,
   createVideoPublishWorkflow,
   createWorkerJobQueue,
@@ -69,6 +70,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
   const queue = createWorkerJobQueue(deps.db, { leaseMs: settings.leaseMs, clock });
   const executor = createJobExecutor({
     queue,
+    stageRepos: createStageRepos,
     jobs: repos.jobs,
     approvals: repos.approvals,
     audit: repos.audit,

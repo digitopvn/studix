@@ -1,14 +1,23 @@
 import { toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
 import type { Approval, BillingPolicy, Job, JobRepository, Stage, TenantContext } from "@studix/core";
+import type { DbExecutor } from "@studix/database";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
 import type { WorkerJobQueue } from "./worker-job-queue.ts";
-import type { StageContext, StageDefinition, StageOutput, WorkflowDefinition } from "./workflow-types.ts";
+import type {
+  StageContext,
+  StageDefinition,
+  StageOutput,
+  StageRepos,
+  WorkflowDefinition,
+} from "./workflow-types.ts";
 
 export interface StageRunnerDeps extends ApprovalGateDeps {
   /** Source of stage reads; every write goes through the fenced `queue`. */
   jobs: JobRepository;
   queue: WorkerJobQueue;
+  /** Binds the repositories a stage writes through to the fenced transaction. */
+  stageRepos: (tx: DbExecutor, clock: Clock) => StageRepos;
   billing: BillingPolicy;
   ledger: UsageLedger;
   clock: Clock;
@@ -106,6 +115,11 @@ export async function runStages(
       attempt: job.attempts,
       signal,
       outputs,
+      fenced: async (write) => {
+        const result = await queue.transact(job, workerId, (tx) => write(deps.stageRepos(tx, deps.clock)));
+        if (!result.held) throw new LeaseLostError();
+        return result.value;
+      },
       reportProgress: (p) => {
         const now = deps.clock.now().getTime();
         if (now - lastProgressAt < (deps.progressIntervalMs ?? 1000)) return;
