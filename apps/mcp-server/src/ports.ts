@@ -43,7 +43,7 @@ export interface ConnectorToolPolicyInput {
 export interface AddConnectorInput {
   name: string;
   url: string;
-  /** Environment-backed credential reference (`STUDIX_CONNECTOR_SECRET_<NAME>`), never the secret itself. */
+  /** Environment-backed credential reference (`env:STUDIX_CONNECTOR_SECRET_<NAME>`), never the secret itself. */
   secretRef?: string;
   toolPolicy?: ConnectorToolPolicyInput;
 }
