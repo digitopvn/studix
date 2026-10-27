@@ -16,7 +16,10 @@ export interface HeartbeatResult {
   /** False when this worker no longer owns the job (lease expired and someone else claimed it). */
   held: boolean;
   cancelRequested: boolean;
-  /** The renewed lease expiry, when held. */
+  /**
+   * The renewed lease expiry on the database clock, when held. Informational: it is not comparable with
+   * the worker's clock, so deadlines are derived from `leaseMs` and the worker's own elapsed time.
+   */
   leaseExpiresAt?: Date;
 }
 
@@ -27,6 +30,8 @@ export interface HeartbeatResult {
  * new owner's state.
  */
 export interface WorkerJobQueue {
+  /** Length of every lease granted by `claim` and `heartbeat`, counted from the database's now(). */
+  readonly leaseMs: number;
   /**
    * Claim the next runnable job: queued and due, or running with an expired lease (its worker died).
    * Increments attempts; jobs at maxAttempts are never claimed (see failExhaustedLeases).
@@ -56,7 +61,9 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     throw new RangeError("leaseMs must be an integer >= 100");
   }
   const clock = options.clock ?? systemClock;
-  const leaseUntil = () => new Date(clock.now().getTime() + options.leaseMs);
+  // Lease expiry is written and compared on the database clock, so worker clock skew cannot shorten
+  // or stretch a lease. now() is the transaction start, never later than the moment the lease is granted.
+  const leaseUntil = () => sql`now() + ${options.leaseMs} * interval '1 millisecond'`;
 
   const owned = (job: Job, workerId: string): SQL =>
     and(
@@ -78,6 +85,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
   };
 
   return {
+    leaseMs: options.leaseMs,
+
     async claim(workerId) {
       const now = clock.now();
       const candidate = db
@@ -87,7 +96,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           and(
             or(
               and(eq(jobs.status, "queued"), lte(jobs.runAfter, now)),
-              and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, now)),
+              and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, sql`now()`)),
             ),
             lt(jobs.attempts, jobs.maxAttempts),
           ),
@@ -164,7 +173,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         .where(
           and(
             eq(jobs.status, "running"),
-            lt(jobs.leaseExpiresAt, now),
+            lt(jobs.leaseExpiresAt, sql`now()`),
             sql`${jobs.attempts} >= ${jobs.maxAttempts}`,
           ),
         )

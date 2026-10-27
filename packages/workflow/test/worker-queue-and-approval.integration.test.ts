@@ -71,6 +71,31 @@ describe("worker queue", () => {
     for (const id of claimed) await db.current.repos.jobs.update(ctx, id, { status: "succeeded" });
   });
 
+  it("measures leases on the database clock, whatever the worker clocks say", async () => {
+    const ctx = await tenant(db.current, "clock-skew");
+    const { job } = await enqueueCreate(db.current, ctx);
+    const hourMs = 3_600_000;
+    const withSkew = (offsetMs: number) =>
+      createWorkerJobQueue(db.current.db, {
+        leaseMs: 30_000,
+        clock: { now: () => new Date(Date.now() + offsetMs) },
+      });
+    const accurate = withSkew(0);
+    const claimed = (await accurate.claim("w-owner"))!;
+    expect(claimed.id).toBe(job.id);
+    // The lease runs 30s from the database's now.
+    expect(Math.abs(claimed.leaseExpiresAt!.getTime() - (Date.now() + 30_000))).toBeLessThan(5_000);
+
+    // A worker whose clock runs an hour ahead cannot take a lease that is still valid on the database.
+    expect(await withSkew(hourMs).claim("w-ahead")).toBeUndefined();
+    // An owner whose clock runs an hour behind still gets a lease measured from the database's now.
+    const renewed = await withSkew(-hourMs).heartbeat(claimed, "w-owner");
+    expect(renewed.held).toBe(true);
+    expect(Math.abs(renewed.leaseExpiresAt!.getTime() - (Date.now() + 30_000))).toBeLessThan(5_000);
+
+    await db.current.repos.jobs.update(ctx, job.id, { status: "succeeded" });
+  });
+
   it("releases the running job on graceful shutdown without consuming the attempt", async () => {
     const ctx = await tenant(db.current, "shutdown");
     const { job } = await enqueueCreate(db.current, ctx);

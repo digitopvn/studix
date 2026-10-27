@@ -19,6 +19,7 @@ import {
   createVideoCreateWorkflow,
   createVideoPublishWorkflow,
   createWorkerJobQueue,
+  type HeartbeatResult,
   type Planner,
 } from "../src/index.ts";
 
@@ -172,6 +173,8 @@ export interface WorkerOptions {
   publisher?: PublisherAdapter;
   leaseMs?: number;
   heartbeatIntervalMs?: number;
+  /** "hang": heartbeats never resolve, like a worker whose database connection froze. */
+  heartbeat?: "hang";
   renderCentsPerSecond?: number;
 }
 
@@ -180,7 +183,10 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
   const { repos } = db;
   const queue = createWorkerJobQueue(db.db, { leaseMs: options.leaseMs ?? 30_000 });
   const executor = createJobExecutor({
-    queue,
+    queue:
+      options.heartbeat === "hang"
+        ? { ...queue, heartbeat: () => new Promise<HeartbeatResult>(() => {}) }
+        : queue,
     jobs: repos.jobs,
     approvals: repos.approvals,
     audit: repos.audit,

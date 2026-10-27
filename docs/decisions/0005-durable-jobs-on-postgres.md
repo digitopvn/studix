@@ -15,6 +15,12 @@ jobs failed on startup. Studix already needs PostgreSQL as its system of record.
   `@studix/database`.
 - Workers claim with `SELECT ... FOR UPDATE SKIP LOCKED`, take a lease and
   extend it with a heartbeat. An expired lease makes the job claimable again.
+- Lease expiry is written and compared on the database clock (`now()`), so
+  worker clock skew cannot shorten or stretch a lease. The worker's watchdog
+  counts the lease length on its own clock from when each renewal was
+  requested, and stops the attempt one safety margin before it lapses;
+  `createJobExecutor` rejects a heartbeat interval that is not shorter than the
+  lease minus that margin.
 - Each stage writes a checkpoint; recovery resumes at the last completed stage.
 - Enqueue takes an idempotency key, unique per workspace.
 - Per-workspace concurrency, cancellation, timeout and budget are checked at
