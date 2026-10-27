@@ -1,6 +1,15 @@
 import { createUsageLedger, type UsageInput } from "@studix/billing";
-import type { Job, JobPatch, TenantContext } from "@studix/core";
 import {
+  type Approval,
+  type ApprovalAction,
+  actorRef,
+  type Job,
+  type JobPatch,
+  type TenantContext,
+} from "@studix/core";
+import {
+  createApprovalRepository,
+  createAuditRepository,
   createUsageRepository,
   type DbExecutor,
   type StudixDb,
@@ -16,6 +25,13 @@ type JobSet = Partial<typeof jobs.$inferInsert>;
 
 /** A stage row written on behalf of a claimed attempt (the tenant and job come from the job). */
 export type StageWrite = Omit<Parameters<typeof upsertStageRow>[3], "jobId" | "attempt">;
+
+export interface ApprovalRequest {
+  action: ApprovalAction;
+  reason: string;
+  estimatedCostCents?: number | undefined;
+  expiresAt: Date;
+}
 
 export interface WorkerJobQueueOptions {
   /** How long a claim is valid without a heartbeat. */
@@ -59,6 +75,13 @@ export interface WorkerJobQueue {
   writeStage(job: Job, workerId: string, stage: StageWrite): Promise<boolean>;
   /** Record one usage event (idempotent by its dedupe key). */
   recordUsage(job: Job, workerId: string, usage: UsageInput): Promise<boolean>;
+  /**
+   * Open an approval request for a gated action, fenced like the writes above. The request and its
+   * `approval.requested` audit entry commit together. If the action already has a live pending request,
+   * or one decided meanwhile, that approval is returned instead of opening a second. Returns undefined,
+   * writing nothing, once this worker no longer owns the job.
+   */
+  openApproval(job: Job, workerId: string, request: ApprovalRequest): Promise<Approval | undefined>;
   complete(job: Job, workerId: string, result: Record<string, unknown>): Promise<boolean>;
   fail(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
   cancel(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
@@ -207,6 +230,39 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       fenced(job, workerId, (tx, ctx) =>
         createUsageLedger(createUsageRepository(tx, clock)).record(ctx, usage),
       ),
+
+    async openApproval(job, workerId, request) {
+      let approval: Approval | undefined;
+      const held = await fenced(job, workerId, async (tx, ctx) => {
+        const approvals = createApprovalRepository(tx, clock);
+        const subject = { type: "job" as const, id: job.id };
+        const latest = await approvals.findLatest(ctx, subject, request.action);
+        const reusable =
+          latest?.status === "rejected" ||
+          (latest?.status === "approved" && latest.decidedBy?.type === "user") ||
+          (latest?.status === "pending" && (latest.expiresAt ?? request.expiresAt) > clock.now());
+        if (latest && reusable) {
+          approval = latest;
+          return;
+        }
+        approval = await approvals.create(ctx, {
+          action: request.action,
+          subject,
+          reason: request.reason,
+          estimatedCostCents: request.estimatedCostCents,
+          requestedBy: actorRef(ctx.actor),
+          expiresAt: request.expiresAt,
+        });
+        await createAuditRepository(tx, clock).append(ctx, {
+          actor: actorRef(ctx.actor),
+          action: "approval.requested",
+          subjectType: "job",
+          subjectId: job.id,
+          data: { approvalId: approval.id, action: request.action, reason: request.reason },
+        });
+      });
+      return held ? approval : undefined;
+    },
 
     complete: (job, workerId, result) =>
       finish(job, workerId, {

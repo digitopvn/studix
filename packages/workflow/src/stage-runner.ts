@@ -123,10 +123,11 @@ export async function runStages(
     };
 
     if (stage.approval) {
-      const gate = await checkApprovalGate(deps, ctx, job, {
+      const gate = await checkApprovalGate(deps, ctx, job, workerId, {
         action: stage.approval.action,
         estimatedCostCents: stage.approval.estimateCostCents?.(job),
       });
+      if (gate.status === "lease_lost") throw new LeaseLostError();
       if (gate.status === "waiting")
         return { status: "waiting_approval", approval: gate.approval, stage: stage.name };
       sctx.approval = gate.approval;

@@ -173,6 +173,48 @@ describe("fenced attempt writes", () => {
     expect(await queue.recordUsage(fresh!, "fresh", usage("current"))).toBe(true);
     await repos.queue.cancel(ctx, job.id);
   });
+
+  it("opens one approval and one audit entry per action, and none for a worker that lost the job", async () => {
+    const ctx = await tenant(db.current, "fenced-approval");
+    const { repos } = db.current;
+    const { job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    const stale = await queue.claim("stalled");
+    const request = {
+      action: "publish" as const,
+      reason: "publishing needs a human",
+      expiresAt: new Date(Date.now() + 3_600_000),
+    };
+    const audits = async () =>
+      (await repos.audit.list(ctx, { subjectId: job.id })).items.filter(
+        (a) => a.action === "approval.requested",
+      );
+
+    // Concurrent attempts to open the same approval converge on one request.
+    const [first, again] = await Promise.all([
+      queue.openApproval(stale!, "stalled", request),
+      queue.openApproval(stale!, "stalled", request),
+    ]);
+    expect(first?.id).toBeDefined();
+    expect(again?.id).toBe(first?.id);
+    expect(await audits()).toHaveLength(1);
+
+    // Another worker reclaims the job; the stalled one can neither open a new approval nor write an audit.
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    const fresh = await queue.claim("fresh");
+    expect(await queue.openApproval(stale!, "stalled", request)).toBeUndefined();
+    expect(await queue.openApproval(stale!, "fresh", request)).toBeUndefined();
+    expect((await queue.openApproval(fresh!, "fresh", request))?.id).toBe(first?.id);
+    expect(await audits()).toHaveLength(1);
+
+    // Once the job is finished, a straggler leaves no orphan approval behind.
+    expect(await queue.complete(fresh!, "fresh", {})).toBe(true);
+    expect(
+      await queue.openApproval(fresh!, "fresh", { ...request, expiresAt: new Date(Date.now() + 1) }),
+    ).toBe(undefined);
+    const all = await repos.approvals.list(ctx, { subject: { type: "job", id: job.id } });
+    expect(all.items).toHaveLength(1);
+  });
 });
 
 describe("publish approval gate", () => {
