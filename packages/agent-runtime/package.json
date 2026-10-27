@@ -1,0 +1,16 @@
+{
+  "name": "@studix/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@studix/core": "workspace:*",
+    "@studix/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "5.0.5"
+  }
+}

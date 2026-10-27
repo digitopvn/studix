@@ -36,6 +36,66 @@ importers:
         specifier: 4.153.0
         version: 4.153.0(@cloudflare/workers-types@5.20261027.1)(@types/node@24.19.2)
 
+  apps/worker:
+    dependencies:
+      '@studix/billing':
+        specifier: workspace:*
+        version: link:../../packages/billing
+      '@studix/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@studix/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@studix/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@studix/workflow':
+        specifier: workspace:*
+        version: link:../../packages/workflow
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@studix/video-ir':
+        specifier: workspace:*
+        version: link:../../packages/video-ir
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
+
+  packages/agent-runtime:
+    dependencies:
+      '@studix/core':
+        specifier: workspace:*
+        version: link:../core
+      '@studix/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
+
+  packages/billing:
+    dependencies:
+      '@studix/core':
+        specifier: workspace:*
+        version: link:../core
+      '@studix/database':
+        specifier: workspace:*
+        version: link:../database
+      '@studix/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
+
   packages/core:
     dependencies:
       '@studix/shared':
@@ -137,6 +197,34 @@ importers:
       zod:
         specifier: 4.6.7
         version: 4.6.7
+
+  packages/workflow:
+    dependencies:
+      '@studix/billing':
+        specifier: workspace:*
+        version: link:../billing
+      '@studix/core':
+        specifier: workspace:*
+        version: link:../core
+      '@studix/database':
+        specifier: workspace:*
+        version: link:../database
+      '@studix/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@studix/video-ir':
+        specifier: workspace:*
+        version: link:../video-ir
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@cloudflare/workers-types@5.20261027.1)(@opentelemetry/api@1.9.1)(postgres@3.4.9)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
 
 packages:
 
