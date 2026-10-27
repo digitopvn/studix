@@ -1,6 +1,15 @@
 import { createUsageLedger, type UsageInput } from "@studix/billing";
-import type { Job, JobPatch, TenantContext } from "@studix/core";
 import {
+  type Approval,
+  type ApprovalAction,
+  actorRef,
+  type Job,
+  type JobPatch,
+  type TenantContext,
+} from "@studix/core";
+import {
+  createApprovalRepository,
+  createAuditRepository,
   createUsageRepository,
   type DbExecutor,
   type StudixDb,
@@ -13,6 +22,20 @@ import { and, asc, eq, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
 
 const { jobs, approvals, stages } = schema;
 type JobSet = Partial<typeof jobs.$inferInsert>;
+
+/** A gated action's pending approval request, opened on behalf of a claimed attempt. */
+export interface ApprovalRequest {
+  action: ApprovalAction;
+  reason: string;
+  estimatedCostCents?: number;
+  /** Lifetime of a newly opened request. */
+  ttlMs: number;
+}
+
+/** `lost`: this worker no longer owns the job, nothing was written. `existing`: a live request was reused. */
+export type ApprovalRequestResult =
+  | { status: "lost" }
+  | { status: "created" | "existing"; approval: Approval };
 
 /** A stage row written on behalf of a claimed attempt (the tenant and job come from the job). */
 export type StageWrite = Omit<Parameters<typeof upsertStageRow>[3], "jobId" | "attempt">;
@@ -59,6 +82,12 @@ export interface WorkerJobQueue {
   writeStage(job: Job, workerId: string, stage: StageWrite): Promise<boolean>;
   /** Record one usage event (idempotent by its dedupe key). */
   recordUsage(job: Job, workerId: string, usage: UsageInput): Promise<boolean>;
+  /**
+   * Open the pending approval for a gated action and audit it, in one transaction fenced like the writes
+   * above. A live pending request for the same action is reused, so a stale worker can neither add a
+   * duplicate that shadows the owner's request nor leave a pending one behind for a finished job.
+   */
+  requestApproval(job: Job, workerId: string, request: ApprovalRequest): Promise<ApprovalRequestResult>;
   complete(job: Job, workerId: string, result: Record<string, unknown>): Promise<boolean>;
   fail(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
   cancel(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
@@ -111,6 +140,37 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       await write(tx, ctx);
       return true;
     });
+  };
+
+  const requestApproval: WorkerJobQueue["requestApproval"] = async (job, workerId, request) => {
+    let result: ApprovalRequestResult = { status: "lost" };
+    const held = await fenced(job, workerId, async (tx, ctx) => {
+      const approvalRepo = createApprovalRepository(tx, clock);
+      const subject = { type: "job" as const, id: job.id };
+      const latest = await approvalRepo.findLatest(ctx, subject, request.action);
+      const now = clock.now();
+      if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
+        result = { status: "existing", approval: latest };
+        return;
+      }
+      const approval = await approvalRepo.create(ctx, {
+        action: request.action,
+        subject,
+        reason: request.reason,
+        estimatedCostCents: request.estimatedCostCents,
+        requestedBy: actorRef(ctx.actor),
+        expiresAt: new Date(now.getTime() + request.ttlMs),
+      });
+      await createAuditRepository(tx, clock).append(ctx, {
+        actor: actorRef(ctx.actor),
+        action: "approval.requested",
+        subjectType: "job",
+        subjectId: job.id,
+        data: { approvalId: approval.id, action: request.action, reason: request.reason },
+      });
+      result = { status: "created", approval };
+    });
+    return held ? result : { status: "lost" };
   };
 
   const finish = async (job: Job, workerId: string, set: JobSet): Promise<boolean> => {
@@ -207,6 +267,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       fenced(job, workerId, (tx, ctx) =>
         createUsageLedger(createUsageRepository(tx, clock)).record(ctx, usage),
       ),
+
+    requestApproval,
 
     complete: (job, workerId, result) =>
       finish(job, workerId, {

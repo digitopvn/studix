@@ -71,7 +71,6 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
     queue,
     jobs: repos.jobs,
     approvals: repos.approvals,
-    audit: repos.audit,
     approvalPolicy:
       deps.approvalPolicy ??
       createDefaultApprovalPolicy({ costThresholdCents: settings.approvalCostThresholdCents }),
