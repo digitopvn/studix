@@ -96,9 +96,9 @@ function makeExecutor(
   });
 }
 
-function start(executor: ReturnType<typeof makeExecutor>) {
+function start(executor: ReturnType<typeof makeExecutor>, leaseRequestedAt?: number) {
   const shutdown = new AbortController();
-  const outcome = executor.execute(job, WORKER, shutdown.signal);
+  const outcome = executor.execute(job, WORKER, shutdown.signal, undefined, leaseRequestedAt);
   return { outcome, shutdown };
 }
 
@@ -199,6 +199,39 @@ describe("job executor lease heartbeat", () => {
     expect(stage.state.signal?.aborted).toBe(true);
     expect(await outcome).toBe("lease_lost");
     expect(queue.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts a renewed lease from when the heartbeat was sent, not when it answered", async () => {
+    // Beats take 2s to answer; after the last success the lease ends LEASE_MS after that beat was sent.
+    let calls = 0;
+    const queue = fakeQueue(async () => {
+      calls += 1;
+      if (calls > 1) throw new Error("database unreachable");
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      return { held: true, cancelRequested: false };
+    });
+    const stage = controlledWorkflow();
+    const { outcome } = start(makeExecutor(queue, stage.workflow));
+
+    // First beat sent at INTERVAL_MS; its lease ends at INTERVAL_MS + LEASE_MS, the watchdog one margin sooner.
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS + LEASE_MS - INTERVAL_MS - 1);
+    expect(stage.state.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stage.state.signal?.aborted).toBe(true);
+    expect(await outcome).toBe("lease_lost");
+  });
+
+  it("counts the first lease from the claim request when the caller supplies it", async () => {
+    const queue = fakeQueue(() => new Promise<HeartbeatResult>(() => {}));
+    const stage = controlledWorkflow();
+    // The claim was sent 2s before execute() started (slow claim round trip).
+    const { outcome } = start(makeExecutor(queue, stage.workflow), Date.now() - 2_000);
+
+    await vi.advanceTimersByTimeAsync(LEASE_MS - INTERVAL_MS - 2_000 - 1);
+    expect(stage.state.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stage.state.signal?.aborted).toBe(true);
+    expect(await outcome).toBe("lease_lost");
   });
 
   it("stops when another worker took the job", async () => {

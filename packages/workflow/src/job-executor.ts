@@ -30,7 +30,14 @@ export interface JobExecutor {
    * `draining` marks that the process is stopping: an attempt that fails after it fired is released
    * too, because the failure is usually collateral (e.g. Puppeteer closes Chrome on SIGTERM).
    */
-  execute(job: Job, workerId: string, shutdown: AbortSignal, draining?: AbortSignal): Promise<JobOutcome>;
+  execute(
+    job: Job,
+    workerId: string,
+    shutdown: AbortSignal,
+    draining?: AbortSignal,
+    /** Epoch ms on the executor clock just before the claim was sent; defaults to now (later, so less safe). */
+    leaseRequestedAt?: number,
+  ): Promise<JobOutcome>;
 }
 
 /** setTimeout overflows above 2^31-1 ms; longer deadlines are re-checked at claim time. */
@@ -65,7 +72,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
   }
   const { queue, clock, logger } = deps;
   const safetyMarginMs = Math.min(deps.heartbeatIntervalMs, LEASE_SAFETY_MARGIN_MS);
-  // The first renewal has to land before the watchdog fires, or a healthy attempt would be abandoned.
+  // The first renewal has to be sent before the watchdog fires; the remaining headroom absorbs its latency.
   if (deps.heartbeatIntervalMs + safetyMarginMs >= queue.leaseMs) {
     throw new RangeError(
       `heartbeatIntervalMs (${deps.heartbeatIntervalMs}) plus the ${safetyMarginMs}ms safety margin must be shorter than the lease (${queue.leaseMs}ms)`,
@@ -75,7 +82,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
   const backoff = deps.retryBackoff ?? DEFAULT_RETRY_BACKOFF;
 
   return {
-    async execute(job, workerId, shutdown, draining) {
+    async execute(job, workerId, shutdown, draining, leaseRequestedAt) {
       const log = logger.child({ jobId: job.id, kind: job.kind, attempt: job.attempts, workerId });
       const ctx: TenantContext = {
         organizationId: job.organizationId,
@@ -121,8 +128,9 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       // failing or hung): past that point another worker may claim the job and both would run it.
       // Lease deadline on this worker's clock: when the request that granted the lease was sent, plus the
       // lease length. The database granted it no earlier than that, so the deadline is never too late, and
-      // no timestamp from the database is compared with the local clock. The claim happened before now.
-      let leaseDeadline = clock.now().getTime() + queue.leaseMs;
+      // no timestamp from the database is compared with the local clock. For the first lease that moment
+      // is the claim request; callers that cannot supply it fall back to now, which is later.
+      let leaseDeadline = (leaseRequestedAt ?? clock.now().getTime()) + queue.leaseMs;
       const retryMs = Math.min(Math.ceil(deps.heartbeatIntervalMs / 5), HEARTBEAT_RETRY_MS);
       let watchdog: ReturnType<typeof setTimeout> | undefined;
       // Set once the attempt settles: a beat still in flight then must not schedule more timers.
