@@ -1,15 +1,16 @@
-import type {
-  Approval,
-  ApprovalRepository,
-  AuditEvent,
-  AuditRepository,
-  NewApproval,
-  Review,
-  ReviewRepository,
-  TenantContext,
+import {
+  type Approval,
+  type ApprovalRepository,
+  type AuditEvent,
+  type AuditRepository,
+  actorRef,
+  type NewApproval,
+  type Review,
+  type ReviewRepository,
+  type TenantContext,
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { and, desc, eq, isNotNull, lte } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lte, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { approvals } from "../schema/jobs.ts";
 import { reviews } from "../schema/projects.ts";
@@ -67,24 +68,42 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
         eq(approvals.status, "pending"),
       );
       // An expired request still occupies the unique slot until it is closed.
-      await db
+      const now = clock.now();
+      const expired = await db
         .update(approvals)
-        .set({ status: "expired", decidedAt: clock.now() })
+        .set({ status: "expired", decidedAt: now })
         .where(
-          scoped(
-            approvals,
-            ctx,
-            sameRequest,
-            isNotNull(approvals.expiresAt),
-            lte(approvals.expiresAt, clock.now()),
-          ),
+          scoped(approvals, ctx, sameRequest, isNotNull(approvals.expiresAt), lte(approvals.expiresAt, now)),
+        )
+        .returning({ id: approvals.id });
+      const sweeper = { type: "system" as const, id: "approval-sweeper" };
+      for (const row of expired) {
+        await createAuditRepository(db, clock).append(
+          { ...ctx, actor: sweeper },
+          {
+            actor: actorRef(sweeper),
+            action: "approval.expired",
+            subjectType: input.subject.type,
+            subjectId: input.subject.id,
+            data: { approvalId: row.id, action: input.action },
+          },
         );
+      }
       // The request found pending can be decided between the insert conflict and the read; retry then.
       for (let attempt = 0; attempt < 3; attempt++) {
         const inserted = await db
           .insert(approvals)
           .values(values(ctx, input))
-          .onConflictDoNothing()
+          .onConflictDoNothing({
+            target: [
+              approvals.workspaceId,
+              approvals.subjectType,
+              approvals.subjectId,
+              approvals.action,
+              approvals.scopeKey,
+            ],
+            where: sql`${approvals.status} = 'pending'`,
+          })
           .returning();
         if (inserted[0]) return { approval: toApproval(inserted[0]), created: true };
         const existing = await db

@@ -123,6 +123,12 @@ Puppeteer closes Chrome on SIGTERM) is released, not failed
 staging: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.
 
+## Approvals migration
+
+Migration `0002` adds a unique index on pending approvals. Roll it out with the old app instances stopped
+or drained first: an old instance still inserts approvals without conflict handling and would hit a unique
+violation on a duplicate request (or make the index build fail if it commits a duplicate mid-migration).
+
 ## Smoke test
 
 Run after every deploy, against the public hostname:

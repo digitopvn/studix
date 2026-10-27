@@ -17,7 +17,7 @@ import {
   toJob,
   upsertStageRow,
 } from "@studix/database";
-import { type Clock, StudixError, type StudixErrorPayload, systemClock } from "@studix/shared";
+import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared";
 import { and, asc, eq, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
 
 const { jobs, approvals, stages } = schema;
@@ -372,6 +372,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     async failExpiredApprovals() {
       const now = clock.now();
       return db.transaction(async (tx) => {
+        // Close requests that are still pending past their expiry on parked jobs, with an audit entry.
         const closed = await tx
           .update(approvals)
           .set({ status: "expired", decidedAt: now })
@@ -396,51 +397,63 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           });
         const audit = createAuditRepository(tx, clock);
         const systemActor = { type: "system" as const, id: "approval-sweeper" };
-        const failedJobs = new Set<string>();
         for (const approval of closed) {
-          const ctx: TenantContext = {
-            organizationId: approval.organizationId,
-            workspaceId: approval.workspaceId,
-            actor: systemActor,
-          };
-          await audit.append(ctx, {
-            actor: actorRef(systemActor),
-            action: "approval.expired",
-            subjectType: "job",
-            subjectId: approval.jobId,
-            data: { approvalId: approval.id, action: approval.action },
-          });
-          if (failedJobs.has(approval.jobId)) continue;
-          const error = new StudixError(
-            "TIMEOUT",
-            `${approval.action} approval expired before a reviewer decided`,
+          await audit.append(
             {
-              retryable: false,
-              suggestedAction:
-                "Submit the job again and ask a reviewer to approve it before the request expires.",
-              details: { reason: "approval_expired", approvalId: approval.id },
+              organizationId: approval.organizationId,
+              workspaceId: approval.workspaceId,
+              actor: systemActor,
             },
-          ).toJSON();
-          const failed = await tx
-            .update(jobs)
-            .set({ status: "failed", error, finishedAt: now, updatedAt: now })
-            .where(
-              and(
-                eq(jobs.id, approval.jobId),
-                eq(jobs.workspaceId, approval.workspaceId),
-                eq(jobs.organizationId, approval.organizationId),
-                eq(jobs.status, "waiting_approval"),
-                sql`not exists (
-                  select 1 from ${approvals} a
-                  where a.workspace_id = ${jobs.workspaceId} and a.subject_type = 'job'
-                    and a.subject_id = ${jobs.id} and a.status = 'pending'
-                )`,
-              ),
-            )
-            .returning({ id: jobs.id });
-          if (failed.length === 1) failedJobs.add(approval.jobId);
+            {
+              actor: actorRef(systemActor),
+              action: "approval.expired",
+              subjectType: "job",
+              subjectId: approval.jobId,
+              data: { approvalId: approval.id, action: approval.action },
+            },
+          );
         }
-        return failedJobs.size;
+        // Driven by the job, not by the rows closed above: an approval can also be closed elsewhere (a
+        // reviewer answering after expiry, opening a new request, a migration), which leaves the job parked
+        // with nothing pending. Fail it when its latest approval expired and no request is still open.
+        const failed = await tx
+          .update(jobs)
+          .set({
+            status: "failed",
+            finishedAt: now,
+            updatedAt: now,
+            error: sql`jsonb_build_object(
+              'code', 'TIMEOUT',
+              'message', (select l.action from ${approvals} l where l.id = (
+                select max(m.id) from ${approvals} m
+                where m.workspace_id = "jobs"."workspace_id" and m.subject_type = 'job' and m.subject_id = "jobs"."id"
+              )) || ' approval expired before a reviewer decided',
+              'retryable', false,
+              'suggestedAction', 'Submit the job again and ask a reviewer to approve it before the request expires.',
+              'details', jsonb_build_object('reason', 'approval_expired')
+            )`,
+          })
+          .where(
+            and(
+              eq(jobs.status, "waiting_approval"),
+              sql`not exists (
+                select 1 from ${approvals} p
+                where p.workspace_id = "jobs"."workspace_id" and p.subject_type = 'job'
+                  and p.subject_id = "jobs"."id" and p.status = 'pending'
+              )`,
+              sql`exists (
+                select 1 from ${approvals} l
+                where l.workspace_id = "jobs"."workspace_id" and l.subject_type = 'job'
+                  and l.subject_id = "jobs"."id" and l.status = 'expired'
+                  and l.id = (
+                    select max(m.id) from ${approvals} m
+                    where m.workspace_id = l.workspace_id and m.subject_type = 'job' and m.subject_id = l.subject_id
+                  )
+              )`,
+            ),
+          )
+          .returning({ id: jobs.id });
+        return failed.length;
       });
     },
   };

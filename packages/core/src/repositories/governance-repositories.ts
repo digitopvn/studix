@@ -21,6 +21,7 @@ export interface ApprovalDecision {
 }
 
 export interface ApprovalRepository {
+  /** Plain insert for seeding rows; production code requests approval through `open`. */
   create(ctx: TenantContext, input: NewApproval): Promise<Approval>;
   /**
    * The one way to request approval: returns the live pending approval for the same subject, action and

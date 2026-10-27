@@ -1,7 +1,7 @@
 ALTER TABLE "approvals" ADD COLUMN "scope_key" text DEFAULT '' NOT NULL;--> statement-breakpoint
 -- Connector approvals carried their tool + argument key only in the reason text; lift it into scope_key.
-UPDATE "approvals" SET "scope_key" = substring("reason" from 'execute mutating connector tool (\S+)$')
-WHERE "action" = 'connector.execute' AND "reason" ~ 'execute mutating connector tool \S+$';--> statement-breakpoint
+UPDATE "approvals" SET "scope_key" = substring("reason" from 'execute mutating connector tool (.+)$')
+WHERE "action" = 'connector.execute' AND "reason" ~ 'execute mutating connector tool .+$';--> statement-breakpoint
 -- Pending requests past their expiry can no longer be decided; close them so they do not hold the slot.
 UPDATE "approvals" SET "status" = 'expired', "decided_at" = now()
 WHERE "status" = 'pending' AND "expires_at" IS NOT NULL AND "expires_at" <= now();--> statement-breakpoint

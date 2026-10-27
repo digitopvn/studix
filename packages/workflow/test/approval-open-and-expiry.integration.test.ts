@@ -96,6 +96,8 @@ describe("opening approvals", () => {
     expect(fresh.created).toBe(true);
     expect(fresh.approval.id).not.toBe(stale.approval.id);
     expect(await repos.approvals.get(ctx, stale.approval.id)).toMatchObject({ status: "expired" });
+    const audits = (await repos.audit.list(ctx, { subjectType: "job", subjectId: job.id })).items;
+    expect(audits.filter((e) => e.action === "approval.expired")).toHaveLength(1);
   });
 });
 
@@ -154,5 +156,32 @@ describe("expired approvals on parked jobs", () => {
     expect(await queue.failExpiredApprovals()).toBe(0);
     expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "waiting_approval" });
     expect(await repos.approvals.get(ctx, approval.id)).toMatchObject({ status: "expired" });
+  });
+
+  it("fails a parked job whose approval was closed elsewhere, such as a reviewer answering after expiry", async () => {
+    const { ctx, repos, queue, job, approval } = await parkedJob("expiry-closed-elsewhere");
+    await db.current.db.execute(
+      sql`update approvals set expires_at = now() - interval '1 minute' where id = ${approval.id}`,
+    );
+    // Same effect as decideApproval on an expired request: the row leaves `pending` without the job moving.
+    await repos.approvals.decide(ctx, approval.id, { status: "expired", decidedAt: new Date() });
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "waiting_approval" });
+    expect(await queue.failExpiredApprovals()).toBe(1);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({
+      status: "failed",
+      error: { code: "TIMEOUT", details: { reason: "approval_expired" } },
+    });
+  });
+
+  it("does not fail a parked job whose latest approval was decided", async () => {
+    const { ctx, repos, queue, job, approval } = await parkedJob("expiry-decided");
+    await repos.approvals.decide(ctx, approval.id, {
+      status: "approved",
+      decidedBy: human,
+      decidedAt: new Date(),
+    });
+    expect(await queue.failExpiredApprovals()).toBe(0);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "waiting_approval" });
+    expect(await queue.resumeDecidedApprovals()).toBe(1);
   });
 });

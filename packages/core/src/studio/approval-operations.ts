@@ -129,6 +129,13 @@ export async function decideApproval(
   const now = deps.clock.now();
   if (approval.status === "pending" && !isPendingAndLive(approval, now)) {
     await deps.approvals.decide(ctx, approval.id, { status: "expired", decidedAt: now });
+    await deps.audit.append(ctx, {
+      actor: actorRef(ctx.actor),
+      action: "approval.expired",
+      subjectType: approval.subject.type,
+      subjectId: approval.subject.id,
+      data: { approvalId: approval.id, action: approval.action },
+    });
     throw new StudixError("CONFLICT", "approval request expired", {
       suggestedAction: "Request approval again.",
     });
