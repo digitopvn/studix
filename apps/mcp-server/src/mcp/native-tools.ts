@@ -65,6 +65,13 @@ const CreateVideoInput = z
       .optional()
       .describe("Same key in this workspace returns the original job."),
     budgetCents: z.number().int().min(0).max(10_000_000).optional(),
+    deadlineSeconds: z
+      .number()
+      .int()
+      .min(10)
+      .max(7 * 24 * 3600)
+      .optional()
+      .describe("Wall-clock limit for the job from now; past it the job fails with TIMEOUT."),
     renderPreset: RenderPreset.optional(),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
@@ -107,6 +114,7 @@ export const NATIVE_TOOLS = [
         title: input.title,
         idempotencyKey: input.idempotencyKey,
         budgetCents: input.budgetCents,
+        ...(input.deadlineSeconds ? { deadlineAt: new Date(Date.now() + input.deadlineSeconds * 1000) } : {}),
         renderPreset: input.renderPreset,
       });
       return {

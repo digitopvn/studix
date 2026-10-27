@@ -17,6 +17,7 @@ import {
 import type { Express } from "express";
 import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
+import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
 import type {
   ArtifactUrlSigner,
@@ -40,7 +41,7 @@ export const AppEnvSchema = z.object({
 });
 export type AppEnv = z.output<typeof AppEnvSchema>;
 
-/** Adapters owned by other packages, plugged in at wiring time. */
+/** Replacements for the adapters composeIntegrations builds from the environment (tests, embedding). */
 export interface ComposeOverrides {
   storage?: ArtifactUrlSigner;
   connectors?: ConnectorAdmin;
@@ -58,15 +59,6 @@ export interface ComposedApp {
   close(): Promise<void>;
 }
 
-/** The deterministic template the planner falls back to (ADR-0003); listed until a skills registry is wired. */
-export const DEFAULT_SKILLS: SkillSummary[] = [
-  {
-    id: "brand-intro",
-    title: "Brand intro",
-    description: "Short motion-graphics brand introduction: logo, slogan, palette, 9:16 / 16:9 / 1:1.",
-  },
-];
-
 const DEFAULT_DASHBOARD_DIST = fileURLToPath(new URL("../../dashboard/dist", import.meta.url));
 
 function parseAppEnv(env: NodeJS.ProcessEnv): AppEnv {
@@ -79,13 +71,6 @@ function parseAppEnv(env: NodeJS.ProcessEnv): AppEnv {
     "VALIDATION",
     `Invalid configuration: ${parsed.error.issues.map((i) => i.path.join(".")).join(", ")}`,
   );
-}
-
-/** Media origins for the dashboard CSP: the S3 endpoint, plus its subdomains for virtual-hosted buckets. */
-function storageMediaOrigins(config: StudixConfig): string[] {
-  if (!config.S3_ENDPOINT) return [];
-  const url = new URL(config.S3_ENDPOINT);
-  return config.S3_FORCE_PATH_STYLE ? [url.origin] : [url.origin, `${url.protocol}//*.${url.host}`];
 }
 
 function dashboardSecret(config: StudixConfig, logger: Logger): string {
@@ -120,9 +105,14 @@ export async function composeApp(
   }
   const handle = createDb(config.DATABASE_URL, { applicationName: "studix-app" });
   const repos = createRepositories(handle.db, { clock: systemClock });
+  const approvalPolicy = createDefaultApprovalPolicy({
+    costThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
+  });
+  const activity = createActivityRecorder(repos.activity, { logger });
+  const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
   const studio = new StudioService({
     ...repos,
-    approvalPolicy: createDefaultApprovalPolicy({ costThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS }),
+    approvalPolicy,
     clock: systemClock,
     logger,
     defaults: {
@@ -162,10 +152,10 @@ export async function composeApp(
       approvalCostThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
       signedUrlTtlSeconds: config.S3_SIGNED_URL_TTL_SECONDS,
     },
-    storage: overrides.storage,
-    connectors: overrides.connectors,
-    metaTools: overrides.metaTools,
-    activity: createActivityRecorder(repos.activity, { logger }),
+    storage: overrides.storage ?? integrations.storage,
+    connectors: overrides.connectors ?? integrations.connectors,
+    metaTools: overrides.metaTools ?? integrations.metaTools,
+    activity,
     readiness: [
       {
         name: "database",
@@ -175,12 +165,16 @@ export async function composeApp(
       },
       ...(overrides.readiness ?? []),
     ],
-    skills: overrides.skills ?? DEFAULT_SKILLS,
+    skills: overrides.skills ?? integrations.skills,
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,
   };
-  if (!overrides.storage) logger.warn("artifact storage not wired; playback URLs are unavailable");
+  if (!deps.storage) logger.warn("S3_BUCKET is not set; playback URLs are unavailable");
 
-  return { app: createApp(deps), config, appEnv, logger, close: () => handle.close() };
+  const close = async () => {
+    integrations.storage?.destroy();
+    await handle.close();
+  };
+  return { app: createApp(deps), config, appEnv, logger, close };
 }

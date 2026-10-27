@@ -81,4 +81,20 @@ describe("createS3StorageAdapterFromConfig", () => {
     );
     adapter.destroy();
   });
+
+  it("presigns with S3_PUBLIC_ENDPOINT when the clients reach storage on another host", async () => {
+    const adapter = createS3StorageAdapterFromConfig(
+      loadConfig({
+        ...base,
+        S3_ENDPOINT: "http://minio:9000",
+        S3_PUBLIC_ENDPOINT: "http://localhost:59000",
+        S3_BUCKET: "studix-test",
+        S3_ACCESS_KEY_ID: "id",
+        S3_SECRET_ACCESS_KEY: "secret-value",
+      }),
+    );
+    const url = new URL(await adapter.signedUrl(testTenant(), "renders/r/out.mp4"));
+    expect(url.origin).toBe("http://localhost:59000");
+    adapter.destroy();
+  });
 });

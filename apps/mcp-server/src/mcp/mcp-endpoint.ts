@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { type AuthInfo, createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { GATEWAY_DEPTH_HEADER, parseGatewayDepth } from "@studix/mcp-gateway";
 import { activeTraceIds, withSpan } from "@studix/observability";
 import { StudixError, toStudixError } from "@studix/shared";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
@@ -8,6 +9,7 @@ import type { z } from "zod";
 import { type AppDeps, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
+import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
 import { NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
 import { errorEnvelope, okEnvelope, ToolEnvelopeSchema } from "./tool-envelope.ts";
 
@@ -18,21 +20,22 @@ const INSTRUCTIONS =
   "Studix produces videos. Call studix_inspect first. studix_create_video returns a jobId at once; " +
   "poll studix_get_job (respect next[].pollAfterMs) until it succeeds, then use its signed MP4 URL.";
 
-type StudixAuthInfo = AuthInfo & { extra: { tenant: ToolContext["tenant"] } };
+/** `gatewayDepth`: inbound gateway hop count, so a call relayed through another gateway cannot execute tools. */
+type StudixAuthInfo = AuthInfo & { extra: { tenant: ToolContext["tenant"]; gatewayDepth: number } };
 
 function newTraceId(): string {
   return activeTraceIds()?.traceId ?? randomBytes(16).toString("hex");
 }
 
-function tenantFrom(authInfo: AuthInfo | undefined): ToolContext["tenant"] {
-  const tenant = (authInfo as StudixAuthInfo | undefined)?.extra?.tenant;
-  if (!tenant?.workspaceId) throw new StudixError("UNAUTHENTICATED", "Missing tenant context");
-  return tenant;
+function authFrom(authInfo: AuthInfo | undefined): StudixAuthInfo["extra"] {
+  const extra = (authInfo as StudixAuthInfo | undefined)?.extra;
+  if (!extra?.tenant?.workspaceId) throw new StudixError("UNAUTHENTICATED", "Missing tenant context");
+  return extra;
 }
 
 /** Register the native tools (and the gateway's meta-tools when wired) on a per-request server. */
 export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authInfo: AuthInfo | undefined) {
-  const tenant = tenantFrom(authInfo);
+  const { tenant, gatewayDepth } = authFrom(authInfo);
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
@@ -91,11 +94,9 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     );
   }
 
-  deps.metaTools?.(server, { tenant, logger: deps.logger, traceId: requestTraceId });
+  deps.metaTools?.(server, { tenant, gatewayDepth, logger: deps.logger, traceId: requestTraceId });
   return server;
 }
-
-const META_TOOL_NAMES = ["studix_tool_search", "studix_tool_inspect", "studix_tool_execute"];
 
 function listedToolNames(deps: AppDeps, native: string[]): string[] {
   return deps.metaTools ? [...native, ...META_TOOL_NAMES] : native;
@@ -142,7 +143,7 @@ export function mountMcpEndpoint(
         token: "[redacted]",
         clientId: tenant.actor.id,
         scopes: tenant.actor.type === "apiKey" ? [...tenant.actor.scopes] : [],
-        extra: { tenant },
+        extra: { tenant, gatewayDepth: parseGatewayDepth(req.headers[GATEWAY_DEPTH_HEADER]) },
       };
       (req as Request & { auth?: AuthInfo }).auth = authInfo;
       next();

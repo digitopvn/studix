@@ -42,6 +42,8 @@ export const ConfigSchema = z
       .optional(),
 
     S3_ENDPOINT: optionalUrl,
+    /** Endpoint used only to presign client URLs when browsers reach storage on another host than the app. */
+    S3_PUBLIC_ENDPOINT: optionalUrl,
     S3_REGION: z.string().min(1).default("us-east-1"),
     S3_BUCKET: optionalString,
     S3_ACCESS_KEY_ID: optionalString,

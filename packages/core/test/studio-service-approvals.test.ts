@@ -85,6 +85,25 @@ describe("publish without approval is blocked", () => {
     expect(err.code).toBe("FORBIDDEN");
   });
 
+  it("a publish job parked by the worker shows its pending publish approval", async () => {
+    const { studio, repos, ctx } = await setup();
+    const { job } = await repos.queue.enqueue(ctx, {
+      kind: "video.publish",
+      payload: { renderId: "rnd_1", title: "t" },
+      createdBy: { type: "user", id: "u" },
+    });
+    await repos.jobs.update(ctx, job.id, { status: "waiting_approval" });
+    const approval = await repos.approvals.create(ctx, {
+      action: "publish",
+      subject: { type: "job", id: job.id },
+      reason: "publishing needs a human",
+      requestedBy: { type: "system", id: "worker" },
+    });
+    const view = await studio.getJob(ctx, job.id);
+    expect(view.approval).toMatchObject({ id: approval.id, action: "publish", status: "pending" });
+    expect(view.next[0]).toMatchObject({ tool: "studix_approve", arguments: { approvalId: approval.id } });
+  });
+
   it("does not gate cheap actions", async () => {
     const { studio, ctx, project } = await setup();
     const result = await studio.ensureApproved(ctx, {

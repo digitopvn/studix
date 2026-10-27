@@ -16,3 +16,4 @@ export {
 } from "./hyperframes/compile-composition.ts";
 export { HyperFramesRenderer, type HyperFramesRendererOptions } from "./hyperframes/hyperframes-renderer.ts";
 export { hyperframesSupport } from "./hyperframes/hyperframes-support.ts";
+export { renderToolchain } from "./render-toolchain.ts";

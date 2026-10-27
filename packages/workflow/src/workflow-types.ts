@@ -75,6 +75,10 @@ export interface PlanUsage {
   costCents: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** Wall time of the call, including fallbacks. */
+  latencyMs?: number;
+  /** Decision kind or capability the call served, e.g. "video.brief". */
+  operation?: string;
   providerExecutionId?: string;
 }
 

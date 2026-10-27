@@ -27,6 +27,8 @@ export interface WorkerPorts {
   storage: StorageAdapter;
   /** Optional: without one, approved publish jobs fail with UNAVAILABLE. */
   publisher?: PublisherAdapter;
+  /** Release adapter resources (HTTP agents, clients) after the pool has drained. */
+  close?(): Promise<void>;
 }
 
 export interface WorkerRuntimeSettings {

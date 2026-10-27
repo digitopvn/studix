@@ -1,13 +1,20 @@
-import { createDb } from "@studix/database";
+import { createDb, type StudixDb } from "@studix/database";
 import { createLogger, type Logger } from "@studix/shared";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
 import { createWorkerRuntime, type WorkerPorts, type WorkerRuntime } from "./wiring.ts";
 import { loadWorkerSettings, type WorkerSettings } from "./worker-settings.ts";
 
+/** Process resources handed to the port resolver (shared pool, environment, process logger). */
+export interface WorkerPortsRuntime {
+  db: StudixDb;
+  env: NodeJS.ProcessEnv;
+  logger: Logger;
+}
+
 export interface WorkerProcessOptions {
-  /** Adapters for the stages, resolved once the settings are known. */
-  resolvePorts: (settings: WorkerSettings) => Promise<WorkerPorts>;
+  /** Adapters for the stages, resolved once the settings are known and the database is ready. */
+  resolvePorts: (settings: WorkerSettings, runtime: WorkerPortsRuntime) => Promise<WorkerPorts>;
   env?: NodeJS.ProcessEnv;
   logger?: Logger;
   /** Install SIGTERM/SIGINT handlers (default true; tests turn it off). */
@@ -37,6 +44,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     applicationName: `studix-worker:${settings.workerId}`,
   });
   let runtime: WorkerRuntime | undefined;
+  let ports: WorkerPorts | undefined;
   let stopping = false;
   const startup = new AbortController();
 
@@ -63,6 +71,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       try {
         await runtime?.stop(settings.shutdownGraceMs);
       } finally {
+        await ports?.close?.().catch((err) => logger.warn("adapter close failed", { error: String(err) }));
         await health
           .close()
           .catch((err) => logger.warn("health server close failed", { error: String(err) }));
@@ -94,7 +103,11 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
 
   try {
     await waitForDatabase(handle, { logger, signal: startup.signal });
-    const ports = await options.resolvePorts(settings);
+    ports = await options.resolvePorts(settings, {
+      db: handle.db,
+      env: options.env ?? process.env,
+      logger,
+    });
     if (stopping) throw new Error("worker stopped during startup");
     runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });
     runtime.start();

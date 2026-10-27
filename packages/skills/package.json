@@ -8,7 +8,8 @@
   },
   "dependencies": {
     "@studix/shared": "workspace:*",
-    "@studix/video-ir": "workspace:*"
+    "@studix/video-ir": "workspace:*",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "vitest": "5.0.5"

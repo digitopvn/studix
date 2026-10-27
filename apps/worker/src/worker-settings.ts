@@ -1,5 +1,6 @@
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseQualifiedToolName } from "@studix/mcp-gateway";
 import { loadConfig, type StudixConfig, StudixError } from "@studix/shared";
 import { z } from "zod";
 
@@ -18,6 +19,18 @@ const WorkerEnv = z.object({
   WORKER_SHUTDOWN_GRACE_MS: z.coerce.number().int().min(0).max(600_000).default(25_000),
   /** COGS per rendered second; 0 until compute cost is measured. */
   RENDER_COST_CENTS_PER_SECOND: z.coerce.number().min(0).default(0),
+  /** Workspace connector tool (`connector.tool`, e.g. `brand.brand_lookup`) used to enrich drafted brands. */
+  STUDIX_BRAND_LOOKUP_TOOL: z
+    .string()
+    .refine((v) => {
+      try {
+        parseQualifiedToolName(v);
+        return true;
+      } catch {
+        return false;
+      }
+    }, "must look like connector.tool")
+    .optional(),
 });
 
 export interface WorkerSettings {
@@ -34,6 +47,8 @@ export interface WorkerSettings {
   workDir: string;
   approvalCostThresholdCents: number;
   renderCentsPerSecond: number;
+  /** Qualified connector tool for brand enrichment; unset disables the lookup. */
+  brandLookupTool?: string;
 }
 
 /** Parse worker settings; throws a VALIDATION StudixError naming bad variables (values never echoed). */
@@ -73,5 +88,6 @@ export function loadWorkerSettings(env: NodeJS.ProcessEnv = process.env): Worker
     workDir: w.WORKER_WORK_DIR ?? join(tmpdir(), "studix-worker"),
     approvalCostThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
     renderCentsPerSecond: w.RENDER_COST_CENTS_PER_SECOND,
+    ...(w.STUDIX_BRAND_LOOKUP_TOOL ? { brandLookupTool: w.STUDIX_BRAND_LOOKUP_TOOL } : {}),
   };
 }
