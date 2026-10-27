@@ -213,6 +213,7 @@ export function createS3StorageAdapterFromConfig(
   config: Pick<
     StudixConfig,
     | "S3_ENDPOINT"
+    | "S3_PUBLIC_ENDPOINT"
     | "S3_REGION"
     | "S3_BUCKET"
     | "S3_ACCESS_KEY_ID"
@@ -241,6 +242,6 @@ export function createS3StorageAdapterFromConfig(
       ? { accessKeyId: config.S3_ACCESS_KEY_ID!, secretAccessKey: config.S3_SECRET_ACCESS_KEY! }
       : undefined,
     signedUrlPolicy: overrides.signedUrlPolicy ?? { defaultTtlSeconds: ttl, maxTtlSeconds: ttl },
-    publicEndpoint: overrides.publicEndpoint,
+    publicEndpoint: overrides.publicEndpoint ?? config.S3_PUBLIC_ENDPOINT,
   });
 }
