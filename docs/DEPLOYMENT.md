@@ -84,7 +84,6 @@ resources prefixed `studix-`.
 | ----------- | ------ | ----------------- | --------------------------------------- | ------------------------------- |
 | production  | `main` | SGP1 (Production) | `studix-prod-app`, `studix-prod-worker` | `1` (TOSE ingress, DNS-only)    |
 | dev         | `dev`  | Development       | `studix-app`, `studix-worker`           | `2` (Cloudflare + TOSE ingress) |
-
 - Each project is built by TOSE from the root `Dockerfile` (linux/amd64) of its
   environment's branch. Auto-deploy is **off**: CI decides when to build (below).
   The worker has no public ingress; its `/healthz` listens on
