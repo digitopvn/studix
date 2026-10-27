@@ -17,7 +17,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       NODE_ENV: test
       # Local-only credentials from docker-compose.yml, not secrets.
@@ -40,6 +40,17 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      # Rendering toolchain for the HyperFrames integration test: FFmpeg/ffprobe plus
+      # chrome-headless-shell (the runner image already ships Chrome's shared libraries).
+      - name: Install FFmpeg and chrome-headless-shell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          npx --yes @puppeteer/browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer
+
+      # uv runs the Python MCP SDK client test against /mcp.
+      - uses: astral-sh/setup-uv@v6
 
       - name: Lint
         run: pnpm lint
