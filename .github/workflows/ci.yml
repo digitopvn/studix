@@ -1,11 +1,11 @@
 # Lint, typecheck, unit + integration tests and build. Never calls paid provider APIs:
 # the live test project only runs when STUDIX_LIVE=1, which CI never sets.
+# Pushes to dev and main run it through deploy.yml, which deploys only after it passes.
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read

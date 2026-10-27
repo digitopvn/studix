@@ -1,0 +1,54 @@
+# Push to dev deploys the dev environment, push to main deploys production, each only after CI
+# passes. TOSE builds the image from the pushed branch (projects have auto-deploy off); the
+# environment's variables name the projects and the public URL, its secret holds the TOSE key.
+name: deploy
+
+on:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    # Manual runs from other branches still run CI but deploy nothing.
+    if: github.ref_name == 'dev' || github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment:
+      name: ${{ github.ref_name == 'main' && 'production' || 'dev' }}
+      url: ${{ vars.STUDIX_APP_URL }}
+    # A started rollout is never cancelled; a newer push queues behind it (GitHub keeps only the
+    # newest queued run, and a newer push also cancels an older run's unfinished CI).
+    concurrency:
+      group: deploy-${{ github.ref_name }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Deploy app, then worker
+        env:
+          TOSE_API_KEY: ${{ secrets.TOSE_API_KEY }}
+          TOSE_WORKSPACE: ${{ vars.TOSE_WORKSPACE }}
+          APP_PROJECT: ${{ vars.TOSE_APP_PROJECT }}
+          WORKER_PROJECT: ${{ vars.TOSE_WORKER_PROJECT }}
+          # Lets the script skip a build when the branch moved past the commit CI tested.
+          EXPECTED_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node deploy/tose/deploy.ts "$APP_PROJECT" "$WORKER_PROJECT"
+      - name: Health check
+        env:
+          APP_URL: ${{ vars.STUDIX_APP_URL }}
+        run: |
+          for p in healthz readyz; do
+            curl -sf --retry 10 --retry-delay 6 --retry-all-errors --max-time 20 "$APP_URL/$p" -o /dev/null
+            echo "$APP_URL/$p ok"
+          done

@@ -11,7 +11,7 @@ bug.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Package ownership, request flow, job lifecycle, trust boundaries      |
 | [MCP_API.md](MCP_API.md)           | The northbound `/mcp` tool contract and client connection guide       |
 | [SECURITY.md](SECURITY.md)         | Tenancy, credentials, connector egress, approvals, threat list        |
-| [DEPLOYMENT.md](DEPLOYMENT.md)     | Local, self-host, Cloudflare marketing, TOSE staging, runbook         |
+| [DEPLOYMENT.md](DEPLOYMENT.md)     | Local, self-host, Cloudflare marketing, TOSE dev/prod, CI, runbook    |
 | [ROADMAP.md](ROADMAP.md)           | P0..P3 and the P0 done-means checklist                                |
 | [METRICS.md](METRICS.md)           | Baseline metric definitions and results                               |
 | [PORTING.md](PORTING.md)           | What was taken from `motion-mcp`, at which SHA, and what was replaced |
