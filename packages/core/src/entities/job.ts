@@ -1,0 +1,123 @@
+import type { StudixErrorPayload } from "@studix/shared";
+import type { RenderPreset, RenderSpec } from "@studix/video-ir";
+import type { ActorRef, TenantOwned } from "./common.ts";
+
+export const JOB_STATUSES = [
+  "queued",
+  "running",
+  "waiting_approval",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
+
+export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set(["succeeded", "failed", "cancelled"]);
+
+export function isTerminalJobStatus(status: JobStatus): boolean {
+  return TERMINAL_JOB_STATUSES.has(status);
+}
+
+/** Well-known job kinds; workflows may register more (kinds are open strings). */
+export const JOB_KINDS = {
+  createVideo: "video.create",
+  render: "video.render",
+  publish: "video.publish",
+} as const;
+
+/**
+ * Durable unit of work in the Postgres-backed queue. Lease fields (`lockedBy`, `leaseExpiresAt`) are owned
+ * by the worker; `cancelRequested` is how a running job is asked to stop.
+ */
+export interface Job extends TenantOwned {
+  projectId?: string;
+  workflowRunId?: string;
+  kind: string;
+  status: JobStatus;
+  /** Current stage name (e.g. "plan", "render-preview"). */
+  stage?: string;
+  /** 0..1 */
+  progress: number;
+  payload: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: StudixErrorPayload;
+  attempts: number;
+  maxAttempts: number;
+  runAfter: Date;
+  lockedBy?: string;
+  leaseExpiresAt?: Date;
+  idempotencyKey?: string;
+  cancelRequested: boolean;
+  deadlineAt?: Date;
+  budgetCents?: number;
+  spentCents: number;
+  createdBy: ActorRef;
+  updatedAt: Date;
+  startedAt?: Date;
+  finishedAt?: Date;
+}
+
+export const STAGE_STATUSES = ["pending", "running", "succeeded", "failed", "skipped", "cancelled"] as const;
+export type StageStatus = (typeof STAGE_STATUSES)[number];
+
+/** One attempt of one named stage of a job (checkpoint for resume). */
+export interface Stage extends TenantOwned {
+  jobId: string;
+  name: string;
+  attempt: number;
+  status: StageStatus;
+  output?: Record<string, unknown>;
+  error?: StudixErrorPayload;
+  startedAt?: Date;
+  finishedAt?: Date;
+}
+
+export const WORKFLOW_RUN_STATUSES = [
+  "running",
+  "waiting_approval",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
+
+/** An execution of a workflow template, grouping its jobs. */
+export interface WorkflowRun extends TenantOwned {
+  projectId?: string;
+  template: string;
+  status: WorkflowRunStatus;
+  input: Record<string, unknown>;
+  createdBy: ActorRef;
+  updatedAt: Date;
+  finishedAt?: Date;
+}
+
+export const RENDER_STATUSES = ["queued", "rendering", "succeeded", "failed", "cancelled"] as const;
+export type RenderStatus = (typeof RENDER_STATUSES)[number];
+
+/** Probe of a rendered media file. */
+export interface MediaProbe {
+  durationMs: number;
+  width: number;
+  height: number;
+  fps: number;
+  videoCodec: string;
+  audioCodec?: string;
+  bytes: number;
+}
+
+export interface Render extends TenantOwned {
+  projectId: string;
+  versionId: string;
+  jobId?: string;
+  preset: RenderPreset;
+  spec: RenderSpec;
+  status: RenderStatus;
+  /** Output asset version once stored. */
+  assetVersionId?: string;
+  storageKey?: string;
+  probe?: MediaProbe;
+  error?: StudixErrorPayload;
+  updatedAt: Date;
+  completedAt?: Date;
+}

@@ -1,0 +1,139 @@
+import { type Clock, StudixError } from "@studix/shared";
+import type { Approval, Review } from "../entities/review.ts";
+import type { ActivityEvent, AuditEvent, ProviderExecution, UsageEvent } from "../entities/telemetry.ts";
+import type {
+  ApprovalRepository,
+  AuditRepository,
+  ReviewRepository,
+} from "../repositories/governance-repositories.ts";
+import type {
+  ActivityRepository,
+  UsageRange,
+  UsageRepository,
+} from "../repositories/telemetry-repositories.ts";
+import { InMemoryTenantTable } from "./in-memory-table.ts";
+
+export function createInMemoryApprovalRepository(clock: Clock): ApprovalRepository {
+  const approvals = new InMemoryTenantTable<Approval>("apr", clock, false);
+  return {
+    async create(ctx, input) {
+      return approvals.insert(ctx, { ...input, status: "pending" });
+    },
+    async get(ctx, id) {
+      return approvals.get(ctx, id);
+    },
+    async findLatest(ctx, subject, action) {
+      return approvals.filter(
+        ctx,
+        (a) => a.subject.type === subject.type && a.subject.id === subject.id && a.action === action,
+      )[0];
+    },
+    async list(ctx, query = {}) {
+      return approvals.page(
+        ctx,
+        query,
+        (a) =>
+          (query.status === undefined || a.status === query.status) &&
+          (query.subject === undefined ||
+            (a.subject.type === query.subject.type && a.subject.id === query.subject.id)),
+      );
+    },
+    async decide(ctx, id, decision) {
+      const current = approvals.require(ctx, id);
+      if (current.status !== "pending") {
+        throw new StudixError("CONFLICT", `approval ${id} is already ${current.status}`);
+      }
+      return approvals.update(ctx, id, decision);
+    },
+  };
+}
+
+export function createInMemoryReviewRepository(clock: Clock): ReviewRepository {
+  const reviews = new InMemoryTenantTable<Review>("rev", clock);
+  return {
+    async create(ctx, input) {
+      return reviews.insert(ctx, { ...input, status: "open" });
+    },
+    async list(ctx, query) {
+      return reviews.page(
+        ctx,
+        query,
+        (r) =>
+          r.projectId === query.projectId &&
+          (query.versionId === undefined || r.versionId === query.versionId),
+      );
+    },
+    async setStatus(ctx, id, status) {
+      return reviews.update(ctx, id, { status });
+    },
+  };
+}
+
+export function createInMemoryAuditRepository(clock: Clock): AuditRepository {
+  const events = new InMemoryTenantTable<AuditEvent>("aud", clock, false);
+  return {
+    async append(ctx, input) {
+      return events.insert(ctx, input);
+    },
+    async list(ctx, query = {}) {
+      return events.page(
+        ctx,
+        query,
+        (e) =>
+          (query.subjectType === undefined || e.subjectType === query.subjectType) &&
+          (query.subjectId === undefined || e.subjectId === query.subjectId),
+      );
+    },
+  };
+}
+
+function inRange(row: { createdAt: Date; jobId?: string }, range: UsageRange): boolean {
+  return (
+    (range.jobId === undefined || row.jobId === range.jobId) &&
+    (range.since === undefined || row.createdAt >= range.since) &&
+    (range.until === undefined || row.createdAt < range.until)
+  );
+}
+
+export function createInMemoryUsageRepository(clock: Clock): UsageRepository {
+  const usage = new InMemoryTenantTable<UsageEvent>("use", clock, false);
+  const executions = new InMemoryTenantTable<ProviderExecution>("pex", clock, false);
+  return {
+    async record(ctx, input) {
+      const existing = usage.filter(ctx, (u) => u.dedupeKey === input.dedupeKey)[0];
+      if (existing) return { event: existing, created: false };
+      return { event: usage.insert(ctx, input), created: true };
+    },
+    async list(ctx, query = {}) {
+      return usage.page(ctx, query, (u) => inRange(u, query));
+    },
+    async totalCostCents(ctx, range = {}) {
+      return usage.filter(ctx, (u) => inRange(u, range)).reduce((sum, u) => sum + u.costCents, 0);
+    },
+    async recordProviderExecution(ctx, input) {
+      return executions.insert(ctx, input);
+    },
+    async listProviderExecutions(ctx, query) {
+      return executions.page(ctx, query, (e) => e.jobId === query.jobId);
+    },
+  };
+}
+
+export function createInMemoryActivityRepository(clock: Clock): ActivityRepository {
+  const events = new InMemoryTenantTable<ActivityEvent>("act", clock, false);
+  return {
+    async append(ctx, input) {
+      return events.insert(ctx, input);
+    },
+    async list(ctx, query = {}) {
+      return events.page(
+        ctx,
+        query,
+        (e) =>
+          (query.projectId === undefined || e.projectId === query.projectId) &&
+          (query.jobId === undefined || e.jobId === query.jobId) &&
+          (query.traceId === undefined || e.traceId === query.traceId),
+      );
+    },
+  };
+}
