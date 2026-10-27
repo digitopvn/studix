@@ -1,5 +1,5 @@
 # Generic Kubernetes manifests for Studix (self-host or any K8s cluster).
-# TOSE staging builds the same root Dockerfile per project; see docs/DEPLOYMENT.md.
+# TOSE builds the same root Dockerfile per project; see docs/DEPLOYMENT.md.
 #   kubectl create secret generic studix-env --from-env-file=.env   # never commit the .env
 #   kubectl apply -k deploy/k8s
 apiVersion: kustomize.config.k8s.io/v1beta1

@@ -1,7 +1,8 @@
 # MCP API
 
 The northbound contract AI clients see at one Streamable HTTP endpoint:
-`${STUDIX_APP_URL}/mcp` (staging: `https://app.studix.digitop.ai/mcp`).
+`${STUDIX_APP_URL}/mcp` (production: `https://app.studix.digitop.ai/mcp`, dev:
+`https://dev-app.studix.digitop.ai/mcp`).
 
 Source of truth for exact field shapes: the zod schemas in
 `packages/shared/src` (envelope, `ErrorCode`), `packages/video-ir/src`
