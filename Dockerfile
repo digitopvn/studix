@@ -13,7 +13,7 @@ ENV NODE_ENV=production \
     STUDIX_ROLE=app \
     PORT=8080 \
     WORKER_HEALTH_PORT=8081 \
-    STUDIX_DASHBOARD_DIR=/app/apps/dashboard/dist
+    STUDIX_DASHBOARD_DIST=/app/apps/dashboard/dist
 
 # FFmpeg for probing/finishing, unzip for HyperFrames' managed Chrome download, fonts and the
 # shared libraries chrome-headless-shell needs.
