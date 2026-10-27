@@ -112,8 +112,11 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       const safetyMarginMs = Math.min(deps.heartbeatIntervalMs, LEASE_SAFETY_MARGIN_MS);
       const retryMs = Math.min(Math.ceil(deps.heartbeatIntervalMs / 5), HEARTBEAT_RETRY_MS);
       let watchdog: ReturnType<typeof setTimeout> | undefined;
+      // Set once the attempt settles: a beat still in flight then must not schedule more timers.
+      let settled = false;
       const armWatchdog = () => {
         clearTimeout(watchdog);
+        if (settled) return;
         if (leaseExpiresAt === undefined) return;
         const ms = leaseExpiresAt - safetyMarginMs - clock.now().getTime();
         watchdog = setTimeout(
@@ -126,15 +129,16 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       };
       let beatTimer: ReturnType<typeof setTimeout> | undefined;
       const scheduleBeat = (ms: number) => {
-        if (!stop) beatTimer = setTimeout(beat, ms);
+        if (!stop && !settled) beatTimer = setTimeout(beat, ms);
       };
       const beat = () => {
-        if (stop) return;
+        if (stop || settled) return;
         // Armed from the first beat on: a beat that hangs or keeps failing must not outlive the lease.
         if (watchdog === undefined) armWatchdog();
         queue
           .heartbeat(job, workerId)
           .then((hb) => {
+            if (settled) return;
             if (!hb.held) return abort("lease_lost");
             if (hb.cancelRequested) return abort("cancel");
             if (hb.leaseExpiresAt) {
@@ -185,6 +189,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
         log.error("job failed", { code: error.code, message: error.message });
         return await settle(queue.fail(job, workerId, error.toJSON()), "failed");
       } finally {
+        settled = true;
         clearTimeout(beatTimer);
         clearTimeout(watchdog);
         if (deadline) clearTimeout(deadline);

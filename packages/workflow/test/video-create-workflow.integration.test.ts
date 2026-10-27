@@ -141,6 +141,34 @@ describe("video.create workflow on Postgres", () => {
     expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({ status: "succeeded", attempts: 1 });
   });
 
+  it("schedules no heartbeat after the attempt settles", async () => {
+    const ctx = await tenant(db.current, "hb-settle");
+    await enqueueCreate(db.current, ctx);
+    const base = fakeRenderer().renderer;
+    const a = createTestWorker(db.current, "worker-settle", {
+      renderer: {
+        ...base,
+        render: async (ir, opts) => {
+          await new Promise((r) => setTimeout(r, 150));
+          return base.render(ir, opts);
+        },
+      },
+      heartbeatIntervalMs: 100,
+    });
+    let beats = 0;
+    // The first beat is still in flight when the job completes, then fails (database down): it must
+    // not start a retry loop for a finished job.
+    a.queue.heartbeat = async () => {
+      beats++;
+      await new Promise((r) => setTimeout(r, 400));
+      throw new Error("database unreachable");
+    };
+    const claimed = (await a.queue.claim("worker-settle"))!;
+    expect(await a.executor.execute(claimed, "worker-settle", a.shutdown.signal)).toBe("succeeded");
+    await new Promise((r) => setTimeout(r, 800));
+    expect(beats).toBe(1);
+  });
+
   it("abandons an attempt before its lease lapses when heartbeats keep failing", async () => {
     const ctx = await tenant(db.current, "hb-fail");
     const { job } = await enqueueCreate(db.current, ctx);
