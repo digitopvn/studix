@@ -1,7 +1,7 @@
 # Studix runtime image: one image, two roles selected by STUDIX_ROLE.
 #   STUDIX_ROLE=app    -> apps/mcp-server (/mcp, /api, dashboard static, migrations on start)
 #   STUDIX_ROLE=worker -> apps/worker (job claim loops, HyperFrames + FFmpeg rendering, /healthz)
-# Node + FFmpeg + chrome-headless-shell (managed by HyperFrames) for rendering.
+# Node + FFmpeg + chrome-headless-shell (Chromium on arm64) for rendering.
 FROM node:22-bookworm-slim
 
 ENV NODE_ENV=production \
@@ -35,9 +35,23 @@ RUN pnpm install --frozen-lockfile --prod=false \
  && pnpm --filter @studix/dashboard build \
  && chown -R node:node /app
 
-# HyperFrames caches its managed Chrome under the runtime user's ~/.cache/hyperframes.
+# Pin the browser path so the renderer never depends on the runtime user's cache layout.
+# Chrome for Testing ships chrome-headless-shell for linux x64 only; arm64 images (local Apple
+# Silicon builds) fall back to Debian's Chromium, which HyperFrames drives in screenshot mode.
+ENV PRODUCER_HEADLESS_SHELL_PATH=/opt/studix-browser/chrome \
+    HYPERFRAMES_BROWSER_PATH=/opt/studix-browser/chrome
+RUN set -eu; arch="$(dpkg --print-architecture)"; mkdir -p /opt/studix-browser; \
+    if [ "$arch" = "amd64" ]; then \
+      npx --yes --package @puppeteer/browsers@2.13.0 -- browsers install chrome-headless-shell@stable --path /opt/studix-browser/cache; \
+      ln -s "$(find /opt/studix-browser/cache -type f -name chrome-headless-shell | head -n1)" /opt/studix-browser/chrome; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*; \
+      ln -s /usr/bin/chromium /opt/studix-browser/chrome; \
+    fi; \
+    /opt/studix-browser/chrome --version; \
+    rm -rf /root/.npm
+
 USER node
-RUN pnpm --filter @studix/renderers exec hyperframes browser ensure
 
 EXPOSE 8080 8081
 

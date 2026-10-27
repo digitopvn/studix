@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "start": "node --import tsx src/main.ts"
+    "start": "node --import tsx src/main.ts",
+    "smoke": "node --import tsx scripts/smoke-video.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.2",
