@@ -79,7 +79,8 @@ while (Date.now() - started < timeoutMs) {
   await new Promise((r) => setTimeout(r, 2000));
 }
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
-if (job.status !== "succeeded") throw new Error(`job ended ${String(job.status)}: ${JSON.stringify(job.error)}`);
+if (job.status !== "succeeded")
+  throw new Error(`job ended ${String(job.status)}: ${JSON.stringify(job.error)}`);
 const video = job.video as { url: string } | undefined;
 if (!video?.url) throw new Error("job succeeded without a video url");
 const mp4 = await fetch(video.url);
