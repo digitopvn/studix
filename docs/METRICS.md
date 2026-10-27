@@ -45,7 +45,8 @@ below say which one they count.
 
 ## Baseline results
 
-Measured on TOSE staging (`app.studix.digitop.ai`, Development server) at commit
+Measured on the TOSE dev environment (Development server, then served at
+`app.studix.digitop.ai`, now `dev-app.studix.digitop.ai`) at commit
 `9f0fc42`, 2026-10-27, from six `studix_create_video` jobs (the demo prompt in
 `apps/mcp-server/scripts/smoke-video.ts`, decision route
 `video.brief=openrouter>rules`, model `openai/gpt-4o-mini`). Server times come
