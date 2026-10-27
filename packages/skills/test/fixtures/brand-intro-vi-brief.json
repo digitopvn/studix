@@ -1,0 +1,27 @@
+{
+  "prompt": "Video giới thiệu thương hiệu cà phê Sương Mai cho khách hàng trẻ ở thành phố, dài 12 giây.",
+  "language": "vi",
+  "objective": "awareness",
+  "audience": "người trẻ yêu cà phê ở Hà Nội và TP. Hồ Chí Minh",
+  "tone": ["ấm áp", "mộc mạc"],
+  "keyMessages": [
+    "100% Arabica trồng ở độ cao 1.500m trên cao nguyên Lâm Đồng",
+    "Rang mới mỗi tuần, giao tận nơi trong 24 giờ",
+    "Mỗi tách cà phê là một buổi sáng an yên"
+  ],
+  "callToAction": "Đặt ngay hôm nay",
+  "aspectRatio": "9:16",
+  "durationMs": 12000,
+  "brand": {
+    "name": "Sương Mai Coffee",
+    "tagline": "Cà phê rang mộc từ Cầu Đất",
+    "palette": {
+      "primary": "#6b3e26",
+      "secondary": "#d9a066",
+      "accent": "#f2c94c",
+      "background": "#1c1410",
+      "foreground": "#fbf6ef"
+    },
+    "fonts": { "heading": "Be Vietnam Pro", "body": "Be Vietnam Pro" }
+  }
+}
