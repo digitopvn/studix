@@ -1,6 +1,7 @@
 import { type Clock, systemClock } from "@studix/shared";
 import type { StudixDb } from "../client.ts";
 import { createAssetRepository } from "./asset-repository.ts";
+import { createConnectorRepository } from "./connector-repository.ts";
 import {
   createApprovalRepository,
   createAuditRepository,
@@ -17,6 +18,7 @@ import {
 } from "./tenancy-repositories.ts";
 
 export * from "./asset-repository.ts";
+export * from "./connector-repository.ts";
 export * from "./governance-repositories.ts";
 export * from "./job-repository.ts";
 export * from "./project-repository.ts";
@@ -43,6 +45,7 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     audit: createAuditRepository(db, clock),
     usage: createUsageRepository(db, clock),
     activity: createActivityRepository(db, clock),
+    connectors: createConnectorRepository(db, clock),
   };
 }
 

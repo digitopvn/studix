@@ -1,0 +1,24 @@
+{
+  "name": "@studix/mcp-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.1.0",
+    "@modelcontextprotocol/server": "2.1.0",
+    "@studix/core": "workspace:*",
+    "@studix/observability": "workspace:*",
+    "@studix/shared": "workspace:*",
+    "undici": "7.30.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@studix/database": "workspace:*",
+    "@studix/mock-mcp": "workspace:*",
+    "vitest": "5.0.5"
+  }
+}
