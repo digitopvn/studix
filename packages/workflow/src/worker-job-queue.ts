@@ -32,10 +32,14 @@ export interface ApprovalRequest {
   ttlMs: number;
 }
 
-/** `lost`: this worker no longer owns the job, nothing was written. `existing`: a live request was reused. */
+/**
+ * `lost`: this worker no longer owns the job, nothing was written. `existing`: a live request was reused.
+ * `decided`: a reviewer decided the latest request after the caller last looked, so nothing was opened
+ * and the caller must act on that decision instead of shadowing it with a new pending request.
+ */
 export type ApprovalRequestResult =
   | { status: "lost" }
-  | { status: "created" | "existing"; approval: Approval };
+  | { status: "created" | "existing" | "decided"; approval: Approval };
 
 /** A stage row written on behalf of a claimed attempt (the tenant and job come from the job). */
 export type StageWrite = Omit<Parameters<typeof upsertStageRow>[3], "jobId" | "attempt">;
@@ -149,6 +153,13 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       const subject = { type: "job" as const, id: job.id };
       const latest = await approvalRepo.findLatest(ctx, subject, request.action);
       const now = clock.now();
+      if (
+        latest &&
+        (latest.status === "rejected" || (latest.status === "approved" && latest.decidedBy?.type === "user"))
+      ) {
+        result = { status: "decided", approval: latest };
+        return;
+      }
       if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
         result = { status: "existing", approval: latest };
         return;

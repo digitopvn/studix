@@ -208,6 +208,18 @@ describe("fenced attempt writes", () => {
     expect(items[0]).toMatchObject({ status: "pending", requestedBy: { type: "system", id: "fresh" } });
     expect(await audits()).toHaveLength(1);
 
+    // A decision that lands after the caller last looked is returned, not shadowed by a new request.
+    await repos.approvals.decide(ctx, items[0]!.id, {
+      status: "rejected",
+      decidedBy: human,
+      decidedAt: new Date(),
+    });
+    expect(await queue.requestApproval(fresh!, "fresh", request)).toMatchObject({
+      status: "decided",
+      approval: { id: items[0]!.id, status: "rejected" },
+    });
+    expect((await repos.approvals.list(ctx, { subject })).items).toHaveLength(1);
+
     // Once the job is finished, a late request leaves no orphan behind.
     await queue.complete(fresh!, "fresh", {});
     expect(await queue.requestApproval(fresh!, "fresh", { ...request, action: "render.final" })).toEqual({

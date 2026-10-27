@@ -25,6 +25,28 @@ export type ApprovalGateResult =
   | { status: "waiting"; approval: Approval }
   | { status: "lease_lost" };
 
+/** The gate's answer when `latest` is already settled (granted, rejected, or still pending); else undefined. */
+function settle(
+  action: ApprovalAction,
+  latest: Approval | undefined,
+  now: Date,
+): ApprovalGateResult | undefined {
+  if (latest?.status === "approved" && latest.decidedBy?.type === "user") {
+    return { status: "approved", approval: latest };
+  }
+  if (latest?.status === "rejected") {
+    throw new StudixError("FORBIDDEN", `${action} was rejected by a reviewer`, {
+      retryable: false,
+      details: { approvalId: latest.id, comment: latest.comment },
+      suggestedAction: "Address the reviewer's comment and submit a new job.",
+    });
+  }
+  if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
+    return { status: "waiting", approval: latest };
+  }
+  return undefined;
+}
+
 /**
  * Check, at execution time, whether a job may perform a gated action. State is read from the database on
  * every check, so it survives worker restarts. Only an approval decided by a signed-in human counts;
@@ -49,19 +71,8 @@ export async function checkApprovalGate(
 
   const now = deps.clock.now();
   const latest = await deps.approvals.findLatest(ctx, subject, gate.action);
-  if (latest?.status === "approved" && latest.decidedBy?.type === "user") {
-    return { status: "approved", approval: latest };
-  }
-  if (latest?.status === "rejected") {
-    throw new StudixError("FORBIDDEN", `${gate.action} was rejected by a reviewer`, {
-      retryable: false,
-      details: { approvalId: latest.id, comment: latest.comment },
-      suggestedAction: "Address the reviewer's comment and submit a new job.",
-    });
-  }
-  if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
-    return { status: "waiting", approval: latest };
-  }
+  const settled = settle(gate.action, latest, now);
+  if (settled) return settled;
 
   const opened = await deps.queue.requestApproval(job, workerId, {
     action: gate.action,
@@ -70,5 +81,6 @@ export async function checkApprovalGate(
     ttlMs: deps.approvalTtlMs,
   });
   if (opened.status === "lost") return { status: "lease_lost" };
+  if (opened.status === "decided") return settle(gate.action, opened.approval, now)!;
   return { status: "waiting", approval: opened.approval };
 }
