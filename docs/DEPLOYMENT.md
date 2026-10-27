@@ -8,13 +8,13 @@ Executable owners (read these, not this page, for exact steps): the root
 `Dockerfile`, `docker-compose.yml`, `.env.example`, `apps/marketing` Wrangler
 config, `infra/` and the GitHub Actions workflows under `.github/workflows/`.
 
-| Surface | Where | Hostname |
-|---|---|---|
-| Marketing | Cloudflare Worker static assets (account `digitop.vn@gmail.com`) | `studix.digitop.ai` |
-| App (UI, `/api`, `/mcp`) | TOSE project `studix-app` | `app.studix.digitop.ai` |
-| Worker | TOSE project `studix-worker` | none (no public ingress) |
-| Database | TOSE managed PostgreSQL | private |
-| Artifacts | Cloudflare R2 bucket `studix-staging` | presigned URLs only |
+| Surface                  | Where                                                            | Hostname                 |
+| ------------------------ | ---------------------------------------------------------------- | ------------------------ |
+| Marketing                | Cloudflare Worker static assets (account `digitop.vn@gmail.com`) | `studix.digitop.ai`      |
+| App (UI, `/api`, `/mcp`) | TOSE project `studix-app`                                        | `app.studix.digitop.ai`  |
+| Worker                   | TOSE project `studix-worker`                                     | none (no public ingress) |
+| Database                 | TOSE managed PostgreSQL                                          | private                  |
+| Artifacts                | Cloudflare R2 bucket `studix-staging`                            | presigned URLs only      |
 
 ## The image
 
@@ -30,12 +30,12 @@ docs or commit real env files.
 
 Names decided by contract:
 
-| Name | Purpose |
-|---|---|
-| `STUDIX_ROLE` | `app` or `worker` |
-| `STUDIX_PUBLIC_URL` | Public base URL used in links |
-| `STUDIX_APP_URL` | App origin; `/mcp` lives here |
-| `STUDIX_MARKETING_URL` | Marketing origin |
+| Name                   | Purpose                       |
+| ---------------------- | ----------------------------- |
+| `STUDIX_ROLE`          | `app` or `worker`             |
+| `STUDIX_PUBLIC_URL`    | Public base URL used in links |
+| `STUDIX_APP_URL`       | App origin; `/mcp` lives here |
+| `STUDIX_MARKETING_URL` | Marketing origin              |
 
 Other required groups (exact names owned by `loadConfig()` and `.env.example`):
 PostgreSQL connection URL; S3 endpoint, region, bucket, access key id and
@@ -122,15 +122,15 @@ Run after every deploy, against the public hostname:
 
 ## Runbook
 
-| Symptom | Check | Action |
-|---|---|---|
-| `/readyz` failing | Database URL, managed Postgres status, R2 credentials | Fix secret or dependency; pods recover on next probe |
-| Jobs stay queued | `studix-worker` running? recent worker logs | Restart worker; leases expire and jobs are reclaimed |
-| Jobs fail at render | Worker logs for Chromium/FFmpeg errors, memory limits | Raise worker resources or reduce concurrency |
-| Preview URL 403 | URL expired or signing config changed | Call `studix_get_job` again for a fresh URL |
-| `/mcp` 401 for everyone | Auth secret or key table migration | Check deploy diff; roll back if needed |
-| Bad deploy | TOSE deployment history | Roll back both projects (above) |
-| Suspected key leak | Dashboard API keys | Revoke the key; issue a new one |
+| Symptom                 | Check                                                 | Action                                               |
+| ----------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| `/readyz` failing       | Database URL, managed Postgres status, R2 credentials | Fix secret or dependency; pods recover on next probe |
+| Jobs stay queued        | `studix-worker` running? recent worker logs           | Restart worker; leases expire and jobs are reclaimed |
+| Jobs fail at render     | Worker logs for Chromium/FFmpeg errors, memory limits | Raise worker resources or reduce concurrency         |
+| Preview URL 403         | URL expired or signing config changed                 | Call `studix_get_job` again for a fresh URL          |
+| `/mcp` 401 for everyone | Auth secret or key table migration                    | Check deploy diff; roll back if needed               |
+| Bad deploy              | TOSE deployment history                               | Roll back both projects (above)                      |
+| Suspected key leak      | Dashboard API keys                                    | Revoke the key; issue a new one                      |
 
 Trace ids from MCP errors map to the dashboard trace view.
 

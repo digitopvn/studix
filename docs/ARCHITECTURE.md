@@ -52,28 +52,28 @@ The rule behind every boundary: each external dependency has exactly one owning
 package, so upstream churn changes one wrapper. Packages are scoped `@studix/*`
 and export `./src/index.ts`.
 
-| Path | Owns | Must not |
-|---|---|---|
-| `apps/mcp-server` | HTTP app: `/mcp` (native + meta tools), `/api` for the dashboard, dashboard static files, `/healthz`, `/readyz` | Contain pipeline or policy logic; it calls `core` and `mcp-gateway` |
-| `apps/worker` | Worker process: claims jobs and runs workflow stages | Expose public HTTP beyond health |
-| `apps/dashboard` | SPA for projects, jobs, traces, playback, connectors | Implement its own pipeline; it uses `/api` over `StudioService` |
-| `apps/marketing` | Static marketing site on Cloudflare | Import engine packages |
-| `apps/mock-mcp` | Third-party Streamable HTTP MCP fixture for gateway tests | Ship to production |
-| `packages/shared` | `StudixError` + `ErrorCode`, `loadConfig()` (env only, zod), logger with redaction, `newId()`, `redact()`, `Clock` | Depend on other `@studix/*` packages |
-| `packages/video-ir` | `VideoIR`, `Scene`, `Shot`, `Timeline`, `AssetRef`, `BrandKit`, `CreativeBrief`, `RenderSpec` schemas, validation, JSON Schema export, `schemaVersion` migrations, golden fixtures | Import any renderer or provider |
-| `packages/core` | Domain entities, `TenantContext`, port interfaces, `ApprovalPolicy`, `StudioService`; also owns assets and review (ADR-0001) | Import adapters; it defines ports only |
-| `packages/database` | Drizzle schema, SQL migrations, tenant-scoped repositories, `createDb()`, `withTestDatabase()` | Export an unscoped query API |
-| `packages/storage` | `StorageAdapter` over the S3 API, signed URLs | Store binaries in Postgres |
-| `packages/workflow` | Postgres job queue, typed stages, scheduler, crash recovery, budget checks, approval gate | Call a model or provider SDK directly |
-| `packages/agent-runtime` | `AgentRuntime` boundary for Pi, plus a fake | Run outside the worker role |
-| `packages/decision-routing` | `DecisionRouter`, `DecisionProviderAdapter`, OpenRouter, TypeSafeAI, Rules and Fake adapters, shared contract suite | Leak provider payloads to callers |
-| `packages/providers` | `MediaProvider` contract, Multix shell, fake provider | Claim modalities that are not wired end to end |
-| `packages/renderers` | `RendererAdapter`: HyperFrames first, FFmpeg finishing | Be imported by `core` or `video-ir` |
-| `packages/skills` | Versioned workflow templates and recipes (brand-intro first) | Hold tenant data |
-| `packages/mcp-gateway` | Server registry, tool catalog, policy, URL policy, MCP client adapter, execution, invocation trace | Forward the inbound client credential downstream |
-| `packages/auth` | Workspace API keys (hash, verify, revoke, scope), dashboard sessions to membership to workspace | Store plaintext keys |
-| `packages/billing` | Usage ledger (COGS and price recorded separately), dedupe keys | Hardcode a credit conversion |
-| `packages/observability` | Trace/span model with org/workspace/project/job/stage/provider/model attributes, redacted | Record secrets or raw prompts by default |
+| Path                        | Owns                                                                                                                                                                               | Must not                                                            |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `apps/mcp-server`           | HTTP app: `/mcp` (native + meta tools), `/api` for the dashboard, dashboard static files, `/healthz`, `/readyz`                                                                    | Contain pipeline or policy logic; it calls `core` and `mcp-gateway` |
+| `apps/worker`               | Worker process: claims jobs and runs workflow stages                                                                                                                               | Expose public HTTP beyond health                                    |
+| `apps/dashboard`            | SPA for projects, jobs, traces, playback, connectors                                                                                                                               | Implement its own pipeline; it uses `/api` over `StudioService`     |
+| `apps/marketing`            | Static marketing site on Cloudflare                                                                                                                                                | Import engine packages                                              |
+| `apps/mock-mcp`             | Third-party Streamable HTTP MCP fixture for gateway tests                                                                                                                          | Ship to production                                                  |
+| `packages/shared`           | `StudixError` + `ErrorCode`, `loadConfig()` (env only, zod), logger with redaction, `newId()`, `redact()`, `Clock`                                                                 | Depend on other `@studix/*` packages                                |
+| `packages/video-ir`         | `VideoIR`, `Scene`, `Shot`, `Timeline`, `AssetRef`, `BrandKit`, `CreativeBrief`, `RenderSpec` schemas, validation, JSON Schema export, `schemaVersion` migrations, golden fixtures | Import any renderer or provider                                     |
+| `packages/core`             | Domain entities, `TenantContext`, port interfaces, `ApprovalPolicy`, `StudioService`; also owns assets and review (ADR-0001)                                                       | Import adapters; it defines ports only                              |
+| `packages/database`         | Drizzle schema, SQL migrations, tenant-scoped repositories, `createDb()`, `withTestDatabase()`                                                                                     | Export an unscoped query API                                        |
+| `packages/storage`          | `StorageAdapter` over the S3 API, signed URLs                                                                                                                                      | Store binaries in Postgres                                          |
+| `packages/workflow`         | Postgres job queue, typed stages, scheduler, crash recovery, budget checks, approval gate                                                                                          | Call a model or provider SDK directly                               |
+| `packages/agent-runtime`    | `AgentRuntime` boundary for Pi, plus a fake                                                                                                                                        | Run outside the worker role                                         |
+| `packages/decision-routing` | `DecisionRouter`, `DecisionProviderAdapter`, OpenRouter, TypeSafeAI, Rules and Fake adapters, shared contract suite                                                                | Leak provider payloads to callers                                   |
+| `packages/providers`        | `MediaProvider` contract, Multix shell, fake provider                                                                                                                              | Claim modalities that are not wired end to end                      |
+| `packages/renderers`        | `RendererAdapter`: HyperFrames first, FFmpeg finishing                                                                                                                             | Be imported by `core` or `video-ir`                                 |
+| `packages/skills`           | Versioned workflow templates and recipes (brand-intro first)                                                                                                                       | Hold tenant data                                                    |
+| `packages/mcp-gateway`      | Server registry, tool catalog, policy, URL policy, MCP client adapter, execution, invocation trace                                                                                 | Forward the inbound client credential downstream                    |
+| `packages/auth`             | Workspace API keys (hash, verify, revoke, scope), dashboard sessions to membership to workspace                                                                                    | Store plaintext keys                                                |
+| `packages/billing`          | Usage ledger (COGS and price recorded separately), dedupe keys                                                                                                                     | Hardcode a credit conversion                                        |
+| `packages/observability`    | Trace/span model with org/workspace/project/job/stage/provider/model attributes, redacted                                                                                          | Record secrets or raw prompts by default                            |
 
 Search is deferred to P1 (ADR-0001). Infrastructure files (Dockerfile, compose,
 Cloudflare and TOSE config) are listed in [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -174,14 +174,14 @@ AI client --(inbound credential: stx_ key)--> /mcp
 
 ## Trust boundaries
 
-| Boundary | Crossing | Control |
-|---|---|---|
-| Internet -> app | AI client, browser | TLS, host allow-list from `STUDIX_*_URL`, API key or session, per-workspace rate limits |
-| App -> tenant data | Every repository call | `TenantContext` required; no unscoped query API |
-| App/worker -> third-party MCP | Outbound connector call | URL policy (SSRF, DNS rebinding, redirects), secretRef, caps, re-authorization |
-| Worker -> model providers | Decision and media calls | Server-held credentials, redaction, budget, timeouts |
-| Worker -> agent runtime | Pi session | Process/pod isolation, not a path guard; no shell, no secrets in prompt |
-| Storage -> client | Artifact download | Short-lived signed URLs, tenant-prefixed keys |
+| Boundary                      | Crossing                 | Control                                                                                 |
+| ----------------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| Internet -> app               | AI client, browser       | TLS, host allow-list from `STUDIX_*_URL`, API key or session, per-workspace rate limits |
+| App -> tenant data            | Every repository call    | `TenantContext` required; no unscoped query API                                         |
+| App/worker -> third-party MCP | Outbound connector call  | URL policy (SSRF, DNS rebinding, redirects), secretRef, caps, re-authorization          |
+| Worker -> model providers     | Decision and media calls | Server-held credentials, redaction, budget, timeouts                                    |
+| Worker -> agent runtime       | Pi session               | Process/pod isolation, not a path guard; no shell, no secrets in prompt                 |
+| Storage -> client             | Artifact download        | Short-lived signed URLs, tenant-prefixed keys                                           |
 
 Details and threat list: [SECURITY.md](SECURITY.md).
 

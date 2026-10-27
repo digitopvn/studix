@@ -36,11 +36,11 @@ Owner: `packages/auth`.
 
 Two independent trust boundaries:
 
-| | Inbound | Outbound |
-|---|---|---|
-| Who presents it | AI client or browser to Studix | Studix to a model, media provider or third-party MCP server |
-| Form | `stx_` key or session | Provider keys (server-held) or connector credentials via `secretRef` |
-| Rule | Never forwarded downstream | Never returned to clients, prompts, logs or traces |
+|                 | Inbound                        | Outbound                                                             |
+| --------------- | ------------------------------ | -------------------------------------------------------------------- |
+| Who presents it | AI client or browser to Studix | Studix to a model, media provider or third-party MCP server          |
+| Form            | `stx_` key or session          | Provider keys (server-held) or connector credentials via `secretRef` |
+| Rule            | Never forwarded downstream     | Never returned to clients, prompts, logs or traces                   |
 
 ### secretRef
 
@@ -139,24 +139,24 @@ Owner: `redact()` and the logger in `packages/shared`, spans in
 
 Each item maps to a negative test in the owning package.
 
-| Threat | Control |
-|---|---|
-| Cross-tenant read/write | `TenantContext` in every repository call; tenant A/B tests |
-| Stolen or leaked API key | Hashed storage, revocation, scopes, redaction |
-| Inbound credential forwarded downstream | Separate outbound credentials via `secretRef` |
-| `secretRef` value leak | Resolution only at execute, never serialized |
-| SSRF to internal or metadata IPs | URL policy, IP range denylist |
-| DNS rebinding | Pinned resolution |
-| Redirect to internal host or wrong origin | Manual redirect handling, origin-bound credentials |
-| Malicious tool description / result (prompt injection) | Data-not-instruction rule, bounded summaries, code-side authorization |
-| Permission changed after search | Re-authorization at execute |
-| Disabled or revoked tool still callable | Catalog invalidation and execute-time check |
-| Recursion through Studix's own `/mcp` | Self-reference rejection |
-| Oversized result or schema | Size caps, truncation, asset refs |
-| Duplicate side effects on retry | Idempotency keys, no auto-retry of unknown-outcome mutations |
-| Duplicate billing on retry | Usage dedupe keys ([ADR-0008](decisions/0008-billing-usage-ledger.md)) |
-| Publish or high-cost action without approval | `ApprovalPolicy`, fail closed |
-| Runaway cost | Budgets checked before each costly stage |
-| Agent escaping its workspace | Worker pod isolation, no shell, scoped credentials |
-| Expired artifact URL still valid | Presign expiry tests |
-| Host header / origin spoofing | Host allow-list derived from `STUDIX_*_URL` |
+| Threat                                                 | Control                                                                |
+| ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Cross-tenant read/write                                | `TenantContext` in every repository call; tenant A/B tests             |
+| Stolen or leaked API key                               | Hashed storage, revocation, scopes, redaction                          |
+| Inbound credential forwarded downstream                | Separate outbound credentials via `secretRef`                          |
+| `secretRef` value leak                                 | Resolution only at execute, never serialized                           |
+| SSRF to internal or metadata IPs                       | URL policy, IP range denylist                                          |
+| DNS rebinding                                          | Pinned resolution                                                      |
+| Redirect to internal host or wrong origin              | Manual redirect handling, origin-bound credentials                     |
+| Malicious tool description / result (prompt injection) | Data-not-instruction rule, bounded summaries, code-side authorization  |
+| Permission changed after search                        | Re-authorization at execute                                            |
+| Disabled or revoked tool still callable                | Catalog invalidation and execute-time check                            |
+| Recursion through Studix's own `/mcp`                  | Self-reference rejection                                               |
+| Oversized result or schema                             | Size caps, truncation, asset refs                                      |
+| Duplicate side effects on retry                        | Idempotency keys, no auto-retry of unknown-outcome mutations           |
+| Duplicate billing on retry                             | Usage dedupe keys ([ADR-0008](decisions/0008-billing-usage-ledger.md)) |
+| Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                          |
+| Runaway cost                                           | Budgets checked before each costly stage                               |
+| Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                     |
+| Expired artifact URL still valid                       | Presign expiry tests                                                   |
+| Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                            |

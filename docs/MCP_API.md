@@ -47,33 +47,33 @@ Rules:
 
 ### Error codes
 
-| Code | Meaning | Typical retryable |
-|---|---|---|
-| `VALIDATION` | Input failed schema or business validation | no |
-| `NOT_FOUND` | Resource absent in this workspace (also used for other tenants' ids) | no |
-| `UNAUTHENTICATED` | Missing, unknown or revoked API key | no |
-| `FORBIDDEN` | Key or grant lacks permission; denied connector tool | no |
-| `CONFLICT` | Idempotency or version conflict | no |
-| `BUDGET_EXCEEDED` | Job or workspace budget would be exceeded | no |
-| `TIMEOUT` | Operation exceeded its deadline | yes |
-| `CANCELLED` | Job or call was cancelled | no |
-| `RATE_LIMITED` | Workspace or upstream rate limit | yes |
-| `PROVIDER_ERROR` | Model, media or downstream MCP provider failed | depends |
-| `UNAVAILABLE` | Dependency temporarily unavailable | yes |
-| `APPROVAL_REQUIRED` | Action needs a recorded human approval | no |
-| `INTERNAL` | Unexpected server error; quote `traceId` | depends |
+| Code                | Meaning                                                              | Typical retryable |
+| ------------------- | -------------------------------------------------------------------- | ----------------- |
+| `VALIDATION`        | Input failed schema or business validation                           | no                |
+| `NOT_FOUND`         | Resource absent in this workspace (also used for other tenants' ids) | no                |
+| `UNAUTHENTICATED`   | Missing, unknown or revoked API key                                  | no                |
+| `FORBIDDEN`         | Key or grant lacks permission; denied connector tool                 | no                |
+| `CONFLICT`          | Idempotency or version conflict                                      | no                |
+| `BUDGET_EXCEEDED`   | Job or workspace budget would be exceeded                            | no                |
+| `TIMEOUT`           | Operation exceeded its deadline                                      | yes               |
+| `CANCELLED`         | Job or call was cancelled                                            | no                |
+| `RATE_LIMITED`      | Workspace or upstream rate limit                                     | yes               |
+| `PROVIDER_ERROR`    | Model, media or downstream MCP provider failed                       | depends           |
+| `UNAVAILABLE`       | Dependency temporarily unavailable                                   | yes               |
+| `APPROVAL_REQUIRED` | Action needs a recorded human approval                               | no                |
+| `INTERNAL`          | Unexpected server error; quote `traceId`                             | depends           |
 
 The union is `ErrorCode` in `packages/shared`; the `retryable` column is a
 guide, the per-error value is authoritative.
 
 ## P0 native tools
 
-| Tool | Purpose |
-|---|---|
-| `studix_inspect` | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first. |
+| Tool                  | Purpose                                                                                                                                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `studix_inspect`      | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first.                                                                |
 | `studix_create_video` | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly. |
-| `studix_get_job` | Job stage, progress, recommended next action, and signed preview/final URLs when ready. |
-| `studix_get_project` | Project, versions, latest job and renders with signed URLs. |
+| `studix_get_job`      | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                            |
+| `studix_get_project`  | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                        |
 
 Behavior notes:
 
@@ -90,11 +90,11 @@ Behavior notes:
 Third-party tools registered in the workspace are reached only through these
 three tools; they never appear in `tools/list`.
 
-| Tool | Arguments | Returns |
-|---|---|---|
-| `studix_tool_search` | `query`, `server?`, `limit?` | Permitted tools as qualified names (`server.tool`) with compact summaries. Denied tools are absent. |
-| `studix_tool_inspect` | `tool` | The tool's actual input schema, annotations, permission and availability. |
-| `studix_tool_execute` | `tool`, `arguments` | Routed result or typed error, `traceId`, `next`. Large results are truncated or stored as asset refs. |
+| Tool                  | Arguments                    | Returns                                                                                               |
+| --------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `studix_tool_search`  | `query`, `server?`, `limit?` | Permitted tools as qualified names (`server.tool`) with compact summaries. Denied tools are absent.   |
+| `studix_tool_inspect` | `tool`                       | The tool's actual input schema, annotations, permission and availability.                             |
+| `studix_tool_execute` | `tool`, `arguments`          | Routed result or typed error, `traceId`, `next`. Large results are truncated or stored as asset refs. |
 
 Every execute is re-authorized at call time; a grant revoked after search
 returns `FORBIDDEN`. See [SECURITY.md](SECURITY.md#mcp-in-mcp-connectors).
@@ -104,15 +104,15 @@ returns `FORBIDDEN`. See [SECURITY.md](SECURITY.md#mcp-in-mcp-connectors).
 Not implemented; do not depend on them. Capabilities are added to the contract
 before new tools are created.
 
-| Tool | Intent | Phase |
-|---|---|---|
-| `studix_edit_video` / `studix_feedback` | Revise a version from feedback or patches | P1 |
-| `studix_approve` | Record an approval through MCP (dashboard first) | P1 |
-| `studix_render` | Render a stored version at a chosen quality | P1 |
-| `studix_list_assets` | List workspace assets | P1 |
-| `studix_search` | Search projects, scenes, assets | P1-P2 |
-| `studix_publish` | Publish an approved final; fails closed without approval | P2 |
-| `studix_code` | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
+| Tool                                    | Intent                                                    | Phase        |
+| --------------------------------------- | --------------------------------------------------------- | ------------ |
+| `studix_edit_video` / `studix_feedback` | Revise a version from feedback or patches                 | P1           |
+| `studix_approve`                        | Record an approval through MCP (dashboard first)          | P1           |
+| `studix_render`                         | Render a stored version at a chosen quality               | P1           |
+| `studix_list_assets`                    | List workspace assets                                     | P1           |
+| `studix_search`                         | Search projects, scenes, assets                           | P1-P2        |
+| `studix_publish`                        | Publish an approved final; fails closed without approval  | P2           |
+| `studix_code`                           | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
 
 ## Connecting a client
 
@@ -223,13 +223,13 @@ The client should call `studix_inspect`, then `studix_create_video`, then poll
 
 ### Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `UNAUTHENTICATED` on every call | Missing `Bearer ` prefix, wrong key, or key revoked | Recreate the key in the dashboard; check the header value |
-| `FORBIDDEN` | Key scope lacks the tool, or connector tool denied | Adjust key scope or connector grant in the dashboard |
-| Client shows no tools | Wrong URL (missing `/mcp`) or blocked by host check | Use the exact URL from the dashboard |
-| Connection drops on long calls | Proxy buffering or timeout on the client side | Studix tools return fast; poll `studix_get_job` instead of waiting |
-| `BUDGET_EXCEEDED` | Workspace or job budget | Lower scope (duration, formats) or raise the budget |
-| `APPROVAL_REQUIRED` | Publish or high-cost step | Approve in the dashboard, then retry |
-| Job stuck in one stage | Worker down or lease recovery pending | Check `traceId` in the dashboard; operators see [DEPLOYMENT.md](DEPLOYMENT.md#runbook) |
-| Search finds no connector tool | Connector disabled, not refreshed, or tool denied | Test/refresh the connector in the dashboard |
+| Symptom                         | Likely cause                                        | Fix                                                                                    |
+| ------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `UNAUTHENTICATED` on every call | Missing `Bearer ` prefix, wrong key, or key revoked | Recreate the key in the dashboard; check the header value                              |
+| `FORBIDDEN`                     | Key scope lacks the tool, or connector tool denied  | Adjust key scope or connector grant in the dashboard                                   |
+| Client shows no tools           | Wrong URL (missing `/mcp`) or blocked by host check | Use the exact URL from the dashboard                                                   |
+| Connection drops on long calls  | Proxy buffering or timeout on the client side       | Studix tools return fast; poll `studix_get_job` instead of waiting                     |
+| `BUDGET_EXCEEDED`               | Workspace or job budget                             | Lower scope (duration, formats) or raise the budget                                    |
+| `APPROVAL_REQUIRED`             | Publish or high-cost step                           | Approve in the dashboard, then retry                                                   |
+| Job stuck in one stage          | Worker down or lease recovery pending               | Check `traceId` in the dashboard; operators see [DEPLOYMENT.md](DEPLOYMENT.md#runbook) |
+| Search finds no connector tool  | Connector disabled, not refreshed, or tool denied   | Test/refresh the connector in the dashboard                                            |

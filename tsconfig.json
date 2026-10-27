@@ -12,5 +12,6 @@
     "apps/*/src/**/*.ts",
     "apps/*/src/**/*.tsx",
     "apps/*/test/**/*.ts"
-  ]
+  ],
+  "exclude": ["apps/marketing"]
 }
