@@ -11,9 +11,12 @@ interface Env {
   STUDIX_APP_URL: string;
 }
 
+// Media is served from public/assets; only fonts come from Google Fonts. Style attributes are allowed
+// (the page sets CSS variables inline); <style> and <script> elements still must come from this origin.
 const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy":
-    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; " +
+    "default-src 'self'; img-src 'self' data:; font-src https://fonts.gstatic.com; " +
+    "style-src 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; script-src 'self'; " +
     "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -61,11 +64,16 @@ export default {
     const appUrl = resolveAppUrl(env);
     if (!isHtml || !appUrl) return withSecurityHeaders(response);
 
-    // Point every CTA marked data-app-link at the configured app URL.
+    // Point every CTA marked data-app-link at the configured app URL, and the MCP config sample at its /mcp.
     const rewritten = new HTMLRewriter()
       .on("a[data-app-link]", {
         element(el) {
           el.setAttribute("href", appUrl);
+        },
+      })
+      .on("[data-app-mcp-url]", {
+        element(el) {
+          el.setInnerContent(JSON.stringify(new URL("mcp", appUrl).toString()));
         },
       })
       .transform(response);
