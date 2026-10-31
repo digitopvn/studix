@@ -110,7 +110,10 @@ Behavior notes:
   entry (1 to 6), all sharing the brief's brand, language, format and length
   (default 20 s, 9:16). The create job writes the script, generates one
   storyboard frame per beat and stops with the project `in_review`; it runs no
-  image-to-video, voice or music. Each ad's voice-over must fit about three
+  image-to-video, voice or music. Frame prompts describe the scene only. Beats
+  derived from a direction never carry its hook or messages, and the brand name
+  and tagline are removed from every frame prompt, because the HyperFrames
+  overlay sets the logo, wordmark and copy. Each ad's voice-over must fit about three
   words a second of its length, or the job fails with `VALIDATION` before any
   paid call. After a person approves the storyboard, `studix_render` animates
   the frames, adds voice-over, music and SFX, then renders, QA-gates and
