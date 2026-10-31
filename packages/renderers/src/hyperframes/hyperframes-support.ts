@@ -5,10 +5,12 @@ import {
   type VideoIR,
   validateVideoIR,
 } from "@studix/video-ir";
+import { FILM_SCENE_MIME } from "../film-engine/film-scene-package.ts";
 import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from "./compile-composition.ts";
 
 /**
- * What the HyperFrames renderer can draw: every shot type (video shots play as timed clips), colour, image
+ * What the HyperFrames renderer can draw: every shot type (video shots play as timed clips; composition shots
+ * that name a film scene code asset are captured with the film engine and play as clips), colour, image
  * or video scene backgrounds, all transitions, burned captions, and audio tracks mixed by the FFmpeg
  * finish. Media types the browser or the frame extractor cannot read are reported instead of being
  * silently dropped.
@@ -37,7 +39,15 @@ export function hyperframesSupport(ir: VideoIR, spec: RenderSpec): RendererSuppo
     checkMedia(`scene "${scene.id}" background`, scene.background?.assetId);
     for (const shot of scene.shots) {
       const where = `scene "${scene.id}" shot "${shot.id}"`;
-      if (shot.type === "composition") reasons.push(`${where}: composition shots are not supported yet`);
+      if (shot.type === "composition") {
+        const code = assets.get(shot.assetId);
+        if (code && code.mime !== FILM_SCENE_MIME)
+          reasons.push(
+            `${where}: code asset type ${code.mime} is not supported (expected ${FILM_SCENE_MIME})`,
+          );
+        if (shot.entry !== undefined && shot.entry !== "main")
+          reasons.push(`${where}: film scenes have only the entry "main"`);
+      }
       if (shot.type === "image" || shot.type === "logo" || shot.type === "video")
         checkMedia(where, shot.assetId);
     }

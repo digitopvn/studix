@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   MediaCapability,
@@ -259,6 +259,10 @@ export class FakeMediaProvider implements MediaProvider {
       await rename(tmp, filePath);
     } catch (err) {
       await rm(tmp, { force: true }).catch(() => undefined);
+      // The path is content-addressed, so concurrent identical requests race for one target; on Windows the
+      // losing rename fails (EPERM) while the winner holds it. Same bytes already there is the same result.
+      const existing = await readFile(filePath).catch(() => undefined);
+      if (existing?.equals(bytes)) return;
       throw new StudixError("INTERNAL", "Could not write placeholder media", { cause: err });
     }
   }

@@ -1,6 +1,9 @@
 import type { Job, JobStatus } from "../entities/job.ts";
 import type { ActorRef, TenantContext } from "../tenant.ts";
 
+/** Attempts a manually retried job may use before it fails again. */
+export const JOB_RESUME_ATTEMPTS = 3;
+
 export interface EnqueueJobInput {
   kind: string;
   projectId?: string;
@@ -30,4 +33,10 @@ export interface JobQueue {
   cancel(ctx: TenantContext, jobId: string, reason?: string): Promise<Job>;
   /** Move a waiting_approval job back to queued. */
   resume(ctx: TenantContext, jobId: string): Promise<Job>;
+  /**
+   * Requeue a `failed` job as the same job, so its succeeded stages and its media job journal are kept and
+   * a resumed stage collects the upstream jobs it already paid for. Grants a fresh allowance of
+   * {@link JOB_RESUME_ATTEMPTS} attempts and restarts the deadline window. Any other status is CONFLICT.
+   */
+  retry(ctx: TenantContext, jobId: string): Promise<Job>;
 }

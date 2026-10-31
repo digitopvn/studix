@@ -28,6 +28,7 @@ export const STUDIX_TOOLS = {
   inspect: "studix_inspect",
   createVideo: "studix_create_video",
   getJob: "studix_get_job",
+  retryJob: "studix_retry_job",
   getProject: "studix_get_project",
   approve: "studix_approve",
   feedback: "studix_feedback",
@@ -93,6 +94,13 @@ export const PlannerSelection = z
   .strict();
 export type PlannerSelection = z.infer<typeof PlannerSelection>;
 
+/**
+ * Where a job's creative agent stages run: `harness` (default) inside the worker under hard caps, `host` on the
+ * MCP client's own agent through the handoff tools (no model spend for Studix).
+ */
+export const AgentMode = z.enum(["harness", "host"]);
+export type AgentMode = z.infer<typeof AgentMode>;
+
 /** Boundary schema for createVideoProject; `spec` is checked separately with validateVideoIR. */
 export const CreateVideoProjectInput = z.object({
   brief: CreativeBrief,
@@ -104,6 +112,7 @@ export const CreateVideoProjectInput = z.object({
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),
   deadlineAt: z.coerce.date().optional(),
   renderPreset: RenderPreset.optional(),
+  agentMode: AgentMode.optional(),
 });
 export type CreateVideoProjectInput = z.input<typeof CreateVideoProjectInput>;
 
@@ -226,6 +235,8 @@ export interface JobView {
   cancelRequested: boolean;
   budget: { limitCents?: number; spentCents: number };
   deadlineAt?: Date;
+  /** Budget left while the deadline is paused at a gate or host task; `deadlineAt` is unset then. */
+  deadlineRemainingMs?: number;
   createdAt: Date;
   updatedAt: Date;
   startedAt?: Date;

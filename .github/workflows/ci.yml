@@ -55,7 +55,10 @@ jobs:
           sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends ffmpeg
-          npx --yes --package @puppeteer/browsers@2.13.0 -- browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer
+          # Same build id as the worker image: read it from the Dockerfile so they cannot diverge.
+          chrome_version="$(sed -n 's/^ARG CHROME_HEADLESS_SHELL_VERSION=//p' Dockerfile)"
+          test -n "$chrome_version"
+          npx --yes --package @puppeteer/browsers@2.13.0 -- browsers install "chrome-headless-shell@${chrome_version}" --path ~/.cache/puppeteer
 
       # uv runs the Python MCP SDK client test against /mcp and the QA tools' pytest (pnpm test).
       - uses: astral-sh/setup-uv@v6

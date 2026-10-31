@@ -1,0 +1,134 @@
+{
+  "title": "Hẹn trên sân thượng",
+  "logline": "Hai người bạn hẹn nhau trên sân thượng trường để xem pháo hoa cuối hè; cậu đến muộn, cô vẫn chờ.",
+  "language": "vi",
+  "aspectRatio": "16:9",
+  "world": "Một thị trấn ven biển miền Trung tưởng tượng, mùa hè cuối cấp, mái ngói đỏ và cột điện chằng chịt.",
+  "tone": "ấm áp, hoài niệm, chút hồi hộp",
+  "style": {
+    "look": "2D cel-shaded anime, clean line art, painted watercolor backgrounds, warm dusk light",
+    "palette": ["#f2a65a", "#3d5a80", "#ee6c4d", "#e0fbfc"],
+    "negatives": ["photorealistic", "3D render", "extra fingers"]
+  },
+  "characters": [
+    {
+      "id": "mai",
+      "name": "Mai",
+      "role": "nữ sinh lớp 12, kiên nhẫn",
+      "description": "cô gái 17 tuổi, tóc đen ngang vai kẹp nơ vàng, áo dài trắng đồng phục",
+      "anchors": ["shoulder-length black hair", "yellow hair bow on the left", "white school ao dai"],
+      "palette": [{ "name": "bow", "hex": "#f6c445" }],
+      "handedness": "right",
+      "negatives": ["long hair", "glasses"],
+      "voice": { "direction": "giọng nữ trẻ, nhẹ, hơi trách yêu", "language": "vi" }
+    },
+    {
+      "id": "tun",
+      "name": "Tùng",
+      "role": "bạn thân của Mai, hay đến muộn",
+      "description": "chàng trai 17 tuổi, tóc rối, áo sơ mi trắng sơ vin, đeo ba lô xanh",
+      "anchors": ["messy short brown hair", "white shirt tucked in", "blue backpack"],
+      "palette": [{ "name": "backpack", "hex": "#3d5a80" }],
+      "handedness": "left",
+      "negatives": ["hat", "beard"],
+      "voice": { "direction": "giọng nam trẻ, hụt hơi vì chạy, áy náy", "language": "vi" }
+    }
+  ],
+  "sets": [
+    {
+      "id": "san-thuong",
+      "description": "school rooftop with a low railing, water tank and a view over red tile roofs to the sea",
+      "light": "golden dusk turning to blue hour"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "canh-1",
+      "title": "Chờ pháo hoa",
+      "summary": "Mai chờ trên sân thượng, Tùng chạy tới, hai người cùng nhìn pháo hoa.",
+      "setId": "san-thuong",
+      "shots": [
+        {
+          "id": "s1",
+          "durationMs": 2000,
+          "beat": "Sân thượng lúc hoàng hôn, cánh hoa bay trong gió.",
+          "camera": "wide establishing, slow push in",
+          "tier": "T1",
+          "renderClass": "STANDARD",
+          "characters": [],
+          "visibleSpeakers": [],
+          "lipsync": "none",
+          "state": { "weather": "petal", "direction": "static" },
+          "changes": [],
+          "lines": [],
+          "sfx": ["gió thổi nhẹ qua sân thượng"]
+        },
+        {
+          "id": "s2",
+          "durationMs": 4000,
+          "beat": "Mai đứng bên lan can bên trái khung hình, quay lại nói.",
+          "camera": "medium close-up, eye level",
+          "tier": "T2",
+          "renderClass": "CHARACTER_CRITICAL",
+          "characters": ["mai"],
+          "visibleSpeakers": ["mai"],
+          "lipsync": "dedicated",
+          "continuityFrom": "s1",
+          "state": { "weather": "petal", "position.mai": "left" },
+          "changes": [],
+          "lines": [{ "characterId": "mai", "text": "Cậu lại đến muộn rồi.", "delivery": "trách yêu" }],
+          "sfx": []
+        },
+        {
+          "id": "s3",
+          "durationMs": 4000,
+          "beat": "Tùng chống tay lên gối thở dốc ở bên phải, xin lỗi.",
+          "camera": "medium shot, slight low angle",
+          "tier": "T2",
+          "renderClass": "CHARACTER_CRITICAL",
+          "characters": ["tun"],
+          "visibleSpeakers": ["tun"],
+          "lipsync": "dedicated",
+          "continuityFrom": "s2",
+          "state": { "weather": "petal", "position.mai": "left", "position.tun": "right" },
+          "changes": [],
+          "lines": [{ "characterId": "tun", "text": "Xin lỗi, tàu điện bị trễ.", "delivery": "hụt hơi" }],
+          "sfx": ["tiếng thở hổn hển"]
+        },
+        {
+          "id": "s4",
+          "durationMs": 3000,
+          "beat": "Hai người đứng cạnh nhau nhìn ra biển, pháo hoa đầu tiên bắn lên.",
+          "camera": "over-the-shoulder from behind, slow tilt up",
+          "tier": "T3",
+          "renderClass": "HERO",
+          "characters": ["mai", "tun"],
+          "visibleSpeakers": [],
+          "lipsync": "none",
+          "continuityFrom": "s3",
+          "state": { "weather": "petal", "position.mai": "left", "position.tun": "right" },
+          "changes": [],
+          "lines": [{ "characterId": "mai", "text": "Vừa kịp lúc.", "delivery": "thì thầm" }],
+          "sfx": ["pháo hoa bắn lên xa"]
+        },
+        {
+          "id": "s5",
+          "durationMs": 2000,
+          "beat": "Bầu trời đêm đầy pháo hoa phản chiếu trên mặt biển.",
+          "camera": "wide, locked off",
+          "tier": "T0",
+          "renderClass": "CHEAP_BROLL",
+          "characters": [],
+          "visibleSpeakers": [],
+          "lipsync": "none",
+          "continuityFrom": "s4",
+          "state": { "weather": "ember" },
+          "changes": [{ "field": "weather", "reason": "pháo hoa thay cánh hoa trên bầu trời" }],
+          "lines": [],
+          "sfx": ["pháo hoa nổ vang"]
+        }
+      ]
+    }
+  ],
+  "music": { "style": "gentle piano and strings, slow build to a warm swell" }
+}

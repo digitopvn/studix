@@ -1,5 +1,6 @@
 import type { StudixErrorPayload } from "@studix/shared";
 import type { RenderPreset, RenderSpec } from "@studix/video-ir";
+import type { MediaJobRecord } from "../ports/media-provider.ts";
 import type { ActorRef, TenantOwned } from "./common.ts";
 
 export const JOB_STATUSES = [
@@ -51,6 +52,11 @@ export interface Job extends TenantOwned {
   idempotencyKey?: string;
   cancelRequested: boolean;
   deadlineAt?: Date;
+  /**
+   * Deadline budget left while the job waits at a human gate or for a host agent task. The deadline is
+   * paused then (`deadlineAt` is unset) and re-armed from this value when a worker claims the job again.
+   */
+  deadlineRemainingMs?: number;
   budgetCents?: number;
   spentCents: number;
   createdBy: ActorRef;
@@ -70,6 +76,12 @@ export interface Stage extends TenantOwned {
   status: StageStatus;
   output?: Record<string, unknown>;
   error?: StudixErrorPayload;
+  /**
+   * Upstream media jobs this attempt submitted (the stage's media job journal), written with the stage row
+   * as soon as a job is submitted. A later attempt of the stage reads them back and collects a paid job by
+   * id instead of submitting it again. Omitted on a write, the stored records are kept.
+   */
+  mediaJobs?: MediaJobRecord[];
   startedAt?: Date;
   finishedAt?: Date;
 }

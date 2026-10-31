@@ -252,6 +252,54 @@ export const DepthMapsOutput = z.object({
 });
 export type DepthMapsResult = z.infer<typeof DepthMapsOutput>;
 
+// ---------------------------------------------------------------- shot-boundaries
+
+/** How a shot joins the previous one (the film production `boundary`); thresholds apply to the first two. */
+export const SHOT_BOUNDARY_MODES = ["locked-composition", "camera-transition", "intentional-cut"] as const;
+
+export const ShotBoundariesInput = z.strictObject({
+  media: MediaRef,
+  joins: z
+    .array(
+      z.strictObject({
+        a: z.string().min(1).max(64),
+        b: z.string().min(1).max(64),
+        /** Time of the cut in the render, in seconds. */
+        atS: z.number().min(0),
+        mode: z.enum(SHOT_BOUNDARY_MODES),
+        /** The second shot was generated from a still of the first (judged on `chainedRatio`). */
+        chained: z.boolean().optional(),
+      }),
+    )
+    .min(1)
+    .max(2000),
+  n: z.number().int().min(2).max(48).optional(),
+  luma: z.number().positive().optional(),
+  hist: z.number().positive().optional(),
+  ratio: z.number().positive().optional(),
+  chainedRatio: z.number().positive().optional(),
+});
+export const ShotBoundariesOutput = z.object({
+  fps: z.number(),
+  joins: z.array(
+    z.object({
+      join: z.string(),
+      mode: z.enum(SHOT_BOUNDARY_MODES),
+      chained: z.boolean(),
+      verdict: z.enum(["ok", "flag", "allowed", "skip"]),
+      why: z.array(z.string()),
+      luma: z.number().optional(),
+      hist: z.number().optional(),
+      joinDiff: z.number().optional(),
+      innerDiff: z.number().optional(),
+      ratio: z.number().optional(),
+    }),
+  ),
+  flagged: z.number().int(),
+  pass: z.boolean(),
+});
+export type ShotBoundariesResult = z.infer<typeof ShotBoundariesOutput>;
+
 // ---------------------------------------------------------------- registry
 
 function tool<I extends z.ZodType, O extends z.ZodType>(
@@ -332,6 +380,15 @@ export const QA_TOOLS = {
     timeoutMs: 15 * 60_000,
     memoryMb: 8192,
     image: "depth",
+  }),
+  shotBoundaries: tool({
+    name: "shot-boundaries",
+    description:
+      "Luma, colour and pose jumps across each shot join of a render, judged by the join's boundary mode.",
+    input: ShotBoundariesInput,
+    output: ShotBoundariesOutput,
+    mediaRefs: one,
+    timeoutMs: 10 * 60_000,
   }),
 } as const;
 

@@ -183,7 +183,13 @@ describe("dashboard project review API (Postgres)", () => {
       body: { prompt: "x", workflowTemplate: "missing-pack" },
     });
     expect(badPack.status).toBe(400);
-    expect(await badPack.json()).toMatchObject({ error: { details: { available: ["brand-intro"] } } });
+    expect(await badPack.json()).toMatchObject({
+      error: {
+        details: {
+          available: ["brand-intro", "marketing-video", "motion-graphic", "anime", "long-form-film"],
+        },
+      },
+    });
   });
 
   it("keeps the review, decisions, feedback and render of another tenant's project invisible", async () => {

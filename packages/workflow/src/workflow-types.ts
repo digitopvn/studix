@@ -5,7 +5,11 @@ import type {
   Approval,
   ApprovalAction,
   Job,
+  MediaJobJournal,
+  MediaProvider,
   PlannerSelection,
+  RendererAdapter,
+  StorageAdapter,
   TenantContext,
 } from "@studix/core";
 import type { CreativeBrief, VideoIR } from "@studix/video-ir";
@@ -24,12 +28,54 @@ export interface StageUsage {
   unit: string;
   costCents: number;
   providerExecutionId?: string;
+  /**
+   * Upstream paid job this line bills (e.g. "sume:job_123"). Like a provider execution, it is billed once
+   * per job whatever attempt reports it, so a stage that resumed a job it paid for never bills it twice.
+   */
+  upstreamJob?: string;
   metadata?: Record<string, unknown>;
 }
 
 export interface StageResult {
   output: StageOutput;
   usage?: StageUsage[];
+}
+
+/** What a QA hard gate checks a rendered file against. */
+export interface QaExpectation {
+  durationMs: number;
+  fps: number;
+  /** The file must carry an audio stream (and pass the loudness and sync checks). */
+  requireAudio: boolean;
+  /** Knowledge packs whose hard checks are bound in addition to the defaults. */
+  knowledge?: readonly string[];
+}
+
+/** The blocking QA layer as a port, so pack stages can gate a render without depending on `@studix/qa`. */
+export interface QaGate {
+  /**
+   * Measure `filePath` and resolve with the JSON report when every hard check passes. Throws a
+   * non-retryable VALIDATION error when one fails; a file that could not be measured never passes.
+   */
+  assertPasses(
+    filePath: string,
+    expect: QaExpectation,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>>;
+}
+
+/**
+ * Ports a pack stage may use, wired once by the worker (`JobExecutorDeps.services`). Pack stages are
+ * static, registry-friendly objects; whatever they need at run time comes from here. A stage that needs a
+ * service the worker did not wire fails with a non-retryable UNAVAILABLE error (see `requireService`).
+ */
+export interface StageServices {
+  media?: MediaProvider;
+  storage?: StorageAdapter;
+  renderer?: RendererAdapter;
+  qa?: QaGate;
+  /** Local scratch root; a stage writes under `<workRoot>/<jobId>/attempt-<n>/<stage>`. */
+  workRoot?: string;
 }
 
 export interface StageContext {
@@ -54,6 +100,15 @@ export interface StageContext {
   commit<T>(write: (repos: FencedRepositories, ctx: TenantContext) => Promise<T>): Promise<T>;
   /** Report progress inside the stage (0..1); persisted with throttling. */
   reportProgress(progress: number): void;
+  /**
+   * Durable journal of the upstream media jobs this stage submits; pass it as `journal` on every media
+   * request. Each write is stored with the stage row (fenced like every stage write), and a later attempt
+   * of the stage on any worker starts from the records of the earlier ones, so it collects a paid job by
+   * id instead of submitting it again.
+   */
+  mediaJournal: MediaJobJournal;
+  /** Ports wired by the worker; empty when it wired none. */
+  services: StageServices;
   /** Services agent stages run on; undefined when the worker was wired without them. */
   agents?: AgentStageServices;
 }
@@ -108,8 +163,16 @@ export interface StageDefinition {
    * estimate still get a budget check with a zero estimate (already-overspent jobs stop).
    */
   estimateCostCents?(stage: StageContext): number | Promise<number>;
-  /** Gate the stage behind a human approval for this action (subject: the job). */
-  approval?: { action: ApprovalAction; estimateCostCents?(job: Job): number | undefined };
+  /**
+   * Gate the stage behind a human approval for this action (subject: the job). `scopeKey` separates gates of
+   * one action in a job (creative gates use `gate:<id>`); `reason` tells the reviewer what to sign off.
+   */
+  approval?: {
+    action: ApprovalAction;
+    estimateCostCents?(job: Job): number | undefined;
+    scopeKey?: string;
+    reason?: string;
+  };
   /**
    * Run only when a person approved the project's storyboard (image-to-video and other per-shot generation
    * that spends on the plan). Checked before the stage cache; otherwise the job fails with a non-retryable
@@ -132,11 +195,65 @@ export interface StageDefinition {
   run(stage: StageContext): Promise<StageResult>;
 }
 
+/** The stages one job runs, and the result built from their outputs. */
+export interface WorkflowRoute {
+  stages: readonly StageDefinition[];
+  result(outputs: Readonly<Record<string, StageOutput>>): Record<string, unknown>;
+}
+
 export interface WorkflowDefinition {
   kind: string;
   stages: readonly StageDefinition[];
   /** Job result built from the stage outputs once every stage succeeded. */
   result(outputs: Readonly<Record<string, StageOutput>>): Record<string, unknown>;
+  /**
+   * Stages for one job when they depend on it (e.g. the workflow pack its project uses); undefined runs
+   * `stages`. A throw fails the job before any stage runs.
+   */
+  route?(job: Job): WorkflowRoute | undefined;
+}
+
+/** The video.create engine stages a pack pipeline is assembled from. */
+export interface EngineStages {
+  /** Loads the project brief: output `{ brief }`. */
+  brief: StageDefinition;
+  /** Plans a new IR with the planner, or loads the job's version: output `{ ir, versionId? }`. */
+  plan: StageDefinition;
+  /** Stores the latest IR of the job as a project version: output `{ versionId }`. */
+  validateIr: StageDefinition;
+  /** Renders the latest IR of the job with the worker's renderer. */
+  render: StageDefinition;
+  upload: StageDefinition;
+  /** Records the render and moves the project to review. */
+  finalize: StageDefinition;
+  /**
+   * Ends a job at the storyboard: the project waits for review and nothing is rendered. Output
+   * `{ projectVersionId }`.
+   */
+  storyboardReady: StageDefinition;
+}
+
+/** Which video.create job a pack pipeline is asked to plan. */
+export interface PackJob {
+  /**
+   * The job renders a stored version (studix_render, a feedback patch) rather than starting from the
+   * brief of a new project.
+   */
+  fromVersion: boolean;
+  /** The version came from reviewer feedback (a patch); the job applies it and goes back to review. */
+  feedback?: boolean;
+}
+
+/**
+ * How a workflow pack runs a video.create job: its own stages (typed, cached, knowledge-scoped) woven
+ * between the engine's. Packs without a pipeline run the engine's default plan -> render chain.
+ */
+export interface PackPipeline {
+  /** Renderer id the pack's IR is written for; a worker with another renderer fails the job up front. */
+  renderer?: string;
+  stages(job: PackJob, engine: EngineStages): readonly StageDefinition[];
+  /** Job result; defaults to the finalize (or storyboard_ready) output. */
+  result?(outputs: Readonly<Record<string, StageOutput>>): Record<string, unknown>;
 }
 
 /** Cost of one model/provider call made while planning. */

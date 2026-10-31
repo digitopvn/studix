@@ -8,6 +8,7 @@ export const PERMISSIONS = [
   "project:read",
   "project:write",
   "job:cancel",
+  "job:retry",
   "asset:read",
   "asset:write",
   "approval:request",
@@ -20,7 +21,14 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number];
 
 const READ: Permission[] = ["workspace:read", "project:read", "asset:read"];
-const EDIT: Permission[] = [...READ, "project:write", "job:cancel", "asset:write", "approval:request"];
+const EDIT: Permission[] = [
+  ...READ,
+  "project:write",
+  "job:cancel",
+  "job:retry",
+  "asset:write",
+  "approval:request",
+];
 
 /** Role -> permission matrix. Reviewers may decide approvals but not edit; viewers only read. */
 export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> = {

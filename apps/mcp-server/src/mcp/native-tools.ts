@@ -22,6 +22,7 @@ import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts
 export const NATIVE_TOOL_NAMES = {
   ...STUDIX_TOOLS,
   cancelJob: "studix_cancel_job",
+  retryJob: "studix_retry_job",
 } as const;
 
 export interface ToolContext {
@@ -82,7 +83,7 @@ const CreateVideoInput = z
     spec: z
       .record(z.string(), z.unknown())
       .optional()
-      .describe("Complete VideoIR authored by the host; skips internal planning."),
+      .describe("Complete VideoIR from the host; skips planning."),
     title: z.string().trim().min(1).max(200).optional(),
     idempotencyKey: z
       .string()
@@ -96,14 +97,17 @@ const CreateVideoInput = z
       .min(10)
       .max(7 * 24 * 3600)
       .optional()
-      .describe("Wall-clock limit for the job from now; past it the job fails with TIMEOUT."),
+      .describe("Seconds from now until the job fails with TIMEOUT."),
     renderPreset: RenderPreset.optional(),
     planner: PlannerSelection.optional().describe(
-      "Opt-in: plan with Claude using one Anthropic key connection id from the dashboard (AI & Providers). Not with spec.",
+      "Opt-in Claude planner: an Anthropic key connection id (dashboard, AI & Providers). Not with spec.",
     ),
     workflowTemplate: WorkflowTemplateId.optional().describe(
       "Workflow pack id (studix_inspect skills). Default brand-intro.",
     ),
+    // Where creative agent stages run: in Studix (harness, the default) or on the host's agent through the
+    // agent task tools. Left undescribed on the wire to keep the tool list within its size budget.
+    agentMode: z.enum(["harness", "host"]).optional(),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
     message: "Provide prompt or brief",
@@ -192,6 +196,7 @@ export const NATIVE_TOOLS = [
         renderPreset: input.renderPreset,
         planner: input.planner,
         workflowTemplate: pack.id,
+        agentMode: input.agentMode,
       });
       return {
         data: {
@@ -249,6 +254,19 @@ export const NATIVE_TOOLS = [
     audited: true,
     async run(ctx, input) {
       const job = await ctx.deps.studio.cancelJob(ctx.tenant, input.jobId, input.reason);
+      return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
+    },
+  }),
+  tool({
+    name: NATIVE_TOOL_NAMES.retryJob,
+    title: "Retry failed job",
+    description:
+      "Requeue a failed job after its cause is fixed. Same job: finished stages and paid media calls are reused, decided gates are not asked again.",
+    input: z.object({ jobId: Id }),
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      const job = await ctx.deps.studio.retryJob(ctx.tenant, input.jobId);
       return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
     },
   }),

@@ -8,16 +8,34 @@ records the contract and the measurements behind it.
 
 ## What renders (Implemented)
 
-| IR element                         | How                                                                                                                                                                  |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`)                                                                                |
-| Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them                     |
-| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `volume` x `gainDb`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`) |
-| Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                |
+| IR element                         | How                                                                                                                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`)                                                                                            |
+| Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them                                 |
+| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `volume` x `gainDb`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`)             |
+| Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                            |
+| Composition shot (film scene)      | Captured first by the ported film engine (`film-engine/film-composition-render.ts`), each scene as its own HyperFrames root composition, then spliced back as a muted video shot |
 
 Media types: images `png/jpeg/webp/gif/avif/svg`, video `mp4/webm/mov`, audio any
 `audio/*` FFmpeg decodes. `hyperframesSupport()` reports anything else instead of
 dropping it.
+
+### Film scenes
+
+A composition shot names a code asset of type `application/vnd.studix.film-scene+json`: a
+versioned package with an EDL and an ES module that exports `scene` (`film-scene-package.ts`).
+The package refers to IR media only as `asset:<id>`; the renderer resolves those tokens to project
+paths, and a malformed package is `VALIDATION`. The engine under `packages/renderers/film-engine/`
+is ported as-is from anime-creator ([PORTING.md](PORTING.md#port-record-film-engine-và-pack-phim)).
+Its page loads GSAP and fonts from the project, and a CSP keeps it off the network.
+
+Captures are keyed by the scene content, its media, params, duration, fps and quality, so a retry
+in the same work directory reuses them.
+
+Packs author scenes through `@studix/renderers/film-scene`, which has no browser dependency.
+`filmPlateScene` builds a one-shot scene that moves a still: a camera push towards a focus point
+and, optionally, particle weather (`petal`, `sakura`, `snow`, `ember`, `leaf`, `ash`). The
+narrative packs use it for T0/T1 shots instead of an image-to-video call.
 
 ## Finish and deliveries (Implemented)
 
@@ -78,6 +96,26 @@ own `FinishSpec` (`HyperFramesRendererOptions.finish` or the per-render
 
 Music is not ducked under `dialogue` / `voiceover` yet; the IR allows it but the
 mix sums tracks at their own levels. Looping a short bed would need an IR field.
+
+## Pinned browser build
+
+The worker image (amd64) and CI install the same `chrome-headless-shell` build,
+`156.0.8078.80`, set once as `ARG CHROME_HEADLESS_SHELL_VERSION` in the root
+`Dockerfile`; CI reads that line. An unpinned `@stable` let pixels, golden tests
+and the WebGL measurements below change between builds with no code change.
+
+Why `156.0.8078.80`: it is the build the WebGL table below was measured on, so
+pinning it invalidates no measurement. `@hyperframes/engine@0.8.223` manages its
+own Chrome at `152.0.7977.30`; moving to that build would mean re-measuring the
+table and is a decision for the film-engine work (#47). To change the build, edit
+the `ARG`, re-run the measurement, and update this section.
+
+The arm64 image (local Apple Silicon) uses Debian's `chromium` package, which is
+not deterministic: its version follows the Debian archive. Do not compare pixels
+or timings across architectures.
+
+Check: two builds of the image print the same `chrome --version`; the build
+already runs it as its last browser step.
 
 ## WebGL in headless Chromium without a GPU
 

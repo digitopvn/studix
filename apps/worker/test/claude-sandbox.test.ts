@@ -12,7 +12,8 @@ describe("Claude sandbox root", () => {
     const base = mkdtempSync(join(tmpdir(), "studix-sandbox-test-"));
     const root = join(base, "claude");
     expect(prepareClaudeSandboxRoot(root, 60_000, logger)).toBe(root);
-    expect(statSync(root).mode & 0o777).toBe(0o700);
+    // Windows does not report POSIX permission bits.
+    if (process.platform !== "win32") expect(statSync(root).mode & 0o777).toBe(0o700);
 
     const now = Date.now();
     for (const name of ["studix-claude-old", "studix-claude-live", "unrelated"]) mkdirSync(join(root, name));
