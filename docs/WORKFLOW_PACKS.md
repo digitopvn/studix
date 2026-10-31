@@ -200,8 +200,10 @@ Lý do của các ràng buộc:
 
 - TTS, nhạc và SFX là các `MediaKind` `voice`, `music`, `sfx`, đi qua `MultixProvider`. Kind `audio`
   chung bị từ chối, phải chọn một trong ba.
-- Ba role này chạy đồng bộ, không có job upstream để resume. File đã xong được tìm lại trong work dir của
-  attempt; work dir của stage gắn với attempt, nên retry ở attempt mới có thể sinh và trả tiền lại.
+- Ba role này chạy đồng bộ, không có job upstream để resume. Provider ghi file vào thư mục media của job
+  (`stageMediaDir`, `<workRoot>/<jobId>/media/<stage>`), không phải work dir của attempt, nên stage được
+  retry tìm lại file đã trả tiền thay vì sinh lại. Thư mục bị xóa ở `finalize`; job fail giữ nó cho lần
+  retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
 - Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (voice và một SFX),
   `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).
@@ -361,6 +363,6 @@ còn lại. Bảng chung cho client: [MCP_API.md](MCP_API.md#troubleshooting).
 | `INTERNAL` "Worker lease expired on the last allowed attempt ..."                                                 | Lease hết hạn ở attempt cuối, worker có thể đã crash                                                                          | Xem log worker của job, rồi `studix_retry_job` hoặc tạo job mới                                     |
 | `PROVIDER_ERROR` "A previous submission of this request may already have been charged and cannot be deduplicated" | Journal có bản ghi `submitting` không có job id (upstream không dedupe được, ví dụ Atlas)                                     | Tìm job trong `multix history` hoặc console của provider; không retry mù                            |
 | `CONFLICT` "This idempotency key already ran a different media request"                                           | Cùng idempotency key (`assetId` trong một stage) đi với kind hoặc model khác, kể cả khi model mặc định đổi giữa hai attempt   | Giữ `assetId` duy nhất cho mỗi asset trong stage                                                    |
-| Retry tính tiền audio lần nữa                                                                                     | Voice, music, SFX chạy đồng bộ, không có job upstream để thu lại ([Audio](#audio))                                            | Chấp nhận, hoặc giữ stage audio nhỏ để retry rẻ                                                     |
+| Retry tính tiền audio lần nữa                                                                                     | Voice, music, SFX chạy đồng bộ; file chỉ được dùng lại khi retry chạy trên cùng worker và cùng `workRoot` ([Audio](#audio))   | Giữ `workRoot` bền qua restart; chấp nhận chi lại khi job chuyển worker                             |
 | `TIMEOUT` "Job deadline reached"                                                                                  | Hết deadline của job (thời gian park không tính)                                                                              | Tạo job với `deadlineSeconds` dài hơn hoặc video ngắn hơn                                           |
 | QA stage fail `VALIDATION` "QA hard gate failed: ..."                                                             | File render trượt hard check; `details.failures`                                                                              | Xem [QA.md](QA.md)                                                                                  |
