@@ -69,17 +69,17 @@ guide, the per-error value is authoritative.
 
 ## P0 native tools
 
-| Tool                  | Purpose                                                                                                                                                                                                                            |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `studix_inspect`      | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first.                                                                |
-| `studix_create_video` | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly. |
-| `studix_get_job`      | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                            |
-| `studix_get_project`  | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                        |
-| `studix_cancel_job`   | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                           |
-| `studix_retry_job`    | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                             |
-| `studix_approve`      | Record a decision on a pending approval (for example `video.publish`). Only a human user may approve; an API key gets `FORBIDDEN`.                                                                                                 |
-| `studix_feedback`     | Feedback on one target of the current version: `shotId`, `sceneId`, `assetId`, or `startMs` with `endMs`. Always stored as a comment. With a `patch`, it makes a new version and queues a render job. Async.                       |
-| `studix_render`       | Queue a render of the current version, or of a given `versionId`, at a `renderPreset`. Returns `jobId`; poll `studix_get_job` for the MP4 URL. Async.                                                                              |
+| Tool                  | Purpose                                                                                                                                                                                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `studix_inspect`      | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first.                                                                                    |
+| `studix_create_video` | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly.                     |
+| `studix_get_job`      | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                                                |
+| `studix_get_project`  | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                                            |
+| `studix_cancel_job`   | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                                               |
+| `studix_retry_job`    | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                                                 |
+| `studix_approve`      | Record a decision on a pending approval (for example `video.publish`). Only a human user may approve; an API key gets `FORBIDDEN`.                                                                                                                     |
+| `studix_feedback`     | Feedback on one target of the current version: `shotId`, `sceneId`, `assetId`, `characterId` (a film character's voice), or `startMs` with `endMs`. Always stored as a comment. With a `patch`, it makes a new version and queues a render job. Async. |
+| `studix_render`       | Queue a render of the current version, or of a given `versionId`, at a `renderPreset`. Returns `jobId`; poll `studix_get_job` for the MP4 URL. Async.                                                                                                  |
 
 Every tool that touches a project returns its ids, `next[]` and `reviewUrl`
 (`${STUDIX_APP_URL}/#/projects/<projectId>/review`), the dashboard page where a
@@ -163,8 +163,10 @@ Behavior notes:
   storyboard, `studix_render` records the dialogue first. Each speaking character has one voice
   for the whole film, cast in the bible as `voice.voiceRef`
   (`<voice>`, `<vendor>:<model>` or `<vendor>:<model>@<voice>`, for example
-  `openrouter:google/gemini-3.8-flash-tts@Leda`). A brief can name it, or a patch on
-  `metadata.film.production.characters[].voice.voiceRef` can set it. A named model overrides the
+  `openrouter:google/gemini-3.8-flash-tts@Leda`). A brief can name it. To cast it later, send
+  `studix_feedback` with `characterId` and a patch under that character's
+  `/metadata/film/production/characters/<i>/voice`; a shot, scene or time-range target refuses
+  that path. A named model overrides the
   language's speech route. Two speakers left with the same voice, including both uncast, fail with
   `VALIDATION` before any line is paid for. Every line is read with direction built from the
   character's voice, the line's delivery, the shot and the film's tone. The render then turns T2/T3 shots into
@@ -211,8 +213,14 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
 
 - `studix_feedback` with no `patch` stores a comment and returns
   `allowedPaths`: the JSON pointers a patch for that target may touch (the
-  shot, the scene with `/timeline`, the asset, or the shots overlapping the time
-  range). `next[]` suggests the call with a patch.
+  shot, the scene with `/timeline`, the asset, the shots overlapping the time
+  range, or a film character's `voice` in the production bible). `next[]`
+  suggests the call with a patch.
+- A `characterId` target is a character of the film's production bible
+  (`NOT_FOUND` for any other id, or for a video without one). Its `shots` are
+  the shots the character speaks in. The patch changes no scene or shot, so the
+  storyboard approvals stay as they are, and the render the patch queues
+  records the character's lines with the new voice.
 - A `patch` is a JSON Patch (`ops[]`) on the VideoIR with absolute pointers. An
   op outside `allowedPaths` fails with `VALIDATION`, with `details.outside` and
   `details.allowedPaths`, and nothing is stored. A valid patch becomes a new

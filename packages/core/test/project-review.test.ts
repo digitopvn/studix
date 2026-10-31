@@ -354,6 +354,117 @@ describe("project review", () => {
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
+  describe("feedback on a film character's voice", () => {
+    const cast = {
+      schemaVersion: 1,
+      characters: [
+        { characterId: "mai", voice: { direction: "warm, teasing" } },
+        { characterId: "tung", voice: { direction: "out of breath" } },
+      ],
+      shots: [],
+      dialogue: [
+        {
+          id: "feature-1-l1",
+          shotId: "feature-1",
+          characterId: "mai",
+          text: "Lại muộn rồi.",
+          status: "temp",
+        },
+        { id: "cta-button-l1", shotId: "cta-button", characterId: "tung", text: "Xin lỗi.", status: "temp" },
+        { id: "feature-2-l1", shotId: "feature-2", characterId: "mai", text: "Vừa kịp.", status: "temp" },
+      ],
+    };
+
+    async function filmSetup() {
+      const env = createInMemoryStudio();
+      const ctx = testTenant();
+      const spec = { ...(brandIntro as VideoIR), metadata: { film: { production: cast } } };
+      const created = await env.studio.createVideoProject(ctx, { brief, spec });
+      return { ...env, ctx, projectId: created.project.id };
+    }
+
+    const castVoice = (index: number, voiceRef: string) => ({
+      ops: [
+        {
+          op: "add" as const,
+          path: `/metadata/film/production/characters/${index}/voice/voiceRef`,
+          value: voiceRef,
+        },
+      ],
+    });
+
+    it("re-casts one character's voice, about the shots they speak in, keeping the approved storyboard", async () => {
+      const { studio, ctx, projectId, repos } = await filmSetup();
+      await studio.decideStoryboard(ctx, { projectId, target: "storyboard", decision: "approved" });
+      expect(await storyboardStatus(repos, ctx, projectId)).toBe("approved");
+
+      const out = await studio.submitFeedback(ctx, {
+        projectId,
+        characterId: "mai",
+        comment: "Giọng Mai: Leda",
+        patch: castVoice(0, "openrouter:google/gemini-tts@Leda"),
+      });
+      expect(out.allowedPaths).toEqual(["/metadata/film/production/characters/0/voice"]);
+      expect(out.shots).toEqual(["feature-1", "feature-2"]);
+      expect(out.invalidated.filter((k) => k.startsWith("shot:") || k.startsWith("scene:"))).toEqual([]);
+      expect(out.job?.status).toBe("queued");
+
+      const review = await studio.getProjectReview(ctx, projectId);
+      expect(review.comments[0]).toMatchObject({ targetId: "character:mai", body: "Giọng Mai: Leda" });
+      const current = await repos.projects.getVersion(ctx, out.versionId!);
+      const film = current?.ir.metadata?.film as { production: typeof cast };
+      expect(film.production.characters[0]?.voice).toEqual({
+        direction: "warm, teasing",
+        voiceRef: "openrouter:google/gemini-tts@Leda",
+      });
+      expect(film.production.characters[1]?.voice).toEqual({ direction: "out of breath" });
+      expect(await storyboardStatus(repos, ctx, projectId)).toBe("approved");
+    });
+
+    it("refuses a character patch outside that character's voice, and stores nothing", async () => {
+      const { studio, ctx, projectId } = await filmSetup();
+      for (const patch of [
+        castVoice(1, "@Puck"),
+        replaceText("/metadata/film/production/characters/0/characterId", "lan"),
+        replaceText("/metadata/film/production/dialogue/0/text", "Câu khác"),
+        replaceText("/scenes/2/shots/0/text", "Khác"),
+      ]) {
+        await expect(
+          studio.submitFeedback(ctx, { projectId, characterId: "mai", comment: "đổi giọng", patch }),
+        ).rejects.toMatchObject({
+          code: "VALIDATION",
+          details: { allowedPaths: ["/metadata/film/production/characters/0/voice"] },
+        });
+      }
+      const review = await studio.getProjectReview(ctx, projectId);
+      expect(review.comments).toHaveLength(0);
+      expect(review.versions).toHaveLength(1);
+    });
+
+    it("rejects a character the version does not cast, and a character target on a video without a cast", async () => {
+      const film = await filmSetup();
+      await expect(
+        film.studio.submitFeedback(film.ctx, { projectId: film.projectId, characterId: "lan", comment: "x" }),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      const plain = await setup();
+      await expect(
+        plain.studio.submitFeedback(plain.ctx, {
+          projectId: plain.projectId,
+          characterId: "mai",
+          comment: "x",
+        }),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(
+        plain.studio.submitFeedback(plain.ctx, {
+          projectId: plain.projectId,
+          characterId: "mai",
+          shotId: "hook-title",
+          comment: "x",
+        }),
+      ).rejects.toMatchObject({ code: "VALIDATION" });
+    });
+  });
+
   it("a person approves the storyboard; the approval survives an unrelated patch only where nothing changed", async () => {
     const { studio, ctx, projectId, repos } = await setup();
     for (const id of ["hook-title", "feature-1"]) {
