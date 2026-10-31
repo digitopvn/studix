@@ -154,6 +154,50 @@ describe("marketing-video IR and variants", () => {
     expect(second.captions?.cues.length).toBeGreaterThan(0);
   });
 
+  it("renders each ad's pictures full-bleed unless the IR names a region", () => {
+    const ir = marketingVideoTemplate(brief);
+    const scene = ir.scenes[0] as (typeof ir.scenes)[number];
+    const frame = {
+      id: "frame-a",
+      kind: "image" as const,
+      storageKey: "k/frame-a.png",
+      sha256: "a".repeat(64),
+      mime: "image/png",
+      bytes: 1,
+      provenance: { source: "generated" as const },
+    };
+    ir.assets.push(frame);
+    scene.shots.unshift(
+      {
+        id: "pic-free",
+        type: "image",
+        startMs: 0,
+        durationMs: 3000,
+        assetId: frame.id,
+        fit: "cover",
+        alt: "Tea on a windowsill",
+      },
+      {
+        id: "pic-top",
+        type: "image",
+        startMs: 3000,
+        durationMs: 3000,
+        assetId: frame.id,
+        fit: "cover",
+        alt: "Tea on a windowsill",
+        style: { region: "top" },
+      },
+    );
+    const one = variantIr(ir, irVariants(ir)[0] as ReturnType<typeof irVariants>[number]);
+    expect(validateVideoIR(one).ok).toBe(true);
+    const shots = Object.fromEntries((one.scenes[0]?.shots ?? []).map((s) => [s.id, s]));
+    expect(shots["pic-free"]?.style?.region).toBe("full");
+    expect(shots["pic-top"]?.style?.region).toBe("top");
+    // Copy keeps its own layout.
+    const copy = one.scenes[0]?.shots.find((s) => s.type === "title" || s.type === "text");
+    expect(copy?.style?.region).not.toBe("full");
+  });
+
   it("rejects an IR that carries no variants", () => {
     const ir = motionGraphicTemplate({ prompt: "Lá Mây", keyMessages: ["Trà ngon"] });
     expect(codeOf(() => irVariants(ir))).toBe("VALIDATION");
