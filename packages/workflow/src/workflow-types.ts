@@ -66,6 +66,11 @@ export interface StageDefinition {
    */
   outputSchema?: z.ZodType;
   /**
+   * Ids of the knowledge packs (`@studix/skills`) this stage works from. The knowledge loader hands a stage
+   * exactly these packs and nothing else; a stage without the field loads none.
+   */
+  knowledge?: readonly string[];
+  /**
    * Identity of the work, normally `stageCacheKey(name, version, input)`: equal keys must produce
    * interchangeable outputs. When the runner has a stage cache holding the key for the tenant, the cached
    * output is reused and the stage is neither run, approval-gated, budget-checked nor charged again.

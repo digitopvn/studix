@@ -1,6 +1,7 @@
 import { StudixError } from "@studix/shared";
 import type { VideoIR } from "@studix/video-ir";
 import type { StageDefinition } from "@studix/workflow";
+import type { KnowledgeCatalog } from "./knowledge/knowledge-catalog.ts";
 
 export interface SkillMetadata {
   /** Stable id, lowercase kebab-case, unique across every registered pack. */
@@ -56,7 +57,15 @@ export interface PackRegistry {
 
 const PACK_ID = /^[a-z0-9][a-z0-9-]*$/;
 
-export function createPackRegistry(initial: readonly WorkflowPack[] = []): PackRegistry {
+export interface PackRegistryOptions {
+  /** When set, a stage may only declare `knowledge` ids this catalog holds. */
+  knowledge?: Pick<KnowledgeCatalog, "has">;
+}
+
+export function createPackRegistry(
+  initial: readonly WorkflowPack[] = [],
+  options: PackRegistryOptions = {},
+): PackRegistry {
   const packs: WorkflowPack[] = [];
   const registry: PackRegistry = {
     register(pack) {
@@ -78,6 +87,12 @@ export function createPackRegistry(initial: readonly WorkflowPack[] = []): PackR
       for (const s of pack.stages ?? []) {
         if (stageNames.has(s.name)) throw clash("stage", s.name);
         stageNames.add(s.name);
+        const unknown = (s.knowledge ?? []).filter((id) => options.knowledge && !options.knowledge.has(id));
+        if (unknown.length > 0) {
+          throw new StudixError("VALIDATION", `stage "${s.name}" needs unknown knowledge packs`, {
+            details: { pack: pack.id, stage: s.name, unknown },
+          });
+        }
       }
       packs.push(pack);
       return () => {
