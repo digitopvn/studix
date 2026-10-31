@@ -8,6 +8,8 @@ import type { StageContext } from "./workflow-types.ts";
 export const VideoCreatePayload = z.object({
   projectId: z.string().min(1),
   versionId: z.string().min(1).optional(),
+  /** Set when the job was queued by feedback: the patch already moved the project pointer to its version. */
+  feedbackId: z.string().min(1).optional(),
   renderPreset: RenderPreset.default("preview"),
   planner: PlannerSelection.optional(),
   workflowTemplate: WorkflowTemplateId.optional(),
