@@ -222,7 +222,7 @@ describe("video.create workflow on Postgres", () => {
     // must not start a retry loop for a finished job.
     a.queue.heartbeat = async () => {
       beats++;
-      await new Promise<void>((_, reject) => {
+      return new Promise<never>((_, reject) => {
         failFirstBeat = () => reject(new Error("database unreachable"));
       });
     };
