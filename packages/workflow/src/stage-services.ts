@@ -1,7 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { StudixError } from "@studix/shared";
-import type { StageContext, StageServices } from "./workflow-types.ts";
+import { StudixError, toStudixError } from "@studix/shared";
+import { StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
+import type { StageContext, StageServices, StageUsage } from "./workflow-types.ts";
 
 /** A service the stage cannot run without; fails non-retryably when the worker did not wire it. */
 export function requireService<K extends keyof StageServices>(
@@ -28,28 +29,50 @@ export async function stageWorkDir(s: StageContext, stage: string): Promise<stri
 }
 
 /**
- * Run `work` over `items` with at most `limit` in flight, keeping the input order in the result. The first
- * failure rejects; items not yet started are not started.
+ * Run `work` over `items` with at most `limit` in flight, keeping the input order in the result. After the
+ * first failure no new item starts, but the items already running are awaited, so none of their paid calls
+ * goes unseen.
+ *
+ * With `usageOf`, the usage of every item that completed (and of every failure that carries its own, see
+ * `StageFailedAfterSpend`) is billed even when the batch fails: the first failure is rethrown as a
+ * `StageFailedAfterSpend` holding all of it, so the stage runner records the spend before failing the stage.
  */
 export async function mapBounded<T, R>(
   items: readonly T[],
   limit: number,
   work: (item: T, index: number) => Promise<R>,
+  usageOf?: (result: R) => readonly StageUsage[],
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
+  const completed = new Array<boolean>(items.length).fill(false);
+  const errors: unknown[] = [];
   let next = 0;
-  let failed = false;
   const lane = async () => {
-    while (!failed && next < items.length) {
+    while (errors.length === 0 && next < items.length) {
       const index = next++;
       try {
         results[index] = await work(items[index] as T, index);
+        completed[index] = true;
       } catch (err) {
-        failed = true;
-        throw err;
+        errors.push(err);
       }
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
-  return results;
+  const [first] = errors;
+  if (errors.length === 0) return results;
+  if (!usageOf) throw first;
+  const usage: StageUsage[] = [];
+  for (const err of errors) {
+    if (err instanceof StageFailedAfterSpend || err instanceof StageSuspended) usage.push(...err.usage);
+  }
+  results.forEach((r, i) => {
+    if (completed[i]) usage.push(...usageOf(r));
+  });
+  if (first instanceof StageSuspended) throw new StageSuspended(first.suspension, usage);
+  if (usage.length === 0) throw first;
+  throw new StageFailedAfterSpend(
+    first instanceof StageFailedAfterSpend ? first.error : toStudixError(first),
+    usage,
+  );
 }

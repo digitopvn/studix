@@ -1,9 +1,15 @@
 import { extname } from "node:path";
 import { USAGE_KINDS } from "@studix/billing";
-import type { MediaGenerationRequest, MediaKind } from "@studix/core";
-import { StudixError } from "@studix/shared";
+import type { MediaGenerationRequest, MediaGenerationResult, MediaKind } from "@studix/core";
+import { StudixError, toStudixError } from "@studix/shared";
 import type { AssetMediaKind, AssetRef } from "@studix/video-ir";
-import { requireService, type StageContext, type StageUsage, sha256File } from "@studix/workflow";
+import {
+  requireService,
+  type StageContext,
+  StageFailedAfterSpend,
+  type StageUsage,
+  sha256File,
+} from "@studix/workflow";
 
 /** One media asset a pack stage generates and keeps in tenant storage. */
 export interface StoredMediaRequest {
@@ -83,6 +89,26 @@ export async function estimateMediaCents(
   return total;
 }
 
+/** The usage line of a finished provider call, tied to the upstream job so a resumed stage never bills it twice. */
+function mediaUsage(request: StoredMediaRequest, result: MediaGenerationResult): StageUsage {
+  return {
+    item: `media-${request.assetId}`,
+    kind: USAGE_KINDS.mediaGeneration,
+    quantity: 1,
+    unit: request.kind,
+    costCents: result.costCents,
+    ...(result.job ? { upstreamJob: `${result.job.provider}:${result.job.id}` } : {}),
+    metadata: {
+      provider: result.provider,
+      model: result.model,
+      mediaKind: request.kind,
+      assetId: request.assetId,
+      costSource: result.costSource ?? "unknown",
+      ...(result.job ? { upstreamJob: `${result.job.provider}:${result.job.id}` } : {}),
+    },
+  };
+}
+
 /**
  * Generate one asset with the worker's media provider, then store it in tenant storage and describe it as
  * an IR asset with provenance. The request carries the stage's durable journal, so a retry on any worker
@@ -97,55 +123,42 @@ export async function generateStoredMedia(
   const media = requireService(s, "media");
   const storage = requireService(s, "storage");
   const result = await media.generate(s.ctx, mediaRequest(s, stage, request, workDir));
-  const output = result.outputs[0];
-  if (!output) {
-    throw new StudixError("UNAVAILABLE", `${result.provider} returned no output for ${request.assetId}`, {
-      details: { assetId: request.assetId, model: result.model },
-    });
-  }
-  const ext = EXT_BY_MIME[output.mime] ?? extname(output.filePath);
-  const { sha256, bytes } = await sha256File(output.filePath);
-  const stored = await storage.put(
-    s.ctx,
-    `${request.keyPrefix}${ext}`,
-    { filePath: output.filePath },
-    { contentType: output.mime, sha256 },
-  );
-  const asset: AssetRef = {
-    id: request.assetId,
-    kind: assetKind(request.kind),
-    storageKey: stored.key,
-    sha256: stored.sha256,
-    mime: output.mime,
-    bytes,
-    ...(output.width ? { width: output.width } : {}),
-    ...(output.height ? { height: output.height } : {}),
-    ...(output.durationMs ? { durationMs: Math.round(output.durationMs) } : {}),
-    provenance: {
-      source: "generated",
-      provider: result.provider,
-      model: result.model,
-      prompt: request.prompt.slice(0, 4000),
-    },
-  };
-  return {
-    asset,
-    filePath: output.filePath,
-    usage: {
-      item: `media-${request.assetId}`,
-      kind: USAGE_KINDS.mediaGeneration,
-      quantity: 1,
-      unit: request.kind,
-      costCents: result.costCents,
-      ...(result.job ? { upstreamJob: `${result.job.provider}:${result.job.id}` } : {}),
-      metadata: {
+  // The provider call is paid from here on: whatever fails next still bills it.
+  const usage = mediaUsage(request, result);
+  try {
+    const output = result.outputs[0];
+    if (!output) {
+      throw new StudixError("UNAVAILABLE", `${result.provider} returned no output for ${request.assetId}`, {
+        details: { assetId: request.assetId, model: result.model },
+      });
+    }
+    const ext = EXT_BY_MIME[output.mime] ?? extname(output.filePath);
+    const { sha256, bytes } = await sha256File(output.filePath);
+    const stored = await storage.put(
+      s.ctx,
+      `${request.keyPrefix}${ext}`,
+      { filePath: output.filePath },
+      { contentType: output.mime, sha256 },
+    );
+    const asset: AssetRef = {
+      id: request.assetId,
+      kind: assetKind(request.kind),
+      storageKey: stored.key,
+      sha256: stored.sha256,
+      mime: output.mime,
+      bytes,
+      ...(output.width ? { width: output.width } : {}),
+      ...(output.height ? { height: output.height } : {}),
+      ...(output.durationMs ? { durationMs: Math.round(output.durationMs) } : {}),
+      provenance: {
+        source: "generated",
         provider: result.provider,
         model: result.model,
-        mediaKind: request.kind,
-        assetId: request.assetId,
-        costSource: result.costSource ?? "unknown",
-        ...(result.job ? { upstreamJob: `${result.job.provider}:${result.job.id}` } : {}),
+        prompt: request.prompt.slice(0, 4000),
       },
-    },
-  };
+    };
+    return { asset, filePath: output.filePath, usage };
+  } catch (err) {
+    throw new StageFailedAfterSpend(toStudixError(err), [usage]);
+  }
 }
