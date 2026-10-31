@@ -1,4 +1,4 @@
-import type { Job, Stage } from "../entities/job.ts";
+import { JOB_KINDS, type Job, type Stage } from "../entities/job.ts";
 import type { Approval } from "../entities/review.ts";
 import { AGENT_HANDOFF_TOOLS } from "./agent-handoff-service.ts";
 import { type ApprovalView, type JobView, type NextAction, STUDIX_TOOLS } from "./studio-types.ts";
@@ -65,6 +65,14 @@ export function nextActionsForJob(job: Job, approval?: Approval): NextAction[] {
         : [];
     case "failed": {
       const hints: NextAction[] = [];
+      if (job.kind !== JOB_KINDS.publish) {
+        hints.push({
+          tool: STUDIX_TOOLS.retryJob,
+          arguments: { jobId: job.id },
+          reason:
+            "After the cause is fixed, resume this job: finished stages and paid media calls are reused, not paid again.",
+        });
+      }
       if (job.projectId) {
         hints.push({
           tool: STUDIX_TOOLS.getProject,
