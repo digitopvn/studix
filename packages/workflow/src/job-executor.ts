@@ -10,6 +10,8 @@ export type JobOutcome =
   | "cancelled"
   | "retrying"
   | "waiting_approval"
+  /** Parked until the MCP client's own agent submits the stage result. */
+  | "waiting_host"
   /** Given back to the queue on shutdown without consuming the attempt. */
   | "released"
   /** Another worker owns the job now; no write after that point was applied. */
@@ -182,6 +184,10 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
         if (outcome.status === "waiting_approval") {
           log.info("job waits for approval", { approvalId: outcome.approval.id, stage: outcome.stage });
           return await settle(queue.park(job, workerId), "waiting_approval");
+        }
+        if (outcome.status === "waiting_host") {
+          log.info("job waits for the host agent", { taskId: outcome.handoff.id, stage: outcome.stage });
+          return await settle(queue.parkForHost(job, workerId), "waiting_host");
         }
         return await settle(queue.complete(job, workerId, outcome.result), "succeeded");
       } catch (err) {

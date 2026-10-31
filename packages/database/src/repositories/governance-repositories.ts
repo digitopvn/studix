@@ -124,7 +124,7 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
         .where(scoped(approvals, ctx, eq(approvals.id, id)));
       return rows[0] ? toApproval(rows[0]) : undefined;
     },
-    async findLatest(ctx, subject, action) {
+    async findLatest(ctx, subject, action, scopeKey) {
       const rows = await db
         .select()
         .from(approvals)
@@ -135,6 +135,7 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
             eq(approvals.subjectType, subject.type),
             eq(approvals.subjectId, subject.id),
             eq(approvals.action, action),
+            scopeKey === undefined ? undefined : eq(approvals.scopeKey, scopeKey),
           ),
         )
         .orderBy(desc(approvals.id))

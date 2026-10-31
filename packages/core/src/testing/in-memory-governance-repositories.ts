@@ -39,10 +39,14 @@ export function createInMemoryApprovalRepository(clock: Clock): ApprovalReposito
     async get(ctx, id) {
       return approvals.get(ctx, id);
     },
-    async findLatest(ctx, subject, action) {
+    async findLatest(ctx, subject, action, scopeKey) {
       return approvals.filter(
         ctx,
-        (a) => a.subject.type === subject.type && a.subject.id === subject.id && a.action === action,
+        (a) =>
+          a.subject.type === subject.type &&
+          a.subject.id === subject.id &&
+          a.action === action &&
+          (scopeKey === undefined || (a.scopeKey ?? "") === scopeKey),
       )[0];
     },
     async list(ctx, query = {}) {

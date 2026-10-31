@@ -15,18 +15,31 @@ export interface FakeAgentRuntime extends AgentRuntime {
   readonly calls: ReadonlyArray<{ ctx: TenantContext; task: AgentTask }>;
 }
 
-/** Deterministic AgentRuntime for tests. Goes through the same limit enforcement as the real one. */
+/**
+ * Deterministic AgentRuntime for tests. Goes through the same limit enforcement as the real one; a
+ * responder can call `task.reportUsage` to simulate an agent crossing a cap mid-run.
+ */
 export function createFakeAgentRuntime(
   respond: FakeAgentResponder,
-  options: { id?: string; clock?: Clock } = {},
+  options: { id?: string; clock?: Clock; stopGraceMs?: number } = {},
 ): FakeAgentRuntime {
   const calls: Array<{ ctx: TenantContext; task: AgentTask }> = [];
   const runtime = createBoundedAgentRuntime({
     id: options.id ?? "fake",
     clock: options.clock,
+    stopGraceMs: options.stopGraceMs,
     loop: async (ctx, task) => {
       calls.push({ ctx, task });
-      const reply = await respond(ctx, task);
+      // Like a real agent process, the fake stops as soon as it is told to.
+      const reply = await new Promise<FakeAgentReply>((resolve, reject) => {
+        const onAbort = () => reject(task.signal.reason);
+        if (task.signal.aborted) return onAbort();
+        task.signal.addEventListener("abort", onAbort, { once: true });
+        Promise.resolve()
+          .then(() => respond(ctx, task))
+          .then(resolve, reject)
+          .finally(() => task.signal.removeEventListener("abort", onAbort));
+      });
       return {
         output: reply.output,
         turns: reply.turns ?? 1,

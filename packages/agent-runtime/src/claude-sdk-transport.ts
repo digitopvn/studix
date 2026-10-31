@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StudixError } from "@studix/shared";
+import { agentCapError } from "./bounded-agent-runtime.ts";
 import type {
   ClaudeAgentEvent,
   ClaudeAgentSession,
@@ -345,14 +346,10 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
                 costUsd: typeof result.total_cost_usd === "number" ? result.total_cost_usd : Number.NaN,
               };
               if (result.subtype === "error_max_budget_usd") {
-                throw new StudixError("BUDGET_EXCEEDED", "Claude agent reached the task spend limit", {
-                  retryable: false,
-                });
+                throw agentCapError("cost", "Claude agent reached the task spend limit");
               }
               if (result.subtype === "error_max_turns") {
-                throw new StudixError("PROVIDER_ERROR", "Claude agent reached the task turn limit", {
-                  retryable: false,
-                });
+                throw agentCapError("turns", "Claude agent reached the task turn limit");
               }
               if (result.subtype !== "success" || result.is_error) {
                 throw classifyClaudeFailure(

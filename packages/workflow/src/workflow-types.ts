@@ -1,4 +1,13 @@
-import type { ActorRef, Approval, ApprovalAction, Job, PlannerSelection, TenantContext } from "@studix/core";
+import type {
+  ActorRef,
+  AgentHandoff,
+  AgentRuntime,
+  Approval,
+  ApprovalAction,
+  Job,
+  PlannerSelection,
+  TenantContext,
+} from "@studix/core";
 import type { CreativeBrief, VideoIR } from "@studix/video-ir";
 import type { z } from "zod";
 import type { FencedRepositories } from "./worker-job-queue.ts";
@@ -45,6 +54,22 @@ export interface StageContext {
   commit<T>(write: (repos: FencedRepositories, ctx: TenantContext) => Promise<T>): Promise<T>;
   /** Report progress inside the stage (0..1); persisted with throttling. */
   reportProgress(progress: number): void;
+  /** Services agent stages run on; undefined when the worker was wired without them. */
+  agents?: AgentStageServices;
+}
+
+/** What an agent stage needs from the engine: the harness runtime and the state of its approvals and host task. */
+export interface AgentStageServices {
+  /** Runtime of the in-worker agent for this job; undefined when the worker runs no harness agent. */
+  runtime?: AgentRuntime;
+  /** The stage's latest host-agent task (any status, any attempt). */
+  latestHandoff(): Promise<AgentHandoff | undefined>;
+  /** The stage's latest overrun approval request. */
+  latestOverrun(): Promise<Approval | undefined>;
+  /** Overrun approvals a person granted this stage so far (approved or already consumed). */
+  grantedOverruns(): Promise<number>;
+  /** Spend an approved overrun request, fenced by job owner and attempt (throws LeaseLostError when lost). */
+  consumeOverrun(approvalId: string): Promise<void>;
 }
 
 /** What a stage's `inputSchema` parses: the job payload and the outputs of the stages before it. */

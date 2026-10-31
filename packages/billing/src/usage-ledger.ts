@@ -9,6 +9,8 @@ export const USAGE_KINDS = {
   renderSeconds: "render.seconds",
   /** Bytes written to object storage. */
   storageBytes: "storage.bytes",
+  /** One run of an agent stage (harness or host): tokens in quantity, model spend in costCents. */
+  agentRun: "agent.run",
 } as const;
 
 /** One billable usage line as recorded by a stage. `costCents` is COGS (what Studix paid). */
