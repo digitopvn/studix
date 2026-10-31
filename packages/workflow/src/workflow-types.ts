@@ -163,8 +163,16 @@ export interface StageDefinition {
    * estimate still get a budget check with a zero estimate (already-overspent jobs stop).
    */
   estimateCostCents?(stage: StageContext): number | Promise<number>;
-  /** Gate the stage behind a human approval for this action (subject: the job). */
-  approval?: { action: ApprovalAction; estimateCostCents?(job: Job): number | undefined };
+  /**
+   * Gate the stage behind a human approval for this action (subject: the job). `scopeKey` separates gates of
+   * one action in a job (creative gates use `gate:<id>`); `reason` tells the reviewer what to sign off.
+   */
+  approval?: {
+    action: ApprovalAction;
+    estimateCostCents?(job: Job): number | undefined;
+    scopeKey?: string;
+    reason?: string;
+  };
   /**
    * Run only when a person approved the project's storyboard (image-to-video and other per-shot generation
    * that spends on the plan). Checked before the stage cache; otherwise the job fails with a non-retryable
@@ -232,6 +240,8 @@ export interface PackJob {
    * brief of a new project.
    */
   fromVersion: boolean;
+  /** The version came from reviewer feedback (a patch); the job applies it and goes back to review. */
+  feedback?: boolean;
 }
 
 /**

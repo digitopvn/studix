@@ -273,6 +273,80 @@ describe("marketing-video pipeline (fake providers)", () => {
     expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(kinds.length);
   });
 
+  it("regenerates only the frames a feedback patch changed, then goes back to review", async () => {
+    const h = harness({ storyboard: "in_review" });
+    const projectId = await newProject(h, "marketing-video");
+    await h.run({ workflowTemplate: "marketing-video" }, projectId);
+    const project = await h.projects.get(ctx, projectId);
+    const base = await h.projects.getVersion(ctx, project?.currentVersionId as string);
+    const baseIr = base?.ir as VideoIR;
+    // What submitFeedback stores for a patch on one shot: a child version with the new description.
+    const patchedIr = structuredClone(baseIr);
+    const target = patchedIr.scenes[0]?.shots.find((s) => s.type === "image");
+    if (target?.type !== "image") throw new Error("expected an image shot");
+    target.alt = "A cup of green tea and loose leaves on a wooden windowsill at sunrise";
+    const patched = await h.projects.createVersion(ctx, {
+      projectId,
+      ir: patchedIr,
+      source: "patch",
+      parentVersionId: base?.id,
+      createdBy: actor,
+      advanceFrom: base?.id,
+    } as never);
+    h.generate.mockClear();
+    const usageBefore = h.usage.length;
+
+    const { outcome } = await h.run(
+      { workflowTemplate: "marketing-video", versionId: patched.id, feedbackId: "rev_1", makeCurrent: false },
+      projectId,
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.generate).toHaveBeenCalledTimes(1);
+    const [, request] = h.generate.mock.calls[0] ?? [];
+    expect(request?.kind).toBe("image");
+    expect(request?.prompt).toContain("loose leaves on a wooden windowsill");
+    expect(h.usage.length - usageBefore).toBe(1);
+    expect(h.renderer.rendered).toHaveLength(0);
+
+    const after = await h.projects.get(ctx, projectId);
+    expect(after?.status).toBe("in_review");
+    expect(after?.currentVersionId).not.toBe(patched.id);
+    const reframed = await h.projects.getVersion(ctx, after?.currentVersionId as string);
+    if (!reframed) throw new Error("expected the reframed version");
+    expect(reframed.parentVersionId).toBe(patched.id);
+    const changed = (reframed.ir as VideoIR).assets.filter(
+      (a) => baseIr.assets.find((b) => b.id === a.id)?.storageKey !== a.storageKey,
+    );
+    expect(changed.map((a) => a.id)).toEqual([target.assetId]);
+
+    // A patch that touches no frame description generates nothing and keeps the patched version current.
+    const textIr = structuredClone(reframed.ir as VideoIR);
+    const text = textIr.scenes[1]?.shots.find((s) => s.type === "text" || s.type === "title");
+    if (!text || !("text" in text)) throw new Error("expected a text shot");
+    text.text = "Góc yên tĩnh";
+    const textVersion = await h.projects.createVersion(ctx, {
+      projectId,
+      ir: textIr,
+      source: "patch",
+      parentVersionId: reframed.id,
+      createdBy: actor,
+      advanceFrom: reframed.id,
+    } as never);
+    h.generate.mockClear();
+    const second = await h.run(
+      {
+        workflowTemplate: "marketing-video",
+        versionId: textVersion.id,
+        feedbackId: "rev_2",
+        makeCurrent: false,
+      },
+      projectId,
+    );
+    expect(h.failureOf(second.outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.generate).not.toHaveBeenCalled();
+    expect((await h.projects.get(ctx, projectId))?.currentVersionId).toBe(textVersion.id);
+  });
+
   it("refuses image-to-video and charges nothing until the storyboard is approved", async () => {
     const h = harness({ storyboard: "in_review" });
     const projectId = await newProject(h, "marketing-video");

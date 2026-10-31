@@ -34,6 +34,11 @@ export const APPROVAL_ACTIONS = [
   "delete",
   /** An agent stage stopped at a cap; approving grants one more run with every cap doubled. */
   "agent.overrun",
+  /**
+   * A creative milestone a person signs off before the workflow spends on what follows (a pack's G0 brief,
+   * G1 designs). Scoped `gate:<id>` per milestone of the job.
+   */
+  "creative.gate",
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 

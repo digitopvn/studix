@@ -9,6 +9,7 @@
   "dependencies": {
     "@studix/billing": "workspace:*",
     "@studix/core": "workspace:*",
+    "@studix/renderers": "workspace:*",
     "@studix/shared": "workspace:*",
     "@studix/video-ir": "workspace:*",
     "@studix/workflow": "workspace:*",

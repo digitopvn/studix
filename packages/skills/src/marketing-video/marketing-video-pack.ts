@@ -32,7 +32,12 @@ import {
 } from "@studix/workflow";
 import { z } from "zod";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
-import { estimateMediaCents, generateStoredMedia, type StoredMediaRequest } from "../stored-media.ts";
+import {
+  estimateMediaCents,
+  generateStoredMedia,
+  type StoredMedia,
+  type StoredMediaRequest,
+} from "../stored-media.ts";
 import { MARKETING_SCRIPT_VERSION, MarketingScript, marketingScript } from "./marketing-script.ts";
 import {
   beatKey,
@@ -46,6 +51,7 @@ export const MARKETING_VIDEO_PACK = "marketing-video";
 export const MV_STAGES = {
   script: "marketing-video.script",
   storyboard: "marketing-video.storyboard",
+  reframe: "marketing-video.reframe",
   i2v: "marketing-video.i2v",
   audio: "marketing-video.audio",
   render: "marketing-video.render",
@@ -217,16 +223,121 @@ export const marketingStoryboardStage: StageDefinition = {
     const workDir = await stageWorkDir(s, MV_STAGES.storyboard);
     const requests = await withCaps(s, frameRequests(s));
     let done = 0;
-    const generated = await mapBounded(requests, MEDIA_CONCURRENCY, async (r) => {
-      const media = await generateStoredMedia(s, MV_STAGES.storyboard, r, workDir);
-      s.reportProgress(++done / requests.length);
-      return { key: r.key, ...media };
-    });
+    const generated = await mapBounded(
+      requests,
+      MEDIA_CONCURRENCY,
+      async (r) => {
+        const media = await generateStoredMedia(s, MV_STAGES.storyboard, r, workDir);
+        s.reportProgress(++done / requests.length);
+        return { key: r.key, ...media };
+      },
+      (r) => [r.usage],
+    );
     const frames = Object.fromEntries(generated.map((g) => [g.key, g.asset]));
     const title = brief.title ?? brief.brand?.name ?? "Marketing video";
     const ir = marketingVideoIr(script, brief.brand, title, { frames });
     await rm(workDir, { recursive: true, force: true });
     return { output: { ir, frames }, usage: generated.map((g) => g.usage) };
+  },
+};
+
+const ReframeInput = z.object({
+  payload: z.object({ projectId: z.string().min(1), versionId: z.string().min(1) }),
+  outputs: z.object({
+    brief: BriefOutput,
+    plan: z.object({ ir: VideoIR, versionId: z.string().min(1) }),
+  }),
+});
+type ReframeInput = z.infer<typeof ReframeInput>;
+
+/**
+ * The frames a feedback patch made stale: every image shot whose description (`alt`) differs from the
+ * version the patch was written against, or that version did not have. Everything else keeps its frame.
+ */
+async function reframeRequests(s: StageContext): Promise<Array<StoredMediaRequest & { shotId: string }>> {
+  const input = s.input as ReframeInput;
+  const { ir, versionId } = input.outputs.plan;
+  const { brief } = input.outputs.brief;
+  const parent = await s.commit(async (repos, ctx) => {
+    const version = await repos.projects.getVersion(ctx, versionId);
+    return version?.parentVersionId ? repos.projects.getVersion(ctx, version.parentVersionId) : undefined;
+  });
+  if (!parent) {
+    throw new StudixError("NOT_FOUND", `version ${versionId} has no parent version to compare frames with`, {
+      retryable: false,
+    });
+  }
+  const before = new Map(framedShots(parent.ir).map(({ image }) => [image.id, image.alt]));
+  return framedShots(ir)
+    .filter(({ image }) => image.alt !== undefined && before.get(image.id) !== image.alt)
+    .map(({ image }) => {
+      const key = image.id.replace(/-media$/, "");
+      return {
+        shotId: image.id,
+        assetId: image.assetId,
+        kind: "image" as const,
+        prompt: framePrompt(image.alt ?? "", undefined, brief, ir.format.aspectRatio),
+        params: { aspectRatio: ir.format.aspectRatio },
+        keyPrefix: `generated/${s.job.id}/storyboard/${key}`,
+        maxCostCents: 0,
+      };
+    });
+}
+
+/**
+ * Reviewer feedback on the storyboard -> new frames for the shots it changed, and back to review. The patch
+ * already stored a version with the new shot descriptions; this stage generates a frame for each changed
+ * shot only, stores the result as the next version (current, if nobody moved the project on meanwhile) and
+ * leaves the project in review. Unchanged shots keep their frames and their review state.
+ */
+export const marketingReframeStage: StageDefinition = {
+  name: MV_STAGES.reframe,
+  knowledge: ["art-direction", "dop-camera", "composition-timing"],
+  inputSchema: ReframeInput,
+  estimateCostCents: async (s) => estimateMediaCents(s, await withCaps(s, await reframeRequests(s))),
+  async run(s) {
+    const input = s.input as ReframeInput;
+    const { ir, versionId } = input.outputs.plan;
+    const { projectId } = input.payload;
+    const requests = await withCaps(s, await reframeRequests(s));
+    const nextVersionId = jobScopedId("pver", s.job.id);
+    let generated: Array<StoredMedia & { shotId: string }> = [];
+    if (requests.length > 0) {
+      const workDir = await stageWorkDir(s, MV_STAGES.reframe);
+      let done = 0;
+      generated = await mapBounded(requests, MEDIA_CONCURRENCY, async (r) => {
+        const media = await generateStoredMedia(s, MV_STAGES.reframe, r, workDir);
+        s.reportProgress(++done / requests.length);
+        return { shotId: r.shotId, ...media };
+      });
+      await rm(workDir, { recursive: true, force: true });
+    }
+    const fresh = new Map(generated.map((g) => [g.asset.id, g.asset]));
+    const next = VideoIR.parse({ ...ir, assets: ir.assets.map((a) => fresh.get(a.id) ?? a) });
+    const resultVersionId = generated.length > 0 ? nextVersionId : versionId;
+    await s.commit(async (repos, ctx) => {
+      if (generated.length > 0 && !(await repos.projects.getVersion(ctx, nextVersionId))) {
+        await repos.projects.createVersion(ctx, {
+          id: nextVersionId,
+          projectId,
+          ir: next,
+          source: "planner",
+          parentVersionId: versionId,
+          createdBy: { type: "system", id: ctx.actor.id },
+          // Only on top of the patched version: a newer version means someone moved on, so stop here.
+          advanceFrom: versionId,
+        });
+      }
+      await repos.projects.update(ctx, projectId, { status: "in_review" });
+    });
+    return {
+      output: {
+        projectVersionId: resultVersionId,
+        storyboard: "in_review",
+        reframed: generated.map((g) => g.shotId),
+      },
+      usage: generated.map((g) => g.usage),
+    };
   },
 };
 
@@ -300,17 +411,22 @@ export const marketingI2vStage: StageDefinition = {
       join(workDir, "frames"),
     );
     let done = 0;
-    const clips = await mapBounded(shots, MEDIA_CONCURRENCY, async (c, i) => {
-      const request = capped[i] as StoredMediaRequest;
-      const media = await generateStoredMedia(
-        s,
-        MV_STAGES.i2v,
-        { ...request, params: { ...request.params, image: frameFiles[c.image.assetId] } },
-        workDir,
-      );
-      s.reportProgress(++done / shots.length);
-      return { ...c, ...media };
-    });
+    const clips = await mapBounded(
+      shots,
+      MEDIA_CONCURRENCY,
+      async (c, i) => {
+        const request = capped[i] as StoredMediaRequest;
+        const media = await generateStoredMedia(
+          s,
+          MV_STAGES.i2v,
+          { ...request, params: { ...request.params, image: frameFiles[c.image.assetId] } },
+          workDir,
+        );
+        s.reportProgress(++done / shots.length);
+        return { ...c, ...media };
+      },
+      (r) => [r.usage],
+    );
     const next = structuredClone(ir);
     for (const c of clips) {
       const scene = next.scenes[c.scene];
@@ -421,11 +537,16 @@ export const marketingAudioStage: StageDefinition = {
       planned.map((a) => a.request),
     );
     let done = 0;
-    const generated = await mapBounded(planned, MEDIA_CONCURRENCY, async (a, i) => {
-      const media = await generateStoredMedia(s, MV_STAGES.audio, capped[i] as StoredMediaRequest, workDir);
-      s.reportProgress(++done / planned.length);
-      return { ...a, ...media };
-    });
+    const generated = await mapBounded(
+      planned,
+      MEDIA_CONCURRENCY,
+      async (a, i) => {
+        const media = await generateStoredMedia(s, MV_STAGES.audio, capped[i] as StoredMediaRequest, workDir);
+        s.reportProgress(++done / planned.length);
+        return { ...a, ...media };
+      },
+      (r) => [r.usage],
+    );
     const tracks: AudioTrack[] = generated.map((g) => {
       const end = g.variant.startMs + g.variant.durationMs;
       const room = end - g.at;
@@ -619,24 +740,28 @@ export const marketingPublishStage: StageDefinition = {
 };
 
 /**
- * A new project runs brief -> script -> storyboard and stops for review. Rendering an approved version runs
+ * A new project runs brief -> script -> storyboard and stops for review. Feedback with a patch regenerates
+ * the frames of the shots it changed and stops for review again. Rendering an approved version runs
  * i2v -> audio -> render -> QA -> publish; both i2v and audio refuse to run before the storyboard is approved.
  */
 export const marketingVideoPipeline: PackPipeline = {
   renderer: "hyperframes",
   stages: (job, e) =>
-    job.fromVersion
-      ? [
-          e.plan,
-          e.validateIr,
-          marketingI2vStage,
-          marketingAudioStage,
-          marketingRenderStage,
-          marketingQaStage,
-          marketingPublishStage,
-        ]
-      : [e.brief, marketingScriptStage, marketingStoryboardStage, e.validateIr, e.storyboardReady],
-  result: (outputs) => outputs[MV_STAGES.publish] ?? outputs.storyboard_ready ?? {},
+    job.fromVersion && job.feedback
+      ? [e.brief, e.plan, marketingReframeStage]
+      : job.fromVersion
+        ? [
+            e.plan,
+            e.validateIr,
+            marketingI2vStage,
+            marketingAudioStage,
+            marketingRenderStage,
+            marketingQaStage,
+            marketingPublishStage,
+          ]
+        : [e.brief, marketingScriptStage, marketingStoryboardStage, e.validateIr, e.storyboardReady],
+  result: (outputs) =>
+    outputs[MV_STAGES.publish] ?? outputs[MV_STAGES.reframe] ?? outputs.storyboard_ready ?? {},
 };
 
 export const marketingVideoPack: WorkflowPack = {
@@ -647,6 +772,7 @@ export const marketingVideoPack: WorkflowPack = {
   stages: [
     marketingScriptStage,
     marketingStoryboardStage,
+    marketingReframeStage,
     marketingI2vStage,
     marketingAudioStage,
     marketingRenderStage,

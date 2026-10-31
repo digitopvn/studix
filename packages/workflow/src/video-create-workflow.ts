@@ -320,7 +320,13 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
         );
       }
       return {
-        stages: pipeline.stages({ fromVersion: payload.versionId !== undefined }, engine),
+        stages: pipeline.stages(
+          {
+            fromVersion: payload.versionId !== undefined,
+            feedback: payload.versionId !== undefined && payload.feedbackId !== undefined,
+          },
+          engine,
+        ),
         result: pipeline.result ?? defaultResult,
       };
     },

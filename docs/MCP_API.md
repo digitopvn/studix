@@ -98,7 +98,8 @@ Behavior notes:
 - `studix_create_video` inputs: `prompt` or `brief` (one is required), `spec`,
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
   past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
-  `workflowTemplate`.
+  `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
+  handoff tools below).
 - Time spent parked is not counted against the deadline. While a job waits at a human gate
   (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
   is paused: what is left of it is kept and starts counting again when a worker
@@ -123,7 +124,10 @@ Behavior notes:
   image-to-video, voice or music. Frame prompts describe the scene only. Beats
   derived from a direction never carry its hook or messages, and the brand name
   and tagline are removed from every frame prompt, because the HyperFrames
-  overlay sets the logo, wordmark and copy. Each ad's voice-over must fit about three
+  overlay sets the logo, wordmark and copy. Feedback with a patch that changes an
+  image shot's `alt` (the frame description) regenerates the frame of that shot
+  only, stores it as the next version and returns the project to review;
+  unchanged shots keep their frames and review state. Each ad's voice-over must fit about three
   words a second of its length, or the job fails with `VALIDATION` before any
   paid call. After a person approves the storyboard, `studix_render` animates
   the frames, adds voice-over, music and SFX, then renders, QA-gates and
@@ -133,6 +137,24 @@ Behavior notes:
   (6 to 60 s, default 15 s) in the style profile that best matches the brief,
   with a generated voice-over and burned captions, then renders, QA-gates and
   uploads it in one job. It has no image-to-video.
+- `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
+  (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
+  pauses twice for a signed-in person, on the approval mechanism: G0 (action
+  `creative.gate`, scope `gate:G0`) after the scope agent has written the series
+  bible and the tiered beat sheet, and G1 (`gate:G1`) after one model sheet per
+  character and one frame per set. Each pause makes a review board the
+  project's current version, so the dashboard review page shows what is being
+  signed. An API key cannot approve a gate. After G1 the storyboard agent writes
+  one panel per shot, every shot gets a keyframe conditioned on its lead
+  character's approved sheet, and the job stops with the project `in_review`.
+  Rejecting a gate fails the job with `FORBIDDEN`. After a person approves the
+  storyboard, `studix_render` records the dialogue first, turns T2/T3 shots into
+  480p image-to-video clips and T0/T1 shots into film-engine scenes, lip-syncs
+  every shot with a visible speaker on the recorded line, adds one score cue per
+  scene and the SFX, checks continuity (G3), then renders, QA-gates (G4) and
+  uploads the film. A scope that breaks the pack's rules (tier mix, lip-sync
+  routing, words per second, continuity chain, at most 16 audio tracks) fails
+  with `VALIDATION` before G0 is requested.
 - `planner: {runtime: "claude", providerConnectionId}` is opt-in. The worker
   then plans the VideoIR with the Claude Agent SDK, billed to that Anthropic API
   key ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
@@ -192,7 +214,8 @@ Behavior notes:
 A creative agent stage (for example `brand-intro.script`) runs in one of two
 modes under the same contract: the stage's input schema, output schema and
 limits ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)). The
-job payload's `agentMode` picks the mode. `harness` (the default) runs the
+job payload's `agentMode` picks the mode; `studix_create_video` sets it from its
+`agentMode` argument. `harness` (the default) runs the
 Claude agent inside the worker under hard caps. `host` hands the stage to the
 MCP client's own agent: the job moves to `waiting_host`, and `studix_get_job`
 returns `next[]` pointing at `studix_list_agent_tasks`.

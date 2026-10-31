@@ -59,7 +59,14 @@ export async function checkApprovalGate(
   ctx: TenantContext,
   job: Job,
   workerId: string,
-  gate: { action: ApprovalAction; estimatedCostCents?: number },
+  gate: {
+    action: ApprovalAction;
+    estimatedCostCents?: number;
+    /** Scope of the gate (e.g. `gate:G1`); without it the latest request of the action, any scope, counts. */
+    scopeKey?: string;
+    /** What the reviewer is asked to sign off; prefixed to the policy's reason. */
+    reason?: string;
+  },
 ): Promise<ApprovalGateResult> {
   const subject = { type: "job" as const, id: job.id };
   const requirement = await decideFailClosed(deps.approvalPolicy, ctx, {
@@ -70,15 +77,16 @@ export async function checkApprovalGate(
   if (!requirement.required) return { status: "approved" };
 
   const now = deps.clock.now();
-  const latest = await deps.approvals.findLatest(ctx, subject, gate.action);
+  const latest = await deps.approvals.findLatest(ctx, subject, gate.action, gate.scopeKey);
   const settled = settle(gate.action, latest, now);
   if (settled) return settled;
 
   const opened = await deps.queue.requestApproval(job, workerId, {
     action: gate.action,
-    reason: requirement.reason,
+    reason: gate.reason ? `${gate.reason} (${requirement.reason})` : requirement.reason,
     estimatedCostCents: gate.estimatedCostCents,
     ttlMs: deps.approvalTtlMs,
+    ...(gate.scopeKey ? { scopeKey: gate.scopeKey } : {}),
   });
   if (opened.status === "lost") return { status: "lease_lost" };
   if (opened.status === "decided") return settle(gate.action, opened.approval, now)!;
