@@ -423,6 +423,43 @@ describe("video.create workflow on Postgres", () => {
     expect(usage.map((u) => u.kind).sort()).toEqual(["provider.decision", "render.seconds", "storage.bytes"]);
   });
 
+  it("does not overwrite a status set after the job failed when the retried job finishes", async () => {
+    const ctx = await tenant(db.current, "stale-retry");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const plan = fakePlanner();
+    const crashing = createTestWorker(db.current, "w-crash", {
+      planner: plan.planner,
+      renderer: fakeRenderer({ crash: Promise.resolve() }).renderer,
+    });
+    expect((await crashing.runOnce())?.outcome).toBe("failed");
+    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({ status: "rendering" });
+
+    // While the job sat failed, a newer render was reviewed and approved.
+    await db.current.repos.projects.update(ctx, project.id, { status: "approved" });
+    await db.current.repos.queue.retry(ctx, job.id);
+    const worker = createTestWorker(db.current, "w-retry", { planner: plan.planner });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+
+    expect(plan.state.calls).toBe(1);
+    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({ status: "approved" });
+    expect((await db.current.repos.renders.listByProject(ctx, project.id)).items).toHaveLength(1);
+  });
+
+  it("still hands a retried job's project to review while it is the one rendering", async () => {
+    const ctx = await tenant(db.current, "own-retry");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const plan = fakePlanner();
+    const crashing = createTestWorker(db.current, "w-crash", {
+      planner: plan.planner,
+      renderer: fakeRenderer({ crash: Promise.resolve() }).renderer,
+    });
+    expect((await crashing.runOnce())?.outcome).toBe("failed");
+    await db.current.repos.queue.retry(ctx, job.id);
+    const worker = createTestWorker(db.current, "w-retry", { planner: plan.planner });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({ status: "in_review" });
+  });
+
   it("fails immediately on non-retryable errors", async () => {
     const ctx = await tenant(db.current, "fatal");
     const { job } = await enqueueCreate(db.current, ctx);

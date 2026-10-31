@@ -1,6 +1,12 @@
 import { extname } from "node:path";
 import { USAGE_KINDS } from "@studix/billing";
-import type { MediaGenerationRequest, MediaGenerationResult, MediaKind } from "@studix/core";
+import {
+  type MediaCharge,
+  MediaChargedError,
+  type MediaGenerationRequest,
+  type MediaGenerationResult,
+  type MediaKind,
+} from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
 import type { AssetMediaKind, AssetRef } from "@studix/video-ir";
 import {
@@ -9,6 +15,7 @@ import {
   StageFailedAfterSpend,
   type StageUsage,
   sha256File,
+  stageMediaDir,
 } from "@studix/workflow";
 
 /** One media asset a pack stage generates and keeps in tenant storage. */
@@ -89,22 +96,23 @@ export async function estimateMediaCents(
   return total;
 }
 
-/** The usage line of a finished provider call, tied to the upstream job so a resumed stage never bills it twice. */
-function mediaUsage(request: StoredMediaRequest, result: MediaGenerationResult): StageUsage {
+/** The usage line of a provider call that charged, whether it then returned or failed. */
+function mediaUsage(request: StoredMediaRequest, charge: MediaCharge): StageUsage {
+  const upstreamJob = charge.job ? `${charge.job.provider}:${charge.job.id}` : undefined;
   return {
     item: `media-${request.assetId}`,
     kind: USAGE_KINDS.mediaGeneration,
     quantity: 1,
     unit: request.kind,
-    costCents: result.costCents,
-    ...(result.job ? { upstreamJob: `${result.job.provider}:${result.job.id}` } : {}),
+    costCents: charge.costCents,
+    ...(upstreamJob ? { upstreamJob } : {}),
     metadata: {
-      provider: result.provider,
-      model: result.model,
+      provider: charge.provider,
+      model: charge.model,
       mediaKind: request.kind,
       assetId: request.assetId,
-      costSource: result.costSource ?? "unknown",
-      ...(result.job ? { upstreamJob: `${result.job.provider}:${result.job.id}` } : {}),
+      costSource: charge.costSource ?? "unknown",
+      ...(upstreamJob ? { upstreamJob } : {}),
     },
   };
 }
@@ -118,13 +126,29 @@ export async function generateStoredMedia(
   s: StageContext,
   stage: string,
   request: StoredMediaRequest,
-  workDir: string,
 ): Promise<StoredMedia> {
   const media = requireService(s, "media");
   const storage = requireService(s, "storage");
-  const result = await media.generate(s.ctx, mediaRequest(s, stage, request, workDir));
+  // The provider writes to the job-scoped media directory, not the attempt scratch directory.
+  const mediaDir = await stageMediaDir(s, stage);
+  let result: MediaGenerationResult;
+  try {
+    result = await media.generate(s.ctx, mediaRequest(s, stage, request, mediaDir));
+  } catch (err) {
+    // The provider charged before it failed (e.g. the finished job's result could not be collected).
+    if (err instanceof MediaChargedError) {
+      throw new StageFailedAfterSpend(err, [mediaUsage(request, err.charge)]);
+    }
+    throw err;
+  }
   // The provider call is paid from here on: whatever fails next still bills it.
-  const usage = mediaUsage(request, result);
+  const usage = mediaUsage(request, {
+    provider: result.provider,
+    model: result.model,
+    costCents: result.costCents,
+    costSource: result.costSource ?? "unknown",
+    ...(result.job ? { job: result.job } : {}),
+  });
   try {
     const output = result.outputs[0];
     if (!output) {

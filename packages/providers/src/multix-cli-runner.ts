@@ -121,6 +121,8 @@ export interface MultixEnvelope {
   estimateHighUsd?: number;
   /** What the provider charged, when the run reported it. */
   receiptUsd?: number;
+  /** The run reported that it sent no request upstream, so nothing was charged. */
+  noRequest?: boolean;
   historyId?: string;
 }
 
@@ -260,6 +262,7 @@ export function parseMultixEnvelope(stdout: string): MultixEnvelope | undefined 
   if (high !== undefined) envelope.estimateHighUsd = high;
   const receipt = parseReceipt(raw);
   if (receipt !== undefined) envelope.receiptUsd = receipt;
+  if (obj(raw.cost).actual_source === "no_request") envelope.noRequest = true;
   const historyId = str(raw.history_id);
   if (historyId) envelope.historyId = historyId;
   return envelope;

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TenantContext } from "@studix/core";
+import { MediaChargedError, type MediaProvider, type TenantContext } from "@studix/core";
 import { FakeMediaProvider } from "@studix/providers";
 import { StudixError } from "@studix/shared";
 import { mapBounded, type StageContext, StageFailedAfterSpend } from "@studix/workflow";
@@ -56,9 +56,57 @@ const request = (assetId: string) => ({
 });
 
 describe("media spend of a failed stage", () => {
+  it("bills a call the provider charged for and then failed, using the charge on the error", async () => {
+    const { s } = stageWith(new Set());
+    const upstreamDone = new StudixError("PROVIDER_ERROR", "finished without outputs", { retryable: false });
+    const charged: MediaProvider = {
+      id: "multix",
+      capabilities: async () => [],
+      estimateCostCents: async () => 2,
+      generate: async () => {
+        throw new MediaChargedError(upstreamDone, {
+          provider: "multix",
+          model: "sume:nano-banana-2.1",
+          costCents: 3,
+          costSource: "receipt",
+          job: { provider: "sume", id: "job_9" },
+        });
+      },
+    };
+    (s as unknown as { services: { media: MediaProvider } }).services.media = charged;
+    const err = await generateStoredMedia(s, "designs", request("a")).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StageFailedAfterSpend);
+    const failed = err as StageFailedAfterSpend;
+    expect(failed.error.code).toBe("PROVIDER_ERROR");
+    expect(failed.usage).toEqual([
+      expect.objectContaining({
+        item: "media-a",
+        costCents: 3,
+        upstreamJob: "sume:job_9",
+        metadata: expect.objectContaining({ costSource: "receipt", model: "sume:nano-banana-2.1" }),
+      }),
+    ]);
+  });
+
+  it("does not bill a provider failure that carries no charge", async () => {
+    const { s } = stageWith(new Set());
+    const down: MediaProvider = {
+      id: "multix",
+      capabilities: async () => [],
+      estimateCostCents: async () => 2,
+      generate: async () => {
+        throw new StudixError("UNAVAILABLE", "multix is down");
+      },
+    };
+    (s as unknown as { services: { media: MediaProvider } }).services.media = down;
+    const err = await generateStoredMedia(s, "designs", request("a")).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StudixError);
+    expect(err).not.toBeInstanceOf(StageFailedAfterSpend);
+  });
+
   it("bills a generation whose upload failed", async () => {
     const { s } = stageWith(new Set(["a"]));
-    const err = await generateStoredMedia(s, "designs", request("a"), root).catch((e: unknown) => e);
+    const err = await generateStoredMedia(s, "designs", request("a")).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StageFailedAfterSpend);
     const failed = err as StageFailedAfterSpend;
     expect(failed.error.code).toBe("UNAVAILABLE");
@@ -77,7 +125,7 @@ describe("media spend of a failed stage", () => {
     const batch = mapBounded(
       ["a", "b", "c"],
       3,
-      (id) => generateStoredMedia(s, "designs", request(id), root),
+      (id) => generateStoredMedia(s, "designs", request(id)),
       (r: StoredMedia) => [r.usage],
     )
       .catch((e: unknown) => e)
