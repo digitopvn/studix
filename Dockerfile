@@ -4,11 +4,11 @@
 # Node + FFmpeg + chrome-headless-shell (Chromium on arm64) for rendering, the multix CLI, and Python for the
 # QA measurement tools.
 
-# The multix CLI, built from a pinned commit of mrgoonie/multix-cli. No npm release ships the Sume
-# commands yet, so the image builds the commit the adapter was verified against (1.22.0-beta.3).
+# The multix CLI, built from the commit tagged v1.26.0 in mrgoonie/multix-cli. Pinning the commit is
+# stricter than pinning the npm version, which has no lockfile integrity hash in this image.
 FROM node:22-bookworm-slim AS multix
 ARG MULTIX_REPO=https://github.com/mrgoonie/multix-cli.git
-ARG MULTIX_COMMIT=a2507d55f94b60fa5b4f0bfd3e7d0ba8b8153b84
+ARG MULTIX_COMMIT=7922a2741b86c56eaac328778eaee3a2f29344ea
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*

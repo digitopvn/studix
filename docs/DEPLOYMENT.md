@@ -26,12 +26,13 @@ generation. The app role does not invoke them; shipping one image keeps build,
 pinning and rollback to a single artifact.
 
 multix is built in a separate stage from a pinned commit of
-`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `a2507d55`, which reports
-1.22.0-beta.3). The stage fails if the fetched HEAD is not that commit. Risk:
-no npm release contains the Sume commands yet (npm 1.24.0 does not), so the
-image cannot pin a registry version with a lockfile integrity hash. When a
-release with Sume ships, switch the stage to `npm install -g
-@mrgoonie/multix@<version>` and re-run the live smoke test.
+`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `7922a274`, the commit tagged
+v1.26.0). The stage fails if the fetched HEAD is not that commit. 1.26.0 is the
+first stable release with the Sume commands and counts Sume cost once per job.
+The image keeps the git build instead of `npm install -g @mrgoonie/multix`,
+because a commit pin is checked and an npm install here has no lockfile
+integrity hash. To upgrade, set `MULTIX_COMMIT` to the new release tag's commit
+and re-run the live smoke test.
 
 ## Configuration
 
