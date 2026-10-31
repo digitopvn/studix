@@ -1,7 +1,29 @@
 # Studix runtime image: one image, two roles selected by STUDIX_ROLE.
 #   STUDIX_ROLE=app    -> apps/mcp-server (/mcp, /api, dashboard static, migrations on start)
 #   STUDIX_ROLE=worker -> apps/worker (job claim loops, HyperFrames + FFmpeg rendering, /healthz)
-# Node + FFmpeg + chrome-headless-shell (Chromium on arm64) for rendering.
+# Node + FFmpeg + chrome-headless-shell (Chromium on arm64) for rendering, plus the multix CLI.
+
+# The multix CLI, built from a pinned commit of mrgoonie/multix-cli. No npm release ships the Sume
+# commands yet, so the image builds the commit the adapter was verified against (1.22.0-beta.3).
+FROM node:22-bookworm-slim AS multix
+ARG MULTIX_REPO=https://github.com/mrgoonie/multix-cli.git
+ARG MULTIX_COMMIT=a2507d55f94b60fa5b4f0bfd3e7d0ba8b8153b84
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates git \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/multix
+RUN set -eu; \
+    git init -q .; \
+    git remote add origin "$MULTIX_REPO"; \
+    git fetch -q --depth 1 origin "$MULTIX_COMMIT"; \
+    git checkout -q --detach FETCH_HEAD; \
+    test "$(git rev-parse HEAD)" = "$MULTIX_COMMIT"; \
+    npm ci --no-audit --no-fund; \
+    npm run build; \
+    npm prune --omit=dev --no-audit --no-fund; \
+    rm -rf .git /root/.npm; \
+    node dist/cli.js --version
+
 FROM node:22-bookworm-slim
 
 ENV NODE_ENV=production \
@@ -26,6 +48,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable
+
+# multix stays opt-in: the worker uses it only when MULTIX_BIN=/opt/multix/dist/cli.js is set.
+COPY --from=multix /opt/multix /opt/multix
+RUN chmod +x /opt/multix/dist/cli.js && ln -s /opt/multix/dist/cli.js /usr/local/bin/multix
 
 WORKDIR /app
 COPY . .

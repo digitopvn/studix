@@ -49,7 +49,7 @@ merged.
 | `packages/pipeline` search                                  | deferred `search` package                                | Not yet ported | P1                                                                                                                                                                                             |
 | `packages/hyperframes-adapter`                              | `@studix/renderers` (HyperFrames)                        | Ported         | Behind `RendererAdapter` ([ADR-0010](decisions/0010-renderer-and-media-provider-adapters.md))                                                                                                  |
 | `packages/media` FFmpeg                                     | `@studix/renderers` (FFmpeg finishing)                   | Ported         |                                                                                                                                                                                                |
-| `packages/media` multix runner, capability matrix, registry | `@studix/providers`                                      | Generalized    | `MediaProvider` contract + Multix shell + fake; modalities not claimed beyond what is wired                                                                                                    |
+| `packages/media` multix runner, capability matrix, registry | `@studix/providers`                                      | Generalized    | `MediaProvider` contract, Multix adapter (Sume, Atlas Cloud, ElevenLabs, Fish, MiniMax) and a fake covering the same kinds; a kind is advertised only when its key is ready                    |
 | `packages/pi-runtime`                                       | `@studix/agent-runtime`                                  | Generalized    | `AgentRuntime` boundary + fake; worker-pod isolation instead of relying on the path guard                                                                                                      |
 | `packages/jev-router` + `packages/llm`                      | `@studix/decision-routing`                               | Generalized    | `DecisionRouter` + `DecisionProviderAdapter`; OpenRouter, TypeSafeAI, Rules, Fake adapters ([ADR-0003](decisions/0003-jev-decision-provider-adapter-and-routing-fallback.md))                  |
 | `packages/director`                                         | planning via `DecisionRouter("video.plan")` or host spec | Not yet ported | Director prompts and critique loops revisit in P2                                                                                                                                              |
@@ -71,7 +71,7 @@ merged.
 | In-process job queue; interrupted jobs marked failed on restart | Pod restarts lose work                              | Postgres queue with lease, heartbeat, recovery                                                                           |
 | Pi path guard used as the containment for agent file access     | A path guard is not a process sandbox               | Agent work only in the isolated worker role; no shell; scoped credentials                                                |
 | Bearer-only MCP auth with static keys                           | No per-workspace revocation, no OAuth               | Hashed, scoped, revocable workspace keys; OAuth plan ([ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md)) |
-| multix video, voice, music and SFX not wired end to end         | Cannot claim those modalities                       | Contract + shell only in P0; P2 wiring                                                                                   |
+| multix video, voice, music and SFX not wired end to end         | Cannot claim those modalities                       | Wired through the pinned multix CLI with estimates, caps, job resume and probe-before-batch (#41)                        |
 | Dashboard partial; search and billing planned/partial           | Reviewers and admins need a working surface         | P0 project/job/trace/connector views; search and billing in later phases                                                 |
 
 ## File-level port record
@@ -86,7 +86,7 @@ Files carried over from the pinned commit and adapted (paths relative to each re
 | `packages/hyperframes-adapter/src/compile.ts` | `packages/renderers/src/hyperframes/compile-composition.ts`, `scene-composition.ts`          |
 | `packages/hyperframes-adapter/src/render.ts`  | `packages/renderers/src/hyperframes/producer-render.ts`                                      |
 | `packages/media/src/ffmpeg.ts`                | `packages/renderers/src/ffmpeg/ffmpeg-probe.ts` (finishing in `ffmpeg-finish.ts` follows it) |
-| `packages/media/src/capability-matrix.ts`     | `packages/providers/src/multix-capability-catalog.ts` (metadata only)                        |
+| `packages/media/src/capability-matrix.ts`     | `packages/providers/src/multix-routes.ts` (replaced by live catalogs and `multix check`)     |
 | `packages/storage/src/r2-store.ts`            | `packages/storage/src/s3-storage-adapter.ts` (generalized to any S3 endpoint)                |
 | `Dockerfile`                                  | `Dockerfile` (one image, `STUDIX_ROLE=app\|worker`)                                          |
 

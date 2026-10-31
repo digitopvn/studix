@@ -83,6 +83,19 @@ export const ConfigSchema = z
     FFMPEG_PATH: z.string().min(1).default("ffmpeg"),
     FFPROBE_PATH: z.string().min(1).default("ffprobe"),
     MULTIX_BIN: optionalString,
+    /** Default "<vendor>:<model>" per media role; unset means the provider's built-in default. */
+    MULTIX_IMAGE_MODEL: optionalString,
+    MULTIX_VIDEO_MODEL: optionalString,
+    MULTIX_LIPSYNC_MODEL: optionalString,
+    MULTIX_VOICE_MODEL: optionalString,
+    MULTIX_MUSIC_MODEL: optionalString,
+    MULTIX_SFX_MODEL: optionalString,
+    MULTIX_IMAGE_UPSCALE_MODEL: optionalString,
+    MULTIX_VIDEO_UPSCALE_MODEL: optionalString,
+    /** Let multix read ~/.multix/.env. Local development only: workers get keys from their environment. */
+    MULTIX_ALLOW_HOME_ENV: bool.default(false),
+    /** Longest wait for one upstream job before the call fails retryably (the job keeps its id). */
+    MULTIX_WAIT_TIMEOUT_SECONDS: z.coerce.number().int().min(30).max(7200).default(900),
 
     OTEL_SERVICE_NAME: z.string().min(1).default("studix"),
     OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,
