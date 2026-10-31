@@ -77,6 +77,14 @@ guide, the per-error value is authoritative.
 | `studix_get_project`  | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                        |
 | `studix_cancel_job`   | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                           |
 | `studix_approve`      | Record a decision on a pending approval (for example `video.publish`). Only a human user may approve; an API key gets `FORBIDDEN`.                                                                                                 |
+| `studix_feedback`     | Feedback on one target of the current version: `shotId`, `sceneId`, `assetId`, or `startMs` with `endMs`. Always stored as a comment. With a `patch`, it makes a new version and queues a render job. Async.                       |
+| `studix_render`       | Queue a render of the current version, or of a given `versionId`, at a `renderPreset`. Returns `jobId`; poll `studix_get_job` for the MP4 URL. Async.                                                                              |
+
+Every tool that touches a project returns its ids, `next[]` and `reviewUrl`
+(`${STUDIX_APP_URL}/#/projects/<projectId>/review`), the dashboard page where a
+person reviews and approves the storyboard. Signed preview URLs are included
+when a finished render exists (`studix_get_job` `video.url`, `studix_get_project`
+`renders[].url`, and `studix_feedback` `previewUrl` for a comment without a patch).
 
 Behavior notes:
 
@@ -89,7 +97,14 @@ Behavior notes:
   ([ADR-0003](decisions/0003-jev-decision-provider-adapter-and-routing-fallback.md)).
 - `studix_create_video` inputs: `prompt` or `brief` (one is required), `spec`,
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
-  past it the job fails with `TIMEOUT`), `renderPreset`, `planner`.
+  past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
+  `workflowTemplate`.
+- `workflowTemplate` is a pack id from the registry in `@studix/skills`
+  (`studix_inspect` lists them under `skills`); it defaults to `brand-intro`.
+  An unknown id fails with `VALIDATION` before anything is stored, with
+  `error.details.available` listing the registered ids. Adding a pack needs
+  only `registerPack`; the server does not change. The Claude `planner` writes
+  the IR itself, so it is refused together with a non-default pack.
 - `planner: {runtime: "claude", providerConnectionId}` is opt-in. The worker
   then plans the VideoIR with the Claude Agent SDK, billed to that Anthropic API
   key ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
@@ -105,6 +120,34 @@ Behavior notes:
   approves it in the dashboard.
 - Re-sending `studix_create_video` with the same idempotency key in the same
   workspace returns the original job instead of a new one.
+
+### Feedback, render and storyboard approval
+
+- `studix_feedback` with no `patch` stores a comment and returns
+  `allowedPaths`: the JSON pointers a patch for that target may touch (the
+  shot, the scene with `/timeline`, the asset, or the shots overlapping the time
+  range). `next[]` suggests the call with a patch.
+- A `patch` is a JSON Patch (`ops[]`) on the VideoIR with absolute pointers. An
+  op outside `allowedPaths` fails with `VALIDATION`, with `details.outside` and
+  `details.allowedPaths`, and nothing is stored. A valid patch becomes a new
+  immutable version that is current from then on. Only the nodes that depend on
+  the change are invalidated, and they are returned as `invalidated`
+  (`shot:<id>`, `scene:<id>`, ...). The render job reuses cached stage work for
+  everything else.
+- `baseVersionId` is optional. When it is not the current version, the call
+  fails with `CONFLICT`, so feedback is never applied to a newer version than
+  the one it was written for.
+- `studix_render` renders a stored version, and that version becomes current.
+  Both tools accept `idempotencyKey` and `budgetCents`. A budget above the
+  approval threshold parks the job in `waiting_approval`.
+- Permissions: a patch or a render needs `project:write`. A comment needs
+  `project:write` or `approval:decide`. Other tenants' projects are `NOT_FOUND`.
+- Approving the storyboard, its scenes and its shots is a human gate. It is
+  done in the dashboard at `reviewUrl` and is not exposed as an MCP tool.
+  Stages that generate per-shot media from the plan, such as image-to-video,
+  run only after the storyboard is `approved`. Otherwise the job fails with
+  `APPROVAL_REQUIRED`. A patch that changes a shot puts that shot, its scene
+  and the storyboard back in review. "Rendered" never means "approved".
 
 ## P0 meta-tools (MCP-in-MCP)
 
@@ -125,15 +168,13 @@ returns `FORBIDDEN`. See [SECURITY.md](SECURITY.md#mcp-in-mcp-connectors).
 Not implemented; do not depend on them. Capabilities are added to the contract
 before new tools are created.
 
-| Tool                                    | Intent                                                    | Phase        |
-| --------------------------------------- | --------------------------------------------------------- | ------------ |
-| `studix_edit_video` / `studix_feedback` | Revise a version from feedback or patches                 | P1           |
-| `studix_approve`                        | Record an approval through MCP (dashboard first)          | P1           |
-| `studix_render`                         | Render a stored version at a chosen quality               | P1           |
-| `studix_list_assets`                    | List workspace assets                                     | P1           |
-| `studix_search`                         | Search projects, scenes, assets                           | P1-P2        |
-| `studix_publish`                        | Publish an approved final; fails closed without approval  | P2           |
-| `studix_code`                           | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
+| Tool                 | Intent                                                    | Phase        |
+| -------------------- | --------------------------------------------------------- | ------------ |
+| `studix_edit_video`  | Revise a version from free-form feedback without a patch  | P1           |
+| `studix_list_assets` | List workspace assets                                     | P1           |
+| `studix_search`      | Search projects, scenes, assets                           | P1-P2        |
+| `studix_publish`     | Publish an approved final; fails closed without approval  | P2           |
+| `studix_code`        | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
 
 ## Connecting a client
 

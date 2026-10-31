@@ -56,7 +56,7 @@ and export `./src/index.ts`.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `apps/mcp-server`           | HTTP app: `/mcp` (native + meta tools), `/api` for the dashboard, dashboard static files, `/healthz`, `/readyz`                                                                                                      | Contain pipeline or policy logic; it calls `core` and `mcp-gateway` |
 | `apps/worker`               | Worker process: claims jobs and runs workflow stages                                                                                                                                                                 | Expose public HTTP beyond health                                    |
-| `apps/dashboard`            | SPA for projects, jobs, traces, playback, connectors                                                                                                                                                                 | Implement its own pipeline; it uses `/api` over `StudioService`     |
+| `apps/dashboard`            | SPA for projects, storyboard review and approval, jobs, traces, playback, connectors                                                                                                                                 | Implement its own pipeline; it uses `/api` over `StudioService`     |
 | `apps/marketing`            | Static marketing site on Cloudflare                                                                                                                                                                                  | Import engine packages                                              |
 | `apps/mock-mcp`             | Third-party Streamable HTTP MCP fixture for gateway tests                                                                                                                                                            | Ship to production                                                  |
 | `packages/shared`           | `StudixError` + `ErrorCode`, `loadConfig()` (env only, zod), logger with redaction, `newId()`, `redact()`, `Clock`                                                                                                   | Depend on other `@studix/*` packages                                |
@@ -173,6 +173,42 @@ an edit can be traced transitively. Stages keyed by the same digest reuse the
 cached work, which is how patching one shot re-generates and re-bills only that
 shot and its dependents. Genres plug in as packs registered in `@studix/skills`;
 the MCP server and worker read the registry and never name a pack.
+
+## Storyboard review gate
+
+A project's storyboard (`project_storyboards`) is append-only: every reviewer
+decision writes a new revision, guarded by `expectedRevision`. Until a decision
+is stored, the storyboard is derived from the current version's IR, with every
+approval in `draft`. When a feedback patch makes a new version, approvals carry
+over only for scenes and shots whose node digest did not change. Changed nodes
+go back to `in_review`, and the storyboard as a whole leaves `approved`.
+
+Approval is a human decision: it needs `approval:decide` and a signed-in user,
+never an API key. Render state is separate. A shot is `rendered` when a finished
+render contains its current content; that never implies `approved`. A stage that
+declares `requiresApprovedStoryboard` (image-to-video and other per-shot
+generation) checks the status before the stage cache. Without an approved
+storyboard it fails closed with a non-retryable `APPROVAL_REQUIRED`, and nothing
+runs or is charged. StudioService serves the same review, decision, feedback and
+render operations to MCP and to the dashboard.
+
+The dashboard page `#/projects/<projectId>/review` shows the following:
+
+- the script;
+- the storyboard by scene and shot, with approval and render state as separate
+  badges;
+- the timeline, versions, renders and cost;
+- comments for each shot.
+
+It has approve and request-changes buttons for the storyboard and for each
+shot. It calls these routes:
+
+- `GET /api/projects/:projectId/review`;
+- `POST /api/projects/:projectId/storyboard/decision`;
+- `POST /api/projects/:projectId/feedback`;
+- `POST /api/projects/:projectId/render`.
+
+The body's `projectId` is always taken from the path.
 
 ## MCP-in-MCP gateway placement
 
