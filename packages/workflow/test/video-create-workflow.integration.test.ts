@@ -7,6 +7,7 @@ import {
   fakePlanner,
   fakeRenderer,
   fakeStorage,
+  fixtureIr,
   tenant,
   waitFor,
 } from "./workflow-test-harness.ts";
@@ -383,6 +384,47 @@ describe("video.create workflow on Postgres", () => {
       status: "failed",
       attempts: 1,
       error: { code: "VALIDATION" },
+    });
+  });
+  it("keeps a newer head when a delayed feedback job validates an older version", async () => {
+    const ctx = await tenant(db.current, "stale-head");
+    const { repos } = db.current;
+    const human = { type: "user", id: "usr_1" } as const;
+    const project = await repos.projects.create(ctx, {
+      title: "Coffee intro",
+      status: "draft",
+      brief: { prompt: "Video giới thiệu thương hiệu cà phê 15 giây" },
+      createdBy: human,
+    });
+    const v2 = await repos.projects.createVersion(ctx, {
+      projectId: project.id,
+      ir: fixtureIr,
+      source: "patch",
+      createdBy: human,
+    });
+    const v3 = await repos.projects.createVersion(ctx, {
+      projectId: project.id,
+      ir: fixtureIr,
+      source: "patch",
+      parentVersionId: v2.id,
+      createdBy: human,
+    });
+    await repos.projects.update(ctx, project.id, { currentVersionId: v3.id });
+    const { job } = await repos.queue.enqueue(ctx, {
+      kind: "video.create",
+      projectId: project.id,
+      payload: { projectId: project.id, versionId: v2.id, feedbackId: "fbk_1", renderPreset: "preview" },
+      createdBy: human,
+      budgetCents: 500,
+      maxAttempts: 3,
+    });
+
+    const worker = createTestWorker(db.current, "w1");
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    expect((await repos.jobs.get(ctx, job.id))?.result).toMatchObject({ projectVersionId: v2.id });
+    expect(await repos.projects.get(ctx, project.id)).toMatchObject({
+      status: "in_review",
+      currentVersionId: v3.id,
     });
   });
 });

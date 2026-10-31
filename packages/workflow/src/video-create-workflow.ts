@@ -127,8 +127,10 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
                 createdBy: { type: "system", id: ctx.actor.id },
               });
             }
+            // A feedback job renders a version the patch already made current. A later patch may have
+            // moved the head on, and a delayed or retried job must not move the pointer back to its own.
             await repos.projects.update(ctx, payload.projectId, {
-              currentVersionId: versionId,
+              ...(payload.feedbackId ? {} : { currentVersionId: versionId }),
               status: "rendering",
             });
           });
