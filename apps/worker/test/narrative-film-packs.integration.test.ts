@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import {
   type ClaudeAgentEvent,
   type ClaudeSessionRequest,
@@ -50,7 +50,14 @@ const scope = JSON.parse(
     "utf8",
   ),
 );
-const shotIds: string[] = scope.scenes.flatMap((s: { shots: { id: string }[] }) => s.shots.map((x) => x.id));
+const fixtureScenes: { setId: string; shots: { id: string; characters: string[] }[] }[] = scope.scenes;
+const shotIds: string[] = fixtureScenes.flatMap((s) => s.shots.map((x) => x.id));
+/** The design a shot's keyframe is an edit of: its lead character's sheet, else its set's frame. */
+function keyframeReference(shotId: string): string {
+  const scene = fixtureScenes.find((s) => s.shots.some((x) => x.id === shotId));
+  const lead = scene?.shots.find((x) => x.id === shotId)?.characters[0];
+  return lead ? `${lead}-sheet-v1` : `${scene?.setId}-set-v1`;
+}
 
 /** The scope agent answers with the fixture, the storyboard agent with one panel per shot. */
 function agentTranscript(request: ClaudeSessionRequest): ClaudeAgentEvent[] {
@@ -96,7 +103,8 @@ function memoryStorage(): StorageAdapter {
   };
 }
 
-function createWorld() {
+/** `setFrame` gives set designs that size instead of the film's frame. */
+function createWorld(opts: { setFrame?: { width: number; height: number } } = {}) {
   const { repos } = db.current;
   const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
   const workRoot = mkdtempSync(join(tmpdir(), "studix-film-packs-"));
@@ -142,6 +150,10 @@ function createWorld() {
       if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
         throw new StudixError("VALIDATION", `params.${name} must be inside workDir`, { retryable: false });
       }
+    }
+    if (opts.setFrame && /-set-v[0-9]+$/.test(request.idempotencyKey)) {
+      const { aspectRatio: _, ...params } = request.params ?? {};
+      return generate(ctx, { ...request, params: { ...params, ...opts.setFrame } });
     }
     return generate(ctx, request);
   };
@@ -352,21 +364,14 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(keyframes.map((r) => r.idempotencyKey.split(":").at(-1))).toEqual(
       shotIds.map((id) => `${id}-key`),
     );
-    expect(keyframes.map((r) => typeof r.params?.image === "string")).toEqual([
-      false,
-      true,
-      true,
-      true,
-      false,
-    ]);
-    // A sheet already in the film's frame sets the edit's frame: no aspect ratio next to it (grok-image refuses one).
-    expect(keyframes.map((r) => r.params?.aspectRatio ?? null)).toEqual([
-      scope.aspectRatio,
-      null,
-      null,
-      null,
-      scope.aspectRatio,
-    ]);
+    // A shot with characters is an edit of its lead's sheet; an empty shot is an edit of its set's signed
+    // frame (drawn from text alone, an empty set came back as a bordered layout plate).
+    expect(keyframes.map((r) => basename(String(r.params?.image)).replace(/\.[a-z0-9]+$/, ""))).toEqual(
+      shotIds.map(keyframeReference),
+    );
+    // A reference already in the film's frame sets the edit's frame: no aspect ratio next to it (grok-image
+    // refuses one).
+    expect(keyframes.map((r) => r.params?.aspectRatio ?? null)).toEqual(shotIds.map(() => null));
     const board = await currentIr(ctx, project.id);
     expect(board.project.status).toBe("in_review");
     expect(board.ir.scenes[0]?.shots.map((s) => [s.id, s.type])).toEqual(shotIds.map((id) => [id, "image"]));
@@ -443,6 +448,28 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
     expect(new Set(usage.map((u) => u.dedupeKey)).size).toBe(usage.length);
     expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(world.requests.length);
+  });
+
+  it("draws an empty shot from text with the film's aspect ratio when its set frame has another shape", async () => {
+    const world = createWorld({ setFrame: { width: 1024, height: 1024 } });
+    const { ctx, project } = await newFilm(`film-square-set-${pack}`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G1");
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+
+    const keyframes = world.requests
+      .slice(3)
+      .sort((a, b) => a.idempotencyKey.localeCompare(b.idempotencyKey));
+    const empty = shotIds.map((id) => keyframeReference(id).endsWith("-set-v1"));
+    expect(empty).toContain(true);
+    // An edit keeps its reference's frame, so a square set frame is not used; the shot asks for the film's frame.
+    expect(keyframes.map((r) => typeof r.params?.image === "string")).toEqual(empty.map((e) => !e));
+    expect(keyframes.map((r) => r.params?.aspectRatio ?? null)).toEqual(
+      empty.map((e) => (e ? scope.aspectRatio : null)),
+    );
   });
 
   it("redraws only the named sheet when G1 comes back with changes, bills it once, and asks G1 again", async () => {
