@@ -50,7 +50,7 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
   logger: Logger;
   /** Minimum time between persisted in-stage progress updates. */
   progressIntervalMs?: number;
-  /** How long a stage aborted by cancel or deadline may take to report its spend (default 2000 ms). */
+  /** How long a stage aborted by cancel, deadline or shutdown may take to report its spend (default 2000 ms). */
   abortGraceMs?: number;
   /** Tenant-wide memo of stage outputs by cacheKey; without it `cacheKey` is ignored. */
   stageCache?: StageCacheRepository;
@@ -162,7 +162,7 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/** How long a stage aborted by cancel or deadline may take to report the usage of its paid calls. */
+/** How long a stage aborted by cancel, deadline or shutdown may take to report the usage of its paid calls. */
 const ABORT_GRACE_MS = 2000;
 
 function leaseLost(signal: AbortSignal): boolean {
@@ -182,7 +182,7 @@ function trackSettled<T>(work: Promise<T>, onSettled: (s: Settled<T>) => void): 
 /** Usage a stage reported, by returning it or by failing/suspending with it. */
 function usageOfSettled(s: Settled<{ usage?: StageUsage[] }> | undefined): StageUsage[] {
   if (!s) return [];
-  if (s.ok) return s.value.usage ?? [];
+  if (s.ok) return s.value?.usage ?? [];
   return s.error instanceof StageFailedAfterSpend || s.error instanceof StageSuspended ? s.error.usage : [];
 }
 

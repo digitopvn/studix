@@ -30,11 +30,11 @@ function job(): Job {
   } as unknown as Job;
 }
 
-function fakeQueue() {
+function fakeQueue(heartbeat: { held: boolean; cancelRequested: boolean }) {
   const settled = () => Promise.resolve(true);
   const queue = {
     leaseMs: 60_000,
-    heartbeat: vi.fn(async () => ({ held: true, cancelRequested: false })),
+    heartbeat: vi.fn(async () => heartbeat),
     updateProgress: vi.fn(settled),
     writeStage: vi.fn(settled),
     recordUsage: vi.fn(settled),
@@ -68,8 +68,13 @@ function workflow(settle: "return" | "fail" | "never", settleAfterMs: number): W
   };
 }
 
-async function runAborted(wf: WorkflowDefinition, abortGraceMs: number, reason: StudixError) {
-  const queue = fakeQueue();
+/** Abort the attempt through the heartbeat: a cancel request, or a lost lease. */
+async function runAborted(
+  wf: WorkflowDefinition,
+  abortGraceMs: number,
+  heartbeat = { held: true, cancelRequested: true },
+) {
+  const queue = fakeQueue(heartbeat);
   const executor = createJobExecutor({
     queue,
     workflows: [wf],
@@ -81,20 +86,16 @@ async function runAborted(wf: WorkflowDefinition, abortGraceMs: number, reason: 
     ledger: { record: async () => ({}), jobCostCents: async () => 0 } as unknown as JobExecutorDeps["ledger"],
     clock,
     logger: createLogger({}, { level: "error", write: () => {} }),
-    heartbeatIntervalMs: 10_000,
+    heartbeatIntervalMs: 10,
     abortGraceMs,
   });
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(reason), 10);
-  await executor.execute(job(), "worker-1", controller.signal);
+  await executor.execute(job(), "worker-1", new AbortController().signal);
   return queue;
 }
 
-const cancelled = new StudixError("CANCELLED", "job cancelled");
-
 describe("spend of a stage aborted by cancel or deadline", () => {
   it("bills the usage of a stage that returns during the grace period", async () => {
-    const queue = await runAborted(workflow("return", 40), 500, cancelled);
+    const queue = await runAborted(workflow("return", 40), 500);
     expect(queue.recordUsage).toHaveBeenCalledTimes(1);
     expect((queue.recordUsage.mock.calls as unknown[][])[0]?.[2]).toMatchObject({
       costCents: 40,
@@ -102,14 +103,14 @@ describe("spend of a stage aborted by cancel or deadline", () => {
     });
   });
 
-  it("bills the usage of a stage that fails after spend during the grace period", async () => {
-    const queue = await runAborted(workflow("fail", 40), 500, cancelled);
+  it("bills the usage of a stage that fails after spend during the grace period (cancel)", async () => {
+    const queue = await runAborted(workflow("fail", 40), 500);
     expect(queue.recordUsage).toHaveBeenCalledTimes(1);
   });
 
   it("does not wait past the grace period for a stage that never settles", async () => {
     const started = Date.now();
-    const queue = await runAborted(workflow("never", 0), 50, cancelled);
+    const queue = await runAborted(workflow("never", 0), 50);
     expect(Date.now() - started).toBeLessThan(1000);
     expect(queue.recordUsage).not.toHaveBeenCalled();
     expect(queue.writeStage).toHaveBeenCalledWith(
@@ -119,8 +120,15 @@ describe("spend of a stage aborted by cancel or deadline", () => {
     );
   });
 
+  it("does not wait or bill when the lease was lost", async () => {
+    const started = Date.now();
+    const queue = await runAborted(workflow("return", 300), 5000, { held: false, cancelRequested: false });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(queue.recordUsage).not.toHaveBeenCalled();
+  });
+
   it("ignores usage that arrives after the grace period", async () => {
-    const queue = await runAborted(workflow("return", 300), 20, cancelled);
+    const queue = await runAborted(workflow("return", 300), 20);
     expect(queue.recordUsage).not.toHaveBeenCalled();
   });
 });
