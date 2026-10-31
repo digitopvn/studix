@@ -4,6 +4,7 @@ import { USAGE_KINDS } from "@studix/billing";
 import {
   JOB_KINDS,
   type ProjectRepository,
+  type ProjectStatus,
   type RendererAdapter,
   type RenderRepository,
   type StorageAdapter,
@@ -157,14 +158,13 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
         // By the time a queued job runs a newer version may be head; jobs that did not ask to move it
         // (feedback patches, renders of "the current version") must not silently revert it.
         const movesHead = payload.makeCurrent && !payload.feedbackId;
-        // Only the head's job owns the project status: an older version's retry must not mark it `rendering`.
         const project = await repos.projects.get(ctx, payload.projectId);
-        if (movesHead || project?.currentVersionId === versionId) {
-          await repos.projects.update(ctx, payload.projectId, {
-            ...(movesHead ? { currentVersionId: versionId } : {}),
-            status: "rendering",
-          });
-        }
+        const isHead = movesHead || project?.currentVersionId === versionId;
+        // Only the job of the head version owns the project's status: another job's render must not flag it.
+        await repos.projects.update(ctx, payload.projectId, {
+          ...(movesHead ? { currentVersionId: versionId } : {}),
+          ...(isHead ? { status: "rendering" as const } : {}),
+        });
       });
       return { output: { versionId } };
     },
@@ -340,17 +340,21 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
 }
 
 /**
- * Hand the project to review when this job's render or storyboard is ready. Only the head version's job moves
- * the project, and only while it is still `rendering`: a retried job that finishes after a newer version became
- * head, a newer render was approved or published, or the project was archived must not put it back into review.
+ * Hand the project to review when this job's render or storyboard is ready. Only the head version's job
+ * moves the status, and only while the project is in one of `from` (by default just `rendering`): a retry of
+ * an older version's job that finishes while the head renders must not end that render early, and a retried
+ * job that finishes after a newer render was approved or published (or after the project was archived) must
+ * not put the project back into review.
  */
-async function markInReview(
+export async function markInReview(
   repos: FencedRepositories,
   ctx: TenantContext,
   projectId: string,
   versionId: string,
+  from: readonly ProjectStatus[] = ["rendering"],
 ): Promise<void> {
   const project = await repos.projects.get(ctx, projectId);
-  if (project?.status === "rendering" && project.currentVersionId === versionId)
+  if (project && from.includes(project.status) && project.currentVersionId === versionId) {
     await repos.projects.update(ctx, projectId, { status: "in_review" });
+  }
 }

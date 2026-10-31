@@ -88,7 +88,10 @@ describe("video.create workflow on Postgres", () => {
       createdBy: author,
     });
     // Patch B already moved the head to v3; the job queued by patch A (v2) is still waiting.
-    await db.current.repos.projects.update(ctx, first.project.id, { currentVersionId: v3.id });
+    await db.current.repos.projects.update(ctx, first.project.id, {
+      currentVersionId: v3.id,
+      status: "in_review",
+    });
     await db.current.repos.queue.enqueue(ctx, {
       kind: "video.create",
       projectId: first.project.id,
@@ -103,7 +106,11 @@ describe("video.create workflow on Postgres", () => {
       maxAttempts: 3,
     });
     expect((await worker.runOnce())?.outcome).toBe("succeeded");
-    expect((await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId).toBe(v3.id);
+    // A job of a version that is no longer head leaves the status alone too (neither rendering nor review).
+    expect(await db.current.repos.projects.get(ctx, first.project.id)).toMatchObject({
+      currentVersionId: v3.id,
+      status: "in_review",
+    });
   });
 
   it("returns the same job for a repeated idempotency key", async () => {
@@ -459,70 +466,23 @@ describe("video.create workflow on Postgres", () => {
       renderer: fakeRenderer({ crash: Promise.resolve() }).renderer,
     });
     expect((await crashing.runOnce())?.outcome).toBe("failed");
-    const older = await db.current.repos.projects.get(ctx, project.id);
-
-    // A newer version became head and is still rendering when the old job is retried.
-    const olderVersion = await db.current.repos.projects.getVersion(ctx, older?.currentVersionId as string);
-    if (!olderVersion) throw new Error("the failed job left no version");
-    const head = await db.current.repos.projects.createVersion(ctx, {
+    const v1 = (await db.current.repos.projects.get(ctx, project.id))!.currentVersionId!;
+    const base = (await db.current.repos.projects.getVersion(ctx, v1))!;
+    const v2 = await db.current.repos.projects.createVersion(ctx, {
       projectId: project.id,
-      ir: olderVersion.ir,
+      ir: base.ir,
       source: "patch",
+      parentVersionId: v1,
       createdBy: { type: "user", id: "usr_1" },
     });
-    await db.current.repos.projects.update(ctx, project.id, {
-      currentVersionId: head.id,
-      status: "rendering",
-    });
+    // A newer version is head and its render is still in flight.
+    await db.current.repos.projects.update(ctx, project.id, { currentVersionId: v2.id, status: "rendering" });
     await db.current.repos.queue.retry(ctx, job.id);
     const worker = createTestWorker(db.current, "w-retry", { planner: plan.planner });
     expect((await worker.runOnce())?.outcome).toBe("succeeded");
-
     expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({
       status: "rendering",
-      currentVersionId: head.id,
-    });
-  });
-
-  it("leaves the project in review when a render of a version that is no longer head runs", async () => {
-    const ctx = await tenant(db.current, "stale-version-render");
-    const { project } = await enqueueCreate(db.current, ctx);
-    const first = createTestWorker(db.current, "w-first");
-    expect((await first.runOnce())?.outcome).toBe("succeeded");
-    const older = await db.current.repos.projects.get(ctx, project.id);
-    const olderVersion = await db.current.repos.projects.getVersion(ctx, older?.currentVersionId as string);
-    if (!olderVersion) throw new Error("the first job left no version");
-
-    // A newer version became head and was already handed to review before the queued render of the old one runs.
-    const head = await db.current.repos.projects.createVersion(ctx, {
-      projectId: project.id,
-      ir: olderVersion.ir,
-      source: "patch",
-      createdBy: { type: "user", id: "usr_1" },
-    });
-    await db.current.repos.projects.update(ctx, project.id, {
-      currentVersionId: head.id,
-      status: "in_review",
-    });
-    await db.current.repos.queue.enqueue(ctx, {
-      kind: "video.create",
-      projectId: project.id,
-      payload: {
-        projectId: project.id,
-        versionId: olderVersion.id,
-        makeCurrent: false,
-        renderPreset: "preview",
-      },
-      createdBy: { type: "user", id: "usr_1" },
-      budgetCents: 500,
-      maxAttempts: 3,
-    });
-    const second = createTestWorker(db.current, "w-second");
-    expect((await second.runOnce())?.outcome).toBe("succeeded");
-
-    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({
-      status: "in_review",
-      currentVersionId: head.id,
+      currentVersionId: v2.id,
     });
   });
 

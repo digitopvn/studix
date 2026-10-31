@@ -57,6 +57,11 @@ export interface Job extends TenantOwned {
    * paused then (`deadlineAt` is unset) and re-armed from this value when a worker claims the job again.
    */
   deadlineRemainingMs?: number;
+  /**
+   * The execution window the caller asked for when the job was created. A retry re-arms the deadline with
+   * this window, so it never exceeds what was requested (a job born at a gate starts its clock at the first claim).
+   */
+  deadlineWindowMs?: number;
   budgetCents?: number;
   spentCents: number;
   createdBy: ActorRef;
