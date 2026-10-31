@@ -1,6 +1,7 @@
+import { resolveWorkflowPack } from "@studix/core";
 import type { DecisionProvider } from "@studix/decision-routing";
-import type { Logger } from "@studix/shared";
-import { applyBriefDraft, brandIntroTemplate, needsBriefDraft } from "@studix/skills";
+import { type Logger, StudixError } from "@studix/shared";
+import { applyBriefDraft, needsBriefDraft, type PackRegistry, packRegistry } from "@studix/skills";
 import type { Planner, PlanUsage } from "@studix/workflow";
 import { applyBrandFacts, type BrandLookup } from "./brand-lookup-enrichment.ts";
 import { type BriefDecisionOptions, decideBriefDraft } from "./brief-decision.ts";
@@ -12,16 +13,27 @@ export interface VideoPlannerDeps {
   brandLookup?: BrandLookup;
   logger: Logger;
   briefDecision?: BriefDecisionOptions;
+  /** Where `workflowTemplate` packs are looked up (default: the process-wide registry). */
+  packs?: Pick<PackRegistry, "packs">;
 }
 
 /**
- * Brief -> brand-intro IR. A prompt-only brief is first turned into a structured brief by one decision
- * (model or deterministic rules); a drafted brand is optionally enriched from a connector; the IR itself
- * is always built by the deterministic brand-intro template, so there is no second model call.
+ * Brief -> IR with the job's workflow pack (brand intro by default). A prompt-only brief is first turned
+ * into a structured brief by one decision (model or deterministic rules); a drafted brand is optionally
+ * enriched from a connector; the IR itself is built by the pack's deterministic template, so there is no
+ * second model call.
  */
 export function createVideoPlanner(deps: VideoPlannerDeps): Planner {
   const log = deps.logger.child({ component: "video-planner" });
+  const packs = deps.packs ?? packRegistry;
   return async (brief, ctx, signal) => {
+    // Resolved first, so an unknown pack fails the job before any decision is paid for.
+    const template = resolveWorkflowPack(packs, ctx.workflowTemplate).templates[0];
+    if (!template) {
+      throw new StudixError("VALIDATION", `workflow pack ${ctx.workflowTemplate} has no template`, {
+        retryable: false,
+      });
+    }
     const usage: PlanUsage[] = [];
     let planned = brief;
     if (needsBriefDraft(brief)) {
@@ -42,9 +54,10 @@ export function createVideoPlanner(deps: VideoPlannerDeps): Planner {
       }
     }
     signal.throwIfAborted();
-    const ir = brandIntroTemplate(planned);
+    const ir = template.run(planned);
     log.info("video planned", {
       jobId: ctx.jobId,
+      template: template.id,
       scenes: ir.scenes.length,
       durationMs: ir.format.durationMs,
       decisions: usage.length,

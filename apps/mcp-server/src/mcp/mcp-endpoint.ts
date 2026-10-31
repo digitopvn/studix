@@ -18,7 +18,8 @@ export const MCP_MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 const INSTRUCTIONS =
   "Studix produces videos. Call studix_inspect first. studix_create_video returns a jobId at once; " +
-  "poll studix_get_job (respect next[].pollAfterMs) until it succeeds, then use its signed MP4 URL.";
+  "poll studix_get_job (respect next[].pollAfterMs) until it succeeds, then use its signed MP4 URL. Revise with studix_feedback, re-render with " +
+  "studix_render; a person reviews and approves the storyboard at the returned reviewUrl.";
 
 /** `gatewayDepth`: inbound gateway hop count, so a call relayed through another gateway cannot execute tools. */
 type StudixAuthInfo = AuthInfo & { extra: { tenant: ToolContext["tenant"]; gatewayDepth: number } };

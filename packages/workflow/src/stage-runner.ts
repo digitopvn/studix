@@ -9,7 +9,7 @@ import type {
   TenantContext,
 } from "@studix/core";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
-import { contentDigest } from "@studix/video-ir";
+import { contentDigest, type StoryboardReviewStatus } from "@studix/video-ir";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
 import type { WorkerJobQueue } from "./worker-job-queue.ts";
 import type { StageContext, StageDefinition, StageOutput, WorkflowDefinition } from "./workflow-types.ts";
@@ -26,6 +26,32 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
   progressIntervalMs?: number;
   /** Tenant-wide memo of stage outputs by cacheKey; without it `cacheKey` is ignored. */
   stageCache?: StageCacheRepository;
+  /**
+   * Review status of a project's storyboard (core `storyboardStatus`). Stages that require an approved
+   * storyboard fail closed when this is missing.
+   */
+  storyboardStatus?(ctx: TenantContext, projectId: string): Promise<StoryboardReviewStatus | undefined>;
+}
+
+/** Fail unless a person approved the job's storyboard; checked before any cache, gate or charge. */
+async function assertStoryboardApproved(
+  deps: StageRunnerDeps,
+  ctx: TenantContext,
+  job: Job,
+  stage: StageDefinition,
+): Promise<void> {
+  const status =
+    job.projectId && deps.storyboardStatus ? await deps.storyboardStatus(ctx, job.projectId) : undefined;
+  if (status === "approved") return;
+  throw new StageFailure(
+    stage,
+    new StudixError("APPROVAL_REQUIRED", `Stage ${stage.name} needs an approved storyboard`, {
+      retryable: false,
+      details: { stage: stage.name, projectId: job.projectId, storyboardStatus: status ?? "missing" },
+      suggestedAction:
+        "Ask a workspace member to approve the storyboard on the dashboard review page, then call studix_render.",
+    }),
+  );
 }
 
 export type StagesOutcome =
@@ -165,6 +191,8 @@ export async function runStages(
           });
       },
     };
+
+    if (stage.requiresApprovedStoryboard) await assertStoryboardApproved(deps, ctx, job, stage);
 
     // A cached result of the same work is reused before any gate, budget check or charge.
     const cacheKey = deps.stageCache ? await stage.cacheKey?.(sctx) : undefined;

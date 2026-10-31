@@ -3,15 +3,21 @@ import type { ActorRef, TenantOwned } from "./common.ts";
 export const REVIEW_STATUSES = ["open", "resolved"] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
-/** Human feedback on a project version (optionally anchored to a scene/shot or timestamp). */
+/**
+ * Human feedback on a project version, optionally anchored to a node of the IR or a time range.
+ * `targetId` is a node key: `storyboard`, `scene:<id>`, `shot:<id>` or `asset:<id>`.
+ */
 export interface Review extends TenantOwned {
   projectId: string;
   versionId?: string;
   author: ActorRef;
   body: string;
-  /** IR element id (scene or shot) the comment refers to. */
+  /** Node key (`storyboard`, `scene:<id>`, `shot:<id>`, `asset:<id>`) the comment refers to. */
   targetId?: string;
+  /** Start of the commented time range on the video timeline. */
   atMs?: number;
+  /** End (exclusive) of the commented time range; only with `atMs`. */
+  endMs?: number;
   status: ReviewStatus;
   updatedAt: Date;
 }
