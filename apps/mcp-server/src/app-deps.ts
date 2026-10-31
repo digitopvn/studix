@@ -1,4 +1,4 @@
-import type { ApiKeyService, ProviderConnectionService } from "@studix/auth";
+import type { ApiKeyService, ModelPreferenceService, ProviderConnectionService } from "@studix/auth";
 import type {
   ActivityRepository,
   AgentHandoffService,
@@ -55,6 +55,8 @@ export interface AppDeps {
   connectors?: ConnectorAdmin;
   /** Outbound AI provider credentials; without it the provider API answers UNAVAILABLE. */
   providers?: ProviderConnectionService;
+  /** Per-stage model choices for the Pi runtime; without it the model API answers UNAVAILABLE. */
+  modelPreferences?: ModelPreferenceService;
   /** STUDIX_CLAUDE_PLANNER: jobs may select the Claude planner. */
   claudePlanner?: boolean;
   /** Meta-tool registration hook from the gateway; without it the meta-tools are not listed. */

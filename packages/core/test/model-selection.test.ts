@@ -1,0 +1,75 @@
+import { describe, expect, it } from "vitest";
+import {
+  type ModelPreference,
+  type ResolvedModelSnapshot,
+  resolveModelSelection,
+  sameModelRoute,
+} from "../src/index.ts";
+
+const base = { organizationId: "org", workspaceId: "ws", createdAt: new Date(0), updatedAt: new Date(0) };
+const pref = (
+  over: Partial<ModelPreference> & Pick<ModelPreference, "id" | "scope" | "stage">,
+): ModelPreference => ({
+  ...base,
+  runtime: "pi",
+  connectionId: "pconn_1",
+  provider: "anthropic",
+  modelId: over.id,
+  allowFallback: false,
+  fallbacks: [],
+  ...over,
+});
+
+const prefs = [
+  pref({ id: "ws-default", scope: { type: "workspace" }, stage: "default" }),
+  pref({ id: "ws-plan", scope: { type: "workspace" }, stage: "plan" }),
+  pref({ id: "u1-default", scope: { type: "user", userId: "u1" }, stage: "default" }),
+  pref({ id: "u1-plan", scope: { type: "user", userId: "u1" }, stage: "plan" }),
+  pref({ id: "other-runtime", scope: { type: "workspace" }, stage: "qa", runtime: "claude" }),
+];
+
+describe("resolveModelSelection precedence", () => {
+  it("user stage > workspace stage > user default > workspace default", () => {
+    const pick = (stage: string, userId?: string) =>
+      resolveModelSelection(prefs, { runtime: "pi", stage, userId });
+    expect(pick("plan", "u1")).toMatchObject({ source: "user-stage", preference: { id: "u1-plan" } });
+    expect(pick("plan", "u2")).toMatchObject({ source: "workspace-stage", preference: { id: "ws-plan" } });
+    expect(pick("qa", "u1")).toMatchObject({ source: "user-default", preference: { id: "u1-default" } });
+    expect(pick("qa", "u2")).toMatchObject({ source: "workspace-default", preference: { id: "ws-default" } });
+    expect(pick("qa")).toMatchObject({ source: "workspace-default" });
+  });
+
+  it("asking for the default stage keeps the user's default ahead of the workspace's", () => {
+    const pick = (userId?: string) =>
+      resolveModelSelection(prefs, { runtime: "pi", stage: "default", userId });
+    expect(pick("u1")).toMatchObject({ source: "user-default", preference: { id: "u1-default" } });
+    expect(pick("u2")).toMatchObject({ source: "workspace-default", preference: { id: "ws-default" } });
+  });
+
+  it("never crosses runtimes and returns undefined instead of guessing", () => {
+    expect(resolveModelSelection(prefs, { runtime: "claude", stage: "plan" })).toBeUndefined();
+    expect(resolveModelSelection([], { runtime: "pi", stage: "plan" })).toBeUndefined();
+  });
+});
+
+describe("sameModelRoute", () => {
+  const snap: ResolvedModelSnapshot = {
+    runtime: "pi",
+    stage: "plan",
+    source: "workspace-stage",
+    connectionId: "pconn_1",
+    connectionVersion: 1,
+    provider: "openai",
+    modelId: "gpt-x",
+    billingSource: "usage_based",
+    allowFallback: true,
+    fallbacks: [{ connectionId: "pconn_2", provider: "anthropic", modelId: "claude-x" }],
+  };
+
+  it("ignores provenance and version but compares the primary and every fallback", () => {
+    expect(sameModelRoute(snap, { ...snap, source: "user-stage", connectionVersion: 4 })).toBe(true);
+    expect(sameModelRoute(snap, { ...snap, modelId: "gpt-y" })).toBe(false);
+    expect(sameModelRoute(snap, { ...snap, fallbacks: [] })).toBe(false);
+    expect(sameModelRoute(snap, { ...snap, allowFallback: false })).toBe(false);
+  });
+});

@@ -2,9 +2,11 @@ import { randomBytes } from "node:crypto";
 import type { Server } from "node:http";
 import { createServer } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { findPiModel, isRuntimeKeyProvider } from "@studix/agent-runtime";
 import {
   createApiKeyService,
   createDashboardAuth,
+  createModelPreferenceService,
   createProviderConnectionService,
   createSecretBox,
   type ProviderKeyTester,
@@ -43,7 +45,7 @@ export const fakeKeyTester: ProviderKeyTester = {
           ok: false,
           verdict: "invalid",
           httpStatus: 401,
-          error: { code: "UNAUTHENTICATED", message: "Anthropic rejected the API key", retryable: false },
+          error: { code: "UNAUTHENTICATED", message: "The provider rejected the API key", retryable: false },
         }
       : { ...base, ok: true, verdict: "available", httpStatus: 200 };
   },
@@ -87,6 +89,13 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
   const base = `http://127.0.0.1:${port}`;
   const logger = createLogger({ service: "studix-app-test" }, { level: "error" });
   const repos = db.repos;
+  const providers = createProviderConnectionService({
+    connections: repos.providerConnections,
+    audit: repos.audit,
+    tester: fakeKeyTester,
+    isSupportedProvider: isRuntimeKeyProvider,
+    secrets: createSecretBox(randomBytes(32)),
+  });
   const deps: AppDeps = {
     logger,
     publicUrl: base,
@@ -114,11 +123,12 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
     },
     storage: fakeSigner,
     rateLimitStore: repos.rateLimits,
-    providers: createProviderConnectionService({
-      connections: repos.providerConnections,
+    providers,
+    modelPreferences: createModelPreferenceService({
+      preferences: repos.modelPreferences,
+      providers,
       audit: repos.audit,
-      tester: fakeKeyTester,
-      secrets: createSecretBox(randomBytes(32)),
+      knownModel: (provider, modelId) => findPiModel(provider, modelId) !== undefined,
     }),
     activity: createActivityRecorder(repos.activity, { logger }),
     readiness: [{ name: "database", check: async () => void (await db.client`select 1`) }],

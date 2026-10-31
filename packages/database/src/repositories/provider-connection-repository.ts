@@ -1,8 +1,9 @@
-import type { ActorRef, TenantContext } from "@studix/core";
+import type { ActorRef, AgentRuntimeName, BillingSource, TenantContext } from "@studix/core";
 import { type Clock, StudixError } from "@studix/shared";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import {
+  modelPreferences,
   type ProviderAuthMethod,
   type ProviderConnectionOwner,
   type ProviderConnectionStatus,
@@ -30,6 +31,11 @@ export interface ProviderConnectionRecord {
   secretCiphertext?: string;
   secretHint?: string;
   lastTest?: ProviderTestResultRecord;
+  /** Agent runtimes allowed to spend this credential. */
+  runtimes: AgentRuntimeName[];
+  billingSource: BillingSource;
+  /** Bumped on every key rotation or runtime change. */
+  version: number;
   createdBy: ActorRef;
   createdAt: Date;
   updatedAt: Date;
@@ -48,6 +54,8 @@ export interface NewProviderConnectionRecord {
   secretCiphertext: string;
   secretHint: string;
   lastTest?: ProviderTestResultRecord;
+  runtimes: AgentRuntimeName[];
+  billingSource: BillingSource;
   createdBy: ActorRef;
 }
 
@@ -57,6 +65,7 @@ export interface ProviderConnectionPatch {
   secretCiphertext?: string;
   secretHint?: string;
   lastTest?: ProviderTestResultRecord;
+  runtimes?: AgentRuntimeName[];
 }
 
 export interface ProviderConnectionRepository {
@@ -64,7 +73,10 @@ export interface ProviderConnectionRepository {
   get(ctx: TenantContext, id: string): Promise<ProviderConnectionRecord | undefined>;
   /** Active (not revoked) connections of the workspace, newest first. */
   listActive(ctx: TenantContext): Promise<ProviderConnectionRecord[]>;
-  /** Patch an active connection; NOT_FOUND when it is missing or revoked. */
+  /**
+   * Patch an active connection; NOT_FOUND when it is missing or revoked. A new secret or runtime list bumps
+   * `version`.
+   */
   update(ctx: TenantContext, id: string, patch: ProviderConnectionPatch): Promise<ProviderConnectionRecord>;
   /**
    * Store a test result only if the key is still the one that was tested; undefined when the key was
@@ -76,7 +88,7 @@ export interface ProviderConnectionRepository {
     testedCiphertext: string,
     patch: Pick<ProviderConnectionPatch, "status" | "lastTest">,
   ): Promise<ProviderConnectionRecord | undefined>;
-  /** Mark revoked and erase the ciphertext. */
+  /** Mark revoked, erase the ciphertext and delete the model preferences that point at it. */
   revoke(ctx: TenantContext, id: string): Promise<ProviderConnectionRecord>;
 }
 
@@ -98,6 +110,9 @@ function toRecord(row: typeof providerConnections.$inferSelect): ProviderConnect
     secretCiphertext: opt(row.secretCiphertext),
     secretHint: opt(row.secretHint),
     ...(row.lastTest ? { lastTest: { ...row.lastTest, at: new Date(row.lastTest.at) } } : {}),
+    runtimes: row.runtimes,
+    billingSource: row.billingSource,
+    version: row.version,
     createdBy: actorFrom(row.createdByType, row.createdById),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -135,6 +150,8 @@ export function createProviderConnectionRepository(db: StudixDb, clock: Clock): 
             secretCiphertext: input.secretCiphertext,
             secretHint: input.secretHint,
             lastTest: storedTest(input.lastTest) ?? null,
+            runtimes: input.runtimes,
+            billingSource: input.billingSource,
             createdByType: input.createdBy.type,
             createdById: input.createdBy.id,
             createdAt: now,
@@ -177,6 +194,10 @@ export function createProviderConnectionRepository(db: StudixDb, clock: Clock): 
           ...(patch.secretCiphertext !== undefined ? { secretCiphertext: patch.secretCiphertext } : {}),
           ...(patch.secretHint !== undefined ? { secretHint: patch.secretHint } : {}),
           ...(patch.lastTest !== undefined ? { lastTest: storedTest(patch.lastTest) } : {}),
+          ...(patch.runtimes !== undefined ? { runtimes: patch.runtimes } : {}),
+          ...(patch.secretCiphertext !== undefined || patch.runtimes !== undefined
+            ? { version: sql`${providerConnections.version} + 1` }
+            : {}),
           updatedAt: clock.now(),
         })
         .where(
@@ -213,18 +234,25 @@ export function createProviderConnectionRepository(db: StudixDb, clock: Clock): 
     },
     async revoke(ctx, id) {
       const now = clock.now();
-      const rows = await db
-        .update(providerConnections)
-        .set({ status: "revoked", secretCiphertext: null, revokedAt: now, updatedAt: now })
-        .where(
-          scoped(
-            providerConnections,
-            ctx,
-            and(eq(providerConnections.id, id), isNull(providerConnections.revokedAt)),
-          ),
-        )
-        .returning();
-      return toRecord(first(rows, `provider connection ${id}`));
+      return db.transaction(async (tx) => {
+        const rows = await tx
+          .update(providerConnections)
+          .set({ status: "revoked", secretCiphertext: null, revokedAt: now, updatedAt: now })
+          .where(
+            scoped(
+              providerConnections,
+              ctx,
+              and(eq(providerConnections.id, id), isNull(providerConnections.revokedAt)),
+            ),
+          )
+          .returning();
+        const revoked = toRecord(first(rows, `provider connection ${id}`));
+        // A preference on a revoked key can never run; dropping it lets resolution fall through to the next entry.
+        await tx
+          .delete(modelPreferences)
+          .where(scoped(modelPreferences, ctx, eq(modelPreferences.connectionId, id)));
+        return revoked;
+      });
     },
   };
 }

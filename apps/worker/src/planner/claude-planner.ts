@@ -117,6 +117,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
           const resolved = await deps.credentials.resolveForExecution(tenant, {
             connectionId: selection.providerConnectionId,
             requestedBy: ctx.requestedBy,
+            runtime: "claude",
           });
           resolvedKey = resolved;
           return resolved.apiKey;
