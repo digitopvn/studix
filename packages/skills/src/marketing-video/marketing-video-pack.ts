@@ -330,8 +330,8 @@ export const marketingReframeStage: StageDefinition = {
           advanceFrom: versionId,
         });
       }
-      // A feedback patch is only ever reframed while the storyboard is in review (or a job of the project is
-      // still rendering); a retry that outlives an approve, publish or archive must not reopen review.
+      // A feedback patch is reframed while the storyboard is in review, or while an earlier job left the project
+      // in rendering; a job that outlives an approve, publish or archive must not reopen review.
       await markInReview(repos, ctx, projectId, ["rendering", "in_review"]);
     });
     return {
