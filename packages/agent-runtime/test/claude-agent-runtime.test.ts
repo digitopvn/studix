@@ -121,7 +121,7 @@ describe("claude agent runtime", () => {
     const result = await h.runtime.run(testTenant(), task({ outputSchema: { type: "object" } }));
     expect(result).toEqual({
       output: { scenes: 3 },
-      turns: 2,
+      turns: 1,
       costCents: 4,
       inputTokens: 100,
       outputTokens: 40,
@@ -373,6 +373,18 @@ describe("claude agent runtime review fixes", () => {
   ])("classifies %j as %s", async (text, code) => {
     const h = harness(() => scripted(success({ is_error: true, result: text })));
     await expect(h.runtime.run(testTenant(), task())).rejects.toMatchObject({ code });
+  });
+
+  it("reports one turn for a single model call even when the SDK counts the structured-output round", async () => {
+    const h = harness(() =>
+      scripted(
+        { type: "assistant", message: { id: "m1" } },
+        success({ num_turns: 2, structured_output: { answer: "ok" } }),
+      ),
+    );
+    await expect(
+      h.runtime.run(testTenant(), task({ maxTurns: 1, outputSchema: { type: "object" } })),
+    ).resolves.toMatchObject({ turns: 1, output: { answer: "ok" } });
   });
 
   it("keeps the spent cost on failures after the result arrived", async () => {

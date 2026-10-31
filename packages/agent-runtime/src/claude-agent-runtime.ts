@@ -389,7 +389,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
           if (!final) {
             throw new StudixError("PROVIDER_ERROR", "Claude ended without a result", { retryable: false });
           }
-          return toRunResult(final, task, options.model, (info) => {
+          return toRunResult(final, task, options.model, turnIds.size + anonymousTurns, (info) => {
             costInfo = info;
           });
         };
@@ -450,6 +450,7 @@ function toRunResult(
   message: ClaudeResultMessage,
   task: AgentTask,
   model: string,
+  modelTurns: number,
   recordCost: (info: Record<string, unknown>) => void,
 ): AgentRunResult {
   if (typeof message.total_cost_usd !== "number" || !Number.isFinite(message.total_cost_usd)) {
@@ -460,7 +461,10 @@ function toRunResult(
   const costCents = Math.ceil(message.total_cost_usd * 100 - 1e-9);
   const usage = {
     costCents,
-    turns: message.num_turns,
+    // Turns are model calls. The SDK's num_turns also counts the structured-output tool round,
+    // so one call that returns structured output reports 2; the turn cap itself is enforced
+    // while streaming and by the SDK (error_max_turns).
+    turns: modelTurns > 0 ? modelTurns : message.num_turns,
     inputTokens: message.usage?.input_tokens ?? 0,
     outputTokens: message.usage?.output_tokens ?? 0,
   };
@@ -483,13 +487,6 @@ function toRunResult(
     throw new StudixError(
       "BUDGET_EXCEEDED",
       `agent cost ${costCents}¢ exceeds the ${task.maxCostCents}¢ task limit`,
-      { retryable: false },
-    );
-  }
-  if (message.num_turns > task.maxTurns) {
-    throw new StudixError(
-      "PROVIDER_ERROR",
-      `agent used ${message.num_turns} turns, over the ${task.maxTurns} limit`,
       { retryable: false },
     );
   }

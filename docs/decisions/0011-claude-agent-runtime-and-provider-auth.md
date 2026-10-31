@@ -54,6 +54,14 @@ intermediate Claude.ai credentials or session tokens.
 - Inbound Studix MCP credentials (`stx_` keys) and outbound Anthropic
   credentials are separate and never forwarded to each other.
 
+- Verified against the pinned SDK (0.3.316) and its bundled runtime by
+  `claude-agent-runtime.sdk.integration.test.ts`, which runs them against a
+  local Messages API stand-in (no tokens spent): with every built-in tool
+  removed, the model is offered only the structured-output tool (plus an inert
+  placeholder) and structured output works; cancelling a hung call ends the
+  process and removes the sandbox. The SDK's `num_turns` counts the
+  structured-output round as a turn, so reported `turns` are model calls.
+
 ### Authentication methods
 
 | Method                          | Decision                                                                                                                                                                                          |
