@@ -496,6 +496,48 @@ describe("video.create workflow on Postgres", () => {
     });
   });
 
+  it("leaves the project in review when a render of a version that is no longer head runs", async () => {
+    const ctx = await tenant(db.current, "stale-version-render");
+    const { project } = await enqueueCreate(db.current, ctx);
+    const first = createTestWorker(db.current, "w-first");
+    expect((await first.runOnce())?.outcome).toBe("succeeded");
+    const older = await db.current.repos.projects.get(ctx, project.id);
+    const olderVersion = await db.current.repos.projects.getVersion(ctx, older?.currentVersionId as string);
+    if (!olderVersion) throw new Error("the first job left no version");
+
+    // A newer version became head and was already handed to review before the queued render of the old one runs.
+    const head = await db.current.repos.projects.createVersion(ctx, {
+      projectId: project.id,
+      ir: olderVersion.ir,
+      source: "patch",
+      createdBy: { type: "user", id: "usr_1" },
+    });
+    await db.current.repos.projects.update(ctx, project.id, {
+      currentVersionId: head.id,
+      status: "in_review",
+    });
+    await db.current.repos.queue.enqueue(ctx, {
+      kind: "video.create",
+      projectId: project.id,
+      payload: {
+        projectId: project.id,
+        versionId: olderVersion.id,
+        makeCurrent: false,
+        renderPreset: "preview",
+      },
+      createdBy: { type: "user", id: "usr_1" },
+      budgetCents: 500,
+      maxAttempts: 3,
+    });
+    const second = createTestWorker(db.current, "w-second");
+    expect((await second.runOnce())?.outcome).toBe("succeeded");
+
+    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({
+      status: "in_review",
+      currentVersionId: head.id,
+    });
+  });
+
   it("fails immediately on non-retryable errors", async () => {
     const ctx = await tenant(db.current, "fatal");
     const { job } = await enqueueCreate(db.current, ctx);
