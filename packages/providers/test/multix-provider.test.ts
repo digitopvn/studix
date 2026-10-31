@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { MediaGenerationRequest } from "@studix/core";
+import { MediaChargedError, type MediaGenerationRequest } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
 import { createManualClock } from "@studix/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -671,6 +671,74 @@ describe("MultixProvider async jobs", () => {
     });
   });
 
+  it("reports no charge when multix says the run sent no request", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_source: "no_request" },
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(MediaChargedError);
+    expect(err).toMatchObject({ code: "PROVIDER_ERROR" });
+  });
+
+  it("still reports the charge when the journal write after a charged failure fails", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_usd: 0.03, actual_source: "provider" },
+        },
+      };
+    });
+    const inner = new InMemoryMediaJobJournal();
+    const journal = {
+      get: inner.get.bind(inner),
+      put: async (c: Parameters<typeof inner.put>[0], r: Parameters<typeof inner.put>[1]) => {
+        if (r.state === "failed") throw new Error("journal down");
+        return inner.put(c, r);
+      },
+    };
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge.costCents).toBe(3);
+  });
+
+  it("reports the charge of a finished job whose outputs are flagged as broken", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_usd: 0.03, actual_source: "provider" },
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge).toMatchObject({
+      provider: "multix",
+      model: "sume:nano-banana-2.1",
+      costSource: "receipt",
+      job: { provider: "sume", id: "job_1" },
+    });
+    expect((err as MediaChargedError).charge.costCents).toBe(3);
+  });
+
   it("drops reported outputs outside the job directory", async () => {
     const outside = join(workDir, "elsewhere.png");
     const cli = sumeImageCli(() => ({
@@ -678,9 +746,12 @@ describe("MultixProvider async jobs", () => {
       envelope: { outputs: [{ path: outside }] },
     }));
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
-    await expect(multix.generate(ctx, imageRequest())).rejects.toMatchObject({
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect(err).toMatchObject({
       code: "PROVIDER_ERROR",
       message: expect.stringContaining("without outputs"),
+      charge: { costCents: 4, costSource: "estimate", job: { provider: "sume", id: "job_1" } },
     });
   });
 
@@ -848,6 +919,18 @@ describe("MultixProvider synchronous audio", () => {
     workDir,
   });
 
+  it("reports the estimate as the charge when TTS succeeds but wrote no usable output", async () => {
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate"))
+        return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+      return { envelope: { outputs: [], history_id: "h_2" } };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, voiceRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge).toMatchObject({ costCents: 1, costSource: "estimate" });
+  });
+
   it("runs TTS once and reuses the completed file on retry", async () => {
     const cli = scriptedCli((argv, options) => {
       if (argv.includes("--estimate"))
@@ -886,6 +969,80 @@ describe("MultixProvider synchronous audio", () => {
     const again = await multix.generate(ctx, voiceRequest());
     expect(again.outputs).toEqual(result.outputs);
     expect(cli.calls).toHaveLength(2);
+  });
+
+  describe("execution id of reused synchronous output", () => {
+    const ttsCli = (historyId: string | undefined) =>
+      scriptedCli((argv, options) => {
+        if (argv.includes("--estimate"))
+          return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+        const out = flagValue(argv, "output")!;
+        const copy = join(options.env.MULTIX_OUTPUT_DIR!, "tts.mp3");
+        return {
+          files: { [out]: "mp3", [copy]: "mp3" },
+          envelope: {
+            outputs: [{ path: out }, { path: copy }],
+            ...(historyId ? { history_id: historyId } : {}),
+          },
+        };
+      });
+
+    it("returns the same job on reuse as on the run that paid, so retries are not billed twice", async () => {
+      for (const historyId of ["h_1", undefined]) {
+        const multix = new MultixProvider({
+          bin: "multix",
+          runner: ttsCli(historyId).runner,
+          journal: new InMemoryMediaJobJournal(),
+        });
+        const first = await multix.generate(ctx, voiceRequest());
+        const again = await multix.generate(ctx, voiceRequest());
+        expect(first.job).toBeDefined();
+        expect(again.job).toEqual(first.job);
+        if (historyId) expect(first.job).toEqual({ provider: "elevenlabs", id: historyId });
+      }
+    });
+
+    it("keeps different assets apart when the upstream reports no history id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const a = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice-a" });
+      const b = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice-b" });
+      expect(a.job?.id).not.toEqual(b.job?.id);
+      expect(a.job?.id).not.toBe("sync");
+    });
+
+    it("bills a second paid run of the same key separately when its file was gone and no history id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const first = await multix.generate(ctx, voiceRequest());
+      const other = await mkdtemp(join(tmpdir(), "multix-attempt-"));
+      try {
+        const second = await multix.generate(ctx, { ...voiceRequest(), workDir: other });
+        expect(second.job?.id).not.toEqual(first.job?.id);
+        expect((await multix.generate(ctx, { ...voiceRequest(), workDir: other })).job).toEqual(second.job);
+      } finally {
+        await rm(other, { recursive: true, force: true });
+      }
+    });
+
+    it("ignores a history id that is not a valid execution id", async () => {
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: ttsCli("bad id/with+chars").runner,
+        journal: new InMemoryMediaJobJournal(),
+      });
+      const result = await multix.generate(ctx, voiceRequest());
+      expect(result.job?.id).toMatch(/^sync-[0-9a-f]{24}$/);
+    });
+
+    it("maps a record journaled with the legacy literal id to the derived id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const first = await multix.generate(ctx, voiceRequest());
+      const record = (await journal.get(ctx, "stage-3:voice"))!;
+      await journal.put(ctx, { ...record, job: { provider: "elevenlabs", id: "sync" } });
+      expect((await multix.generate(ctx, voiceRequest())).job).toEqual(first.job);
+    });
   });
 
   it("prices SFX from the assumed ceiling when multix has no estimator", async () => {
