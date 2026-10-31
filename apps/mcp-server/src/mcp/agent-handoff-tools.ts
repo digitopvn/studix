@@ -35,7 +35,7 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
     name: NAMES.list,
     title: "List agent tasks",
     description:
-      "Stages handed to you (the host agent) that wait for your output. Filter by jobId; read one with studix_get_agent_task.",
+      "Stages waiting for your (host agent) output, optionally for one jobId.",
     input: z.object({
       jobId: Id.optional(),
       limit: z.number().int().min(1).max(100).optional(),
@@ -58,7 +58,7 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
     name: NAMES.get,
     title: "Get agent task",
     description:
-      "One handed-off stage: instructions, input, outputSchema (JSON Schema), limits (turns, tokens, cost, time, tool allowlist) and the attempt to submit with.",
+      "A handed-off stage: instructions, input, outputSchema, limits and the attempt to submit.",
     input: z.object({ taskId: Id }),
     readOnly: true,
     async run(ctx, input) {
@@ -80,7 +80,7 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
     name: NAMES.submit,
     title: "Submit agent task output",
     description:
-      "Submit your output for a handed-off stage. It must match the task's outputSchema and name the task's attempt; the same output again is a no-op, a different one is CONFLICT.",
+      "Submit the output (must match outputSchema) for the task's attempt. Resubmitting it is a no-op.",
     input: z.object({
       taskId: Id,
       attempt: z.number().int().min(1),
