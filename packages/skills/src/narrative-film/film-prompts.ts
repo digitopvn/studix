@@ -8,6 +8,12 @@ import type { FilmScope, FilmScopeShot, ScopeCharacter } from "./film-scope.ts";
 
 const NO_TEXT = "no text, no letters, no subtitles, no watermark, no logo";
 const MARGIN = "keep 8% margin at every frame edge so no limb or prop is cut";
+/**
+ * A keyframe is a film frame, not a sheet: the picture fills the frame. Asked for an edge margin, image
+ * models draw a border or side bars into the frame instead.
+ */
+const FULL_BLEED =
+  "full-bleed picture that fills the whole frame edge to edge, no border, no frame, no side bars, no letterbox; keep heads, hands and props inside the picture";
 
 const avoid = (scope: FilmScope, extra: readonly string[] = []) =>
   `Avoid: ${[...scope.style.negatives, ...extra, NO_TEXT].join(", ")}`;
@@ -70,12 +76,16 @@ function castClause(scope: FilmScope, shot: FilmScopeShot): string {
     .join("; ")}`;
 }
 
-/** Keyframe of a shot: the board's frame description inside the bible's look, cast and set. */
+/**
+ * Keyframe of a shot: the board's frame description inside the bible's look, cast and set. `revision` is a
+ * reviewer's note on a redraw, placed after the frame and cast it corrects.
+ */
 export function keyframePrompt(
   scope: FilmScope,
   sceneSetId: string,
   shot: FilmScopeShot,
   frame: string,
+  revision?: string,
 ): string {
   const set = scope.sets.find((s) => s.id === sceneSetId);
   const cast = shot.characters
@@ -86,15 +96,13 @@ export function keyframePrompt(
     frame,
     `Camera: ${shot.camera}`,
     castClause(scope, shot),
+    revisionClause(revision),
     set ? `Set: ${set.description}; light: ${set.light}` : undefined,
     shot.characters.length > 0
       ? "feet on the ground with contact shadows; empty hands unless a prop is named"
       : undefined,
-    MARGIN,
-    avoid(
-      scope,
-      cast.flatMap((c) => c.negatives),
-    ),
+    FULL_BLEED,
+    avoid(scope, [...cast.flatMap((c) => c.negatives), "border", "frame", "letterbox"]),
   ]);
 }
 

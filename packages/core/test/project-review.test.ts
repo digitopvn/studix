@@ -472,4 +472,44 @@ describe("project review", () => {
       code: "NOT_FOUND",
     });
   });
+
+  it("render redraws the shots a reviewer asked to change instead of rendering", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    await studio.decideStoryboard(ctx, {
+      projectId,
+      target: "shot",
+      targetId: "cta-button",
+      decision: "changes_requested",
+      note: "CTA chưa rõ",
+    });
+    await studio.decideStoryboard(ctx, {
+      projectId,
+      target: "shot",
+      targetId: "hook-title",
+      decision: "changes_requested",
+      note: "Chữ to hơn",
+    });
+    await studio.decideStoryboard(ctx, {
+      projectId,
+      target: "shot",
+      targetId: "feature-1",
+      decision: "approved",
+    });
+    const out = await studio.renderVersion(ctx, { projectId });
+    expect(out.storyboardRedraw).toEqual(["hook-title", "cta-button"]);
+    expect((await repos.jobs.get(ctx, out.job.id))?.payload).toMatchObject({
+      makeCurrent: false,
+      storyboardRedraw: [
+        { shotId: "hook-title", note: "Chữ to hơn" },
+        { shotId: "cta-button", note: "CTA chưa rõ" },
+      ],
+    });
+  });
+
+  it("render without requested changes queues a plain render", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    const out = await studio.renderVersion(ctx, { projectId });
+    expect(out.storyboardRedraw).toBeUndefined();
+    expect((await repos.jobs.get(ctx, out.job.id))?.payload).not.toHaveProperty("storyboardRedraw");
+  });
 });

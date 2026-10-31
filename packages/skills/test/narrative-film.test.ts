@@ -175,18 +175,24 @@ describe("film scope", () => {
 describe("film prompts", () => {
   const shots = scope.scenes[0]!.shots;
 
-  it("compiles the bible into every prompt: style, cast anchors, margin and no text", () => {
+  it("compiles the bible into every prompt: style, cast anchors, framing and no text", () => {
     const sheet = characterSheetPrompt(scope, scope.characters[0]!);
     expect(sheet).toMatch(/^2D cel-shaded anime/);
     expect(sheet).toContain("yellow hair bow on the left");
     expect(sheet).toContain("right-handed");
+    expect(sheet).toContain("keep 8% margin");
     expect(sheet).toContain("Avoid: photorealistic, 3D render, extra fingers, long hair, glasses, no text");
 
     const key = keyframePrompt(scope, "san-thuong", shots[3]!, "Mai left, Tùng right, backs to camera");
     expect(key).toContain("Cast, each exactly once and no one else: Mai (");
     expect(key).toContain("Tùng (messy short brown hair, white shirt tucked in, blue backpack, left-handed)");
-    expect(key).toContain("keep 8% margin");
+    // A film frame fills the picture: an edge margin made image models draw borders and side bars.
+    expect(key).not.toContain("margin");
+    expect(key).toContain("full-bleed picture that fills the whole frame edge to edge, no border");
     expect(key).toContain("Set: school rooftop");
+    expect(key).not.toContain("Reviewer's correction");
+    const redraw = keyframePrompt(scope, "san-thuong", shots[3]!, "backs to camera", "Tùng in long sleeves");
+    expect(redraw).toContain("Reviewer's correction, apply it exactly: Tùng in long sleeves");
     expect(keyframePrompt(scope, "san-thuong", shots[0]!, "empty rooftop")).toContain(
       "No characters in frame",
     );

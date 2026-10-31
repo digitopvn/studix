@@ -247,6 +247,8 @@ export interface PackJob {
   fromVersion: boolean;
   /** The version came from reviewer feedback (a patch); the job applies it and goes back to review. */
   feedback?: boolean;
+  /** Redraw the storyboard shots a reviewer asked to change (payload `storyboardRedraw`), then stop. */
+  redraw?: boolean;
 }
 
 /**

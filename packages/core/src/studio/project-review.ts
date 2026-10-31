@@ -898,9 +898,24 @@ export interface RenderResult {
   approval?: Approval;
   replayed: boolean;
   next: NextAction[];
+  /** Shots the job redraws instead of rendering, because a reviewer asked for changes on them. */
+  storyboardRedraw?: string[];
 }
 
-/** Queue a render of a stored version (default: the current one). The rendered version becomes current. */
+/** Shots of a storyboard whose approval is `changes_requested`, with the reviewer's note. */
+function requestedRedraws(storyboard: Storyboard): { shotId: string; note?: string }[] {
+  return storyboard.scenes.flatMap((scene) =>
+    scene.shots
+      .filter((shot) => shot.approval.status === "changes_requested")
+      .map((shot) => ({ shotId: shot.id, ...(shot.approval.note ? { note: shot.approval.note } : {}) })),
+  );
+}
+
+/**
+ * Queue a render of a stored version (default: the current one). The rendered version becomes current.
+ * When a reviewer asked for changes on shots of the current version's storyboard, the job redraws those
+ * shots instead and stops at the storyboard; the reviewer approves it before the next render.
+ */
 export async function renderVersion(
   deps: Deps,
   ctx: TenantContext,
@@ -930,6 +945,10 @@ export async function renderVersion(
   if (!version || version.projectId !== project.id)
     throw new StudixError("NOT_FOUND", `project version ${input.versionId} not found`);
   await deps.revisions.recordVersion(ctx, version.id);
+  const redraw =
+    version.id === project.currentVersionId
+      ? requestedRedraws((await effectiveStoryboard(deps, ctx, version)).storyboard)
+      : [];
   const queued = await enqueueVersionJob(deps, ctx, {
     project,
     version,
@@ -937,7 +956,9 @@ export async function renderVersion(
     idempotencyKey: input.idempotencyKey,
     budgetCents: input.budgetCents,
     // Naming a version is a deliberate rollback; rendering "the current one" must not move the head.
-    makeCurrent: input.versionId !== undefined,
+    // A redraw publishes its own child version, so it never moves the head to this one either.
+    makeCurrent: input.versionId !== undefined && redraw.length === 0,
+    ...(redraw.length > 0 ? { extra: { storyboardRedraw: redraw } } : {}),
   });
   return {
     projectId: project.id,
@@ -947,5 +968,6 @@ export async function renderVersion(
     approval: queued.approval,
     replayed: queued.replayed,
     next: queued.job.next,
+    ...(redraw.length > 0 ? { storyboardRedraw: redraw.map((r) => r.shotId) } : {}),
   };
 }
