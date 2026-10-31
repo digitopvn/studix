@@ -15,15 +15,17 @@ const KEY_B = "sk-ant-api03-bbbbbbbbbbbbbbbbbbbbbbbb-BBBB";
 const BAD = "sk-ant-api03-rejectedrejectedrejected-XXXX";
 
 /** Accepts every key except BAD; records what was tested. */
-function fakeTester(): ProviderKeyTester & { tested: string[] } {
+function fakeTester(): ProviderKeyTester & { tested: string[]; revoked: Set<string> } {
   const tested: string[] = [];
+  const revoked = new Set<string>();
   return {
     tested,
+    revoked,
     async test(apiKey) {
       tested.push(apiKey);
       const base = { at: new Date(), latencyMs: 1 };
       return (
-        apiKey === BAD
+        apiKey === BAD || revoked.has(apiKey)
           ? {
               ...base,
               ok: false,
@@ -231,6 +233,34 @@ describe("provider connections over Postgres", () => {
         svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy: { type: "user", id: "x" } }),
       ),
     ).toBe("UNAUTHENTICATED");
+  });
+
+  it("marks only a key that is still rejected on re-test, never a rotated one", async () => {
+    const { svc, tester } = service();
+    const t = await workspace("pc-rejected");
+    const view = await svc.saveApiKey(t.admin, { owner: "workspace", apiKey: KEY_A });
+    const requestedBy = { type: "user", id: "x" } as const;
+    const resolved = await svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy });
+
+    // A 401 that Anthropic does not repeat (gateway or incident) leaves the key usable.
+    await resolved.markRejected();
+    expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
+
+    // The key is rotated while a run holding the old one still reports a rejection.
+    tester.revoked.add(KEY_A);
+    await svc.rotateApiKey(t.admin, view.id, { apiKey: KEY_B });
+    await resolved.markRejected();
+    expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
+
+    tester.revoked.add(KEY_B);
+    const current = await svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy });
+    await current.markRejected();
+    expect(await codeOf(svc.assertUsable(t.admin, view.id))).toBe("UNAUTHENTICATED");
+    const overview = await svc.overview(t.admin);
+    expect(overview.connections[0]).toMatchObject({
+      status: "invalid",
+      lastTest: { ok: false, httpStatus: 401, error: { code: "UNAUTHENTICATED" } },
+    });
   });
 
   it("never lets a slow test of a replaced key overwrite the new key's status", async () => {

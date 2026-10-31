@@ -492,6 +492,8 @@ export async function runStages(
         settled = s;
       });
       const result = await untilAborted(work, signal);
+      // Bill first: the stage's calls are paid whether or not the output is still wanted.
+      await recordUsage(result.usage ?? []);
       signal.throwIfAborted();
       output = result.output;
       if (!matchesOutput(stage, output)) {
@@ -499,7 +501,6 @@ export async function runStages(
           retryable: false,
         });
       }
-      await recordUsage(result.usage ?? []);
     } catch (err) {
       if (err instanceof LeaseLostError) throw err;
       if (err instanceof StageSuspended && !signal.aborted) return await suspend(err);

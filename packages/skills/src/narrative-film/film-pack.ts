@@ -34,7 +34,12 @@ import {
 } from "@studix/workflow";
 import { z } from "zod";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
-import { estimateMediaCents, generateStoredMedia, type StoredMediaRequest } from "../stored-media.ts";
+import {
+  billedOnFailure,
+  estimateMediaCents,
+  generateStoredMedia,
+  type StoredMediaRequest,
+} from "../stored-media.ts";
 import {
   bibleBoardIr,
   designBoardIr,
@@ -772,7 +777,8 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         s.reportProgress(++done / total);
       }
       await rm(workDir, { recursive: true, force: true });
-      return { output: { ir: replaceShots(ir, next, assets) }, usage: clips.map((c) => c.usage) };
+      const usage = clips.map((c) => c.usage);
+      return { output: { ir: await billedOnFailure(usage, () => replaceShots(ir, next, assets)) }, usage };
     },
   };
 
@@ -941,13 +947,16 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         };
       });
       const assets = made.map((m) => m.asset);
-      const next = VideoIRSchema.parse({
-        ...ir,
-        assets: [...ir.assets.filter((a) => !assets.some((b) => b.id === a.id)), ...assets],
-        audio: [...(ir.audio ?? []).filter((t) => t.kind !== "music" && t.kind !== "sfx"), ...tracks],
-      });
+      const usage = made.map((m) => m.usage);
+      const next = await billedOnFailure(usage, () =>
+        VideoIRSchema.parse({
+          ...ir,
+          assets: [...ir.assets.filter((a) => !assets.some((b) => b.id === a.id)), ...assets],
+          audio: [...(ir.audio ?? []).filter((t) => t.kind !== "music" && t.kind !== "sfx"), ...tracks],
+        }),
+      );
       await rm(workDir, { recursive: true, force: true });
-      return { output: { ir: next }, usage: made.map((m) => m.usage) };
+      return { output: { ir: next }, usage };
     },
   };
 

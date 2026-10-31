@@ -1,7 +1,7 @@
 import { type Clock, StudixError } from "@studix/shared";
 import type { Job, Render, Stage, WorkflowRun } from "../entities/job.ts";
 import { isTerminalJobStatus } from "../entities/job.ts";
-import type { JobQueue } from "../ports/job-queue.ts";
+import { JOB_RESUME_ATTEMPTS, type JobQueue } from "../ports/job-queue.ts";
 import type {
   JobRepository,
   RenderRepository,
@@ -75,7 +75,9 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         runAfter: input.runAfter ?? clock.now(),
         idempotencyKey: input.idempotencyKey,
         cancelRequested: false,
-        deadlineAt: input.deadlineAt,
+        ...(input.initialStatus === "waiting_approval" && input.deadlineAt
+          ? { deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - clock.now().getTime()) }
+          : { deadlineAt: input.deadlineAt }),
         budgetCents: input.budgetCents,
         spentCents: 0,
         createdBy: input.createdBy,
@@ -92,6 +94,30 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         finishedAt: clock.now(),
         error: { code: "CANCELLED", message: reason ?? "cancelled", retryable: false },
       });
+    },
+    async retry(ctx, jobId) {
+      const job = jobs.require(ctx, jobId);
+      if (job.status !== "failed") {
+        throw new StudixError("CONFLICT", `job ${jobId} is ${job.status}`, {
+          details: { status: job.status, expected: ["failed"] },
+        });
+      }
+      const now = clock.now();
+      const next: Partial<Job> = {
+        status: "queued",
+        runAfter: now,
+        maxAttempts: job.attempts + JOB_RESUME_ATTEMPTS,
+        cancelRequested: false,
+        error: undefined,
+        result: undefined,
+        finishedAt: undefined,
+        lockedBy: undefined,
+        leaseExpiresAt: undefined,
+        deadlineAt: job.deadlineAt
+          ? new Date(now.getTime() + (job.deadlineAt.getTime() - job.createdAt.getTime()))
+          : undefined,
+      };
+      return jobs.update(ctx, jobId, next);
     },
     async resume(ctx, jobId) {
       return repo.update(

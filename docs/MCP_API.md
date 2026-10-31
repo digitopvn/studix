@@ -76,6 +76,7 @@ guide, the per-error value is authoritative.
 | `studix_get_job`      | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                            |
 | `studix_get_project`  | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                        |
 | `studix_cancel_job`   | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                           |
+| `studix_retry_job`    | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                             |
 | `studix_approve`      | Record a decision on a pending approval (for example `video.publish`). Only a human user may approve; an API key gets `FORBIDDEN`.                                                                                                 |
 | `studix_feedback`     | Feedback on one target of the current version: `shotId`, `sceneId`, `assetId`, or `startMs` with `endMs`. Always stored as a comment. With a `patch`, it makes a new version and queues a render job. Async.                       |
 | `studix_render`       | Queue a render of the current version, or of a given `versionId`, at a `renderPreset`. Returns `jobId`; poll `studix_get_job` for the MP4 URL. Async.                                                                              |
@@ -100,6 +101,17 @@ Behavior notes:
   past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
   `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
   handoff tools below).
+- Time spent parked is not counted against the deadline. While a job waits at a human gate
+  (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
+  is paused: what is left of it is kept and starts counting again when a worker
+  claims the job after the approval or host submission. A job created already
+  waiting at a gate starts its deadline at its first claim. A review can take
+  as long as the approval stays valid (7 days) without failing the job with
+  `TIMEOUT`; a stage that runs past the remaining budget still does. Retry
+  backoff and queue wait still count. While paused, the job view has no
+  `deadlineAt` and reports the budget left as `deadlineRemainingMs`. When
+  deploying, drain old workers before new ones park jobs: an old worker claims
+  a paused job without re-arming its deadline.
 - `workflowTemplate` is a pack id from the registry in `@studix/skills`
   (`studix_inspect` lists them under `skills`); it defaults to `brand-intro`.
   An unknown id fails with `VALIDATION` before anything is stored, with
@@ -159,6 +171,19 @@ Behavior notes:
   approves it in the dashboard.
 - Re-sending `studix_create_video` with the same idempotency key in the same
   workspace returns the original job instead of a new one.
+
+### Retrying a failed job
+
+A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jobs/:jobId/retry` on the dashboard API) requeues it as the same job once the cause is fixed, for example a storage bucket that was missing after the provider had already charged for the media.
+
+- Stages that succeeded keep their outputs and are not run again.
+- The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) are looked up in the attempt's work directory, so a retry may generate and pay for them again.
+- Usage events keep their `dedupeKey`, which is tied to the upstream job, so the resume bills no call twice.
+- Gates already decided on the job (approved, or consumed) are read from the database and are not asked again.
+- The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window it was created with. The budget is not reset: spend so far still counts against `budgetCents`.
+- Only a `failed` job can be retried (any other status returns `CONFLICT`). `video.publish` jobs cannot (`VALIDATION`: a publish is not idempotent, so start a new one), and neither can a job whose `job.start` approval was expired, rejected or never granted by a person (`APPROVAL_REQUIRED`). Agent stages are not retried automatically, but a manual retry re-runs a failed agent stage and its spend is billed again.
+- The caller needs the `job:retry` permission (owner, admin and editor roles; API keys need the scope).
+- The action is audited as `job.retried`. A failed job's `next` list suggests the tool.
 
 ### Feedback, render and storyboard approval
 

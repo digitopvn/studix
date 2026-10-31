@@ -14,7 +14,12 @@ import {
 import { z } from "zod";
 import { VO_PAD_MS } from "../marketing-video/marketing-script.ts";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
-import { estimateMediaCents, generateStoredMedia, type StoredMediaRequest } from "../stored-media.ts";
+import {
+  billedOnFailure,
+  estimateMediaCents,
+  generateStoredMedia,
+  type StoredMediaRequest,
+} from "../stored-media.ts";
 import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion-graphic-template.ts";
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
@@ -126,7 +131,10 @@ export const motionGraphicVoiceoverStage: StageDefinition = {
       ],
     };
     await rm(workDir, { recursive: true, force: true });
-    return { output: { ir: VideoIR.parse(next) }, usage: [media.usage] };
+    return {
+      output: { ir: await billedOnFailure([media.usage], () => VideoIR.parse(next)) },
+      usage: [media.usage],
+    };
   },
 };
 

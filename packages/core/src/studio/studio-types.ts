@@ -28,6 +28,7 @@ export const STUDIX_TOOLS = {
   inspect: "studix_inspect",
   createVideo: "studix_create_video",
   getJob: "studix_get_job",
+  retryJob: "studix_retry_job",
   getProject: "studix_get_project",
   approve: "studix_approve",
   feedback: "studix_feedback",
@@ -234,6 +235,8 @@ export interface JobView {
   cancelRequested: boolean;
   budget: { limitCents?: number; spentCents: number };
   deadlineAt?: Date;
+  /** Budget left while the deadline is paused at a gate or host task; `deadlineAt` is unset then. */
+  deadlineRemainingMs?: number;
   createdAt: Date;
   updatedAt: Date;
   startedAt?: Date;
