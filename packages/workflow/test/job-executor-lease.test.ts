@@ -285,7 +285,8 @@ describe("job executor lease heartbeat", () => {
     const stage = controlledWorkflow();
     const { outcome } = start(makeExecutor(queue, stage.workflow));
 
-    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    // The aborted stage never settles, so the runner waits out its grace period before it gives up.
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS + 2_000);
     expect(await outcome).toBe("cancelled");
     expect(queue.cancel).toHaveBeenCalledOnce();
   });
