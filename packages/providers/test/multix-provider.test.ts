@@ -804,6 +804,25 @@ describe("MultixProvider async jobs", () => {
     expect((err as MediaChargedError).charge.costCents).toBe(3);
   });
 
+  it("marks a charged Sume job failed when its downloaded outputs are flagged as broken", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_usd: 0.03, actual_source: "provider" },
+        },
+      };
+    });
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MediaChargedError);
+    expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "failed" });
+  });
+
   it("reports the charge of a finished job whose outputs are flagged as broken", async () => {
     const cli = sumeImageCli((argv) => {
       const out = join(flagValue(argv, "output")!, "image-1.png");

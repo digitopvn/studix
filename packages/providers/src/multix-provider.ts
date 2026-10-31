@@ -579,6 +579,8 @@ export class MultixProvider implements MediaProvider {
     let envelope: MultixEnvelope;
     // Set once the job reported completion: from then on the upstream has charged, whatever fails next.
     let charge: MediaCharge | undefined;
+    // Sume reported the job's money captured but the status run still failed: only the download did.
+    let completedButUndownloaded = false;
     try {
       const { result, envelope: printed } = await this.execRaw(
         argv,
@@ -601,6 +603,7 @@ export class MultixProvider implements MediaProvider {
         ) {
           const [costCents, costSource] = this.settleCost(unproven, record?.receiptCents, fallback);
           charge = this.chargeOf(unproven, { provider: this.id, model, costCents, costSource, job });
+          completedButUndownloaded = true;
         }
         throw multixRunError(`${job.provider} status`, result, printed);
       }
@@ -612,20 +615,24 @@ export class MultixProvider implements MediaProvider {
       // A rejected Sume job ended upstream (Sume refunds it); the next attempt submits anew. Atlas gives
       // no such guarantee and cannot deduplicate, so an Atlas job always stays resumable. Anything else
       // (timeout, temporary failure, cancel) leaves the job running, and the record makes a retry resume it.
+      // A completed job whose download failed is not rejected: it stays resumable so a retry collects it
+      // instead of paying for a new one.
       if (
         job.provider === "sume" &&
-        !charge &&
+        !completedButUndownloaded &&
         "ctx" in tracking &&
         record &&
         err instanceof StudixError &&
         err.code === "PROVIDER_ERROR" &&
         !err.retryable
       ) {
-        await tracking.journal.put(tracking.ctx, {
-          ...record,
-          state: "failed",
-          updatedAt: this.clock.now().toISOString(),
-        });
+        await tracking.journal
+          .put(tracking.ctx, { ...record, state: "failed", updatedAt: this.clock.now().toISOString() })
+          .catch((putErr: unknown) => {
+            // A journal failure must not hide the charge the error already carries.
+            if (charge) throw new MediaChargedError(toStudixError(putErr), charge);
+            throw putErr;
+          });
       }
       if (err instanceof StudixError) {
         const wrapped = new StudixError(err.code, err.message, {
