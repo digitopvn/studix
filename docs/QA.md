@@ -62,7 +62,8 @@ trả về check sẵn cho `runHardGate` và danh sách `unbound`; threshold c�
 - Check sai unit, hoặc có `params` khác giá trị tool đo, không được gắn (`unsupported_params`,
   `unit_mismatch`), thay vì đo theo cách khác rồi cho qua.
 - Metric chưa có tool (`no_tool`) không bị bỏ ngầm: caller quyết có chấp nhận hay không.
-  Metric mức shot (mix bus theo shot, lipsync) cần contract shot boundary của #47.
+  Metric mức shot (mix bus theo shot, lipsync) chưa gắn; biên shot của pack phim nằm trong
+  `film.production` của IR.
 
 ### Gate cho stage của pack
 
@@ -78,16 +79,17 @@ check `unbound` được ghi vào output của stage.
 Mỗi tool là một module trong `tools/qa/src/studix_qa/`, bọc phía TS bằng một `QaTool` có
 schema zod cho input và output (`qa-tools.ts`).
 
-| Tool            | Lớp      | Đo gì                                                                   | Timeout | Bộ nhớ |
-| --------------- | -------- | ----------------------------------------------------------------------- | ------- | ------ |
-| `probe`         | hard     | ffprobe: container, stream, fps, duration, size                         | 60 s    | 4 GiB  |
-| `loudness`      | hard     | Integrated LUFS, true peak, LRA (`ebur128=peak=true`)                   | 10 min  | 4 GiB  |
-| `black-frames`  | hard     | Đoạn đen đầu, cuối, giữa trên proxy 160x90                              | 10 min  | 4 GiB  |
-| `sync`          | hard     | Lệch start và duration giữa audio và video trong container              | 60 s    | 4 GiB  |
-| `prescan`       | evidence | Wedge, still hold, black, cut, click, dropout, transient (`qa-prescan`) | 15 min  | 4 GiB  |
-| `mix-buses`     | evidence | Mức bus beds/hits/vo/music theo shot (`audit-mix-buses`)                | 10 min  | 8 GiB  |
-| `judge-reports` | evidence | Gộp report của AI reviewer (`qa-gate-check`)                            | 60 s    | 4 GiB  |
-| `depth-maps`    | evidence | Depth map PNG bằng Depth Anything V2 Small; chỉ image `depth`           | 15 min  | 8 GiB  |
+| Tool              | Lớp      | Đo gì                                                                             | Timeout | Bộ nhớ |
+| ----------------- | -------- | --------------------------------------------------------------------------------- | ------- | ------ |
+| `probe`           | hard     | ffprobe: container, stream, fps, duration, size                                   | 60 s    | 4 GiB  |
+| `loudness`        | hard     | Integrated LUFS, true peak, LRA (`ebur128=peak=true`)                             | 10 min  | 4 GiB  |
+| `black-frames`    | hard     | Đoạn đen đầu, cuối, giữa trên proxy 160x90                                        | 10 min  | 4 GiB  |
+| `sync`            | hard     | Lệch start và duration giữa audio và video trong container                        | 60 s    | 4 GiB  |
+| `prescan`         | evidence | Wedge, still hold, black, cut, click, dropout, transient (`qa-prescan`)           | 15 min  | 4 GiB  |
+| `mix-buses`       | evidence | Mức bus beds/hits/vo/music theo shot (`audit-mix-buses`)                          | 10 min  | 8 GiB  |
+| `judge-reports`   | evidence | Gộp report của AI reviewer (`qa-gate-check`)                                      | 60 s    | 4 GiB  |
+| `shot-boundaries` | evidence | Pop luma, histogram, diff ở từng cut theo chế độ biên shot (`qa-shot-boundaries`) | 10 min  | 4 GiB  |
+| `depth-maps`      | evidence | Depth map PNG bằng Depth Anything V2 Small; chỉ image `depth`                     | 15 min  | 8 GiB  |
 
 Nguồn port và golden test ghi ở [PORTING.md](PORTING.md#port-record-tool-qa).
 
@@ -119,7 +121,10 @@ không gọi API trả tiền và không tải gì lúc chạy.
   Lipsync thuộc #47.
 - `black-frames` và `prescan` đo trên proxy xám nhỏ: phát hiện đoạn đen, hold, wedge rõ ràng,
   không đánh giá chất lượng hình.
-- `qa-shot-boundaries` chưa port: cần contract shot boundary của #47.
+- `shot-boundaries` đo từng cut của một bản render (luma, histogram, tỉ lệ diff qua cut so với
+  diff trong shot). Join lấy từ `film.production` bằng `filmShotJoins` (`film-shot-joins.ts`).
+  Cut `intentional-cut` luôn được cho qua. Tool chưa gắn vào hard gate của pack phim: kết quả
+  là evidence cho reviewer.
 - Gate chạy trên một file; mỗi delivery (master, preview, phone) là một lần gọi.
 - `qa_check` chưa gắn vào `video.create` của brand intro: pack tự thêm stage khi cần, vì
   brand intro có thể im lặng và mọi job khi đó sẽ cần Python.
