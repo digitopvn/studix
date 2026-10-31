@@ -1,0 +1,69 @@
+# 0011. Claude Agent SDK runtime and provider authentication
+
+- Status: Accepted (runtime contract); subscription OAuth is gated, see below
+- Date: 2026-10-31
+
+## Context
+
+Studix plans with the `DecisionRouter` today. Some stages need an agent loop with
+tool use. The Claude Agent SDK runs Claude as a subprocess, so it must live in the
+worker, behind the existing `AgentRuntime` port, with hard limits that the
+`Promise.race` based `BoundedAgentRuntime` cannot give: aborting a promise does
+not stop the process, and turn/cost limits checked after the run do not cap spend.
+
+## Decision
+
+- `createClaudeAgentRuntime` (`@studix/agent-runtime`) implements `AgentRuntime`
+  on top of a `ClaudeAgentTransport` seam. CI uses a fake transport; the real SDK
+  adapter is injected by the worker and pinned in the worker image (later PR).
+- Limits are enforced **while the session runs**: turns and cost stop the process
+  as soon as a usage event crosses the cap; the SDK's own `maxTurns` and
+  `maxBudgetUsd` are passed as a second layer.
+- Abort, lost lease and deadline call `interrupt()`, then `kill()` after a grace
+  period. `run` settles only after the process has closed, so a job never reports
+  cancelled while its subprocess still runs. Once stopping, `canUseTool` denies
+  every call: zero tool execution after lease loss.
+- Tools are deny-by-default: only names declared in `AgentTask.tools` are allowed.
+  No `bypassPermissions`, no shell tool, nothing exposed through public MCP.
+- The credential is resolved per tenant by a `ClaudeCredentialResolver`, handed
+  to the session only, and upstream errors are mapped (401 `UNAUTHENTICATED`,
+  403 `FORBIDDEN`, 429 `RATE_LIMITED`) with keys redacted. There is never an
+  automatic fallback between authentication methods.
+- Output is validated by an injected validator (VideoIR for the planner); the
+  agent's output is never trusted.
+- Runtime selection stays configuration (`plannerRuntime: default|claude`), not a
+  `core` dependency on any vendor.
+
+## Authentication methods
+
+| Method                                      | Status                                                                         | Billing                                |
+| ------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------- |
+| Anthropic API key (BYOK or workspace-owned) | Build first (PR 2)                                                             | Usage-based, on the key's organization |
+| Claude subscription (OAuth)                 | **Not enabled.** Dashboard shows "Restricted — not available for Studix cloud" | Subscription limits                    |
+
+Anthropic's Legal and compliance page and the Agent SDK overview restrict third
+parties from offering Claude.ai login or relaying Free/Pro/Max credentials in their
+own product without approval. The Help Center article on using the SDK with a plan
+does not authorise a multi-tenant SaaS to collect or relay OAuth tokens. Until
+Anthropic confirms this use case in writing, Studix will not ship a Connect
+button, store consumer tokens, or mark the method Connected or Supported. Users
+who want subscription usage can run Claude Code on their own machine and connect
+it to Studix as an MCP client. Monthly API credits on some plans apply to Console
+API keys, so they belong to the API-key path.
+
+Studix inbound MCP credentials (`stx_` keys) stay separate from Anthropic outbound
+credentials and are never forwarded.
+
+## Consequences
+
+- The runtime is testable without tokens or the SDK installed.
+- PR 2 adds encrypted credential storage, the API-key dashboard flow and the
+  restricted OAuth card; PR 3 wires the worker, usage records and an E2E run.
+- The OAuth flow is a separate, compliance-gated PR and is not part of "done" for
+  the API-key path.
+
+## Alternatives considered
+
+- Wrap `claude -p` output: loses permission hooks, structured output and streaming usage.
+- Reuse `createBoundedAgentRuntime`: cannot guarantee the subprocess stops or cap cost mid-run.
+- Run the agent in `apps/mcp-server`: puts a subprocess on the request path and widens the public surface.
