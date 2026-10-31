@@ -16,5 +16,6 @@ supersedes the old one; accepted ADRs are not rewritten.
 | [0009](0009-deployment-cloudflare-and-tose.md)                     | Deployment on Cloudflare and TOSE                                          | Accepted |
 | [0010](0010-renderer-and-media-provider-adapters.md)               | Renderer and media provider adapters                                       | Accepted |
 | [0011](0011-claude-agent-runtime-and-provider-auth.md)             | Claude Agent SDK runtime and provider authentication                       | Accepted |
+| [0013](0013-hybrid-port-and-workflow-packs.md)                     | Port lai (lõi TS, Python tool trong sandbox worker) và port theo pack      | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.

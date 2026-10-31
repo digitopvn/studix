@@ -4,6 +4,10 @@ Studix ports selectively from `motion-mcp` and refactors deliberately. This
 manifest records the source, the license obligations and where each source
 package went.
 
+Epic [#2](https://github.com/digitopvn/studix/issues/2) adds two more sources,
+`zuey-workspace` and `agentkit`; see
+[Nguồn zuey-workspace và agentkit](#nguồn-zuey-workspace-và-agentkit).
+
 ## Source
 
 | Field         | Value                                                           |
@@ -98,3 +102,59 @@ search for `motion.digitop.ai` outside `docs/` should return nothing; CI may
 enforce it.
 
 No secrets, `.env` files or data directories are copied from the source.
+
+## Nguồn zuey-workspace và agentkit
+
+Epic [#2](https://github.com/digitopvn/studix/issues/2) port có chọn lọc skill
+`anime-creator` của `zuey-workspace` và 11 skill video/motion của `agentkit` thành các
+workflow pack trên engine dùng chung. Phần này ghi quyền dùng, SHA đã pin, attribution và
+quy trình sync. Audit từng nguồn nằm ở [porting/source-audit.md](porting/source-audit.md),
+bản đồ port ở [porting/migration-matrix.md](porting/migration-matrix.md), quyết định ở
+[ADR-0013](decisions/0013-hybrid-port-and-workflow-packs.md).
+
+### Quyền dùng
+
+`zuey-workspace` là repo private không có file LICENSE; `agentkit` là phần mềm
+proprietary. Chủ sở hữu của cả hai cho phép Studix dùng code, ghi nguyên văn ngày
+2026-10-31 trong [issue #39](https://github.com/digitopvn/studix/issues/39):
+
+> Tôi - Zuey, chủ sở hữu, cho phép Studix dùng code từ zuey-workspace và agentkit
+
+Quyền này không biến hai repo nguồn thành mã nguồn mở. Không phân phối lại nguồn ngoài
+Studix, và không mang theo phần của bên thứ ba có license riêng (ví dụ phần MIT trong
+`LICENSE.txt` của `ak-motion-video` và `ak-motion-design`) mà không giữ notice của phần đó.
+
+### Nguồn đã pin
+
+| Nguồn                                                                 | Commit đã pin                              | Phạm vi                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [mrgoonie/zuey-workspace](https://github.com/mrgoonie/zuey-workspace) | `10719856e9027c92d61892e523b82dd70fca189b` | `.agents/skills/anime-creator` (v1.6.0)                                                                                                                                                                                                                         |
+| [bestagentkits/agentkit](https://github.com/bestagentkits/agentkit)   | `9fe4699777a954987bb859bf839dacab1aff14ec` | `kits/marketing/skills/`: `ak-motion-video`, `ak-filmmaking`, `ak-video`, `ak-creativity`, `ak-motion-design`, `ak-elevenlabs`; `kits/core/skills/`: `ak-hyperframes`, `ak-remotion`; `kits/engineer/skills/`: `ak-media-processing`, `ak-shader`, `ak-threejs` |
+
+Dạng rút gọn dùng trong issue và docs: `zuey-workspace` `10719856`, `agentkit` `9fe46997`.
+
+### Attribution
+
+- File port gần như nguyên vẹn ghi trong comment đầu file: repo nguồn, path tương đối với
+  root của repo nguồn và SHA đã pin, ví dụ
+  `Ported from zuey-workspace@10719856:.agents/skills/anime-creator/scripts/qa-prescan.py`.
+- File chỉ lấy ý tưởng hoặc một phần logic ghi nguồn trong mô tả PR, không cần comment.
+- Golden test port từ nguồn ghi nguồn ở đầu file test.
+- Bảng file-level port record cho hai nguồn này được thêm vào file này khi file đầu tiên
+  được port (từ #41 trở đi).
+
+### Quy trình sync có kiểm soát
+
+1. **Pin SHA.** Studix chỉ port từ commit ghi trong bảng trên. Không port từ nhánh đang
+   chạy hay bản copy local chưa commit.
+2. **Mỗi lần sync là một PR.** Đổi SHA đã pin là một PR riêng, chỉ chứa việc sync: cập nhật
+   bảng trên, cập nhật [migration matrix](porting/migration-matrix.md) và các file port bị
+   ảnh hưởng.
+3. **Kèm diff nguồn.** Mô tả PR có danh sách file đổi giữa SHA cũ và SHA mới trong phạm vi
+   đã pin (`git diff --stat <sha-cũ> <sha-mới> -- <path>`) và tóm tắt thay đổi hành vi. File
+   port thay đổi phải chỉ ra đoạn diff nguồn tương ứng.
+4. **Chỉ đọc repo nguồn.** Audit và sync chỉ dùng `git ls-tree`, `git show` hoặc
+   `git archive` tại SHA; không checkout, không sửa repo nguồn.
+5. **Lọc trước khi commit.** Không chép path tuyệt đối của máy, secret, file `.env`, dữ liệu
+   chạy, bản ghi benchmark, tên phim, series hay studio có sẵn, hay alias thương hiệu thật.
+   Thành phần đánh dấu `human review` trong matrix chỉ được port khi chủ sở hữu duyệt.
