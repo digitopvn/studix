@@ -50,6 +50,7 @@ async function runBible(status: ProjectStatus) {
       write({ projects } as never, ctx),
   } as never)) as { output: { reviewVersionId: string } };
   return {
+    versions: (await projects.listVersions(ctx, project.id)).items.length,
     project: (await projects.get(ctx, project.id))!,
     headId: head.id,
     review: out.output.reviewVersionId,
@@ -72,6 +73,8 @@ describe("narrative-film review board", () => {
       const r = await runBible(status);
       expect(r.project.status).toBe(status);
       expect(r.project.currentVersionId).toBe(r.headId);
+      // The board is still stored next to the head, only the pointer and status stay put.
+      expect(r.versions).toBe(2);
     },
   );
 });

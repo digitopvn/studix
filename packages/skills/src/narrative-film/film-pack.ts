@@ -22,7 +22,6 @@ import {
   irOf,
   jobScopedId,
   mapBounded,
-  markInReview,
   type PackPipeline,
   payloadOf,
   RenderOutput,
@@ -256,8 +255,7 @@ async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string)
     // the project's head back to its stale board; the version above stays stored and reachable by id.
     const project = await repos.projects.get(ctx, projectId);
     if (project && REVIEWABLE.includes(project.status)) {
-      await repos.projects.update(ctx, projectId, { currentVersionId: versionId });
-      await markInReview(repos, ctx, projectId, REVIEWABLE);
+      await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
     }
   });
   return versionId;
