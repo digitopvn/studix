@@ -4,7 +4,7 @@ import type { MediaBillingUnit } from "./media-price-book.ts";
 import { type MediaInput, numberParam, resolveMediaInput, stringParam } from "./media-request-guards.ts";
 
 /** Upstream routes Studix drives through multix. Media runs on Sume; audio and image upscale do not. */
-export const MULTIX_VENDORS = ["sume", "atlas", "elevenlabs", "fish", "minimax"] as const;
+export const MULTIX_VENDORS = ["sume", "atlas", "elevenlabs", "fish", "minimax", "openrouter"] as const;
 export type MultixVendor = (typeof MULTIX_VENDORS)[number];
 
 /** The key `multix check` must report for a vendor before its kinds are advertised. */
@@ -14,6 +14,7 @@ export const MULTIX_VENDOR_KEYS: Readonly<Record<MultixVendor, string>> = {
   elevenlabs: "ELEVENLABS_API_KEY",
   fish: "FISH_API_KEY",
   minimax: "MINIMAX_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 /** A media role is a kind refined by its inputs (lip-sync is video with audio; upscale splits by input). */
@@ -33,7 +34,7 @@ export const MULTIX_ROLE_VENDORS: Readonly<Record<MultixRole, readonly MultixVen
   lipsync: ["sume"],
   videoUpscale: ["sume"],
   imageUpscale: ["atlas"],
-  voice: ["elevenlabs", "fish", "minimax"],
+  voice: ["elevenlabs", "fish", "minimax", "openrouter"],
   music: ["elevenlabs", "minimax"],
   sfx: ["elevenlabs"],
 };
@@ -173,6 +174,11 @@ export interface MultixPlan {
   operand?: string;
   /** multix can price argv with --estimate. */
   priced: boolean;
+  /**
+   * How multix applies `--max-cost`: "strict" (default) needs a proven ceiling, "estimate" accepts the
+   * estimated high end, for models billed by an output whose length the model decides.
+   */
+  costPolicy?: "strict" | "estimate";
   assumed?: AssumedPrice;
   /** Atlas: request fields, and local files to upload into `uploads` fields before submitting. */
   atlas?: { modelId: string; fields: Record<string, unknown>; uploads: { field: string; path: string }[] };
@@ -218,6 +224,7 @@ function boolParam(params: Record<string, unknown>, name: string): boolean | und
 
 export interface PlanContext {
   defaults: MultixModelDefaults;
+  voiceRoutes?: VoiceLanguageRoutes;
   waitTimeoutMs: number;
 }
 
@@ -256,15 +263,69 @@ function speaks(model: QualifiedModel, language: string): boolean {
   return languages === undefined || languages.includes(language);
 }
 
+/** The speech model one language is spoken with, and the voice used when a request names none. */
+export interface VoiceRoute {
+  model: QualifiedModel;
+  voice?: string;
+}
+/** Speech routes by primary language subtag ("vi"), from config; a language without one takes the default. */
+export type VoiceLanguageRoutes = Readonly<Record<string, VoiceRoute>>;
+
+const ROUTE_LANGUAGE = /^[a-z]{2,3}$/;
+
+/**
+ * Parse `MULTIX_VOICE_LANGUAGE_MODELS`: comma-separated `<language>=<vendor>:<model>[@<voice>]`, e.g.
+ * `vi=openrouter:fish-audio/drama-3` or `vi=openrouter:google/gemini-3.8-flash-tts@Sulafat`. Throws
+ * VALIDATION on a malformed entry, a vendor that does not serve speech or a language named twice, so a
+ * bad setting fails at startup instead of on a paid call.
+ */
+export function parseVoiceLanguageRoutes(
+  value: string | undefined,
+  defaults: MultixModelDefaults,
+): VoiceLanguageRoutes {
+  const routes: Record<string, VoiceRoute> = {};
+  for (const entry of (value ?? "").split(",").map((e) => e.trim())) {
+    if (entry === "") continue;
+    const eq = entry.indexOf("=");
+    const language = entry.slice(0, Math.max(0, eq)).trim().toLowerCase();
+    const target = entry.slice(eq + 1).trim();
+    const at = target.lastIndexOf("@");
+    const model = at === -1 ? target : target.slice(0, at);
+    const voice = at === -1 ? undefined : target.slice(at + 1);
+    if (eq === -1 || !ROUTE_LANGUAGE.test(language) || (voice !== undefined && !TOKEN.test(voice))) {
+      throw new StudixError(
+        "VALIDATION",
+        `Voice language route "${entry}" must read <language>=<vendor>:<model>[@<voice>]`,
+        { retryable: false },
+      );
+    }
+    if (routes[language]) {
+      throw new StudixError("VALIDATION", `Voice language "${language}" is routed twice`, {
+        retryable: false,
+      });
+    }
+    routes[language] = {
+      model: parseQualifiedModel(model, "voice", defaults),
+      ...(voice !== undefined ? { voice } : {}),
+    };
+  }
+  return routes;
+}
+
 /** Resolve the role and model of a request without touching its inputs (used for grouping and pricing). */
 export function resolveMultixModel(
   request: Pick<MediaGenerationRequest, "kind" | "model" | "params">,
   defaults: MultixModelDefaults,
-): { role: MultixRole; model: QualifiedModel } {
+  voiceRoutes: VoiceLanguageRoutes = {},
+): { role: MultixRole; model: QualifiedModel; voice?: string } {
   const params = request.params ?? {};
   const role = roleFor(request.kind, params);
-  const model = parseQualifiedModel(request.model ?? defaults[role], role, defaults);
   const language = role === "voice" ? primaryLanguage(params) : undefined;
+  // A configured route for the language wins over the role default; a model the request names wins over both.
+  const route = request.model === undefined && language !== undefined ? voiceRoutes[language] : undefined;
+  if (route)
+    return { role, model: route.model, ...(route.voice !== undefined ? { voice: route.voice } : {}) };
+  const model = parseQualifiedModel(request.model ?? defaults[role], role, defaults);
   if (language === undefined || speaks(model, language)) return { role, model };
   // A model the request named is the caller's choice: refuse it before anything is paid.
   if (request.model !== undefined) {
@@ -284,7 +345,11 @@ export async function planMultixRequest(
   context: PlanContext,
 ): Promise<MultixPlan> {
   const params = request.params ?? {};
-  const { role, model } = resolveMultixModel(request, context.defaults);
+  const {
+    role,
+    model,
+    voice: routeVoice,
+  } = resolveMultixModel(request, context.defaults, context.voiceRoutes);
   const input = async (name: string) =>
     workDir === undefined ? estimateInput(params, name) : resolveMediaInput(params, name, workDir);
   const base = { role, model, assumed: assumedPrice(role, model) };
@@ -388,15 +453,19 @@ export async function planMultixRequest(
         atlas: { modelId: model.model, fields, uploads },
       };
     }
-    case "voice":
+    case "voice": {
+      const openrouter = model.vendor === "openrouter";
       return {
         ...base,
         mode: "sync",
         priced: model.vendor !== "minimax",
-        outputExt: ".mp3",
+        // OpenRouter bills some speech models by output audio, which multix can estimate but not prove.
+        ...(openrouter ? { costPolicy: "estimate" as const } : {}),
+        outputExt: openrouter && PCM_ONLY_SPEECH.test(model.model) ? ".wav" : ".mp3",
         waitTimeoutMs: wait(300_000),
-        argv: voiceArgv(model, request.prompt, params),
+        argv: voiceArgv(model, request.prompt, params, routeVoice),
       };
+    }
     case "music":
       return {
         ...base,
@@ -426,10 +495,53 @@ export async function planMultixRequest(
   }
 }
 
-function voiceArgv(model: QualifiedModel, prompt: string, params: Record<string, unknown>): string[] {
-  const voice = stringParam(params, "voice", TOKEN);
+/** OpenRouter speech models that return raw PCM only; multix wraps it in a WAV header (per multix 1.26). */
+const PCM_ONLY_SPEECH = /^(google|heygen)\//;
+const MAX_INSTRUCTIONS = 1000;
+
+/**
+ * Delivery direction for a speech model (tone, pace, emotion), as free text. Only routes that take
+ * direction (OpenRouter's Gemini and Fish Audio speech) receive it; the others read the line plainly.
+ */
+function instructionsParam(params: Record<string, unknown>): string | undefined {
+  const value = params.instructions;
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.trim() === "" ||
+    value.length > MAX_INSTRUCTIONS ||
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is refused.
+    /[\u0000-\u0008\u000b-\u001f\u007f]/.test(value)
+  ) {
+    throw new StudixError(
+      "VALIDATION",
+      `params.instructions must be plain text of at most ${MAX_INSTRUCTIONS} characters`,
+    );
+  }
+  return value.trim();
+}
+
+function voiceArgv(
+  model: QualifiedModel,
+  prompt: string,
+  params: Record<string, unknown>,
+  routeVoice: string | undefined,
+): string[] {
+  const voice = stringParam(params, "voice", TOKEN) ?? routeVoice;
   const language = stringParam(params, "language", LANGUAGE);
+  const instructions = instructionsParam(params);
   switch (model.vendor) {
+    case "openrouter":
+      // The model reads the language from the text; OpenRouter has no language field for speech.
+      return [
+        "openrouter",
+        "tts",
+        `--text=${prompt}`,
+        `--model=${model.model}`,
+        `--format=${PCM_ONLY_SPEECH.test(model.model) ? "wav" : "mp3"}`,
+        ...flag("voice", voice),
+        ...flag("instructions", instructions),
+      ];
     case "elevenlabs":
       return [
         "elevenlabs",

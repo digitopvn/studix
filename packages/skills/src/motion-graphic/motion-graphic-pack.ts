@@ -1,9 +1,7 @@
 import { rm } from "node:fs/promises";
-import { StudixError } from "@studix/shared";
 import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
 import {
   irOf,
-  mapBounded,
   type PackPipeline,
   RenderOutput,
   read,
@@ -22,12 +20,18 @@ import {
   generateStoredMedia,
   type StoredMediaRequest,
 } from "../stored-media.ts";
+import { voiceDirection } from "../voice-direction.ts";
 import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion-graphic-template.ts";
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
 export const MG_STAGES = {
   compose: "motion-graphic.compose",
-  voiceover: "motion-graphic.voiceover",
+  /**
+   * Lays the SFX accent. It is named for the time it also voiced the graphic; the name and cache key are
+   * kept so a re-voiced graphic reuses its paid accent and older jobs still resume.
+   */
+  accent: "motion-graphic.voiceover",
+  voice: "motion-graphic.voice",
   qa: "motion-graphic.qa",
 } as const;
 
@@ -76,15 +80,25 @@ export const motionGraphicComposeStage: StageDefinition = {
   },
 };
 
+const voiceoverOf = (ir: VideoIR) =>
+  typeof ir.metadata?.voiceover === "string" && ir.metadata.voiceover !== ""
+    ? ir.metadata.voiceover
+    : undefined;
+
+/**
+ * The script read in the IR's language with direction from its scenes (hook, message cards, call to
+ * action) and the brand's tone of voice; the worker's media provider picks the speech model.
+ */
 function voiceRequest(s: StageContext): StoredMediaRequest | undefined {
   const ir = irOf(s);
-  const text = typeof ir.metadata?.voiceover === "string" ? ir.metadata.voiceover : undefined;
+  const text = voiceoverOf(ir);
   if (!text) return undefined;
+  const instructions = voiceDirection(ir);
   return {
     assetId: "voiceover",
     kind: "voice",
     prompt: text,
-    params: { language: ir.language },
+    params: { language: ir.language, ...(instructions ? { instructions } : {}) },
     keyPrefix: `generated/${s.job.id}/voiceover`,
     maxCostCents: 0,
   };
@@ -125,54 +139,40 @@ async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMed
   return { ...r, maxCostCents: Math.max(5, Math.ceil(estimate * 2)) };
 }
 
-/** The voice-over and the SFX accent of a graphic that has a script; none for a graphic without one. */
-async function audioRequests(s: StageContext): Promise<StoredMediaRequest[]> {
+/** The SFX accent of a graphic that has a script; none for a graphic without one (it has no voice to lead). */
+async function accentRequests(s: StageContext): Promise<StoredMediaRequest[]> {
+  return voiceoverOf(irOf(s)) ? [await capped(s, sfxRequest(s).request)] : [];
+}
+
+async function voiceRequests(s: StageContext): Promise<StoredMediaRequest[]> {
   const voice = voiceRequest(s);
-  if (!voice) return [];
-  return [await capped(s, voice), await capped(s, sfxRequest(s).request)];
+  return voice ? [await capped(s, voice)] : [];
 }
 
 /**
- * The voice-over of the script, generated with the worker's speech model and laid under the captions, and
- * one SFX accent where the CTA card lands. No music: the voice carries the graphic.
+ * One SFX accent where the CTA card lands, for a graphic with a voice-over. No music: the voice carries the
+ * graphic. The cache key is the one this stage had when it also voiced the graphic: such a cached output
+ * still holds that older voice-over, which the voice stage replaces by id.
  */
-export const motionGraphicVoiceoverStage: StageDefinition = {
-  name: MG_STAGES.voiceover,
-  knowledge: ["voice-performance", "sound"],
+export const motionGraphicAccentStage: StageDefinition = {
+  name: MG_STAGES.accent,
+  knowledge: ["sound"],
   outputSchema: IrOutput,
-  cacheKey: (s) =>
-    stageCacheKey(MG_STAGES.voiceover, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
-  estimateCostCents: async (s) => estimateMediaCents(s, await audioRequests(s)),
+  cacheKey: (s) => stageCacheKey(MG_STAGES.accent, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  estimateCostCents: async (s) => estimateMediaCents(s, await accentRequests(s)),
   async run(s) {
     const ir = irOf(s);
-    const requests = await audioRequests(s);
-    if (requests.length === 0) return { output: { ir } };
-    const workDir = await stageWorkDir(s, MG_STAGES.voiceover);
-    const [voice, sfx] = await mapBounded(
-      requests,
-      requests.length,
-      (r) => generateStoredMedia(s, MG_STAGES.voiceover, r),
-      (m) => [m.usage],
-    );
-    if (!voice || !sfx) throw new StudixError("INTERNAL", "motion-graphic audio returned too few results");
-    const room = ir.format.durationMs - VO_PAD_MS;
+    const [request] = await accentRequests(s);
+    if (!request) return { output: { ir } };
+    const workDir = await stageWorkDir(s, MG_STAGES.accent);
+    const sfx = await generateStoredMedia(s, MG_STAGES.accent, request);
     const accentAt = sfxRequest(s).at;
     const accentRoom = Math.max(1, ir.format.durationMs - accentAt);
-    const usage = [voice.usage, sfx.usage];
-    const ids = new Set([voice.asset.id, sfx.asset.id]);
     const next = {
       ...ir,
-      assets: [...ir.assets.filter((a) => !ids.has(a.id)), voice.asset, sfx.asset],
+      assets: [...ir.assets.filter((a) => a.id !== sfx.asset.id), sfx.asset],
       audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "voiceover-track" && t.id !== "sfx-accent-track"),
-        {
-          id: "voiceover-track",
-          kind: "voiceover" as const,
-          assetId: voice.asset.id,
-          startMs: VO_PAD_MS,
-          durationMs: Math.max(1, Math.min(room, voice.asset.durationMs ?? room)),
-          volume: 1,
-        },
+        ...(ir.audio ?? []).filter((t) => t.id !== "sfx-accent-track"),
         {
           id: "sfx-accent-track",
           kind: "sfx" as const,
@@ -184,7 +184,51 @@ export const motionGraphicVoiceoverStage: StageDefinition = {
       ],
     };
     await rm(workDir, { recursive: true, force: true });
-    return { output: { ir: await billedOnFailure(usage, () => VideoIR.parse(next)) }, usage };
+    return {
+      output: { ir: await billedOnFailure([sfx.usage], () => VideoIR.parse(next)) },
+      usage: [sfx.usage],
+    };
+  },
+};
+
+/**
+ * The voice-over of the script, read with the direction of its scenes and laid under the captions. Its
+ * own stage, so a new voice (another speech model, new direction) costs only the voice.
+ */
+export const motionGraphicVoiceStage: StageDefinition = {
+  name: MG_STAGES.voice,
+  knowledge: ["voice-performance"],
+  outputSchema: IrOutput,
+  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 1, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  estimateCostCents: async (s) => estimateMediaCents(s, await voiceRequests(s)),
+  async run(s) {
+    const ir = irOf(s);
+    const [request] = await voiceRequests(s);
+    if (!request) return { output: { ir } };
+    const workDir = await stageWorkDir(s, MG_STAGES.voice);
+    const voice = await generateStoredMedia(s, MG_STAGES.voice, request);
+    const room = ir.format.durationMs - VO_PAD_MS;
+    const next = {
+      ...ir,
+      assets: [...ir.assets.filter((a) => a.id !== voice.asset.id), voice.asset],
+      // The voice leads the mix, so its track comes first.
+      audio: [
+        {
+          id: "voiceover-track",
+          kind: "voiceover" as const,
+          assetId: voice.asset.id,
+          startMs: VO_PAD_MS,
+          durationMs: Math.max(1, Math.min(room, voice.asset.durationMs ?? room)),
+          volume: 1,
+        },
+        ...(ir.audio ?? []).filter((t) => t.id !== "voiceover-track"),
+      ],
+    };
+    await rm(workDir, { recursive: true, force: true });
+    return {
+      output: { ir: await billedOnFailure([voice.usage], () => VideoIR.parse(next)) },
+      usage: [voice.usage],
+    };
   },
 };
 
@@ -210,7 +254,10 @@ export const motionGraphicQaStage: StageDefinition = {
   },
 };
 
-/** New project: compose -> voice-over -> render -> QA -> upload. Re-render of a version: render -> QA -> upload. */
+/**
+ * New project: compose -> SFX accent -> voice-over -> render -> QA -> upload. Re-render of a version:
+ * render -> QA -> upload.
+ */
 export const motionGraphicPipeline: PackPipeline = {
   renderer: "hyperframes",
   stages: (job, e) =>
@@ -219,7 +266,8 @@ export const motionGraphicPipeline: PackPipeline = {
       : [
           e.brief,
           motionGraphicComposeStage,
-          motionGraphicVoiceoverStage,
+          motionGraphicAccentStage,
+          motionGraphicVoiceStage,
           e.validateIr,
           e.render,
           motionGraphicQaStage,
@@ -233,6 +281,11 @@ export const motionGraphicPack: WorkflowPack = {
   title: "Motion graphic",
   version: 1,
   templates: [motionGraphicSkill],
-  stages: [motionGraphicComposeStage, motionGraphicVoiceoverStage, motionGraphicQaStage],
+  stages: [
+    motionGraphicComposeStage,
+    motionGraphicAccentStage,
+    motionGraphicVoiceStage,
+    motionGraphicQaStage,
+  ],
   pipeline: motionGraphicPipeline,
 };

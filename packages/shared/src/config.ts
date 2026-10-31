@@ -88,6 +88,8 @@ export const ConfigSchema = z
     MULTIX_VIDEO_MODEL: optionalString,
     MULTIX_LIPSYNC_MODEL: optionalString,
     MULTIX_VOICE_MODEL: optionalString,
+    /** Speech model per language, `<language>=<vendor>:<model>[@<voice>]` comma-separated (`vi=openrouter:fish-audio/drama-3`). */
+    MULTIX_VOICE_LANGUAGE_MODELS: optionalString,
     MULTIX_MUSIC_MODEL: optionalString,
     MULTIX_SFX_MODEL: optionalString,
     MULTIX_IMAGE_UPSCALE_MODEL: optionalString,

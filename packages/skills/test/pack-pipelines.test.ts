@@ -21,7 +21,7 @@ import {
   type WorkerJobQueue,
 } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MV_STAGES, packPipelines, packRegistry } from "../src/index.ts";
+import { MG_STAGES, MV_STAGES, packPipelines, packRegistry } from "../src/index.ts";
 
 const clock = { now: () => new Date() };
 const ctx: TenantContext = {
@@ -131,7 +131,14 @@ function fakeRenderer(): RendererAdapter & { rendered: VideoIR[] } {
   };
 }
 
-function harness(options: { storyboard?: StoryboardReviewStatus; qaFails?: boolean } = {}) {
+function harness(
+  options: {
+    storyboard?: StoryboardReviewStatus;
+    qaFails?: boolean;
+    /** Stages whose cached outputs are ignored, as after a change to what they produce. */
+    uncached?: () => readonly string[];
+  } = {},
+) {
   const { jobs } = createInMemoryJobStore(clock);
   const projects = createInMemoryProjectRepository(clock);
   const renders = createInMemoryRenderRepository(clock);
@@ -214,7 +221,14 @@ function harness(options: { storyboard?: StoryboardReviewStatus; qaFails?: boole
     clock,
     logger: createLogger({}, { level: "error", write: () => {} }),
     heartbeatIntervalMs: 10_000,
-    stageCache: createInMemoryStageCache(clock),
+    stageCache: (() => {
+      const cache = createInMemoryStageCache(clock);
+      return {
+        ...cache,
+        get: (c: TenantContext, stage: string, key: string) =>
+          options.uncached?.().includes(stage) ? Promise.resolve(undefined) : cache.get(c, stage, key),
+      } as typeof cache;
+    })(),
     storyboardStatus: async () => options.storyboard,
     services: { media, storage, renderer, qa, workRoot },
   });
@@ -469,6 +483,13 @@ describe("marketing-video pipeline (fake providers)", () => {
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     const kinds = h.generate.mock.calls.map(([, r]) => r.kind);
     expect(kinds.filter((k) => k === "voice")).toHaveLength(3);
+    // Every voice-over is asked for in the IR's language with direction for its beats.
+    for (const [, r] of h.generate.mock.calls.filter(([, r]) => r.kind === "voice")) {
+      expect(r.params).toMatchObject({
+        language: "vi",
+        instructions: expect.stringContaining("call to action"),
+      });
+    }
     expect(kinds.filter((k) => k === "music")).toHaveLength(3);
     expect(kinds.filter((k) => k === "sfx")).toHaveLength(3);
     expect(kinds.filter((k) => k === "video").length).toBeGreaterThanOrEqual(6);
@@ -485,6 +506,29 @@ describe("marketing-video pipeline (fake providers)", () => {
     expect(published.items.filter((r) => r.jobId === job.id)).toHaveLength(3);
     // Every paid call bills once: no dedupe key twice.
     expect(new Set(h.usage.map((u) => u.dedupeKey)).size).toBe(h.usage.length);
+  });
+
+  it("re-voices the ads without paying again for clips, music or SFX", async () => {
+    let uncached: readonly string[] = [];
+    const h = harness({ storyboard: "approved", uncached: () => uncached });
+    const projectId = await newProject(h, "marketing-video");
+    await h.run({ workflowTemplate: "marketing-video" }, projectId);
+    const versionId = (await h.projects.get(ctx, projectId))?.currentVersionId;
+    await h.run({ workflowTemplate: "marketing-video", versionId }, projectId);
+    h.generate.mockClear();
+    h.renderer.rendered.length = 0;
+    uncached = [MV_STAGES.voiceover];
+    const { job, outcome } = await h.run({ workflowTemplate: "marketing-video", versionId }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.generate.mock.calls.map(([, r]) => r.kind)).toEqual(["voice", "voice", "voice"]);
+    expect(h.renderer.rendered).toHaveLength(3);
+    for (const one of h.renderer.rendered) {
+      const voice = one.audio?.filter((t) => t.kind === "voiceover") ?? [];
+      expect(voice).toHaveLength(1);
+      const asset = one.assets.find((a) => a.id === voice[0]?.assetId);
+      expect(asset?.storageKey).toContain(job.id);
+      expect(one.audio?.map((t) => t.kind).sort()).toEqual(["music", "sfx", "voiceover"]);
+    }
   });
 
   it("publishes nothing when the QA hard gate fails", async () => {
@@ -557,6 +601,35 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(h.qaCalls).toEqual([expect.objectContaining({ requireAudio: true, durationMs: 12_000 })]);
     expect((await h.renders.listByProject(ctx, projectId)).items).toHaveLength(1);
     expect((await h.projects.get(ctx, projectId))?.status).toBe("in_review");
+  });
+
+  it("reads the script with direction and re-voices it without paying again for the accent", async () => {
+    let uncached: readonly string[] = [];
+    const h = harness({ uncached: () => uncached });
+    const graphic = {
+      prompt: "Motion graphic giới thiệu tiệm trà Lá Mây",
+      title: "Lá Mây",
+      language: "vi",
+      durationMs: 12_000,
+      keyMessages: ["Trà hái tay mỗi sớm"],
+      callToAction: "Đặt trà ngay",
+    };
+    await h.run({ workflowTemplate: "motion-graphic" }, await newProject(h, "motion-graphic", graphic));
+    const voice = h.generate.mock.calls.find(([, r]) => r.kind === "voice")?.[1];
+    expect(voice?.params).toMatchObject({
+      language: "vi",
+      instructions: expect.stringMatching(/Vietnamese.*lean in.*call to action/),
+    });
+    h.generate.mockClear();
+    h.renderer.rendered.length = 0;
+    uncached = [MG_STAGES.voice];
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.generate.mock.calls.map(([, r]) => r.kind)).toEqual(["voice"]);
+    expect(h.renderer.rendered[0]?.audio?.map((t) => t.kind)).toEqual(["voiceover", "sfx"]);
   });
 
   it("re-renders a stored version through render -> QA -> upload", async () => {

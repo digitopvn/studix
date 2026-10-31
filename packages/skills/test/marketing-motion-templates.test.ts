@@ -345,8 +345,10 @@ describe("pack pipelines", () => {
     const pipeline = packPipelines(packRegistry)("marketing-video");
     const engine = new Proxy({}, { get: (_t, name) => ({ name: `engine.${String(name)}` }) });
     const stages = pipeline?.stages({ fromVersion: true }, engine as never) ?? [];
-    const paid = stages.filter((s) => s.name === "marketing-video.i2v" || s.name === "marketing-video.audio");
-    expect(paid).toHaveLength(2);
+    const paid = stages.filter((s) =>
+      ["marketing-video.i2v", "marketing-video.audio", "marketing-video.voiceover"].includes(s.name),
+    );
+    expect(paid).toHaveLength(3);
     expect(paid.every((s) => s.requiresApprovedStoryboard === true)).toBe(true);
     const mg =
       packPipelines(packRegistry)("motion-graphic")?.stages({ fromVersion: false }, engine as never) ?? [];
