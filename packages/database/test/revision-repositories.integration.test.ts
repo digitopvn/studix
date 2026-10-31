@@ -131,4 +131,34 @@ describe("Postgres stage cache", () => {
     expect(await stageCache.get(other, "compose", "k1")).toBeUndefined();
     expect(await stageCache.get(ctx, "render", "k1")).toBeUndefined();
   });
+
+  it("advanceFromVersionId lets exactly one of two concurrent versions on the same base become current", async () => {
+    const { projects } = db.current.repos;
+    const ctx = await tenant("rev-cas");
+    const { project, v1 } = await projectWithVersion(ctx);
+    await projects.update(ctx, project.id, { currentVersionId: v1.id });
+    const attempt = (path: string, value: string) => {
+      const p = { ops: [{ op: "replace" as const, path, value }] };
+      return projects.createVersion(ctx, {
+        projectId: project.id,
+        ir: applyPatch(v1.ir, p),
+        source: "patch",
+        parentVersionId: v1.id,
+        patch: p,
+        createdBy,
+        advanceFromVersionId: v1.id,
+      });
+    };
+    const results = await Promise.allSettled([
+      attempt("/scenes/2/shots/0/text", "A"),
+      attempt("/scenes/2/shots/1/text", "B"),
+    ]);
+    const won = results.filter((r): r is PromiseFulfilledResult<ProjectVersion> => r.status === "fulfilled");
+    expect(won).toHaveLength(1);
+    expect((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({
+      code: "CONFLICT",
+    });
+    expect((await projects.get(ctx, project.id))?.currentVersionId).toBe(won[0]?.value.id);
+    expect((await projects.listVersions(ctx, project.id)).items).toHaveLength(2);
+  });
 });

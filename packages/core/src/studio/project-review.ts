@@ -602,6 +602,23 @@ export async function submitFeedback(
   const nextIr = input.patch ? applyPatch(base.ir, input.patch) : undefined;
 
   const author = actorRef(ctx.actor);
+  // Create the version first: the compare-and-set on the base makes a concurrent patch on the same base fail
+  // with CONFLICT before any comment is stored, so a retry against the new current version does not duplicate it.
+  const version =
+    nextIr && input.patch
+      ? await deps.projects.createVersion(ctx, {
+          projectId: project.id,
+          ir: nextIr,
+          source: "patch",
+          parentVersionId: base.id,
+          patch: {
+            description: input.patch.description ?? input.comment.slice(0, 500),
+            ops: input.patch.ops,
+          },
+          createdBy: author,
+          advanceFromVersionId: base.id,
+        })
+      : undefined;
   const feedback = await deps.reviews.create(ctx, {
     projectId: project.id,
     versionId: base.id,
@@ -619,7 +636,7 @@ export async function submitFeedback(
     allowedPaths: target.allowedPaths,
     replayed: false,
   };
-  if (!nextIr || !input.patch) {
+  if (!version) {
     const example = target.allowedPaths[0];
     return {
       ...common,
@@ -645,15 +662,6 @@ export async function submitFeedback(
     };
   }
 
-  const version = await deps.projects.createVersion(ctx, {
-    projectId: project.id,
-    ir: nextIr,
-    source: "patch",
-    parentVersionId: base.id,
-    patch: { description: input.patch.description ?? input.comment.slice(0, 500), ops: input.patch.ops },
-    createdBy: author,
-  });
-  await deps.projects.update(ctx, project.id, { currentVersionId: version.id });
   await deps.revisions.recordVersion(ctx, base.id);
   const recorded = await deps.revisions.recordVersion(ctx, version.id);
   const queued = await enqueueVersionJob(deps, ctx, {

@@ -63,6 +63,22 @@ describe("project review", () => {
     expect(review.storyboard?.scenes[0]?.shots[0]).toMatchObject({ changed: false, revision: 1 });
   });
 
+  it("two concurrent patches on the same base: one wins, the other gets CONFLICT and leaves nothing behind", async () => {
+    const { studio, ctx, projectId } = await setup();
+    const send = (shotId: string, path: string, text: string) =>
+      studio.submitFeedback(ctx, { projectId, shotId, comment: text, patch: replaceText(path, text) });
+    const results = await Promise.allSettled([
+      send("feature-1", "/scenes/2/shots/0/text", "Bản A"),
+      send("feature-2", "/scenes/2/shots/1/text", "Bản B"),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: "CONFLICT" });
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.versions).toHaveLength(2);
+    expect(review.comments).toHaveLength(1);
+  });
+
   it("refuses a patch that reaches outside the feedback target, and stores nothing", async () => {
     const { studio, ctx, projectId } = await setup();
     await expect(
