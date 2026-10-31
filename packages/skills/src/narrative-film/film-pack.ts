@@ -24,7 +24,9 @@ import {
   irOf,
   jobScopedId,
   mapBounded,
+  markInReview,
   type PackPipeline,
+  PlanOutput,
   payloadOf,
   RenderOutput,
   read,
@@ -63,6 +65,7 @@ import {
 } from "./film-prompts.ts";
 import {
   FilmScope,
+  type FilmScopeShot,
   filmFrameSize,
   isVideoTier,
   productionFromScope,
@@ -75,6 +78,8 @@ import {
 
 /** Parallel upstream calls per stage. */
 const MEDIA_CONCURRENCY = 3;
+/** A shot's keyframe is redrawn at most this many times on reviewer request; later fixes go through a patch. */
+const MAX_KEYFRAME_REDRAWS = 2;
 /** Per-call ceiling over the provider's own estimate; the provider refuses anything above it. */
 const capOf = (estimateCents: number) => Math.max(5, Math.ceil(estimateCents * 2));
 /** Image-to-video clip bounds; the edit plays the head of a clip longer than its shot. */
@@ -124,6 +129,7 @@ export interface FilmPackStageNames {
   g1: string;
   storyboard: string;
   keyframes: string;
+  redraw: string;
   dialogue: string;
   motion: string;
   lipsync: string;
@@ -140,6 +146,7 @@ export const filmStageNames = (id: string): FilmPackStageNames => ({
   g1: `${id}.gate-g1`,
   storyboard: `${id}.storyboard`,
   keyframes: `${id}.keyframes`,
+  redraw: `${id}.redraw`,
   dialogue: `${id}.dialogue`,
   motion: `${id}.motion`,
   lipsync: `${id}.lipsync`,
@@ -300,6 +307,66 @@ function hasFilmFrame(asset: AssetRef | undefined, scope: Pick<FilmScope, "aspec
   return (
     Math.abs(asset.width * frame.height - asset.height * frame.width) <= 0.01 * asset.height * frame.width
   );
+}
+
+/** Version of a keyframe asset id: `<shot>-key` is 1, a redraw `<shot>-key-v<n>` is n; else undefined. */
+function keyframeVersion(assetId: string, shotId: string): number | undefined {
+  const base = `${shotId}-key`;
+  if (assetId === base) return 1;
+  const rest = assetId.startsWith(`${base}-v`) ? assetId.slice(base.length + 2) : "";
+  return /^[0-9]{1,4}$/.test(rest) ? Number(rest) : undefined;
+}
+
+function keyframeAssetId(shotId: string, version: number): string {
+  if (version === 1) return `${shotId}-key`.slice(0, 64);
+  const id = `${shotId}-key-v${version}`;
+  if (id.length > 64)
+    throw new StudixError("VALIDATION", `Shot id ${shotId} is too long to version its keyframe`, {
+      retryable: false,
+    });
+  return id;
+}
+
+/**
+ * The image request of one shot's keyframe at `version`. Identity comes from the lead character's sheet (a
+ * model sheet conditions better than a prose prompt); `revision` is a reviewer's note on a redraw.
+ */
+function keyframeRequest(
+  jobId: string,
+  ir: VideoIR,
+  film: FilmMetadata,
+  setId: string,
+  shot: FilmScopeShot,
+  board: ShotBoard,
+  version: number,
+  revision?: string,
+) {
+  const lead = shot.characters[0];
+  const sheet = lead
+    ? film.production.characters
+        .find((c) => c.characterId === lead)
+        ?.references.find((r) => r.status !== "retired")
+    : undefined;
+  const framed =
+    sheet !== undefined &&
+    hasFilmFrame(
+      ir.assets.find((a) => a.id === sheet.assetId),
+      film.scope,
+    );
+  const assetId = keyframeAssetId(shot.id, version);
+  return {
+    shot,
+    board,
+    sheet,
+    request: {
+      assetId,
+      kind: "image" as const,
+      prompt: keyframePrompt(film.scope, setId, shot, board.frame, revision),
+      params: framed ? {} : { aspectRatio: film.scope.aspectRatio },
+      keyPrefix: `generated/${jobId}/keyframes/${version === 1 ? shot.id : assetId}`,
+      maxCostCents: 0,
+    } satisfies StoredMediaRequest,
+  };
 }
 
 /** Replace shots of an IR by id. */
@@ -643,35 +710,9 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
     const film = filmOf(ir);
     const { boards } = read(boardsOutput, s.outputs[n.storyboard], "storyboard checkpoint");
     const byShot = boardsFor(film.scope, boards);
-    return scopeShots(film.scope).map(({ scene, shot }) => {
-      const board = byShot.get(shot.id) as ShotBoard;
-      // Identity comes from the first character's sheet: a model sheet conditions better than a prose prompt.
-      const lead = shot.characters[0];
-      const sheet = lead
-        ? film.production.characters
-            .find((c) => c.characterId === lead)
-            ?.references.find((r) => r.status !== "retired")
-        : undefined;
-      const framed =
-        sheet !== undefined &&
-        hasFilmFrame(
-          ir.assets.find((a) => a.id === sheet.assetId),
-          film.scope,
-        );
-      return {
-        shot,
-        board,
-        sheet,
-        request: {
-          assetId: `${shot.id}-key`.slice(0, 64),
-          kind: "image" as const,
-          prompt: keyframePrompt(film.scope, scene.setId, shot, board.frame),
-          params: framed ? {} : { aspectRatio: film.scope.aspectRatio },
-          keyPrefix: `generated/${s.job.id}/keyframes/${shot.id}`,
-          maxCostCents: 0,
-        } satisfies StoredMediaRequest,
-      };
-    });
+    return scopeShots(film.scope).map(({ scene, shot }) =>
+      keyframeRequest(s.job.id, ir, film, scene.setId, shot, byShot.get(shot.id) as ShotBoard, 1),
+    );
   };
 
   /** After G1: the approved sheets become canonical, then one keyframe per shot conditioned on them. */
@@ -735,6 +776,129 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       if (issues.length > 0)
         failIssues("The storyboard breaks continuity", issues, "Submit a new job to redraw the storyboard.");
       return { output: { ir: next }, usage: made.map((m) => m.usage) };
+    },
+  };
+
+  /** The keyframes a reviewer asked to change on the storyboard, each at its next version with the note. */
+  const redrawRequests = (s: StageContext) => {
+    const ir = irOf(s);
+    const film = filmOf(ir);
+    const boards = new Map((film.boards ?? []).map((b) => [b.shotId, b]));
+    const placed = new Map(scopeShots(film.scope).map((p) => [p.shot.id, p]));
+    return (payloadOf(s).storyboardRedraw ?? []).map(({ shotId, note }) => {
+      const at = placed.get(shotId);
+      const board = boards.get(shotId);
+      const current = at && board ? irShot(ir, shotId) : undefined;
+      if (!at || !board || current?.type !== "image")
+        throw new StudixError("VALIDATION", `Shot ${shotId} has no keyframe on this storyboard`, {
+          retryable: false,
+          details: { shotId },
+        });
+      const version = keyframeVersion(current.assetId, shotId);
+      if (version === undefined)
+        throw new StudixError("VALIDATION", `Shot ${shotId} shows ${current.assetId}, not a pack keyframe`, {
+          retryable: false,
+          details: { shotId, assetId: current.assetId },
+          suggestedAction: "Change this shot with a studix_feedback patch instead.",
+        });
+      if (version > MAX_KEYFRAME_REDRAWS)
+        throw new StudixError(
+          "VALIDATION",
+          `Shot ${shotId} was already redrawn ${MAX_KEYFRAME_REDRAWS} times on request`,
+          {
+            retryable: false,
+            details: { shotId, assetId: current.assetId },
+            suggestedAction: "Approve the shot, or change it with a studix_feedback patch.",
+          },
+        );
+      return {
+        ...keyframeRequest(s.job.id, ir, film, at.scene.setId, at.shot, board, version + 1, note),
+        current,
+      };
+    });
+  };
+
+  /**
+   * Storyboard changes requested on shots -> a new keyframe for each named shot only, with the reviewer's
+   * note in its prompt and the same sheet conditioning. The replaced keyframe stays in the IR as history.
+   * The result is stored as a child of the reviewed version (current unless someone moved the project on),
+   * the project goes back to review and the job ends: unchanged shots keep their review state.
+   */
+  const redrawStage: StageDefinition = {
+    name: n.redraw,
+    knowledge: config.knowledge.storyboard,
+    estimateCostCents: (s) => estimateOf(s, redrawRequests(s)),
+    async run(s) {
+      const { projectId } = payloadOf(s);
+      const { versionId } = read(PlanOutput, s.outputs.plan, "plan checkpoint");
+      if (versionId === undefined)
+        throw new StudixError("INTERNAL", "A storyboard redraw needs the reviewed version", {
+          retryable: false,
+        });
+      const ir = irOf(s);
+      const film = filmOf(ir);
+      const planned = await withCaps(s, redrawRequests(s));
+      const sheetIds = new Set(planned.flatMap((p) => (p.sheet ? [p.sheet.assetId] : [])));
+      const sheetFiles = await downloadMediaInputs(s, n.redraw, ir, sheetIds);
+      let done = 0;
+      const made = await mapBounded(
+        planned,
+        MEDIA_CONCURRENCY,
+        async (p) => {
+          const image = p.sheet ? localFile(sheetFiles, p.sheet.assetId) : undefined;
+          const media = await generateStoredMedia(s, n.redraw, {
+            ...p.request,
+            params: { ...p.request.params, ...(image ? { image } : {}) },
+          });
+          s.reportProgress(++done / planned.length);
+          return { ...p, ...media };
+        },
+        (r) => [r.usage],
+      );
+      const usage = made.map((m) => m.usage);
+      return billedOnFailure(usage, async () => {
+        const next = replaceShots(
+          ir,
+          new Map(made.map((m) => [m.shot.id, { ...m.current, assetId: m.asset.id }])),
+          made.map((m) => m.asset),
+        );
+        const issues = filmProductionIssues(
+          film.production,
+          storyboardFromScope(film.scope, next.assets),
+          "design",
+        );
+        if (issues.length > 0)
+          failIssues("The redrawn storyboard breaks continuity", issues, "Change the shots with a patch.");
+        const nextVersionId = jobScopedId("pver", s.job.id);
+        await s.commit(async (repos, ctx) => {
+          if (!(await repos.projects.getVersion(ctx, nextVersionId))) {
+            await repos.projects.createVersion(ctx, {
+              id: nextVersionId,
+              projectId,
+              ir: next,
+              source: "planner",
+              parentVersionId: versionId,
+              createdBy: { type: "system", id: ctx.actor.id },
+              // Only on top of the reviewed version: a newer version means someone moved on, so stop here.
+              advanceFrom: versionId,
+            });
+          }
+          await markInReview(repos, ctx, projectId, nextVersionId, ["rendering", "in_review"]);
+        });
+        return {
+          output: {
+            ir: next,
+            projectVersionId: nextVersionId,
+            storyboard: "in_review",
+            redrawn: made.map((m) => ({
+              shotId: m.shot.id,
+              assetId: m.asset.id,
+              replaced: m.current.assetId,
+            })),
+          },
+          usage,
+        };
+      });
     },
   };
 
@@ -1213,33 +1377,42 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
   const pipeline: PackPipeline = {
     renderer: "hyperframes",
     stages: (job, e) =>
-      job.fromVersion
-        ? [
-            e.plan,
-            e.validateIr,
-            dialogueStage,
-            motionStage,
-            lipsyncStage,
-            scoreStage,
-            continuityStage,
-            e.render,
-            qaStage,
-            e.upload,
-            e.finalize,
-          ]
-        : [
-            e.brief,
-            scopeStage,
-            bibleStage,
-            g0,
-            designsStage,
-            g1,
-            storyboardStage,
-            keyframesStage,
-            e.validateIr,
-            e.storyboardReady,
-          ],
-    result: (outputs) => outputs.finalize ?? outputs.storyboard_ready ?? {},
+      job.fromVersion && job.redraw
+        ? [e.plan, redrawStage]
+        : job.fromVersion
+          ? [
+              e.plan,
+              e.validateIr,
+              dialogueStage,
+              motionStage,
+              lipsyncStage,
+              scoreStage,
+              continuityStage,
+              e.render,
+              qaStage,
+              e.upload,
+              e.finalize,
+            ]
+          : [
+              e.brief,
+              scopeStage,
+              bibleStage,
+              g0,
+              designsStage,
+              g1,
+              storyboardStage,
+              keyframesStage,
+              e.validateIr,
+              e.storyboardReady,
+            ],
+    result: (outputs) => {
+      const redrawn = outputs[n.redraw];
+      if (redrawn) {
+        const { ir: _ir, ...rest } = redrawn;
+        return rest;
+      }
+      return outputs.finalize ?? outputs.storyboard_ready ?? {};
+    },
   };
 
   let scopeSchema: Record<string, unknown> | undefined;
@@ -1284,6 +1457,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       g1,
       storyboardStage,
       keyframesStage,
+      redrawStage,
       dialogueStage,
       motionStage,
       lipsyncStage,

@@ -153,7 +153,13 @@ Behavior notes:
   request changes on named designs instead (see the next section): the job
   redraws only those sheets or set frames, with the note added to the prompt and
   the bible's anchors kept, publishes the revised board as a new version and
-  asks G1 again. Each redraw is billed once. After a person approves the
+  asks G1 again. Each redraw is billed once. If the reviewer requests changes
+  on storyboard shots, `studix_render` on the current version redraws only
+  those keyframes, with each shot's note added to the prompt and the same sheet
+  conditioning. It then publishes the result as a new version that is back
+  `in_review`, keeps the old frames as history and renders nothing. Each shot is
+  redrawn at most twice; a third request fails with `VALIDATION` before any
+  paid call. After a person approves the
   storyboard, `studix_render` records the dialogue first, turns T2/T3 shots into
   480p image-to-video clips and T0/T1 shots into film-engine scenes, lip-syncs
   every shot with a visible speaker on the recorded line, adds one score cue per
@@ -231,6 +237,8 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
   with `replayed: true`; the same key with a different comment or with a patch
   is `CONFLICT`.
 - `studix_render` renders a stored version, and that version becomes current.
+  A film storyboard redraw (above) is the exception: its job's new version
+  becomes current only once it is committed, back in review.
   Both tools accept `idempotencyKey` and `budgetCents`. A budget above the
   approval threshold parks the job in `waiting_approval`.
 - Permissions: a patch or a render needs `project:write`. A comment needs

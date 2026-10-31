@@ -541,6 +541,86 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(new Set(usage.map((u) => u.dedupeKey)).size).toBe(usage.length);
   });
 
+  it("redraws only the storyboard shots a reviewer sent back, with their notes, at most twice each", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-${pack}-redraw`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G1");
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+    const board = await currentIr(ctx, project.id);
+    world.requests.length = 0;
+
+    // The reviewer sent s2 and s4 back; the render request carries the shots and their notes.
+    const redraw = [
+      { shotId: "s2", note: "No cream bars at the sides; the picture fills the frame" },
+      { shotId: "s4", note: "Tùng in a long-sleeved white shirt and black trousers, as in s3" },
+    ];
+    const first = await enqueue(ctx, project.id, pack, {
+      versionId: board.version.id,
+      makeCurrent: false,
+      storyboardRedraw: redraw,
+    });
+    const outcome = await world.runOnce(first.id);
+    expect(outcome, JSON.stringify((await world.repos.jobs.get(ctx, first.id))?.error)).toBe("succeeded");
+    const calls = [...world.requests].sort((a, b) => a.idempotencyKey.localeCompare(b.idempotencyKey));
+    expect(calls.map((r) => r.idempotencyKey)).toEqual([
+      `${first.id}:${n.redraw}:s2-key-v2`,
+      `${first.id}:${n.redraw}:s4-key-v2`,
+    ]);
+    expect(calls[0]?.prompt).toContain(`Reviewer's correction, apply it exactly: ${redraw[0]!.note}`);
+    expect(calls[1]?.prompt).toContain(redraw[1]!.note);
+    // Same identity conditioning as the first keyframes: Mai's sheet, already in the film's frame.
+    expect(
+      calls.every((r) => typeof r.params?.image === "string" && r.params.aspectRatio === undefined),
+    ).toBe(true);
+    expect(world.rendered).toHaveLength(0);
+
+    const redrawn = await currentIr(ctx, project.id);
+    expect(redrawn.version.parentVersionId).toBe(board.version.id);
+    expect(redrawn.project.status).toBe("in_review");
+    expect(
+      redrawn.ir.scenes[0]?.shots.map((sh) => [sh.id, "assetId" in sh ? sh.assetId : undefined]),
+    ).toEqual([
+      ["s1", "s1-key"],
+      ["s2", "s2-key-v2"],
+      ["s3", "s3-key"],
+      ["s4", "s4-key-v2"],
+      ["s5", "s5-key"],
+    ]);
+    // The replaced frames stay as history.
+    expect(redrawn.ir.assets.map((a) => a.id)).toEqual(expect.arrayContaining(["s2-key", "s4-key"]));
+    expect((await world.repos.jobs.get(ctx, first.id))?.result).toMatchObject({
+      projectVersionId: redrawn.version.id,
+      redrawn: [
+        { shotId: "s2", assetId: "s2-key-v2", replaced: "s2-key" },
+        { shotId: "s4", assetId: "s4-key-v2", replaced: "s4-key" },
+      ],
+    });
+    const usage = (await world.repos.usage.list(ctx, { jobId: first.id, limit: 50 })).items;
+    expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(2);
+
+    // A second redraw of s2 is v3; a third is refused before any call.
+    const second = await enqueue(ctx, project.id, pack, {
+      versionId: redrawn.version.id,
+      makeCurrent: false,
+      storyboardRedraw: [{ shotId: "s2" }],
+    });
+    expect(await world.runOnce(second.id)).toBe("succeeded");
+    expect(world.requests.at(-1)?.idempotencyKey).toBe(`${second.id}:${n.redraw}:s2-key-v3`);
+    const third = await enqueue(ctx, project.id, pack, {
+      versionId: (await currentIr(ctx, project.id)).version.id,
+      makeCurrent: false,
+      storyboardRedraw: [{ shotId: "s2" }],
+    });
+    const before = world.requests.length;
+    expect(await world.runOnce(third.id)).toBe("failed");
+    expect(await world.repos.jobs.get(ctx, third.id)).toMatchObject({ error: { code: "VALIDATION" } });
+    expect(world.requests).toHaveLength(before);
+  });
+
   it("fails the job and spends nothing on designs when the reviewer rejects G0", async () => {
     const world = createWorld();
     const { ctx, project } = await newFilm(`film-${pack}-reject`, pack);

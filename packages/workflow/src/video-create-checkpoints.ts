@@ -15,6 +15,15 @@ export const VideoCreatePayload = z.object({
   renderPreset: RenderPreset.default("preview"),
   planner: PlannerSelection.optional(),
   workflowTemplate: WorkflowTemplateId.optional(),
+  /**
+   * The storyboard shots a reviewer asked to change, with their notes: the job redraws only these shots
+   * and stops at the storyboard instead of rendering.
+   */
+  storyboardRedraw: z
+    .array(z.object({ shotId: z.string().min(1).max(64), note: z.string().max(1000).optional() }))
+    .min(1)
+    .max(240)
+    .optional(),
 });
 export const PlanOutput = z.object({ ir: z.unknown(), versionId: z.string().optional() });
 export const ValidateOutput = z.object({ versionId: z.string() });

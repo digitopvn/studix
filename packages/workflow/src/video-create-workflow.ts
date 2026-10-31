@@ -331,6 +331,7 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
           {
             fromVersion: payload.versionId !== undefined,
             feedback: payload.versionId !== undefined && payload.feedbackId !== undefined,
+            redraw: payload.versionId !== undefined && payload.storyboardRedraw !== undefined,
           },
           engine,
         ),
