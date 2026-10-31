@@ -99,6 +99,53 @@ describe("project review", () => {
     );
   });
 
+  describe("a comment without a patch sent again with the same key", () => {
+    const comment = (env: Awaited<ReturnType<typeof setup>>, extra: Record<string, unknown> = {}) => ({
+      projectId: env.projectId,
+      shotId: "feature-1",
+      comment: "tiêu đề hơi dài",
+      idempotencyKey: "c-1",
+      ...extra,
+    });
+
+    it("returns the stored comment and stores no second one, also for retries sent at once", async () => {
+      const env = await setup();
+      const first = await env.studio.submitFeedback(env.ctx, comment(env));
+      expect(first.replayed).toBe(false);
+      const again = await env.studio.submitFeedback(env.ctx, comment(env));
+      expect(again).toMatchObject({ replayed: true, feedbackId: first.feedbackId });
+      expect(again.baseVersionId).toBe(first.baseVersionId);
+      expect(again.shots).toEqual(first.shots);
+
+      const burst = await Promise.all(
+        [1, 2, 3].map(() => env.studio.submitFeedback(env.ctx, comment(env, { idempotencyKey: "c-2" }))),
+      );
+      expect(new Set(burst.map((r) => r.feedbackId)).size).toBe(1);
+      expect((await env.studio.getProjectReview(env.ctx, env.projectId)).comments).toHaveLength(2);
+    });
+
+    it("refuses the key for a different comment or a patch, and a retry still finds the first", async () => {
+      const env = await setup();
+      const first = await env.studio.submitFeedback(env.ctx, comment(env));
+      await expect(
+        env.studio.submitFeedback(env.ctx, comment(env, { comment: "nội dung khác" })),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      await expect(
+        env.studio.submitFeedback(
+          env.ctx,
+          comment(env, { patch: replaceText("/scenes/2/shots/0/text", "Mới") }),
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      const review = await env.studio.getProjectReview(env.ctx, env.projectId);
+      expect(review.comments).toHaveLength(1);
+      expect(review.versions).toHaveLength(1);
+      expect(await env.studio.submitFeedback(env.ctx, comment(env))).toMatchObject({
+        replayed: true,
+        feedbackId: first.feedbackId,
+      });
+    });
+  });
+
   describe("a feedback request that stopped after its version was stored", () => {
     async function failOnce(env: Awaited<ReturnType<typeof setup>>, step: "recordVersion" | "enqueue") {
       const target = step === "recordVersion" ? env.repos.revisions : env.repos.queue;

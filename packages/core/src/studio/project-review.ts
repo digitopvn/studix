@@ -142,6 +142,33 @@ async function assertSameRequest(
   }
 }
 
+/**
+ * A retry may return the comment stored under its key only when it is the same comment, on the same version,
+ * with no patch: a key already spent on a different request must not silently answer for this one.
+ */
+async function replayCommentBase(
+  deps: Deps,
+  ctx: TenantContext,
+  stored: Review,
+  input: FeedbackInputParsed,
+): Promise<ProjectVersion> {
+  const base = stored.versionId ? await deps.projects.getVersion(ctx, stored.versionId) : undefined;
+  const sameRequest =
+    base !== undefined &&
+    !input.patch &&
+    stored.body === input.comment &&
+    stored.atMs === input.startMs &&
+    stored.endMs === input.endMs &&
+    stored.targetId === resolveTarget(base.ir, input).key &&
+    (input.baseVersionId === undefined || input.baseVersionId === base.id);
+  if (!base || !sameRequest) {
+    throw new StudixError("CONFLICT", "idempotency key was used for a different request", {
+      suggestedAction: "Use a new idempotencyKey for a different feedback.",
+    });
+  }
+  return base;
+}
+
 /** The version a stored patch version was derived from. */
 async function requireParentVersion(
   deps: Deps,
@@ -636,7 +663,15 @@ export async function submitFeedback(
     : undefined;
   let base: ProjectVersion;
   let feedbackId = version?.feedbackId ?? newId("rev");
-  if (version) {
+  // A comment sent without a patch stores no version or job, so its key lives on the comment.
+  const storedComment =
+    !version && input.idempotencyKey
+      ? await deps.reviews.findByIdempotencyKey(ctx, project.id, input.idempotencyKey)
+      : undefined;
+  if (storedComment) {
+    base = await replayCommentBase(deps, ctx, storedComment, input);
+    feedbackId = storedComment.id;
+  } else if (version) {
     await assertSameRequest(deps, ctx, project.id, version, input);
     base = await requireParentVersion(deps, ctx, version);
   } else {
@@ -691,6 +726,8 @@ export async function submitFeedback(
     (await deps.reviews
       .create(ctx, {
         id: feedbackId,
+        // Only a comment without a patch needs the key here; a patch keeps it on its version.
+        idempotencyKey: input.patch ? undefined : input.idempotencyKey,
         projectId: project.id,
         versionId: base.id,
         author,
@@ -711,7 +748,8 @@ export async function submitFeedback(
     baseVersionId: base.id,
     shots: target.shots,
     allowedPaths: target.allowedPaths,
-    replayed: false,
+    // A comment stored earlier under this key, or by a concurrent request with it, is the answer.
+    replayed: !version && (storedComment !== undefined || feedback.id !== feedbackId),
   };
   if (!version) {
     const example = target.allowedPaths[0];

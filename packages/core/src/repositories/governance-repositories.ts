@@ -52,8 +52,13 @@ export interface ApprovalRepository {
 export type NewReview = Omit<NewRecord<Review>, "status">;
 
 export interface ReviewRepository {
+  /**
+   * With an `idempotencyKey`, a comment already stored under that key in the project is returned instead of
+   * a new one, so concurrent callers with the same key converge on one comment.
+   */
   create(ctx: TenantContext, input: NewReview): Promise<Review>;
   get(ctx: TenantContext, id: string): Promise<Review | undefined>;
+  findByIdempotencyKey(ctx: TenantContext, projectId: string, key: string): Promise<Review | undefined>;
   list(
     ctx: TenantContext,
     query: PageRequest & { projectId: string; versionId?: string },

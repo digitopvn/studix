@@ -19,6 +19,8 @@ export interface Review extends TenantOwned {
   /** End (exclusive) of the commented time range; only with `atMs`. */
   endMs?: number;
   status: ReviewStatus;
+  /** Set on a comment sent without a patch; unique per project, so a retry finds this comment. */
+  idempotencyKey?: string;
   updatedAt: Date;
 }
 

@@ -203,16 +203,17 @@ function toReview(row: typeof reviews.$inferSelect): Review {
     atMs: opt(row.atMs),
     endMs: opt(row.endMs),
     status: row.status,
+    idempotencyKey: opt(row.idempotencyKey),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
 export function createReviewRepository(db: StudixDb, clock: Clock): ReviewRepository {
-  return {
+  const repo: ReviewRepository = {
     async create(ctx, input) {
       const now = clock.now();
-      const rows = await db
+      const inserted = await db
         .insert(reviews)
         .values({
           id: input.id ?? newId("rev"),
@@ -226,11 +227,29 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
           atMs: input.atMs ?? null,
           endMs: input.endMs ?? null,
           status: "open",
+          idempotencyKey: input.idempotencyKey ?? null,
           createdAt: now,
           updatedAt: now,
         })
+        .onConflictDoNothing({
+          target: [reviews.projectId, reviews.idempotencyKey],
+          where: sql`${reviews.idempotencyKey} is not null`,
+        })
         .returning();
-      return toReview(first(rows, "review"));
+      if (inserted[0]) return toReview(inserted[0]);
+      // Lost the race on the key: the comment stored first is the answer.
+      const stored = input.idempotencyKey
+        ? await repo.findByIdempotencyKey(ctx, input.projectId, input.idempotencyKey)
+        : undefined;
+      if (!stored) throw new StudixError("CONFLICT", "review could not be stored");
+      return stored;
+    },
+    async findByIdempotencyKey(ctx, projectId, key) {
+      const rows = await db
+        .select()
+        .from(reviews)
+        .where(scoped(reviews, ctx, eq(reviews.projectId, projectId), eq(reviews.idempotencyKey, key)));
+      return rows[0] ? toReview(rows[0]) : undefined;
     },
     async get(ctx, id) {
       const rows = await db
@@ -266,6 +285,7 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
       return toReview(first(rows, `review ${id}`));
     },
   };
+  return repo;
 }
 
 function toAudit(row: typeof auditEvents.$inferSelect): AuditEvent {

@@ -75,10 +75,20 @@ export function createInMemoryReviewRepository(clock: Clock): ReviewRepository {
   const reviews = new InMemoryTenantTable<Review>("rev", clock);
   return {
     async create(ctx, input) {
+      if (input.idempotencyKey !== undefined) {
+        const existing = reviews.filter(
+          ctx,
+          (r) => r.projectId === input.projectId && r.idempotencyKey === input.idempotencyKey,
+        )[0];
+        if (existing) return existing;
+      }
       return reviews.insert(ctx, { ...input, status: "open" });
     },
     async get(ctx, id) {
       return reviews.get(ctx, id);
+    },
+    async findByIdempotencyKey(ctx, projectId, key) {
+      return reviews.filter(ctx, (r) => r.projectId === projectId && r.idempotencyKey === key)[0];
     },
     async list(ctx, query) {
       return reviews.page(
