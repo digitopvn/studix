@@ -188,11 +188,22 @@ export const RequestApprovalInput = z.object({
 });
 export type RequestApprovalInput = z.input<typeof RequestApprovalInput>;
 
-export const DecideApprovalInput = z.object({
-  approvalId: z.string().min(1).max(100),
-  decision: z.enum(["approved", "rejected"]),
-  comment: z.string().trim().max(2000).optional(),
-});
+/** `changes_requested` (creative gates only) names the assets to redo in `targets`; `comment` is the note. */
+export const DecideApprovalInput = z
+  .object({
+    approvalId: z.string().min(1).max(100),
+    decision: z.enum(["approved", "rejected", "changes_requested"]),
+    comment: z.string().trim().max(2000).optional(),
+    targets: z.array(IrId).min(1).max(20).optional(),
+  })
+  .refine((v) => (v.decision === "changes_requested") === (v.targets !== undefined), {
+    message: "targets are required with changes_requested and not allowed otherwise",
+    path: ["targets"],
+  })
+  .refine((v) => v.decision !== "changes_requested" || (v.comment ?? "").length > 0, {
+    message: "a change request needs a comment saying what to change",
+    path: ["comment"],
+  });
 export type DecideApprovalInput = z.input<typeof DecideApprovalInput>;
 
 export const RecordAuditInput = z.object({

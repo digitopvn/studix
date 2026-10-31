@@ -61,6 +61,13 @@ saving keys is disabled. Losing it makes every stored key unreadable, so back
 it up with the database secrets. To rotate it, move the old value to
 `STUDIX_SECRETS_KEYS_PREVIOUS` and set a new one.
 
+Keys for the Pi runtime and the per-stage model preferences need no extra
+setting: they use the same `STUDIX_SECRETS_KEY`, which the worker also needs to
+run a stage on a workspace key. Without it the worker keeps the operator's
+default routing. The Pi SDK and its model catalog are pinned in
+`packages/agent-runtime/package.json`; upgrading it can change which models the
+dashboard offers.
+
 The Claude planner is off unless `STUDIX_CLAUDE_PLANNER=true`. Set it on both
 the app (so job creation accepts a `planner` selection) and the worker. The
 worker then also needs the same `STUDIX_SECRETS_KEY` to open the selected key,
@@ -241,8 +248,10 @@ npx wrangler@4 deploy        # needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TO
 
 On SIGTERM the worker stops claiming, lets the running attempt finish within
 the grace period, then aborts and releases the lease so another pod reclaims
-the job. An attempt that fails while the pool is draining (for example because
-Puppeteer closes Chrome on SIGTERM) is released, not failed
+the job. Chrome keeps rendering through the grace period: the HyperFrames
+engine is patched so Puppeteer does not close it on SIGTERM (see
+`docs/RENDERER.md`). An attempt that fails while the pool is draining anyway is
+released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.

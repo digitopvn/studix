@@ -5,13 +5,14 @@ export interface ProviderKeyTestResult {
   at: Date;
   latencyMs: number;
   httpStatus?: number;
-  /** `invalid`: the key is rejected; `unverified`: Anthropic could not confirm it right now. */
+  /** `invalid`: the key is rejected; `unverified`: the provider could not confirm it right now. */
   verdict: "available" | "invalid" | "unverified";
   error?: StudixErrorPayload;
 }
 
 export interface ProviderKeyTester {
-  test(apiKey: string): Promise<ProviderKeyTestResult>;
+  /** `provider` is the connection's provider id; a single-provider tester may ignore it. */
+  test(apiKey: string, provider: string): Promise<ProviderKeyTestResult>;
 }
 
 export interface AnthropicKeyTesterOptions {

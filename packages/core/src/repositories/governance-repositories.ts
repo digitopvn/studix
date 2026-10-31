@@ -2,6 +2,7 @@ import type { NewRecord } from "../entities/common.ts";
 import type {
   Approval,
   ApprovalAction,
+  ApprovalChanges,
   ApprovalStatus,
   ApprovalSubject,
   Review,
@@ -11,13 +12,18 @@ import type { AuditEvent } from "../entities/telemetry.ts";
 import type { ActorRef, TenantContext } from "../tenant.ts";
 import type { Page, PageRequest } from "./pagination.ts";
 
-export type NewApproval = Omit<NewRecord<Approval>, "status" | "decidedBy" | "decidedAt" | "comment">;
+export type NewApproval = Omit<
+  NewRecord<Approval>,
+  "status" | "decidedBy" | "decidedAt" | "comment" | "changes"
+>;
 
 export interface ApprovalDecision {
   status: Exclude<ApprovalStatus, "pending">;
   decidedBy?: ActorRef;
   decidedAt: Date;
   comment?: string;
+  /** Only with `changes_requested`. */
+  changes?: ApprovalChanges;
 }
 
 export interface ApprovalRepository {

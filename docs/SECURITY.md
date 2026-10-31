@@ -123,6 +123,30 @@ two auth methods are separate and are never used as each other's fallback:
   3. Each sealed value records its key id, so existing rows keep decrypting
      until they are re-saved.
 
+### Keys for the Pi runtime and model preferences
+
+Keys for other providers (OpenAI, Google, OpenRouter and others) use the same
+sealed storage, hints and permissions as Anthropic keys
+([ADR-0016](decisions/0016-provider-connections-runtimes-and-model-preferences.md)).
+On top of that:
+
+- Each key lists the runtimes allowed to spend it. Keys saved before this
+  existed are enabled for Claude only; Pi can use them only after whoever
+  manages the key enables it. Claude never runs a non-Anthropic key.
+- Testing a non-Anthropic key sends one short prompt to the provider's cheapest
+  model, capped at 1 cent, because most providers have no free check.
+- A workspace-wide model choice may only use workspace keys, so one member's
+  personal key never becomes everyone's default.
+- Each Pi attempt runs in-process with an in-memory auth store that holds only
+  the resolved key. It has no tools, reads no `~/.pi` files, settings,
+  extensions or context files, and does not fall back to environment
+  credentials (an empty key is refused). The key is registered for log
+  redaction and cut out of provider error messages before they are kept.
+- Fallback to another key happens only when the preference opted in, and only
+  for a failure at the provider. A key the provider rejects is marked invalid.
+- The model a job uses is pinned at its first attempt. The snapshot stores ids
+  and the key version, never the key.
+
 ## MCP-in-MCP connectors
 
 Owner: `packages/mcp-gateway`

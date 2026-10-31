@@ -143,7 +143,17 @@ export function createInMemoryUsageRepository(clock: Clock): UsageRepository {
   return {
     async record(ctx, input) {
       const existing = usage.filter(ctx, (u) => u.dedupeKey === input.dedupeKey)[0];
-      if (existing) return { event: existing, created: false };
+      if (existing) {
+        // An estimate is replaced by the receipt for the same job, never added to.
+        if (existing.metadata?.costSource === "estimate" && input.metadata?.costSource === "receipt") {
+          const { kind, quantity, unit, costCents, metadata } = input;
+          return {
+            event: usage.update(ctx, existing.id, { kind, quantity, unit, costCents, metadata }),
+            created: false,
+          };
+        }
+        return { event: existing, created: false };
+      }
       return { event: usage.insert(ctx, input), created: true };
     },
     async list(ctx, query = {}) {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import {
   type ClaudeAgentEvent,
   type ClaudeSessionRequest,
@@ -134,6 +134,15 @@ function createWorld() {
   const generate = media.generate.bind(media);
   media.generate = async (ctx, request) => {
     requests.push(request);
+    // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
+    for (const name of ["image", "video", "audio"]) {
+      const value = request.params?.[name];
+      if (typeof value !== "string" || value.startsWith("https://")) continue;
+      const rel = relative(request.workDir, value);
+      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+        throw new StudixError("VALIDATION", `params.${name} must be inside workDir`, { retryable: false });
+      }
+    }
     return generate(ctx, request);
   };
   const qaCalls: QaExpectation[] = [];
@@ -283,6 +292,25 @@ async function approveStoryboard(ctx: TenantContext, projectId: string) {
 describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake providers)", (pack) => {
   const n = filmStageNames(pack);
 
+  it("stops a stale job without a creative gate when the project has already moved on", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-closed-${pack}`, pack);
+    await db.current.repos.projects.update(ctx, project.id, { status: "published" });
+    const job = await enqueue(ctx, project.id, pack);
+
+    expect(await world.runOnce(job.id)).toBe("failed");
+    expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({
+      status: "failed",
+      error: { code: "CONFLICT" },
+    });
+    expect(
+      await world.repos.approvals.findLatest(ctx, { type: "job", id: job.id }, "creative.gate", "gate:G0"),
+    ).toBeUndefined();
+    const after = await db.current.repos.projects.get(ctx, project.id);
+    expect(after?.status).toBe("published");
+    expect(after?.currentVersionId).toBe(project.currentVersionId);
+  });
+
   it("stops at G0 and G1 for a person, then storyboards on the approved sheets, then renders on an approved storyboard", async () => {
     const world = createWorld();
     const { ctx, project } = await newFilm(`film-${pack}`, pack);
@@ -330,6 +358,14 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
       true,
       true,
       false,
+    ]);
+    // A sheet already in the film's frame sets the edit's frame: no aspect ratio next to it (grok-image refuses one).
+    expect(keyframes.map((r) => r.params?.aspectRatio ?? null)).toEqual([
+      scope.aspectRatio,
+      null,
+      null,
+      null,
+      scope.aspectRatio,
     ]);
     const board = await currentIr(ctx, project.id);
     expect(board.project.status).toBe("in_review");
@@ -407,6 +443,109 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
     expect(new Set(usage.map((u) => u.dedupeKey)).size).toBe(usage.length);
     expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(world.requests.length);
+  });
+
+  it("redraws only the named sheet when G1 comes back with changes, bills it once, and asks G1 again", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-${pack}-revise`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    const reviewed = await currentIr(ctx, project.id);
+    expect(world.requests).toHaveLength(3);
+
+    // The reviewer sends G1 back on Mai's sheet with a note.
+    const note = "Shoulder-length black hair; yellow bow on her left in every view, back view included";
+    const first = await world.repos.approvals.findLatest(
+      ctx,
+      { type: "job", id: job.id },
+      "creative.gate",
+      "gate:G1",
+    );
+    await world.repos.approvals.decide(ctx, first!.id, {
+      status: "changes_requested",
+      decidedBy: reviewer,
+      decidedAt: new Date(),
+      comment: note,
+      changes: { targets: ["mai-sheet-v1"], note, invalidated: ["asset:mai-sheet-v1"] },
+    });
+    expect(await world.queue.resumeDecidedApprovals()).toBeGreaterThanOrEqual(1);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+
+    // Only Mai's sheet is redrawn, as v2, with the note next to the bible's anchors.
+    expect(world.requests).toHaveLength(4);
+    const redraw = world.requests[3]!;
+    expect(redraw.idempotencyKey).toBe(`${job.id}:${n.g1}:mai-sheet-v2`);
+    expect(redraw.prompt).toContain("Keep exactly:");
+    expect(redraw.prompt).toContain(note);
+    const revised = await currentIr(ctx, project.id);
+    expect(revised.version.id).not.toBe(reviewed.version.id);
+    expect(revised.version.parentVersionId).toBe(reviewed.version.id);
+    expect(
+      revised.ir.scenes[0]?.shots.map((sh) => [sh.id, "assetId" in sh ? sh.assetId : undefined]),
+    ).toEqual([
+      ["design-mai", "mai-sheet-v2"],
+      ["design-tun", "tun-sheet-v1"],
+      ["design-san-thuong", "san-thuong-set-v1"],
+    ]);
+    expect(
+      filmOf(revised.ir).production.characters.map((c) => c.references.map((r) => [r.id, r.status])),
+    ).toEqual([
+      [
+        ["mai-sheet-v1", "retired"],
+        ["mai-sheet-v2", "candidate"],
+      ],
+      [["tun-sheet-v1", "candidate"]],
+    ]);
+
+    // G1 is open again, on the revised board.
+    const again = await world.repos.approvals.findLatest(
+      ctx,
+      { type: "job", id: job.id },
+      "creative.gate",
+      "gate:G1",
+    );
+    expect(again?.id).not.toBe(first!.id);
+    expect(again?.status).toBe("pending");
+    expect(again?.reason).toContain("revision 1: redid mai-sheet-v1");
+    const mediaUsage = async () =>
+      (await world.repos.usage.list(ctx, { jobId: job.id, limit: 200 })).items.filter(
+        (u) => u.kind === USAGE_KINDS.mediaGeneration,
+      );
+    expect(await mediaUsage()).toHaveLength(4);
+
+    // Approved: no design is drawn again, the keyframes use the redrawn sheet, and every call is billed once.
+    await signGate(world, ctx, job.id, "G1");
+    const outcome = await world.runOnce(job.id);
+    expect(outcome, JSON.stringify((await world.repos.jobs.get(ctx, job.id))?.error)).toBe("succeeded");
+    const after = world.requests.slice(4);
+    expect(after.map((r) => r.idempotencyKey.split(":").at(-1)).sort()).toEqual(
+      shotIds.map((id) => `${id}-key`).sort(),
+    );
+    const gate = (await world.repos.jobs.listStages(ctx, job.id)).find((st) => st.name === n.g1);
+    expect(gate?.output?.revisions).toEqual([
+      expect.objectContaining({
+        approvalId: first!.id,
+        targets: ["mai-sheet-v1"],
+        note,
+        versionId: revised.version.id,
+        invalidated: expect.arrayContaining(["asset:mai-sheet-v1", "asset:mai-sheet-v2", "shot:design-mai"]),
+      }),
+    ]);
+    const storyboardTask = world.transport.requests.at(-1)?.input as {
+      sheets: { characterId: string; references: { id: string }[] }[];
+    };
+    expect(storyboardTask.sheets.find((sh) => sh.characterId === "mai")?.references).toEqual([
+      { id: "mai-sheet-v2", view: "turnaround" },
+    ]);
+    const film = filmOf((await currentIr(ctx, project.id)).ir);
+    expect(film.production.shots.find((sh) => sh.shotId === "s4")?.conditioningRefs).toEqual([
+      "mai-sheet-v2",
+    ]);
+    const usage = await mediaUsage();
+    expect(usage).toHaveLength(world.requests.length);
+    expect(new Set(usage.map((u) => u.dedupeKey)).size).toBe(usage.length);
   });
 
   it("fails the job and spends nothing on designs when the reviewer rejects G0", async () => {
