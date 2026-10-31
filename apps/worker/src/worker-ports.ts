@@ -64,8 +64,7 @@ function claudePlanner(settings: WorkerSettings, runtime: WorkerPortsRuntime): P
   return createClaudePlanner({
     transport: createClaudeSdkTransport({
       baseUrl: config.ANTHROPIC_BASE_URL,
-      workRoot: join(settings.workDir, "claude"),
-      logger: runtime.logger.child({ component: "claude-sdk" }),
+      sandboxRoot: join(settings.workDir, "claude"),
     }),
     credentials: providers,
     executions: repos.usage,
