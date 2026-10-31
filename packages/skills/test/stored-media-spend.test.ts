@@ -23,13 +23,16 @@ afterEach(async () => {
 });
 
 /** A stage context whose storage refuses the puts of `failing` assets. */
-function stageWith(failing: ReadonlySet<string>) {
+function stageWith(failing: ReadonlySet<string>, gate?: { id: string; open: Promise<void> }) {
   const media = new FakeMediaProvider({ pricing: { estimateCents: () => 2 } });
+  const stored: string[] = [];
   const storage = {
     put: async (_c: TenantContext, key: string, _body: unknown, opts: { sha256?: string }) => {
-      if ([...failing].some((id) => key.includes(id))) {
+      if (gate && key.includes(`/${gate.id}.`)) await gate.open;
+      if ([...failing].some((id) => key.includes(`/${id}.`))) {
         throw new StudixError("UNAVAILABLE", "storage is down", { retryable: true });
       }
+      stored.push(key);
       return { key, sha256: opts.sha256 ?? "", bytes: 1 };
     },
   };
@@ -41,7 +44,7 @@ function stageWith(failing: ReadonlySet<string>) {
     mediaJournal: undefined,
     services: { media, storage, workRoot: root },
   } as unknown as StageContext;
-  return s;
+  return { s, stored };
 }
 
 const request = (assetId: string) => ({
@@ -54,7 +57,7 @@ const request = (assetId: string) => ({
 
 describe("media spend of a failed stage", () => {
   it("bills a generation whose upload failed", async () => {
-    const s = stageWith(new Set(["a"]));
+    const { s } = stageWith(new Set(["a"]));
     const err = await generateStoredMedia(s, "designs", request("a"), root).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StageFailedAfterSpend);
     const failed = err as StageFailedAfterSpend;
@@ -64,16 +67,30 @@ describe("media spend of a failed stage", () => {
   });
 
   it("bills the finished and in-flight items of a batch where one item fails", async () => {
-    // Concurrency 3: `b` fails on upload while `a` and `c` are generated; all three were paid.
-    const s = stageWith(new Set(["b"]));
-    const err = await mapBounded(
+    // `b` fails on upload at once, `c` is still uploading when it does, and `a` has already finished.
+    let release: () => void = () => {};
+    const open = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { s, stored } = stageWith(new Set(["b"]), { id: "c", open });
+    let settled = false;
+    const batch = mapBounded(
       ["a", "b", "c"],
       3,
       (id) => generateStoredMedia(s, "designs", request(id), root),
       (r: StoredMedia) => [r.usage],
-    ).catch((e: unknown) => e);
+    )
+      .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(settled).toBe(false); // the failure waits for `c`
+    release();
+    const err = await batch;
     expect(err).toBeInstanceOf(StageFailedAfterSpend);
     const failed = err as StageFailedAfterSpend;
+    expect(stored.map((k) => k.split("/").pop()).sort()).toEqual(["a.png", "c.png"]);
     expect(failed.usage.map((u) => u.item).sort()).toEqual(["media-a", "media-b", "media-c"]);
     expect(failed.usage.reduce((sum, u) => sum + u.costCents, 0)).toBe(6);
   });
