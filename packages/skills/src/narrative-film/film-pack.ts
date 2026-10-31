@@ -20,6 +20,7 @@ import {
   createAgentStage,
   createCreativeGateStage,
   downloadIrAssets,
+  FINISHED_PROJECT_STATUSES,
   type GateChange,
   irOf,
   jobScopedId,
@@ -253,8 +254,15 @@ async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string)
         createdBy: { type: "system", id: ctx.actor.id },
       });
     }
-    // A job that outlives an approve, publish or archive must not point the project back at a board in review.
+    // A job that outlives an approve, publish or archive stops here, before any creative gate is requested.
     const project = await repos.projects.get(ctx, projectId);
+    if (project && FINISHED_PROJECT_STATUSES.includes(project.status)) {
+      throw new StudixError("CONFLICT", `Project is ${project.status}; this job is stale`, {
+        retryable: false,
+        details: { projectId, status: project.status },
+        suggestedAction: "This job is stale: the project was finished after it started.",
+      });
+    }
     if (project && !CLOSED_PROJECT_STATUSES.includes(project.status)) {
       await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
     }
