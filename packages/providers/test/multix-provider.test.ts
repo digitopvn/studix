@@ -543,6 +543,126 @@ describe("MultixProvider async jobs", () => {
       expect(runs).toBe(1);
     });
 
+    it("releases the key when atlas run exits 2 (rejected before any submission)", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return runs === 1
+          ? { exitCode: 2, envelope: { error: { message: "bad input" } } }
+          : { envelope: { job: { provider: "atlas", id: "pred_9" }, text: "pred_9" } };
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({ code: "VALIDATION" });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({
+        state: "failed",
+        attempt: 1,
+      });
+      await expect(multix.generate(ctx, upscaleRequest(input))).resolves.toMatchObject({
+        job: { provider: "atlas", id: "pred_9" },
+      });
+      expect(runs).toBe(2);
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ attempt: 2 });
+    });
+
+    it.each([
+      ["TIMEOUT", { stoppedBy: "timeout" as const, exitCode: 143 }],
+      ["CANCELLED", { stoppedBy: "abort" as const, exitCode: 143 }],
+    ])("keeps the record blocked when atlas run ends %s with an unknown outcome", async (code, reply) => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return reply;
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({ code });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "submitting" });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({
+        code: "PROVIDER_ERROR",
+        retryable: false,
+        message: expect.stringContaining("may already have been charged"),
+      });
+      expect(runs).toBe(1);
+    });
+
+    it("lets only one of two concurrent submissions of the same key reach atlas", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return { envelope: { job: { provider: "atlas", id: "pred_9" }, text: "pred_9" } };
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      const settled = await Promise.allSettled([
+        multix.generate(ctx, upscaleRequest(input)),
+        multix.generate(ctx, upscaleRequest(input)),
+      ]);
+      expect(runs).toBe(1);
+      expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const lost = settled.find((r) => r.status === "rejected") as PromiseRejectedResult;
+      expect(lost.reason).toMatchObject({ code: "CONFLICT", retryable: false });
+    });
+
+    it("lets an operator attach the prediction id to a submitting record", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        throw new Error("worker crashed");
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toThrow("worker crashed");
+
+      await expect(
+        multix.recordSubmittedJob(ctx, {
+          idempotencyKey: "stage-2:upscale",
+          job: { provider: "sume", id: "x1" },
+        }),
+      ).rejects.toMatchObject({ code: "VALIDATION" });
+      await expect(
+        multix.recordSubmittedJob(ctx, {
+          idempotencyKey: "stage-2:upscale",
+          job: { provider: "atlas", id: "../x" },
+        }),
+      ).rejects.toMatchObject({ code: "VALIDATION" });
+      await expect(
+        multix.recordSubmittedJob(ctx, {
+          idempotencyKey: "missing",
+          job: { provider: "atlas", id: "pred_9" },
+        }),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+      await multix.recordSubmittedJob(ctx, {
+        idempotencyKey: "stage-2:upscale",
+        job: { provider: "atlas", id: "pred_9" },
+      });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({
+        state: "submitted",
+        job: { provider: "atlas", id: "pred_9" },
+      });
+      // The next attempt collects the attached job and never submits again.
+      await expect(multix.generate(ctx, upscaleRequest(input))).resolves.toMatchObject({
+        job: { provider: "atlas", id: "pred_9" },
+      });
+      expect(runs).toBe(1);
+      // A tracked record cannot be overwritten.
+      await expect(
+        multix.recordSubmittedJob(ctx, {
+          idempotencyKey: "stage-2:upscale",
+          job: { provider: "atlas", id: "pred_10" },
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    });
+
     it("lets a retry through when multix proves the run was never accepted", async () => {
       const input = join(workDir, "frame.png");
       await writeFile(input, "png");

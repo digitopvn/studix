@@ -308,13 +308,47 @@ export class MultixProvider implements MediaProvider {
       plan.mode === "sume-job"
         ? await this.submitSume(ctx, plan, request, attempt)
         : await this.submitAtlas(plan, request, {
-            intent: () => this.journal.put(ctx, { ...base, state: "submitting", updatedAt: at }),
+            intent: () => this.journal.claim(ctx, { ...base, state: "submitting", updatedAt: at }),
             // Only errors proving the request never reached Atlas may release the key for a retry.
             release: () => this.journal.put(ctx, { ...base, state: "failed", updatedAt: at }),
           });
     const record: MediaJobRecord = { ...base, job, state: "submitted", updatedAt: at };
     await this.journal.put(ctx, record);
     return this.collect(job, plan.model.id, request.workDir, request.signal, started, { ctx, record });
+  }
+
+  /**
+   * Operator recovery of a "submitting" record: once the prediction id is known (from `multix history` or
+   * the provider console), attach it so the next `generate` collects that job instead of staying blocked.
+   * Refuses anything but a "submitting" record of the same kind and model, so it can never overwrite a
+   * job that is already tracked.
+   */
+  async recordSubmittedJob(
+    ctx: TenantContext,
+    request: { idempotencyKey: string; job: ProviderJobRef },
+  ): Promise<MediaJobRecord> {
+    const { job } = request;
+    if (job.provider !== "atlas") {
+      throw new StudixError("VALIDATION", "Only an Atlas job can be attached to a submitting record");
+    }
+    if (typeof job.id !== "string" || !JOB_ID.test(job.id)) {
+      throw new StudixError("VALIDATION", "job.id is not a valid provider job id");
+    }
+    const existing = await this.journal.get(ctx, request.idempotencyKey);
+    if (!existing) throw new StudixError("NOT_FOUND", "No journal record exists for this idempotency key");
+    if (existing.state !== "submitting") {
+      throw new StudixError("CONFLICT", `The record is "${existing.state}", not "submitting"`, {
+        details: { state: existing.state, ...(existing.job ? { job: existing.job } : {}) },
+      });
+    }
+    const record: MediaJobRecord = {
+      ...existing,
+      job,
+      state: "submitted",
+      updatedAt: this.clock.now().toISOString(),
+    };
+    await this.journal.put(ctx, record);
+    return record;
   }
 
   /** Collect an upstream job by id without submitting anything (no new charge). */
@@ -459,7 +493,7 @@ export class MultixProvider implements MediaProvider {
   private async submitAtlas(
     plan: MultixPlan,
     request: MediaGenerationRequest,
-    journal: { intent: () => Promise<void>; release: () => Promise<void> },
+    journal: { intent: () => Promise<boolean>; release: () => Promise<void> },
   ): Promise<ProviderJobRef> {
     const atlas = plan.atlas!;
     const fields = { ...atlas.fields };
@@ -479,7 +513,13 @@ export class MultixProvider implements MediaProvider {
     }
     if (fields.image === undefined) throw new StudixError("VALIDATION", "upscale needs params.image");
     throwIfAborted(request.signal);
-    await journal.intent();
+    if (!(await journal.intent())) {
+      throw new StudixError("CONFLICT", "Another worker is already submitting this request", {
+        retryable: false,
+        details: { provider: "atlas" },
+        suggestedAction: "Let the other submission finish; do not submit the same request twice.",
+      });
+    }
     let envelope: MultixEnvelope;
     try {
       envelope = await this.exec(
