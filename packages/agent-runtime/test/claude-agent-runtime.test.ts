@@ -41,7 +41,7 @@ interface Harness {
 /** A scripted SDK query; `stream` decides what the iterator yields and how it reacts to close(). */
 function harness(
   stream: (close: Promise<void>) => AsyncGenerator<ClaudeMessage>,
-  opts: { killGraceMs?: number; closeEndsStream?: boolean } = {},
+  opts: { killGraceMs?: number; closeEndsStream?: boolean; killWorks?: boolean } = {},
 ): Harness {
   let captured: ClaudeQueryOptions | undefined;
   let closes = 0;
@@ -50,8 +50,22 @@ function harness(
   const runtime = createClaudeAgentRuntime({
     model: "test-model",
     killGraceMs: opts.killGraceMs ?? 50,
-    hardKill: () => {
-      kills++;
+    spawnProcess: () => {
+      const child = {
+        stdin: null,
+        stdout: null,
+        killed: false,
+        exitCode: null as number | null,
+        kill: () => {
+          kills++;
+          if (opts.killWorks !== false) child.killed = true;
+          return true;
+        },
+        on: () => child,
+        once: () => child,
+        off: () => child,
+      };
+      return child as never;
     },
     resolveCredential: async () => ({ apiKey: KEY }),
     createSandbox: async () => ({
@@ -62,6 +76,12 @@ function harness(
     }),
     query: ({ options }) => {
       captured = options;
+      options.spawnClaudeCodeProcess?.({
+        command: "claude",
+        args: [],
+        env: {},
+        signal: options.abortController.signal,
+      });
       let signalClose: () => void = () => {};
       const closePromise = new Promise<void>((resolve) => {
         signalClose = resolve;
@@ -120,12 +140,17 @@ describe("claude agent runtime", () => {
       cwd: "/tmp/sandbox-test",
       outputFormat: { type: "json_schema", schema: { type: "object" } },
     });
-    expect(Object.keys(options.env).sort()).toEqual(["ANTHROPIC_API_KEY", "HOME", "PATH"]);
+    expect(Object.keys(options.env).sort()).toEqual([
+      "ANTHROPIC_API_KEY",
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+      "DISABLE_AUTOUPDATER",
+      "HOME",
+      "PATH",
+      "TMPDIR",
+    ]);
     expect(options.env.ANTHROPIC_API_KEY).toBe(KEY);
     expect(options.env.HOME).toBe("/tmp/sandbox-test");
-    await expect(options.canUseTool("Bash", { command: "ls" })).resolves.toMatchObject({
-      behavior: "deny",
-    });
+    expect(options.tools).toEqual([]);
     expect(h.disposed()).toBe(1);
   });
 
@@ -154,7 +179,7 @@ describe("claude agent runtime", () => {
       },
       query,
     });
-    await expect(runtime.run(testTenant(), task())).rejects.toBeDefined();
+    await expect(runtime.run(testTenant(), task())).rejects.toMatchObject({ message: "no grant" });
     expect(query).not.toHaveBeenCalled();
   });
 
@@ -210,7 +235,6 @@ describe("claude agent runtime", () => {
     await expect(
       h.runtime.run(testTenant(), task({ deadlineAt: new Date(Date.now() - 1) })),
     ).rejects.toMatchObject({ code: "TIMEOUT" });
-    expect(h.options).toBeDefined();
     expect(h.closed()).toBe(0);
   });
 
@@ -258,9 +282,34 @@ describe("claude agent runtime", () => {
     const running = h.runtime.run(testTenant(), task({ signal: controller.signal }));
     await vi.waitFor(() => expect(h.options()).toBeDefined());
     controller.abort();
-    await expect(running).rejects.toMatchObject({ code: "INTERNAL", retryable: false });
+    await expect(running).rejects.toMatchObject({
+      code: "INTERNAL",
+      retryable: false,
+      details: { reason: "CANCELLED", processMayBeAlive: false },
+    });
     expect(h.hardKills()).toBe(1);
     expect(h.disposed()).toBe(1);
+  });
+
+  it("keeps the sandbox when the process could not be confirmed dead", async () => {
+    const h = harness(
+      () =>
+        (async function* () {
+          await new Promise(() => {});
+          yield { type: "never" };
+        })(),
+      { closeEndsStream: false, killGraceMs: 20, killWorks: false },
+    );
+    const controller = new AbortController();
+    const running = h.runtime.run(testTenant(), task({ signal: controller.signal }));
+    await vi.waitFor(() => expect(h.options()).toBeDefined());
+    controller.abort();
+    await expect(running).rejects.toMatchObject({
+      code: "INTERNAL",
+      details: { processMayBeAlive: true },
+    });
+    expect(h.hardKills()).toBe(1);
+    expect(h.disposed()).toBe(0);
   });
 
   it("does not start the SDK when already aborted", async () => {
@@ -293,6 +342,101 @@ describe("claude agent runtime", () => {
     await runtime.run(testTenant({ workspaceId: "wsp_a" }), task());
     await runtime.run(testTenant({ workspaceId: "wsp_b" }), task());
     expect(seen).toEqual(["sk-ant-for-wsp_a-xxxxxxxx", "sk-ant-for-wsp_b-xxxxxxxx"]);
+  });
+});
+
+describe("claude agent runtime review fixes", () => {
+  it("counts one turn per assistant message id, not per content block", async () => {
+    const block = (id: string) => ({ type: "assistant", message: { id } });
+    const h = harness(() =>
+      scripted(block("m1"), block("m1"), block("m1"), block("m2"), success({ num_turns: 2 })),
+    );
+    await expect(h.runtime.run(testTenant(), task({ maxTurns: 2 }))).resolves.toMatchObject({
+      turns: 2,
+    });
+    const over = harness(() => scripted(block("m1"), block("m2"), block("m3"), success()));
+    await expect(over.runtime.run(testTenant(), task({ maxTurns: 2 }))).rejects.toMatchObject({
+      code: "PROVIDER_ERROR",
+    });
+  });
+
+  it.each([
+    ["API Error: 401 authentication_error", "UNAUTHENTICATED"],
+    ["API Error: 403 permission_error", "FORBIDDEN"],
+    ["API Error: 429 rate_limit_error", "RATE_LIMITED"],
+    ["Your credit balance is too low to access the API", "FORBIDDEN"],
+    ["API Error: 529 overloaded_error", "PROVIDER_ERROR"],
+    ["upload URL expired", "PROVIDER_ERROR"],
+    ["EACCES: permission denied, open '/tmp/x'", "PROVIDER_ERROR"],
+    ["Permission to use Bash has been denied", "PROVIDER_ERROR"],
+    ["quota of scenes exceeded", "PROVIDER_ERROR"],
+  ])("classifies %j as %s", async (text, code) => {
+    const h = harness(() => scripted(success({ is_error: true, result: text })));
+    await expect(h.runtime.run(testTenant(), task())).rejects.toMatchObject({ code });
+  });
+
+  it("keeps the spent cost on failures after the result arrived", async () => {
+    const h = harness(() =>
+      scripted(success({ subtype: "error_max_budget_usd", is_error: true, total_cost_usd: 0.52 })),
+    );
+    await expect(h.runtime.run(testTenant(), task())).rejects.toMatchObject({
+      code: "BUDGET_EXCEEDED",
+      details: { costCents: 52, turns: 2, inputTokens: 100, outputTokens: 40 },
+    });
+  });
+
+  it("refuses a result without a cost instead of recording it as free", async () => {
+    const h = harness(() => scripted({ ...success(), total_cost_usd: undefined as never }));
+    await expect(h.runtime.run(testTenant(), task())).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+  });
+
+  it("redacts the key from error details and drops the cause", async () => {
+    const { StudixError } = await import("@studix/shared");
+    const runtime = createClaudeAgentRuntime({
+      model: "m",
+      resolveCredential: async () => {
+        throw new StudixError("FORBIDDEN", "no grant", { details: { token: KEY } });
+      },
+      query: vi.fn(),
+    });
+    const resolved = createClaudeAgentRuntime({
+      model: "m",
+      resolveCredential: async () => ({ apiKey: KEY }),
+      createSandbox: async () => {
+        throw new StudixError("INTERNAL", "boom", {
+          details: { echoed: `key=${KEY}` },
+          cause: new Error(KEY),
+        });
+      },
+      query: vi.fn(),
+    });
+    await runtime.run(testTenant(), task()).catch(() => {});
+    const error = (await resolved.run(testTenant(), task()).catch((e: unknown) => e)) as {
+      details: unknown;
+      cause?: unknown;
+    };
+    expect(JSON.stringify(error.details)).not.toContain(KEY);
+    expect(error.cause).toBeUndefined();
+  });
+
+  it("honours abort while the credential lookup hangs", async () => {
+    const query = vi.fn();
+    const runtime = createClaudeAgentRuntime({
+      model: "m",
+      resolveCredential: () => new Promise(() => {}),
+      query,
+    });
+    await expect(
+      runtime.run(testTenant(), task({ deadlineAt: new Date(Date.now() + 30) })),
+    ).rejects.toMatchObject({ code: "TIMEOUT" });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("clamps far deadlines instead of firing immediately", async () => {
+    const h = harness(() => scripted(success()));
+    await expect(
+      h.runtime.run(testTenant(), task({ deadlineAt: new Date(Date.now() + 40 * 86_400_000) })),
+    ).resolves.toMatchObject({ turns: 2 });
   });
 });
 

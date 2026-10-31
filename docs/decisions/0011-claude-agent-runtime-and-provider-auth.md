@@ -25,12 +25,18 @@ intermediate Claude.ai credentials or session tokens.
 - The runtime runs only in the `worker` role. No shell or `claude -p` tool is
   exposed through the public MCP surface.
 - Limits are enforced inside the run: `maxTurns` and `maxBudgetUsd` go to the
-  SDK, assistant turns are counted while streaming, and the result is checked
-  again. Cost is rounded up to whole cents.
-- Abort, deadline or lease loss close the SDK query (which ends the process),
-  and `run` returns only after the stream ended. If it does not end within
-  `killGraceMs`, the injected `hardKill` fallback runs and the run fails with
-  `INTERNAL`.
+  SDK and assistant turns are counted while streaming (one turn per message id,
+  since a turn can stream as several messages). The SDK checks spend after each
+  turn, so the last turn can overshoot: the cap is a soft per-turn cap, and the
+  actual cost is always reported, including on failures (`details`). A result
+  without a cost is an error, never "free". Cost is rounded up to whole cents.
+- The runtime owns the child process through `spawnClaudeCodeProcess`. Abort,
+  deadline or lease loss close the SDK query and wait for the stream to end. If
+  it does not end within `killGraceMs`, the process is sent SIGKILL by handle and
+  the run fails with `INTERNAL` (original reason in `details`). The working
+  directory is removed only once the process is confirmed gone; otherwise it is
+  left for the host's reaper. Credential lookup and sandbox creation also honour
+  abort and deadline.
 - Zero tools: `tools: []`, `permissionMode: "dontAsk"`, and `canUseTool` denies
   everything. Custom `AgentTask.tools` are rejected with `UNAVAILABLE` until a
   scoped tool host exists. Setting sources and session persistence are off.
