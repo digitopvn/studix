@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
 import {
   irOf,
+  mapBounded,
   type PackPipeline,
   RenderOutput,
   read,
@@ -12,7 +13,6 @@ import {
   stageWorkDir,
 } from "@studix/workflow";
 import { z } from "zod";
-import { VO_PAD_MS } from "../marketing-video/marketing-script.ts";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
 import {
   billedOnFailure,
@@ -20,7 +20,7 @@ import {
   generateStoredMedia,
   type StoredMediaRequest,
 } from "../stored-media.ts";
-import { voiceDirection } from "../voice-direction.ts";
+import { type VoiceLine, voiceLines, voiceLineTrack, withVoiceover } from "../voice-lines.ts";
 import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion-graphic-template.ts";
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
@@ -86,22 +86,23 @@ const voiceoverOf = (ir: VideoIR) =>
     : undefined;
 
 /**
- * The script read in the IR's language with direction from its scenes (hook, message cards, call to
- * action) and the brand's tone of voice; the worker's media provider picks the speech model.
+ * The script as one line per card, each read with its card's direction (hook, messages, call to action)
+ * and the brand's tone of voice; the worker's media provider picks the speech model.
  */
-function voiceRequest(s: StageContext): StoredMediaRequest | undefined {
+function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: StoredMediaRequest }> {
   const ir = irOf(s);
-  const text = voiceoverOf(ir);
-  if (!text) return undefined;
-  const instructions = voiceDirection(ir);
-  return {
-    assetId: "voiceover",
-    kind: "voice",
-    prompt: text,
-    params: { language: ir.language, ...(instructions ? { instructions } : {}) },
-    keyPrefix: `generated/${s.job.id}/voiceover`,
-    maxCostCents: 0,
-  };
+  if (!voiceoverOf(ir)) return [];
+  return voiceLines(ir).map((line, i) => ({
+    line,
+    request: {
+      assetId: `voiceover-${i + 1}`,
+      kind: "voice",
+      prompt: line.text,
+      params: { language: ir.language, instructions: line.instructions },
+      keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
+      maxCostCents: 0,
+    },
+  }));
 }
 
 const SFX_MS = 1500;
@@ -144,15 +145,18 @@ async function accentRequests(s: StageContext): Promise<StoredMediaRequest[]> {
   return voiceoverOf(irOf(s)) ? [await capped(s, sfxRequest(s).request)] : [];
 }
 
-async function voiceRequests(s: StageContext): Promise<StoredMediaRequest[]> {
-  const voice = voiceRequest(s);
-  return voice ? [await capped(s, voice)] : [];
+async function voiceRequests(
+  s: StageContext,
+): Promise<Array<{ line: VoiceLine; request: StoredMediaRequest }>> {
+  return Promise.all(
+    voiceLineRequests(s).map(async (v) => ({ line: v.line, request: await capped(s, v.request) })),
+  );
 }
 
 /**
  * One SFX accent where the CTA card lands, for a graphic with a voice-over. No music: the voice carries the
  * graphic. The cache key is the one this stage had when it also voiced the graphic: such a cached output
- * still holds that older voice-over, which the voice stage replaces by id.
+ * still holds that older voice-over, which the voice stage replaces.
  */
 export const motionGraphicAccentStage: StageDefinition = {
   name: MG_STAGES.accent,
@@ -192,46 +196,45 @@ export const motionGraphicAccentStage: StageDefinition = {
 };
 
 /**
- * The voice-over of the script, read with the direction of its scenes and laid under the captions. Its
- * own stage, so a new voice (another speech model, new direction) costs only the voice.
+ * The voice-over of the script, one line per card, each read with its card's direction and laid where that
+ * card's captions start, so the call to action is heard with the CTA card. Its own stage, so a new voice
+ * (another speech model, new direction) costs only the voice.
  */
 export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 1, { ir: irOf(s), media: s.services.media?.id ?? null }),
-  estimateCostCents: async (s) => estimateMediaCents(s, await voiceRequests(s)),
+  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  estimateCostCents: async (s) =>
+    estimateMediaCents(
+      s,
+      (await voiceRequests(s)).map((v) => v.request),
+    ),
   async run(s) {
     const ir = irOf(s);
-    const [request] = await voiceRequests(s);
-    if (!request) return { output: { ir } };
+    const planned = await voiceRequests(s);
+    if (planned.length === 0) return { output: { ir } };
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
-    const voice = await generateStoredMedia(s, MG_STAGES.voice, request);
-    const room = ir.format.durationMs - VO_PAD_MS;
-    const next = {
-      ...ir,
-      assets: [...ir.assets.filter((a) => a.id !== voice.asset.id), voice.asset],
-      // The voice leads the mix, so its track comes first.
-      audio: [
-        {
-          id: "voiceover-track",
-          kind: "voiceover" as const,
-          assetId: voice.asset.id,
-          startMs: VO_PAD_MS,
-          durationMs: Math.max(1, Math.min(room, voice.asset.durationMs ?? room)),
-          volume: 1,
-        },
-        ...(ir.audio ?? []).filter((t) => t.id !== "voiceover-track"),
-      ],
-    };
+    const generated = await mapBounded(
+      planned,
+      planned.length,
+      async (v) => ({ ...v, ...(await generateStoredMedia(s, MG_STAGES.voice, v.request)) }),
+      (g) => [g.usage],
+    );
     await rm(workDir, { recursive: true, force: true });
-    return {
-      output: { ir: await billedOnFailure([voice.usage], () => VideoIR.parse(next)) },
-      usage: [voice.usage],
-    };
+    const usage = generated.map((g) => g.usage);
+    const next = await billedOnFailure(usage, () =>
+      VideoIR.parse(
+        withVoiceover(
+          ir,
+          generated.map((g) => voiceLineTrack(g.line, g.asset, `${g.asset.id}-track`)),
+          generated.map((g) => g.asset),
+        ),
+      ),
+    );
+    return { output: { ir: next }, usage };
   },
 };
-
 /** The blocking QA gate on the render; a graphic with a voice-over must also pass the audio checks. */
 export const motionGraphicQaStage: StageDefinition = {
   name: MG_STAGES.qa,
