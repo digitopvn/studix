@@ -52,6 +52,11 @@ export interface Job extends TenantOwned {
   idempotencyKey?: string;
   cancelRequested: boolean;
   deadlineAt?: Date;
+  /**
+   * Deadline budget left while the job waits at a human gate or for a host agent task. The deadline is
+   * paused then (`deadlineAt` is unset) and re-armed from this value when a worker claims the job again.
+   */
+  deadlineRemainingMs?: number;
   budgetCents?: number;
   spentCents: number;
   createdBy: ActorRef;

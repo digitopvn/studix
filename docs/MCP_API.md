@@ -100,6 +100,17 @@ Behavior notes:
   past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
   `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
   handoff tools below).
+- Time spent parked is not counted against the deadline. While a job waits at a human gate
+  (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
+  is paused: what is left of it is kept and starts counting again when a worker
+  claims the job after the approval or host submission. A job created already
+  waiting at a gate starts its deadline at its first claim. A review can take
+  as long as the approval stays valid (7 days) without failing the job with
+  `TIMEOUT`; a stage that runs past the remaining budget still does. Retry
+  backoff and queue wait still count. While paused, the job view has no
+  `deadlineAt` and reports the budget left as `deadlineRemainingMs`. When
+  deploying, drain old workers before new ones park jobs: an old worker claims
+  a paused job without re-arming its deadline.
 - `workflowTemplate` is a pack id from the registry in `@studix/skills`
   (`studix_inspect` lists them under `skills`); it defaults to `brand-intro`.
   An unknown id fails with `VALIDATION` before anything is stored, with

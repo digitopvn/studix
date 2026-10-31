@@ -73,6 +73,20 @@ describe("Postgres job queue", () => {
     expect(finished.status).toBe("cancelled");
   });
 
+  it("starts the deadline of a job born at a gate only once it is claimed", async () => {
+    const { queue } = db.current.repos;
+    const ctx = await tenant("gate-deadline");
+    const deadlineAt = new Date(Date.now() + 600_000);
+    const { job } = await queue.enqueue(ctx, {
+      ...enqueueInput(),
+      deadlineAt,
+      initialStatus: "waiting_approval",
+    });
+    expect(job.deadlineAt).toBeUndefined();
+    expect(job.deadlineRemainingMs).toBeGreaterThan(590_000);
+    expect(job.deadlineRemainingMs).toBeLessThanOrEqual(600_000);
+  });
+
   it("resumes only waiting_approval jobs (compare-and-set)", async () => {
     const { queue, jobs } = db.current.repos;
     const ctx = await tenant("resume");

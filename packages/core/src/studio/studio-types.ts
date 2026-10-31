@@ -234,6 +234,8 @@ export interface JobView {
   cancelRequested: boolean;
   budget: { limitCents?: number; spentCents: number };
   deadlineAt?: Date;
+  /** Budget left while the deadline is paused at a gate or host task; `deadlineAt` is unset then. */
+  deadlineRemainingMs?: number;
   createdAt: Date;
   updatedAt: Date;
   startedAt?: Date;

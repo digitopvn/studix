@@ -75,7 +75,9 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         runAfter: input.runAfter ?? clock.now(),
         idempotencyKey: input.idempotencyKey,
         cancelRequested: false,
-        deadlineAt: input.deadlineAt,
+        ...(input.initialStatus === "waiting_approval" && input.deadlineAt
+          ? { deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - clock.now().getTime()) }
+          : { deadlineAt: input.deadlineAt }),
         budgetCents: input.budgetCents,
         spentCents: 0,
         createdBy: input.createdBy,
