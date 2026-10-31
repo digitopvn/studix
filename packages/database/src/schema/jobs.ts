@@ -69,6 +69,7 @@ export const jobs = pgTable(
     cancelRequested: boolean("cancel_requested").notNull().default(false),
     deadlineAt: ts("deadline_at"),
     deadlineRemainingMs: bigint("deadline_remaining_ms", { mode: "number" }),
+    deadlineWindowMs: bigint("deadline_window_ms", { mode: "number" }),
     budgetCents: integer("budget_cents"),
     spentCents: integer("spent_cents").notNull().default(0),
     createdByType: text("created_by_type").$type<ActorType>().notNull(),

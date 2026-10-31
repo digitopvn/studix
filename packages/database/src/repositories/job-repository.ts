@@ -39,6 +39,7 @@ export function toJob(row: JobRow): Job {
     cancelRequested: row.cancelRequested,
     deadlineAt: opt(row.deadlineAt),
     deadlineRemainingMs: opt(row.deadlineRemainingMs),
+    deadlineWindowMs: opt(row.deadlineWindowMs),
     budgetCents: opt(row.budgetCents),
     spentCents: row.spentCents,
     createdBy: actorFrom(row.createdByType, row.createdById),
@@ -221,6 +222,7 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
                 deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - now.getTime()),
               }
             : { deadlineAt: input.deadlineAt ?? null }),
+          deadlineWindowMs: input.deadlineAt ? Math.max(0, input.deadlineAt.getTime() - now.getTime()) : null,
           budgetCents: input.budgetCents ?? null,
           createdByType: input.createdBy.type,
           createdById: input.createdBy.id,
@@ -286,8 +288,14 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           finishedAt: null,
           lockedBy: null,
           leaseExpiresAt: null,
-          // The window the job was created with starts again; the failed attempt may have used it up.
-          deadlineAt: sql`case when ${jobs.deadlineAt} is null then null else ${now.toISOString()}::timestamptz + (${jobs.deadlineAt} - ${jobs.createdAt}) end`,
+          // The window the caller asked for starts again; the failed attempt may have used it up. Jobs created
+          // before the window was stored fall back to the span between creation and the deadline.
+          // A deadline paused while parked would override the re-armed one at the next claim.
+          deadlineRemainingMs: null,
+          deadlineAt: sql`case
+            when ${jobs.deadlineWindowMs} is not null then ${now.toISOString()}::timestamptz + ${jobs.deadlineWindowMs} * interval '1 millisecond'
+            when ${jobs.deadlineAt} is null then null
+            else ${now.toISOString()}::timestamptz + (${jobs.deadlineAt} - ${jobs.createdAt}) end`,
           updatedAt: now,
         })
         .where(scoped(jobs, ctx, eq(jobs.id, jobId), eq(jobs.status, "failed")))
