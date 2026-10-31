@@ -93,6 +93,13 @@ to the exact same version in `packages/renderers/package.json` (currently
   must redo it (`pnpm patch @hyperframes/engine@<version>`, then
   `pnpm patch-commit`) or `pnpm install` fails. Drop it once upstream exposes a
   host switch for SIGTERM like `setHostHandlesSigint`.
+- **Deadline budget.** `RenderOptions.deadlineAt` (the job deadline) becomes the
+  producer's `maxRenderMs` for each capture, read when that capture starts.
+  The producer then fails fast once its projected finish passes the deadline
+  (after its calibration pass, or after about a minute of measured capture),
+  and the renderer reports that as a non-retryable `TIMEOUT`. It is a second
+  stop behind the job executor's deadline abort, aimed at a capture that hangs
+  or crawls.
 
 ### Pending IR fields
 

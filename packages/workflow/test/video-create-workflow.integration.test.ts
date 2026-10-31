@@ -65,6 +65,16 @@ describe("video.create workflow on Postgres", () => {
     ]);
   });
 
+  it("hands the job deadline to the renderer", async () => {
+    const ctx = await tenant(db.current, "render-deadline");
+    const deadlineAt = new Date(Date.now() + 10 * 60_000);
+    await enqueueCreate(db.current, ctx, { deadlineAt });
+    const fake = fakeRenderer();
+    const worker = createTestWorker(db.current, "w-deadline", { renderer: fake.renderer });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    expect(fake.state.deadlineAt?.getTime()).toBe(deadlineAt.getTime());
+  });
+
   it("does not move the project pointer back when a feedback job runs after a newer patch", async () => {
     const ctx = await tenant(db.current, "stale-pointer");
     const first = await enqueueCreate(db.current, ctx);

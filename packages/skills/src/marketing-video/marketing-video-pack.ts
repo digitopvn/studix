@@ -618,6 +618,7 @@ export const marketingRenderStage: StageDefinition = {
         workDir,
         assetFiles,
         signal: s.signal,
+        deadlineAt: s.job.deadlineAt,
         onProgress: (p) => s.reportProgress((i + p.progress) / variants.length),
       });
       out.push({
