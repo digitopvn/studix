@@ -181,9 +181,10 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
 - The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) are looked up in the attempt's work directory, so a retry may generate and pay for them again.
 - Usage events keep their `dedupeKey`, which is tied to the upstream job, so the resume bills no call twice.
 - Gates already decided on the job (approved, or consumed) are read from the database and are not asked again.
-- The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window it was created with. The budget is not reset: spend so far still counts against `budgetCents`.
+- The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window the caller asked for when the job was created (stored with the job, so a job that waited at a gate gets the same window, not a longer one). The budget is not reset: spend so far still counts against `budgetCents`.
 - Only a `failed` job can be retried (any other status returns `CONFLICT`). `video.publish` jobs cannot (`VALIDATION`: a publish is not idempotent, so start a new one), and neither can a job whose `job.start` approval was expired, rejected or never granted by a person (`APPROVAL_REQUIRED`). Agent stages are not retried automatically, but a manual retry re-runs a failed agent stage and its spend is billed again.
-- The caller needs the `job:retry` permission (owner, admin and editor roles; API keys need the scope).
+- The caller needs the `job:retry` permission (owner, admin and editor roles). The dashboard route `POST /api/jobs/:jobId/retry` accepts a signed-in session only, like every dashboard API route; an API key with the `job:retry` scope retries through the MCP tool `studix_retry_job`.
+- A failed job keeps its attempt work directories so the retry can reuse synced media; the worker removes a job's directory once nothing has written to it for `WORKER_WORK_DIR_RETENTION_HOURS` (default 168, checked at startup and hourly). Past that, a retry regenerates that media.
 - The action is audited as `job.retried`. A failed job's `next` list suggests the tool.
 
 ### Feedback, render and storyboard approval

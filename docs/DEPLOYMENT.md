@@ -76,6 +76,9 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
 when the run ends; the worker creates that directory at startup and removes
 sandboxes left by a crashed worker once they are older than the run timeout.
+Job scratch directories (`WORKER_WORK_DIR/<jobId>`) are removed when the job
+finishes; those of failed jobs are kept for retries and swept after
+`WORKER_WORK_DIR_RETENTION_HOURS` (default 168) without writes.
 When Anthropic answers a run with 401, the worker re-tests that key directly
 and, only if it is still rejected and was not rotated meanwhile, marks its
 connection `invalid`, so job creation stops accepting it until the key is

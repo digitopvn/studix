@@ -78,6 +78,13 @@
       "when": 1793442813195,
       "tag": "0010_job_deadline_pause",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793444480143,
+      "tag": "0011_job_deadline_window",
+      "breakpoints": true
     }
   ]
 }
