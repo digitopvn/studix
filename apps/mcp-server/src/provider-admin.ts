@@ -230,7 +230,9 @@ export function createProviderAdmin(deps: ProviderAdminDeps): ProviderAdmin {
       }
       const started = clock.now().getTime();
       let result: ProviderConnectionTestResult;
-      let status: ProviderConnection["status"] = "connected";
+      // Only proof changes the status: a working key reconnects, a rejected one is invalid, anything else
+      // (rate limit, timeout, outage) says nothing about the key and keeps what was there.
+      let status: ProviderConnection["status"] | undefined = "connected";
       try {
         const apiKey = await deps.vault.reveal(ctx, connection.secretRef);
         await probe(ctx, { provider: connection.provider, modelId, apiKey, connectionId: connection.id });
@@ -238,7 +240,7 @@ export function createProviderAdmin(deps: ProviderAdminDeps): ProviderAdmin {
       } catch (error) {
         const failure = toStudixError(error);
         const outcome = testCode(failure);
-        if (outcome.status) status = outcome.status;
+        status = outcome.code === "ok" ? "connected" : outcome.status;
         result = {
           ok: outcome.code === "ok",
           at: clock.now(),
@@ -247,7 +249,12 @@ export function createProviderAdmin(deps: ProviderAdminDeps): ProviderAdmin {
           ...(outcome.code === "ok" ? {} : { message: failure.message.slice(0, 300) }),
         };
       }
-      return toPublicConnection(await deps.connections.update(ctx, id, { status, lastTest: result }));
+      // A key replaced while the probe ran was not the key tested; keep the status the rotation set.
+      const current = await deps.connections.get(ctx, id);
+      if (current && current.version !== connection.version) status = undefined;
+      return toPublicConnection(
+        await deps.connections.update(ctx, id, { ...(status ? { status } : {}), lastTest: result }),
+      );
     },
 
     async rotateConnection(ctx, id, body) {

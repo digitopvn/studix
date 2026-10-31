@@ -84,7 +84,10 @@ export function createBoundedAgentRuntime(options: BoundedAgentRuntimeOptions): 
           throw new StudixError(
             "BUDGET_EXCEEDED",
             `agent cost ${result.costCents}¢ exceeds the ${task.maxCostCents}¢ task limit`,
-            { retryable: false },
+            {
+              retryable: false,
+              ...(Number.isFinite(result.costCents) ? { details: { spentCents: result.costCents } } : {}),
+            },
           );
         }
         return result;

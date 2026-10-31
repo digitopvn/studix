@@ -71,8 +71,10 @@ Keys are write-only through `/api/providers`: responses carry a short hint and
 are sent with `Cache-Control: no-store`. Users cannot supply a custom provider
 endpoint (`baseUrl`) until outbound URLs are checked against private networks,
 and providers that authenticate from ambient cloud credentials are not offered.
-A failing workspace model falls back to the free rules provider, never to the
-operator's paid credentials. App and worker need the same keyring.
+A failing workspace model (including a stored key that no longer opens) falls
+back to the free rules provider, never to the operator's paid credentials. App
+and worker need the same keyring: a worker started without one cannot open any
+workspace key and runs every decision on the operator's router, as before BYOK.
 
 ## MCP-in-MCP connectors
 

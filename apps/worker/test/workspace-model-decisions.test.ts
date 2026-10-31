@@ -65,7 +65,14 @@ function memorySnapshots(): ModelSnapshotRepository & { rows: Map<string, Resolv
   };
 }
 
-function setup(options: { prefs?: ModelPreference[]; runtimeOutput?: unknown; runtimeError?: Error } = {}) {
+function setup(
+  options: {
+    prefs?: ModelPreference[];
+    runtimeOutput?: unknown;
+    runtimeError?: Error;
+    vaultError?: Error;
+  } = {},
+) {
   const prefs = options.prefs ?? [];
   const snapshots = memorySnapshots();
   const runs: PiResolvedRun[] = [];
@@ -92,6 +99,7 @@ function setup(options: { prefs?: ModelPreference[]; runtimeOutput?: unknown; ru
     snapshots,
     vault: {
       async reveal() {
+        if (options.vaultError) throw options.vaultError;
         return "tenant-key-0123456789";
       },
     },
@@ -156,6 +164,61 @@ describe("workspace model decisions", () => {
     const invalid = setup({ prefs: [preference("model/a")], runtimeOutput: { wrong: true } });
     const fromInvalid = await invalid.provider.decide(request());
     expect(fromInvalid).toMatchObject({ output: { answer: "rules" }, costCents: 2 });
+  });
+
+  it("treats an unreadable stored key as a failing workspace model, not as no choice", async () => {
+    const { provider, operator } = setup({
+      prefs: [preference("model/a")],
+      vaultError: new StudixError("UNAVAILABLE", "Stored credential cannot be opened"),
+    });
+    const result = await provider.decide(request());
+    expect(result).toMatchObject({ output: { answer: "rules" }, fallbackReason: "provider_error" });
+    expect(operator.calls).toHaveLength(0);
+  });
+
+  it("does not call the provider when the decision has no budget", async () => {
+    const { provider, runs } = setup({ prefs: [preference("model/a")] });
+    const result = await provider.decide({ ...request(), budgetCents: 0 });
+    expect(result).toMatchObject({ output: { answer: "rules" }, fallbackReason: "budget_exceeded" });
+    expect(runs).toHaveLength(0);
+  });
+
+  it("keeps the spend of a failed run in the fallback result", async () => {
+    const { provider } = setup({
+      prefs: [preference("model/a")],
+      runtimeError: new StudixError("PROVIDER_ERROR", "outage", { details: { spentCents: 3 } }),
+    });
+    const result = await provider.decide(request());
+    expect(result).toMatchObject({ output: { answer: "rules" }, costCents: 3 });
+  });
+
+  it("runs the model another attempt pinned first", async () => {
+    const { provider, snapshots, runs } = setup({ prefs: [preference("model/b")] });
+    const original = snapshots.get.bind(snapshots);
+    let raced = false;
+    // The first read sees no pin; a concurrent attempt then pins model/a before this one does.
+    snapshots.get = async (ctx, jobId, key) => {
+      const found = await original(ctx, jobId, key);
+      if (!raced) {
+        raced = true;
+        snapshots.rows.set(`${jobId}/pi/plan`, {
+          runtime: "pi",
+          stage: "plan",
+          source: "workspace-stage",
+          connectionId: "pconn_1",
+          connectionVersion: 1,
+          provider: "openrouter",
+          modelId: "model/a",
+          authMethod: "api_key",
+          billingSource: "usage-based",
+          allowFallback: false,
+          fallbacks: [],
+        });
+      }
+      return found;
+    };
+    await provider.decide(request());
+    expect(runs[0]!.bindings[0]!.modelId).toBe("model/a");
   });
 
   it("does not swallow a cancellation", async () => {

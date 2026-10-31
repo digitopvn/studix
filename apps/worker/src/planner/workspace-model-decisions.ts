@@ -2,6 +2,7 @@ import {
   type CredentialRevealer,
   createPiSdkAgentRuntime,
   createProviderBindingResolver,
+  isNoModelSelected,
   type PiResolvedRun,
 } from "@studix/agent-runtime";
 import type {
@@ -10,8 +11,10 @@ import type {
   ModelPreferenceRepository,
   ModelSnapshotRepository,
   ProviderConnectionRepository,
+  ResolvedModelSnapshot,
 } from "@studix/core";
 import {
+  type DecisionFailureReason,
   type DecisionProvider,
   type DecisionRequest,
   type DecisionResult,
@@ -56,23 +59,30 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
     if (!jobId) return undefined;
     const job = await deps.jobs.get(tenant, jobId);
     if (!job) return undefined;
+    const resolve = (snapshot?: ResolvedModelSnapshot) =>
+      createProviderBindingResolver({
+        connections: deps.connections,
+        preferences: deps.preferences,
+        vault: deps.vault,
+        requestedBy: job.createdBy,
+        ...(snapshot ? { snapshot } : {}),
+      }).resolve(tenant, { stage });
+
     const pinned = await deps.snapshots.get(tenant, jobId, { runtime: "pi", stage });
-    const resolver = createProviderBindingResolver({
-      connections: deps.connections,
-      preferences: deps.preferences,
-      vault: deps.vault,
-      requestedBy: job.createdBy,
-      ...(pinned ? { snapshot: pinned } : {}),
-    });
+    let resolved: PiResolvedRun;
     try {
-      const resolved = await resolver.resolve(tenant, { stage });
-      if (resolved.snapshot && !pinned) await deps.snapshots.pin(tenant, jobId, resolved.snapshot);
-      return resolved;
+      resolved = await resolve(pinned);
     } catch (error) {
-      // No model chosen for this workspace: keep the operator's behaviour. Anything else is a real failure.
-      if (!pinned && error instanceof StudixError && error.code === "UNAVAILABLE") return undefined;
+      // Nobody chose a model: keep the operator's behaviour. A choice that cannot run is a real failure.
+      if (!pinned && isNoModelSelected(error)) return undefined;
       throw error;
     }
+    if (pinned || !resolved.snapshot) return resolved;
+    const stored = await deps.snapshots.pin(tenant, jobId, resolved.snapshot);
+    const same =
+      stored.connectionId === resolved.snapshot.connectionId && stored.modelId === resolved.snapshot.modelId;
+    // A concurrent attempt pinned first: run what it stored so every attempt of the job uses one model.
+    return same ? resolved : resolve(stored);
   }
 
   return {
@@ -88,6 +98,13 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
         return fallBack(request, toStudixError(error), started);
       }
       if (!resolved) return deps.operator.decide(request);
+      if (request.budgetCents <= 0) {
+        return fallBack(
+          request,
+          new StudixError("BUDGET_EXCEEDED", "No budget left for the workspace model"),
+          started,
+        );
+      }
 
       try {
         const run = await runtimeFor(resolved).run(request.tenant, {
@@ -128,7 +145,8 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
           traceId: request.idempotencyKey,
         };
       } catch (error) {
-        return fallBack(request, toStudixError(error), started);
+        const failure = toStudixError(error);
+        return fallBack(request, failure, started, spentCentsOf(failure));
       }
     },
   };
@@ -150,8 +168,19 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
       ...result,
       costCents: result.costCents + spentCents,
       latencyMs: clock.now().getTime() - started,
-      fallbackReason:
-        error.code === "UNAUTHENTICATED" || error.code === "FORBIDDEN" ? "auth" : "provider_error",
+      fallbackReason: reasonOf(error),
     };
   }
+}
+
+function reasonOf(error: StudixError): DecisionFailureReason {
+  if (error.code === "UNAUTHENTICATED" || error.code === "FORBIDDEN") return "auth";
+  if (error.code === "BUDGET_EXCEEDED") return "budget_exceeded";
+  return "provider_error";
+}
+
+/** Spend a failed run reports in its error details; it is billed even though the decision fell back. */
+function spentCentsOf(error: StudixError): number {
+  const spent = error.details?.spentCents;
+  return typeof spent === "number" && Number.isFinite(spent) && spent > 0 ? spent : 0;
 }

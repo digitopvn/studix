@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createPiSdkAgentRuntime,
   createProviderBindingResolver,
+  isNoModelSelected,
   listPiCatalog,
   type PiBindingResolver,
   type PiRunBinding,
@@ -172,6 +173,8 @@ describe("Pi SDK runtime", () => {
     await expect(runtime.run(testTenant(), task({ outputSchema: { type: "object" } }))).rejects.toMatchObject(
       {
         code: "VALIDATION",
+        // The bad answer was still billed; callers record it.
+        details: { spentCents: expect.closeTo(100, 0) },
       },
     );
     expect(seen).toHaveLength(1);
@@ -312,16 +315,16 @@ describe("provider binding resolver", () => {
   });
 
   it("fails clearly when no model is chosen or the connection is unusable", async () => {
-    await expect(
-      resolverFor([connection()], []).resolver.resolve(ctxOf(""), { stage: "plan" }),
-    ).rejects.toMatchObject({
-      code: "UNAVAILABLE",
-    });
-    await expect(
-      resolverFor([connection({ status: "expired" })], [preference()]).resolver.resolve(ctxOf(""), {
-        stage: "plan",
-      }),
-    ).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+    const none = await resolverFor([connection()], [])
+      .resolver.resolve(ctxOf(""), { stage: "plan" })
+      .catch((e: unknown) => e);
+    expect(none).toMatchObject({ code: "UNAVAILABLE" });
+    expect(isNoModelSelected(none)).toBe(true);
+    const expired = await resolverFor([connection({ status: "expired" })], [preference()])
+      .resolver.resolve(ctxOf(""), { stage: "plan" })
+      .catch((e: unknown) => e);
+    expect(expired).toMatchObject({ code: "UNAUTHENTICATED" });
+    expect(isNoModelSelected(expired)).toBe(false);
     await expect(
       resolverFor([connection({ runtimes: ["claude-agent-sdk"] })], [preference()]).resolver.resolve(
         ctxOf(""),

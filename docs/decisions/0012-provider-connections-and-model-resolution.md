@@ -62,10 +62,13 @@ operator.
    permission or UI: default API key scopes never include `provider:*`.
 10. **Where the workspace model runs.** The worker maps decision kinds to stages (`video.brief` → `plan`). When the
     workspace or the job's creator chose a Pi model for that stage, the decision runs on it with that connection's key.
-    Without a choice the operator's decision router runs exactly as before. When the workspace model fails (rejected
-    key, outage, invalid answer) the job continues on the free rules provider; it never moves onto credentials the
-    operator pays for. Inside one attempt, a provider failure (including a rejected key) moves to the next fallback
-    only when the preference allowed fallbacks; budget caps, cancellation and invalid output never do.
+    Without a choice the operator's decision router runs exactly as before; "no choice" means no preference
+    matched, never an error that merely looks similar. When the workspace model fails (rejected key, a stored key
+    that no longer opens, outage, invalid answer, no budget left) the job continues on the free rules provider; it
+    never moves onto credentials the operator pays for. Spend of a failed run is kept in the result. Inside one
+    attempt, a provider failure (including a rejected key) moves to the next fallback only when the preference
+    allowed fallbacks; budget caps, cancellation and invalid output never do. When two attempts of one job resolve
+    at once, both run the snapshot that was pinned first.
 11. **No custom endpoints yet.** `baseUrl` is not accepted from users. A user-supplied endpoint would let a tenant make
     the server call private addresses; it waits for the outbound URL policy that already guards MCP connectors.
     Providers whose SDK path reads ambient credentials (cloud IAM, ADC, account ids from the environment) are not
@@ -74,7 +77,9 @@ operator.
     connections, tests them with one tiny prompt capped at one cent (cheapest catalog model unless one is named),
     rotates and deletes them, saves per-stage preferences and previews the model each stage resolves to for the
     caller. Keys are write-only; responses carry the hint and `Cache-Control: no-store`. Without a credential keyring
-    the API answers `UNAVAILABLE`.
+    the API answers `UNAVAILABLE`. A test changes the status only on proof: a working key marks it `connected`, a
+    rejected one `invalid`; a timeout, rate limit or outage leaves it as it was, and a key replaced while the test
+    ran keeps the status the replacement set.
 
 ## Consequences
 
@@ -85,6 +90,9 @@ operator.
   a worker without it ignores workspace models and keeps the operator router.
 - Losing every key that sealed a secret makes that connection unrecoverable (the user reconnects).
 - New permissions `provider:connect` and `provider:manage` extend the role matrix for users only; inbound API keys do not derive them.
+- Open product questions: spend on a workspace's own key is recorded in the usage ledger like operator spend
+  (`billingSource` on the snapshot tells them apart, but invoices do not yet); nothing yet removes a personal
+  connection when its owner leaves the workspace.
 - Delivery splits into independently mergeable parts: this domain and vault, the Pi runtime and catalog,
   the dashboard and API-key flow, then OAuth per provider.
 

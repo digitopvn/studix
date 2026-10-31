@@ -133,6 +133,15 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
         if (!retryOnFallback || task.signal.aborted) break;
       }
     }
+    // Failed attempts can still have been billed; callers need that spend to record it.
+    if (lastError instanceof StudixError && total.costCents > 0) {
+      throw new StudixError(lastError.code, lastError.message, {
+        retryable: lastError.retryable,
+        ...(lastError.suggestedAction ? { suggestedAction: lastError.suggestedAction } : {}),
+        details: { ...lastError.details, spentCents: total.costCents },
+        cause: lastError,
+      });
+    }
     throw lastError;
   };
 }

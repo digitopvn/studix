@@ -79,11 +79,18 @@ describe("AI provider API (Better Auth session, Postgres)", () => {
     const rejected = await json(
       await app.api("POST", `/api/providers/connections/${connection.id}/test`, { cookie: alice, body: {} }),
     );
-    probeFailure = undefined;
     expect(rejected.body).toMatchObject({
       status: "invalid",
       lastTest: { ok: false, code: "unauthenticated" },
     });
+
+    // A timeout says nothing about the key, so the connection stays invalid.
+    probeFailure = new StudixError("TIMEOUT", "the provider did not answer in time");
+    const timedOut = await json(
+      await app.api("POST", `/api/providers/connections/${connection.id}/test`, { cookie: alice, body: {} }),
+    );
+    probeFailure = undefined;
+    expect(timedOut.body).toMatchObject({ status: "invalid", lastTest: { ok: false, code: "timeout" } });
 
     const rotated = await app.api("POST", `/api/providers/connections/${connection.id}/rotate`, {
       cookie: alice,

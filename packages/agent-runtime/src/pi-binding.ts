@@ -71,6 +71,16 @@ export interface ProviderBindingResolverOptions {
   endpointFor?: (connection: ProviderConnection) => PiEndpoint | undefined;
 }
 
+const NO_MODEL_SELECTED = "no_model_selected";
+
+/**
+ * True only when nobody chose a model for the stage. Other `UNAVAILABLE` failures (an unreadable stored key,
+ * a model removed from the catalog) mean a choice exists but cannot run.
+ */
+export function isNoModelSelected(error: unknown): boolean {
+  return error instanceof StudixError && error.details?.reason === NO_MODEL_SELECTED;
+}
+
 const reconnect = (message: string, details?: Record<string, unknown>) =>
   new StudixError("UNAUTHENTICATED", message, {
     retryable: false,
@@ -171,6 +181,7 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
         throw new StudixError("UNAVAILABLE", `No model is configured for the ${runtime} runtime`, {
           retryable: false,
           suggestedAction: "Connect a provider and choose a default model in Settings > AI & Models.",
+          details: { reason: NO_MODEL_SELECTED },
         });
       }
       const { preference, source } = selected;
