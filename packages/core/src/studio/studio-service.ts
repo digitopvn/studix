@@ -113,6 +113,16 @@ export class StudioService {
         suggestedAction: "Start a new publish once the cause is fixed.",
       });
     }
+    // The worker never checks `job.start`; an expired or rejected request fails the job, and a retry must not
+    // start it without the person who gates it.
+    const start = await this.deps.approvals.findLatest(ctx, { type: "job", id: jobId }, "job.start");
+    if (start && !(start.status === "approved" && start.decidedBy?.type === "user")) {
+      throw new StudixError("APPROVAL_REQUIRED", `job ${jobId} was never approved to start`, {
+        retryable: false,
+        details: { approvalId: start.id, approvalStatus: start.status },
+        suggestedAction: "Create the job again and have a workspace member approve it in the dashboard.",
+      });
+    }
     const requeued = await this.deps.queue.retry(ctx, jobId);
     await this.recordAudit(ctx, {
       action: "job.retried",

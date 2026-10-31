@@ -205,6 +205,18 @@ describe("jobs, lists and audit", () => {
     expect(audit.items[0]).toMatchObject({ action: "job.retried", data: { error: "UNAVAILABLE" } });
   });
 
+  it("does not retry a job whose job.start approval a person never granted", async () => {
+    const { studio, repos, ctx } = await setup();
+    const { job } = await studio.createVideoProject(ctx, { brief });
+    await studio.requestApproval(ctx, { action: "job.start", subjectType: "job", subjectId: job.id });
+    await repos.jobs.update(ctx, job.id, { status: "failed" });
+    await expect(studio.retryJob(ctx, job.id)).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" });
+    const pending = (await repos.approvals.findLatest(ctx, { type: "job", id: job.id }, "job.start"))!;
+    const reviewer = withActor(ctx, { type: "user", id: "usr_rev", role: "reviewer" });
+    await studio.approve(reviewer, { approvalId: pending.id, decision: "approved" });
+    expect((await studio.retryJob(ctx, job.id)).status).toBe("queued");
+  });
+
   it("does not retry a failed publish job", async () => {
     const { studio, repos, ctx } = await setup();
     const { queue } = repos;
