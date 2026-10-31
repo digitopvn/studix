@@ -735,6 +735,10 @@ export async function renderVersion(
     idempotencyKey: input.idempotencyKey,
     budgetCents: input.budgetCents,
   });
+  // The rendered version becomes current when it is requested, not when the job later runs.
+  if (project.currentVersionId !== version.id) {
+    await deps.projects.update(ctx, project.id, { currentVersionId: version.id });
+  }
   return {
     projectId: project.id,
     versionId: version.id,

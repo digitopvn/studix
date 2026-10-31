@@ -127,10 +127,11 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
                 createdBy: { type: "system", id: ctx.actor.id },
               });
             }
-            // A feedback job renders a version the patch already made current. A later patch may have
-            // moved the head on, and a delayed or retried job must not move the pointer back to its own.
+            // Only a version the planner just made needs the pointer. A stored version (feedback patch,
+            // explicit render) was made current by whoever queued the job; moving it again here would
+            // rewind a newer patch that landed while the job waited for approval or retried.
             await repos.projects.update(ctx, payload.projectId, {
-              ...(payload.feedbackId ? {} : { currentVersionId: versionId }),
+              ...(needsVersion ? { currentVersionId: versionId } : {}),
               status: "rendering",
             });
           });

@@ -63,6 +63,21 @@ describe("project review", () => {
     expect(review.storyboard?.scenes[0]?.shots[0]).toMatchObject({ changed: false, revision: 1 });
   });
 
+  it("renders an older version by making it current when requested", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    const out = await studio.submitFeedback(ctx, {
+      projectId,
+      shotId: "feature-1",
+      comment: "Nhấn mạnh tốc độ giao hàng",
+      patch: replaceText("/scenes/2/shots/0/text", "Giao hàng trong 2 giờ"),
+    });
+    expect((await repos.projects.get(ctx, projectId))?.currentVersionId).toBe(out.versionId);
+
+    const rendered = await studio.renderVersion(ctx, { projectId, versionId: out.baseVersionId });
+    expect(rendered.versionId).toBe(out.baseVersionId);
+    expect((await repos.projects.get(ctx, projectId))?.currentVersionId).toBe(out.baseVersionId);
+  });
+
   it("refuses a patch that reaches outside the feedback target, and stores nothing", async () => {
     const { studio, ctx, projectId } = await setup();
     await expect(

@@ -386,7 +386,7 @@ describe("video.create workflow on Postgres", () => {
       error: { code: "VALIDATION" },
     });
   });
-  it("keeps a newer head when a delayed feedback job validates an older version", async () => {
+  it("keeps a newer head when a delayed job validates a stored older version", async () => {
     const ctx = await tenant(db.current, "stale-head");
     const { repos } = db.current;
     const human = { type: "user", id: "usr_1" } as const;
@@ -413,7 +413,7 @@ describe("video.create workflow on Postgres", () => {
     const { job } = await repos.queue.enqueue(ctx, {
       kind: "video.create",
       projectId: project.id,
-      payload: { projectId: project.id, versionId: v2.id, feedbackId: "fbk_1", renderPreset: "preview" },
+      payload: { projectId: project.id, versionId: v2.id, renderPreset: "preview" },
       createdBy: human,
       budgetCents: 500,
       maxAttempts: 3,
