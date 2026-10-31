@@ -7,6 +7,8 @@ import type {
   BillingPolicy,
   Job,
   JobRepository,
+  MediaJobJournal,
+  MediaJobRecord,
   Stage,
   StageCacheRepository,
   TenantContext,
@@ -21,6 +23,7 @@ import type {
   StageContext,
   StageDefinition,
   StageOutput,
+  StageServices,
   StageUsage,
   WorkflowDefinition,
 } from "./workflow-types.ts";
@@ -54,7 +57,52 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
    * storyboard fail closed when this is missing.
    */
   storyboardStatus?(ctx: TenantContext, projectId: string): Promise<StoryboardReviewStatus | undefined>;
+  /** Ports handed to every stage as `StageContext.services`. */
+  services?: StageServices;
   agents?: AgentStageWiring;
+}
+
+/**
+ * The media job journal of one stage run. It starts from the records every earlier attempt of the stage
+ * stored (the newest record per idempotency key wins) and persists each `put` through `persist`, which
+ * writes the stage row fenced by job ownership. Writes are serialized so the stored list never goes
+ * backwards; a refused write rejects the `put`, so a provider never reports a job it could not journal.
+ */
+function stageMediaJournal(
+  ctx: TenantContext,
+  prior: readonly Stage[],
+  persist: (records: MediaJobRecord[]) => Promise<void>,
+): MediaJobJournal {
+  const records = new Map<string, MediaJobRecord>();
+  for (const row of prior) {
+    for (const record of row.mediaJobs ?? []) {
+      const known = records.get(record.idempotencyKey);
+      if (!known || record.updatedAt >= known.updatedAt) records.set(record.idempotencyKey, record);
+    }
+  }
+  const sameTenant = (c: TenantContext) =>
+    c.workspaceId === ctx.workspaceId && c.organizationId === ctx.organizationId;
+  let queue: Promise<void> = Promise.resolve();
+  return {
+    async get(c, key) {
+      if (!sameTenant(c)) return undefined;
+      const record = records.get(key);
+      return record ? structuredClone(record) : undefined;
+    },
+    put(c, record) {
+      if (!sameTenant(c)) {
+        return Promise.reject(
+          new StudixError("FORBIDDEN", "media job journal belongs to another workspace", {
+            retryable: false,
+          }),
+        );
+      }
+      records.set(record.idempotencyKey, structuredClone(record));
+      const write = queue.then(() => persist([...records.values()].map((r) => structuredClone(r))));
+      queue = write.catch(() => undefined);
+      return write;
+    },
+  };
 }
 
 /** Fail unless a person approved the job's storyboard; checked before any cache, gate or charge. */
@@ -215,12 +263,15 @@ export async function runStages(
   const fenced = async (write: Promise<boolean>): Promise<void> => {
     if (!(await write)) throw new LeaseLostError();
   };
-  const saved = checkpoints(await deps.jobs.listStages(ctx, job.id));
+  const route = workflow.route?.(job) ?? workflow;
+  const rows = await deps.jobs.listStages(ctx, job.id);
+  const saved = checkpoints(rows);
   const outputs: Record<string, StageOutput> = {};
   let spentCents = job.spentCents;
-  const total = workflow.stages.length;
+  const total = route.stages.length;
+  const services = deps.services ?? {};
 
-  for (const [index, stage] of workflow.stages.entries()) {
+  for (const [index, stage] of route.stages.entries()) {
     signal.throwIfAborted();
     const checkpoint = saved[stage.name];
     if (checkpoint && ((await stage.isCheckpointValid?.(checkpoint, saved)) ?? true)) {
@@ -229,6 +280,15 @@ export async function runStages(
     }
 
     let lastProgressAt = 0;
+    let startedAt = deps.clock.now();
+    const mediaJournal = stageMediaJournal(
+      ctx,
+      rows.filter((r) => r.name === stage.name),
+      (mediaJobs) =>
+        fenced(
+          queue.writeStage(job, workerId, { name: stage.name, status: "running", startedAt, mediaJobs }),
+        ),
+    );
     const sctx: StageContext = {
       ctx,
       job,
@@ -256,6 +316,8 @@ export async function runStages(
             deps.logger.warn("progress update failed", { jobId: job.id, error: String(err) });
           });
       },
+      mediaJournal,
+      services,
     };
 
     if (stage.requiresApprovedStoryboard) await assertStoryboardApproved(deps, ctx, job, stage);
@@ -310,7 +372,7 @@ export async function runStages(
       });
     }
 
-    const startedAt = deps.clock.now();
+    startedAt = deps.clock.now();
     await fenced(queue.updateProgress(job, workerId, { stage: stage.name, progress: index / total }));
     await fenced(queue.writeStage(job, workerId, { name: stage.name, status: "running", startedAt }));
     const recordUsage = async (lines: readonly StageUsage[]) => {
@@ -319,18 +381,19 @@ export async function runStages(
           queue.recordUsage(job, workerId, {
             // A usage line tied to a provider execution is that one call's cost, whatever attempt reports
             // it (e.g. a retry served from the decision cache); anything else re-ran and cost again.
-            dedupeKey: usage.providerExecutionId
-              ? executionUsageDedupeKey({
-                  jobId: job.id,
-                  stage: stage.name,
-                  executionId: usage.providerExecutionId,
-                })
-              : usageDedupeKey({
-                  jobId: job.id,
-                  stage: stage.name,
-                  attempt: job.attempts,
-                  item: usage.item,
-                }),
+            dedupeKey:
+              (usage.providerExecutionId ?? usage.upstreamJob)
+                ? executionUsageDedupeKey({
+                    jobId: job.id,
+                    stage: stage.name,
+                    executionId: (usage.providerExecutionId ?? usage.upstreamJob) as string,
+                  })
+                : usageDedupeKey({
+                    jobId: job.id,
+                    stage: stage.name,
+                    attempt: job.attempts,
+                    item: usage.item,
+                  }),
             kind: usage.kind,
             quantity: usage.quantity,
             unit: usage.unit,
@@ -448,5 +511,5 @@ export async function runStages(
       );
     }
   }
-  return { status: "succeeded", result: workflow.result(outputs) };
+  return { status: "succeeded", result: route.result(outputs) };
 }

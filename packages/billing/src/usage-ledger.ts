@@ -7,6 +7,8 @@ export const USAGE_KINDS = {
   providerDecision: "provider.decision",
   /** Seconds of rendered output. */
   renderSeconds: "render.seconds",
+  /** One generated image, clip, voice line, music bed or sound effect (provider COGS). */
+  mediaGeneration: "media.generation",
   /** Bytes written to object storage. */
   storageBytes: "storage.bytes",
   /** One run of an agent stage (harness or host): tokens in quantity, model spend in costCents. */

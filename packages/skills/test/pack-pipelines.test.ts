@@ -1,0 +1,411 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Job, RendererAdapter, StorageAdapter, TenantContext, UsageEvent } from "@studix/core";
+import {
+  createInMemoryJobStore,
+  createInMemoryProjectRepository,
+  createInMemoryRenderRepository,
+  createInMemoryStageCache,
+} from "@studix/core/testing";
+import { FakeMediaProvider } from "@studix/providers";
+import { createLogger, StudixError } from "@studix/shared";
+import type { StoryboardReviewStatus, VideoIR } from "@studix/video-ir";
+import {
+  createJobExecutor,
+  createVideoCreateWorkflow,
+  type JobExecutorDeps,
+  type QaExpectation,
+  type QaGate,
+  type WorkerJobQueue,
+} from "@studix/workflow";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MV_STAGES, packPipelines, packRegistry } from "../src/index.ts";
+
+const clock = { now: () => new Date() };
+const ctx: TenantContext = {
+  organizationId: "org_1",
+  workspaceId: "ws_1",
+  actor: { type: "user", id: "usr_1", role: "owner" },
+};
+const actor = { type: "user", id: "usr_1" } as const;
+
+/** An invented brand: three Vietnamese ad directions for a made-up tea shop. */
+const brief = {
+  prompt: "Ba quảng cáo dọc 20 giây cho tiệm trà Lá Mây",
+  title: "Lá Mây — ba hướng quảng cáo",
+  language: "vi",
+  aspectRatio: "9:16" as const,
+  durationMs: 20_000,
+  brand: {
+    name: "Lá Mây",
+    tagline: "Trà ngon mỗi sớm",
+    palette: { primary: "#2f6b4f", background: "#f4efe6", foreground: "#1d2a24", accent: "#d98e3f" },
+    fonts: { heading: "Be Vietnam Pro", body: "Be Vietnam Pro" },
+    voice: ["ấm áp", "gần gũi"],
+  },
+  directions: [
+    {
+      id: "sang-som",
+      name: "Buổi sáng",
+      concept: "Một tách trà nóng mở đầu ngày mới.",
+      hook: "Sáng nay bạn đã uống trà chưa?",
+      keyMessages: ["Lá trà hái tay mỗi sớm"],
+    },
+    {
+      id: "ban-be",
+      name: "Bạn bè",
+      concept: "Nhóm bạn tụ tập bên ấm trà chiều.",
+      hook: "Chiều nay hẹn nhau ở Lá Mây",
+      keyMessages: ["Không gian yên tĩnh giữa phố"],
+    },
+    {
+      id: "qua-tang",
+      name: "Quà tặng",
+      concept: "Hộp trà làm quà cho người thương.",
+      hook: "Món quà nhỏ, ý nghĩa lớn",
+      keyMessages: ["Hộp quà gói sẵn, giao tận nơi"],
+    },
+  ],
+};
+
+let root: string;
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), "studix-pack-pipelines-"));
+});
+afterEach(async () => {
+  await rm(root, { recursive: true, force: true });
+});
+
+function memoryStorage(): StorageAdapter & { keys(): string[] } {
+  const objects = new Map<string, Buffer>();
+  const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+  return {
+    keys: () => [...objects.keys()],
+    async put(_ctx, key, body, opts) {
+      if (!("filePath" in body)) throw new Error("memory storage takes files only");
+      const bytes = await readFile(body.filePath);
+      objects.set(key, bytes);
+      return { key, bytes: bytes.length, sha256: sha(bytes), contentType: opts.contentType };
+    },
+    async get() {
+      throw new Error("not used");
+    },
+    async download(_ctx, key, filePath) {
+      const bytes = objects.get(key);
+      if (!bytes) throw new StudixError("NOT_FOUND", `no object ${key}`);
+      await writeFile(filePath, bytes);
+      return { sha256: sha(bytes), bytes: bytes.length };
+    },
+    head: async () => undefined,
+    signedUrl: async (_ctx, key) => `https://storage.test/${key}`,
+    delete: async () => {},
+  };
+}
+
+function fakeRenderer(): RendererAdapter & { rendered: VideoIR[] } {
+  const rendered: VideoIR[] = [];
+  return {
+    id: "hyperframes",
+    rendered,
+    supports: () => ({ supported: true, reasons: [] }),
+    async render(ir, opts) {
+      rendered.push(ir);
+      for (const asset of ir.assets) expect(opts.assetFiles[asset.id]).toBeDefined();
+      const filePath = join(opts.workDir, "out.mp4");
+      await writeFile(filePath, `mp4:${ir.title}`);
+      return {
+        filePath,
+        mime: "video/mp4",
+        probe: {
+          durationMs: ir.format.durationMs,
+          width: 540,
+          height: 960,
+          fps: 30,
+          videoCodec: "h264",
+          bytes: 0,
+        },
+      };
+    },
+  };
+}
+
+function harness(options: { storyboard?: StoryboardReviewStatus; qaFails?: boolean } = {}) {
+  const { jobs } = createInMemoryJobStore(clock);
+  const projects = createInMemoryProjectRepository(clock);
+  const renders = createInMemoryRenderRepository(clock);
+  const storage = memoryStorage();
+  const renderer = fakeRenderer();
+  const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
+  const generate = vi.spyOn(media, "generate");
+  const usage: UsageEvent[] = [];
+  const qaCalls: QaExpectation[] = [];
+  const qa: QaGate = {
+    async assertPasses(_file, expectation) {
+      qaCalls.push(expectation);
+      if (options.qaFails)
+        throw new StudixError("VALIDATION", "QA hard gate failed: loudness", { retryable: false });
+      return { pass: true };
+    },
+  };
+  const settled = () => Promise.resolve(true);
+  const queue = {
+    leaseMs: 60_000,
+    heartbeat: async () => ({ held: true, cancelRequested: false }),
+    updateProgress: settled,
+    writeStage: async (job: Job, _w: string, stage: Parameters<WorkerJobQueue["writeStage"]>[2]) => {
+      await jobs.upsertStage(ctx, { ...stage, jobId: job.id, attempt: job.attempts } as never);
+      return true;
+    },
+    recordUsage: async (_job: Job, _w: string, line: UsageEvent) => {
+      if (!usage.some((u) => u.dedupeKey === line.dedupeKey)) usage.push(line);
+      return true;
+    },
+    commit: async (_job: Job, _w: string, write: (r: never, c: TenantContext) => Promise<unknown>) => ({
+      held: true,
+      value: await write({ projects, renders } as never, ctx),
+    }),
+    complete: vi.fn(settled),
+    fail: vi.fn(settled),
+    cancel: vi.fn(settled),
+    retry: vi.fn(settled),
+    release: vi.fn(settled),
+    park: vi.fn(settled),
+  } as unknown as WorkerJobQueue & Record<"complete" | "fail" | "retry", ReturnType<typeof vi.fn>>;
+  const workRoot = join(root, "work");
+  const executor = createJobExecutor({
+    queue,
+    jobs,
+    workflows: [
+      createVideoCreateWorkflow({
+        planner: async () => {
+          throw new Error("pack pipelines never call the default planner");
+        },
+        renderer,
+        storage,
+        projects,
+        renders,
+        workRoot,
+        pipelines: packPipelines(packRegistry),
+      }),
+    ],
+    approvals: {} as JobExecutorDeps["approvals"],
+    approvalPolicy: {} as JobExecutorDeps["approvalPolicy"],
+    approvalTtlMs: 1,
+    billing: { authorizeSpend: async () => ({ allowed: true }) } as unknown as JobExecutorDeps["billing"],
+    ledger: {
+      record: async () => ({}),
+      jobCostCents: async () => usage.reduce((n, u) => n + u.costCents, 0),
+    } as unknown as JobExecutorDeps["ledger"],
+    clock,
+    logger: createLogger({}, { level: "error", write: () => {} }),
+    heartbeatIntervalMs: 10_000,
+    stageCache: createInMemoryStageCache(clock),
+    storyboardStatus: async () => options.storyboard,
+    services: { media, storage, renderer, qa, workRoot },
+  });
+
+  let seq = 0;
+  async function run(payload: Record<string, unknown>, projectId: string) {
+    const job = {
+      id: `job_${++seq}`,
+      organizationId: ctx.organizationId,
+      workspaceId: ctx.workspaceId,
+      projectId,
+      kind: "video.create",
+      status: "running",
+      payload: { projectId, renderPreset: "preview", ...payload },
+      progress: 0,
+      attempts: 1,
+      maxAttempts: 1,
+      spentCents: 0,
+      cancelRequested: false,
+      createdBy: actor,
+    } as unknown as Job;
+    const outcome = await executor.execute(job, "worker-1", new AbortController().signal);
+    return { job, outcome };
+  }
+  /** The outcome with the job's failure, so a failed expectation says why the job failed. */
+  const failureOf = (outcome: unknown) => ({ outcome, failure: queue.fail.mock.calls.at(-1)?.[2] });
+  return { run, failureOf, projects, renders, storage, renderer, generate, usage, qaCalls, queue };
+}
+
+async function newProject(h: ReturnType<typeof harness>, workflowTemplate: string, b: unknown = brief) {
+  const project = await h.projects.create(ctx, {
+    title: "Lá Mây",
+    status: "draft",
+    brief: b as never,
+    workflowTemplate,
+    createdBy: actor,
+  } as never);
+  return project.id;
+}
+
+describe("marketing-video pipeline (fake providers)", () => {
+  it("runs brief -> script -> storyboard frames and stops for review, without any clip or audio job", async () => {
+    const h = harness();
+    const projectId = await newProject(h, "marketing-video");
+    const { outcome } = await h.run({ workflowTemplate: "marketing-video" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+
+    const kinds = h.generate.mock.calls.map(([, r]) => r.kind);
+    expect(kinds.length).toBeGreaterThan(0);
+    expect(new Set(kinds)).toEqual(new Set(["image"]));
+    const project = await h.projects.get(ctx, projectId);
+    expect(project?.status).toBe("in_review");
+    const version = await h.projects.getVersion(ctx, project?.currentVersionId as string);
+    const ir = version?.ir as VideoIR;
+    expect(ir.scenes).toHaveLength(3);
+    expect(ir.format).toMatchObject({ aspectRatio: "9:16", durationMs: 60_000 });
+    expect(ir.language).toBe("vi");
+    const images = ir.scenes.flatMap((s) => s.shots.filter((x) => x.type === "image"));
+    expect(images).toHaveLength(kinds.length);
+    expect(
+      ir.assets
+        .filter((a) => a.kind === "image")
+        .every((a) => a.storageKey && h.storage.keys().includes(a.storageKey)),
+    ).toBe(true);
+    // Hook within the first three seconds of every ad; captions are chunked to at most nine words.
+    for (const scene of ir.scenes) expect(scene.shots[0]?.durationMs).toBeLessThanOrEqual(3000);
+    expect(ir.captions?.cues.every((c) => c.text.split(" ").length <= 9)).toBe(true);
+    expect(h.renderer.rendered).toHaveLength(0);
+    expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(kinds.length);
+  });
+
+  it("refuses image-to-video and charges nothing until the storyboard is approved", async () => {
+    const h = harness({ storyboard: "in_review" });
+    const projectId = await newProject(h, "marketing-video");
+    await h.run({ workflowTemplate: "marketing-video" }, projectId);
+    h.generate.mockClear();
+    const project = await h.projects.get(ctx, projectId);
+    const { outcome } = await h.run(
+      { workflowTemplate: "marketing-video", versionId: project?.currentVersionId },
+      projectId,
+    );
+    expect(outcome).toBe("failed");
+    expect(h.generate).not.toHaveBeenCalled();
+    const failure = h.queue.fail.mock.calls.at(-1)?.[2] as { code: string };
+    expect(failure.code).toBe("APPROVAL_REQUIRED");
+  });
+
+  it("renders, gates and publishes one file per ad once the storyboard is approved", async () => {
+    const h = harness({ storyboard: "approved" });
+    const projectId = await newProject(h, "marketing-video");
+    await h.run({ workflowTemplate: "marketing-video" }, projectId);
+    const project = await h.projects.get(ctx, projectId);
+    h.generate.mockClear();
+    const { job, outcome } = await h.run(
+      { workflowTemplate: "marketing-video", versionId: project?.currentVersionId },
+      projectId,
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const kinds = h.generate.mock.calls.map(([, r]) => r.kind);
+    expect(kinds.filter((k) => k === "voice")).toHaveLength(3);
+    expect(kinds.filter((k) => k === "music")).toHaveLength(3);
+    expect(kinds.filter((k) => k === "sfx")).toHaveLength(3);
+    expect(kinds.filter((k) => k === "video").length).toBeGreaterThanOrEqual(6);
+    expect(h.renderer.rendered).toHaveLength(3);
+    for (const one of h.renderer.rendered) {
+      expect(one.format.durationMs).toBe(20_000);
+      expect(one.scenes[0]?.shots.some((s) => s.type === "video")).toBe(true);
+      expect(one.audio?.map((t) => t.kind).sort()).toEqual(["music", "sfx", "voiceover"]);
+      expect(one.audio?.every((t) => t.startMs + (t.durationMs ?? 0) <= 20_000)).toBe(true);
+    }
+    expect(h.qaCalls).toHaveLength(3);
+    expect(h.qaCalls.every((q) => q.requireAudio && q.durationMs === 20_000)).toBe(true);
+    const published = await h.renders.listByProject(ctx, projectId);
+    expect(published.items.filter((r) => r.jobId === job.id)).toHaveLength(3);
+    // Every paid call bills once: no dedupe key twice.
+    expect(new Set(h.usage.map((u) => u.dedupeKey)).size).toBe(h.usage.length);
+  });
+
+  it("publishes nothing when the QA hard gate fails", async () => {
+    const h = harness({ storyboard: "approved", qaFails: true });
+    const projectId = await newProject(h, "marketing-video");
+    await h.run({ workflowTemplate: "marketing-video" }, projectId);
+    const project = await h.projects.get(ctx, projectId);
+    const { outcome } = await h.run(
+      { workflowTemplate: "marketing-video", versionId: project?.currentVersionId },
+      projectId,
+    );
+    expect(outcome).toBe("failed");
+    expect((await h.renders.listByProject(ctx, projectId)).items).toHaveLength(0);
+  });
+
+  it("fails before any paid call when a voice-over overruns the word budget", async () => {
+    const h = harness();
+    const long = Array.from({ length: 80 }, (_, i) => `từ${i}`).join(" ");
+    const projectId = await newProject(h, "marketing-video", {
+      ...brief,
+      directions: [
+        {
+          ...brief.directions[0],
+          beats: [
+            { visual: "trà", voiceover: long },
+            { visual: "ấm", voiceover: "Ghé Lá Mây" },
+          ],
+        },
+      ],
+    });
+    const { outcome } = await h.run({ workflowTemplate: "marketing-video" }, projectId);
+    expect(outcome).toBe("failed");
+    expect(h.generate).not.toHaveBeenCalled();
+    const failure = h.queue.fail.mock.calls.at(-1)?.[2] as { code: string } | undefined;
+    expect(failure?.code).toBe("VALIDATION");
+  });
+});
+
+describe("motion-graphic pipeline (fake providers)", () => {
+  it("composes, voices, renders, gates and uploads with no image-to-video", async () => {
+    const h = harness();
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic giới thiệu tiệm trà Lá Mây",
+      title: "Lá Mây",
+      language: "vi",
+      durationMs: 12_000,
+      tone: ["editorial", "calm"],
+      keyMessages: ["Trà hái tay mỗi sớm", "Giao tận nơi trong ngày"],
+      callToAction: "Đặt trà ngay",
+    });
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.generate.mock.calls.map(([, r]) => r.kind)).toEqual(["voice"]);
+    expect(h.renderer.rendered).toHaveLength(1);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.audio?.[0]).toMatchObject({ kind: "voiceover" });
+    expect(ir.captions?.cues.length).toBeGreaterThan(0);
+    expect(ir.metadata?.styleProfile).toEqual(expect.any(String));
+    expect(h.qaCalls).toEqual([expect.objectContaining({ requireAudio: true, durationMs: 12_000 })]);
+    expect((await h.renders.listByProject(ctx, projectId)).items).toHaveLength(1);
+    expect((await h.projects.get(ctx, projectId))?.status).toBe("in_review");
+  });
+
+  it("re-renders a stored version through render -> QA -> upload", async () => {
+    const h = harness();
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic cho Lá Mây",
+      keyMessages: ["Trà ngon"],
+    });
+    await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    h.generate.mockClear();
+    const project = await h.projects.get(ctx, projectId);
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic", versionId: project?.currentVersionId },
+      projectId,
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.generate).not.toHaveBeenCalled();
+    expect(h.qaCalls).toHaveLength(2);
+  });
+});
+
+describe("pack pipeline routing", () => {
+  it("fails the job up front for an unknown workflow template", async () => {
+    const h = harness();
+    const projectId = await newProject(h, "brand-intro");
+    const { outcome } = await h.run({ workflowTemplate: "no-such-pack" }, projectId);
+    expect(outcome).toBe("failed");
+    expect(MV_STAGES.script).toBe("marketing-video.script");
+  });
+});

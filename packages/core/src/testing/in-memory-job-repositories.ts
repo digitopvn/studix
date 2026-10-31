@@ -47,7 +47,10 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         ctx,
         (s) => s.jobId === input.jobId && s.name === input.name && s.attempt === input.attempt,
       )[0];
-      return existing ? stages.update(ctx, existing.id, input) : stages.insert(ctx, input);
+      if (!existing) return stages.insert(ctx, input);
+      // Like the database: a write without mediaJobs keeps the records already stored on the row.
+      const { mediaJobs, ...rest } = input;
+      return stages.update(ctx, existing.id, mediaJobs === undefined ? rest : input);
     },
     async listStages(ctx, jobId) {
       return stages.filter(ctx, (s) => s.jobId === jobId).reverse();

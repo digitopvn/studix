@@ -26,13 +26,15 @@ afterEach(() => {
   unregister = undefined;
 });
 
+const BUILT_IN = ["brand-intro", "marketing-video", "motion-graphic"];
+
 describe("workflow packs on the MCP server", () => {
   it("advertises a newly registered pack through studix_inspect without code changes", () => {
-    expect(skillSummaries().map((s) => s.id)).toEqual(["brand-intro"]);
+    expect(skillSummaries().map((s) => s.id)).toEqual(BUILT_IN);
     unregister = registerPack(samplePack);
 
     const skills = skillSummaries();
-    expect(skills.map((s) => s.id)).toEqual(["brand-intro", "sample-explainer"]);
+    expect(skills.map((s) => s.id)).toEqual([...BUILT_IN, "sample-explainer"]);
     const capabilities = inspectCapabilities({
       tenant: testTenant(),
       limits: {} as AppLimits,
@@ -50,6 +52,6 @@ describe("workflow packs on the MCP server", () => {
 
   it("drops the pack again once it is unregistered", () => {
     registerPack(samplePack)();
-    expect(skillSummaries().map((s) => s.id)).toEqual(["brand-intro"]);
+    expect(skillSummaries().map((s) => s.id)).toEqual(BUILT_IN);
   });
 });

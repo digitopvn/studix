@@ -1,44 +1,12 @@
-import type { MediaKind, ProviderJobRef, TenantContext } from "@studix/core";
+import type { MediaJobJournal, MediaJobRecord, TenantContext } from "@studix/core";
+
+/** The journal contract lives in `@studix/core` so workflow stages can hand providers a durable one. */
+export type { MediaJobJournal, MediaJobRecord, MediaJobState } from "@studix/core";
 
 /**
- * submitting: the request is about to reach (or may have reached) an upstream that cannot deduplicate it,
- * so no job id is known yet; submitted: paid and running upstream; completed: outputs collected;
- * failed: ended without outputs.
- */
-export type MediaJobState = "submitting" | "submitted" | "completed" | "failed";
-
-/** What a provider must remember about an upstream job to collect it later instead of paying again. */
-export interface MediaJobRecord {
-  idempotencyKey: string;
-  kind: MediaKind;
-  model: string;
-  /** Absent while `state` is "submitting": the upstream has not reported an id yet. */
-  job?: ProviderJobRef;
-  /** Submission attempt for this idempotency key; a failed job is resubmitted as the next attempt. */
-  attempt: number;
-  state: MediaJobState;
-  estimatedCostCents: number;
-  /** Charge reported when the job completed. */
-  receiptCents?: number;
-  submittedAt: string;
-  updatedAt: string;
-}
-
-/**
- * Durable memory of upstream jobs, keyed by workspace and idempotency key. The record is written right
- * after submission, so a worker that dies while waiting leaves enough behind for the next attempt to
- * resume the same paid job. Implementations must scope reads and writes by `ctx.workspaceId`. `put` is an
- * unconditional overwrite: callers must serialize `generate` per idempotency key (the stage fencing does),
- * because the "submitting" intent is not a compare-and-set.
- */
-export interface MediaJobJournal {
-  get(ctx: TenantContext, idempotencyKey: string): Promise<MediaJobRecord | undefined>;
-  put(ctx: TenantContext, record: MediaJobRecord): Promise<void>;
-}
-
-/**
- * Process-local journal. It survives retries inside one worker process only; production wiring stores the
- * record with the stage checkpoint so another worker can resume it.
+ * Process-local journal, the provider's fallback when a request brings none. It survives retries inside one
+ * worker process only; workflow stages pass their stage journal (`StageContext.mediaJournal`), which is
+ * stored with the stage checkpoint so another worker can resume the job.
  */
 export class InMemoryMediaJobJournal implements MediaJobJournal {
   private readonly records = new Map<string, MediaJobRecord>();

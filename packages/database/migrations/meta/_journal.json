@@ -64,6 +64,13 @@
       "when": 1793433415971,
       "tag": "0008_agent_handoffs",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793433808111,
+      "tag": "0009_stage_media_jobs",
+      "breakpoints": true
     }
   ]
 }

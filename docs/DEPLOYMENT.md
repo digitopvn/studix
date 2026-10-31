@@ -86,18 +86,30 @@ advertised only when `multix check` reports its vendor key. Default models per
 role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`;
 `MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
 job. Every paid call is estimated first and refused above the request's cap.
+A video request on `sume:seedance-2.5` runs at `480p` unless it passes
+`params.resolution`; a higher resolution is an explicit, separately estimated
+choice
+([`DEFAULT_VIDEO_RESOLUTIONS`](../packages/providers/src/multix-routes.ts)).
 Sume jobs are submitted with an idempotency key and collected with `status
---wait --download`, so a retry resumes the paid job by its id. The job journal
-is in memory per worker process until the workflow stores it with the stage
-checkpoint; until then a worker restart in the middle of a job relies on the
-Sume idempotency key. Atlas Cloud has no idempotency key, so the adapter
+--wait --download`, so a retry resumes the paid job by its id. Stages pass the
+provider a job journal stored on the stage row (`stages.media_jobs`), written
+right after each submission: a worker that dies mid-stage leaves the upstream
+job ids behind, and the next attempt, on any worker, collects those jobs
+instead of submitting again. Atlas Cloud has no idempotency key, so the adapter
 journals a `submitting` record right before `atlas run`. If the worker dies
 before the job id is journaled, a retry with the same idempotency key is
 refused (non-retryable) instead of paying twice for one upscale (about $0.01):
 find the prediction in `multix history` or the Atlas Cloud console and resume
 it by job id. Only errors that prove Atlas never accepted the run (invalid
-request, missing key) release the key for a retry. This protection lasts as
-long as the journal does, so it needs the durable journal described above.
+request, missing key) release the key for a retry. Calls made outside a
+workflow stage fall back to an in-process journal, which a restart loses.
+
+Pack stages (`marketing-video`, `motion-graphic`) get the media provider, the
+storage, the renderer and the hard QA gate from the worker
+([`pack-services.ts`](../apps/worker/src/pack-services.ts)). Without
+`MULTIX_BIN` their paid stages fail with `UNAVAILABLE`; without the QA
+toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
+is never published.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.

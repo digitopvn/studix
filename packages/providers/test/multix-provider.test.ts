@@ -430,6 +430,28 @@ describe("MultixProvider async jobs", () => {
     expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
   });
 
+  it("journals in the request's journal, so a fresh provider without it still resumes the job", async () => {
+    let statusCalls = 0;
+    const cli = sumeImageCli((argv) => {
+      statusCalls += 1;
+      if (statusCalls === 1) return { stoppedBy: "timeout", exitCode: 143 };
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return { files: { [out]: "png" }, envelope: { outputs: [{ path: out }], usage: { cost_usd: 0.03 } } };
+    });
+    const stageJournal = new InMemoryMediaJobJournal();
+    const ownJournal = new InMemoryMediaJobJournal();
+    const first = new MultixProvider({ bin: "multix", runner: cli.runner, journal: ownJournal });
+    await first.generate(ctx, imageRequest({ journal: stageJournal })).catch(() => undefined);
+    expect(await stageJournal.get(ctx, "stage-1:image")).toMatchObject({ state: "submitted" });
+    expect(await ownJournal.get(ctx, "stage-1:image")).toBeUndefined();
+
+    // Another worker's provider has an empty journal of its own; the stage journal still carries job_1.
+    const second = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await second.generate(ctx, imageRequest({ journal: stageJournal }));
+    expect(result).toMatchObject({ job: { id: "job_1" } });
+    expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
+  });
+
   it("collects a finished Sume job from the real status envelope, which lists saved files only in text", async () => {
     const cli = scriptedCli((argv) => {
       expect(argv).toEqual(

@@ -180,6 +180,89 @@
         "minLength": 1,
         "maxLength": 300
       }
+    },
+    "directions": {
+      "minItems": 1,
+      "maxItems": 6,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "concept": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "hook": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "keyMessages": {
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "callToAction": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "visualStyle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "beats": {
+            "minItems": 2,
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "visual": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "onScreen": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "voiceover": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                }
+              },
+              "required": [
+                "visual"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "concept"
+        ]
+      }
     }
   },
   "required": [
