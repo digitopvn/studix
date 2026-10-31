@@ -215,8 +215,12 @@ describe("video.create workflow on Postgres", () => {
     };
     const claimed = (await a.queue.claim("worker-settle"))!;
     expect(await a.executor.execute(claimed, "worker-settle", a.shutdown.signal)).toBe("succeeded");
+    // A slow job may legitimately start more beats while it is still live, so compare against the
+    // count at the moment the attempt settled instead of an absolute number.
+    const beatsAtSettle = beats;
+    expect(beatsAtSettle).toBeGreaterThanOrEqual(1);
     await new Promise((r) => setTimeout(r, 800));
-    expect(beats).toBe(1);
+    expect(beats).toBe(beatsAtSettle);
   });
 
   it("does not apply a stalled worker's project writes after another worker finished the job", async () => {
