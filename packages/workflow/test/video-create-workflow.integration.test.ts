@@ -65,6 +65,47 @@ describe("video.create workflow on Postgres", () => {
     ]);
   });
 
+  it("does not move the project pointer back when a feedback job runs after a newer patch", async () => {
+    const ctx = await tenant(db.current, "stale-pointer");
+    const first = await enqueueCreate(db.current, ctx);
+    const worker = createTestWorker(db.current, "w1");
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    const v1 = (await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId!;
+    const base = (await db.current.repos.projects.getVersion(ctx, v1))!;
+    const author = { type: "user" as const, id: "usr_1" };
+    const v2 = await db.current.repos.projects.createVersion(ctx, {
+      projectId: first.project.id,
+      ir: base.ir,
+      source: "patch",
+      parentVersionId: v1,
+      createdBy: author,
+    });
+    const v3 = await db.current.repos.projects.createVersion(ctx, {
+      projectId: first.project.id,
+      ir: base.ir,
+      source: "patch",
+      parentVersionId: v2.id,
+      createdBy: author,
+    });
+    // Patch B already moved the head to v3; the job queued by patch A (v2) is still waiting.
+    await db.current.repos.projects.update(ctx, first.project.id, { currentVersionId: v3.id });
+    await db.current.repos.queue.enqueue(ctx, {
+      kind: "video.create",
+      projectId: first.project.id,
+      payload: {
+        projectId: first.project.id,
+        versionId: v2.id,
+        makeCurrent: false,
+        renderPreset: "preview",
+      },
+      createdBy: author,
+      budgetCents: 500,
+      maxAttempts: 3,
+    });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    expect((await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId).toBe(v3.id);
+  });
+
   it("returns the same job for a repeated idempotency key", async () => {
     const ctx = await tenant(db.current, "idem");
     const first = await enqueueCreate(db.current, ctx, { idempotencyKey: "brief-1" });

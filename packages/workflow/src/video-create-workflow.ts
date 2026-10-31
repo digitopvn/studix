@@ -127,8 +127,11 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
                 createdBy: { type: "system", id: ctx.actor.id },
               });
             }
+            // By the time a queued job runs a newer version may be head; jobs that did not ask to move it
+            // (feedback patches, renders of "the current version") must not silently revert it.
+            const movesHead = payload.makeCurrent && !payload.feedbackId;
             await repos.projects.update(ctx, payload.projectId, {
-              currentVersionId: versionId,
+              ...(movesHead ? { currentVersionId: versionId } : {}),
               status: "rendering",
             });
           });

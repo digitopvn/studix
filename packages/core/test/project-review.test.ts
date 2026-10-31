@@ -51,7 +51,11 @@ describe("project review", () => {
     expect(out.job?.status).toBe("queued");
     expect(out.next[0]?.tool).toBe("studix_get_job");
     const job = await repos.jobs.get(ctx, out.job!.id);
-    expect(job?.payload).toMatchObject({ versionId: out.versionId, workflowTemplate: "brand-intro" });
+    expect(job?.payload).toMatchObject({
+      versionId: out.versionId,
+      workflowTemplate: "brand-intro",
+      makeCurrent: false,
+    });
 
     const review = await studio.getProjectReview(ctx, projectId);
     expect(review.currentVersion?.id).toBe(out.versionId);
@@ -257,7 +261,12 @@ describe("project review", () => {
       idempotencyKey: "r-1",
     });
     expect(first).toMatchObject({ version: 1, replayed: false });
-    expect((await repos.jobs.get(ctx, first.job.id))?.payload).toMatchObject({ renderPreset: "final" });
+    expect((await repos.jobs.get(ctx, first.job.id))?.payload).toMatchObject({
+      renderPreset: "final",
+      makeCurrent: false,
+    });
+    const rollback = await studio.renderVersion(ctx, { projectId, versionId: first.versionId });
+    expect((await repos.jobs.get(ctx, rollback.job.id))?.payload).toMatchObject({ makeCurrent: true });
     const again = await studio.renderVersion(ctx, { projectId, idempotencyKey: "r-1" });
     expect(again).toMatchObject({ replayed: true, versionId: first.versionId });
     expect(again.job.id).toBe(first.job.id);

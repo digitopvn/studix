@@ -8,6 +8,10 @@ import type { StageContext } from "./workflow-types.ts";
 export const VideoCreatePayload = z.object({
   projectId: z.string().min(1),
   versionId: z.string().min(1).optional(),
+  /** False when the head was settled at queue time: this job must not move it (default true). */
+  makeCurrent: z.boolean().default(true),
+  /** Feedback jobs queued before `makeCurrent` existed carry only this; their patch already moved the head. */
+  feedbackId: z.string().min(1).optional(),
   renderPreset: RenderPreset.default("preview"),
   planner: PlannerSelection.optional(),
   workflowTemplate: WorkflowTemplateId.optional(),
