@@ -23,6 +23,11 @@ export interface EnqueueResult {
   created: boolean;
 }
 
+export interface RetryFailedJobOptions {
+  /** Attempts the resumed job may use on top of those it already spent. */
+  maxAttempts: number;
+}
+
 /** Producer side of the durable queue. Worker-side claiming/leasing lives in the workflow package. */
 export interface JobQueue {
   enqueue(ctx: TenantContext, input: EnqueueJobInput): Promise<EnqueueResult>;
@@ -30,4 +35,11 @@ export interface JobQueue {
   cancel(ctx: TenantContext, jobId: string, reason?: string): Promise<Job>;
   /** Move a waiting_approval job back to queued. */
   resume(ctx: TenantContext, jobId: string): Promise<Job>;
+  /**
+   * Requeue a `failed` job as itself (CONFLICT for any other status). Stage checkpoints, the stage media
+   * journals, spend, usage events and decided approvals stay, so the resumed run collects what it already
+   * paid for instead of submitting it again. The error and lease are cleared, and a deadline restarts with
+   * the window it was created with.
+   */
+  retryFailed(ctx: TenantContext, jobId: string, options: RetryFailedJobOptions): Promise<Job>;
 }

@@ -97,6 +97,26 @@ export class StudioService {
     return loadJobView(this.deps, ctx, cancelled);
   }
 
+  /**
+   * Requeue a failed job as itself once its cause is fixed. Checkpointed stages and the media journal of
+   * the failed stage are kept, so calls the provider already completed are collected, not paid again.
+   */
+  async retryJob(ctx: TenantContext, jobId: string): Promise<JobView> {
+    assertPermission(ctx, "job:retry");
+    const job = await this.deps.jobs.get(ctx, jobId);
+    if (!job) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
+    const requeued = await this.deps.queue.retryFailed(ctx, jobId, {
+      maxAttempts: this.deps.defaults.jobMaxAttempts,
+    });
+    await this.recordAudit(ctx, {
+      action: "job.retried",
+      subjectType: "job",
+      subjectId: jobId,
+      data: { previousError: job.error?.code, attempts: job.attempts },
+    });
+    return loadJobView(this.deps, ctx, requeued);
+  }
+
   async getProject(ctx: TenantContext, projectId: string): Promise<ProjectDetails> {
     assertPermission(ctx, "project:read");
     const project = await this.deps.projects.get(ctx, projectId);

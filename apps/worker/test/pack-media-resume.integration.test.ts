@@ -12,7 +12,7 @@ import {
 } from "@studix/core";
 import { withTestDatabase } from "@studix/database/testing";
 import { MultixProvider, type MultixRunner, type MultixRunResult } from "@studix/providers";
-import { createLogger } from "@studix/shared";
+import { createLogger, StudixError } from "@studix/shared";
 import { MV_STAGES, packPipelines, packRegistry } from "@studix/skills";
 import {
   createJobExecutor,
@@ -106,7 +106,11 @@ function sumeCli(upstream: { submits: string[] }, collect: "hang" | "deliver") {
 }
 
 /** A worker process with its own Multix provider (and so its own empty in-process journal). */
-function createWorker(workerId: string, cli: ReturnType<typeof sumeCli>, options: { frozen?: boolean } = {}) {
+function createWorker(
+  workerId: string,
+  cli: ReturnType<typeof sumeCli>,
+  options: { frozen?: boolean; storage?: StorageAdapter } = {},
+) {
   const { repos } = db.current;
   const base = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
   const queue: WorkerJobQueue = options.frozen
@@ -126,14 +130,14 @@ function createWorker(workerId: string, cli: ReturnType<typeof sumeCli>, options
     logger,
     heartbeatIntervalMs: 50,
     retryBackoff: { baseMs: 10, maxMs: 50 },
-    services: { media, storage, renderer, workRoot },
+    services: { media, storage: options.storage ?? storage, renderer, workRoot },
     workflows: [
       createVideoCreateWorkflow({
         planner: async () => {
           throw new Error("pack pipelines do not plan");
         },
         renderer,
-        storage,
+        storage: options.storage ?? storage,
         projects: repos.projects,
         renders: repos.renders,
         workRoot,
@@ -238,6 +242,44 @@ describe("pack media resume", () => {
     // Sume's captured amount is the receipt, one line per upstream job.
     expect(frames.every((u) => u.costCents === 1)).toBe(true);
     expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "succeeded", attempts: 2 });
+    expect(await repos.projects.get(ctx, project.id)).toMatchObject({ status: "in_review" });
+  });
+
+  it("requeues a failed job so the resumed stage collects the frames it already paid for", async () => {
+    const { ctx, job, project } = await enqueue("pack-media-retry");
+    const { repos } = db.current;
+    const upstream = { submits: [] as string[] };
+
+    // The frames are generated and billed, then storage refuses them for good (a missing bucket).
+    const brokenStorage: StorageAdapter = {
+      ...storage,
+      put: async () => {
+        throw new StudixError("UNAVAILABLE", "bucket is missing", { retryable: false });
+      },
+    };
+    const failing = createWorker("worker-a", sumeCli(upstream, "deliver"), { storage: brokenStorage });
+    expect((await failing.runOnce())?.outcome).toBe("failed");
+    expect(upstream.submits).toEqual(["job_1", "job_2"]);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "failed" });
+    await expect(repos.queue.retryFailed(ctx, project.id, { maxAttempts: 3 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+
+    // The cause is fixed; the same job is requeued and a fresh worker finishes it.
+    const requeued = await repos.queue.retryFailed(ctx, job.id, { maxAttempts: 3 });
+    expect(requeued).toMatchObject({ status: "queued", cancelRequested: false, maxAttempts: 4 });
+    expect(requeued.error).toBeUndefined();
+    await expect(repos.queue.retryFailed(ctx, job.id, { maxAttempts: 3 })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    const cliB = sumeCli(upstream, "deliver");
+    const resumed = await waitFor(() => createWorker("worker-b", cliB).runOnce());
+    expect(resumed).toMatchObject({ outcome: "succeeded", job: { attempts: 2 } });
+    expect(upstream.submits).toEqual(["job_1", "job_2"]);
+
+    const usage = (await repos.usage.list(ctx, { jobId: job.id, limit: 100 })).items;
+    expect(new Set(usage.map((u) => u.dedupeKey)).size).toBe(usage.length);
+    expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(2);
     expect(await repos.projects.get(ctx, project.id)).toMatchObject({ status: "in_review" });
   });
 });

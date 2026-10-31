@@ -32,6 +32,7 @@ export const STUDIX_TOOLS = {
   approve: "studix_approve",
   feedback: "studix_feedback",
   render: "studix_render",
+  retryJob: "studix_retry_job",
   listAssets: "studix_list_assets",
 } as const;
 

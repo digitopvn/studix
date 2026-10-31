@@ -93,6 +93,28 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         error: { code: "CANCELLED", message: reason ?? "cancelled", retryable: false },
       });
     },
+    async retryFailed(ctx, jobId, options) {
+      const job = jobs.require(ctx, jobId);
+      if (job.status !== "failed") {
+        throw new StudixError("CONFLICT", `job ${jobId} is ${job.status}`, {
+          details: { status: job.status, expected: ["failed"] },
+        });
+      }
+      const now = clock.now();
+      return jobs.update(ctx, jobId, {
+        status: "queued",
+        runAfter: now,
+        maxAttempts: job.attempts + options.maxAttempts,
+        cancelRequested: false,
+        error: undefined,
+        finishedAt: undefined,
+        lockedBy: undefined,
+        leaseExpiresAt: undefined,
+        deadlineAt: job.deadlineAt
+          ? new Date(now.getTime() + (job.deadlineAt.getTime() - job.createdAt.getTime()))
+          : undefined,
+      });
+    },
     async resume(ctx, jobId) {
       return repo.update(
         ctx,

@@ -72,6 +72,14 @@ export function nextActionsForJob(job: Job, approval?: Approval): NextAction[] {
           reason: job.error?.suggestedAction ?? "Inspect the project and its last version before retrying.",
         });
       }
+      if (job.status === "failed") {
+        hints.push({
+          tool: STUDIX_TOOLS.retryJob,
+          arguments: { jobId: job.id },
+          reason:
+            "After fixing the cause, requeue this job: finished stages and media already paid for are reused.",
+        });
+      }
       return hints;
     }
     case "cancelled":

@@ -257,6 +257,33 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
       return toJob(row);
     },
 
+    async retryFailed(ctx, jobId, options) {
+      const row = await getRow(ctx, jobId);
+      if (!row) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
+      if (row.status !== "failed") return conflictOrMissing(ctx, jobId, ["failed"]);
+      const now = clock.now();
+      const rows = await db
+        .update(jobs)
+        .set({
+          status: "queued",
+          runAfter: now,
+          maxAttempts: row.attempts + options.maxAttempts,
+          cancelRequested: false,
+          error: null,
+          finishedAt: null,
+          lockedBy: null,
+          leaseExpiresAt: null,
+          deadlineAt: row.deadlineAt
+            ? new Date(now.getTime() + (row.deadlineAt.getTime() - row.createdAt.getTime()))
+            : null,
+          updatedAt: now,
+        })
+        .where(scoped(jobs, ctx, eq(jobs.id, jobId), eq(jobs.status, "failed")))
+        .returning();
+      if (!rows[0]) return conflictOrMissing(ctx, jobId, ["failed"]);
+      return toJob(rows[0]);
+    },
+
     async resume(ctx, jobId) {
       return repo.update(
         ctx,

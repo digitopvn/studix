@@ -131,6 +131,7 @@ describe("cross-tenant isolation", () => {
       expect((await rejects(studio.getProject(intruder, project.id))).code).toBe("NOT_FOUND");
       expect((await rejects(studio.getJob(intruder, job.id))).code).toBe("NOT_FOUND");
       expect((await rejects(studio.cancelJob(intruder, job.id))).code).toBe("NOT_FOUND");
+      expect((await rejects(studio.retryJob(intruder, job.id))).code).toBe("NOT_FOUND");
       expect((await rejects(studio.approve(intruder, { approvalId, decision: "approved" }))).code).toBe(
         "NOT_FOUND",
       );
@@ -186,6 +187,34 @@ describe("jobs, lists and audit", () => {
     await repos.jobs.update(ctx, job.id, { status: "running", stage: "plan" });
     const view = await studio.cancelJob(ctx, job.id);
     expect(view).toMatchObject({ status: "running", cancelRequested: true });
+  });
+
+  it("requeues a failed job as itself, keeps its spend and audits the retry", async () => {
+    const { studio, repos, ctx } = await setup();
+    const { job } = await studio.createVideoProject(ctx, { brief });
+    expect((await rejects(studio.retryJob(ctx, job.id))).code).toBe("CONFLICT");
+
+    await repos.jobs.update(ctx, job.id, {
+      status: "failed",
+      attempts: 2,
+      spentCents: 6,
+      error: { code: "UNAVAILABLE", message: "bucket is missing", retryable: false },
+      finishedAt: new Date(),
+    });
+    const failed = await studio.getJob(ctx, job.id);
+    expect(failed.next.map((n) => n.tool)).toContain("studix_retry_job");
+
+    const viewer = withActor(ctx, { type: "user", id: "usr_v", role: "viewer" });
+    expect((await rejects(studio.retryJob(viewer, job.id))).code).toBe("FORBIDDEN");
+
+    const view = await studio.retryJob(ctx, job.id);
+    expect(view).toMatchObject({ id: job.id, status: "queued", attempts: 2, cancelRequested: false });
+    expect(view.budget.spentCents).toBe(6);
+    expect(view.error).toBeUndefined();
+    expect(view.maxAttempts).toBe(5);
+    const audit = await repos.audit.list(ctx, { subjectType: "job", subjectId: job.id });
+    expect(audit.items[0]).toMatchObject({ action: "job.retried", data: { previousError: "UNAVAILABLE" } });
+    expect((await rejects(studio.retryJob(ctx, job.id))).code).toBe("CONFLICT");
   });
 
   it("paginates projects newest first", async () => {

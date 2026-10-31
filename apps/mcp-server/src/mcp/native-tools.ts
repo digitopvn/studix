@@ -253,6 +253,19 @@ export const NATIVE_TOOLS = [
     },
   }),
   tool({
+    name: NATIVE_TOOL_NAMES.retryJob,
+    title: "Retry failed job",
+    description:
+      "Requeue a failed job after its cause is fixed. Finished stages keep their outputs and media the provider already delivered is collected, not paid again.",
+    input: z.object({ jobId: Id }),
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      const job = await ctx.deps.studio.retryJob(ctx.tenant, input.jobId);
+      return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
+    },
+  }),
+  tool({
     name: NATIVE_TOOL_NAMES.feedback,
     title: "Feedback on a shot, scene, asset or time range",
     description:
