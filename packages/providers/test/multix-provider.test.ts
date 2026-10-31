@@ -463,6 +463,51 @@ describe("MultixProvider async jobs", () => {
     expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
   });
 
+  it("bills a completed Sume job whose download failed, and keeps the record resumable", async () => {
+    let statusCalls = 0;
+    const cli = sumeImageCli((argv) => {
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        return {
+          exitCode: 5,
+          envelope: {
+            error: { code: "DOWNLOAD_FAILED", message: "could not save output", retryable: false },
+            usage: { cost_usd: 0.03 },
+          },
+        };
+      }
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return { files: { [out]: "png" }, envelope: { outputs: [{ path: out }], usage: { cost_usd: 0.03 } } };
+    });
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MediaFailedAfterSpend);
+    expect((error as MediaFailedAfterSpend).charge).toMatchObject({
+      costCents: 3,
+      costSource: "receipt",
+      job: { provider: "sume", id: "job_1" },
+    });
+    expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "submitted" });
+
+    // The retry collects the same job instead of submitting a new one.
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result).toMatchObject({ job: { id: "job_1" }, costCents: 3 });
+    expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
+  });
+
+  it("still marks a rejected Sume job failed when its error envelope reports no charge", async () => {
+    const cli = sumeImageCli(() => ({
+      exitCode: 5,
+      envelope: { error: { code: "JOB_FAILED", message: "rejected", retryable: false } },
+    }));
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).not.toBeInstanceOf(MediaFailedAfterSpend);
+    expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "failed" });
+  });
+
   it("journals in the request's journal, so a fresh provider without it still resumes the job", async () => {
     let statusCalls = 0;
     const cli = sumeImageCli((argv) => {
