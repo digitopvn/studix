@@ -132,6 +132,23 @@ describe("buildComposition escaping and assets", () => {
   });
 });
 
+describe("buildComposition without text shots", () => {
+  it("still bundles a face for the family the stage CSS names, so no font is fetched", () => {
+    const ir = structuredClone(brandIntro);
+    for (const scene of ir.scenes)
+      scene.shots = scene.shots.filter((s) => s.type === "image" || s.type === "video" || s.type === "logo");
+    delete ir.captions;
+    const build = buildComposition(ir, previewSize);
+    const copies = [...build.copies.keys()];
+    expect(copies).toContain("assets/fonts/inter-vietnamese-400-normal.woff2");
+    for (const scene of ir.scenes) {
+      const html = build.files.get(`compositions/${scene.id}.html`)!;
+      expect(html).toContain("@font-face");
+      expect(html).not.toMatch(/https?:\/\//);
+    }
+  });
+});
+
 describe("assignLanes", () => {
   const shot = (id: string, startMs: number, durationMs: number): Shot => ({
     id,

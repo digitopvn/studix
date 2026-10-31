@@ -4,7 +4,13 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { StudixError } from "@studix/shared";
 import { resolveSceneSpans, type VideoIR } from "@studix/video-ir";
-import { DEFAULT_FONT_FAMILY, type FontSlot, frameScale, resolvePalette } from "./brand-tokens.ts";
+import {
+  DEFAULT_FONT_FAMILY,
+  type FontSlot,
+  frameScale,
+  resolvePalette,
+  TEXT_STYLES,
+} from "./brand-tokens.ts";
 import { planFonts } from "./bundled-fonts.ts";
 import { cmp, escapeHtml, num, scriptJson, seconds } from "./html-utils.ts";
 import { compileScene, type SceneCaptionCue } from "./scene-composition.ts";
@@ -159,6 +165,9 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
     }),
   );
 
+  // Every scene stage names the body family, so it needs a bundled face even when no shot draws text;
+  // otherwise the producer injects one itself, which can mean a network font fetch.
+  if (fontWeights.body.size === 0) fontWeights.body.add(TEXT_STYLES.body.weight);
   const fonts = planFonts([
     { family: families.heading, weights: fontWeights.heading },
     { family: families.body, weights: fontWeights.body },
