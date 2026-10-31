@@ -49,8 +49,14 @@ export function read<T extends z.ZodType>(
 
 export const payloadOf = (s: StageContext) =>
   read(VideoCreatePayload, s.job.payload, "video.create job payload", "VALIDATION");
-export const irOf = (s: StageContext) =>
-  unwrapValidation(
-    validateVideoIR(read(PlanOutput, s.outputs.plan, "plan checkpoint").ir),
-    "planned VideoIR",
-  );
+/**
+ * The job's current IR: the `ir` of the latest stage output that carries one (stage outputs are kept in
+ * run order). The plan stage writes the first; pack stages that add frames, clips or audio write newer ones.
+ */
+export const irOf = (s: StageContext) => {
+  const latest = Object.values(s.outputs).findLast((o) => o.ir !== undefined);
+  if (!latest) {
+    throw new StudixError("INTERNAL", "No stage before this one produced a VideoIR", { retryable: false });
+  }
+  return unwrapValidation(validateVideoIR(latest.ir), "planned VideoIR");
+};

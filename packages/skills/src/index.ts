@@ -5,6 +5,11 @@ export {
   brandIntroSkill,
 } from "./brand-intro/brand-intro-pack.ts";
 export {
+  BRAND_INTRO_SCRIPT_STAGE,
+  BrandIntroScript,
+  brandIntroScriptStage,
+} from "./brand-intro/brand-intro-script-stage.ts";
+export {
   BRAND_INTRO_MAX_MS,
   BRAND_INTRO_MIN_MS,
   BRAND_INTRO_TEMPLATE_VERSION,
@@ -19,6 +24,7 @@ export {
   needsBriefDraft,
 } from "./brand-intro/brief-draft.ts";
 export { draftBriefFromPrompt } from "./brand-intro/brief-draft-from-prompt.ts";
+export { captionCues, chunkCaption, MAX_CAPTION_WORDS, wordCount } from "./caption-chunks.ts";
 export { BUILTIN_KNOWLEDGE_PACKS } from "./knowledge/builtin-knowledge-packs.ts";
 export {
   createKnowledgeCatalog,
@@ -54,10 +60,18 @@ export {
   Threshold,
 } from "./knowledge/knowledge-pack-schema.ts";
 export { PINNED_SOURCES } from "./knowledge/knowledge-sources.ts";
+export * from "./marketing-video/marketing-script.ts";
+export * from "./marketing-video/marketing-video-pack.ts";
+export * from "./marketing-video/marketing-video-template.ts";
+export * from "./marketing-video/marketing-video-variants.ts";
+export * from "./motion-graphic/motion-graphic-pack.ts";
+export * from "./motion-graphic/motion-graphic-template.ts";
+export * from "./motion-graphic/motion-style-profiles.ts";
 export {
   createPackRegistry,
   type PackRegistry,
   type PackRegistryOptions,
+  packPipelines,
   type Skill,
   type SkillMetadata,
   type SkillRunOptions,
@@ -72,6 +86,7 @@ export {
   registerKnowledgePack,
   registerPack,
 } from "./skill-registry.ts";
+export * from "./stored-media.ts";
 export {
   breakLines,
   detectLanguage,

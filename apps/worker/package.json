@@ -18,6 +18,8 @@
     "@studix/decision-routing": "workspace:*",
     "@studix/mcp-gateway": "workspace:*",
     "@studix/observability": "workspace:*",
+    "@studix/providers": "workspace:*",
+    "@studix/qa": "workspace:*",
     "@studix/renderers": "workspace:*",
     "@studix/shared": "workspace:*",
     "@studix/skills": "workspace:*",

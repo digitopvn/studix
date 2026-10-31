@@ -193,6 +193,17 @@ const flag = (name: string, value: string | number | undefined): string[] =>
 const inputFlag = (name: string, input: MediaInput | undefined): string[] =>
   input ? [`--${name}=${input.kind === "url" ? input.url : input.path}`] : [];
 
+/**
+ * Resolution Studix asks for when a request names none, by model. Seedance 2.5 bills per output second by
+ * resolution and Sume's own default is far above what a draft or review cut needs, so Studix pins it to
+ * 480p (about $0.10/s); pass `params.resolution` to choose another.
+ */
+export const DEFAULT_VIDEO_RESOLUTIONS: Readonly<Record<string, string>> = { "sume:seedance-2.5": "480p" };
+
+function videoResolution(params: Record<string, unknown>, model: QualifiedModel): string | undefined {
+  return stringParam(params, "resolution", RESOLUTION) ?? DEFAULT_VIDEO_RESOLUTIONS[model.id];
+}
+
 function seconds(params: Record<string, unknown>): number | undefined {
   const ms = numberParam(params, "durationMs", 1, MAX_DURATION_MS);
   return ms === undefined ? undefined : Math.ceil(ms / 1000);
@@ -268,7 +279,7 @@ export async function planMultixRequest(
           ...inputFlag("image", await input("image")),
           ...inputFlag("end-image", await input("endImage")),
           ...flag("duration", seconds(params)),
-          ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
+          ...flag("resolution", videoResolution(params, model)),
           ...flag("aspect-ratio", stringParam(params, "aspectRatio", ASPECT)),
           ...(audio === undefined ? [] : [audio ? "--generate-audio" : "--no-generate-audio"]),
         ],
@@ -293,7 +304,7 @@ export async function planMultixRequest(
           ...inputFlag("image", video ? undefined : image),
           ...inputFlag("audio", await input("audio")),
           ...flag("duration", seconds(params)),
-          ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
+          ...flag("resolution", videoResolution(params, model)),
         ],
       };
     }
@@ -309,7 +320,7 @@ export async function planMultixRequest(
           `--model=${model.model}`,
           ...inputFlag("video", await input("video")),
           ...flag("duration", seconds(params)),
-          ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
+          ...flag("resolution", videoResolution(params, model)),
         ],
       };
     case "imageUpscale": {

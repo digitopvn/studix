@@ -176,6 +176,12 @@ importers:
       '@studix/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@studix/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
+      '@studix/qa':
+        specifier: workspace:*
+        version: link:../../packages/qa
       '@studix/renderers':
         specifier: workspace:*
         version: link:../../packages/renderers
@@ -460,6 +466,12 @@ importers:
 
   packages/skills:
     dependencies:
+      '@studix/billing':
+        specifier: workspace:*
+        version: link:../billing
+      '@studix/core':
+        specifier: workspace:*
+        version: link:../core
       '@studix/shared':
         specifier: workspace:*
         version: link:../shared
@@ -473,6 +485,9 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@studix/providers':
+        specifier: workspace:*
+        version: link:../providers
       vitest:
         specifier: 5.0.5
         version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))

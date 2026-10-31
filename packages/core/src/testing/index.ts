@@ -24,6 +24,7 @@ import { createInMemoryRevisionRepository } from "./in-memory-revision-repositor
 import { createInMemoryStoryboardRepository } from "./in-memory-storyboard-repository.ts";
 import { createInMemoryTenancy } from "./in-memory-tenancy.ts";
 
+export * from "./in-memory-agent-handoff-repository.ts";
 export * from "./in-memory-governance-repositories.ts";
 export * from "./in-memory-job-repositories.ts";
 export * from "./in-memory-project-repositories.ts";

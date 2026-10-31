@@ -13,6 +13,7 @@ import {
   type MultixRunOptions,
   type MultixRunResult,
   parseCheckKeys,
+  parseMultixEnvelope,
 } from "../src/index.ts";
 
 /** One scripted CLI reply. `files` are written before the envelope is returned, as multix would. */
@@ -209,6 +210,38 @@ describe("parseCheckKeys", () => {
   it("never reads past the dash, so a masked value cannot pose as a key", () => {
     expect([...parseCheckKeys("✓ SUME_API_KEY found — ✓ FAKE_KEY found")]).toEqual(["SUME_API_KEY"]);
     expect(parseCheckKeys("  SUME_API_KEY not set (optional)").size).toBe(0);
+  });
+});
+
+describe("parseMultixEnvelope receipt", () => {
+  const P = "data.job.usage_summary.";
+  const line = (metrics: Record<string, number>) =>
+    JSON.stringify({ schema: "multix.result/v1", ok: true, usage: { metrics } });
+  const usage = (captured: number, extra: Record<string, number> = {}) => ({
+    [`${P}reserved_usd_cents`]: 1,
+    [`${P}captured_usd_cents`]: captured,
+    [`${P}refunded_usd_cents`]: 0,
+    [`${P}released_usd_cents`]: 0,
+    ...extra,
+  });
+
+  it("bills what Sume will keep when the charge is not captured yet", () => {
+    expect(parseMultixEnvelope(line(usage(0)))?.receiptUsd).toBe(0.01);
+  });
+
+  it("keeps the captured amount once settled and never lowers it", () => {
+    expect(parseMultixEnvelope(line(usage(1)))?.receiptUsd).toBe(0.01);
+    expect(parseMultixEnvelope(line(usage(3)))?.receiptUsd).toBe(0.03);
+  });
+
+  it("subtracts refunded and released amounts and clamps at zero", () => {
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}refunded_usd_cents`]: 1 })))?.receiptUsd).toBe(0);
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}released_usd_cents`]: 1 })))?.receiptUsd).toBe(0);
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}refunded_usd_cents`]: 5 })))?.receiptUsd).toBe(0);
+  });
+
+  it("falls back to the captured amount when no reservation is reported", () => {
+    expect(parseMultixEnvelope(line({ [`${P}captured_usd_cents`]: 2 }))?.receiptUsd).toBe(0.02);
   });
 });
 
@@ -430,6 +463,28 @@ describe("MultixProvider async jobs", () => {
     expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
   });
 
+  it("journals in the request's journal, so a fresh provider without it still resumes the job", async () => {
+    let statusCalls = 0;
+    const cli = sumeImageCli((argv) => {
+      statusCalls += 1;
+      if (statusCalls === 1) return { stoppedBy: "timeout", exitCode: 143 };
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return { files: { [out]: "png" }, envelope: { outputs: [{ path: out }], usage: { cost_usd: 0.03 } } };
+    });
+    const stageJournal = new InMemoryMediaJobJournal();
+    const ownJournal = new InMemoryMediaJobJournal();
+    const first = new MultixProvider({ bin: "multix", runner: cli.runner, journal: ownJournal });
+    await first.generate(ctx, imageRequest({ journal: stageJournal })).catch(() => undefined);
+    expect(await stageJournal.get(ctx, "stage-1:image")).toMatchObject({ state: "submitted" });
+    expect(await ownJournal.get(ctx, "stage-1:image")).toBeUndefined();
+
+    // Another worker's provider has an empty journal of its own; the stage journal still carries job_1.
+    const second = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await second.generate(ctx, imageRequest({ journal: stageJournal }));
+    expect(result).toMatchObject({ job: { id: "job_1" } });
+    expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
+  });
+
   it("collects a finished Sume job from the real status envelope, which lists saved files only in text", async () => {
     const cli = scriptedCli((argv) => {
       expect(argv).toEqual(
@@ -458,6 +513,23 @@ describe("MultixProvider async jobs", () => {
     ]);
     // Sume's captured amount (1¢), not multix's cost_usd (0.03), is the receipt.
     expect(result).toMatchObject({ costCents: 1, costSource: "receipt", job: { id: REAL_JOB_ID } });
+  });
+
+  it("bills the reserved charge when Sume reports the job completed before capturing it", async () => {
+    const cli = scriptedCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
+      const envelope = realStatusEnvelope(out);
+      envelope.usage.metrics["data.job.usage_summary.captured_usd_cents"] = 0;
+      return { files: { [out]: "png-bytes" }, envelope };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await multix.resume(ctx, {
+      kind: "image",
+      job: { provider: "sume", id: REAL_JOB_ID },
+      model: "sume:z-image",
+      workDir,
+    });
+    expect(result).toMatchObject({ costCents: 1, costSource: "receipt" });
   });
 
   it("collects an Atlas prediction from the real status envelope, which lists saved files only in text", async () => {

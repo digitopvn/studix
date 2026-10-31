@@ -51,6 +51,7 @@ function toStage(row: StageRow): Stage {
     status: row.status,
     output: opt(row.output),
     error: opt(row.error),
+    mediaJobs: opt(row.mediaJobs),
     startedAt: opt(row.startedAt),
     finishedAt: opt(row.finishedAt),
     createdAt: row.createdAt,
@@ -70,6 +71,8 @@ export async function upsertStageRow(
     error: input.error ?? null,
     startedAt: input.startedAt ?? null,
     finishedAt: input.finishedAt ?? null,
+    // Omitted means "keep": progress and outcome writes must not erase the journal of submitted jobs.
+    ...(input.mediaJobs !== undefined ? { mediaJobs: input.mediaJobs } : {}),
   };
   const rows = await db
     .insert(stages)
@@ -233,7 +236,14 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           leaseExpiresAt: null,
           error: { code: "CANCELLED", message: reason ?? "cancelled", retryable: false },
         })
-        .where(scoped(jobs, ctx, eq(jobs.id, jobId), inArray(jobs.status, ["queued", "waiting_approval"])))
+        .where(
+          scoped(
+            jobs,
+            ctx,
+            eq(jobs.id, jobId),
+            inArray(jobs.status, ["queued", "waiting_approval", "waiting_host"]),
+          ),
+        )
         .returning();
       if (stopped[0]) return toJob(stopped[0]);
       const flagged = await db

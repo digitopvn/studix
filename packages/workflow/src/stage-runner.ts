@@ -1,9 +1,14 @@
 import { executionUsageDedupeKey, toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
 import type {
+  AgentHandoff,
+  AgentHandoffRepository,
+  AgentRuntime,
   Approval,
   BillingPolicy,
   Job,
   JobRepository,
+  MediaJobJournal,
+  MediaJobRecord,
   Stage,
   StageCacheRepository,
   TenantContext,
@@ -11,8 +16,29 @@ import type {
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { contentDigest, type StoryboardReviewStatus } from "@studix/video-ir";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
+import { StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
 import type { WorkerJobQueue } from "./worker-job-queue.ts";
-import type { StageContext, StageDefinition, StageOutput, WorkflowDefinition } from "./workflow-types.ts";
+import type {
+  AgentStageServices,
+  StageContext,
+  StageDefinition,
+  StageOutput,
+  StageServices,
+  StageUsage,
+  WorkflowDefinition,
+} from "./workflow-types.ts";
+
+/** How the worker runs agent stages. Without it an agent stage fails UNAVAILABLE. */
+export interface AgentStageWiring {
+  handoffs: Pick<AgentHandoffRepository, "findLatest">;
+  /** The in-worker agent runtime for one stage run; omitted or undefined means host mode only. */
+  runtimeFor?(stage: StageContext): AgentRuntime | undefined;
+}
+
+/** Scope of the overrun approvals of an agent stage. */
+export function agentOverrunScope(stage: string): string {
+  return `agent:${stage}`;
+}
 
 export interface StageRunnerDeps extends ApprovalGateDeps {
   /** Source of stage reads; every write goes through the fenced `queue`. */
@@ -31,6 +57,52 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
    * storyboard fail closed when this is missing.
    */
   storyboardStatus?(ctx: TenantContext, projectId: string): Promise<StoryboardReviewStatus | undefined>;
+  /** Ports handed to every stage as `StageContext.services`. */
+  services?: StageServices;
+  agents?: AgentStageWiring;
+}
+
+/**
+ * The media job journal of one stage run. It starts from the records every earlier attempt of the stage
+ * stored (the newest record per idempotency key wins) and persists each `put` through `persist`, which
+ * writes the stage row fenced by job ownership. Writes are serialized so the stored list never goes
+ * backwards; a refused write rejects the `put`, so a provider never reports a job it could not journal.
+ */
+function stageMediaJournal(
+  ctx: TenantContext,
+  prior: readonly Stage[],
+  persist: (records: MediaJobRecord[]) => Promise<void>,
+): MediaJobJournal {
+  const records = new Map<string, MediaJobRecord>();
+  for (const row of prior) {
+    for (const record of row.mediaJobs ?? []) {
+      const known = records.get(record.idempotencyKey);
+      if (!known || record.updatedAt >= known.updatedAt) records.set(record.idempotencyKey, record);
+    }
+  }
+  const sameTenant = (c: TenantContext) =>
+    c.workspaceId === ctx.workspaceId && c.organizationId === ctx.organizationId;
+  let queue: Promise<void> = Promise.resolve();
+  return {
+    async get(c, key) {
+      if (!sameTenant(c)) return undefined;
+      const record = records.get(key);
+      return record ? structuredClone(record) : undefined;
+    },
+    put(c, record) {
+      if (!sameTenant(c)) {
+        return Promise.reject(
+          new StudixError("FORBIDDEN", "media job journal belongs to another workspace", {
+            retryable: false,
+          }),
+        );
+      }
+      records.set(record.idempotencyKey, structuredClone(record));
+      const write = queue.then(() => persist([...records.values()].map((r) => structuredClone(r))));
+      queue = write.catch(() => undefined);
+      return write;
+    },
+  };
 }
 
 /** Fail unless a person approved the job's storyboard; checked before any cache, gate or charge. */
@@ -56,7 +128,8 @@ async function assertStoryboardApproved(
 
 export type StagesOutcome =
   | { status: "succeeded"; result: Record<string, unknown> }
-  | { status: "waiting_approval"; approval: Approval; stage: string };
+  | { status: "waiting_approval"; approval: Approval; stage: string }
+  | { status: "waiting_host"; handoff: AgentHandoff; stage: string };
 
 /** Error raised by a stage, tagged with the stage so the executor can apply its retry policy. */
 export class StageFailure extends Error {
@@ -132,6 +205,47 @@ function budgetError(message: string, details: Record<string, unknown>): StudixE
   });
 }
 
+const APPROVAL_PAGE = 100;
+
+/** The agent services of one stage run, reading approvals and host tasks on every call (they survive restarts). */
+function agentStageServices(
+  deps: StageRunnerDeps,
+  wiring: AgentStageWiring,
+  ctx: TenantContext,
+  job: Job,
+  workerId: string,
+  stageName: string,
+  sctx: StageContext,
+): AgentStageServices {
+  const subject = { type: "job" as const, id: job.id };
+  const scopeKey = agentOverrunScope(stageName);
+  return {
+    get runtime() {
+      return wiring.runtimeFor?.(sctx);
+    },
+    latestHandoff: () => wiring.handoffs.findLatest(ctx, job.id, stageName),
+    latestOverrun: () => deps.approvals.findLatest(ctx, subject, "agent.overrun", scopeKey),
+    async grantedOverruns() {
+      let granted = 0;
+      let cursor: string | undefined;
+      do {
+        const page = await deps.approvals.list(ctx, { subject, limit: APPROVAL_PAGE, cursor });
+        granted += page.items.filter(
+          (a) =>
+            a.action === "agent.overrun" &&
+            (a.scopeKey ?? "") === scopeKey &&
+            (a.status === "consumed" || (a.status === "approved" && a.decidedBy?.type === "user")),
+        ).length;
+        cursor = page.nextCursor;
+      } while (cursor);
+      return granted;
+    },
+    async consumeOverrun(approvalId) {
+      if (!(await deps.queue.consumeApproval(job, workerId, approvalId))) throw new LeaseLostError();
+    },
+  };
+}
+
 /**
  * Run a workflow's stages for one claimed attempt. Completed stages are skipped using their checkpoint;
  * each executed stage is recorded in `stages`, its usage written idempotently to the ledger, and the
@@ -149,12 +263,15 @@ export async function runStages(
   const fenced = async (write: Promise<boolean>): Promise<void> => {
     if (!(await write)) throw new LeaseLostError();
   };
-  const saved = checkpoints(await deps.jobs.listStages(ctx, job.id));
+  const route = workflow.route?.(job) ?? workflow;
+  const rows = await deps.jobs.listStages(ctx, job.id);
+  const saved = checkpoints(rows);
   const outputs: Record<string, StageOutput> = {};
   let spentCents = job.spentCents;
-  const total = workflow.stages.length;
+  const total = route.stages.length;
+  const services = deps.services ?? {};
 
-  for (const [index, stage] of workflow.stages.entries()) {
+  for (const [index, stage] of route.stages.entries()) {
     signal.throwIfAborted();
     const checkpoint = saved[stage.name];
     if (checkpoint && ((await stage.isCheckpointValid?.(checkpoint, saved)) ?? true)) {
@@ -163,6 +280,15 @@ export async function runStages(
     }
 
     let lastProgressAt = 0;
+    let startedAt = deps.clock.now();
+    const mediaJournal = stageMediaJournal(
+      ctx,
+      rows.filter((r) => r.name === stage.name),
+      (mediaJobs) =>
+        fenced(
+          queue.writeStage(job, workerId, { name: stage.name, status: "running", startedAt, mediaJobs }),
+        ),
+    );
     const sctx: StageContext = {
       ctx,
       job,
@@ -190,9 +316,13 @@ export async function runStages(
             deps.logger.warn("progress update failed", { jobId: job.id, error: String(err) });
           });
       },
+      mediaJournal,
+      services,
     };
 
     if (stage.requiresApprovedStoryboard) await assertStoryboardApproved(deps, ctx, job, stage);
+    if (deps.agents)
+      sctx.agents = agentStageServices(deps, deps.agents, ctx, job, workerId, stage.name, sctx);
 
     // A cached result of the same work is reused before any gate, budget check or charge.
     const cacheKey = deps.stageCache ? await stage.cacheKey?.(sctx) : undefined;
@@ -242,36 +372,28 @@ export async function runStages(
       });
     }
 
-    const startedAt = deps.clock.now();
+    startedAt = deps.clock.now();
     await fenced(queue.updateProgress(job, workerId, { stage: stage.name, progress: index / total }));
     await fenced(queue.writeStage(job, workerId, { name: stage.name, status: "running", startedAt }));
-    let output: StageOutput;
-    try {
-      const result = await untilAborted(stage.run(sctx), signal);
-      signal.throwIfAborted();
-      output = result.output;
-      if (!matchesOutput(stage, output)) {
-        throw new StudixError("VALIDATION", `Stage ${stage.name} returned an output that fails its schema`, {
-          retryable: false,
-        });
-      }
-      for (const usage of result.usage ?? []) {
+    const recordUsage = async (lines: readonly StageUsage[]) => {
+      for (const usage of lines) {
         await fenced(
           queue.recordUsage(job, workerId, {
             // A usage line tied to a provider execution is that one call's cost, whatever attempt reports
             // it (e.g. a retry served from the decision cache); anything else re-ran and cost again.
-            dedupeKey: usage.providerExecutionId
-              ? executionUsageDedupeKey({
-                  jobId: job.id,
-                  stage: stage.name,
-                  executionId: usage.providerExecutionId,
-                })
-              : usageDedupeKey({
-                  jobId: job.id,
-                  stage: stage.name,
-                  attempt: job.attempts,
-                  item: usage.item,
-                }),
+            dedupeKey:
+              (usage.providerExecutionId ?? usage.upstreamJob)
+                ? executionUsageDedupeKey({
+                    jobId: job.id,
+                    stage: stage.name,
+                    executionId: (usage.providerExecutionId ?? usage.upstreamJob) as string,
+                  })
+                : usageDedupeKey({
+                    jobId: job.id,
+                    stage: stage.name,
+                    attempt: job.attempts,
+                    item: usage.item,
+                  }),
             kind: usage.kind,
             quantity: usage.quantity,
             unit: usage.unit,
@@ -282,10 +404,68 @@ export async function runStages(
           }),
         );
       }
+    };
+
+    // Park the job instead of failing it: what the stage spent is billed, then the request is opened.
+    const suspend = async (signalled: StageSuspended): Promise<StagesOutcome> => {
+      await recordUsage(signalled.usage);
+      if (signalled.usage.length > 0) {
+        spentCents = toBudgetCents(await deps.ledger.jobCostCents(ctx, job.id));
+        await fenced(queue.updateProgress(job, workerId, { spentCents }));
+      }
+      await fenced(queue.writeStage(job, workerId, { name: stage.name, status: "pending", startedAt }));
+      const s = signalled.suspension;
+      if (s.kind === "approval") {
+        const opened = await queue.requestApproval(job, workerId, {
+          action: s.action,
+          reason: s.reason,
+          estimatedCostCents: s.estimatedCostCents,
+          ttlMs: deps.approvalTtlMs,
+          scopeKey: s.scopeKey,
+        });
+        if (opened.status === "lost") throw new LeaseLostError();
+        return { status: "waiting_approval", approval: opened.approval, stage: stage.name };
+      }
+      const opened = await queue.openHandoff(job, workerId, {
+        ...s.task,
+        stage: stage.name,
+        expiresAt: new Date(deps.clock.now().getTime() + s.task.limits.timeoutMs),
+      });
+      if (opened.status === "lost") throw new LeaseLostError();
+      return { status: "waiting_host", handoff: opened.handoff, stage: stage.name };
+    };
+
+    let output: StageOutput;
+    try {
+      const result = await untilAborted(stage.run(sctx), signal);
+      signal.throwIfAborted();
+      output = result.output;
+      if (!matchesOutput(stage, output)) {
+        throw new StudixError("VALIDATION", `Stage ${stage.name} returned an output that fails its schema`, {
+          retryable: false,
+        });
+      }
+      await recordUsage(result.usage ?? []);
     } catch (err) {
-      const reason: unknown = signal.aborted ? signal.reason : err;
-      const error = toStudixError(reason);
       if (err instanceof LeaseLostError) throw err;
+      if (err instanceof StageSuspended && !signal.aborted) return await suspend(err);
+      if (err instanceof StageFailedAfterSpend) {
+        try {
+          await recordUsage(err.usage);
+        } catch (usageErr) {
+          if (usageErr instanceof LeaseLostError) throw usageErr;
+          deps.logger.warn("spend of a failed stage could not be recorded", {
+            jobId: job.id,
+            error: String(usageErr),
+          });
+        }
+      }
+      const reason: unknown = signal.aborted
+        ? signal.reason
+        : err instanceof StageFailedAfterSpend
+          ? err.error
+          : err;
+      const error = toStudixError(reason);
       try {
         await fenced(
           queue.writeStage(job, workerId, {
@@ -331,5 +511,5 @@ export async function runStages(
       );
     }
   }
-  return { status: "succeeded", result: workflow.result(outputs) };
+  return { status: "succeeded", result: route.result(outputs) };
 }

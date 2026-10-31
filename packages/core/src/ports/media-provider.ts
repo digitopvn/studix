@@ -34,6 +34,12 @@ export interface MediaGenerationRequest {
   /** Directory where the provider writes outputs. */
   workDir: string;
   signal?: AbortSignal;
+  /**
+   * Where the provider remembers the upstream job of this request, so a retry on any worker resumes it
+   * instead of paying again. Workflow stages pass their durable stage journal; without one the provider
+   * uses its own (process-local) journal.
+   */
+  journal?: MediaJobJournal;
 }
 
 export interface GeneratedMedia {
@@ -67,6 +73,42 @@ export interface MediaGenerationResult {
   costSource?: MediaCostSource;
   /** Present when the work ran as an upstream async job. */
   job?: ProviderJobRef;
+}
+
+/**
+ * submitting: the request is about to reach (or may have reached) an upstream that cannot deduplicate it,
+ * so no job id is known yet; submitted: paid and running upstream; completed: outputs collected;
+ * failed: ended without outputs.
+ */
+export type MediaJobState = "submitting" | "submitted" | "completed" | "failed";
+
+/** What a provider must remember about an upstream job to collect it later instead of paying again. */
+export interface MediaJobRecord {
+  idempotencyKey: string;
+  kind: MediaKind;
+  model: string;
+  /** Absent while `state` is "submitting": the upstream has not reported an id yet. */
+  job?: ProviderJobRef;
+  /** Submission attempt for this idempotency key; a failed job is resubmitted as the next attempt. */
+  attempt: number;
+  state: MediaJobState;
+  estimatedCostCents: number;
+  /** Charge reported when the job completed. */
+  receiptCents?: number;
+  submittedAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Durable memory of upstream jobs, keyed by workspace and idempotency key. The record is written right
+ * after submission, so a worker that dies while waiting leaves enough behind for the next attempt to
+ * resume the same paid job. Implementations must scope reads and writes by `ctx.workspaceId`. `put` is an
+ * unconditional overwrite: callers must serialize `generate` per idempotency key (the stage fencing does),
+ * because the "submitting" intent is not a compare-and-set.
+ */
+export interface MediaJobJournal {
+  get(ctx: TenantContext, idempotencyKey: string): Promise<MediaJobRecord | undefined>;
+  put(ctx: TenantContext, record: MediaJobRecord): Promise<void>;
 }
 
 /** Resume an upstream job by id (e.g. after the worker that submitted it died). Never submits new work. */

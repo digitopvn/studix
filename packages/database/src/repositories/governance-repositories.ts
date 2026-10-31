@@ -124,7 +124,7 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
         .where(scoped(approvals, ctx, eq(approvals.id, id)));
       return rows[0] ? toApproval(rows[0]) : undefined;
     },
-    async findLatest(ctx, subject, action) {
+    async findLatest(ctx, subject, action, scopeKey) {
       const rows = await db
         .select()
         .from(approvals)
@@ -135,6 +135,7 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
             eq(approvals.subjectType, subject.type),
             eq(approvals.subjectId, subject.id),
             eq(approvals.action, action),
+            scopeKey === undefined ? undefined : eq(approvals.scopeKey, scopeKey),
           ),
         )
         .orderBy(desc(approvals.id))
@@ -210,10 +211,10 @@ function toReview(row: typeof reviews.$inferSelect): Review {
 }
 
 export function createReviewRepository(db: StudixDb, clock: Clock): ReviewRepository {
-  const repo: ReviewRepository = {
+  return {
     async create(ctx, input) {
       const now = clock.now();
-      const inserted = await db
+      const rows = await db
         .insert(reviews)
         .values({
           id: input.id ?? newId("rev"),
@@ -231,31 +232,23 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
           createdAt: now,
           updatedAt: now,
         })
-        .onConflictDoNothing({
-          target: [reviews.projectId, reviews.idempotencyKey],
-          where: sql`${reviews.idempotencyKey} is not null`,
-        })
         .returning();
-      if (inserted[0]) return toReview(inserted[0]);
-      // Lost the race on the key: the comment stored first is the answer.
-      const stored = input.idempotencyKey
-        ? await repo.findByIdempotencyKey(ctx, input.projectId, input.idempotencyKey)
-        : undefined;
-      if (!stored) throw new StudixError("CONFLICT", "review could not be stored");
-      return stored;
-    },
-    async findByIdempotencyKey(ctx, projectId, key) {
-      const rows = await db
-        .select()
-        .from(reviews)
-        .where(scoped(reviews, ctx, eq(reviews.projectId, projectId), eq(reviews.idempotencyKey, key)));
-      return rows[0] ? toReview(rows[0]) : undefined;
+      return toReview(first(rows, "review"));
     },
     async get(ctx, id) {
       const rows = await db
         .select()
         .from(reviews)
         .where(scoped(reviews, ctx, eq(reviews.id, id)));
+      return rows[0] ? toReview(rows[0]) : undefined;
+    },
+    async findByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      const rows = await db
+        .select()
+        .from(reviews)
+        .where(
+          scoped(reviews, ctx, eq(reviews.projectId, projectId), eq(reviews.idempotencyKey, idempotencyKey)),
+        );
       return rows[0] ? toReview(rows[0]) : undefined;
     },
     async list(ctx, query) {
@@ -285,7 +278,6 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
       return toReview(first(rows, `review ${id}`));
     },
   };
-  return repo;
 }
 
 function toAudit(row: typeof auditEvents.$inferSelect): AuditEvent {

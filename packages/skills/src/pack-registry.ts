@@ -1,6 +1,6 @@
 import { StudixError } from "@studix/shared";
 import type { VideoIR } from "@studix/video-ir";
-import type { StageDefinition } from "@studix/workflow";
+import type { PackPipeline, StageDefinition } from "@studix/workflow";
 import type { KnowledgeCatalog } from "./knowledge/knowledge-catalog.ts";
 
 export interface SkillMetadata {
@@ -41,6 +41,11 @@ export interface WorkflowPack {
   templates: readonly Skill[];
   /** Stage templates (with input/output schemas and cache keys), unique by name across packs. */
   stages?: readonly StageDefinition[];
+  /**
+   * How a video.create job of this pack runs (its stages woven between the engine's); packs without one
+   * run the engine's default plan -> render chain.
+   */
+  pipeline?: PackPipeline;
 }
 
 export interface PackRegistry {
@@ -119,4 +124,25 @@ export function createPackRegistry(
   };
   for (const pack of initial) registry.register(pack);
   return registry;
+}
+
+/**
+ * The `pipelines` dependency of the video.create workflow: the pipeline of the job's pack, undefined for
+ * packs that run the default chain (and for jobs without a workflowTemplate). An unknown pack id is a
+ * non-retryable VALIDATION error, so the job fails before any stage runs.
+ */
+export function packPipelines(
+  registry: Pick<PackRegistry, "packs">,
+): (workflowTemplate: string | undefined) => PackPipeline | undefined {
+  return (workflowTemplate) => {
+    if (workflowTemplate === undefined) return undefined;
+    const pack = registry.packs().find((p) => p.id === workflowTemplate);
+    if (!pack) {
+      throw new StudixError("VALIDATION", `Unknown workflowTemplate "${workflowTemplate}"`, {
+        retryable: false,
+        details: { workflowTemplate, available: registry.packs().map((p) => p.id) },
+      });
+    }
+    return pack.pipeline;
+  };
 }

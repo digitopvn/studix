@@ -1,11 +1,14 @@
 import type { StudixErrorPayload } from "@studix/shared";
 import type { RenderPreset, RenderSpec } from "@studix/video-ir";
+import type { MediaJobRecord } from "../ports/media-provider.ts";
 import type { ActorRef, TenantOwned } from "./common.ts";
 
 export const JOB_STATUSES = [
   "queued",
   "running",
   "waiting_approval",
+  /** Parked until the MCP host agent submits the output of a handed-off stage. */
+  "waiting_host",
   "succeeded",
   "failed",
   "cancelled",
@@ -68,6 +71,12 @@ export interface Stage extends TenantOwned {
   status: StageStatus;
   output?: Record<string, unknown>;
   error?: StudixErrorPayload;
+  /**
+   * Upstream media jobs this attempt submitted (the stage's media job journal), written with the stage row
+   * as soon as a job is submitted. A later attempt of the stage reads them back and collects a paid job by
+   * id instead of submitting it again. Omitted on a write, the stored records are kept.
+   */
+  mediaJobs?: MediaJobRecord[];
   startedAt?: Date;
   finishedAt?: Date;
 }

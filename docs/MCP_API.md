@@ -105,6 +105,23 @@ Behavior notes:
   `error.details.available` listing the registered ids. Adding a pack needs
   only `registerPack`; the server does not change. The Claude `planner` writes
   the IR itself, so it is refused together with a non-default pack.
+- `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
+  entry (1 to 6), all sharing the brief's brand, language, format and length
+  (default 20 s, 9:16). The create job writes the script, generates one
+  storyboard frame per beat and stops with the project `in_review`; it runs no
+  image-to-video, voice or music. Frame prompts describe the scene only. Beats
+  derived from a direction never carry its hook or messages, and the brand name
+  and tagline are removed from every frame prompt, because the HyperFrames
+  overlay sets the logo, wordmark and copy. Each ad's voice-over must fit about three
+  words a second of its length, or the job fails with `VALIDATION` before any
+  paid call. After a person approves the storyboard, `studix_render` animates
+  the frames, adds voice-over, music and SFX, then renders, QA-gates and
+  uploads one file per ad (`renders[]`). Any image-to-video or audio stage
+  without an approved storyboard fails with `APPROVAL_REQUIRED`.
+- `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
+  (6 to 60 s, default 15 s) in the style profile that best matches the brief,
+  with a generated voice-over and burned captions, then renders, QA-gates and
+  uploads it in one job. It has no image-to-video.
 - `planner: {runtime: "claude", providerConnectionId}` is opt-in. The worker
   then plans the VideoIR with the Claude Agent SDK, billed to that Anthropic API
   key ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
@@ -143,10 +160,10 @@ Behavior notes:
   revisions, job), even when `baseVersionId` is no longer current. Retries,
   including concurrent ones, return the same version, comment and job, with
   `replayed: true`.
-  A comment without a patch creates no version or job, so its key is stored
-  on the comment itself (unique per project). A retry returns that comment
-  with `replayed: true`. Reusing the key for a different comment, or with a
-  patch, fails with `CONFLICT`.
+- A comment without a patch creates no version or job, so its key is stored on
+  the comment itself (unique per project). A retry returns the stored comment
+  with `replayed: true`; the same key with a different comment or with a patch
+  is `CONFLICT`.
 - `studix_render` renders a stored version, and that version becomes current.
   Both tools accept `idempotencyKey` and `budgetCents`. A budget above the
   approval threshold parks the job in `waiting_approval`.
@@ -158,6 +175,45 @@ Behavior notes:
   run only after the storyboard is `approved`. Otherwise the job fails with
   `APPROVAL_REQUIRED`. A patch that changes a shot puts that shot, its scene
   and the storyboard back in review. "Rendered" never means "approved".
+
+### Agent stage handoff tools
+
+A creative agent stage (for example `brand-intro.script`) runs in one of two
+modes under the same contract: the stage's input schema, output schema and
+limits ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)). The
+job payload's `agentMode` picks the mode. `harness` (the default) runs the
+Claude agent inside the worker under hard caps. `host` hands the stage to the
+MCP client's own agent: the job moves to `waiting_host`, and `studix_get_job`
+returns `next[]` pointing at `studix_list_agent_tasks`.
+
+| Tool                       | Arguments                               | Returns                                                                                           |
+| -------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `studix_list_agent_tasks`  | `jobId?`, `limit?`, `cursor?`           | Tasks waiting for a host output: `id`, `jobId`, `stage`, `attempt`, `status`, `expiresAt`.        |
+| `studix_get_agent_task`    | `taskId`                                | `instructions`, `input`, `outputSchema` (JSON Schema), `limits` and the `attempt` to submit with. |
+| `studix_submit_agent_task` | `taskId`, `attempt`, `output`, `usage?` | `{task, replayed}`. An accepted output requeues the job, which continues from the next stage.     |
+- `limits` holds `maxTurns`, `maxTokens`, `maxCostCents`, `timeoutMs` and
+  `tools`, the allowlist of tool names the agent may call. Only the time limit
+  is enforced in host mode: the task expires at `expiresAt`. The other limits
+  are the budget the harness would have; respect them.
+- `output` is checked against the stage's output schema, the same schema the
+  worker applies. A mismatch fails with `VALIDATION`, `details.reason:
+  "invalid_output"` and `details.issues`, and nothing is stored, so fix the
+  output and submit again. Secrets in the output are redacted before it is
+  stored.
+- Submissions are idempotent per attempt. The same output again returns
+  `replayed: true`; a different one is `CONFLICT` with
+  `details.reason: "already_submitted"`. A wrong `attempt` is `CONFLICT`
+  `stale_attempt`, a job that stopped waiting is `CONFLICT` `not_waiting`, and a
+  task past `expiresAt` is `TIMEOUT` `expired`.
+- `usage` (`turns`, `inputTokens`, `outputTokens`, `model`) is optional and is
+  recorded in the ledger with zero cost. Studix pays nothing for host work.
+- Reading needs `project:read`; submitting needs `project:write`. Other
+  workspaces' tasks are `NOT_FOUND`.
+- When a stage reaches a limit (any cap in the harness, the time limit in host
+  mode), the job does not fail. It parks in `waiting_approval` with an
+  `agent.overrun` approval. A person approving it in the dashboard grants one
+  more run with every limit doubled; rejecting it fails the job with
+  `FORBIDDEN`.
 
 ## P0 meta-tools (MCP-in-MCP)
 

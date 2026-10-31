@@ -158,7 +158,6 @@ export const reviews = pgTable(
     atMs: integer("at_ms"),
     endMs: integer("end_ms"),
     status: text("status").$type<ReviewStatus>().notNull(),
-    /** Client key of a comment sent without a patch, so a retry returns this comment instead of a new one. */
     idempotencyKey: text("idempotency_key"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

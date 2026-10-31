@@ -19,7 +19,7 @@ export interface Review extends TenantOwned {
   /** End (exclusive) of the commented time range; only with `atMs`. */
   endMs?: number;
   status: ReviewStatus;
-  /** Set on a comment sent without a patch; unique per project, so a retry finds this comment. */
+  /** Client retry key of a comment sent without a patch (a patch stores its key on the version). */
   idempotencyKey?: string;
   updatedAt: Date;
 }
@@ -32,6 +32,8 @@ export const APPROVAL_ACTIONS = [
   "provider.spend",
   "connector.execute",
   "delete",
+  /** An agent stage stopped at a cap; approving grants one more run with every cap doubled. */
+  "agent.overrun",
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 

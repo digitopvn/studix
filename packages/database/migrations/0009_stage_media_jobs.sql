@@ -1,0 +1,1 @@
+ALTER TABLE "stages" ADD COLUMN "media_jobs" jsonb;
