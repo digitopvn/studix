@@ -347,6 +347,34 @@ describe("marketing-video pipeline (fake providers)", () => {
     expect((await h.projects.get(ctx, projectId))?.currentVersionId).toBe(textVersion.id);
   });
 
+  it("does not reopen review when a reframe job runs after the project moved on", async () => {
+    const h = harness({ storyboard: "in_review" });
+    const projectId = await newProject(h, "marketing-video");
+    await h.run({ workflowTemplate: "marketing-video" }, projectId);
+    const project = await h.projects.get(ctx, projectId);
+    const base = await h.projects.getVersion(ctx, project?.currentVersionId as string);
+    const patchedIr = structuredClone(base?.ir as VideoIR);
+    const target = patchedIr.scenes[0]?.shots.find((s) => s.type === "image");
+    if (target?.type !== "image") throw new Error("expected an image shot");
+    target.alt = "A cup of green tea and loose leaves on a wooden windowsill at sunrise";
+    const patched = await h.projects.createVersion(ctx, {
+      projectId,
+      ir: patchedIr,
+      source: "patch",
+      parentVersionId: base?.id,
+      createdBy: actor,
+      advanceFrom: base?.id,
+    } as never);
+    await h.projects.update(ctx, projectId, { status: "published" });
+
+    const { outcome } = await h.run(
+      { workflowTemplate: "marketing-video", versionId: patched.id, feedbackId: "rev_1", makeCurrent: false },
+      projectId,
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect((await h.projects.get(ctx, projectId))?.status).toBe("published");
+  });
+
   it("refuses image-to-video and charges nothing until the storyboard is approved", async () => {
     const h = harness({ storyboard: "in_review" });
     const projectId = await newProject(h, "marketing-video");
