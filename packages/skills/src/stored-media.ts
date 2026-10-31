@@ -23,6 +23,8 @@ export interface StoredMediaRequest {
   /** IR asset id of the result; also names the upstream idempotency key, so keep it stable per job. */
   assetId: string;
   kind: MediaKind;
+  /** `<vendor>:<model>` to run on instead of the provider's default or language route for this kind. */
+  model?: string;
   prompt: string;
   params?: Record<string, unknown>;
   /** Storage key prefix; the file extension is appended. */
@@ -67,6 +69,7 @@ export function mediaRequest(
 ): MediaGenerationRequest {
   return {
     kind: request.kind,
+    ...(request.model ? { model: request.model } : {}),
     prompt: request.prompt,
     ...(request.params ? { params: request.params } : {}),
     // Stable across attempts and workers: the stage journal resumes the upstream job under this key.
@@ -81,13 +84,14 @@ export function mediaRequest(
 /** Sum of the provider's estimates for `requests`, in cents (the budget check before a paid stage). */
 export async function estimateMediaCents(
   s: StageContext,
-  requests: readonly Pick<StoredMediaRequest, "kind" | "prompt" | "params" | "maxCostCents">[],
+  requests: readonly Pick<StoredMediaRequest, "kind" | "model" | "prompt" | "params" | "maxCostCents">[],
 ): Promise<number> {
   const media = requireService(s, "media");
   let total = 0;
   for (const r of requests) {
     total += await media.estimateCostCents({
       kind: r.kind,
+      ...(r.model ? { model: r.model } : {}),
       prompt: r.prompt,
       maxCostCents: r.maxCostCents,
       ...(r.params ? { params: r.params } : {}),

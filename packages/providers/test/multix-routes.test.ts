@@ -113,6 +113,19 @@ describe("speech routed by language", () => {
     expect(named.argv.some((a) => a.startsWith("--instructions="))).toBe(false);
   });
 
+  it("runs a character cast on another model and voice than its language's route, with its direction", async () => {
+    // Vietnamese is routed to Fish (no voice list); a film cast its character on Gemini with a voice of its own.
+    const plan = await speech(
+      { language: "vi", voice: "Leda", instructions: "giọng nữ trẻ, trách yêu" },
+      "openrouter:google/gemini-3.8-flash-tts",
+    );
+    expect(plan.model.id).toBe("openrouter:google/gemini-3.8-flash-tts");
+    expect(value(plan.argv, "model")).toBe("google/gemini-3.8-flash-tts");
+    expect(value(plan.argv, "voice")).toBe("Leda");
+    expect(value(plan.argv, "instructions")).toBe("giọng nữ trẻ, trách yêu");
+    expect(plan).toMatchObject({ costPolicy: "estimate", outputExt: ".wav" });
+  });
+
   it("refuses direction that is not bounded plain text before anything is paid", async () => {
     for (const instructions of ["", "x".repeat(1001), "calm\u0007", 42]) {
       await expect(speech({ language: "vi", instructions })).rejects.toMatchObject({ code: "VALIDATION" });

@@ -76,6 +76,7 @@ import {
   scopeShots,
   storyboardFromScope,
 } from "./film-scope.ts";
+import { filmVoiceCast, lineDirection } from "./film-voices.ts";
 
 /** Parallel upstream calls per stage. */
 const MEDIA_CONCURRENCY = 3;
@@ -169,7 +170,9 @@ const SCOPE_CONTRACT =
   "lip-synced shot is T2 or T3 and carries exactly one line of its one visible speaker; elsewhere keep " +
   "speakers off screen or in reaction shots. About three spoken words per second at most. Keep the brief's " +
   "language with correct diacritics. Characters, designs and names are original: never a real person, " +
-  "brand or existing title. Return only JSON matching the output schema.";
+  "brand or existing title. Write each line's delivery (how it is read: emotion, pace, volume). Set a " +
+  "character's voice.voiceRef only when the brief names that character's voice; never invent one. Return " +
+  "only JSON matching the output schema.";
 
 const STORYBOARD_CONTRACT =
   "Write one storyboard panel per shot of the approved scope, in film order, using the approved character " +
@@ -932,18 +935,22 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
   const dialogueRequests = (s: StageContext) => {
     const ir = irOf(s);
     const film = filmOf(ir);
+    // One voice per speaking character for the whole film; two speakers sharing one fail here, before a call.
+    const cast = filmVoiceCast(film.production);
     return film.production.dialogue.map((cue) => {
       const bible = film.production.characters.find((c) => c.characterId === cue.characterId);
-      const voice = bible?.voice?.voiceRef;
+      const { model, voice } = cast.get(cue.characterId) ?? {};
       return {
         cue,
         request: {
           assetId: `${cue.id}-vo`.slice(0, 64),
           kind: "voice" as const,
+          ...(model ? { model } : {}),
           prompt: cue.text,
           params: {
             language: bible?.voice?.language ?? film.scope.language,
-            ...(voice && /^[A-Za-z0-9_.-]{1,128}$/.test(voice) ? { voice } : {}),
+            ...(voice ? { voice } : {}),
+            instructions: lineDirection(film.scope, film.production, cue),
           },
           keyPrefix: `generated/${s.job.id}/dialogue/${cue.id}`,
           maxCostCents: 0,

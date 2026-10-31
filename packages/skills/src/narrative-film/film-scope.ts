@@ -38,6 +38,10 @@ export const SHOT_MAX_MS = 10_000;
 /** Audio tracks one VideoIR carries: every line, every SFX cue and each scene's score cue take one. */
 export const MAX_AUDIO_TRACKS = 16;
 
+/** A cast voice: `<voice>`, `<vendor>:<model>` or `<vendor>:<model>@<voice>` (see film-voices.ts). */
+export const VOICE_REF =
+  /^(?:[A-Za-z0-9_.-]{1,128}|[a-z][a-z0-9-]{1,31}:[A-Za-z0-9][A-Za-z0-9._/:-]{0,159}(?:@[A-Za-z0-9_.-]{1,128})?)$/;
+
 export const ScopeLine = z.object({
   characterId: IrId,
   text: z.string().min(1).max(300),
@@ -88,7 +92,12 @@ export const ScopeCharacter = CharacterBible.pick({
   name: z.string().min(1).max(80),
   role: z.string().min(1).max(200),
   description: z.string().min(1).max(600),
-  voice: z.object({ direction: z.string().min(1).max(300), language: LanguageTag.optional() }),
+  voice: z.object({
+    direction: z.string().min(1).max(300),
+    language: LanguageTag.optional(),
+    /** Cast voice, `[<vendor>:<model>][@<voice>]`; the bible keeps it for every line of the character. */
+    voiceRef: z.string().regex(VOICE_REF, "must read [<vendor>:<model>][@<voice>]").optional(),
+  }),
 });
 export type ScopeCharacter = z.infer<typeof ScopeCharacter>;
 
@@ -196,7 +205,11 @@ export function productionFromScope(scope: FilmScope): FilmProduction {
       palette: c.palette,
       ...(c.handedness ? { handedness: c.handedness } : {}),
       negatives: c.negatives,
-      voice: { direction: c.voice.direction, ...(c.voice.language ? { language: c.voice.language } : {}) },
+      voice: {
+        direction: c.voice.direction,
+        ...(c.voice.language ? { language: c.voice.language } : {}),
+        ...(c.voice.voiceRef ? { voiceRef: c.voice.voiceRef } : {}),
+      },
       ...(c.acting ? { acting: c.acting } : {}),
       references: [],
     })),

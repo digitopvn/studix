@@ -20,7 +20,11 @@
       "palette": [{ "name": "bow", "hex": "#f6c445" }],
       "handedness": "right",
       "negatives": ["long hair", "glasses"],
-      "voice": { "direction": "giọng nữ trẻ, nhẹ, hơi trách yêu", "language": "vi" }
+      "voice": {
+        "direction": "giọng nữ trẻ, nhẹ, hơi trách yêu",
+        "language": "vi",
+        "voiceRef": "openrouter:google/gemini-3.8-flash-tts@Leda"
+      }
     },
     {
       "id": "tun",
@@ -31,7 +35,11 @@
       "palette": [{ "name": "backpack", "hex": "#3d5a80" }],
       "handedness": "left",
       "negatives": ["hat", "beard"],
-      "voice": { "direction": "giọng nam trẻ, hụt hơi vì chạy, áy náy", "language": "vi" }
+      "voice": {
+        "direction": "giọng nam trẻ, hụt hơi vì chạy, áy náy",
+        "language": "vi",
+        "voiceRef": "openrouter:google/gemini-3.8-flash-tts@Puck"
+      }
     }
   ],
   "sets": [
