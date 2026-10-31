@@ -96,7 +96,7 @@ export const animePack = createFilmPack({
     "continuity state. Use state.weather (petal, sakura, snow, ember, leaf or ash) for drifting particles.",
   storyboardInstructions:
     "Anime boards: perspective sets with depth and a ground plane, feet on the ground with contact " +
-    "shadows, 8% margin at the frame edges, one clear action per panel. T3 motion is a single action that " +
+    "shadows, heads, hands and props clear of the frame edges, one clear action per panel. T3 motion is a single action that " +
     "ends on a readable pose; T2 motion is a small acting beat or a mouth on its one line.",
   knowledge: {
     scope: ["narrative", "creative-direction", "composition-timing"],

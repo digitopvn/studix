@@ -15,6 +15,10 @@ const MARGIN = "keep 8% margin at every frame edge so no limb or prop is cut";
 const FULL_BLEED =
   "full-bleed picture that fills the whole frame edge to edge, no border, no frame, no side bars, no letterbox; keep heads, hands and props inside the picture";
 
+/** An edge-margin request in a board's frame text ("8% margin at every edge"), which reads as a border. */
+const FRAME_MARGIN =
+  /[,;]?\s*(?:keep\s+)?(?:an?\s+)?\d+(?:\.\d+)?\s*%\s*margins?\s+(?:at|on|around)\s+(?:every|each|all|the)\s+(?:frame\s+)?edges?/gi;
+
 const avoid = (scope: FilmScope, extra: readonly string[] = []) =>
   `Avoid: ${[...scope.style.negatives, ...extra, NO_TEXT].join(", ")}`;
 
@@ -93,7 +97,7 @@ export function keyframePrompt(
     .filter((c): c is ScopeCharacter => c !== undefined);
   return join([
     scope.style.look,
-    frame,
+    frame.replace(FRAME_MARGIN, ""),
     `Camera: ${shot.camera}`,
     castClause(scope, shot),
     revisionClause(revision),

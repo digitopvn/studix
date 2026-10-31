@@ -193,6 +193,18 @@ describe("film prompts", () => {
     expect(key).not.toContain("Reviewer's correction");
     const redraw = keyframePrompt(scope, "san-thuong", shots[3]!, "backs to camera", "Tùng in long sleeves");
     expect(redraw).toContain("Reviewer's correction, apply it exactly: Tùng in long sleeves");
+    // A board that still asks for an edge margin in its frame text loses it; the rest of the frame stays.
+    const boardMargin = keyframePrompt(
+      scope,
+      "san-thuong",
+      shots[0]!,
+      "Empty rooftop, ground plane toward the horizon, 8% margin at every edge. No people.",
+    );
+    expect(boardMargin).not.toMatch(/margin/i);
+    expect(boardMargin).toContain("Empty rooftop, ground plane toward the horizon. No people.");
+    expect(
+      keyframePrompt(scope, "san-thuong", shots[0]!, "Rooftop; keep a 5% margin on the frame edges"),
+    ).not.toMatch(/margin/i);
     expect(keyframePrompt(scope, "san-thuong", shots[0]!, "empty rooftop")).toContain(
       "No characters in frame",
     );
