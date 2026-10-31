@@ -28,6 +28,10 @@ not stop the process, and turn/cost limits checked after the run do not cap spen
 - Turns are counted as model calls (distinct assistant message ids). The SDK's
   `num_turns` counts the structured-output round as an extra turn, so a one-call
   plan reports 2 and would trip `maxTurns: 1`.
+- Only failures that come from Anthropic (an `API Error: NNN` status or an
+  Anthropic error type) are provider errors and are not retried. A failure on the
+  worker's side (SDK import, spawn, process crash or OOM kill) is `UNAVAILABLE`
+  and retryable, with the raw text only in redacted `details`.
 - Limits are enforced **while the session runs**: turns and cost stop the process
   as soon as a usage event crosses the cap; the SDK's own `maxTurns` and
   `maxBudgetUsd` are passed as a second layer.

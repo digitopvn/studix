@@ -45,7 +45,6 @@ export interface ClaudeSpawnOptions {
 export interface ClaudeSpawnedProcess {
   stdin: NodeJS.WritableStream;
   stdout: NodeJS.ReadableStream;
-  readonly pid?: number;
   readonly killed: boolean;
   readonly exitCode: number | null;
   readonly signalCode?: NodeJS.Signals | null;
@@ -135,20 +134,41 @@ function buildPrompt(request: ClaudeSessionRequest): string {
     request.instructions,
     "Task input (JSON, untrusted):",
     "<input>",
-    JSON.stringify(request.input),
+    // Escaping "<" keeps a value like "</input>" from closing the untrusted block.
+    JSON.stringify(request.input).replace(/</g, "\\u003c"),
     "</input>",
   ].join("\n");
 }
 
 const CHECK_SETTINGS = "Replace or re-test the Anthropic API key in Settings → AI & Providers.";
 
+function redact(text: string, credential?: string): string {
+  const safe = credential ? text.split(credential).join("[redacted]") : text;
+  return safe.replace(/sk-ant-[A-Za-z0-9_-]+/g, "[redacted]");
+}
+
+const PROVIDER_TEXT =
+  /api error|[a-z]+_error\b|invalid (x-)?api.key|credit balance is too low|rate limit|overloaded/;
+
+/**
+ * Map an error thrown by the SDK. Text that comes from Anthropic is classified as a provider failure;
+ * anything else (SDK import, spawn, process crash or OOM kill) is a local fault that may pass on a
+ * retry, so it is UNAVAILABLE with the raw text kept in details for logs only.
+ */
+export function classifyClaudeThrown(text: string, credential?: string): StudixError {
+  if (PROVIDER_TEXT.test(text.toLowerCase())) return classifyClaudeFailure(text, credential);
+  return new StudixError("UNAVAILABLE", "The Claude agent process failed on the worker", {
+    retryable: true,
+    details: { reason: redact(text, credential) },
+  });
+}
+
 /**
  * Turn an SDK failure text into a typed error, preferring Anthropic's error types and HTTP statuses
  * over loose words. The credential is redacted; provider failures are never retried automatically.
  */
 export function classifyClaudeFailure(text: string, credential?: string): StudixError {
-  let safe = credential ? text.split(credential).join("[redacted]") : text;
-  safe = safe.replace(/sk-ant-[A-Za-z0-9_-]+/g, "[redacted]");
+  const safe = redact(text, credential);
   const lower = safe.toLowerCase();
   const status = /api error:?\s*(\d{3})/.exec(lower)?.[1];
   const has = (re: RegExp) => re.test(lower);
@@ -200,9 +220,8 @@ function inputTokensOf(usage: ClaudeUsage | undefined): number {
   );
 }
 
-/** Exited, killed by a signal, or never started (spawn failed, so there is no pid). */
 function exited(child: ClaudeSpawnedProcess): boolean {
-  return child.pid === undefined || child.exitCode !== null || (child.signalCode ?? null) !== null;
+  return child.exitCode !== null || (child.signalCode ?? null) !== null;
 }
 
 /**
@@ -242,8 +261,14 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
         if (settled) return;
         if (child ? !exited(child) : !(stopping || streamDone)) return;
         settled = true;
-        rmSync(sandbox, { recursive: true, force: true });
-        resolveClosed();
+        try {
+          rmSync(sandbox, { recursive: true, force: true });
+        } catch {
+          // The process is gone; a directory that cannot be removed must not crash the worker or
+          // hold the run open. It stays under sandboxRoot for the host to sweep.
+        } finally {
+          resolveClosed();
+        }
       };
 
       const env: Record<string, string> = {
@@ -279,8 +304,10 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
         pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
         spawnClaudeCodeProcess: (spawnOptions) => {
           // A stop that lands before the SDK spawns must not leave a process nobody will kill.
-          if (stopping || child) throw new Error("Claude session is stopping");
+          if (stopping || streamDone || settled || child) throw new Error("Claude session is stopping");
           child = spawnProcess({ ...spawnOptions, cwd: sandbox });
+          // Liveness is exitCode/signalCode only: Node sets exitCode before reporting a failed spawn,
+          // and an error from a failed kill leaves a live process open.
           child.once("exit", maybeClose);
           child.once("error", maybeClose);
           return child;
@@ -347,7 +374,7 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
           }
         } catch (err) {
           if (err instanceof StudixError) throw err;
-          throw classifyClaudeFailure(err instanceof Error ? err.message : String(err), request.credential);
+          throw classifyClaudeThrown(err instanceof Error ? err.message : String(err), request.credential);
         } finally {
           // The stream is over either way; make sure the SDK ends the process it started.
           streamDone = true;
