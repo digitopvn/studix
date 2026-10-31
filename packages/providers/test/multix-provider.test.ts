@@ -622,8 +622,8 @@ describe("MultixProvider async jobs", () => {
   it("submits a new attempt with a new idempotency key after the upstream rejected the job", async () => {
     let statusCalls = 0;
     const cli = sumeImageCli((argv) => {
-      statusCalls += 1;
-      if (statusCalls === 1) {
+      // The job-state probe after a failed wait (no --download) sees the same rejected job.
+      if (!argv.includes("--download") || ++statusCalls === 1) {
         return { exitCode: 5, envelope: { error: { code: "REJECTED", message: "content policy" } } };
       }
       const out = join(flagValue(argv, "output")!, "image-1.png");
@@ -645,6 +645,48 @@ describe("MultixProvider async jobs", () => {
       flagValue(submits[1]!.argv, "idempotency-key"),
     );
     expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "completed", attempt: 2 });
+  });
+
+  it("keeps a completed Sume job resumable and reports its charge when only the download failed", async () => {
+    const downloadFails = (argv: readonly string[]): Reply =>
+      argv.includes("--download")
+        ? { exitCode: 5, envelope: { error: { code: "DOWNLOAD_FAILED", message: "disk full" } } }
+        : { envelope: { usage: { cost_usd: 0.03 } } };
+    let failDownload = true;
+    const cli = sumeImageCli((argv) => {
+      if (failDownload) return downloadFails(argv);
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return { files: { [out]: "png" }, envelope: { outputs: [{ path: out }], usage: { cost_usd: 0.03 } } };
+    });
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaFailedAfterSpend);
+    expect((error as MediaFailedAfterSpend).charge).toMatchObject({
+      costCents: 3,
+      costSource: "receipt",
+      job: { provider: "sume", id: "job_1" },
+    });
+    expect((await journal.get(ctx, "stage-1:image"))?.state).not.toBe("failed");
+
+    failDownload = false;
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result.job).toEqual({ provider: "sume", id: "job_1" });
+    const submits = cli.calls.filter((c) => c.argv[1] === "image" && !c.argv.includes("--estimate"));
+    expect(submits).toHaveLength(1);
+  });
+
+  it("reads the charge from the failed envelope itself when it carries one", async () => {
+    const cli = sumeImageCli(() => ({
+      exitCode: 5,
+      envelope: { error: { code: "DOWNLOAD_FAILED" }, usage: { cost_usd: 0.03 } },
+    }));
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaFailedAfterSpend);
+    expect((error as MediaFailedAfterSpend).charge.costCents).toBe(3);
+    expect((await journal.get(ctx, "stage-1:image"))?.state).not.toBe("failed");
   });
 
   it("refuses an idempotency key reused for a different request", async () => {

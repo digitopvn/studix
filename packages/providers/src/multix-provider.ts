@@ -401,6 +401,23 @@ export class MultixProvider implements MediaProvider {
     return env;
   }
 
+  /** Run one command with --json. The run and its envelope are returned whether or not it succeeded. */
+  private async execRaw(
+    argv: readonly string[],
+    cwd: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ result: Awaited<ReturnType<MultixRunner>>; envelope: MultixEnvelope | undefined }> {
+    const cacheDir = join(cwd, `${CACHE_DIR}-${randomUUID()}`);
+    let result: Awaited<ReturnType<MultixRunner>>;
+    try {
+      result = await this.runner!(argv, { cwd, env: this.childEnv(cacheDir), timeoutMs, signal });
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    return { result, envelope: parseMultixEnvelope(result.stdout) };
+  }
+
   /** Run one command with --json and return its envelope; a failed run becomes a typed error. */
   private async exec(
     command: string,
@@ -409,14 +426,7 @@ export class MultixProvider implements MediaProvider {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<MultixEnvelope> {
-    const cacheDir = join(cwd, `${CACHE_DIR}-${randomUUID()}`);
-    let result: Awaited<ReturnType<MultixRunner>>;
-    try {
-      result = await this.runner!(argv, { cwd, env: this.childEnv(cacheDir), timeoutMs, signal });
-    } finally {
-      await rm(cacheDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-    const envelope = parseMultixEnvelope(result.stdout);
+    const { result, envelope } = await this.execRaw(argv, cwd, timeoutMs, signal);
     if (!multixRunSucceeded(result, envelope)) {
       throw multixRunError(command, result, envelope);
     }
@@ -593,16 +603,26 @@ export class MultixProvider implements MediaProvider {
       return { costCents, costSource, provider: this.id, model, job };
     };
     let envelope: MultixEnvelope | undefined;
+    // The envelope of a run that exited non-zero: a download that fails after the job completed can
+    // still carry what the job was charged.
+    let failedEnvelope: MultixEnvelope | undefined;
+    const command = `${job.provider} status`;
     try {
-      envelope = await this.exec(
-        `${job.provider} status`,
-        argv,
-        outDir,
-        this.waitTimeoutMs + RUN_MARGIN_MS,
-        signal,
-      );
+      const run = await this.execRaw(argv, outDir, this.waitTimeoutMs + RUN_MARGIN_MS, signal);
+      if (!multixRunSucceeded(run.result, run.envelope)) {
+        failedEnvelope = run.envelope;
+        throw multixRunError(command, run.result, run.envelope);
+      }
+      envelope = run.envelope;
       this.assertTrustedOutputs(envelope, job);
     } catch (err) {
+      // A job whose status run failed may still have completed and been charged (only its download
+      // failed): then it is neither rejected nor free, so it stays resumable and its charge is reported.
+      const paidEnvelope =
+        envelope ??
+        (failedEnvelope && (failedEnvelope.receiptUsd ?? 0) > 0
+          ? failedEnvelope
+          : await this.completedJobEnvelope(job, err, outDir, signal));
       // A rejected Sume job ended upstream (Sume refunds it); the next attempt submits anew. Atlas gives
       // no such guarantee and cannot deduplicate, so an Atlas job always stays resumable. Anything else
       // (timeout, temporary failure, cancel) leaves the job running, and the record makes a retry resume it.
@@ -610,6 +630,7 @@ export class MultixProvider implements MediaProvider {
         job.provider === "sume" &&
         "ctx" in tracking &&
         record &&
+        !paidEnvelope &&
         err instanceof StudixError &&
         err.code === "PROVIDER_ERROR" &&
         !err.retryable
@@ -627,7 +648,9 @@ export class MultixProvider implements MediaProvider {
           details: { ...err.details, job },
           cause: err,
         });
-        throw envelope ? billedFailure(wrapped, chargeOf(envelope), job.provider === "sume") : wrapped;
+        throw paidEnvelope
+          ? billedFailure(wrapped, chargeOf(paidEnvelope), job.provider === "sume")
+          : wrapped;
       }
       throw err;
     }
@@ -660,6 +683,38 @@ export class MultixProvider implements MediaProvider {
       };
     } catch (err) {
       throw billedFailure(toStudixError(err), charge, job.provider === "sume");
+    }
+  }
+
+  /**
+   * After a Sume status run failed without a usable envelope, ask for the job's state alone (no wait, no
+   * download). A job that reports a kept charge completed upstream, so the failure was the download and
+   * the job must not be treated as rejected. Anything else (or a probe that fails) returns undefined.
+   */
+  private async completedJobEnvelope(
+    job: ProviderJobRef,
+    err: unknown,
+    cwd: string,
+    signal: AbortSignal | undefined,
+  ): Promise<MultixEnvelope | undefined> {
+    if (
+      job.provider !== "sume" ||
+      !(err instanceof StudixError) ||
+      err.code !== "PROVIDER_ERROR" ||
+      err.retryable
+    ) {
+      return undefined;
+    }
+    try {
+      const { result, envelope } = await this.execRaw(
+        ["sume", "status", job.id, "--json"],
+        cwd,
+        PROBE_TIMEOUT_MS,
+        signal,
+      );
+      return multixRunSucceeded(result, envelope) && (envelope.receiptUsd ?? 0) > 0 ? envelope : undefined;
+    } catch {
+      return undefined;
     }
   }
 
