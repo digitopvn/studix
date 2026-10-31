@@ -671,6 +671,50 @@ describe("MultixProvider async jobs", () => {
     });
   });
 
+  it("reports no charge when multix says the run sent no request", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_source: "no_request" },
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(MediaChargedError);
+    expect(err).toMatchObject({ code: "PROVIDER_ERROR" });
+  });
+
+  it("still reports the charge when the journal write after a charged failure fails", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_usd: 0.03, actual_source: "provider" },
+        },
+      };
+    });
+    const inner = new InMemoryMediaJobJournal();
+    const journal = {
+      get: inner.get.bind(inner),
+      put: async (c: Parameters<typeof inner.put>[0], r: Parameters<typeof inner.put>[1]) => {
+        if (r.state === "failed") throw new Error("journal down");
+        return inner.put(c, r);
+      },
+    };
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge.costCents).toBe(3);
+  });
+
   it("reports the charge of a finished job whose outputs are flagged as broken", async () => {
     const cli = sumeImageCli((argv) => {
       const out = join(flagValue(argv, "output")!, "image-1.png");

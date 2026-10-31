@@ -18,7 +18,7 @@ import {
   type ProviderJobRef,
   type TenantContext,
 } from "@studix/core";
-import { type Clock, type StudixConfig, StudixError, systemClock } from "@studix/shared";
+import { type Clock, type StudixConfig, StudixError, systemClock, toStudixError } from "@studix/shared";
 import { InMemoryMediaJobJournal } from "./media-job-journal.ts";
 import { mediaBillingQuantity } from "./media-price-book.ts";
 import {
@@ -578,7 +578,7 @@ export class MultixProvider implements MediaProvider {
         signal,
       );
       const [costCents, costSource] = this.settleCost(envelope, record?.receiptCents, fallback);
-      charge = { provider: this.id, model, costCents, costSource, job };
+      charge = this.chargeOf(envelope, { provider: this.id, model, costCents, costSource, job });
       this.assertTrustedOutputs(envelope, job);
     } catch (err) {
       // A rejected Sume job ended upstream (Sume refunds it); the next attempt submits anew. Atlas gives
@@ -592,11 +592,13 @@ export class MultixProvider implements MediaProvider {
         err.code === "PROVIDER_ERROR" &&
         !err.retryable
       ) {
-        await tracking.journal.put(tracking.ctx, {
-          ...record,
-          state: "failed",
-          updatedAt: this.clock.now().toISOString(),
-        });
+        await tracking.journal
+          .put(tracking.ctx, { ...record, state: "failed", updatedAt: this.clock.now().toISOString() })
+          .catch((putErr: unknown) => {
+            // A journal failure must not hide the charge the error already carries.
+            if (charge) throw new MediaChargedError(toStudixError(putErr), charge);
+            throw putErr;
+          });
       }
       if (err instanceof StudixError) {
         const wrapped = new StudixError(err.code, err.message, {
@@ -609,24 +611,30 @@ export class MultixProvider implements MediaProvider {
       }
       throw err;
     }
-    const { costCents, costSource } = charge!;
+    const [costCents, costSource] = this.settleCost(envelope, record?.receiptCents, fallback);
     const outputs = await this.outputsIn(envelope, outDir, outDir);
     if (outputs.length === 0) {
-      throw new MediaChargedError(
-        new StudixError("PROVIDER_ERROR", `${job.provider} job ${job.id} finished without outputs`, {
+      const empty = new StudixError(
+        "PROVIDER_ERROR",
+        `${job.provider} job ${job.id} finished without outputs`,
+        {
           retryable: false,
           details: { job },
-        }),
-        charge!,
+        },
       );
+      throw charge ? new MediaChargedError(empty, charge) : empty;
     }
     if ("ctx" in tracking && record) {
-      await tracking.journal.put(tracking.ctx, {
-        ...record,
-        state: "completed",
-        ...(costSource === "receipt" ? { receiptCents: costCents } : {}),
-        updatedAt: this.clock.now().toISOString(),
-      });
+      await tracking.journal
+        .put(tracking.ctx, {
+          ...record,
+          state: "completed",
+          ...(costSource === "receipt" ? { receiptCents: costCents } : {}),
+          updatedAt: this.clock.now().toISOString(),
+        })
+        .catch((putErr: unknown) => {
+          throw charge ? new MediaChargedError(toStudixError(putErr), charge) : putErr;
+        });
     }
     return {
       outputs,
@@ -637,6 +645,11 @@ export class MultixProvider implements MediaProvider {
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
       job,
     };
+  }
+
+  /** The charge to report when a finished call then fails; none when multix says it sent no request. */
+  private chargeOf(envelope: MultixEnvelope, charge: MediaCharge): MediaCharge | undefined {
+    return envelope.noRequest && envelope.receiptUsd === undefined ? undefined : charge;
   }
 
   /** The charge of a finished call: the receipt, else the journaled receipt, else the pre-call estimate. */
@@ -691,40 +704,44 @@ export class MultixProvider implements MediaProvider {
     );
     // The run succeeded, so the upstream has charged even if its output turns out unusable.
     const [spentCents, spentSource] = this.settleCost(envelope, undefined, estimate);
-    const charge: MediaCharge = {
+    const charge = this.chargeOf(envelope, {
       provider: this.id,
       model: plan.model.id,
       costCents: spentCents,
       costSource: spentSource,
-    };
+    });
+    const failed = (error: StudixError) => (charge ? new MediaChargedError(error, charge) : error);
     try {
       this.assertTrustedOutputs(envelope);
     } catch (err) {
-      throw err instanceof StudixError ? new MediaChargedError(err, charge) : err;
+      throw err instanceof StudixError ? failed(err) : err;
     }
     const outputs = (await this.outputsIn(envelope, outDir, outDir)).filter((o) => o.filePath === file);
     if (outputs.length === 0) {
-      throw new MediaChargedError(
+      throw failed(
         new StudixError("PROVIDER_ERROR", `multix ${plan.argv.slice(0, 2).join(" ")} wrote no output`, {
           retryable: false,
         }),
-        charge,
       );
     }
     const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
     const at = this.clock.now().toISOString();
-    await journal.put(ctx, {
-      idempotencyKey: request.idempotencyKey,
-      kind: request.kind,
-      model: plan.model.id,
-      job: { provider: plan.model.vendor, id: envelope.historyId ?? "sync" },
-      attempt: (existing?.attempt ?? 0) + 1,
-      state: "completed",
-      estimatedCostCents: estimate,
-      ...(receipt !== undefined ? { receiptCents: receipt } : {}),
-      submittedAt: at,
-      updatedAt: at,
-    });
+    await journal
+      .put(ctx, {
+        idempotencyKey: request.idempotencyKey,
+        kind: request.kind,
+        model: plan.model.id,
+        job: { provider: plan.model.vendor, id: envelope.historyId ?? "sync" },
+        attempt: (existing?.attempt ?? 0) + 1,
+        state: "completed",
+        estimatedCostCents: estimate,
+        ...(receipt !== undefined ? { receiptCents: receipt } : {}),
+        submittedAt: at,
+        updatedAt: at,
+      })
+      .catch((putErr: unknown) => {
+        throw charge ? new MediaChargedError(toStudixError(putErr), charge) : putErr;
+      });
     return result(outputs, receipt ?? estimate, receipt !== undefined ? "receipt" : "estimate");
   }
 
