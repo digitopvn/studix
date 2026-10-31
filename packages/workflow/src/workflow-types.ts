@@ -232,6 +232,8 @@ export interface PackJob {
    * brief of a new project.
    */
   fromVersion: boolean;
+  /** The version came from reviewer feedback (a patch); the job applies it and goes back to review. */
+  feedback?: boolean;
 }
 
 /**

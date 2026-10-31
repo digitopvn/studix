@@ -112,7 +112,10 @@ Behavior notes:
   image-to-video, voice or music. Frame prompts describe the scene only. Beats
   derived from a direction never carry its hook or messages, and the brand name
   and tagline are removed from every frame prompt, because the HyperFrames
-  overlay sets the logo, wordmark and copy. Each ad's voice-over must fit about three
+  overlay sets the logo, wordmark and copy. Feedback with a patch that changes an
+  image shot's `alt` (the frame description) regenerates the frame of that shot
+  only, stores it as the next version and returns the project to review;
+  unchanged shots keep their frames and review state. Each ad's voice-over must fit about three
   words a second of its length, or the job fails with `VALIDATION` before any
   paid call. After a person approves the storyboard, `studix_render` animates
   the frames, adds voice-over, music and SFX, then renders, QA-gates and
