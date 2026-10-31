@@ -98,7 +98,8 @@ Behavior notes:
 - `studix_create_video` inputs: `prompt` or `brief` (one is required), `spec`,
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
   past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
-  `workflowTemplate`.
+  `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
+  handoff tools below).
 - `workflowTemplate` is a pack id from the registry in `@studix/skills`
   (`studix_inspect` lists them under `skills`); it defaults to `brand-intro`.
   An unknown id fails with `VALIDATION` before anything is stored, with
@@ -178,7 +179,8 @@ Behavior notes:
 A creative agent stage (for example `brand-intro.script`) runs in one of two
 modes under the same contract: the stage's input schema, output schema and
 limits ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)). The
-job payload's `agentMode` picks the mode. `harness` (the default) runs the
+job payload's `agentMode` picks the mode; `studix_create_video` sets it from its
+`agentMode` argument. `harness` (the default) runs the
 Claude agent inside the worker under hard caps. `host` hands the stage to the
 MCP client's own agent: the job moves to `waiting_host`, and `studix_get_job`
 returns `next[]` pointing at `studix_list_agent_tasks`.

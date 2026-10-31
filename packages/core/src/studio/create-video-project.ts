@@ -110,6 +110,7 @@ export async function createVideoProject(
       renderPreset: input.renderPreset ?? "preview",
       planner: input.planner,
       workflowTemplate,
+      ...(input.agentMode ? { agentMode: input.agentMode } : {}),
     },
     idempotencyKey: input.idempotencyKey,
     budgetCents,

@@ -104,6 +104,10 @@ const CreateVideoInput = z
     workflowTemplate: WorkflowTemplateId.optional().describe(
       "Workflow pack id (studix_inspect skills). Default brand-intro.",
     ),
+    agentMode: z
+      .enum(["harness", "host"])
+      .optional()
+      .describe("Creative agent stages: harness (default, in Studix) or host (your agent, via agent tasks)."),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
     message: "Provide prompt or brief",
@@ -192,6 +196,7 @@ export const NATIVE_TOOLS = [
         renderPreset: input.renderPreset,
         planner: input.planner,
         workflowTemplate: pack.id,
+        agentMode: input.agentMode,
       });
       return {
         data: {
