@@ -647,20 +647,32 @@ describe("MultixProvider async jobs", () => {
     expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "completed", attempt: 2 });
   });
 
+  const sumeUsage = (captured: number, reserved = 3, refunded = 0) => ({
+    cost_usd: 0.03,
+    metrics: {
+      "data.job.usage_summary.captured_usd_cents": captured,
+      "data.job.usage_summary.reserved_usd_cents": reserved,
+      "data.job.usage_summary.refunded_usd_cents": refunded,
+    },
+  });
+  const downloadError = { error: { code: "DOWNLOAD_FAILED", message: "disk full" } };
+  const generateFailure = async (multix: MultixProvider) =>
+    multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+
   it("keeps a completed Sume job resumable and reports its charge when only the download failed", async () => {
-    const downloadFails = (argv: readonly string[]): Reply =>
-      argv.includes("--download")
-        ? { exitCode: 5, envelope: { error: { code: "DOWNLOAD_FAILED", message: "disk full" } } }
-        : { envelope: { usage: { cost_usd: 0.03 } } };
     let failDownload = true;
     const cli = sumeImageCli((argv) => {
-      if (failDownload) return downloadFails(argv);
+      if (failDownload) {
+        return argv.includes("--download")
+          ? { exitCode: 5, envelope: downloadError }
+          : { envelope: { usage: sumeUsage(3) } };
+      }
       const out = join(flagValue(argv, "output")!, "image-1.png");
-      return { files: { [out]: "png" }, envelope: { outputs: [{ path: out }], usage: { cost_usd: 0.03 } } };
+      return { files: { [out]: "png" }, envelope: { outputs: [{ path: out }], usage: sumeUsage(3) } };
     });
     const journal = new InMemoryMediaJobJournal();
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
-    const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    const error = await generateFailure(multix);
     expect(error).toBeInstanceOf(MediaFailedAfterSpend);
     expect((error as MediaFailedAfterSpend).charge).toMatchObject({
       costCents: 3,
@@ -676,16 +688,58 @@ describe("MultixProvider async jobs", () => {
     expect(submits).toHaveLength(1);
   });
 
-  it("reads the charge from the failed envelope itself when it carries one", async () => {
+  it("reads the charge from the failed envelope itself when it carries a captured amount", async () => {
     const cli = sumeImageCli(() => ({
       exitCode: 5,
-      envelope: { error: { code: "DOWNLOAD_FAILED" }, usage: { cost_usd: 0.03 } },
+      envelope: { ...downloadError, usage: sumeUsage(3) },
     }));
     const journal = new InMemoryMediaJobJournal();
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
-    const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    const error = await generateFailure(multix);
     expect(error).toBeInstanceOf(MediaFailedAfterSpend);
     expect((error as MediaFailedAfterSpend).charge.costCents).toBe(3);
+    expect((await journal.get(ctx, "stage-1:image"))?.state).not.toBe("failed");
+    expect(cli.calls.filter((c) => c.argv[1] === "status")).toHaveLength(1);
+  });
+
+  it("does not conclude anything when the job-state probe gets no answer", async () => {
+    for (const probe of [
+      { exitCode: 4 as const, envelope: { error: { code: "TEMPORARY" } } },
+      { exitCode: 6 as const, envelope: {} },
+    ]) {
+      const cli = sumeImageCli((argv) =>
+        argv.includes("--download") ? { exitCode: 5, envelope: downloadError } : probe,
+      );
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      const error = await generateFailure(multix);
+      expect(error).not.toBeInstanceOf(MediaFailedAfterSpend);
+      expect((await journal.get(ctx, "stage-1:image"))?.state).not.toBe("failed");
+    }
+  });
+
+  it("neither bills nor resumes a rejected job whose refund is still pending", async () => {
+    const cli = sumeImageCli((argv) =>
+      argv.includes("--download")
+        ? { exitCode: 5, envelope: { ...downloadError, usage: sumeUsage(0, 3) } }
+        : { exitCode: 5, envelope: { error: { code: "REJECTED" }, usage: sumeUsage(0, 3) } },
+    );
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await generateFailure(multix);
+    expect(error).not.toBeInstanceOf(MediaFailedAfterSpend);
+    expect((await journal.get(ctx, "stage-1:image"))?.state).toBe("failed");
+  });
+
+  it("does not bill a job that is still running when multix times out its wait", async () => {
+    const cli = sumeImageCli(() => ({
+      exitCode: 6,
+      envelope: { error: { code: "TIMEOUT" }, usage: sumeUsage(3) },
+    }));
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await generateFailure(multix);
+    expect(error).not.toBeInstanceOf(MediaFailedAfterSpend);
     expect((await journal.get(ctx, "stage-1:image"))?.state).not.toBe("failed");
   });
 

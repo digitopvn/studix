@@ -121,6 +121,8 @@ export interface MultixEnvelope {
   estimateHighUsd?: number;
   /** What the provider charged, when the run reported it. */
   receiptUsd?: number;
+  /** What Sume says it has captured for the job; only a finished job has a captured amount above 0. */
+  capturedUsd?: number;
   historyId?: string;
 }
 
@@ -261,6 +263,8 @@ export function parseMultixEnvelope(stdout: string): MultixEnvelope | undefined 
   if (high !== undefined) envelope.estimateHighUsd = high;
   const receipt = parseReceipt(raw);
   if (receipt !== undefined) envelope.receiptUsd = receipt;
+  const captured = num(obj(obj(raw.usage).metrics)[SUME_CAPTURED_CENTS]);
+  if (captured !== undefined) envelope.capturedUsd = captured / 100;
   const historyId = str(raw.history_id);
   if (historyId) envelope.historyId = historyId;
   return envelope;

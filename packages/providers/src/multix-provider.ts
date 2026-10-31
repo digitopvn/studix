@@ -618,23 +618,26 @@ export class MultixProvider implements MediaProvider {
     } catch (err) {
       // A job whose status run failed may still have completed and been charged (only its download
       // failed): then it is neither rejected nor free, so it stays resumable and its charge is reported.
-      const paidEnvelope =
-        envelope ??
-        (failedEnvelope && (failedEnvelope.receiptUsd ?? 0) > 0
-          ? failedEnvelope
-          : await this.completedJobEnvelope(job, err, outDir, signal));
+      // Only a plain provider failure can be that; a timeout or temporary failure leaves the job running,
+      // where a reservation is not yet a charge.
+      const plainFailure = err instanceof StudixError && err.code === "PROVIDER_ERROR" && !err.retryable;
+      const keptBy = (e: MultixEnvelope) => (job.provider === "sume" ? e.capturedUsd : e.receiptUsd) ?? 0;
+      let paidEnvelope: MultixEnvelope | undefined = envelope;
+      let rejected = false;
+      if (!paidEnvelope && plainFailure) {
+        if (failedEnvelope && keptBy(failedEnvelope) > 0) {
+          paidEnvelope = failedEnvelope;
+        } else if (job.provider === "sume") {
+          const probe = await this.probeSumeJob(job, outDir, signal);
+          if (probe === "rejected") rejected = true;
+          else if (probe !== "unknown") paidEnvelope = probe;
+        }
+      }
       // A rejected Sume job ended upstream (Sume refunds it); the next attempt submits anew. Atlas gives
       // no such guarantee and cannot deduplicate, so an Atlas job always stays resumable. Anything else
-      // (timeout, temporary failure, cancel) leaves the job running, and the record makes a retry resume it.
-      if (
-        job.provider === "sume" &&
-        "ctx" in tracking &&
-        record &&
-        !paidEnvelope &&
-        err instanceof StudixError &&
-        err.code === "PROVIDER_ERROR" &&
-        !err.retryable
-      ) {
+      // (timeout, temporary failure, cancel, an unanswered probe) leaves the job as it is, and the record
+      // makes a retry resume it.
+      if (rejected && "ctx" in tracking && record) {
         await tracking.journal.put(tracking.ctx, {
           ...record,
           state: "failed",
@@ -687,24 +690,16 @@ export class MultixProvider implements MediaProvider {
   }
 
   /**
-   * After a Sume status run failed without a usable envelope, ask for the job's state alone (no wait, no
-   * download). A job that reports a kept charge completed upstream, so the failure was the download and
-   * the job must not be treated as rejected. Anything else (or a probe that fails) returns undefined.
+   * After a Sume status run failed, ask for the job's state alone (no wait, no download). A job with a
+   * captured charge completed upstream, so the failure was the download. A job that answers without one
+   * was rejected. No answer (cancelled, timed out, temporary failure, no envelope) is "unknown": nothing
+   * is concluded and the job stays resumable.
    */
-  private async completedJobEnvelope(
+  private async probeSumeJob(
     job: ProviderJobRef,
-    err: unknown,
     cwd: string,
     signal: AbortSignal | undefined,
-  ): Promise<MultixEnvelope | undefined> {
-    if (
-      job.provider !== "sume" ||
-      !(err instanceof StudixError) ||
-      err.code !== "PROVIDER_ERROR" ||
-      err.retryable
-    ) {
-      return undefined;
-    }
+  ): Promise<MultixEnvelope | "rejected" | "unknown"> {
     try {
       const { result, envelope } = await this.execRaw(
         ["sume", "status", job.id, "--json"],
@@ -712,9 +707,13 @@ export class MultixProvider implements MediaProvider {
         PROBE_TIMEOUT_MS,
         signal,
       );
-      return multixRunSucceeded(result, envelope) && (envelope.receiptUsd ?? 0) > 0 ? envelope : undefined;
+      if (result.stoppedBy || !envelope) return "unknown";
+      if (multixRunSucceeded(result, envelope)) {
+        return (envelope.capturedUsd ?? 0) > 0 ? envelope : "rejected";
+      }
+      return result.exitCode === 4 || result.exitCode === 6 ? "unknown" : "rejected";
     } catch {
-      return undefined;
+      return "unknown";
     }
   }
 
