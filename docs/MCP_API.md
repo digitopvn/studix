@@ -160,7 +160,14 @@ Behavior notes:
   `in_review`, keeps the old frames as history and renders nothing. Each shot is
   redrawn at most twice; a third request fails with `VALIDATION` before any
   paid call. After a person approves the
-  storyboard, `studix_render` records the dialogue first, turns T2/T3 shots into
+  storyboard, `studix_render` records the dialogue first. Each speaking character has one voice
+  for the whole film, cast in the bible as `voice.voiceRef`
+  (`<voice>`, `<vendor>:<model>` or `<vendor>:<model>@<voice>`, for example
+  `openrouter:google/gemini-3.8-flash-tts@Leda`). A brief can name it, or a patch on
+  `metadata.film.production.characters[].voice.voiceRef` can set it. A named model overrides the
+  language's speech route. Two speakers left with the same voice, including both uncast, fail with
+  `VALIDATION` before any line is paid for. Every line is read with direction built from the
+  character's voice, the line's delivery, the shot and the film's tone. The render then turns T2/T3 shots into
   480p image-to-video clips and T0/T1 shots into film-engine scenes, lip-syncs
   every shot with a visible speaker on the recorded line, adds one score cue per
   scene and the SFX, checks continuity (G3), then renders, QA-gates (G4) and

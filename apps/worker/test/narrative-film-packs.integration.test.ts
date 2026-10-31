@@ -140,8 +140,13 @@ function createWorld(opts: { setFrame?: { width: number; height: number } } = {}
   const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
   const requests: MediaGenerationRequest[] = [];
   const generate = media.generate.bind(media);
-  media.generate = async (ctx, request) => {
-    requests.push(request);
+  const estimate = media.estimateCostCents.bind(media);
+  // The fake runs one model; a model a request names (a cast voice) is recorded, then run on the fake.
+  const onFake = <R extends { model?: string }>({ model: _, ...rest }: R) => rest;
+  media.estimateCostCents = (request) => estimate(onFake(request));
+  media.generate = async (ctx, original) => {
+    requests.push(original);
+    const request = onFake(original);
     // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
     for (const name of ["image", "video", "audio"]) {
       const value = request.params?.[name];
@@ -399,7 +404,22 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const render = await enqueue(ctx, project.id, pack, { versionId: board.version.id });
     expect(await world.runOnce(render.id)).toBe("succeeded");
     const kinds = world.requests.map((r) => r.kind);
-    expect(kinds.filter((k) => k === "voice")).toHaveLength(3);
+    // Each character keeps the voice the bible cast for every line; each line carries its own direction.
+    // Lines are recorded concurrently: order them by their line id.
+    const lines = world.requests
+      .filter((r) => r.kind === "voice")
+      .sort((a, b) => a.idempotencyKey.localeCompare(b.idempotencyKey));
+    expect(lines.map((r) => [r.prompt, r.model, r.params?.voice])).toEqual([
+      ["Cậu lại đến muộn rồi.", "openrouter:google/gemini-3.8-flash-tts", "Leda"],
+      ["Xin lỗi, tàu điện bị trễ.", "openrouter:google/gemini-3.8-flash-tts", "Puck"],
+      ["Vừa kịp lúc.", "openrouter:google/gemini-3.8-flash-tts", "Leda"],
+    ]);
+    const directions = lines.map((r) => String(r.params?.instructions));
+    expect(directions[0]).toContain("Character voice: giọng nữ trẻ, nhẹ, hơi trách yêu.");
+    expect(directions[0]).toContain("Read this line: trách yêu.");
+    expect(directions[1]).toMatch(/^Tùng speaks one line in a Vietnamese animated film/);
+    expect(directions[1]).toContain("Read this line: hụt hơi.");
+    expect(directions[2]).toContain("Read this line: thì thầm.");
     const videos = world.requests.filter((r) => r.kind === "video");
     const clips = videos.filter((r) => r.params?.audio === undefined);
     const syncs = videos.filter((r) => r.params?.audio !== undefined);
