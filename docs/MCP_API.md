@@ -136,8 +136,9 @@ Behavior notes:
   without an approved storyboard fails with `APPROVAL_REQUIRED`.
 - `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
   (6 to 60 s, default 15 s) in the style profile that best matches the brief,
-  with a generated voice-over and burned captions, then renders, QA-gates and
-  uploads it in one job. It has no image-to-video.
+  with a generated voice-over, one SFX accent where the CTA card lands and
+  burned captions, then renders, QA-gates and uploads it in one job. It has no
+  image-to-video and no music.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action

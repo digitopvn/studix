@@ -444,10 +444,21 @@ describe("motion-graphic pipeline (fake providers)", () => {
     });
     const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
-    expect(h.generate.mock.calls.map(([, r]) => r.kind)).toEqual(["voice"]);
+    expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual(["sfx", "voice"]);
     expect(h.renderer.rendered).toHaveLength(1);
     const ir = h.renderer.rendered[0] as VideoIR;
-    expect(ir.audio?.[0]).toMatchObject({ kind: "voiceover" });
+    const ctaAt = ir.scenes
+      .slice(
+        0,
+        ir.scenes.findIndex((sc) => sc.id === "cta"),
+      )
+      .reduce((ms, sc) => ms + sc.durationMs, 0);
+    expect(ctaAt).toBeGreaterThan(0);
+    expect(ir.audio).toEqual([
+      expect.objectContaining({ kind: "voiceover", assetId: "voiceover" }),
+      expect.objectContaining({ kind: "sfx", assetId: "sfx-accent", startMs: ctaAt }),
+    ]);
+    expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(2);
     expect(ir.captions?.cues.length).toBeGreaterThan(0);
     expect(ir.metadata?.styleProfile).toEqual(expect.any(String));
     expect(h.qaCalls).toEqual([expect.objectContaining({ requireAudio: true, durationMs: 12_000 })]);
