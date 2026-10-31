@@ -490,6 +490,10 @@ describe("MultixProvider async jobs", () => {
       scriptedCli((argv) => {
         if (argv[1] === "upload") return { envelope: { text: "https://cdn.atlascloud.ai/u/frame.png" } };
         if (argv[1] === "run") return onRun();
+        if (argv[1] === "status") {
+          const out = join(flagValue(argv, "output")!, "output-1.png");
+          return { files: { [out]: "big-png" }, envelope: { outputs: [{ path: out, mime: "image/png" }] } };
+        }
         throw new Error(`unexpected argv ${argv.join(" ")}`);
       });
 
@@ -515,6 +519,30 @@ describe("MultixProvider async jobs", () => {
       expect(runs).toBe(1);
     });
 
+    it("keeps a paid Atlas job resumable when collecting it fails permanently", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = scriptedCli((argv) => {
+        if (argv[1] === "upload") return { envelope: { text: "https://cdn.atlascloud.ai/u/frame.png" } };
+        if (argv[1] === "run") {
+          runs += 1;
+          return { envelope: { job: { provider: "atlas", id: "pred_9" }, text: "pred_9" } };
+        }
+        return { exitCode: 5, envelope: { error: { message: "rejected" } } };
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({
+        code: "PROVIDER_ERROR",
+      });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "submitted" });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({
+        code: "PROVIDER_ERROR",
+      });
+      expect(runs).toBe(1);
+    });
+
     it("lets a retry through when multix proves the run was never accepted", async () => {
       const input = join(workDir, "frame.png");
       await writeFile(input, "png");
@@ -531,8 +559,8 @@ describe("MultixProvider async jobs", () => {
         code: "UNAVAILABLE",
       });
       await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "failed" });
-      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.not.toMatchObject({
-        message: expect.stringContaining("may already have been charged"),
+      await expect(multix.generate(ctx, upscaleRequest(input))).resolves.toMatchObject({
+        job: { provider: "atlas", id: "pred_9" },
       });
       expect(runs).toBe(2);
     });

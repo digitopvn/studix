@@ -478,6 +478,7 @@ export class MultixProvider implements MediaProvider {
       fields[upload.field] = url;
     }
     if (fields.image === undefined) throw new StudixError("VALIDATION", "upscale needs params.image");
+    throwIfAborted(request.signal);
     await journal.intent();
     let envelope: MultixEnvelope;
     try {
@@ -490,7 +491,7 @@ export class MultixProvider implements MediaProvider {
       );
     } catch (error) {
       if (error instanceof StudixError && (error.code === "VALIDATION" || error.code === "UNAVAILABLE")) {
-        await journal.release();
+        await journal.release().catch(() => undefined);
       }
       throw error;
     }
@@ -548,9 +549,11 @@ export class MultixProvider implements MediaProvider {
       );
       this.assertTrustedOutputs(envelope, job);
     } catch (err) {
-      // A rejected job ended upstream (Sume refunds it); the next attempt submits anew. Anything else
+      // A rejected Sume job ended upstream (Sume refunds it); the next attempt submits anew. Atlas gives
+      // no such guarantee and cannot deduplicate, so an Atlas job always stays resumable. Anything else
       // (timeout, temporary failure, cancel) leaves the job running, and the record makes a retry resume it.
       if (
+        job.provider === "sume" &&
         "ctx" in tracking &&
         record &&
         err instanceof StudixError &&

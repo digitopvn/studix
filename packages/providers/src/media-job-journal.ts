@@ -27,7 +27,9 @@ export interface MediaJobRecord {
 /**
  * Durable memory of upstream jobs, keyed by workspace and idempotency key. The record is written right
  * after submission, so a worker that dies while waiting leaves enough behind for the next attempt to
- * resume the same paid job. Implementations must scope reads and writes by `ctx.workspaceId`.
+ * resume the same paid job. Implementations must scope reads and writes by `ctx.workspaceId`. `put` is an
+ * unconditional overwrite: callers must serialize `generate` per idempotency key (the stage fencing does),
+ * because the "submitting" intent is not a compare-and-set.
  */
 export interface MediaJobJournal {
   get(ctx: TenantContext, idempotencyKey: string): Promise<MediaJobRecord | undefined>;
