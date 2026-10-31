@@ -8,7 +8,7 @@ import type {
   UsageRepository,
 } from "@studix/core";
 import { type Clock, newId, redactDeep, StudixError } from "@studix/shared";
-import { and, desc, eq, gte, lt, type SQL, sum } from "drizzle-orm";
+import { and, desc, eq, gte, lt, type SQL, sql, sum } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { activityEvents, providerExecutions, usageEvents } from "../schema/telemetry.ts";
 import { beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -82,6 +82,27 @@ export function createUsageRepository(db: DbExecutor, clock: Clock): UsageReposi
         .onConflictDoNothing({ target: [usageEvents.workspaceId, usageEvents.dedupeKey] })
         .returning();
       if (inserted[0]) return { event: toUsage(inserted[0]), created: true };
+      if (input.metadata?.costSource === "receipt") {
+        // The conditional update is atomic: only a stored estimate is replaced, a receipt never is.
+        const upgraded = await db
+          .update(usageEvents)
+          .set({
+            quantity: input.quantity,
+            unit: input.unit,
+            costCents: input.costCents,
+            metadata: input.metadata,
+          })
+          .where(
+            scoped(
+              usageEvents,
+              ctx,
+              eq(usageEvents.dedupeKey, input.dedupeKey),
+              sql`${usageEvents.metadata}->>'costSource' = 'estimate'`,
+            ),
+          )
+          .returning();
+        if (upgraded[0]) return { event: toUsage(upgraded[0]), created: false };
+      }
       const rows = await db
         .select()
         .from(usageEvents)

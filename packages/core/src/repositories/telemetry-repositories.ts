@@ -14,8 +14,20 @@ export interface UsageRange {
   until?: Date;
 }
 
+/** True when a stored usage line was only an estimate and `incoming` carries the provider's receipt for it. */
+export function receiptSupersedesEstimate(
+  stored: Record<string, unknown> | undefined,
+  incoming: Record<string, unknown> | undefined,
+): boolean {
+  return stored?.costSource === "estimate" && incoming?.costSource === "receipt";
+}
+
 export interface UsageRepository {
-  /** Idempotent on (workspace, dedupeKey): a duplicate returns the stored event with created=false. */
+  /**
+   * Idempotent on (workspace, dedupeKey): a duplicate returns the stored event with created=false.
+   * One exception: a stored line whose `metadata.costSource` is "estimate" is replaced (not added to) by
+   * a later line for the same key whose `costSource` is "receipt", so the real charge is what counts.
+   */
   record(ctx: TenantContext, input: NewUsageEvent): Promise<{ event: UsageEvent; created: boolean }>;
   list(ctx: TenantContext, query?: PageRequest & UsageRange): Promise<Page<UsageEvent>>;
   totalCostCents(ctx: TenantContext, range?: UsageRange): Promise<number>;

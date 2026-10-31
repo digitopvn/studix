@@ -40,6 +40,38 @@ describe("usage ledger", () => {
     ]);
   });
 
+  it("replaces an estimate with the receipt for the same key instead of adding to it", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    const withSource = (costSource: string, cents: number) => ({
+      ...usage("job_1:media:exec:sume:j1", cents),
+      metadata: { costSource },
+    });
+
+    const estimate = await ledger.record(ctx, withSource("estimate", 5));
+    const receipt = await ledger.record(ctx, withSource("receipt", 7));
+    expect(receipt.created).toBe(false);
+    expect(receipt.event.id).toBe(estimate.event.id);
+    expect(receipt.event.costCents).toBe(7);
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7);
+    expect(await ledger.listForJob(ctx, "job_1")).toHaveLength(1);
+
+    // A receipt is final: neither a later estimate nor another receipt changes it.
+    await ledger.record(ctx, withSource("estimate", 9));
+    await ledger.record(ctx, withSource("receipt", 11));
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7);
+  });
+
+  it("keeps the first line when an estimate follows an estimate or lines carry no cost source", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    await ledger.record(ctx, { ...usage("a", 5), metadata: { costSource: "estimate" } });
+    await ledger.record(ctx, { ...usage("a", 8), metadata: { costSource: "estimate" } });
+    await ledger.record(ctx, usage("b", 5));
+    await ledger.record(ctx, { ...usage("b", 8), metadata: { costSource: "receipt" } });
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(10);
+  });
+
   it("isolates dedupe keys per workspace", async () => {
     const ledger = createInMemoryUsageLedger();
     const a = await ledger.record(testTenant(), usage("same", 1));

@@ -51,4 +51,34 @@ describe("Postgres usage ledger", () => {
     expect(await ledger.jobCostCents(ctx, job.id)).toBeCloseTo(3.25);
     expect(await ledger.listForJob(ctx, job.id)).toHaveLength(2);
   });
+
+  it("replaces a stored estimate with the receipt atomically and never the other way round", async () => {
+    const ctx = await tenant("ledger-receipt");
+    const { job } = await db.current.repos.queue.enqueue(ctx, {
+      kind: "video.create",
+      payload: {},
+      createdBy: { type: "system", id: "test" },
+    });
+    const ledger = createPostgresUsageLedger(db.current.db);
+    const line = (costSource: string, costCents: number) => ({
+      dedupeKey: `${job.id}:media:exec:sume:j1`,
+      kind: USAGE_KINDS.mediaGeneration,
+      quantity: 1,
+      unit: "image",
+      costCents,
+      jobId: job.id,
+      metadata: { costSource },
+    });
+    const estimate = await ledger.record(ctx, line("estimate", 5));
+    expect(estimate.created).toBe(true);
+    await Promise.all(Array.from({ length: 4 }, () => ledger.record(ctx, line("receipt", 7))));
+    await ledger.record(ctx, line("estimate", 9));
+    await ledger.record(ctx, line("receipt", 11));
+    const events = await ledger.listForJob(ctx, job.id);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.id).toBe(estimate.event.id);
+    expect(events[0]?.costCents).toBe(7);
+    expect(events[0]?.metadata).toEqual({ costSource: "receipt" });
+    expect(await ledger.jobCostCents(ctx, job.id)).toBe(7);
+  });
 });
