@@ -683,7 +683,25 @@ describe("MultixProvider async jobs", () => {
     expect((error as MediaFailedAfterSpend).charge.job).toBeDefined();
   });
 
-  it("reports the estimate when output flagged as broken follows a charge without receipt", async () => {
+  it("reports the receipt when a Sume job's output is flagged as broken after it was kept", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          usage: { cost_usd: 0.05 },
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaFailedAfterSpend);
+    expect((error as MediaFailedAfterSpend).charge).toMatchObject({ costCents: 5, costSource: "receipt" });
+  });
+
+  it("does not bill a Sume job without a receipt, since Sume refunds jobs without a usable result", async () => {
     const cli = sumeImageCli((argv) => {
       const out = join(flagValue(argv, "output")!, "image-1.png");
       return {
@@ -693,9 +711,8 @@ describe("MultixProvider async jobs", () => {
     });
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
     const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(MediaFailedAfterSpend);
-    expect((error as MediaFailedAfterSpend).charge).toMatchObject({ costSource: "estimate" });
-    expect((error as MediaFailedAfterSpend).charge.costCents).toBeGreaterThan(0);
+    expect(error).not.toBeInstanceOf(MediaFailedAfterSpend);
+    expect(error).toMatchObject({ code: "PROVIDER_ERROR" });
   });
 
   it("does not report spend when the upstream never completed the job", async () => {

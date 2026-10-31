@@ -1,8 +1,9 @@
-import type {
-  MediaGenerationRequest,
-  MediaGenerationResult,
-  MediaProvider,
-  TenantContext,
+import {
+  MediaFailedAfterSpend,
+  type MediaGenerationRequest,
+  type MediaGenerationResult,
+  type MediaProvider,
+  type TenantContext,
 } from "@studix/core";
 import { type Clock, StudixError, systemClock } from "@studix/shared";
 import { centsFromPrice, type MediaPriceBook, mediaBillingQuantity } from "./media-price-book.ts";
@@ -88,7 +89,13 @@ export async function runMediaBatchWithProbe(
   });
 
   const run = async (index: number): Promise<MediaGenerationResult> => {
-    const result = await provider.generate(ctx, requests[index]!);
+    let result: MediaGenerationResult;
+    try {
+      result = await provider.generate(ctx, requests[index]!);
+    } catch (err) {
+      if (err instanceof MediaFailedAfterSpend) spent += err.charge.costCents;
+      throw err;
+    }
     results[index] = result;
     spent += result.costCents;
     return result;

@@ -167,8 +167,9 @@ const SUME_USAGE_PREFIX = "data.job.usage_summary.";
 
 /**
  * Sume can mark a job completed before it has captured the reserved charge, so `captured` may still read 0.
- * What it will keep is `reserved - refunded - released`; the receipt is never below that. Callers only read
- * a receipt after a successful run that produced outputs, so a failed job's reservation is never billed.
+ * What it will keep is `reserved - refunded - released`; the receipt is never below that. A caller that reads the
+ * receipt of a job whose result was unusable bills it only when this reports money kept, so a reservation
+ * Sume refunded is never billed.
  */
 function sumeKeptCents(metrics: Json): number | undefined {
   const reserved = num(metrics[`${SUME_USAGE_PREFIX}reserved_usd_cents`]);

@@ -180,6 +180,18 @@ interface CatalogModels {
  * first. Async jobs are journaled right after submission and collected with `status --wait --download`,
  * so a retry (or another worker) resumes the paid job instead of submitting a new one.
  */
+/**
+ * Wrap a failure that followed a finished upstream call as a billed failure. Sume refunds jobs that end
+ * without a usable result, so its charge counts only when the receipt says money was kept; Atlas and
+ * synchronous routes do not refund, so their estimate stands in when no receipt reports a price. A charge
+ * of nothing leaves the error as it was.
+ */
+function billedFailure(error: StudixError, charge: MediaCharge, refundsFailures: boolean): StudixError {
+  if (charge.costCents <= 0) return error;
+  if (refundsFailures && charge.costSource !== "receipt") return error;
+  return new MediaFailedAfterSpend(error, charge);
+}
+
 export class MultixProvider implements MediaProvider {
   readonly id = MULTIX_PROVIDER_ID;
   private readonly bin: string | undefined;
@@ -615,7 +627,7 @@ export class MultixProvider implements MediaProvider {
           details: { ...err.details, job },
           cause: err,
         });
-        throw envelope ? new MediaFailedAfterSpend(wrapped, chargeOf(envelope)) : wrapped;
+        throw envelope ? billedFailure(wrapped, chargeOf(envelope), job.provider === "sume") : wrapped;
       }
       throw err;
     }
@@ -647,7 +659,7 @@ export class MultixProvider implements MediaProvider {
         job,
       };
     } catch (err) {
-      throw new MediaFailedAfterSpend(toStudixError(err), charge);
+      throw billedFailure(toStudixError(err), charge, job.provider === "sume");
     }
   }
 
@@ -706,7 +718,7 @@ export class MultixProvider implements MediaProvider {
         });
       }
     } catch (err) {
-      throw new MediaFailedAfterSpend(toStudixError(err), charge);
+      throw billedFailure(toStudixError(err), charge, false);
     }
     const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
     const at = this.clock.now().toISOString();
