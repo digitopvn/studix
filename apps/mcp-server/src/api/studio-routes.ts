@@ -44,8 +44,13 @@ const CreateVideoBody = z
   })
   .strict();
 
+/** StudioService re-validates the pairing: `targets` only with `changes_requested`, which needs a comment. */
 const DecisionBody = z
-  .object({ decision: z.enum(["approved", "rejected"]), comment: z.string().trim().max(2000).optional() })
+  .object({
+    decision: z.enum(["approved", "rejected", "changes_requested"]),
+    comment: z.string().trim().max(2000).optional(),
+    targets: z.array(z.string().min(1).max(64)).min(1).max(20).optional(),
+  })
   .strict();
 
 /** The JSON body with the path's project id; a body naming another project cannot redirect the call. */

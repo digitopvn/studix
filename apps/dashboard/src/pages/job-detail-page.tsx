@@ -35,6 +35,45 @@ function StageTimeline({ job }: { job: Job }) {
   );
 }
 
+/** Send a creative gate back: the asset ids to redo and what to change; the job redoes them and asks again. */
+function RequestChanges({
+  approvalId,
+  onSubmit,
+}: {
+  approvalId: string;
+  onSubmit: (run: () => Promise<unknown>) => void;
+}) {
+  const [targets, setTargets] = useState("");
+  const [note, setNote] = useState("");
+  const ids = targets
+    .split(/[\s,]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  return (
+    <form
+      className="form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit(() =>
+          api.decideApproval(approvalId, "changes_requested", { targets: ids, comment: note.trim() }),
+        );
+      }}
+    >
+      <label>
+        Asset ids to redo
+        <input value={targets} onChange={(e) => setTargets(e.target.value)} placeholder="mai-sheet-v1" />
+      </label>
+      <label>
+        What to change
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={2000} />
+      </label>
+      <button type="submit" disabled={ids.length === 0 || note.trim().length === 0}>
+        Request changes
+      </button>
+    </form>
+  );
+}
+
 export function JobDetailPage({ jobId }: { jobId: string }) {
   const { data, error, reload } = useAsync(() => api.job(jobId), [jobId]);
   const [actionError, setActionError] = useState<unknown>();
@@ -116,6 +155,9 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
                   Reject
                 </button>
               </div>
+              {job.approval.action === "creative.gate" && (
+                <RequestChanges approvalId={job.approval.id} onSubmit={act} />
+              )}
             </div>
           )}
         </Section>

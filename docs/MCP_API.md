@@ -147,7 +147,11 @@ Behavior notes:
   signed. An API key cannot approve a gate. After G1 the storyboard agent writes
   one panel per shot, every shot gets a keyframe conditioned on its lead
   character's approved sheet, and the job stops with the project `in_review`.
-  Rejecting a gate fails the job with `FORBIDDEN`. After a person approves the
+  Rejecting a gate fails the job with `FORBIDDEN`. At G1 the reviewer can also
+  request changes on named designs instead (see the next section): the job
+  redraws only those sheets or set frames, with the note added to the prompt and
+  the bible's anchors kept, publishes the revised board as a new version and
+  asks G1 again. Each redraw is billed once. After a person approves the
   storyboard, `studix_render` records the dialogue first, turns T2/T3 shots into
   480p image-to-video clips and T0/T1 shots into film-engine scenes, lip-syncs
   every shot with a visible speaker on the recorded line, adds one score cue per
@@ -184,6 +188,16 @@ Behavior notes:
   the change are invalidated, and they are returned as `invalidated`
   (`shot:<id>`, `scene:<id>`, ...). The render job reuses cached stage work for
   everything else.
+- A comment without a `patch` on an `assetId` the current version shows, while
+  a job of the project waits at a creative gate, requests changes on that gate
+  (the API key needs `project:write`). The approval comes back as
+  `changes_requested` with `changes: {targets, note, invalidated}`, where
+  `invalidated` lists every node of the reviewed board that depends on the
+  asset; `next[]` suggests polling the job. A request is not an approval: the
+  gate is asked again after the redraw, and only a signed-in person can approve
+  it. On the dashboard, `POST /api/approvals/:approvalId/decision` takes
+  `{decision: "changes_requested", targets: [assetId, ...], comment}` for the
+  same decision; `approved` and `rejected` are unchanged.
 - `baseVersionId` is optional. When it is not the current version, the call
   fails with `CONFLICT`, so feedback is never applied to a newer version than
   the one it was written for.
