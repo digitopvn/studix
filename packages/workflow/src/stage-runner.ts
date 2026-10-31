@@ -50,6 +50,8 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
   logger: Logger;
   /** Minimum time between persisted in-stage progress updates. */
   progressIntervalMs?: number;
+  /** How long a stage aborted by cancel or deadline may take to report its spend (default 2000 ms). */
+  abortGraceMs?: number;
   /** Tenant-wide memo of stage outputs by cacheKey; without it `cacheKey` is ignored. */
   stageCache?: StageCacheRepository;
   /**
@@ -158,6 +160,49 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     signal.addEventListener("abort", onAbort, { once: true });
     work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
   });
+}
+
+/** How long a stage aborted by cancel or deadline may take to report the usage of its paid calls. */
+const ABORT_GRACE_MS = 2000;
+
+function leaseLost(signal: AbortSignal): boolean {
+  return signal.reason instanceof StudixError && signal.reason.code === "CONFLICT";
+}
+
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+/** Remember how `work` settled; the returned promise never rejects. */
+function trackSettled<T>(work: Promise<T>, onSettled: (s: Settled<T>) => void): Promise<void> {
+  return work.then(
+    (value) => onSettled({ ok: true, value }),
+    (error: unknown) => onSettled({ ok: false, error }),
+  );
+}
+
+/** Usage a stage reported, by returning it or by failing/suspending with it. */
+function usageOfSettled(s: Settled<{ usage?: StageUsage[] }> | undefined): StageUsage[] {
+  if (!s) return [];
+  if (s.ok) return s.value.usage ?? [];
+  return s.error instanceof StageFailedAfterSpend || s.error instanceof StageSuspended ? s.error.usage : [];
+}
+
+/** Wait up to `graceMs` for an aborted stage to settle, then return the usage it reported (none if it never did). */
+async function spendAfterAbort(
+  running: Promise<unknown> | undefined,
+  settledNow: () => Settled<{ usage?: StageUsage[] }> | undefined,
+  graceMs: number,
+): Promise<StageUsage[]> {
+  if (running && !settledNow() && graceMs > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      running,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, graceMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+  return usageOfSettled(settledNow());
 }
 
 /**
@@ -438,8 +483,15 @@ export async function runStages(
     };
 
     let output: StageOutput;
+    // What the stage settled with, even after the runner stopped waiting for it on abort.
+    let settled: Settled<Awaited<ReturnType<typeof stage.run>>> | undefined;
+    let running: Promise<unknown> | undefined;
     try {
-      const result = await untilAborted(stage.run(sctx), signal);
+      const work = stage.run(sctx);
+      running = trackSettled(work, (s) => {
+        settled = s;
+      });
+      const result = await untilAborted(work, signal);
       signal.throwIfAborted();
       output = result.output;
       if (!matchesOutput(stage, output)) {
@@ -451,9 +503,21 @@ export async function runStages(
     } catch (err) {
       if (err instanceof LeaseLostError) throw err;
       if (err instanceof StageSuspended && !signal.aborted) return await suspend(err);
-      if (err instanceof StageFailedAfterSpend) {
+      // On cancel or deadline the runner stopped waiting, but paid calls already made still bill the job:
+      // give the stage a bounded moment to settle, then record the usage it reports.
+      // A lost lease (CONFLICT) skips the wait: the fenced writes would be refused anyway.
+      const spent = signal.aborted
+        ? await spendAfterAbort(
+            running,
+            () => settled,
+            leaseLost(signal) ? 0 : (deps.abortGraceMs ?? ABORT_GRACE_MS),
+          )
+        : err instanceof StageFailedAfterSpend
+          ? err.usage
+          : [];
+      if (spent.length > 0) {
         try {
-          await recordUsage(err.usage);
+          await recordUsage(spent);
         } catch (usageErr) {
           if (usageErr instanceof LeaseLostError) throw usageErr;
           deps.logger.warn("spend of a failed stage could not be recorded", {
