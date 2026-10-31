@@ -85,11 +85,15 @@ RUN set -eu; extras=""; for e in $STUDIX_QA_EXTRAS; do extras="$extras --extra $
 # Pin the browser path so the renderer never depends on the runtime user's cache layout.
 # Chrome for Testing ships chrome-headless-shell for linux x64 only; arm64 images (local Apple
 # Silicon builds) fall back to Debian's Chromium, which HyperFrames drives in screenshot mode.
+# The amd64 build id is pinned so pixels and the WebGL measurements in docs/RENDERER.md do not drift
+# between image builds; CI reads this same line. The arm64 branch is NOT deterministic: it takes
+# whatever Chromium Debian ships. Bump the id deliberately and re-measure (see docs/RENDERER.md).
+ARG CHROME_HEADLESS_SHELL_VERSION=156.0.8078.80
 ENV PRODUCER_HEADLESS_SHELL_PATH=/opt/studix-browser/chrome \
     HYPERFRAMES_BROWSER_PATH=/opt/studix-browser/chrome
 RUN set -eu; arch="$(dpkg --print-architecture)"; mkdir -p /opt/studix-browser; \
     if [ "$arch" = "amd64" ]; then \
-      npx --yes --package @puppeteer/browsers@2.13.0 -- browsers install chrome-headless-shell@stable --path /opt/studix-browser/cache; \
+      npx --yes --package @puppeteer/browsers@2.13.0 -- browsers install "chrome-headless-shell@${CHROME_HEADLESS_SHELL_VERSION}" --path /opt/studix-browser/cache; \
       ln -s "$(find /opt/studix-browser/cache -type f -name chrome-headless-shell | head -n1)" /opt/studix-browser/chrome; \
     else \
       apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*; \
