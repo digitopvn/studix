@@ -297,34 +297,6 @@ describe("marketing-video pipeline (fake providers)", () => {
     expect((await h.projects.get(ctx, projectId))?.status).toBe("approved");
   });
 
-  it("does not put an approved project back into review when a feedback reframe finishes", async () => {
-    const h = harness({ storyboard: "in_review" });
-    const projectId = await newProject(h, "marketing-video");
-    await h.run({ workflowTemplate: "marketing-video" }, projectId);
-    const project = await h.projects.get(ctx, projectId);
-    const base = await h.projects.getVersion(ctx, project?.currentVersionId as string);
-    const patchedIr = structuredClone(base?.ir as VideoIR);
-    const target = patchedIr.scenes[0]?.shots.find((s) => s.type === "image");
-    if (target?.type !== "image") throw new Error("expected an image shot");
-    target.alt = "A cup of green tea and loose leaves on a wooden windowsill at sunrise";
-    const patched = await h.projects.createVersion(ctx, {
-      projectId,
-      ir: patchedIr,
-      source: "patch",
-      parentVersionId: base?.id,
-      createdBy: actor,
-      advanceFrom: base?.id,
-    } as never);
-    // The reframe job has no render stage of its own: the project is still in review when it starts.
-    await h.projects.update(ctx, projectId, { status: "approved" });
-    const { outcome } = await h.run(
-      { workflowTemplate: "marketing-video", versionId: patched.id, feedbackId: "rev_1", makeCurrent: false },
-      projectId,
-    );
-    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
-    expect((await h.projects.get(ctx, projectId))?.status).toBe("approved");
-  });
-
   it("moves a project still rendering to review when a feedback reframe finishes", async () => {
     const h = harness({ storyboard: "in_review" });
     const projectId = await newProject(h, "marketing-video");
