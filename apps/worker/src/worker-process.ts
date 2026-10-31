@@ -3,6 +3,7 @@ import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } fro
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
 import { createWorkerRuntime, type WorkerPorts, type WorkerRuntime } from "./wiring.ts";
+import { sweepStaleJobDirs } from "./work-dir-sweep.ts";
 import { loadWorkerSettings, type WorkerSettings } from "./worker-settings.ts";
 
 /** Process resources handed to the port resolver (shared pool, environment, process logger). */
@@ -51,6 +52,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   let ports: WorkerPorts | undefined;
   let stopping = false;
   const startup = new AbortController();
+  let sweepTimer: NodeJS.Timeout | undefined;
 
   const health: HealthServer = await startHealthServer({
     port: settings.healthPort,
@@ -71,6 +73,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     shutdownPromise ??= (async () => {
       stopping = true;
       startup.abort();
+      if (sweepTimer) clearInterval(sweepTimer);
       logger.info("shutting down worker");
       try {
         await runtime?.stop(settings.shutdownGraceMs);
@@ -115,6 +118,17 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     if (stopping) throw new Error("worker stopped during startup");
     runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });
     runtime.start();
+    const sweep = () =>
+      sweepStaleJobDirs(settings.workDir, settings.workDirRetentionMs).then(
+        (removed) => {
+          if (removed.length > 0)
+            logger.info("removed stale job work directories", { count: removed.length });
+        },
+        (err) => logger.warn("work directory sweep failed", { error: String(err) }),
+      );
+    void sweep();
+    sweepTimer = setInterval(() => void sweep(), 3_600_000);
+    sweepTimer.unref();
   } catch (err) {
     await shutdown();
     throw err;

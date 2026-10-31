@@ -103,7 +103,10 @@ describe("video.create workflow on Postgres", () => {
       maxAttempts: 3,
     });
     expect((await worker.runOnce())?.outcome).toBe("succeeded");
-    expect((await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId).toBe(v3.id);
+    const after = (await db.current.repos.projects.get(ctx, first.project.id))!;
+    expect(after.currentVersionId).toBe(v3.id);
+    // A render of an older version never leaves the project flagged as rendering.
+    expect(after.status).toBe("in_review");
   });
 
   it("returns the same job for a repeated idempotency key", async () => {
