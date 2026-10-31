@@ -43,7 +43,11 @@ export interface MediaJobJournal {
   claim(ctx: TenantContext, record: MediaJobRecord): Promise<boolean>;
 }
 
-/** The stored record that `record` may replace in `claim`: none, or the failed previous attempt. */
+/**
+ * The rule `claim` enforces: the stored record is none, or the failed previous attempt. A durable
+ * implementation must apply it inside one conditional write (for example a SQL `WHERE`), never as a
+ * separate read followed by a write.
+ */
 export function canClaim(stored: MediaJobRecord | undefined, record: MediaJobRecord): boolean {
   return stored === undefined || (stored.state === "failed" && stored.attempt === record.attempt - 1);
 }

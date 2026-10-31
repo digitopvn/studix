@@ -607,7 +607,7 @@ describe("MultixProvider async jobs", () => {
       expect(runs).toBe(1);
       expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
       const lost = settled.find((r) => r.status === "rejected") as PromiseRejectedResult;
-      expect(lost.reason).toMatchObject({ code: "CONFLICT", retryable: false });
+      expect(lost.reason).toMatchObject({ code: "CONFLICT", retryable: true });
     });
 
     it("lets an operator attach the prediction id to a submitting record", async () => {
@@ -619,7 +619,8 @@ describe("MultixProvider async jobs", () => {
         runs += 1;
         throw new Error("worker crashed");
       });
-      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      const clock = createManualClock(0);
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal, clock });
       await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toThrow("worker crashed");
 
       await expect(
@@ -641,6 +642,16 @@ describe("MultixProvider async jobs", () => {
         }),
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
 
+      // The worker may still be waiting on `atlas run`, so a young record cannot be promoted.
+      await expect(
+        multix.recordSubmittedJob(ctx, {
+          idempotencyKey: "stage-2:upscale",
+          job: { provider: "atlas", id: "pred_9" },
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT", retryable: false });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "submitting" });
+
+      clock.advance(10 * 60_000);
       await multix.recordSubmittedJob(ctx, {
         idempotencyKey: "stage-2:upscale",
         job: { provider: "atlas", id: "pred_9" },

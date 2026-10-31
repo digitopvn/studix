@@ -13,7 +13,6 @@ export {
   runMediaBatchWithProbe,
 } from "./media-batch-probe-policy.ts";
 export {
-  canClaim,
   InMemoryMediaJobJournal,
   type MediaJobJournal,
   type MediaJobRecord,

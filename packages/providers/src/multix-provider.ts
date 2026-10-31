@@ -320,8 +320,9 @@ export class MultixProvider implements MediaProvider {
   /**
    * Operator recovery of a "submitting" record: once the prediction id is known (from `multix history` or
    * the provider console), attach it so the next `generate` collects that job instead of staying blocked.
-   * Refuses anything but a "submitting" record of the same kind and model, so it can never overwrite a
-   * job that is already tracked.
+   * Refuses anything but a "submitting" Atlas record, so it can never overwrite a tracked job, and refuses
+   * one still young enough that its worker may be waiting on `atlas run`, which would then overwrite the
+   * attached id.
    */
   async recordSubmittedJob(
     ctx: TenantContext,
@@ -339,6 +340,15 @@ export class MultixProvider implements MediaProvider {
     if (existing.state !== "submitting") {
       throw new StudixError("CONFLICT", `The record is "${existing.state}", not "submitting"`, {
         details: { state: existing.state, ...(existing.job ? { job: existing.job } : {}) },
+      });
+    }
+    const ageMs = this.clock.now().getTime() - Date.parse(existing.updatedAt);
+    const minAgeMs = PROBE_TIMEOUT_MS * 5 + RUN_MARGIN_MS;
+    if (!(ageMs >= minAgeMs)) {
+      throw new StudixError("CONFLICT", "The submission may still be in flight", {
+        retryable: false,
+        details: { updatedAt: existing.updatedAt, minAgeMs },
+        suggestedAction: "Wait until the submitting worker has timed out, then attach the job id.",
       });
     }
     const record: MediaJobRecord = {
@@ -514,10 +524,12 @@ export class MultixProvider implements MediaProvider {
     if (fields.image === undefined) throw new StudixError("VALIDATION", "upscale needs params.image");
     throwIfAborted(request.signal);
     if (!(await journal.intent())) {
-      throw new StudixError("CONFLICT", "Another worker is already submitting this request", {
-        retryable: false,
+      // Another caller took the key between our read and our claim. A retry re-reads the record and then
+      // collects its job, re-plans after a release, or is blocked by a live "submitting" intent.
+      throw new StudixError("CONFLICT", "Another worker claimed this request first", {
+        retryable: true,
         details: { provider: "atlas" },
-        suggestedAction: "Let the other submission finish; do not submit the same request twice.",
+        suggestedAction: "Retry: the next attempt reads what the other worker recorded.",
       });
     }
     let envelope: MultixEnvelope;
