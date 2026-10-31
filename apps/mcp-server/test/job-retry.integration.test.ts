@@ -10,6 +10,26 @@ interface Envelope {
   error?: { code: string; message: string };
 }
 
+interface Me {
+  user: { id: string };
+  role: string;
+  organization: { id: string };
+  workspace: { id: string };
+}
+interface Created {
+  job: { id: string };
+}
+interface JobBody {
+  id: string;
+  status: string;
+  attempts?: number;
+  maxAttempts?: number;
+  error?: unknown;
+}
+interface ApiError {
+  error: { code: string; message: string };
+}
+
 const FAILED = {
   status: "failed" as const,
   attempts: 3,
@@ -33,12 +53,12 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
   let viewerCookie: string;
 
   /** A dashboard request as the signed-in session; `workspaceId` selects a membership like the dashboard does. */
-  async function dashboard(
+  async function dashboard<T = unknown>(
     method: string,
     path: string,
     cookie: string,
     options: { body?: unknown; workspaceId?: string } = {},
-  ): Promise<{ status: number; body: Record<string, any> }> {
+  ): Promise<{ status: number; body: T }> {
     const headers: Record<string, string> = { origin: app.base, cookie };
     if (options.body !== undefined) headers["content-type"] = "application/json";
     if (options.workspaceId) headers["x-studix-workspace"] = options.workspaceId;
@@ -47,7 +67,7 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
-    return { status: res.status, body: (await res.json()) as Record<string, any> };
+    return { status: res.status, body: (await res.json()) as T };
   }
 
   /** A video job in the workspace, then marked failed the way a worker leaves it after a non-retryable error. */
@@ -66,7 +86,7 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
     keyB = await app.createKey(tenantB);
 
     aliceCookie = await app.signUp(`retry-alice-${Date.now()}@example.test`);
-    const me = await dashboard("GET", "/api/me", aliceCookie);
+    const me = await dashboard<Me>("GET", "/api/me", aliceCookie);
     aliceCtx = {
       organizationId: me.body.organization.id,
       workspaceId: me.body.workspace.id,
@@ -75,7 +95,7 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
 
     // A second person joins Alice's workspace as a viewer; their own personal workspace stays the default.
     viewerCookie = await app.signUp(`retry-viewer-${Date.now()}@example.test`);
-    const viewer = await dashboard("GET", "/api/me", viewerCookie);
+    const viewer = await dashboard<Me>("GET", "/api/me", viewerCookie);
     await app.deps.repos.workspaces.upsertMember(aliceCtx, { userId: viewer.body.user.id, role: "viewer" });
   });
   afterAll(async () => {
@@ -84,31 +104,31 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
 
   describe("POST /api/jobs/:jobId/retry", () => {
     it("requeues a failed job as the same job and clears its failure", async () => {
-      const created = await dashboard("POST", "/api/projects", aliceCookie, {
+      const created = await dashboard<Created>("POST", "/api/projects", aliceCookie, {
         body: { prompt: "Brand intro for Acme" },
       });
       expect(created.status).toBe(201);
       const jobId = created.body.job.id as string;
       await app.deps.repos.jobs.update(aliceCtx, jobId, FAILED);
 
-      const retried = await dashboard("POST", `/api/jobs/${jobId}/retry`, aliceCookie);
+      const retried = await dashboard<JobBody>("POST", `/api/jobs/${jobId}/retry`, aliceCookie);
       expect(retried.status).toBe(200);
       expect(retried.body).toMatchObject({ id: jobId, status: "queued", attempts: 3 });
       expect(retried.body.error).toBeUndefined();
       expect(retried.body.maxAttempts).toBeGreaterThan(3);
 
-      const detail = await dashboard("GET", `/api/jobs/${jobId}`, aliceCookie);
+      const detail = await dashboard<{ job: JobBody }>("GET", `/api/jobs/${jobId}`, aliceCookie);
       expect(detail.body.job).toMatchObject({ id: jobId, status: "queued" });
       const audit = await app.deps.repos.audit.list(aliceCtx, { subjectType: "job", subjectId: jobId });
       expect(audit.items.map((e) => e.action)).toContain("job.retried");
     });
 
     it("refuses a job that is not failed with CONFLICT and leaves it untouched", async () => {
-      const created = await dashboard("POST", "/api/projects", aliceCookie, {
+      const created = await dashboard<Created>("POST", "/api/projects", aliceCookie, {
         body: { prompt: "Still queued" },
       });
       const jobId = created.body.job.id as string;
-      const res = await dashboard("POST", `/api/jobs/${jobId}/retry`, aliceCookie);
+      const res = await dashboard<ApiError>("POST", `/api/jobs/${jobId}/retry`, aliceCookie);
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("CONFLICT");
       expect(await app.deps.repos.jobs.get(aliceCtx, jobId)).toMatchObject({ status: "queued" });
@@ -116,20 +136,20 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
 
     it("refuses a failed publish job with VALIDATION and never requeues it", async () => {
       const jobId = await failedJobIn(aliceCtx, "video.publish");
-      const res = await dashboard("POST", `/api/jobs/${jobId}/retry`, aliceCookie);
+      const res = await dashboard<ApiError>("POST", `/api/jobs/${jobId}/retry`, aliceCookie);
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe("VALIDATION");
       expect(await app.deps.repos.jobs.get(aliceCtx, jobId)).toMatchObject({ status: "failed" });
     });
 
     it("answers NOT_FOUND for an unknown job and for another tenant's failed job", async () => {
-      const unknown = await dashboard("POST", "/api/jobs/job_does_not_exist/retry", aliceCookie);
+      const unknown = await dashboard<ApiError>("POST", "/api/jobs/job_does_not_exist/retry", aliceCookie);
       expect(unknown.status).toBe(404);
       expect(unknown.body.error.code).toBe("NOT_FOUND");
 
       const bobCookie = await app.signUp(`retry-bob-${Date.now()}@example.test`);
       const foreign = await failedJobIn(aliceCtx);
-      const res = await dashboard("POST", `/api/jobs/${foreign}/retry`, bobCookie);
+      const res = await dashboard<ApiError>("POST", `/api/jobs/${foreign}/retry`, bobCookie);
       expect(res.status).toBe(404);
       expect(res.body.error.code).toBe("NOT_FOUND");
       expect(await app.deps.repos.jobs.get(aliceCtx, foreign)).toMatchObject({ status: "failed" });
@@ -138,8 +158,8 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
     it("refuses a viewer of the workspace with FORBIDDEN", async () => {
       const jobId = await failedJobIn(aliceCtx);
       const asViewer = { workspaceId: aliceCtx.workspaceId };
-      expect((await dashboard("GET", "/api/me", viewerCookie, asViewer)).body.role).toBe("viewer");
-      const res = await dashboard("POST", `/api/jobs/${jobId}/retry`, viewerCookie, asViewer);
+      expect((await dashboard<Me>("GET", "/api/me", viewerCookie, asViewer)).body.role).toBe("viewer");
+      const res = await dashboard<ApiError>("POST", `/api/jobs/${jobId}/retry`, viewerCookie, asViewer);
       expect(res.status).toBe(403);
       expect(res.body.error).toMatchObject({ code: "FORBIDDEN", message: "Missing permission job:retry" });
       expect(await app.deps.repos.jobs.get(aliceCtx, jobId)).toMatchObject({ status: "failed" });
