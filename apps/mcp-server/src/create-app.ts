@@ -3,6 +3,7 @@ import { StudixError } from "@studix/shared";
 import express, { type Express } from "express";
 import { apiKeyRoutes, connectorRoutes } from "./api/admin-routes.ts";
 import { requireSession } from "./api/api-context.ts";
+import { providerRoutes } from "./api/provider-routes.ts";
 import { studioRoutes } from "./api/studio-routes.ts";
 import { type AppDeps, SERVER_VERSION } from "./app-deps.ts";
 import type { ArtifactUrlDeps } from "./artifact-urls.ts";
@@ -66,6 +67,7 @@ export function createApp(deps: AppDeps): Express {
   );
   api.use("/api-keys", apiKeyRoutes(deps));
   api.use("/connectors", connectorRoutes(deps));
+  api.use("/providers", providerRoutes(deps));
   api.use(studioRoutes(deps, artifacts));
   api.use(() => {
     throw new StudixError("NOT_FOUND", "Unknown API route");

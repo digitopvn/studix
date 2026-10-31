@@ -169,9 +169,11 @@ export function resolveModelSelection(
           ? p.scope.type === "workspace"
           : p.scope.type === "user" && query.userId !== undefined && p.scope.userId === query.userId),
     );
+  // Asking for the default stage itself must not let the workspace default outrank the user's default.
+  const stageEntries = query.stage !== DEFAULT_STAGE;
   const candidates: Array<[ModelSelectionSource, ModelPreference | undefined]> = [
-    ["user-stage", find("user", query.stage)],
-    ["workspace-stage", find("workspace", query.stage)],
+    ["user-stage", stageEntries ? find("user", query.stage) : undefined],
+    ["workspace-stage", stageEntries ? find("workspace", query.stage) : undefined],
     ["user-default", find("user", DEFAULT_STAGE)],
     ["workspace-default", find("workspace", DEFAULT_STAGE)],
   ];

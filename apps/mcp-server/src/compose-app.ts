@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createApiKeyService, createDashboardAuth } from "@studix/auth";
+import {
+  createApiKeyService,
+  createCredentialVault,
+  createDashboardAuth,
+  parseCredentialKeyring,
+} from "@studix/auth";
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
@@ -26,6 +31,7 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
+import { createProviderAdmin, type ProviderAdmin } from "./provider-admin.ts";
 
 /** App-role settings that are not part of the shared config schema. */
 export const AppEnvSchema = z.object({
@@ -80,6 +86,30 @@ function dashboardSecret(config: StudixConfig, logger: Logger): string {
   }
   logger.warn("BETTER_AUTH_SECRET is not set; using an ephemeral secret (sessions end on restart)");
   return randomBytes(32).toString("base64url");
+}
+
+/**
+ * Workspace AI providers need the credential keyring to seal keys. Without it the provider API stays off
+ * (UNAVAILABLE) rather than storing keys it could not protect; a malformed keyring fails startup.
+ */
+function providerAdmin(
+  env: NodeJS.ProcessEnv,
+  repos: ReturnType<typeof createRepositories>,
+  logger: Logger,
+): ProviderAdmin | undefined {
+  const keyringSpec = env.STUDIX_CREDENTIAL_KEYS;
+  if (!keyringSpec?.trim()) {
+    logger.warn("STUDIX_CREDENTIAL_KEYS is not set; workspace AI provider connections are disabled");
+    return undefined;
+  }
+  return createProviderAdmin({
+    connections: repos.providerConnections,
+    preferences: repos.modelPreferences,
+    vault: createCredentialVault({
+      store: repos.sealedCredentials,
+      keyring: parseCredentialKeyring(keyringSpec),
+    }),
+  });
 }
 
 /**
@@ -154,6 +184,7 @@ export async function composeApp(
     },
     storage: overrides.storage ?? integrations.storage,
     connectors: overrides.connectors ?? integrations.connectors,
+    providers: providerAdmin(env, repos, logger),
     metaTools: overrides.metaTools ?? integrations.metaTools,
     activity,
     readiness: [

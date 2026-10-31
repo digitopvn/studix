@@ -69,6 +69,9 @@ importers:
       '@modelcontextprotocol/server':
         specifier: 2.4.0
         version: 2.4.0
+      '@studix/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
       '@studix/auth':
         specifier: workspace:*
         version: link:../../packages/auth

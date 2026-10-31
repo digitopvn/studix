@@ -40,6 +40,13 @@ describe("resolveModelSelection precedence", () => {
     expect(pick("qa")).toMatchObject({ source: "workspace-default" });
   });
 
+  it("asking for the default stage keeps the user's default ahead of the workspace's", () => {
+    const pick = (userId?: string) =>
+      resolveModelSelection(prefs, { runtime: "pi", stage: "default", userId });
+    expect(pick("u1")).toMatchObject({ source: "user-default", preference: { id: "u1-default" } });
+    expect(pick("u2")).toMatchObject({ source: "workspace-default", preference: { id: "ws-default" } });
+  });
+
   it("never crosses runtimes and returns undefined instead of guessing", () => {
     expect(resolveModelSelection(prefs, { runtime: "claude-agent-sdk", stage: "plan" })).toBeUndefined();
     expect(resolveModelSelection([], { runtime: "pi", stage: "plan" })).toBeUndefined();

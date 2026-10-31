@@ -17,6 +17,7 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
+import type { ProviderAdmin } from "./provider-admin.ts";
 
 /** Product limits and defaults advertised by `studix_inspect` (values come from configuration). */
 export interface AppLimits {
@@ -51,6 +52,8 @@ export interface AppDeps {
   storage?: ArtifactUrlSigner;
   /** Workspace connectors (MCP-in-MCP); without it the connector API answers UNAVAILABLE. */
   connectors?: ConnectorAdmin;
+  /** Workspace AI providers (BYOK); without it the provider API answers UNAVAILABLE. */
+  providers?: ProviderAdmin;
   /** Meta-tool registration hook from the gateway; without it the meta-tools are not listed. */
   metaTools?: RegisterMetaTools;
   /** Activity/trace recorder for MCP and API mutations (best effort). */
