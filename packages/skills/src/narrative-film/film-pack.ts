@@ -69,6 +69,7 @@ import {
   FilmScope,
   type FilmScopeShot,
   filmFrameSize,
+  isSoundCue,
   isVideoTier,
   productionFromScope,
   type ScopeRule,
@@ -170,7 +171,8 @@ const SCOPE_CONTRACT =
   "changes, its spoken lines and at most three SFX cues. Shot lengths add up to the brief's length. A " +
   "lip-synced shot is T2 or T3 and carries exactly one line of its one visible speaker; elsewhere keep " +
   "speakers off screen or in reaction shots. About three spoken words per second at most. Keep the brief's " +
-  "language with correct diacritics. Characters, designs and names are original: never a real person, " +
+  "language with correct diacritics, except SFX cues: write each as the sound heard, in English (for " +
+  'example "distant fireworks bursting"), never words for someone to say. Characters, designs and names are original: never a real person, ' +
   "brand or existing title. Write each line's delivery (how it is read: emotion, pace, volume). Set a " +
   "character's voice.voiceRef only when the brief names that character's voice; never invent one. Return " +
   "only JSON matching the output schema.";
@@ -417,6 +419,9 @@ function fullFrameCut(ir: VideoIR): VideoIR {
     scene.shots = scene.shots.map((shot) => ({ ...shot, style: { ...shot.style, ...FILM_SHOT_STYLE } }));
   return VideoIRSchema.parse(copy);
 }
+
+/** An effect request: the cue as a sound, with nothing spoken, sung or read out. */
+const sfxPrompt = (cue: string): string => `Sound effect only, no voice, speech, words or singing: ${cue}`;
 
 function irShot(ir: VideoIR, id: string): Shot {
   for (const scene of ir.scenes) {
@@ -1286,6 +1291,17 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
     });
     const sfx = scopeShots(film.scope).flatMap(({ shot }) =>
       shot.sfx.map((cue, i) => {
+        // Checked before any media is paid for: a scope locked before the English rule could carry one.
+        if (!isSoundCue(cue))
+          throw new StudixError(
+            "VALIDATION",
+            `SFX cue "${cue}" of shot ${shot.id} is not an English sound description; the effect model would read it aloud`,
+            {
+              retryable: false,
+              suggestedAction:
+                "Rewrite the shot's SFX cues in English as the sound heard, then render again.",
+            },
+          );
         const span = starts.get(shot.id) ?? { startMs: 0, durationMs: shot.durationMs };
         return {
           role: "sfx" as const,
@@ -1294,7 +1310,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           request: {
             assetId: `${shot.id}-fx${i + 1}`.slice(0, 64),
             kind: "sfx" as const,
-            prompt: cue,
+            prompt: sfxPrompt(cue),
             params: { durationMs: Math.max(500, Math.min(3_000, span.durationMs)) },
             keyPrefix: `generated/${s.job.id}/sound/${shot.id}-fx${i + 1}`,
             maxCostCents: 0,

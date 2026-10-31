@@ -79,6 +79,17 @@ describe("film scope", () => {
     ).toContain("lipsync");
   });
 
+  it("refuses an SFX cue written in the film's language, which the effect model would read aloud", () => {
+    const spoken = withShots((s) => {
+      s[2]!.sfx = ["tiếng thở hổn hển"];
+      s[4]!.sfx = ["fireworks bursting overhead", "pháo hoa nổ vang"];
+    });
+    expect(scopeIssues(spoken, { durationMs: 15_000 })).toEqual([
+      expect.objectContaining({ code: "schema", path: "/scenes/0/shots/2/sfx/0" }),
+      expect.objectContaining({ code: "schema", path: "/scenes/0/shots/4/sfx/1" }),
+    ]);
+  });
+
   it("keeps lines within three words a second, the brief's length and the audio track bound", () => {
     const wordy = withShots((s) => {
       s[3]!.lines = [{ characterId: "mai", text: "một hai ba bốn năm sáu bảy tám chín mười" }];

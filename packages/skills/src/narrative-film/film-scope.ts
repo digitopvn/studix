@@ -68,7 +68,7 @@ export const ScopeShot = ShotPlan.pick({
   characters: z.array(IrId).max(6),
   /** Spoken lines, in order; a lip-synced shot carries one line of its visible speaker. */
   lines: z.array(ScopeLine).max(4),
-  /** Sound effect cues, in order. */
+  /** Sound effect cues, in order: the sound heard, in English (see `isSoundCue`). */
   sfx: z.array(z.string().min(1).max(200)).max(3),
 });
 export type ScopeShot = z.input<typeof ScopeShot>;
@@ -235,6 +235,12 @@ export function productionFromScope(scope: FilmScope): FilmProduction {
   };
 }
 
+/**
+ * Whether an SFX cue can go to the effect model: the sound described in English (plain ASCII). The model
+ * reads a cue in another language, such as the film's Vietnamese, aloud as speech instead of making the sound.
+ */
+export const isSoundCue = (cue: string): boolean => /^[\x20-\x7E]+$/.test(cue);
+
 /** Dialogue cue id of a shot's i-th line (also the stem of its audio asset ids). */
 export const lineId = (shotId: string, index: number) => `${shotId}-l${index + 1}`.slice(0, 64);
 
@@ -277,6 +283,14 @@ export function scopeIssues(scope: FilmScope, options: ScopeCheckOptions = {}): 
           code: "out_of_bounds",
           message: `${words} spoken words do not fit a ${shot.durationMs / 1000}s shot (at most ${budget})`,
         });
+      shot.sfx.forEach((cue, j) => {
+        if (!isSoundCue(cue))
+          issues.push({
+            path: `${path}/sfx/${j}`,
+            code: "schema",
+            message: `SFX cue "${cue}" must describe the sound in English; the effect model reads other languages aloud`,
+          });
+      });
       if (shot.lipsync === "native")
         issues.push({
           path: `${path}/lipsync`,

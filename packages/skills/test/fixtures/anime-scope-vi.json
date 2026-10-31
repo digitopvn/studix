@@ -69,7 +69,7 @@
           "state": { "weather": "petal", "direction": "static" },
           "changes": [],
           "lines": [],
-          "sfx": ["gió thổi nhẹ qua sân thượng"]
+          "sfx": ["soft wind over a rooftop"]
         },
         {
           "id": "s2",
@@ -101,7 +101,7 @@
           "state": { "weather": "petal", "position.mai": "left", "position.tun": "right" },
           "changes": [],
           "lines": [{ "characterId": "tun", "text": "Xin lỗi, tàu điện bị trễ.", "delivery": "hụt hơi" }],
-          "sfx": ["tiếng thở hổn hển"]
+          "sfx": ["heavy panting after a run"]
         },
         {
           "id": "s4",
@@ -117,7 +117,7 @@
           "state": { "weather": "petal", "position.mai": "left", "position.tun": "right" },
           "changes": [],
           "lines": [{ "characterId": "mai", "text": "Vừa kịp lúc.", "delivery": "thì thầm" }],
-          "sfx": ["pháo hoa bắn lên xa"]
+          "sfx": ["distant fireworks launching"]
         },
         {
           "id": "s5",
@@ -133,7 +133,7 @@
           "state": { "weather": "ember" },
           "changes": [{ "field": "weather", "reason": "pháo hoa thay cánh hoa trên bầu trời" }],
           "lines": [],
-          "sfx": ["pháo hoa nổ vang"]
+          "sfx": ["fireworks bursting overhead"]
         }
       ]
     }

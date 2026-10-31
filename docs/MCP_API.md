@@ -174,8 +174,11 @@ Behavior notes:
   every shot with a visible speaker on the recorded line, adds one score cue per
   scene and the SFX, checks continuity (G3), then renders, QA-gates (G4) and
   uploads the film. A scope that breaks the pack's rules (tier mix, lip-sync
-  routing, words per second, continuity chain, at most 16 audio tracks) fails
-  with `VALIDATION` before G0 is requested.
+  routing, words per second, continuity chain, at most 16 audio tracks, SFX cues
+  in English) fails with `VALIDATION` before G0 is requested. SFX cues describe
+  the sound heard, in English, because the effect model reads a cue in another
+  language aloud. A scope stored before this rule fails at the score stage,
+  before any music or SFX is paid for.
 - `planner: {runtime: "claude", providerConnectionId}` is opt-in. The worker
   then plans the VideoIR with the Claude Agent SDK, billed to that Anthropic API
   key ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
