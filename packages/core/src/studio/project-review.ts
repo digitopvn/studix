@@ -156,9 +156,10 @@ async function requireParentVersion(
 }
 
 /** A retry of a stored comment must repeat it exactly; the key cannot carry a different comment or a patch. */
-function assertSameComment(stored: Review, input: FeedbackInput): void {
+function assertSameComment(stored: Review, input: FeedbackInput, targetKey: string | undefined): void {
   if (
     input.patch ||
+    stored.targetId !== targetKey ||
     stored.body !== input.comment ||
     stored.atMs !== input.startMs ||
     stored.endMs !== input.endMs
@@ -319,7 +320,8 @@ export async function getProjectReview(
         budgetCents: j.budgetCents,
       })),
     },
-    comments: comments.items,
+    // The retry key is a write-side detail; versions hide theirs the same way.
+    comments: comments.items.map(({ idempotencyKey: _key, ...comment }) => comment),
     invalidated: [],
   };
   if (!current) return base;
@@ -640,6 +642,12 @@ export async function submitFeedback(
     if (replay.raw.projectId !== project.id) {
       throw new StudixError("CONFLICT", "idempotency key belongs to another project's job");
     }
+    // A comment without a patch never queues a job, so a job under its key belongs to another request.
+    if (!input.patch) {
+      throw new StudixError("CONFLICT", "idempotency key was used for a different request", {
+        suggestedAction: "Use a new idempotencyKey for a different feedback.",
+      });
+    }
     return {
       feedbackId: String(payload.feedbackId ?? ""),
       projectId: project.id,
@@ -669,10 +677,10 @@ export async function submitFeedback(
       ? await deps.reviews.findByIdempotencyKey(ctx, project.id, input.idempotencyKey)
       : undefined;
   if (storedComment) {
-    assertSameComment(storedComment, input);
+    base = await requireCommentVersion(deps, ctx, storedComment);
+    assertSameComment(storedComment, input, resolveTarget(base.ir, input).key);
     commentReplayed = true;
     feedbackId = storedComment.id;
-    base = await requireCommentVersion(deps, ctx, storedComment);
   } else if (version) {
     await assertSameRequest(deps, ctx, project.id, version, input);
     base = await requireParentVersion(deps, ctx, version);
@@ -722,7 +730,7 @@ export async function submitFeedback(
       base = await requireParentVersion(deps, ctx, winner);
     }
   }
-  const target = resolveTarget(base.ir, input);
+  let target = resolveTarget(base.ir, input);
   const feedback =
     (await deps.reviews.get(ctx, feedbackId)) ??
     (await deps.reviews
@@ -745,7 +753,10 @@ export async function submitFeedback(
           (commentKey ? await deps.reviews.findByIdempotencyKey(ctx, project.id, commentKey) : undefined);
         if (!stored) throw error;
         if (stored.id !== feedbackId) {
-          assertSameComment(stored, input);
+          // Report the comment as the request that stored it saw it: its version and target.
+          base = await requireCommentVersion(deps, ctx, stored);
+          target = resolveTarget(base.ir, input);
+          assertSameComment(stored, input, target.key);
           commentReplayed = true;
         }
         return stored;

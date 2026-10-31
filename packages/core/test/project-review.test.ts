@@ -115,6 +115,32 @@ describe("project review", () => {
       expect((await studio.getProjectReview(ctx, projectId)).comments).toHaveLength(1);
     });
 
+    it("refuses the key for the same comment aimed at another target", async () => {
+      const { studio, ctx, projectId } = await setup();
+      await studio.submitFeedback(ctx, comment(projectId));
+      await expect(
+        studio.submitFeedback(ctx, comment(projectId, { shotId: undefined, sceneId: "hook" })),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    });
+
+    it("refuses a comment that reuses the key of a patch", async () => {
+      const { studio, ctx, projectId } = await setup();
+      await studio.submitFeedback(
+        ctx,
+        comment(projectId, { patch: replaceText("/scenes/2/shots/0/text", "Mới") }),
+      );
+      await expect(studio.submitFeedback(ctx, comment(projectId))).rejects.toMatchObject({
+        code: "CONFLICT",
+      });
+    });
+
+    it("does not expose the key on the review page", async () => {
+      const { studio, ctx, projectId } = await setup();
+      await studio.submitFeedback(ctx, comment(projectId));
+      const page = await studio.getProjectReview(ctx, projectId);
+      expect(page.comments[0]).not.toHaveProperty("idempotencyKey");
+    });
+
     it("keeps the same key usable on another project", async () => {
       const { studio, ctx, projectId } = await setup();
       const other = await studio.createVideoProject(ctx, { brief, spec: brandIntro as VideoIR });
