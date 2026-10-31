@@ -33,6 +33,7 @@ import {
   type StageDefinition,
   sha256File,
   stageCacheKey,
+  stageMediaDir,
   stageWorkDir,
 } from "@studix/workflow";
 import { z } from "zod";
@@ -271,6 +272,22 @@ function localFile(files: Readonly<Record<string, string>>, assetId: string): st
   const path = files[assetId];
   if (!path) throw new StudixError("INTERNAL", `Asset ${assetId} was not downloaded`, { retryable: true });
   return path;
+}
+
+/**
+ * Download the IR assets a stage hands to its media provider (a sheet, a keyframe, a clip and its line).
+ * The provider reads local inputs only from inside its own media directory, so they go in an `inputs`
+ * folder there; its outputs live in per-call folders beside it, and the job's finalize removes both.
+ */
+async function downloadMediaInputs(
+  s: StageContext,
+  stage: string,
+  ir: VideoIR,
+  assetIds: ReadonlySet<string>,
+): Promise<Record<string, string>> {
+  const dir = join(await stageMediaDir(s, stage), "inputs");
+  const assets = ir.assets.filter((a) => assetIds.has(a.id));
+  return downloadIrAssets(requireService(s, "storage"), s.ctx, { ...ir, assets }, dir);
 }
 
 /** Replace shots of an IR by id. */
@@ -656,8 +673,6 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         });
       const ir = irOf(s);
       const film = filmOf(ir);
-      const storage = requireService(s, "storage");
-      const workDir = await stageWorkDir(s, n.keyframes);
       const promoted: FilmProduction = {
         ...film.production,
         characters: film.production.characters.map((c) => ({
@@ -671,12 +686,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       };
       const planned = await withCaps(s, keyframeRequests(s));
       const sheetIds = new Set(planned.flatMap((p) => (p.sheet ? [p.sheet.assetId] : [])));
-      const sheetFiles = await downloadIrAssets(
-        storage,
-        s.ctx,
-        { ...ir, assets: ir.assets.filter((a) => sheetIds.has(a.id)) },
-        join(workDir, "sheets"),
-      );
+      const sheetFiles = await downloadMediaInputs(s, n.keyframes, ir, sheetIds);
       let done = 0;
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
         const image = p.sheet ? localFile(sheetFiles, p.sheet.assetId) : undefined;
@@ -705,7 +715,6 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const issues = filmProductionIssues(production, storyboardFromScope(film.scope, next.assets), "design");
       if (issues.length > 0)
         failIssues("The storyboard breaks continuity", issues, "Submit a new job to redraw the storyboard.");
-      await rm(workDir, { recursive: true, force: true });
       return { output: { ir: next }, usage: made.map((m) => m.usage) };
     },
   };
@@ -866,12 +875,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const workDir = await stageWorkDir(s, n.motion);
       const planned = await withCaps(s, clipRequests(s));
       const keyIds = new Set(planned.map((p) => (p.still as ImageShot).assetId));
-      const keyFiles = await downloadIrAssets(
-        storage,
-        s.ctx,
-        { ...ir, assets: ir.assets.filter((a) => keyIds.has(a.id)) },
-        join(workDir, "keyframes"),
-      );
+      const keyFiles = await downloadMediaInputs(s, n.motion, ir, keyIds);
       let done = 0;
       const total = scopeShots(film.scope).length;
       const clips = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
@@ -996,17 +1000,10 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const ir = irOf(s);
       const planned = lipsyncRequests(s);
       if (planned.length === 0) return { output: { ir, lipsynced: 0 } };
-      const storage = requireService(s, "storage");
-      const workDir = await stageWorkDir(s, n.lipsync);
       const inputs = new Set(
         planned.flatMap((p) => [p.shot.type === "video" ? p.shot.assetId : "", p.cue.audioAssetId ?? ""]),
       );
-      const files = await downloadIrAssets(
-        storage,
-        s.ctx,
-        { ...ir, assets: ir.assets.filter((a) => inputs.has(a.id)) },
-        join(workDir, "inputs"),
-      );
+      const files = await downloadMediaInputs(s, n.lipsync, ir, inputs);
       const capped = await withCaps(s, planned);
       let done = 0;
       const made = await mapBounded(capped, MEDIA_CONCURRENCY, async (p) => {
@@ -1025,7 +1022,6 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           { ...(m.shot as Extract<Shot, { type: "video" }>), assetId: m.asset.id, muted: true },
         ]),
       );
-      await rm(workDir, { recursive: true, force: true });
       return {
         output: {
           ir: replaceShots(

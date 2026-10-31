@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import {
   type ClaudeAgentEvent,
   type ClaudeSessionRequest,
@@ -134,6 +134,15 @@ function createWorld() {
   const generate = media.generate.bind(media);
   media.generate = async (ctx, request) => {
     requests.push(request);
+    // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
+    for (const name of ["image", "video", "audio"]) {
+      const value = request.params?.[name];
+      if (typeof value !== "string" || value.startsWith("https://")) continue;
+      const rel = relative(request.workDir, value);
+      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+        throw new StudixError("VALIDATION", `params.${name} must be inside workDir`, { retryable: false });
+      }
+    }
     return generate(ctx, request);
   };
   const qaCalls: QaExpectation[] = [];
