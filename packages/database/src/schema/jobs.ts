@@ -121,3 +121,12 @@ export const approvals = pgTable(
     index("approvals_tenant_idx").on(t.workspaceId, t.organizationId, t.id),
   ],
 );
+
+/**
+ * SQL form of the deadline rule: a job resumed from `waiting_approval` has its deadline pushed out by
+ * the time it waited (`updatedAt` is the park or creation time). In an UPDATE's SET list the columns
+ * read the pre-update row, so one statement both resumes the job and moves the deadline.
+ */
+export const deadlineAfterWaitSql = (now: Date) =>
+  sql`case when ${jobs.deadlineAt} is null then null
+    else ${jobs.deadlineAt} + greatest(${now.toISOString()}::timestamptz - ${jobs.updatedAt}, interval '0') end`;

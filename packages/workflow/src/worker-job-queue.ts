@@ -181,8 +181,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           runAfter: now,
           updatedAt: now,
           // The wait for a person does not count against the deadline: push it out by the wait.
-          deadlineAt: sql`case when ${jobs.deadlineAt} is null then null
-            else ${jobs.deadlineAt} + greatest(${now.toISOString()}::timestamptz - ${jobs.updatedAt}, interval '0') end`,
+          deadlineAt: schema.deadlineAfterWaitSql(now),
         })
         .where(
           and(

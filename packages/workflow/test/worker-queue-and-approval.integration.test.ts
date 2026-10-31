@@ -179,7 +179,7 @@ describe("deadline while waiting for a human", () => {
     const remainingMs = resumed.deadlineAt!.getTime() - Date.now();
     expect(remainingMs).toBeGreaterThan(30_000);
     expect(remainingMs).toBeLessThan(90_000);
-    // Drain the resumed job so it does not leak into other tests' workers (they claim across tenants).
+    // Run it again: the publish approval is still pending, so it re-parks instead of leaking a queued job into other tests' workers.
     await worker.runOnce();
   });
 });

@@ -1,16 +1,8 @@
-import {
-  deadlineAfterWait,
-  type Job,
-  type JobPatch,
-  type JobQueue,
-  type JobRepository,
-  type Stage,
-  type TenantContext,
-} from "@studix/core";
+import type { Job, JobPatch, JobQueue, JobRepository, Stage, TenantContext } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
 import { asc, desc, eq, inArray } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
-import { jobs, stages } from "../schema/jobs.ts";
+import { deadlineAfterWaitSql, jobs, stages } from "../schema/jobs.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
 
 type JobRow = typeof jobs.$inferSelect;
@@ -247,14 +239,13 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
 
     async resume(ctx, jobId) {
       const now = clock.now();
-      const row = await getRow(ctx, jobId);
-      const deadlineAt = row ? deadlineAfterWait(toJob(row), now) : undefined;
-      return repo.update(
-        ctx,
-        jobId,
-        { status: "queued", runAfter: now, ...(deadlineAt ? { deadlineAt } : {}) },
-        { expectStatus: ["waiting_approval"] },
-      );
+      const rows = await db
+        .update(jobs)
+        .set({ status: "queued", runAfter: now, updatedAt: now, deadlineAt: deadlineAfterWaitSql(now) })
+        .where(scoped(jobs, ctx, eq(jobs.id, jobId), eq(jobs.status, "waiting_approval")))
+        .returning();
+      if (!rows[0]) return conflictOrMissing(ctx, jobId, ["waiting_approval"]);
+      return toJob(rows[0]);
     },
   };
 
