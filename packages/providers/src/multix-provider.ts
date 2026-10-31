@@ -2,19 +2,21 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
-import type {
-  GeneratedMedia,
-  MediaCapability,
-  MediaCostSource,
-  MediaGenerationRequest,
-  MediaGenerationResult,
-  MediaJobJournal,
-  MediaJobRecord,
-  MediaKind,
-  MediaProvider,
-  MediaResumeRequest,
-  ProviderJobRef,
-  TenantContext,
+import {
+  type GeneratedMedia,
+  type MediaCapability,
+  type MediaCharge,
+  MediaChargedError,
+  type MediaCostSource,
+  type MediaGenerationRequest,
+  type MediaGenerationResult,
+  type MediaJobJournal,
+  type MediaJobRecord,
+  type MediaKind,
+  type MediaProvider,
+  type MediaResumeRequest,
+  type ProviderJobRef,
+  type TenantContext,
 } from "@studix/core";
 import { type Clock, type StudixConfig, StudixError, systemClock } from "@studix/shared";
 import { InMemoryMediaJobJournal } from "./media-job-journal.ts";
@@ -561,7 +563,12 @@ export class MultixProvider implements MediaProvider {
             "--json",
           ];
     const record = "record" in tracking ? tracking.record : undefined;
+    const fallback =
+      record?.estimatedCostCents ??
+      ("estimatedCostCents" in tracking ? tracking.estimatedCostCents : undefined);
     let envelope: MultixEnvelope;
+    // Set once the job reported completion: from then on the upstream has charged, whatever fails next.
+    let charge: MediaCharge | undefined;
     try {
       envelope = await this.exec(
         `${job.provider} status`,
@@ -570,6 +577,8 @@ export class MultixProvider implements MediaProvider {
         this.waitTimeoutMs + RUN_MARGIN_MS,
         signal,
       );
+      const [costCents, costSource] = this.settleCost(envelope, record?.receiptCents, fallback);
+      charge = { provider: this.id, model, costCents, costSource, job };
       this.assertTrustedOutputs(envelope, job);
     } catch (err) {
       // A rejected Sume job ended upstream (Sume refunds it); the next attempt submits anew. Atlas gives
@@ -590,34 +599,27 @@ export class MultixProvider implements MediaProvider {
         });
       }
       if (err instanceof StudixError) {
-        throw new StudixError(err.code, err.message, {
+        const wrapped = new StudixError(err.code, err.message, {
           retryable: err.retryable,
           suggestedAction: err.suggestedAction,
           details: { ...err.details, job },
           cause: err,
         });
+        throw charge ? new MediaChargedError(wrapped, charge) : wrapped;
       }
       throw err;
     }
+    const { costCents, costSource } = charge!;
     const outputs = await this.outputsIn(envelope, outDir, outDir);
     if (outputs.length === 0) {
-      throw new StudixError("PROVIDER_ERROR", `${job.provider} job ${job.id} finished without outputs`, {
-        retryable: false,
-        details: { job },
-      });
+      throw new MediaChargedError(
+        new StudixError("PROVIDER_ERROR", `${job.provider} job ${job.id} finished without outputs`, {
+          retryable: false,
+          details: { job },
+        }),
+        charge!,
+      );
     }
-    const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
-    const fallback =
-      record?.estimatedCostCents ??
-      ("estimatedCostCents" in tracking ? tracking.estimatedCostCents : undefined);
-    const [costCents, costSource]: [number, MediaCostSource] =
-      receipt !== undefined
-        ? [receipt, "receipt"]
-        : record?.receiptCents !== undefined
-          ? [record.receiptCents, "receipt"]
-          : fallback !== undefined
-            ? [fallback, "estimate"]
-            : [0, "unknown"];
     if ("ctx" in tracking && record) {
       await tracking.journal.put(tracking.ctx, {
         ...record,
@@ -635,6 +637,19 @@ export class MultixProvider implements MediaProvider {
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
       job,
     };
+  }
+
+  /** The charge of a finished call: the receipt, else the journaled receipt, else the pre-call estimate. */
+  private settleCost(
+    envelope: MultixEnvelope,
+    journaledReceiptCents: number | undefined,
+    estimateCents: number | undefined,
+  ): [number, MediaCostSource] {
+    const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
+    if (receipt !== undefined) return [receipt, "receipt"];
+    if (journaledReceiptCents !== undefined) return [journaledReceiptCents, "receipt"];
+    if (estimateCents !== undefined) return [estimateCents, "estimate"];
+    return [0, "unknown"];
   }
 
   /** Synchronous audio: no upstream job to resume, so a completed output is reused from its fixed path. */
@@ -674,12 +689,27 @@ export class MultixProvider implements MediaProvider {
       plan.waitTimeoutMs + RUN_MARGIN_MS,
       request.signal,
     );
-    this.assertTrustedOutputs(envelope);
+    // The run succeeded, so the upstream has charged even if its output turns out unusable.
+    const [spentCents, spentSource] = this.settleCost(envelope, undefined, estimate);
+    const charge: MediaCharge = {
+      provider: this.id,
+      model: plan.model.id,
+      costCents: spentCents,
+      costSource: spentSource,
+    };
+    try {
+      this.assertTrustedOutputs(envelope);
+    } catch (err) {
+      throw err instanceof StudixError ? new MediaChargedError(err, charge) : err;
+    }
     const outputs = (await this.outputsIn(envelope, outDir, outDir)).filter((o) => o.filePath === file);
     if (outputs.length === 0) {
-      throw new StudixError("PROVIDER_ERROR", `multix ${plan.argv.slice(0, 2).join(" ")} wrote no output`, {
-        retryable: false,
-      });
+      throw new MediaChargedError(
+        new StudixError("PROVIDER_ERROR", `multix ${plan.argv.slice(0, 2).join(" ")} wrote no output`, {
+          retryable: false,
+        }),
+        charge,
+      );
     }
     const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
     const at = this.clock.now().toISOString();

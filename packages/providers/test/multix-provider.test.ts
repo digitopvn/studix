@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { MediaGenerationRequest } from "@studix/core";
+import { MediaChargedError, type MediaGenerationRequest } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
 import { createManualClock } from "@studix/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -671,6 +671,30 @@ describe("MultixProvider async jobs", () => {
     });
   });
 
+  it("reports the charge of a finished job whose outputs are flagged as broken", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_usd: 0.03, actual_source: "provider" },
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge).toMatchObject({
+      provider: "multix",
+      model: "sume:nano-banana-2.1",
+      costSource: "receipt",
+      job: { provider: "sume", id: "job_1" },
+    });
+    expect((err as MediaChargedError).charge.costCents).toBe(3);
+  });
+
   it("drops reported outputs outside the job directory", async () => {
     const outside = join(workDir, "elsewhere.png");
     const cli = sumeImageCli(() => ({
@@ -678,9 +702,12 @@ describe("MultixProvider async jobs", () => {
       envelope: { outputs: [{ path: outside }] },
     }));
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
-    await expect(multix.generate(ctx, imageRequest())).rejects.toMatchObject({
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect(err).toMatchObject({
       code: "PROVIDER_ERROR",
       message: expect.stringContaining("without outputs"),
+      charge: { costCents: 4, costSource: "estimate", job: { provider: "sume", id: "job_1" } },
     });
   });
 
@@ -846,6 +873,18 @@ describe("MultixProvider synchronous audio", () => {
     idempotencyKey: "stage-3:voice",
     maxCostCents: 10,
     workDir,
+  });
+
+  it("reports the estimate as the charge when TTS succeeds but wrote no usable output", async () => {
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate"))
+        return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+      return { envelope: { outputs: [], history_id: "h_2" } };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, voiceRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge).toMatchObject({ costCents: 1, costSource: "estimate" });
   });
 
   it("runs TTS once and reuses the completed file on retry", async () => {
