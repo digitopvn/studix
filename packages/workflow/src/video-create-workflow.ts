@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { USAGE_KINDS } from "@studix/billing";
 import {
   JOB_KINDS,
+  type JobRepository,
   type ProjectRepository,
   type RendererAdapter,
   type RenderRepository,
@@ -40,6 +41,14 @@ export interface VideoCreateWorkflowDeps {
   /** Read side only: every write goes through `StageContext.commit` so it is fenced by job ownership. */
   projects: Pick<ProjectRepository, "get" | "getVersion">;
   renders: Pick<RenderRepository, "get">;
+  /**
+   * Lets a failed or cancelled job hand its project back from `rendering` (see `onEnded`). Unfenced by
+   * design: the job no longer owns anything then. Without it the project keeps the status the job left.
+   */
+  recovery?: {
+    projects: Pick<ProjectRepository, "get" | "update">;
+    jobs: Pick<JobRepository, "list">;
+  };
   /** Local scratch root; each job attempt renders into `<workRoot>/<jobId>/attempt-<n>`. */
   workRoot: string;
   /** COGS per rendered output second (compute cost). Defaults to 0 until measured. */
@@ -307,6 +316,22 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
     kind: JOB_KINDS.createVideo,
     result: defaultResult,
     stages: [engine.plan, engine.validateIr, engine.render, engine.upload, engine.finalize],
+    async onEnded(job, _outcome, ctx) {
+      const recovery = deps.recovery;
+      const parsed = VideoCreatePayload.safeParse(job.payload);
+      if (!recovery || !parsed.success) return;
+      const { projectId } = parsed.data;
+      const project = await recovery.projects.get(ctx, projectId);
+      if (project?.status !== "rendering") return;
+      // Another job of the project that is queued or running sets the status again when it gets there.
+      for (const status of ["queued", "running"] as const) {
+        const others = await recovery.jobs.list(ctx, { projectId, status, limit: 5 });
+        if (others.items.some((other) => other.id !== job.id)) return;
+      }
+      await recovery.projects.update(ctx, projectId, {
+        status: project.currentVersionId ? "in_review" : "draft",
+      });
+    },
     route(job) {
       if (!deps.pipelines) return undefined;
       const payload = read(VideoCreatePayload, job.payload, "video.create job payload", "VALIDATION");

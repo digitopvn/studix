@@ -1,8 +1,15 @@
 import { createDb, type StudixDb } from "@studix/database";
-import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } from "@studix/shared";
+import {
+  createLogger,
+  type Logger,
+  registerSecret,
+  registerSecretsFromEnv,
+  systemClock,
+} from "@studix/shared";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
 import { createWorkerRuntime, type WorkerPorts, type WorkerRuntime } from "./wiring.ts";
+import { startWorkDirSweeper } from "./work-dir-sweeper.ts";
 import { loadWorkerSettings, type WorkerSettings } from "./worker-settings.ts";
 
 /** Process resources handed to the port resolver (shared pool, environment, process logger). */
@@ -50,6 +57,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   let runtime: WorkerRuntime | undefined;
   let ports: WorkerPorts | undefined;
   let stopping = false;
+  let stopSweeper: (() => void) | undefined;
   const startup = new AbortController();
 
   const health: HealthServer = await startHealthServer({
@@ -70,6 +78,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   const shutdown = () => {
     shutdownPromise ??= (async () => {
       stopping = true;
+      stopSweeper?.();
       startup.abort();
       logger.info("shutting down worker");
       try {
@@ -115,6 +124,15 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     if (stopping) throw new Error("worker stopped during startup");
     runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });
     runtime.start();
+    stopSweeper = startWorkDirSweeper({
+      db: handle.db,
+      workDir: settings.workDir,
+      retentionMs: settings.workRetentionMs,
+      // Sweep about every tenth of the retention, between a minute and an hour.
+      intervalMs: Math.min(3_600_000, Math.max(60_000, Math.round(settings.workRetentionMs / 10))),
+      clock: systemClock,
+      logger,
+    });
   } catch (err) {
     await shutdown();
     throw err;

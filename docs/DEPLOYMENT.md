@@ -82,6 +82,11 @@ connection `invalid`, so job creation stops accepting it until the key is
 replaced. A 401 that the re-test does not repeat (a gateway token, a short
 Anthropic incident) leaves the key alone.
 
+Job scratch directories (`WORKER_WORK_DIR/<jobId>`) are removed when a job
+finishes. A failed job keeps its directory for `WORKER_WORK_RETENTION_HOURS`
+(default 24) so a retry can reuse media outputs; the worker sweeps at startup
+and periodically, removing older ones and those of cancelled jobs.
+
 Smoke tests of the planner live in the `live` test project (`STUDIX_LIVE=1
 ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
 plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the

@@ -426,4 +426,26 @@ describe("video.create workflow on Postgres", () => {
       error: { code: "VALIDATION" },
     });
   });
+  it("hands the project back from rendering when its last job fails, not while another job is queued", async () => {
+    const ctx = await tenant(db.current, "stuck-rendering");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const { job: sibling } = await db.current.repos.queue.enqueue(ctx, {
+      kind: job.kind,
+      projectId: project.id,
+      payload: job.payload,
+      createdBy: { type: "user", id: "usr_reviewer" },
+    });
+    const worker = createTestWorker(db.current, "w", {
+      renderer: fakeRenderer({ supported: false }).renderer,
+    });
+    // validate_ir moved the project to rendering, then the render stage refused the video.
+    expect((await worker.runOnce())?.job.id).toBe(job.id);
+    expect((await db.current.repos.projects.get(ctx, project.id))!.status).toBe("rendering");
+
+    expect((await worker.runOnce())?.job.id).toBe(sibling.id);
+    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({
+      status: "in_review",
+      currentVersionId: expect.stringMatching(/^pver_/),
+    });
+  });
 });

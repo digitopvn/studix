@@ -211,6 +211,11 @@ export interface WorkflowDefinition {
    * `stages`. A throw fails the job before any stage runs.
    */
   route?(job: Job): WorkflowRoute | undefined;
+  /**
+   * Called after a job of this kind ended `failed` or `cancelled` and that outcome was written (not when
+   * the lease was lost). A failed job can still be retried, so this only undoes state the job left half-way.
+   */
+  onEnded?(job: Job, outcome: "failed" | "cancelled", ctx: TenantContext): Promise<void>;
 }
 
 /** The video.create engine stages a pack pipeline is assembled from. */

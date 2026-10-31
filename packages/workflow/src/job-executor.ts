@@ -92,6 +92,13 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       const settle = async (written: Promise<boolean>, outcome: JobOutcome): Promise<JobOutcome> => {
         if (await written) {
           log.info("job attempt finished", { outcome });
+          if (outcome === "failed" || outcome === "cancelled") {
+            // Best effort: the outcome is already durable, a failing hook must not turn it into an error.
+            await registry
+              .get(job.kind)
+              ?.onEnded?.(job, outcome, ctx)
+              .catch((err) => log.warn("workflow onEnded hook failed", { error: String(err) }));
+          }
           return outcome;
         }
         log.warn("job lease lost before the outcome could be written", { outcome });

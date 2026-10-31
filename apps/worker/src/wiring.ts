@@ -112,6 +112,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
         storage: deps.storage,
         projects: repos.projects,
         renders: repos.renders,
+        recovery: { projects: repos.projects, jobs: repos.jobs },
         workRoot: settings.workDir,
         renderCentsPerSecond: settings.renderCentsPerSecond,
         clock,

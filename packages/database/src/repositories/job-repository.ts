@@ -4,6 +4,7 @@ import {
   type JobPatch,
   type JobQueue,
   type JobRepository,
+  type JobStatus,
   type Stage,
   type TenantContext,
 } from "@studix/core";
@@ -39,6 +40,7 @@ export function toJob(row: JobRow): Job {
     cancelRequested: row.cancelRequested,
     deadlineAt: opt(row.deadlineAt),
     deadlineRemainingMs: opt(row.deadlineRemainingMs),
+    deadlineWindowMs: opt(row.deadlineWindowMs),
     budgetCents: opt(row.budgetCents),
     spentCents: row.spentCents,
     createdBy: actorFrom(row.createdByType, row.createdById),
@@ -107,6 +109,22 @@ export async function upsertStageRow(
  * Tenant-scoped job persistence. Implements the read/update repository and the producer side of the
  * Postgres queue (enqueue/cancel/resume). Worker claiming and leasing live in the workflow package.
  */
+/**
+ * Status and finish time of jobs by id, across tenants. For worker housekeeping that only decides what
+ * a job's leftovers (scratch files) are worth; it never returns payloads or results.
+ */
+export async function findJobStates(
+  db: StudixDb,
+  ids: readonly string[],
+): Promise<Map<string, { status: JobStatus; finishedAt?: Date }>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({ id: jobs.id, status: jobs.status, finishedAt: jobs.finishedAt })
+    .from(jobs)
+    .where(inArray(jobs.id, [...ids]));
+  return new Map(rows.map((r) => [r.id, { status: r.status, finishedAt: opt(r.finishedAt) }]));
+}
+
 export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepository; queue: JobQueue } {
   const getRow = async (ctx: TenantContext, id: string) =>
     (
@@ -221,6 +239,7 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
                 deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - now.getTime()),
               }
             : { deadlineAt: input.deadlineAt ?? null }),
+          deadlineWindowMs: input.deadlineAt ? Math.max(0, input.deadlineAt.getTime() - now.getTime()) : null,
           budgetCents: input.budgetCents ?? null,
           createdByType: input.createdBy.type,
           createdById: input.createdBy.id,
@@ -286,8 +305,8 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           finishedAt: null,
           lockedBy: null,
           leaseExpiresAt: null,
-          // The window the job was created with starts again; the failed attempt may have used it up.
-          deadlineAt: sql`case when ${jobs.deadlineAt} is null then null else ${now.toISOString()}::timestamptz + (${jobs.deadlineAt} - ${jobs.createdAt}) end`,
+          // The window the caller asked for starts again; the failed attempt may have used it up.
+          deadlineAt: sql`case when ${jobs.deadlineAt} is null then null else ${now.toISOString()}::timestamptz + coalesce(${jobs.deadlineWindowMs} * interval '1 millisecond', ${jobs.deadlineAt} - ${jobs.createdAt}) end`,
           updatedAt: now,
         })
         .where(scoped(jobs, ctx, eq(jobs.id, jobId), eq(jobs.status, "failed")))

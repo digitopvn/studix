@@ -78,6 +78,9 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         ...(input.initialStatus === "waiting_approval" && input.deadlineAt
           ? { deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - clock.now().getTime()) }
           : { deadlineAt: input.deadlineAt }),
+        deadlineWindowMs: input.deadlineAt
+          ? Math.max(0, input.deadlineAt.getTime() - clock.now().getTime())
+          : undefined,
         budgetCents: input.budgetCents,
         spentCents: 0,
         createdBy: input.createdBy,
@@ -114,7 +117,9 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         lockedBy: undefined,
         leaseExpiresAt: undefined,
         deadlineAt: job.deadlineAt
-          ? new Date(now.getTime() + (job.deadlineAt.getTime() - job.createdAt.getTime()))
+          ? new Date(
+              now.getTime() + (job.deadlineWindowMs ?? job.deadlineAt.getTime() - job.createdAt.getTime()),
+            )
           : undefined,
       };
       return jobs.update(ctx, jobId, next);

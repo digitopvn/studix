@@ -15,6 +15,8 @@ const WorkerEnv = z.object({
     .regex(/^[\w.-]{1,100}$/, "1-100 letters, digits, '_', '.', '-'")
     .optional(),
   WORKER_WORK_DIR: z.string().min(1).optional(),
+  /** How long the scratch directory of a failed job is kept for a retry to reuse (hours). */
+  WORKER_WORK_RETENTION_HOURS: z.coerce.number().min(0.01).max(8760).default(24),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(10).max(60_000).default(1000),
   WORKER_SHUTDOWN_GRACE_MS: z.coerce.number().int().min(0).max(600_000).default(25_000),
   /** COGS per rendered second; 0 until compute cost is measured. */
@@ -61,6 +63,8 @@ export interface WorkerSettings {
   healthPort: number;
   healthHost: string;
   workDir: string;
+  /** Failed jobs keep their scratch directory this long; the worker sweeps older ones. */
+  workRetentionMs: number;
   approvalCostThresholdCents: number;
   renderCentsPerSecond: number;
   /** Qualified connector tool for brand enrichment; unset disables the lookup. */
@@ -109,6 +113,7 @@ export function loadWorkerSettings(env: NodeJS.ProcessEnv = process.env): Worker
     healthPort: w.WORKER_HEALTH_PORT,
     healthHost: w.WORKER_HEALTH_HOST,
     workDir: w.WORKER_WORK_DIR ?? join(tmpdir(), "studix-worker"),
+    workRetentionMs: Math.round(w.WORKER_WORK_RETENTION_HOURS * 3_600_000),
     approvalCostThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
     renderCentsPerSecond: w.RENDER_COST_CENTS_PER_SECOND,
     ...(w.STUDIX_BRAND_LOOKUP_TOOL ? { brandLookupTool: w.STUDIX_BRAND_LOOKUP_TOOL } : {}),

@@ -209,6 +209,7 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
         storage: options.storage ?? fakeStorage().storage,
         projects: options.projects ?? repos.projects,
         renders: options.renders ?? repos.renders,
+        recovery: { projects: repos.projects, jobs: repos.jobs },
         workRoot: mkdtempSync(join(tmpdir(), "studix-worker-test-")),
         renderCentsPerSecond: options.renderCentsPerSecond,
       }),

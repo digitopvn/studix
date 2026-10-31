@@ -5,6 +5,7 @@ import { createJobBudgetPolicy, createPostgresUsageLedger } from "@studix/billin
 import { createDefaultApprovalPolicy, type MediaJobRecord, type TenantContext } from "@studix/core";
 import { withTestDatabase } from "@studix/database/testing";
 import { StudixError } from "@studix/shared";
+import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
   createJobExecutor,
@@ -171,5 +172,26 @@ describe("retrying a failed job", () => {
     expect(approvals.items).toHaveLength(1);
     expect(await usageCount(ctx, job.id)).toBe(1);
     expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "succeeded", spentCents: 2 });
+  });
+  it("retries a job born at a gate with the window the caller asked for, not the time it waited", async () => {
+    const ctx = await tenant(db.current, "retry-window");
+    const { repos } = db.current;
+    const { job } = await repos.queue.enqueue(ctx, {
+      kind: "test.resume",
+      payload: {},
+      createdBy: human,
+      initialStatus: "waiting_approval",
+      deadlineAt: new Date(Date.now() + 60_000),
+    });
+    expect(job.deadlineWindowMs).toBeGreaterThan(59_000);
+    expect(job.deadlineWindowMs).toBeLessThanOrEqual(60_000);
+    // The job waited at the gate for ten minutes before it was claimed and failed.
+    await db.current.db.execute(
+      sql`update jobs set status = 'failed', created_at = now() - interval '10 minutes', deadline_at = now() - interval '1 minute', deadline_remaining_ms = null where id = ${job.id}`,
+    );
+    const requeued = await repos.queue.retry(ctx, job.id);
+    const window = requeued.deadlineAt!.getTime() - Date.now();
+    expect(window).toBeGreaterThan(55_000);
+    expect(window).toBeLessThanOrEqual(60_000);
   });
 });
