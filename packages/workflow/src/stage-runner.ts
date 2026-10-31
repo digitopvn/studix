@@ -16,7 +16,7 @@ import type {
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { contentDigest, type StoryboardReviewStatus } from "@studix/video-ir";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
-import { StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
+import { LeaseLostError, StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
 import type { WorkerJobQueue } from "./worker-job-queue.ts";
 import type {
   AgentStageServices,
@@ -27,6 +27,8 @@ import type {
   StageUsage,
   WorkflowDefinition,
 } from "./workflow-types.ts";
+
+export { LeaseLostError };
 
 /** How the worker runs agent stages. Without it an agent stage fails UNAVAILABLE. */
 export interface AgentStageWiring {
@@ -139,14 +141,6 @@ export class StageFailure extends Error {
   ) {
     super(error.message, { cause: error });
     this.name = "StageFailure";
-  }
-}
-
-/** A fenced write was refused: another worker owns the job now, so this attempt must stop writing. */
-export class LeaseLostError extends Error {
-  constructor() {
-    super("Job lease was lost to another worker");
-    this.name = "LeaseLostError";
   }
 }
 
@@ -438,6 +432,8 @@ export async function runStages(
     let output: StageOutput;
     try {
       const result = await untilAborted(stage.run(sctx), signal);
+      // Bill first: the stage's calls are paid whether or not the output is still wanted.
+      await recordUsage(result.usage ?? []);
       signal.throwIfAborted();
       output = result.output;
       if (!matchesOutput(stage, output)) {
@@ -445,7 +441,6 @@ export async function runStages(
           retryable: false,
         });
       }
-      await recordUsage(result.usage ?? []);
     } catch (err) {
       if (err instanceof LeaseLostError) throw err;
       if (err instanceof StageSuspended && !signal.aborted) return await suspend(err);

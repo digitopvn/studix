@@ -48,3 +48,11 @@ export class StageFailedAfterSpend extends Error {
     this.name = "StageFailedAfterSpend";
   }
 }
+
+/** A fenced write was refused: another worker owns the job now, so this attempt must stop writing. */
+export class LeaseLostError extends Error {
+  constructor() {
+    super("Job lease was lost to another worker");
+    this.name = "LeaseLostError";
+  }
+}

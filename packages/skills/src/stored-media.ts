@@ -161,3 +161,16 @@ export async function generateStoredMedia(
     throw new StageFailedAfterSpend(toStudixError(err), [usage]);
   }
 }
+
+/**
+ * Run the work that follows paid generation (assembling and validating the IR). Its failure still bills
+ * `usage`, because the provider calls it follows are already captured.
+ */
+export async function billedOnFailure<T>(usage: readonly StageUsage[], work: () => T): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    if (err instanceof StageFailedAfterSpend) throw err;
+    throw new StageFailedAfterSpend(toStudixError(err), [...usage]);
+  }
+}

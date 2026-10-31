@@ -1,6 +1,6 @@
 import { StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
-import { mapBounded, StageFailedAfterSpend, type StageUsage } from "../src/index.ts";
+import { LeaseLostError, mapBounded, StageFailedAfterSpend, type StageUsage } from "../src/index.ts";
 
 const line = (item: string): StageUsage => ({
   item,
@@ -59,5 +59,21 @@ describe("mapBounded spend", () => {
         { usageOf: () => [] },
       ),
     ).rejects.toBe(boom);
+  });
+});
+
+describe("mapBounded control flow", () => {
+  it("does not wrap a lost lease, even when siblings completed", async () => {
+    const lost = new LeaseLostError();
+    const err = await mapBounded(
+      [0, 1],
+      2,
+      async (i) => {
+        if (i === 0) throw lost;
+        return { usage: line("b") };
+      },
+      { usageOf: (r) => [r.usage] },
+    ).catch((e: unknown) => e);
+    expect(err).toBe(lost);
   });
 });

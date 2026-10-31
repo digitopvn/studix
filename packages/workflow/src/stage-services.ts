@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { StudixError, toStudixError } from "@studix/shared";
-import { StageFailedAfterSpend } from "./stage-signals.ts";
+import { LeaseLostError, StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
 import type { StageContext, StageServices, StageUsage } from "./workflow-types.ts";
 
 /** A service the stage cannot run without; fails non-retryably when the worker did not wire it. */
@@ -69,7 +69,8 @@ export async function mapBounded<T, R>(
 
   const first = failures[0];
   const { usageOf } = options;
-  if (!usageOf) throw first;
+  // Control flow (lease loss, a park) is not a stage failure; wrapping it would change how the runner treats it.
+  if (!usageOf || first instanceof LeaseLostError || first instanceof StageSuspended) throw first;
   const usage: StageUsage[] = [];
   for (const failure of failures) if (failure instanceof StageFailedAfterSpend) usage.push(...failure.usage);
   results.forEach((result, index) => {
