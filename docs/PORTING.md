@@ -143,6 +143,25 @@ Dạng rút gọn dùng trong issue và docs: `zuey-workspace` `10719856`, `agen
 - Bảng file-level port record cho hai nguồn này được thêm vào file này khi file đầu tiên
   được port (từ #41 trở đi).
 
+### File-level port record (zuey-workspace và agentkit)
+
+Path nguồn tương đối với root repo nguồn, tại SHA đã pin; path Studix tương đối với
+`packages/skills/src/knowledge/`. Knowledge pack ghi nguồn đầy đủ trong trường `sources` của
+chính nó ([KNOWLEDGE_PACKS.md](KNOWLEDGE_PACKS.md)).
+
+| Nguồn                                                                                                                              | Studix file                              | Cách port                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------------------------------- |
+| `zuey-workspace` `.agents/skills/anime-creator/knowledge/packs/<id>.json` (bảy pack, AC-37)                                        | `packs/<id>-pack.ts`                     | Port gần nguyên; id check đổi theo id pack      |
+| `zuey-workspace` `.agents/skills/anime-creator/SKILL.md` failure modes, ngưỡng của `scripts/qa-*.py`, `audit-mix-buses.py` (AC-38) | `packs/production-failure-modes-pack.ts` | Chuyển thành check `hard`/`evidence`            |
+| `agentkit` `kits/marketing/skills/ak-creativity/` `styles.csv`, `voiceover.csv`, `color-psychology.md` (CR-04)                     | `packs/creative-direction-pack.ts`       | Chắt lọc; bỏ cột thương hiệu ví dụ              |
+| `agentkit` `kits/marketing/skills/ak-elevenlabs/references/scriptwriting-and-performance-guide.md` (EL-05)                         | `packs/voice-performance-pack.ts`        | Chắt lọc, trung lập provider                    |
+| `agentkit` `kits/marketing/skills/ak-motion-design/` (MD-01, MD-02; MIT, LottieFiles)                                              | `packs/motion-design-pack.ts`            | Chắt lọc; gộp hai bảng easing; giữ notice MIT   |
+| `agentkit` `kits/marketing/skills/ak-motion-video/references/story-and-shots.md`, `motion-craft.md` (MV-17)                        | `packs/motion-craft-pack.ts`             | Chắt lọc; giữ notice MIT của phần vox-director  |
+| `agentkit` `kits/core/skills/ak-remotion/rules/` (RM-01)                                                                           | `packs/composition-timing-pack.ts`       | Chắt lọc, trung lập renderer                    |
+| `agentkit` `kits/engineer/skills/ak-shader/references/` trừ built-in reference (SH-01)                                             | `packs/shader-gl-pack.ts`                | Viết lại bằng lời, không chép code listing      |
+| `agentkit` `kits/engineer/skills/ak-threejs/` CSV API, category, use case, guide 00–18 (TJ-02)                                     | `packs/threejs-pack.ts`                  | Chắt lọc; nguồn không nêu phiên bản Three.js    |
+| `agentkit` `ak-creativity/scripts/core.py`, `ak-threejs/scripts/core.py` BM25 (CR-01, TJ-01)                                       | `knowledge-search.ts`                    | Viết lại bằng TypeScript, một engine dùng chung |
+
 ### Quy trình sync có kiểm soát
 
 1. **Pin SHA.** Studix chỉ port từ commit ghi trong bảng trên. Không port từ nhánh đang
