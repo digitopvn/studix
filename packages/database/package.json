@@ -10,7 +10,8 @@
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx scripts/migrate.ts"
+    "db:migrate": "tsx scripts/migrate.ts",
+    "benchmark": "tsx scripts/benchmark-jobs.ts"
   },
   "dependencies": {
     "@studix/core": "workspace:*",

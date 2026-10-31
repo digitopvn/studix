@@ -397,6 +397,20 @@ export class MultixProvider implements MediaProvider {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<MultixEnvelope> {
+    const { result, envelope } = await this.execRaw(argv, cwd, timeoutMs, signal);
+    if (!multixRunSucceeded(result, envelope)) {
+      throw multixRunError(command, result, envelope);
+    }
+    return envelope;
+  }
+
+  /** Run one command with --json and return what multix printed; judging success is the caller's job. */
+  private async execRaw(
+    argv: readonly string[],
+    cwd: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ result: Awaited<ReturnType<MultixRunner>>; envelope: MultixEnvelope | undefined }> {
     const cacheDir = join(cwd, `${CACHE_DIR}-${randomUUID()}`);
     let result: Awaited<ReturnType<MultixRunner>>;
     try {
@@ -404,11 +418,7 @@ export class MultixProvider implements MediaProvider {
     } finally {
       await rm(cacheDir, { recursive: true, force: true }).catch(() => undefined);
     }
-    const envelope = parseMultixEnvelope(result.stdout);
-    if (!multixRunSucceeded(result, envelope)) {
-      throw multixRunError(command, result, envelope);
-    }
-    return envelope;
+    return { result, envelope: parseMultixEnvelope(result.stdout) };
   }
 
   private compose(plan: MultixPlan, extra: readonly string[]): string[] {
@@ -569,14 +579,35 @@ export class MultixProvider implements MediaProvider {
     let envelope: MultixEnvelope;
     // Set once the job reported completion: from then on the upstream has charged, whatever fails next.
     let charge: MediaCharge | undefined;
+    // Sume reported the job's money captured but the status run still failed: only the download did.
+    let completedButUndownloaded = false;
     try {
-      envelope = await this.exec(
-        `${job.provider} status`,
+      const { result, envelope: printed } = await this.execRaw(
         argv,
         outDir,
         this.waitTimeoutMs + RUN_MARGIN_MS,
         signal,
       );
+      if (!multixRunSucceeded(result, printed)) {
+        // `--wait --download` can exit non-zero after the job completed (the download failed). Only Sume
+        // money it reports as captured proves the job ended and was kept: a reservation, a running job
+        // (exit 4 temporary, 6 still running) or a rejection awaiting its refund must not be billed.
+        const unproven = printed as MultixEnvelope | undefined;
+        const stillOpen = result.exitCode === 4 || result.exitCode === 6;
+        if (
+          job.provider === "sume" &&
+          unproven?.capturedCents !== undefined &&
+          unproven.capturedCents > 0 &&
+          !stillOpen &&
+          !result.stoppedBy
+        ) {
+          const [costCents, costSource] = this.settleCost(unproven, record?.receiptCents, fallback);
+          charge = this.chargeOf(unproven, { provider: this.id, model, costCents, costSource, job });
+          completedButUndownloaded = true;
+        }
+        throw multixRunError(`${job.provider} status`, result, printed);
+      }
+      envelope = printed;
       const [costCents, costSource] = this.settleCost(envelope, record?.receiptCents, fallback);
       charge = this.chargeOf(envelope, { provider: this.id, model, costCents, costSource, job });
       this.assertTrustedOutputs(envelope, job);
@@ -584,8 +615,11 @@ export class MultixProvider implements MediaProvider {
       // A rejected Sume job ended upstream (Sume refunds it); the next attempt submits anew. Atlas gives
       // no such guarantee and cannot deduplicate, so an Atlas job always stays resumable. Anything else
       // (timeout, temporary failure, cancel) leaves the job running, and the record makes a retry resume it.
+      // A completed job whose download failed is not rejected: it stays resumable so a retry collects it
+      // instead of paying for a new one.
       if (
         job.provider === "sume" &&
+        !completedButUndownloaded &&
         "ctx" in tracking &&
         record &&
         err instanceof StudixError &&

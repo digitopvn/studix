@@ -4,8 +4,10 @@ import {
   type AspectRatio,
   type AssetRef,
   type BrandKit,
+  type BrandPalette,
   buildSequentialTimeline,
   type CaptionCue,
+  type ColorRole,
   type CreativeBrief,
   type MotionPreset,
   type Scene,
@@ -22,7 +24,7 @@ import { VO_PAD_MS, VO_WORDS_PER_SECOND, voiceoverWordBudget } from "../marketin
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 1;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 2;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -87,6 +89,41 @@ function linesOf(brief: CreativeBrief, cta: string): Line[] {
     brief.directions?.[0]?.hook ?? brief.title ?? brief.brand?.tagline ?? truncateText(brief.prompt, 80);
   const messages = (brief.directions?.[0]?.keyMessages ?? brief.keyMessages ?? []).slice(0, 4);
   return [hook, ...messages, cta].map((text) => ({ onScreen: truncateText(text, 120), voiceover: text }));
+}
+
+/** WCAG relative luminance of a `#rrggbb[aa]` colour (alpha ignored). */
+function luminance(hex: string): number {
+  const channel = (i: number) => {
+    const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** WCAG AA for large text, which every motion-graphic line is. */
+const MIN_CONTRAST = 3;
+
+/**
+ * The palette role to set text in on a scene colour: the wanted role when it reads (WCAG AA large text),
+ * else whichever of foreground and background contrasts more. Brand palettes pair foreground with
+ * background, so dark ink on a dark primary would otherwise vanish.
+ */
+function inkOn(
+  palette: BrandPalette,
+  scene: "background" | "primary",
+  wanted: "foreground" | "accent",
+): ColorRole {
+  const fill = palette[scene];
+  const colour = palette[wanted];
+  if (colour && contrast(colour, fill) >= MIN_CONTRAST) return wanted;
+  return contrast(palette.foreground, fill) >= contrast(palette.background, fill)
+    ? "foreground"
+    : "background";
 }
 
 function durations(totalMs: number, count: number): number[] {
@@ -162,6 +199,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       cues.push(...captionCues(line.voiceover, startAt + pad, durationMs - pad - tail));
     }
     const id = i === 0 ? "hook" : i === last ? "cta" : `message-${i}`;
+    const fill = i % 2 === 0 ? "background" : "primary";
     const shots: Shot[] = [];
     if (i === last) {
       shots.push({
@@ -170,7 +208,12 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         startMs: 0,
         durationMs,
         ...(logo ? { assetId: logo.id } : { text: truncateText(brand.name, 60) }),
-        style: { textStyle: "heading", color: "accent", align: "center", region: "top" },
+        style: {
+          textStyle: "heading",
+          color: inkOn(brand.palette, fill, "accent"),
+          align: "center",
+          region: "top",
+        },
         animation: { enter: motion.enter, durationMs: 400 },
       });
       shots.push({
@@ -181,7 +224,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         text: breakLines(line.onScreen, chars - 2).slice(0, 120),
         style: {
           textStyle: "heading",
-          color: "foreground",
+          color: inkOn(brand.palette, fill, "foreground"),
           align: "center",
           region: "middle",
           emphasis: "high",
@@ -197,7 +240,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         text: breakLines(line.onScreen, chars).slice(0, i === 0 ? 160 : 500),
         style: {
           textStyle: i === 0 ? "display" : "heading",
-          color: "foreground",
+          color: inkOn(brand.palette, fill, "foreground"),
           align: "center",
           region: "middle",
         },
@@ -208,7 +251,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       id,
       role: i === 0 ? "hook" : i === last ? "cta" : "feature",
       durationMs,
-      background: { color: i % 2 === 0 ? "background" : "primary" },
+      background: { color: fill },
       shots,
       ...(i === last ? {} : { transitionOut: motion.transition }),
     };

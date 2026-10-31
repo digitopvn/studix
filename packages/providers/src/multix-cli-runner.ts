@@ -123,6 +123,8 @@ export interface MultixEnvelope {
   receiptUsd?: number;
   /** The run reported that it sent no request upstream, so nothing was charged. */
   noRequest?: boolean;
+  /** Cents Sume says it has captured for the job: money actually taken, not a reservation. */
+  capturedCents?: number;
   historyId?: string;
 }
 
@@ -263,6 +265,8 @@ export function parseMultixEnvelope(stdout: string): MultixEnvelope | undefined 
   const receipt = parseReceipt(raw);
   if (receipt !== undefined) envelope.receiptUsd = receipt;
   if (obj(raw.cost).actual_source === "no_request") envelope.noRequest = true;
+  const captured = num(obj(obj(raw.usage).metrics)[SUME_CAPTURED_CENTS]);
+  if (captured !== undefined) envelope.capturedCents = captured;
   const historyId = str(raw.history_id);
   if (historyId) envelope.historyId = historyId;
   return envelope;

@@ -1,12 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { createPiKeyTester, findPiModel, isRuntimeKeyProvider } from "@studix/agent-runtime";
 import {
   createAnthropicKeyTester,
   createApiKeyService,
   createDashboardAuth,
+  createModelPreferenceService,
   createProviderConnectionService,
   createSecretBox,
   parseSecretKey,
+  routeKeyTester,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
@@ -149,7 +152,12 @@ export async function composeApp(
   const providers = createProviderConnectionService({
     connections: repos.providerConnections,
     audit: repos.audit,
-    tester: createAnthropicKeyTester({ baseUrl: config.ANTHROPIC_BASE_URL }),
+    // Anthropic keys keep the free /v1/models check; other providers get a one-cent Pi probe.
+    tester: routeKeyTester(
+      createAnthropicKeyTester({ baseUrl: config.ANTHROPIC_BASE_URL }),
+      createPiKeyTester(),
+    ),
+    isSupportedProvider: isRuntimeKeyProvider,
     secrets: config.STUDIX_SECRETS_KEY
       ? createSecretBox(
           parseSecretKey(config.STUDIX_SECRETS_KEY),
@@ -160,6 +168,12 @@ export async function composeApp(
   });
   if (!config.STUDIX_SECRETS_KEY)
     logger.warn("STUDIX_SECRETS_KEY is not set; provider keys cannot be stored");
+  const modelPreferences = createModelPreferenceService({
+    preferences: repos.modelPreferences,
+    providers,
+    audit: repos.audit,
+    knownModel: (provider, modelId) => findPiModel(provider, modelId) !== undefined,
+  });
 
   const deps: AppDeps = {
     logger,
@@ -180,6 +194,7 @@ export async function composeApp(
     connectors: overrides.connectors ?? integrations.connectors,
     metaTools: overrides.metaTools ?? integrations.metaTools,
     providers,
+    modelPreferences,
     claudePlanner: config.STUDIX_CLAUDE_PLANNER,
     activity,
     readiness: [

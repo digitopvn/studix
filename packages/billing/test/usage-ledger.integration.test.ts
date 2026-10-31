@@ -51,4 +51,30 @@ describe("Postgres usage ledger", () => {
     expect(await ledger.jobCostCents(ctx, job.id)).toBeCloseTo(3.25);
     expect(await ledger.listForJob(ctx, job.id)).toHaveLength(2);
   });
+
+  it("replaces an estimate with the receipt exactly once under concurrent writes", async () => {
+    const ctx = await tenant("ledger-receipt");
+    const { job } = await db.current.repos.queue.enqueue(ctx, {
+      kind: "video.create",
+      payload: {},
+      createdBy: { type: "system", id: "test" },
+    });
+    const ledger = createPostgresUsageLedger(db.current.db);
+    const line = (costCents: number, costSource: string) => ({
+      dedupeKey: `${job.id}:media:exec:sume:j1`,
+      kind: USAGE_KINDS.mediaGeneration,
+      quantity: 1,
+      unit: "video",
+      costCents,
+      jobId: job.id,
+      metadata: { costSource },
+    });
+    await ledger.record(ctx, line(10, "estimate"));
+    await Promise.all([ledger.record(ctx, line(7, "receipt")), ledger.record(ctx, line(7, "receipt"))]);
+    await ledger.record(ctx, line(10, "estimate"));
+    expect(await ledger.jobCostCents(ctx, job.id)).toBe(7);
+    const events = await ledger.listForJob(ctx, job.id);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.metadata).toMatchObject({ costSource: "receipt" });
+  });
 });

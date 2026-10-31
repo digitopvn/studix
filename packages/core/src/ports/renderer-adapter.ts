@@ -14,6 +14,8 @@ export interface RenderOptions {
   /** Map of IR asset id -> local file path, already downloaded and hash-verified by the caller. */
   assetFiles: Readonly<Record<string, string>>;
   signal?: AbortSignal;
+  /** The job's deadline: the adapter may stop early, with TIMEOUT, once it projects to finish after it. */
+  deadlineAt?: Date;
   onProgress?: (progress: RenderProgress) => void;
 }
 

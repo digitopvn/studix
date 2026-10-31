@@ -1,14 +1,26 @@
 import { join } from "node:path";
-import { createClaudeSdkTransport, preflightClaudeRuntime } from "@studix/agent-runtime";
+import {
+  createClaudeSdkTransport,
+  createPiKeyTester,
+  isRuntimeKeyProvider,
+  preflightClaudeRuntime,
+} from "@studix/agent-runtime";
 import {
   createAnthropicKeyTester,
   createProviderConnectionService,
   createSecretBox,
+  type ProviderConnectionService,
   parseSecretKey,
+  routeKeyTester,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy } from "@studix/core";
 import { createRepositories } from "@studix/database";
-import { createDecisionRouterFromConfig, RulesAdapter } from "@studix/decision-routing";
+import {
+  createDecisionRouterFromConfig,
+  type DecisionProvider,
+  type ProviderExecutionSink,
+  RulesAdapter,
+} from "@studix/decision-routing";
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import { createActivityRecorder } from "@studix/observability";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
@@ -20,6 +32,7 @@ import { type ClaudePlanner, createClaudePlanner, createPlannerRouter } from "./
 import { prepareClaudeSandboxRoot } from "./planner/claude-sandbox.ts";
 import { createExecutionSink } from "./planner/execution-sink.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
+import { createWorkspaceModelDecisions } from "./planner/workspace-model-decisions.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
@@ -46,26 +59,73 @@ function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntim
 }
 
 /**
- * Claude Agent SDK planner, built only when STUDIX_CLAUDE_PLANNER is on. It opens the job's selected
- * Anthropic key through the same service and master key as the app; nothing else is ever substituted.
+ * The provider-connection service over the same master key as the app, or undefined without
+ * STUDIX_SECRETS_KEY (then no workspace can have stored a key). A run re-tests a rejected key with the
+ * provider's own tester before marking it invalid.
  */
-function claudePlanner(settings: WorkerSettings, runtime: WorkerPortsRuntime): ClaudePlanner | undefined {
-  const claude = settings.claudePlanner;
-  if (!claude) return undefined;
+function providerConnections(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+): ProviderConnectionService | undefined {
   const { config } = settings;
-  // loadWorkerSettings refuses the flag without STUDIX_SECRETS_KEY.
-  const masterKey = config.STUDIX_SECRETS_KEY as string;
+  if (!config.STUDIX_SECRETS_KEY) return undefined;
   const repos = createRepositories(runtime.db);
-  const providers = createProviderConnectionService({
+  return createProviderConnectionService({
     connections: repos.providerConnections,
     audit: repos.audit,
-    tester: createAnthropicKeyTester({ baseUrl: config.ANTHROPIC_BASE_URL }),
+    tester: routeKeyTester(
+      createAnthropicKeyTester({ baseUrl: config.ANTHROPIC_BASE_URL }),
+      createPiKeyTester(),
+    ),
+    isSupportedProvider: isRuntimeKeyProvider,
     secrets: createSecretBox(
-      parseSecretKey(masterKey),
+      parseSecretKey(config.STUDIX_SECRETS_KEY),
       config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
     ),
     logger: runtime.logger,
   });
+}
+
+/**
+ * Models chosen in Settings → AI & Providers, run on the Pi runtime with the chosen connection, in front
+ * of the operator router. Without stored keys the operator router runs alone.
+ */
+function withWorkspaceModels(
+  operator: DecisionProvider,
+  rules: RulesAdapter,
+  providers: ProviderConnectionService | undefined,
+  sink: ProviderExecutionSink,
+  runtime: WorkerPortsRuntime,
+): DecisionProvider {
+  if (!providers) return operator;
+  const repos = createRepositories(runtime.db);
+  return createWorkspaceModelDecisions({
+    operator,
+    rules,
+    jobs: repos.jobs,
+    credentials: providers,
+    preferences: repos.modelPreferences,
+    snapshots: repos.modelSnapshots,
+    sink,
+    logger: runtime.logger,
+  });
+}
+
+/**
+ * Claude Agent SDK planner, built only when STUDIX_CLAUDE_PLANNER is on. It opens the job's selected
+ * Anthropic key through the same service and master key as the app; nothing else is ever substituted.
+ */
+function claudePlanner(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+  providers: ProviderConnectionService | undefined,
+): ClaudePlanner | undefined {
+  const claude = settings.claudePlanner;
+  if (!claude) return undefined;
+  const { config } = settings;
+  // loadWorkerSettings refuses the flag without STUDIX_SECRETS_KEY.
+  if (!providers) throw new StudixError("INTERNAL", "STUDIX_CLAUDE_PLANNER needs STUDIX_SECRETS_KEY");
+  const repos = createRepositories(runtime.db);
   return createClaudePlanner({
     transport: createClaudeSdkTransport({
       baseUrl: config.ANTHROPIC_BASE_URL,
@@ -126,19 +186,24 @@ export async function loadWorkerPorts(
   await assertClaudeRuntime(settings, logger);
   const rules = registerBriefRule(new RulesAdapter({ logger }));
   const { usage } = createRepositories(runtime.db);
-  const decisions = createDecisionRouterFromConfig(runtime.env, {
+  const sink = createExecutionSink(usage);
+  const providers = providerConnections(settings, runtime);
+  const decisions = withWorkspaceModels(
+    createDecisionRouterFromConfig(runtime.env, { rules, logger, sink }),
     rules,
-    logger,
-    sink: createExecutionSink(usage),
-  });
+    providers,
+    sink,
+    runtime,
+  );
   const brandLookup = gatewayBrandLookup(settings, runtime);
   logger.info("worker adapters ready", {
     storage: "s3",
     renderer: renderer.id,
     brandLookup: settings.brandLookupTool ?? "off",
     claudePlanner: settings.claudePlanner ? settings.claudePlanner.model : "off",
+    workspaceModels: providers ? "on" : "off",
   });
-  const claude = claudePlanner(settings, runtime);
+  const claude = claudePlanner(settings, runtime, providers);
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),

@@ -68,11 +68,15 @@ trả về check sẵn cho `runHardGate` và danh sách `unbound`; threshold c�
 ### Gate cho stage của pack
 
 `createHardQaGate` (`qa-hard-gate.ts`) là `QaGate` mà worker đưa cho stage QA của pack
-(`marketing-video.qa`, `motion-graphic.qa`). Mỗi render chạy hard gate mặc định theo độ dài,
-fps và việc có âm thanh hay không, cộng hard check đã gắn của các knowledge pack mà stage
-khai báo (`hardChecksFor`). Render im lặng bỏ check loudness và sync của pack. Check nào
-fail thì stage fail với `VALIDATION` không retry, nên không có file nào được upload. Các
-check `unbound` được ghi vào output của stage.
+(`marketing-video.qa`, `motion-graphic.qa`, `anime.qa`, `long-form-film.qa`). Mỗi render chạy
+hard gate mặc định theo độ dài, fps và việc có âm thanh hay không, cộng hard check đã gắn của
+các knowledge pack mà stage khai báo (`hardChecksFor`). Render im lặng bỏ check loudness và
+sync của pack; hai pack phim luôn đòi âm thanh. Check nào fail thì stage fail với `VALIDATION`
+không retry, nên không có file nào được upload. Các check `unbound` được ghi vào output của
+stage.
+
+Gate này chỉ chạy lớp `hard`. Nó không thu evidence và không có stage `qa_review`. Check
+`pendingReview` được gắn vào lớp evidence, nên ở đây nó không được đo và không có trong report.
 
 ## Tool đo (Implemented)
 
@@ -114,6 +118,20 @@ tiến trình, không phải cô lập. Python vẫn đọc được mọi file 
 ffmpeg con không bị giới hạn bộ nhớ. Cô lập thật là việc của container worker: user `node`,
 không mount secret, egress theo policy của deployment ([SECURITY.md](SECURITY.md)). Tool
 không gọi API trả tiền và không tải gì lúc chạy.
+
+**Gate đo gì.** Hard gate chỉ đo thông số kỹ thuật của một file: stream, độ dài, fps, kích
+thước, loudness, true peak, đoạn đen, lệch audio/video ở mức container. Nó không chấm thẩm mỹ,
+kể chuyện, độ đúng brief, diễn xuất, khẩu hình hay continuity giữa các shot. Một render qua gate
+nghĩa là file đủ chuẩn kỹ thuật để giao, không phải là video tốt.
+
+- Knowledge pack: chỉ check `hard` có `metric.id` trong `QA_METRIC_BINDINGS` mới được đo. Check
+  `evidence` (`judges: ["ai"]`, `["human"]`) không có code nào chạy; nó là tiêu chí cho người
+  duyệt.
+- Lớp evidence (`collectEvidence`), stage `qa_check`/`qa_review` (`createQaStages`) và
+  `createQaApprovalPolicy` có trong `@studix/qa` nhưng chưa pack hay worker nào nối vào. Worker
+  dùng `createDefaultApprovalPolicy`, trong đó `render.final` chỉ cần duyệt khi chi phí ước tính
+  vượt ngưỡng hoặc không có. Người duyệt trong các pack hiện có nằm ở storyboard gate và creative
+  gate G0/G1 ([WORKFLOW_PACKS.md](WORKFLOW_PACKS.md#gate)), không ở bản render cuối.
 
 **Giới hạn của phép đo.**
 

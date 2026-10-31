@@ -21,6 +21,8 @@ export interface FilmCompositionRenderInput {
   workers?: number;
   logger: Logger;
   signal?: AbortSignal;
+  /** Job deadline, passed to each scene capture. */
+  deadlineAt?: Date;
   /** Progress over all composition shots, 0..1. */
   onProgress?: (progress: number) => void;
 }
@@ -140,6 +142,7 @@ export async function renderFilmCompositions(
         workers: input.workers,
         logger: input.logger,
         signal: input.signal,
+        deadlineAt: input.deadlineAt,
         onProgress: (p) => input.onProgress?.((index + p) / jobs.length),
       });
       for (const warning of warnings)

@@ -11,6 +11,8 @@ export interface ProducerRenderInput {
   workers?: number;
   logger: Logger;
   signal?: AbortSignal;
+  /** Job deadline; the capture fails fast with TIMEOUT once the producer projects it to finish later. */
+  deadlineAt?: Date;
   /** Producer progress, 0..1. */
   onProgress: (progress: number, stage: string) => void;
 }
@@ -61,9 +63,21 @@ function loadProducer(): Promise<ProducerModule> {
   return producerPromise;
 }
 
+/**
+ * Wall-time budget for one producer capture: the time left until the job deadline, read when the capture
+ * starts so later captures of the same render get less. Undefined (guard off) without a deadline or once it
+ * has passed; the job executor's deadline abort covers that case.
+ */
+export function maxRenderMsFor(deadlineAt: Date | undefined, now: number = Date.now()): number | undefined {
+  if (!deadlineAt) return undefined;
+  const remaining = Math.floor(deadlineAt.getTime() - now);
+  return remaining > 0 ? remaining : undefined;
+}
+
 /** Capture a compiled project to an H.264 MP4 with the in-process HyperFrames producer. */
 export async function renderWithProducer(input: ProducerRenderInput): Promise<{ warnings: string[] }> {
   const producer = await loadProducer();
+  const maxRenderMs = maxRenderMsFor(input.deadlineAt);
   const config: RenderConfigInput = {
     fps: input.fps,
     quality: input.quality,
@@ -75,6 +89,8 @@ export async function renderWithProducer(input: ProducerRenderInput): Promise<{ 
     crf: input.crf,
     logger: input.logger,
     ...(input.workers ? { workers: input.workers } : {}),
+    // A cheap second stop for a hung or crawling capture: the producer fails once its ETA passes the deadline.
+    ...(maxRenderMs ? { maxRenderMs } : {}),
   };
   const job = producer.createRenderJob(config);
   try {
@@ -88,6 +104,15 @@ export async function renderWithProducer(input: ProducerRenderInput): Promise<{ 
       ),
     );
   } catch (err) {
+    // RenderTooSlowError is not exported by the producer; its name is the stable marker.
+    if (err instanceof Error && err.name === "RenderTooSlowError" && !input.signal?.aborted) {
+      throw new StudixError("TIMEOUT", "Render would not finish before the job deadline", {
+        cause: err,
+        retryable: false,
+        details: { stage: job.currentStage, maxRenderMs },
+        suggestedAction: "Submit the job again with a later deadline or a shorter video.",
+      });
+    }
     if (err instanceof producer.RenderCancelledError || input.signal?.aborted) {
       throw new StudixError("CANCELLED", "Render cancelled", { cause: err });
     }

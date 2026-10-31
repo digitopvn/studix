@@ -74,7 +74,7 @@ export class HyperFramesRenderer implements RendererAdapter {
   }
 
   async render(ir: VideoIR, options: HyperFramesRenderOptions): Promise<RenderOutput> {
-    const { spec, workDir, signal } = options;
+    const { spec, workDir, signal, deadlineAt } = options;
     const support = this.supports(ir, spec);
     if (!support.supported) {
       throw new StudixError("VALIDATION", `IR cannot be rendered by HyperFrames: ${support.reasons[0]}`, {
@@ -127,6 +127,7 @@ export class HyperFramesRenderer implements RendererAdapter {
           workers: this.options.workers,
           logger: this.log,
           signal,
+          deadlineAt,
           onProgress: (p) => report(p * FILM_SHARE, "film"),
         });
         renderIr = film.ir;
@@ -148,6 +149,7 @@ export class HyperFramesRenderer implements RendererAdapter {
         workers: this.options.workers,
         logger: this.log,
         signal,
+        deadlineAt,
         onProgress: (p, stage) => report(captureFrom + p * (PHASES.capture - captureFrom), stage),
       });
       for (const warning of warnings) this.log.warn("hyperframes render warning", { warning });

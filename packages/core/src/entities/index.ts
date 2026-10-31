@@ -2,6 +2,7 @@ export * from "./agent-handoff.ts";
 export * from "./asset.ts";
 export * from "./common.ts";
 export * from "./job.ts";
+export * from "./model-preference.ts";
 export * from "./project.ts";
 export * from "./review.ts";
 export * from "./revision.ts";

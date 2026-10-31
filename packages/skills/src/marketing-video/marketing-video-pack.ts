@@ -28,6 +28,7 @@ import {
   type StageUsage,
   sha256File,
   stageCacheKey,
+  stageMediaDir,
   stageWorkDir,
   ValidateOutput,
 } from "@studix/workflow";
@@ -332,7 +333,7 @@ export const marketingReframeStage: StageDefinition = {
       }
       // A feedback patch is reframed while the storyboard is in review, or while an earlier job left the project
       // in rendering; a job that outlives an approve, publish or archive must not reopen review.
-      await markInReview(repos, ctx, projectId, ["rendering", "in_review"]);
+      await markInReview(repos, ctx, projectId, resultVersionId, ["rendering", "in_review"]);
     });
     return {
       output: {
@@ -400,7 +401,8 @@ export const marketingI2vStage: StageDefinition = {
   async run(s) {
     const ir = irOf(s);
     const storage = requireService(s, "storage");
-    const workDir = await stageWorkDir(s, MV_STAGES.i2v);
+    // The provider reads local inputs only from inside its own media directory, so the frames go there.
+    const inputDir = join(await stageMediaDir(s, MV_STAGES.i2v), "inputs");
     const shots = clipRequests(s);
     const capped = await withCaps(
       s,
@@ -412,7 +414,7 @@ export const marketingI2vStage: StageDefinition = {
       storage,
       s.ctx,
       { ...ir, assets: ir.assets.filter((a) => frameIds.has(a.id)) },
-      join(workDir, "frames"),
+      inputDir,
     );
     let done = 0;
     const clips = await mapBounded(
@@ -444,7 +446,7 @@ export const marketingI2vStage: StageDefinition = {
       };
     }
     next.assets = [...next.assets, ...clips.map((c) => c.asset)];
-    await rm(workDir, { recursive: true, force: true });
+    await rm(inputDir, { recursive: true, force: true });
     const usage = clips.map((c) => c.usage);
     return { output: { ir: await billedOnFailure(usage, () => VideoIR.parse(next)) }, usage };
   },
@@ -619,6 +621,7 @@ export const marketingRenderStage: StageDefinition = {
         workDir,
         assetFiles,
         signal: s.signal,
+        deadlineAt: s.job.deadlineAt,
         onProgress: (p) => s.reportProgress((i + p.progress) / variants.length),
       });
       out.push({
@@ -722,7 +725,7 @@ export const marketingPublishStage: StageDefinition = {
           completedAt: new Date(),
         });
       }
-      await markInReview(repos, ctx, payload.projectId);
+      await markInReview(repos, ctx, payload.projectId, versionId);
     });
     const root = requireService(s, "workRoot");
     await rm(join(root, s.job.id), { recursive: true, force: true });

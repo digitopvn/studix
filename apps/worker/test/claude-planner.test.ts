@@ -92,7 +92,7 @@ describe("Claude planner", () => {
         operation: "video.plan.claude",
       }),
     ]);
-    expect(resolved).toEqual([{ connectionId: "pcn_1", requestedBy: owner }]);
+    expect(resolved).toEqual([{ connectionId: "pcn_1", requestedBy: owner, runtime: "claude" }]);
     const [request] = transport.requests;
     expect(request?.credential).toBe(FAKE_KEY);
     expect(request?.allowedTools).toEqual([]);

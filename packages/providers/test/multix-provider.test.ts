@@ -463,6 +463,95 @@ describe("MultixProvider async jobs", () => {
     expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
   });
 
+  it("bills a completed Sume job whose download failed, and keeps the record resumable", async () => {
+    let statusCalls = 0;
+    const cli = sumeImageCli((argv) => {
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        return {
+          exitCode: 5,
+          envelope: {
+            ok: false,
+            error: { code: "DOWNLOAD_FAILED", message: "could not save output", retryable: false },
+            usage: {
+              cost_usd: 0.03,
+              metrics: {
+                "data.job.usage_summary.reserved_usd_cents": 3,
+                "data.job.usage_summary.captured_usd_cents": 3,
+              },
+            },
+          },
+        };
+      }
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return { files: { [out]: "png" }, envelope: { outputs: [{ path: out }], usage: { cost_usd: 0.03 } } };
+    });
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MediaChargedError);
+    expect((error as MediaChargedError).charge).toMatchObject({
+      costCents: 3,
+      costSource: "receipt",
+      job: { provider: "sume", id: "job_1" },
+    });
+    expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "submitted" });
+
+    // The retry collects the same job instead of submitting a new one.
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result).toMatchObject({ job: { id: "job_1" }, costCents: 3 });
+    // One estimate and one submit in total: the retry did not submit again.
+    expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
+  });
+
+  it("still marks a rejected Sume job failed when its error envelope reports no charge", async () => {
+    const cli = sumeImageCli(() => ({
+      exitCode: 5,
+      envelope: { ok: false, error: { code: "JOB_FAILED", message: "rejected", retryable: false } },
+    }));
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).not.toBeInstanceOf(MediaChargedError);
+    expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "failed" });
+  });
+
+  it.each([
+    ["exit 6 (still running)", 6],
+    ["exit 4 (temporary failure)", 4],
+    ["exit 5 (rejected, refund not posted yet)", 5],
+  ])("does not bill a reservation that Sume has not captured: %s", async (_name, exitCode) => {
+    const cli = sumeImageCli(() => ({
+      exitCode,
+      envelope: {
+        ok: false,
+        error: { code: "NOT_DONE", message: "no result", retryable: false },
+        usage: {
+          cost_usd: 0.03,
+          metrics: {
+            "data.job.usage_summary.reserved_usd_cents": 3,
+            "data.job.usage_summary.captured_usd_cents": 0,
+          },
+        },
+      },
+    }));
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).not.toBeInstanceOf(MediaChargedError);
+  });
+
+  it("does not bill a run stopped by timeout even if it printed a receipt", async () => {
+    const cli = sumeImageCli(() => ({
+      stoppedBy: "timeout",
+      exitCode: 143,
+      envelope: { ok: false, usage: { cost_usd: 0.03 } },
+    }));
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).not.toBeInstanceOf(MediaChargedError);
+    expect(error).toMatchObject({ code: "TIMEOUT" });
+  });
+
   it("journals in the request's journal, so a fresh provider without it still resumes the job", async () => {
     let statusCalls = 0;
     const cli = sumeImageCli((argv) => {
@@ -715,6 +804,25 @@ describe("MultixProvider async jobs", () => {
     expect((err as MediaChargedError).charge.costCents).toBe(3);
   });
 
+  it("marks a charged Sume job failed when its downloaded outputs are flagged as broken", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_usd: 0.03, actual_source: "provider" },
+        },
+      };
+    });
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MediaChargedError);
+    expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "failed" });
+  });
+
   it("reports the charge of a finished job whose outputs are flagged as broken", async () => {
     const cli = sumeImageCli((argv) => {
       const out = join(flagValue(argv, "output")!, "image-1.png");
@@ -866,6 +974,53 @@ describe("MultixProvider async jobs", () => {
       await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "submitted" });
       await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({
         code: "PROVIDER_ERROR",
+      });
+      expect(runs).toBe(1);
+    });
+
+    it("releases the key when atlas run exits 2 (rejected before any submission)", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return runs === 1
+          ? { exitCode: 2, envelope: { error: { message: "bad input" } } }
+          : { envelope: { job: { provider: "atlas", id: "pred_9" }, text: "pred_9" } };
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({ code: "VALIDATION" });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({
+        state: "failed",
+        attempt: 1,
+      });
+      await expect(multix.generate(ctx, upscaleRequest(input))).resolves.toMatchObject({
+        job: { provider: "atlas", id: "pred_9" },
+      });
+      expect(runs).toBe(2);
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ attempt: 2 });
+    });
+
+    it.each([
+      ["TIMEOUT", { stoppedBy: "timeout" as const, exitCode: 143 }],
+      ["CANCELLED", { stoppedBy: "abort" as const, exitCode: 143 }],
+    ])("keeps the record blocked when atlas run ends %s with an unknown outcome", async (code, reply) => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return reply;
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({ code });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "submitting" });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({
+        code: "PROVIDER_ERROR",
+        retryable: false,
+        message: expect.stringContaining("may already have been charged"),
       });
       expect(runs).toBe(1);
     });

@@ -1,7 +1,7 @@
 # Studix runtime image: one image, two roles selected by STUDIX_ROLE.
 #   STUDIX_ROLE=app    -> apps/mcp-server (/mcp, /api, dashboard static, migrations on start)
 #   STUDIX_ROLE=worker -> apps/worker (job claim loops, HyperFrames + FFmpeg rendering, QA tools, /healthz)
-# Node + FFmpeg + chrome-headless-shell (Chromium on arm64) for rendering, the multix CLI, and Python for the
+# Node + FFmpeg + chrome-headless-shell for rendering, the multix CLI, and Python for the
 # QA measurement tools.
 
 # The multix CLI, built from the commit tagged v1.26.0 in mrgoonie/multix-cli. Pinning the commit is
@@ -83,22 +83,19 @@ RUN set -eu; extras=""; for e in $STUDIX_QA_EXTRAS; do extras="$extras --extra $
     chown -R node:node /app
 
 # Pin the browser path so the renderer never depends on the runtime user's cache layout.
-# Chrome for Testing ships chrome-headless-shell for linux x64 only; arm64 images (local Apple
-# Silicon builds) fall back to Debian's Chromium, which HyperFrames drives in screenshot mode.
-# The amd64 build id is pinned so pixels and the WebGL measurements in docs/RENDERER.md do not drift
-# between image builds; CI reads this same line. The arm64 branch is NOT deterministic: it takes
-# whatever Chromium Debian ships. Bump the id deliberately and re-measure (see docs/RENDERER.md).
+# Chrome for Testing ships chrome-headless-shell for linux64 and, from build 153, linux-arm64, so amd64
+# and arm64 (local Apple Silicon) images install the same pinned build. @puppeteer/browsers resolves
+# linux-arm64 from 3.2.0; 3.2.6 is the version already in pnpm-lock.yaml. The build id is pinned so
+# pixels and the WebGL measurements in docs/RENDERER.md do not drift between image builds; CI reads
+# this same line. Bump the id deliberately and re-measure (see docs/RENDERER.md).
 ARG CHROME_HEADLESS_SHELL_VERSION=156.0.8078.80
 ENV PRODUCER_HEADLESS_SHELL_PATH=/opt/studix-browser/chrome \
     HYPERFRAMES_BROWSER_PATH=/opt/studix-browser/chrome
-RUN set -eu; arch="$(dpkg --print-architecture)"; mkdir -p /opt/studix-browser; \
-    if [ "$arch" = "amd64" ]; then \
-      npx --yes --package @puppeteer/browsers@2.13.0 -- browsers install "chrome-headless-shell@${CHROME_HEADLESS_SHELL_VERSION}" --path /opt/studix-browser/cache; \
-      ln -s "$(find /opt/studix-browser/cache -type f -name chrome-headless-shell | head -n1)" /opt/studix-browser/chrome; \
-    else \
-      apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*; \
-      ln -s /usr/bin/chromium /opt/studix-browser/chrome; \
-    fi; \
+# npx runs from / because /app already has this version as a transitive pnpm dependency without a
+# `browsers` bin on PATH; outside the project npx fetches the package and its bin.
+RUN set -eu; mkdir -p /opt/studix-browser; cd /; \
+    npx --yes --package @puppeteer/browsers@3.2.6 -- browsers install "chrome-headless-shell@${CHROME_HEADLESS_SHELL_VERSION}" --path /opt/studix-browser/cache; \
+    ln -s "$(find /opt/studix-browser/cache -type f -name chrome-headless-shell | head -n1)" /opt/studix-browser/chrome; \
     /opt/studix-browser/chrome --version; \
     rm -rf /root/.npm
 
