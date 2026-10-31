@@ -143,7 +143,7 @@ const OUTPUT_MIMES: Readonly<Record<Exclude<MediaKind, "audio">, string[]>> = {
 
 const sha = (value: unknown, length = 16) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, length);
-const toCents = (usd: number) => Math.ceil(usd * 100 - 1e-9);
+const toCents = (usd: number) => Math.max(0, Math.ceil(usd * 100 - 1e-9));
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);

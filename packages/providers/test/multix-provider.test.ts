@@ -482,6 +482,31 @@ describe("MultixProvider async jobs", () => {
     expect(result).toMatchObject({ costCents: 1, costSource: "receipt", job: { id: REAL_JOB_ID } });
   });
 
+  it("bills the reserved charge when Sume completed the job before it captured anything", async () => {
+    const settle =
+      (captured: number, refunded = 0) =>
+      (argv: readonly string[]) => {
+        const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
+        const envelope = realStatusEnvelope(out);
+        Object.assign(envelope.usage.metrics, {
+          "data.job.usage_summary.captured_usd_cents": captured,
+          "data.job.usage_summary.refunded_usd_cents": refunded,
+        });
+        return { files: { [out]: "png-bytes" }, envelope };
+      };
+    const collect = async (script: ReturnType<typeof settle>) =>
+      new MultixProvider({ bin: "multix", runner: scriptedCli(script).runner }).resume(ctx, {
+        kind: "image",
+        job: { provider: "sume", id: REAL_JOB_ID },
+        model: "sume:z-image",
+        workDir,
+      });
+    // Completed, reserved 1¢, captured still 0: Sume will keep the 1¢.
+    expect(await collect(settle(0))).toMatchObject({ costCents: 1, costSource: "receipt" });
+    // A refund of the whole reservation really is free.
+    expect(await collect(settle(0, 1))).toMatchObject({ costCents: 0, costSource: "receipt" });
+  });
+
   it("collects an Atlas prediction from the real status envelope, which lists saved files only in text", async () => {
     const id = "56af498e15864121b423bd9dae28e516";
     const cli = scriptedCli((argv) => {
