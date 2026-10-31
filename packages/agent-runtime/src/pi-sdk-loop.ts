@@ -52,6 +52,12 @@ export function parseModelJson(text: string): unknown {
   return JSON.parse(fenced ? fenced[1]! : trimmed);
 }
 
+function throwIfCancelled(task: BoundedAgentTask): void {
+  if (task.signal.aborted) {
+    throw task.signal.reason ?? new StudixError("CANCELLED", "agent task was cancelled");
+  }
+}
+
 function mapProviderFailure(message: string | undefined, binding: PiRunBinding): StudixError {
   const clean = (message ?? "provider call failed").split(binding.apiKey).join("[redacted]").slice(0, 500);
   const details = {
@@ -89,6 +95,7 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
       });
     }
     const resolved = await options.resolver.resolve(ctx, { stage: task.skill });
+    throwIfCancelled(task);
     if (resolved.bindings.length === 0) {
       throw new StudixError("UNAVAILABLE", "No provider binding was resolved", { retryable: false });
     }
@@ -102,12 +109,20 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
     };
     let lastModel = "";
     let lastError: unknown;
-    for (const binding of resolved.bindings) {
+    for (const [index, binding] of resolved.bindings.entries()) {
       registerSecret(binding.apiKey);
       try {
         const attempt = await runAttempt(binding, task, total, options.scratchRoot);
         lastModel = `${binding.provider}/${binding.modelId}`;
-        const result: AgentRunResult = { ...attempt, model: lastModel };
+        const result: AgentRunResult = {
+          ...attempt,
+          model: lastModel,
+          resolved: {
+            connectionId: binding.connectionId,
+            ...(resolved.snapshot ? { snapshot: resolved.snapshot } : {}),
+            usedFallback: index > 0,
+          },
+        };
         return result;
       } catch (error) {
         lastError = error;
@@ -122,13 +137,10 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
   };
 }
 
-async function runAttempt(
-  binding: PiRunBinding,
-  task: BoundedAgentTask,
-  total: AttemptResult,
-  scratchRoot: string | undefined,
-): Promise<AttemptResult> {
-  const scratch = await mkdtemp(join(scratchRoot ?? tmpdir(), "studix-pi-"));
+type PiSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+
+/** Builds the isolated session: in-memory auth holding only this binding's key, no tools, no discovery. */
+async function openSession(binding: PiRunBinding, scratch: string): Promise<PiSession> {
   const authStorage = AuthStorage.inMemory({});
   const modelRegistry = ModelRegistry.inMemory(authStorage);
   if (binding.endpoint) {
@@ -137,7 +149,7 @@ async function runAttempt(
       ...(binding.endpoint.api ? { api: binding.endpoint.api } : {}),
       ...(binding.endpoint.models
         ? {
-            apiKey: "runtime-key",
+            apiKey: binding.apiKey,
             models: binding.endpoint.models.map((m) => ({
               id: m.id,
               name: m.name ?? m.id,
@@ -154,7 +166,6 @@ async function runAttempt(
   authStorage.setRuntimeApiKey(binding.provider, binding.apiKey);
   const model = modelRegistry.find(binding.provider, binding.modelId);
   if (!model) {
-    await rm(scratch, { recursive: true, force: true });
     throw new StudixError(
       "UNAVAILABLE",
       `Model ${binding.provider}/${binding.modelId} is not in the catalog`,
@@ -164,7 +175,6 @@ async function runAttempt(
       },
     );
   }
-
   const loader = new DefaultResourceLoader({
     cwd: scratch,
     agentDir: scratch,
@@ -188,55 +198,79 @@ async function runAttempt(
     settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
     tools: [],
   });
+  return session;
+}
+
+async function runAttempt(
+  binding: PiRunBinding,
+  task: BoundedAgentTask,
+  total: AttemptResult,
+  scratchRoot: string | undefined,
+): Promise<AttemptResult> {
+  // An empty key would make the SDK fall back to the server's own environment credentials.
+  if (!binding.apiKey.trim()) {
+    throw new StudixError("UNAUTHENTICATED", "The provider key is empty", { retryable: false });
+  }
+  if (binding.endpoint?.models?.some((m) => !m.cost)) {
+    throw new StudixError("VALIDATION", "Custom endpoint models must declare their cost", {
+      retryable: false,
+      suggestedAction: "Set a price per million tokens so the task budget can be enforced.",
+    });
+  }
+  throwIfCancelled(task);
 
   let turns = 0;
   let costCents = 0;
   let inputTokens = 0;
   let outputTokens = 0;
   let limit: StudixError | undefined;
+  let session: PiSession | undefined;
+  let unsubscribe: (() => void) | undefined;
+  const scratch = await mkdtemp(join(scratchRoot ?? tmpdir(), "studix-pi-"));
   const stop = (error: StudixError) => {
     if (limit) return;
     limit = error;
-    void session.abort();
+    void session?.abort();
   };
-  const onAbort = () => void session.abort();
-  if (task.signal.aborted) onAbort();
+  const onAbort = () => void session?.abort();
   task.signal.addEventListener("abort", onAbort, { once: true });
 
-  const unsubscribe = session.subscribe((event) => {
-    if (event.type === "message_end" && event.message.role === "assistant") {
-      const usage = event.message.usage;
-      costCents += (usage?.cost?.total ?? 0) * 100;
-      inputTokens += usage?.input ?? 0;
-      outputTokens += usage?.output ?? 0;
-      if (total.costCents + costCents > task.maxCostCents) {
-        stop(
-          new StudixError("BUDGET_EXCEEDED", `agent cost exceeded the ${task.maxCostCents}¢ task limit`, {
-            retryable: false,
-          }),
-        );
-      }
-    }
-    if (event.type === "turn_end") {
-      turns += 1;
-      if (total.turns + turns >= task.maxTurns && event.toolResults.length > 0) {
-        stop(
-          new StudixError("PROVIDER_ERROR", `agent reached the ${task.maxTurns} turn limit`, {
-            retryable: false,
-          }),
-        );
-      }
-    }
-  });
-
   try {
-    await session.prompt(buildPrompt(task));
+    session = await openSession(binding, scratch);
+    // The abort may have fired while the session was being built, before there was anything to abort.
+    throwIfCancelled(task);
+    const active = session;
+    unsubscribe = active.subscribe((event) => {
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        const usage = event.message.usage;
+        costCents += (usage?.cost?.total ?? 0) * 100;
+        inputTokens += usage?.input ?? 0;
+        outputTokens += usage?.output ?? 0;
+        if (total.costCents + costCents > task.maxCostCents) {
+          stop(
+            new StudixError("BUDGET_EXCEEDED", `agent cost exceeded the ${task.maxCostCents}¢ task limit`, {
+              retryable: false,
+            }),
+          );
+        }
+      }
+      if (event.type === "turn_end") {
+        turns += 1;
+        if (total.turns + turns >= task.maxTurns && event.toolResults.length > 0) {
+          stop(
+            new StudixError("BUDGET_EXCEEDED", `agent reached the ${task.maxTurns} turn limit`, {
+              retryable: false,
+            }),
+          );
+        }
+      }
+    });
+
+    await active.prompt(buildPrompt(task));
     if (limit) throw limit;
-    if (task.signal.aborted)
-      throw task.signal.reason ?? new StudixError("CANCELLED", "agent task was cancelled");
-    const reply = [...session.messages].reverse().find((m) => m.role === "assistant");
-    if (!reply || reply.role !== "assistant")
-      throw new StudixError("PROVIDER_ERROR", "The model returned no reply");
+    throwIfCancelled(task);
+    const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
+    if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");
     if (reply.stopReason === "error" || reply.stopReason === "aborted") {
       throw mapProviderFailure(reply.errorMessage, binding);
     }
@@ -249,7 +283,8 @@ async function runAttempt(
       try {
         output = parseModelJson(text);
       } catch {
-        throw new StudixError("PROVIDER_ERROR", "The model did not return valid JSON", {
+        // A model answering badly is not a provider outage, so it must not move to a fallback.
+        throw new StudixError("VALIDATION", "The model did not return valid JSON", {
           retryable: false,
           details: { provider: binding.provider, modelId: binding.modelId },
         });
@@ -270,9 +305,9 @@ async function runAttempt(
     total.outputTokens += outputTokens;
     throw error;
   } finally {
-    unsubscribe();
+    unsubscribe?.();
     task.signal.removeEventListener("abort", onAbort);
-    session.dispose();
+    session?.dispose();
     await rm(scratch, { recursive: true, force: true });
   }
 }

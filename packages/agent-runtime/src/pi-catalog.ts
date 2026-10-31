@@ -27,16 +27,41 @@ export interface PiCatalogProvider {
 }
 
 /**
- * OAuth logins that drive a vendor's consumer subscription through a third-party harness. They stay
- * unavailable until the vendor's terms allow it (ADR 0011); API keys for the same provider are unaffected.
+ * Providers whose only credential is the API key we hand the session. Anything with ambient auth (cloud IAM,
+ * ADC, account ids read from the environment) or an unverified vendor is left out: the Pi SDK would fall
+ * back to the operator's own environment for it, which breaks the per-tenant credential boundary (ADR 0011).
  */
-const RESTRICTED_OAUTH: Readonly<Record<string, string>> = {
-  anthropic:
-    "Claude Pro/Max subscriptions may not be used through third-party harnesses; connect an API key instead.",
-};
+const RUNTIME_KEY_PROVIDERS: ReadonlySet<string> = new Set([
+  "anthropic",
+  "openai",
+  "openrouter",
+  "google",
+  "groq",
+  "mistral",
+  "xai",
+  "cerebras",
+  "deepseek",
+  "fireworks",
+  "huggingface",
+  "zai",
+  "moonshotai",
+]);
+
+export function isRuntimeKeyProvider(provider: string): boolean {
+  return RUNTIME_KEY_PROVIDERS.has(provider);
+}
+
+/**
+ * OAuth is offered per provider, only after the vendor's terms for third-party harnesses were checked
+ * (ADR 0011). Nothing is allowed yet, so every OAuth login the SDK knows about is reported as restricted.
+ */
+const OAUTH_ALLOWED: ReadonlySet<string> = new Set();
+
+const OAUTH_RESTRICTION =
+  "OAuth sign-in through a third-party harness is not enabled for this provider; connect an API key instead.";
 
 export function isOAuthRestricted(provider: string): boolean {
-  return provider in RESTRICTED_OAUTH;
+  return !OAUTH_ALLOWED.has(provider);
 }
 
 export function listPiCatalog(): PiCatalogProvider[] {
@@ -45,24 +70,27 @@ export function listPiCatalog(): PiCatalogProvider[] {
       .getOAuthProviders()
       .map((p) => [p.id, p.name] as const),
   );
-  return [...getProviders()].sort().map((id) => {
-    const restriction = RESTRICTED_OAUTH[id];
-    const hasOAuth = oauthIds.has(id);
-    return {
-      id,
-      name: oauthIds.get(id)?.replace(/\s*\(.*\)$/, "") ?? id,
-      authMethods: ["api_key", ...(hasOAuth && !restriction ? (["oauth"] as const) : [])],
-      ...(hasOAuth && restriction ? { oauthRestriction: restriction } : {}),
-      models: getModels(id as Parameters<typeof getModels>[0]).map((m) => ({
-        id: m.id,
-        name: m.name,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        cost: { input: m.cost.input, output: m.cost.output },
-      })),
-    };
-  });
+  return [...getProviders()]
+    .filter(isRuntimeKeyProvider)
+    .sort()
+    .map((id) => {
+      const restriction = isOAuthRestricted(id) ? OAUTH_RESTRICTION : undefined;
+      const hasOAuth = oauthIds.has(id);
+      return {
+        id,
+        name: oauthIds.get(id)?.replace(/\s*\(.*\)$/, "") ?? id,
+        authMethods: ["api_key", ...(hasOAuth && !restriction ? (["oauth"] as const) : [])],
+        ...(hasOAuth && restriction ? { oauthRestriction: restriction } : {}),
+        models: getModels(id as Parameters<typeof getModels>[0]).map((m) => ({
+          id: m.id,
+          name: m.name,
+          reasoning: m.reasoning,
+          contextWindow: m.contextWindow,
+          maxTokens: m.maxTokens,
+          cost: { input: m.cost.input, output: m.cost.output },
+        })),
+      };
+    });
 }
 
 export function findPiModel(provider: string, modelId: string): PiCatalogModel | undefined {

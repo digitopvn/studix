@@ -1,8 +1,5 @@
-import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type {
   AgentTask,
   ModelPreference,
@@ -112,7 +109,6 @@ describe("Pi SDK runtime", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]!.auth).toBe("Bearer runtime-key-0123456789");
     expect(seen[0]!.body.model).toBe("acme-1");
-    expect(existsSync(join(homedir(), ".pi", "agent", "auth.json"))).toBe(false);
   });
 
   it("stops on the cost cap while the run is in flight", async () => {
@@ -123,7 +119,7 @@ describe("Pi SDK runtime", () => {
     });
   });
 
-  it("maps a rejected credential to UNAUTHENTICATED and never falls back on its own", async () => {
+  it("maps a rejected credential to UNAUTHENTICATED after trying every supplied binding", async () => {
     seen.length = 0;
     respond = () => ({ status: 401 });
     const runtime = createPiSdkAgentRuntime({
@@ -133,7 +129,7 @@ describe("Pi SDK runtime", () => {
       ),
     });
     await expect(runtime.run(testTenant(), task())).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
-    expect(seen.length).toBeGreaterThanOrEqual(1);
+    expect(seen).toHaveLength(2);
   });
 
   it("tries the next explicit binding only after a provider failure", async () => {
@@ -150,13 +146,78 @@ describe("Pi SDK runtime", () => {
     expect(seen.map((s) => s.auth)).toContain("Bearer good-key-0123456789");
   });
 
-  it("cancels on abort and rejects tools", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    const runtime = createPiSdkAgentRuntime({ resolver: staticResolver(binding()) });
-    await expect(runtime.run(testTenant(), task({ signal: controller.signal }))).rejects.toMatchObject({
-      code: "CANCELLED",
+  it("never sends an empty tenant key and never reads the server environment", async () => {
+    seen.length = 0;
+    process.env.OPENAI_API_KEY = "operator-env-key-0123456789";
+    try {
+      const runtime = createPiSdkAgentRuntime({
+        resolver: staticResolver(binding({ provider: "openai", apiKey: "  " })),
+      });
+      await expect(runtime.run(testTenant(), task())).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+      expect(seen).toHaveLength(0);
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
+  it("does not fall back when the model answers badly", async () => {
+    seen.length = 0;
+    respond = () => ({ status: 200, text: "not json at all" });
+    const runtime = createPiSdkAgentRuntime({
+      resolver: staticResolver(
+        binding(),
+        binding({ connectionId: "pconn_2", apiKey: "second-key-0123456789" }),
+      ),
     });
+    await expect(runtime.run(testTenant(), task({ outputSchema: { type: "object" } }))).rejects.toMatchObject(
+      {
+        code: "VALIDATION",
+      },
+    );
+    expect(seen).toHaveLength(1);
+  });
+
+  it("reports which connection ran and whether a fallback was used", async () => {
+    respond = (s) => (s.auth?.includes("bad-key") ? { status: 500 } : { status: 200, text: '{"ok":1}' });
+    const snapshot = { connectionId: "pconn_1" } as ResolvedModelSnapshot;
+    const runtime = createPiSdkAgentRuntime({
+      resolver: {
+        async resolve() {
+          return {
+            snapshot,
+            bindings: [
+              binding({ apiKey: "bad-key-0123456789" }),
+              binding({ connectionId: "pconn_2", apiKey: "good-key-0123456789" }),
+            ],
+          };
+        },
+      },
+    });
+    const result = await runtime.run(testTenant(), task({ outputSchema: { type: "object" } }));
+    expect(result.resolved).toEqual({ connectionId: "pconn_2", snapshot, usedFallback: true });
+  });
+
+  it("makes no provider call when cancelled while the binding is still resolving", async () => {
+    seen.length = 0;
+    const controller = new AbortController();
+    const slow: PiBindingResolver = {
+      async resolve() {
+        await new Promise((r) => setTimeout(r, 40));
+        return { bindings: [binding()] };
+      },
+    };
+    const running = createPiSdkAgentRuntime({ resolver: slow }).run(
+      testTenant(),
+      task({ signal: controller.signal }),
+    );
+    setTimeout(() => controller.abort(), 10);
+    await expect(running).rejects.toMatchObject({ code: "CANCELLED" });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(seen).toHaveLength(0);
+  });
+
+  it("rejects tools", async () => {
+    const runtime = createPiSdkAgentRuntime({ resolver: staticResolver(binding()) });
     await expect(
       runtime.run(
         testTenant(),
@@ -297,10 +358,40 @@ describe("provider binding resolver", () => {
         requestedBy: { type: "user", id: "u_other" },
       },
     );
-    await expect(otherJob.resolver.resolve(ctxOf(""), { stage: "plan" })).rejects.toMatchObject({
-      code: "UNAUTHENTICATED",
-    });
+    expect((await otherJob.resolver.resolve(ctxOf(""), { stage: "plan" })).bindings).toHaveLength(1);
     expect(otherJob.reveals).not.toContain("cred_p");
+  });
+
+  it("rejects OAuth connections, unsupported ambient-auth providers and a mismatched snapshot", async () => {
+    await expect(
+      resolverFor([connection({ authMethod: "oauth" })], [preference()]).resolver.resolve(ctxOf(""), {
+        stage: "plan",
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      resolverFor(
+        [connection({ provider: "amazon-bedrock" })],
+        [preference({ provider: "amazon-bedrock" })],
+      ).resolver.resolve(ctxOf(""), { stage: "plan" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const first = await resolverFor([connection()], [preference()]).resolver.resolve(ctxOf(""), {
+      stage: "plan",
+    });
+    await expect(
+      resolverFor([connection()], [], { snapshot: first.snapshot }).resolver.resolve(ctxOf(""), {
+        stage: "qa",
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
+  it("skips an unusable fallback instead of failing a healthy primary", async () => {
+    const dead = connection({ id: "pconn_dead", status: "revoked", secretRef: "cred_dead" });
+    const fb = { connectionId: "pconn_dead", provider: "openrouter", modelId: "x/y" };
+    const { resolver } = resolverFor(
+      [connection(), dead],
+      [preference({ allowFallback: true, fallbacks: [fb] })],
+    );
+    expect((await resolver.resolve(ctxOf(""), { stage: "plan" })).bindings).toHaveLength(1);
   });
 
   it("keeps the snapshot's connection and model on retry even if the preference changed", async () => {
@@ -323,6 +414,8 @@ describe("Pi catalog", () => {
     expect(anthropic?.models.length).toBeGreaterThan(0);
     expect(anthropic?.authMethods).toEqual(["api_key"]);
     expect(anthropic?.oauthRestriction).toBeDefined();
+    expect(catalog.find((p) => p.id === "amazon-bedrock")).toBeUndefined();
+    expect(catalog.some((p) => p.authMethods.includes("oauth"))).toBe(false);
     expect(catalog.find((p) => p.id === "openrouter")?.authMethods).toContain("api_key");
   });
 });

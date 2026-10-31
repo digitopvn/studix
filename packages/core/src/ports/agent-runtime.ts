@@ -1,3 +1,4 @@
+import type { ResolvedModelSnapshot } from "../entities/provider-connection.ts";
 import type { TenantContext } from "../tenant.ts";
 
 export interface AgentToolDefinition {
@@ -28,6 +29,13 @@ export interface AgentRunResult {
   inputTokens: number;
   outputTokens: number;
   model?: string;
+  /** Which stored connection actually ran the task, so the job layer can record it and pin retries to it. */
+  resolved?: {
+    connectionId: string;
+    snapshot?: ResolvedModelSnapshot;
+    /** True when a consented fallback ran instead of the primary choice. */
+    usedFallback: boolean;
+  };
 }
 
 /** Bounded agent execution boundary (e.g. Pi). Must honour budget, turns, deadline and signal. */

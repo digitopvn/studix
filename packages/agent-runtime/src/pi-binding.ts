@@ -11,6 +11,7 @@ import {
   type TenantContext,
 } from "@studix/core";
 import { StudixError } from "@studix/shared";
+import { isRuntimeKeyProvider } from "./pi-catalog.ts";
 
 /** A custom or proxied endpoint for a provider (OpenAI-compatible gateways, self-hosted models). */
 export interface PiEndpoint {
@@ -88,7 +89,9 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
         ? { ...ctx, actor: { type: "user", id: userId, role: "viewer" } }
         : { ...ctx, actor: { type: "system", id: ctx.actor.id } };
 
-      const bind = async (choice: ModelChoice): Promise<PiRunBinding> => {
+      const bind = async (
+        choice: ModelChoice,
+      ): Promise<{ binding: PiRunBinding; connection: ProviderConnection }> => {
         const connection = await options.connections.get(lookup, choice.connectionId);
         if (!connection || !connection.secretRef) {
           throw reconnect("The selected provider connection no longer exists", {
@@ -116,21 +119,49 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
             details: { connectionProvider: connection.provider, modelProvider: choice.provider },
           });
         }
-        const apiKey = await options.vault.reveal(lookup, connection.secretRef);
+        if (connection.authMethod !== "api_key") {
+          throw new StudixError("FORBIDDEN", "Only API key connections can run on the Pi runtime", {
+            retryable: false,
+            suggestedAction: "Connect this provider with an API key in Settings > AI & Models.",
+          });
+        }
         const endpoint = options.endpointFor?.(connection);
+        if (!endpoint && !isRuntimeKeyProvider(connection.provider)) {
+          throw new StudixError("FORBIDDEN", `${connection.provider} is not supported on the Pi runtime`, {
+            retryable: false,
+            suggestedAction: "Choose a provider that authenticates with an API key.",
+          });
+        }
+        const apiKey = await options.vault.reveal(lookup, connection.secretRef);
+        // An empty key would make the SDK fall back to the server's own environment credentials.
+        if (!apiKey.trim())
+          throw reconnect("The stored provider key is empty", { connectionId: connection.id });
         return {
-          provider: connection.provider,
-          modelId: choice.modelId,
-          apiKey,
-          connectionId: connection.id,
-          ...(endpoint ? { endpoint } : {}),
+          connection,
+          binding: {
+            provider: connection.provider,
+            modelId: choice.modelId,
+            apiKey,
+            connectionId: connection.id,
+            ...(endpoint ? { endpoint } : {}),
+          },
         };
       };
+      /** Fallbacks are optional: an unusable one is skipped rather than failing a healthy primary. */
+      const bindFallbacks = async (choices: ModelChoice[]): Promise<PiRunBinding[]> =>
+        (await Promise.allSettled(choices.map(bind))).flatMap((r) =>
+          r.status === "fulfilled" ? [r.value.binding] : [],
+        );
 
       const snapshot = options.snapshot;
       if (snapshot) {
-        const primary = await bind(snapshot);
-        const fallbacks = snapshot.allowFallback ? await Promise.all(snapshot.fallbacks.map(bind)) : [];
+        if (snapshot.runtime !== runtime || snapshot.stage !== request.stage) {
+          throw new StudixError("VALIDATION", "The job snapshot belongs to a different runtime or stage", {
+            retryable: false,
+          });
+        }
+        const { binding: primary } = await bind(snapshot);
+        const fallbacks = snapshot.allowFallback ? await bindFallbacks(snapshot.fallbacks) : [];
         return { bindings: [primary, ...fallbacks], snapshot };
       }
 
@@ -143,9 +174,8 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
         });
       }
       const { preference, source } = selected;
-      const primary = await bind(preference);
-      const connection = (await options.connections.get(lookup, preference.connectionId))!;
-      const fallbacks = preference.allowFallback ? await Promise.all(preference.fallbacks.map(bind)) : [];
+      const { binding: primary, connection } = await bind(preference);
+      const fallbacks = preference.allowFallback ? await bindFallbacks(preference.fallbacks) : [];
       return {
         bindings: [primary, ...fallbacks],
         snapshot: {
