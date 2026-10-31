@@ -25,11 +25,13 @@ const job = {
 
 const GRACE_MS = 2_000;
 
+const cancelRequested = { value: false };
+
 function fakeQueue() {
   const settled = () => Promise.resolve(true);
   return {
-    leaseMs: 600_000,
-    heartbeat: vi.fn(async () => ({ held: true, cancelRequested: false })),
+    leaseMs: 60_000,
+    heartbeat: vi.fn(async () => ({ held: true, cancelRequested: cancelRequested.value })),
     updateProgress: vi.fn(settled),
     writeStage: vi.fn(settled),
     recordUsage: vi.fn(settled),
@@ -69,7 +71,7 @@ function executorFor(queue: WorkerJobQueue, workflow: WorkflowDefinition) {
     ledger: { record: async () => ({}), jobCostCents: async () => 0 } as unknown as JobExecutorDeps["ledger"],
     clock: { now: () => new Date() },
     logger: createLogger({}, { level: "error", write: () => {} }),
-    heartbeatIntervalMs: 60_000,
+    heartbeatIntervalMs: 1_000,
     abortGraceMs: GRACE_MS,
   });
 }
@@ -83,6 +85,7 @@ function billed(queue: ReturnType<typeof fakeQueue>): string[] {
 }
 
 beforeEach(() => {
+  cancelRequested.value = false;
   vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
 });
 afterEach(() => {
@@ -102,9 +105,9 @@ describe("spend of a stage aborted by cancel or deadline", () => {
     const outcome = executorFor(queue, workflow).execute(job, "w1", shutdown.signal);
 
     await vi.advanceTimersByTimeAsync(10);
-    shutdown.abort(new StudixError("CANCELLED", "cancelled by user"));
-    await vi.advanceTimersByTimeAsync(10);
-    await outcome;
+    cancelRequested.value = true;
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(await outcome).toBe("cancelled");
 
     expect(billed(queue)).toEqual(["3"]);
   });
@@ -120,10 +123,11 @@ describe("spend of a stage aborted by cancel or deadline", () => {
     const shutdown = new AbortController();
     const outcome = executorFor(queue, workflow).execute(job, "w1", shutdown.signal);
     await vi.advanceTimersByTimeAsync(10);
-    shutdown.abort(new StudixError("CANCELLED", "cancelled by user"));
+    cancelRequested.value = true;
+    await vi.advanceTimersByTimeAsync(1_100);
     provider.calls[0]?.release();
     await vi.advanceTimersByTimeAsync(10);
-    await outcome;
+    expect(await outcome).toBe("cancelled");
 
     expect(billed(queue)).toEqual(["3", "3"]);
   });
@@ -139,12 +143,41 @@ describe("spend of a stage aborted by cancel or deadline", () => {
         finished = true;
       });
     await vi.advanceTimersByTimeAsync(10);
-    shutdown.abort(new StudixError("CANCELLED", "cancelled by user"));
-    await vi.advanceTimersByTimeAsync(GRACE_MS - 100);
+    cancelRequested.value = true;
+    await vi.advanceTimersByTimeAsync(1_000 + GRACE_MS - 100);
     expect(finished).toBe(false);
     await vi.advanceTimersByTimeAsync(200);
     await outcome;
     expect(finished).toBe(true);
     expect(billed(queue)).toEqual([]);
+  });
+
+  it("bills a stage that reports its spend after the job deadline", async () => {
+    const queue = fakeQueue();
+    const workflow = singleStage(async (stage) => {
+      await new Promise((resolve) => stage.signal.addEventListener("abort", resolve, { once: true }));
+      throw new StageFailedAfterSpend(new StudixError("TIMEOUT", "deadline"), [
+        { item: "first", kind: "media", quantity: 1, unit: "image", costCents: 3 },
+      ]);
+    });
+    const outcome = executorFor(queue, workflow).execute(
+      { ...job, deadlineAt: new Date(Date.now() + 500) } as Job,
+      "w1",
+      new AbortController().signal,
+    );
+    await vi.advanceTimersByTimeAsync(600);
+    await outcome;
+    expect(billed(queue)).toEqual(["3"]);
+  });
+
+  it("does not wait for a stage when the worker shuts down", async () => {
+    const queue = fakeQueue();
+    const workflow = singleStage(() => new Promise(() => {}));
+    const shutdown = new AbortController();
+    const outcome = executorFor(queue, workflow).execute(job, "w1", shutdown.signal);
+    await vi.advanceTimersByTimeAsync(10);
+    shutdown.abort();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await outcome).toBe("released");
   });
 });

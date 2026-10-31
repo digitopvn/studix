@@ -50,7 +50,7 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
   logger: Logger;
   /** Minimum time between persisted in-stage progress updates. */
   progressIntervalMs?: number;
-  /** How long a stage may settle after the job aborts (cancel, deadline) so its paid calls are billed. */
+  /** How long a stage may settle after the job is cancelled or hits its deadline (capped at half the lease) so its paid calls are billed. */
   abortGraceMs?: number;
   /** Tenant-wide memo of stage outputs by cacheKey; without it `cacheKey` is ignored. */
   stageCache?: StageCacheRepository;
@@ -168,9 +168,11 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal, graceMs: number)
   return new Promise<T>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const onAbort = () => {
-      // A lost lease fences every write, so waiting could not bill anything.
-      const leaseLost = signal.reason instanceof StudixError && signal.reason.code === "CONFLICT";
-      if (leaseLost || graceMs <= 0) return reject(signal.reason);
+      // Only a cancel or the deadline waits: a shutdown or lost lease releases the job, and a re-run
+      // would collide with the attempt-keyed usage lines this attempt recorded.
+      const code = signal.reason instanceof StudixError ? signal.reason.code : undefined;
+      const waits = code === "CANCELLED" || code === "TIMEOUT";
+      if (!waits || !(graceMs > 0)) return reject(signal.reason);
       timer = setTimeout(() => reject(signal.reason), graceMs);
     };
     signal.addEventListener("abort", onAbort, { once: true });
@@ -458,7 +460,11 @@ export async function runStages(
 
     let output: StageOutput;
     try {
-      const result = await untilAborted(stage.run(sctx), signal, deps.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS);
+      const result = await untilAborted(
+        stage.run(sctx),
+        signal,
+        Math.min(deps.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS, queue.leaseMs / 2),
+      );
       // The stage finished while the job was aborting: its result is dropped but its paid calls are billed.
       if (signal.aborted && result.usage?.length)
         throw new StageFailedAfterSpend(toStudixError(signal.reason), [...result.usage]);
