@@ -90,7 +90,7 @@ is in [ROADMAP.md](ROADMAP.md#p0-done-means).
 ## What P0 does not deliver
 
 - Marketing redesign or a full video editor.
-- Every provider and media modality; Multix is an adapter shell with a contract.
+- Every provider and media modality; P0 shipped Multix as an adapter shell with a contract (real media wiring followed in #41).
 - Pricing, checkout or credit conversion.
 - GPU execution or self-hosted generation models.
 - Full social publishing connectors.

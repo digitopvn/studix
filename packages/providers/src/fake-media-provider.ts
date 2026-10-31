@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   MediaCapability,
@@ -7,6 +7,7 @@ import type {
   MediaGenerationResult,
   MediaKind,
   MediaProvider,
+  MediaResumeRequest,
   TenantContext,
 } from "@studix/core";
 import { type Clock, StudixError, systemClock } from "@studix/shared";
@@ -16,7 +17,12 @@ import {
   assertWithinBudget,
   throwIfAborted,
 } from "./media-request-guards.ts";
-import { encodeGradientPng, encodeToneWav, type Rgb } from "./placeholder-media-encoders.ts";
+import {
+  encodeGradientAvi,
+  encodeGradientPng,
+  encodeToneWav,
+  type Rgb,
+} from "./placeholder-media-encoders.ts";
 
 export const FAKE_PROVIDER_ID = "fake";
 export const FAKE_MODEL = "fake-placeholder-v1";
@@ -24,13 +30,28 @@ export const FAKE_MODEL = "fake-placeholder-v1";
 const MIN_SIDE = 16;
 const MAX_SIDE = 2048;
 const DEFAULT_LONG_SIDE = 512;
-const MIN_AUDIO_MS = 100;
-const MAX_AUDIO_MS = 30_000;
-const DEFAULT_AUDIO_MS = 2_000;
-const AUDIO_KINDS: readonly MediaKind[] = ["audio", "voice", "music"];
+/** Placeholder video is uncompressed, so it stays small. */
+const VIDEO_LONG_SIDE = 160;
+const VIDEO_FPS = 12;
+const MIN_MEDIA_MS = 100;
+const MAX_MEDIA_MS = 30_000;
+const DEFAULT_MEDIA_MS = 2_000;
+const AUDIO_KINDS: readonly MediaKind[] = ["audio", "voice", "music", "sfx"];
+const FAKE_KINDS: readonly MediaKind[] = ["image", "video", ...AUDIO_KINDS, "upscale"];
+
+type EstimateRequest = Omit<MediaGenerationRequest, "workDir" | "signal" | "idempotencyKey">;
+
+export interface FakeMediaPricing {
+  /** What estimateCostCents returns (default 0). */
+  estimateCents?: (request: EstimateRequest) => number;
+  /** What the "receipt" charges; undefined means no receipt, so the result falls back to the estimate. */
+  chargeCents?: (request: MediaGenerationRequest) => number | undefined;
+}
 
 export interface FakeMediaProviderOptions {
   clock?: Clock;
+  /** Simulated prices, for exercising billing policies; by default everything costs 0 with a receipt. */
+  pricing?: FakeMediaPricing;
 }
 
 function intParam(
@@ -47,8 +68,8 @@ function intParam(
   return value;
 }
 
-/** Explicit width/height win; otherwise the aspect ratio's long side is 512px. Both sides stay even. */
-function imageSize(params: Record<string, unknown>): { width: number; height: number } {
+/** Explicit width/height win; otherwise the aspect ratio sets the shape at the given long side. Both even. */
+function frameSize(params: Record<string, unknown>, longSide: number): { width: number; height: number } {
   const width = intParam(params, "width", MIN_SIDE, MAX_SIDE);
   const height = intParam(params, "height", MIN_SIDE, MAX_SIDE);
   if (width !== undefined || height !== undefined) {
@@ -58,14 +79,14 @@ function imageSize(params: Record<string, unknown>): { width: number; height: nu
     return { width, height };
   }
   const ratio = params.aspectRatio;
-  if (ratio === undefined) return { width: DEFAULT_LONG_SIDE, height: DEFAULT_LONG_SIDE };
+  if (ratio === undefined) return { width: longSide, height: longSide };
   const match = typeof ratio === "string" ? /^(\d{1,2}):(\d{1,2})$/.exec(ratio) : null;
   const w = Number(match?.[1]);
   const h = Number(match?.[2]);
   if (!match || w === 0 || h === 0) {
     throw new StudixError("VALIDATION", 'params.aspectRatio must look like "16:9"');
   }
-  const scale = DEFAULT_LONG_SIDE / Math.max(w, h);
+  const scale = longSide / Math.max(w, h);
   const even = (n: number) => Math.max(MIN_SIDE, Math.round((n * scale) / 2) * 2);
   return { width: even(w), height: even(h) };
 }
@@ -74,45 +95,81 @@ function color(digest: Buffer, offset: number): Rgb {
   return [digest[offset]!, digest[offset + 1]!, digest[offset + 2]!];
 }
 
+type Shape = { type: "image" | "video" | "audio"; width?: number; height?: number; durationMs?: number };
+
+/** What a request renders as: upscale scales the input's placeholder size by params.scale. */
+function shapeOf(request: MediaGenerationRequest): { shape: Shape; input: string | null } {
+  const params = request.params ?? {};
+  if (AUDIO_KINDS.includes(request.kind)) {
+    const durationMs = intParam(params, "durationMs", MIN_MEDIA_MS, MAX_MEDIA_MS) ?? DEFAULT_MEDIA_MS;
+    return { shape: { type: "audio", durationMs }, input: null };
+  }
+  if (request.kind === "upscale") {
+    const image = params.image;
+    const video = params.video;
+    const input = image ?? video;
+    if ((image === undefined) === (video === undefined) || typeof input !== "string" || input === "") {
+      throw new StudixError("VALIDATION", "upscale needs exactly one of params.image or params.video");
+    }
+    const scale = intParam(params, "scale", 1, 4) ?? 2;
+    const isVideo = video !== undefined;
+    const base = frameSize(params, (isVideo ? VIDEO_LONG_SIDE : DEFAULT_LONG_SIDE) / 2);
+    const width = Math.min(MAX_SIDE, base.width * scale);
+    const height = Math.min(MAX_SIDE, base.height * scale);
+    return isVideo
+      ? { shape: { type: "video", width, height, durationMs: DEFAULT_MEDIA_MS }, input }
+      : { shape: { type: "image", width, height }, input };
+  }
+  if (request.kind === "video") {
+    const size = frameSize(params, VIDEO_LONG_SIDE);
+    const durationMs = intParam(params, "durationMs", MIN_MEDIA_MS, MAX_MEDIA_MS) ?? DEFAULT_MEDIA_MS;
+    return { shape: { type: "video", ...size, durationMs }, input: null };
+  }
+  return { shape: { type: "image", ...frameSize(params, DEFAULT_LONG_SIDE) }, input: null };
+}
+
 /**
- * Deterministic, offline MediaProvider for tests, demos and CI. Images are gradient PNGs and audio is a
- * sine tone WAV, both derived only from the request (kind, prompt, model, seed, size), so the same request
- * always yields byte-identical files. It never touches the network and always costs 0 cents.
- * It does not claim video: placeholders must not stand in for modalities nothing can render.
+ * Deterministic, offline MediaProvider for tests, demos and CI. It covers every kind the Multix provider
+ * serves: images are gradient PNGs, video an uncompressed gradient AVI, audio a sine tone WAV, and upscale
+ * a larger placeholder of the input's type. Output bytes derive only from the request, so the same request
+ * always yields byte-identical files. It never touches the network. Each result carries a fake job id that
+ * resume() collects again, as a real async provider would after a worker restart.
  */
 export class FakeMediaProvider implements MediaProvider {
   readonly id = FAKE_PROVIDER_ID;
   private readonly clock: Clock;
+  private readonly pricing: FakeMediaPricing;
+  private readonly jobs = new Map<string, { workspaceId: string; result: MediaGenerationResult }>();
 
   constructor(options: FakeMediaProviderOptions = {}) {
     this.clock = options.clock ?? systemClock;
+    this.pricing = options.pricing ?? {};
   }
 
   async capabilities(): Promise<MediaCapability[]> {
-    return [
-      { kind: "image", models: [FAKE_MODEL], outputMimes: ["image/png"] },
-      ...AUDIO_KINDS.map((kind) => ({
-        kind,
-        models: [FAKE_MODEL],
-        maxDurationMs: MAX_AUDIO_MS,
-        outputMimes: ["audio/wav"],
-      })),
-    ];
+    return FAKE_KINDS.map((kind): MediaCapability => {
+      if (kind === "image") return { kind, models: [FAKE_MODEL], outputMimes: ["image/png"] };
+      if (kind === "video") {
+        return { kind, models: [FAKE_MODEL], maxDurationMs: MAX_MEDIA_MS, outputMimes: ["video/x-msvideo"] };
+      }
+      if (kind === "upscale")
+        return { kind, models: [FAKE_MODEL], outputMimes: ["image/png", "video/x-msvideo"] };
+      return { kind, models: [FAKE_MODEL], maxDurationMs: MAX_MEDIA_MS, outputMimes: ["audio/wav"] };
+    });
   }
 
-  async estimateCostCents(
-    request: Omit<MediaGenerationRequest, "workDir" | "signal" | "idempotencyKey">,
-  ): Promise<number> {
+  async estimateCostCents(request: EstimateRequest): Promise<number> {
     assertEstimateRequest(request);
     this.assertSupported(request.kind, request.model);
-    return 0;
+    return this.pricing.estimateCents?.(request) ?? 0;
   }
 
-  async generate(_ctx: TenantContext, request: MediaGenerationRequest): Promise<MediaGenerationResult> {
+  async generate(ctx: TenantContext, request: MediaGenerationRequest): Promise<MediaGenerationResult> {
     const started = this.clock.now().getTime();
     assertGenerationRequest(request);
     this.assertSupported(request.kind, request.model);
-    assertWithinBudget(0, request.maxCostCents, this.id);
+    const estimate = this.pricing.estimateCents?.(request) ?? 0;
+    assertWithinBudget(estimate, request.maxCostCents, this.id);
     throwIfAborted(request.signal);
 
     const params = request.params ?? {};
@@ -120,42 +177,70 @@ export class FakeMediaProvider implements MediaProvider {
     if (seed !== null && typeof seed !== "string" && typeof seed !== "number") {
       throw new StudixError("VALIDATION", "params.seed must be a string or number");
     }
-    const isImage = request.kind === "image";
-    const size = isImage ? imageSize(params) : undefined;
-    const durationMs = isImage
-      ? undefined
-      : (intParam(params, "durationMs", MIN_AUDIO_MS, MAX_AUDIO_MS) ?? DEFAULT_AUDIO_MS);
+    const { shape, input } = shapeOf(request);
     const digest = createHash("sha256")
-      .update(
-        JSON.stringify([request.kind, FAKE_MODEL, request.prompt, seed, size ?? null, durationMs ?? null]),
-      )
+      .update(JSON.stringify([request.kind, FAKE_MODEL, request.prompt, seed, shape, input]))
       .digest();
-
-    const bytes = size
-      ? encodeGradientPng(size.width, size.height, color(digest, 0), color(digest, 3))
-      : encodeToneWav(durationMs!, 220 + (digest.readUInt16BE(6) % 440));
-    const filePath = join(
-      request.workDir,
-      `${this.id}-${request.kind}-${digest.toString("hex").slice(0, 16)}.${isImage ? "png" : "wav"}`,
-    );
+    const from = color(digest, 0);
+    const to = color(digest, 3);
+    const [bytes, ext, mime] =
+      shape.type === "image"
+        ? [encodeGradientPng(shape.width!, shape.height!, from, to), "png", "image/png"]
+        : shape.type === "video"
+          ? [
+              encodeGradientAvi(
+                shape.width!,
+                shape.height!,
+                Math.max(1, Math.round((shape.durationMs! * VIDEO_FPS) / 1000)),
+                VIDEO_FPS,
+                from,
+                to,
+              ),
+              "avi",
+              "video/x-msvideo",
+            ]
+          : [encodeToneWav(shape.durationMs!, 220 + (digest.readUInt16BE(6) % 440)), "wav", "audio/wav"];
+    const hex = digest.toString("hex").slice(0, 16);
+    const filePath = join(request.workDir, `${this.id}-${request.kind}-${hex}.${ext}`);
     await this.writeAtomic(filePath, bytes);
     throwIfAborted(request.signal);
 
-    return {
+    const charge = this.pricing.chargeCents?.(request);
+    const result: MediaGenerationResult = {
       outputs: [
-        size
-          ? { filePath, mime: "image/png", width: size.width, height: size.height }
-          : { filePath, mime: "audio/wav", durationMs },
+        {
+          filePath,
+          mime,
+          ...(shape.width !== undefined ? { width: shape.width, height: shape.height } : {}),
+          ...(shape.durationMs !== undefined ? { durationMs: shape.durationMs } : {}),
+        },
       ],
       provider: this.id,
       model: FAKE_MODEL,
-      costCents: 0,
+      costCents: charge ?? estimate,
+      costSource: charge === undefined && this.pricing.chargeCents ? "estimate" : "receipt",
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
+      job: { provider: this.id, id: `fake_${hex}` },
     };
+    this.jobs.set(result.job!.id, { workspaceId: ctx.workspaceId, result });
+    return structuredClone(result);
+  }
+
+  /** Collect a job generate() already ran; unknown ids (or another workspace's) are NOT_FOUND. */
+  async resume(ctx: TenantContext, request: MediaResumeRequest): Promise<MediaGenerationResult> {
+    throwIfAborted(request.signal);
+    const job = request.job.provider === this.id ? this.jobs.get(request.job.id) : undefined;
+    if (!job || job.workspaceId !== ctx.workspaceId || job.result.outputs[0] === undefined) {
+      throw new StudixError("NOT_FOUND", `Unknown fake job "${request.job.id}"`);
+    }
+    if (!(await stat(job.result.outputs[0].filePath).catch(() => null))) {
+      throw new StudixError("NOT_FOUND", `The outputs of fake job "${request.job.id}" are gone`);
+    }
+    return { ...structuredClone(job.result), latencyMs: 0 };
   }
 
   private assertSupported(kind: MediaKind, model: string | undefined): void {
-    if (kind !== "image" && !AUDIO_KINDS.includes(kind)) {
+    if (!FAKE_KINDS.includes(kind)) {
       throw new StudixError("UNAVAILABLE", `The fake provider does not generate ${kind}`, {
         retryable: false,
       });

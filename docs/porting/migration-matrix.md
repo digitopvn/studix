@@ -63,11 +63,11 @@ storyboard, lipsync (xem [phần cuối](#primitive-chung-character-continuity-s
 | AC-16 | `build-scene.sh` (Bash, `npx -y esbuild`)                                                 | loại bỏ        |       | #47  | Viết lại build đa nền tảng, pin trong lockfile                                         |
 | AC-17 | Layout dự án dựa trên file và fetch CDN lúc init                                          | loại bỏ        |       | #47  | Thay bằng storage và asset pin có checksum trong image                                 |
 | AC-18 | `generate-media-via-multix.py` (guard, job, ledger)                                       | adapter        |       | #41  | Guard và ledger thành logic của adapter và `@studix/billing`                           |
-| AC-19 | Quy tắc ngân sách: trần ở G0, dừng khi khoản ngoài kế hoạch vượt 20%, probe model chưa đo | core           |       | #41  | Phối hợp fencing của #40                                                               |
+| AC-19 | Quy tắc ngân sách: trần ở G0, dừng khi khoản ngoài kế hoạch vượt 20%, probe model chưa đo | core           |       | #41  | Probe trước batch, dừng khi lệch 20%: `runMediaBatchWithProbe`; nối stage sau #40      |
 | AC-20 | `engines.json` (role → adapter)                                                           | core           |       | #41  | Schema vào core; số đo GPU là dữ liệu cần review                                       |
 | AC-21 | Giá trong `price-table.json`                                                              | human review   |       | #41  | Có khuyến mãi hết hạn 2026-11-12; adapter dùng catalog sống                            |
 | AC-22 | `telemetry_trace_and_ledger.py` (trace, ledger)                                           | core           |       | #41  | Trace vào observability, ledger vào billing                                            |
-| AC-23 | Đọc key từ `~/.multix/.env`                                                               | loại bỏ        |       | #41  | Credential chỉ qua `secretRef` của workspace                                           |
+| AC-23 | Đọc key từ `~/.multix/.env`                                                               | loại bỏ        |       | #41  | Adapter đặt `MULTIX_DISABLE_HOME_ENV=1`; key qua env worker, chưa qua `secretRef`      |
 | AC-24 | `generate-video-via-comfyui.py`, `comfyui-workflows/`                                     | adapter        |       | #41  | Provider local tùy chọn, cần GPU                                                       |
 | AC-25 | `make-voice-variants.py`                                                                  | adapter        |       | #41  |                                                                                        |
 | AC-26 | `draw-images-via-codex.py` (workspace-write)                                              | human review   |       | #46  | Ranh giới tin cậy của agent ghi file                                                   |
@@ -121,7 +121,7 @@ storyboard, lipsync (xem [phần cuối](#primitive-chung-character-continuity-s
 | AV-04 | Storyboard START/END của `create-storyboard.cjs`              | human review         | #43  | Chọn một contract storyboard cùng FM-06               |
 | AV-05 | `generate-video.cjs`                                          | adapter              | #41  | Thêm điều kiện frame                                  |
 | AV-06 | `veo-prompt-guide.md`, `audio-directive-guide.md`             | adapter              | #41  | Tri thức riêng provider                               |
-| AV-07 | `npx -y @mrgoonie/multix` lúc chạy                            | loại bỏ              | #41  | Multix pin trong image worker                         |
+| AV-07 | `npx -y @mrgoonie/multix` lúc chạy                            | loại bỏ              | #41  | Image worker build multix ở commit `a2507d55`         |
 | AV-08 | `extract-captions.cjs` (SRT, VTT)                             | core                 | #42  |                                                       |
 | AV-09 | `optimize-for-platform.cjs`                                   | adapter              | #42  | Sửa shell injection: argv, không shell                |
 | AV-10 | `analyze-video.cjs`                                           | adapter              | #44  | Kết quả là evidence                                   |

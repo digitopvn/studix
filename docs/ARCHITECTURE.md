@@ -31,7 +31,7 @@ flowchart TB
     dr["@studix/decision-routing<br/>DecisionRouter (Jev)"]
     ar["@studix/agent-runtime<br/>(Pi boundary)"]
     rd["@studix/renderers<br/>HyperFrames + FFmpeg"]
-    pv["@studix/providers<br/>MediaProvider, Multix shell"]
+    pv["@studix/providers<br/>MediaProvider, Multix, fake"]
     wf --> dr & ar & rd & pv
     wf --> gw2["@studix/mcp-gateway"]
   end
@@ -67,7 +67,7 @@ and export `./src/index.ts`.
 | `packages/workflow`         | Postgres job queue, typed stages (input/output schemas, `cacheKey`), stage cache reuse, scheduler, crash recovery, budget checks, approval gate                                                                      | Call a model or provider SDK directly                               |
 | `packages/agent-runtime`    | `AgentRuntime` boundary for Pi and the Claude Agent SDK ([ADR 0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)), plus fakes                                                                           | Run outside the worker role                                         |
 | `packages/decision-routing` | `DecisionRouter`, `DecisionProviderAdapter`, OpenRouter, TypeSafeAI, Rules and Fake adapters, shared contract suite                                                                                                  | Leak provider payloads to callers                                   |
-| `packages/providers`        | `MediaProvider` contract, Multix shell, fake provider                                                                                                                                                                | Claim modalities that are not wired end to end                      |
+| `packages/providers`        | `MediaProvider` contract, Multix adapter over the multix CLI, fake provider, job journal and probe-before-batch policy                                                                                               | Claim kinds whose vendor key is not ready                           |
 | `packages/renderers`        | `RendererAdapter`: HyperFrames first, FFmpeg finishing                                                                                                                                                               | Be imported by `core` or `video-ir`                                 |
 | `packages/skills`           | Pack registry: versioned workflow templates and stage templates per genre pack (brand-intro first)                                                                                                                   | Hold tenant data                                                    |
 | `packages/mcp-gateway`      | Server registry, tool catalog, policy, URL policy, MCP client adapter, execution, invocation trace                                                                                                                   | Forward the inbound client credential downstream                    |

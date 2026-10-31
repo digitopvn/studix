@@ -21,8 +21,17 @@ Marketing runs on the Digitop Cloudflare account (`digitop.vn@gmail.com`).
 ## The image
 
 Root `Dockerfile`, one image for both roles. It contains Node, Chromium, FFmpeg
-and HyperFrames because the worker renders. The app role does not invoke them;
-shipping one image keeps build, pinning and rollback to a single artifact.
+and HyperFrames because the worker renders, and the multix CLI for paid media
+generation. The app role does not invoke them; shipping one image keeps build,
+pinning and rollback to a single artifact.
+
+multix is built in a separate stage from a pinned commit of
+`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `a2507d55`, which reports
+1.22.0-beta.3). The stage fails if the fetched HEAD is not that commit. Risk:
+no npm release contains the Sume commands yet (npm 1.24.0 does not), so the
+image cannot pin a registry version with a lockfile integrity hash. When a
+release with Sume ships, switch the stage to `npm install -g
+@mrgoonie/multix@<version>` and re-run the live smoke test.
 
 ## Configuration
 
@@ -63,6 +72,25 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
 when the run ends; the worker creates that directory at startup and removes
 sandboxes left by a crashed worker once they are older than the run timeout.
+
+Paid media runs through the Multix provider (`packages/providers`), which is
+off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
+video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
+music and SFX on ElevenLabs, Fish or MiniMax. The worker passes only
+`SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`, `FISH_API_KEY` and
+`MINIMAX_API_KEY` (plus PATH, HOME, temp and proxy variables) to the CLI, and
+sets `MULTIX_DISABLE_HOME_ENV=1` so `~/.multix/.env` is never read on servers
+(`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A kind is
+advertised only when `multix check` reports its vendor key. Default models per
+role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`;
+`MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
+job. Every paid call is estimated first and refused above the request's cap.
+Sume jobs are submitted with an idempotency key and collected with `status
+--wait --download`, so a retry resumes the paid job by its id. The job journal
+is in memory per worker process until the workflow stores it with the stage
+checkpoint; until then a worker restart in the middle of a job relies on the
+Sume idempotency key. Atlas Cloud has no idempotency key, so a crash between
+submit and the journal write can pay twice for one upscale (about $0.01).
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
