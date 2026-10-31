@@ -163,14 +163,32 @@ function parseWarnings(raw: unknown): string[] {
 
 /** What Sume itself says it captured for a job, in cents. */
 const SUME_CAPTURED_CENTS = "data.job.usage_summary.captured_usd_cents";
+const SUME_USAGE_PREFIX = "data.job.usage_summary.";
+
+/**
+ * Sume can mark a job completed before it has captured the reserved charge, so `captured` may still read 0.
+ * What it will keep is `reserved - refunded - released`; the receipt is never below that. Callers only read
+ * a receipt after a successful run that produced outputs, so a failed job's reservation is never billed.
+ */
+function sumeKeptCents(metrics: Json): number | undefined {
+  const reserved = num(metrics[`${SUME_USAGE_PREFIX}reserved_usd_cents`]);
+  if (reserved === undefined) return undefined;
+  const refunded = num(metrics[`${SUME_USAGE_PREFIX}refunded_usd_cents`]) ?? 0;
+  const released = num(metrics[`${SUME_USAGE_PREFIX}released_usd_cents`]) ?? 0;
+  return Math.max(0, reserved - refunded - released);
+}
 
 /**
  * A charge the provider reported; a run that sent no request reports none. Sume's own captured amount
  * wins over multix's `cost_usd`, which has been seen to grow with every status poll of the same job.
  */
 function parseReceipt(envelope: Json): number | undefined {
-  const captured = num(obj(obj(envelope.usage).metrics)[SUME_CAPTURED_CENTS]);
-  if (captured !== undefined) return captured / 100;
+  const metrics = obj(obj(envelope.usage).metrics);
+  const captured = num(metrics[SUME_CAPTURED_CENTS]);
+  if (captured !== undefined) {
+    const kept = sumeKeptCents(metrics) ?? 0;
+    return Math.max(captured, kept) / 100;
+  }
   const cost = obj(envelope.cost);
   if (cost.actual_source !== "no_request") {
     const actual = num(cost.actual_usd) ?? num(obj(cost.provider_reported).cost_usd);
