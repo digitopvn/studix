@@ -236,7 +236,14 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           leaseExpiresAt: null,
           error: { code: "CANCELLED", message: reason ?? "cancelled", retryable: false },
         })
-        .where(scoped(jobs, ctx, eq(jobs.id, jobId), inArray(jobs.status, ["queued", "waiting_approval"])))
+        .where(
+          scoped(
+            jobs,
+            ctx,
+            eq(jobs.id, jobId),
+            inArray(jobs.status, ["queued", "waiting_approval", "waiting_host"]),
+          ),
+        )
         .returning();
       if (stopped[0]) return toJob(stopped[0]);
       const flagged = await db

@@ -71,12 +71,14 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
     const failed = await queue.failExhaustedLeases();
     const resumed = await queue.resumeDecidedApprovals();
     const expired = await queue.failExpiredApprovals();
+    const hostExpired = await queue.expireHostHandoffs();
     lastContact = new Date();
-    if (failed || resumed || expired) {
+    if (failed || resumed || expired || hostExpired) {
       logger.info("queue sweep", {
         failedExhaustedLeases: failed,
         resumedApprovals: resumed,
         failedExpiredApprovals: expired,
+        expiredHostTasks: hostExpired,
       });
     }
   };

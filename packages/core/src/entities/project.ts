@@ -36,5 +36,9 @@ export interface ProjectVersion extends TenantOwned {
   parentVersionId?: string;
   /** Patch that produced this version from its parent, when source is "patch". */
   patch?: VideoIRPatch;
+  /** Client idempotency key of the request that created the version; unique per project. */
+  idempotencyKey?: string;
+  /** Feedback comment the version was created for, so a request that stopped midway can be completed. */
+  feedbackId?: string;
   createdBy: ActorRef;
 }

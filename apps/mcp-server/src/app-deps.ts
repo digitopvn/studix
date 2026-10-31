@@ -1,6 +1,7 @@
 import type { ApiKeyService, ProviderConnectionService } from "@studix/auth";
 import type {
   ActivityRepository,
+  AgentHandoffService,
   JobRepository,
   RenderRepository,
   StudioService,
@@ -63,6 +64,8 @@ export interface AppDeps {
   readiness?: ReadinessCheck[];
   /** Workflow templates listed by `studix_inspect`. */
   skills?: SkillSummary[];
+  /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
+  agentHandoffs?: AgentHandoffService;
 
   /** Built dashboard directory; when missing, browser navigations get a 503 page. */
   dashboardDist?: string;

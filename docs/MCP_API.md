@@ -137,6 +137,16 @@ Behavior notes:
 - `baseVersionId` is optional. When it is not the current version, the call
   fails with `CONFLICT`, so feedback is never applied to a newer version than
   the one it was written for.
+- With an `idempotencyKey`, `studix_feedback` is safe to retry. The key is
+  stored on the new version together with the comment id, so a call that
+  stopped after the version was stored is completed by the retry (comment,
+  revisions, job), even when `baseVersionId` is no longer current. Retries,
+  including concurrent ones, return the same version, comment and job, with
+  `replayed: true`.
+- A comment without a patch creates no version or job, so its key is stored on
+  the comment itself (unique per project). A retry returns the stored comment
+  with `replayed: true`; the same key with a different comment or with a patch
+  is `CONFLICT`.
 - `studix_render` renders a stored version, and that version becomes current.
   Both tools accept `idempotencyKey` and `budgetCents`. A budget above the
   approval threshold parks the job in `waiting_approval`.
@@ -148,6 +158,45 @@ Behavior notes:
   run only after the storyboard is `approved`. Otherwise the job fails with
   `APPROVAL_REQUIRED`. A patch that changes a shot puts that shot, its scene
   and the storyboard back in review. "Rendered" never means "approved".
+
+### Agent stage handoff tools
+
+A creative agent stage (for example `brand-intro.script`) runs in one of two
+modes under the same contract: the stage's input schema, output schema and
+limits ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)). The
+job payload's `agentMode` picks the mode. `harness` (the default) runs the
+Claude agent inside the worker under hard caps. `host` hands the stage to the
+MCP client's own agent: the job moves to `waiting_host`, and `studix_get_job`
+returns `next[]` pointing at `studix_list_agent_tasks`.
+
+| Tool                       | Arguments                               | Returns                                                                                           |
+| -------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `studix_list_agent_tasks`  | `jobId?`, `limit?`, `cursor?`           | Tasks waiting for a host output: `id`, `jobId`, `stage`, `attempt`, `status`, `expiresAt`.        |
+| `studix_get_agent_task`    | `taskId`                                | `instructions`, `input`, `outputSchema` (JSON Schema), `limits` and the `attempt` to submit with. |
+| `studix_submit_agent_task` | `taskId`, `attempt`, `output`, `usage?` | `{task, replayed}`. An accepted output requeues the job, which continues from the next stage.     |
+- `limits` holds `maxTurns`, `maxTokens`, `maxCostCents`, `timeoutMs` and
+  `tools`, the allowlist of tool names the agent may call. Only the time limit
+  is enforced in host mode: the task expires at `expiresAt`. The other limits
+  are the budget the harness would have; respect them.
+- `output` is checked against the stage's output schema, the same schema the
+  worker applies. A mismatch fails with `VALIDATION`, `details.reason:
+  "invalid_output"` and `details.issues`, and nothing is stored, so fix the
+  output and submit again. Secrets in the output are redacted before it is
+  stored.
+- Submissions are idempotent per attempt. The same output again returns
+  `replayed: true`; a different one is `CONFLICT` with
+  `details.reason: "already_submitted"`. A wrong `attempt` is `CONFLICT`
+  `stale_attempt`, a job that stopped waiting is `CONFLICT` `not_waiting`, and a
+  task past `expiresAt` is `TIMEOUT` `expired`.
+- `usage` (`turns`, `inputTokens`, `outputTokens`, `model`) is optional and is
+  recorded in the ledger with zero cost. Studix pays nothing for host work.
+- Reading needs `project:read`; submitting needs `project:write`. Other
+  workspaces' tasks are `NOT_FOUND`.
+- When a stage reaches a limit (any cap in the harness, the time limit in host
+  mode), the job does not fail. It parks in `waiting_approval` with an
+  `agent.overrun` approval. A person approving it in the dashboard grants one
+  more run with every limit doubled; rejecting it fails the job with
+  `FORBIDDEN`.
 
 ## P0 meta-tools (MCP-in-MCP)
 

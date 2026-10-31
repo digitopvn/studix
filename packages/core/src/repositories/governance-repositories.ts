@@ -30,11 +30,15 @@ export interface ApprovalRepository {
    */
   open(ctx: TenantContext, input: NewApproval): Promise<{ approval: Approval; created: boolean }>;
   get(ctx: TenantContext, id: string): Promise<Approval | undefined>;
-  /** Most recent approval for this subject and action, any status. */
+  /**
+   * Most recent approval for this subject and action, any status. With `scopeKey` only requests of that
+   * scope count (`""` is the unscoped workflow gate); without it every scope does.
+   */
   findLatest(
     ctx: TenantContext,
     subject: ApprovalSubject,
     action: ApprovalAction,
+    scopeKey?: string,
   ): Promise<Approval | undefined>;
   list(
     ctx: TenantContext,
@@ -53,6 +57,12 @@ export type NewReview = Omit<NewRecord<Review>, "status">;
 
 export interface ReviewRepository {
   create(ctx: TenantContext, input: NewReview): Promise<Review>;
+  get(ctx: TenantContext, id: string): Promise<Review | undefined>;
+  findByIdempotencyKey(
+    ctx: TenantContext,
+    projectId: string,
+    idempotencyKey: string,
+  ): Promise<Review | undefined>;
   list(
     ctx: TenantContext,
     query: PageRequest & { projectId: string; versionId?: string },

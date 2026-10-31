@@ -39,10 +39,14 @@ export function createInMemoryApprovalRepository(clock: Clock): ApprovalReposito
     async get(ctx, id) {
       return approvals.get(ctx, id);
     },
-    async findLatest(ctx, subject, action) {
+    async findLatest(ctx, subject, action, scopeKey) {
       return approvals.filter(
         ctx,
-        (a) => a.subject.type === subject.type && a.subject.id === subject.id && a.action === action,
+        (a) =>
+          a.subject.type === subject.type &&
+          a.subject.id === subject.id &&
+          a.action === action &&
+          (scopeKey === undefined || (a.scopeKey ?? "") === scopeKey),
       )[0];
     },
     async list(ctx, query = {}) {
@@ -75,7 +79,22 @@ export function createInMemoryReviewRepository(clock: Clock): ReviewRepository {
   const reviews = new InMemoryTenantTable<Review>("rev", clock);
   return {
     async create(ctx, input) {
+      if (
+        input.idempotencyKey !== undefined &&
+        reviews.filter(
+          ctx,
+          (r) => r.projectId === input.projectId && r.idempotencyKey === input.idempotencyKey,
+        ).length > 0
+      ) {
+        throw new StudixError("CONFLICT", `idempotency key ${input.idempotencyKey} is already used`);
+      }
       return reviews.insert(ctx, { ...input, status: "open" });
+    },
+    async get(ctx, id) {
+      return reviews.get(ctx, id);
+    },
+    async findByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      return reviews.filter(ctx, (r) => r.projectId === projectId && r.idempotencyKey === idempotencyKey)[0];
     },
     async list(ctx, query) {
       return reviews.page(

@@ -7,6 +7,8 @@ export const JOB_STATUSES = [
   "queued",
   "running",
   "waiting_approval",
+  /** Parked until the MCP host agent submits the output of a handed-off stage. */
+  "waiting_host",
   "succeeded",
   "failed",
   "cancelled",

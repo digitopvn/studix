@@ -1,5 +1,6 @@
 import { createJobBudgetPolicy, createUsageLedger } from "@studix/billing";
 import {
+  type AgentRuntime,
   type ApprovalPolicy,
   createDefaultApprovalPolicy,
   type PublisherAdapter,
@@ -17,6 +18,7 @@ import {
   createWorkerPool,
   type JobOutcome,
   type Planner,
+  type StageContext,
   type WorkerPool,
   type WorkerPoolStatus,
 } from "@studix/workflow";
@@ -28,6 +30,11 @@ export interface WorkerPorts {
   storage: StorageAdapter;
   /** Optional: without one, approved publish jobs fail with UNAVAILABLE. */
   publisher?: PublisherAdapter;
+  /**
+   * Optional: the in-worker agent harness for an agent stage of a job. Without it agent stages run only in
+   * host mode (the MCP client's agent completes them).
+   */
+  agentRuntimeFor?(stage: StageContext): AgentRuntime | undefined;
   /** Release adapter resources (HTTP agents, clients) after the pool has drained. */
   close?(): Promise<void>;
 }
@@ -80,6 +87,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
     ledger: createUsageLedger(repos.usage),
     stageCache: repos.stageCache,
     storyboardStatus: (ctx, projectId) => storyboardStatus(repos, ctx, projectId),
+    agents: { handoffs: repos.agentHandoffs, runtimeFor: deps.agentRuntimeFor },
     clock,
     logger,
     heartbeatIntervalMs: settings.heartbeatIntervalMs,

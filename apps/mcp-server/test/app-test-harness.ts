@@ -9,11 +9,18 @@ import {
   createSecretBox,
   type ProviderKeyTester,
 } from "@studix/auth";
-import { createDefaultApprovalPolicy, type Role, StudioService, type TenantContext } from "@studix/core";
+import {
+  createAgentHandoffService,
+  createDefaultApprovalPolicy,
+  type Role,
+  StudioService,
+  type TenantContext,
+} from "@studix/core";
 import { createTestDatabase, insertTestUser, type TestDatabase } from "@studix/database/testing";
 import { createActivityRecorder } from "@studix/observability";
 import { createLogger, newId, systemClock } from "@studix/shared";
 import type { AppDeps } from "../src/app-deps.ts";
+import { packStageOutputValidator } from "../src/compose-integrations.ts";
 import { createApp } from "../src/create-app.ts";
 import type { ArtifactUrlSigner } from "../src/ports.ts";
 
@@ -114,6 +121,10 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
     }),
     activity: createActivityRecorder(repos.activity, { logger }),
     readiness: [{ name: "database", check: async () => void (await db.client`select 1`) }],
+    agentHandoffs: createAgentHandoffService({
+      handoffs: repos.agentHandoffs,
+      validateOutput: packStageOutputValidator(),
+    }),
     ...overrides,
   };
   const app = createApp(deps);
