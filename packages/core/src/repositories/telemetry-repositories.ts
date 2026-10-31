@@ -15,7 +15,11 @@ export interface UsageRange {
 }
 
 export interface UsageRepository {
-  /** Idempotent on (workspace, dedupeKey): a duplicate returns the stored event with created=false. */
+  /**
+   * Idempotent on (workspace, dedupeKey): a duplicate returns the stored event with created=false. The one
+   * exception: a stored `metadata.costSource: "estimate"` is replaced by a duplicate whose
+   * `metadata.costSource` is `"receipt"` (same job, real cost; not added), also created=false.
+   */
   record(ctx: TenantContext, input: NewUsageEvent): Promise<{ event: UsageEvent; created: boolean }>;
   list(ctx: TenantContext, query?: PageRequest & UsageRange): Promise<Page<UsageEvent>>;
   totalCostCents(ctx: TenantContext, range?: UsageRange): Promise<number>;
