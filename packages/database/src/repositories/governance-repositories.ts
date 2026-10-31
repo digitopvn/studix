@@ -33,6 +33,7 @@ function toApproval(row: typeof approvals.$inferSelect): Approval {
       row.decidedByType && row.decidedById ? actorFrom(row.decidedByType, row.decidedById) : undefined,
     decidedAt: opt(row.decidedAt),
     comment: opt(row.comment),
+    changes: opt(row.changes),
     expiresAt: opt(row.expiresAt),
     createdAt: row.createdAt,
   };
@@ -171,6 +172,7 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
           decidedById: decision.decidedBy?.id ?? null,
           decidedAt: decision.decidedAt,
           comment: decision.comment ?? null,
+          changes: decision.changes ?? null,
         })
         .where(scoped(approvals, ctx, eq(approvals.id, id), eq(approvals.status, "pending")))
         .returning();

@@ -83,7 +83,7 @@ export function fakeRenderer(
     crash?: Promise<void>;
   } = {},
 ) {
-  const state = { calls: 0 };
+  const state: { calls: number; deadlineAt?: Date } = { calls: 0 };
   const renderer: RendererAdapter = {
     id: "fake-renderer",
     supports: () =>
@@ -92,6 +92,7 @@ export function fakeRenderer(
         : { supported: true, reasons: [] },
     async render(ir, opts) {
       state.calls++;
+      state.deadlineAt = opts.deadlineAt;
       opts.onProgress?.({ progress: 0.5, phase: "frames" });
       if (options.crash) {
         await options.crash;

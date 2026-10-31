@@ -16,9 +16,11 @@ import {
   VideoIR as VideoIRSchema,
 } from "@studix/video-ir";
 import {
+  type CreativeGateRevise,
   createAgentStage,
   createCreativeGateStage,
   downloadIrAssets,
+  type GateChange,
   irOf,
   jobScopedId,
   mapBounded,
@@ -31,6 +33,7 @@ import {
   type StageDefinition,
   sha256File,
   stageCacheKey,
+  stageMediaDir,
   stageWorkDir,
 } from "@studix/workflow";
 import { z } from "zod";
@@ -271,6 +274,34 @@ function localFile(files: Readonly<Record<string, string>>, assetId: string): st
   return path;
 }
 
+/**
+ * Download the IR assets a stage hands to its media provider (a sheet, a keyframe, a clip and its line).
+ * The provider reads local inputs only from inside its own media directory, so they go in an `inputs`
+ * folder there; its outputs live in per-call folders beside it, and the job's finalize removes both.
+ */
+async function downloadMediaInputs(
+  s: StageContext,
+  stage: string,
+  ir: VideoIR,
+  assetIds: ReadonlySet<string>,
+): Promise<Record<string, string>> {
+  const dir = join(await stageMediaDir(s, stage), "inputs");
+  const assets = ir.assets.filter((a) => assetIds.has(a.id));
+  return downloadIrAssets(requireService(s, "storage"), s.ctx, { ...ir, assets }, dir);
+}
+
+/**
+ * Whether an image already has the film's frame. An edit keeps its reference's frame, and some models
+ * (grok-image) refuse an aspect ratio next to a reference, so a matching reference is sent without one.
+ */
+function hasFilmFrame(asset: AssetRef | undefined, scope: Pick<FilmScope, "aspectRatio">): boolean {
+  if (!asset?.width || !asset.height) return false;
+  const frame = filmFrameSize(scope);
+  return (
+    Math.abs(asset.width * frame.height - asset.height * frame.width) <= 0.01 * asset.height * frame.width
+  );
+}
+
 /** Replace shots of an IR by id. */
 function replaceShots(ir: VideoIR, next: ReadonlyMap<string, Shot>, assets: readonly AssetRef[]): VideoIR {
   const copy = structuredClone(ir);
@@ -317,6 +348,87 @@ function alignWords(text: string, durationMs: number) {
 }
 
 /** Builds the stages and pipeline of a narrative film pack (anime, long-form film) from its config. */
+/** Designs of a board: the current asset of each character sheet and set frame, by character or set id. */
+function boardDesigns(scope: FilmScope, ir: VideoIR) {
+  const byId = new Map(ir.assets.map((a) => [a.id, a]));
+  const shown = (shotId: string) => {
+    const shot = ir.scenes.flatMap((sc) => sc.shots).find((sh) => sh.id === shotId.slice(0, 64));
+    return shot && "assetId" in shot && shot.assetId ? byId.get(shot.assetId) : undefined;
+  };
+  const pick = (ids: readonly string[]) =>
+    new Map(
+      ids.flatMap((id) => {
+        const asset = shown(`design-${id}`);
+        return asset ? [[id, asset] as const] : [];
+      }),
+    );
+  return { sheets: pick(scope.characters.map((c) => c.id)), sets: pick(scope.sets.map((st) => st.id)) };
+}
+
+/** Version of a design asset id `<id>-<kind>-v<n>` (`kind` is `sheet` or `set`), else undefined. */
+function designVersion(assetId: string, id: string, kind: "sheet" | "set"): number | undefined {
+  const prefix = `${id}-${kind}-v`;
+  const rest = assetId.startsWith(prefix) ? assetId.slice(prefix.length) : "";
+  return /^[0-9]{1,4}$/.test(rest) ? Number(rest) : undefined;
+}
+
+/**
+ * One image request per design a change names, redrawn under the next version id with the reviewer's note
+ * in its prompt. With `board`, every target must be one of its assets.
+ */
+function redesignRequests(
+  s: StageContext,
+  scope: FilmScope,
+  change: GateChange,
+  stage: string,
+  board?: VideoIR,
+) {
+  const designs = board ? boardDesigns(scope, board) : undefined;
+  const shown = designs && new Set([...designs.sheets.values(), ...designs.sets.values()].map((a) => a.id));
+  return change.targets.map((assetId) => {
+    if (board && !shown?.has(assetId))
+      throw new StudixError("VALIDATION", `${assetId} is not a design shown on the board under review`, {
+        retryable: false,
+        details: { assetId, designs: [...(shown ?? [])] },
+        suggestedAction: "Request changes on the current board's sheet or set asset ids.",
+      });
+    const request = (id: string, prompt: string, aspectRatio: string) =>
+      ({
+        assetId: id,
+        kind: "image" as const,
+        prompt,
+        params: { aspectRatio },
+        keyPrefix: `generated/${s.job.id}/designs/${id}`,
+        maxCostCents: 0,
+      }) satisfies StoredMediaRequest;
+    for (const c of scope.characters) {
+      const v = designVersion(assetId, c.id, "sheet");
+      if (v === undefined) continue;
+      const id = `${c.id}-sheet-v${v + 1}`.slice(0, 64);
+      return {
+        target: { type: "character" as const, id: c.id },
+        stage,
+        request: request(id, characterSheetPrompt(scope, c, change.note), "16:9"),
+      };
+    }
+    for (const set of scope.sets) {
+      const v = designVersion(assetId, set.id, "set");
+      if (v === undefined) continue;
+      const id = `${set.id}-set-v${v + 1}`.slice(0, 64);
+      return {
+        target: { type: "set" as const, id: set.id },
+        stage,
+        request: request(id, setFramePrompt(scope, set, change.note), scope.aspectRatio),
+      };
+    }
+    throw new StudixError("VALIDATION", `${assetId} is not a character sheet or set frame`, {
+      retryable: false,
+      details: { assetId },
+      suggestedAction: "Request changes on the board's sheet or set asset ids.",
+    });
+  });
+}
+
 export function createFilmPack(config: FilmPackConfig): WorkflowPack {
   const n = filmStageNames(config.id);
   const scopeOutput = z.object({ scope: FilmScope });
@@ -363,7 +475,90 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
   };
 
   const g0 = createCreativeGateStage({ gate: "G0", name: n.g0, summary: config.gates.g0 });
-  const g1 = createCreativeGateStage({ gate: "G1", name: n.g1, summary: config.gates.g1 });
+  const designsOutput = z.object({ ir: VideoIRSchema });
+  /**
+   * G1 change requests: redraw only the named sheets and set frames with the reviewer's note (the bible's
+   * anchors stay in the prompt), retire the replaced sheet, and publish the revised board as a child version
+   * of the one reviewed. One version per request, so a replay finds it and pays nothing.
+   */
+  const designRevise: CreativeGateRevise = {
+    initial: (s) => read(designsOutput, s.outputs[n.designs], `${n.designs} checkpoint`).ir,
+    estimateCostCents: (s, change) =>
+      estimateOf(s, redesignRequests(s, filmOf(designRevise.initial(s)).scope, change, n.g1)),
+    async apply(s, base, change) {
+      const { projectId } = payloadOf(s);
+      const versionId = jobScopedId("pvg1c", change.approvalId);
+      const stored = await s.commit((repos, ctx) => repos.projects.getVersion(ctx, versionId));
+      if (stored) return { ir: stored.ir, versionId };
+      const film = filmOf(base);
+      const { scope } = film;
+      const planned = await withCaps(s, redesignRequests(s, scope, change, n.g1, base));
+      const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (d) => ({
+        ...d,
+        ...(await generateStoredMedia(s, n.g1, d.request)),
+      }));
+      const usage = made.map((m) => m.usage);
+      return billedOnFailure(usage, async () => {
+        const { sheets, sets } = boardDesigns(scope, base);
+        const replaced = new Map<string, string>();
+        for (const m of made) {
+          const designs = m.target.type === "character" ? sheets : sets;
+          replaced.set(designs.get(m.target.id)?.id ?? "", m.asset.id);
+          designs.set(m.target.id, m.asset);
+        }
+        // The replaced sheet stays in the bible as history; the redraw is the candidate G1 signs.
+        const production: FilmProduction = {
+          ...film.production,
+          characters: film.production.characters.map((bible) => {
+            const sheet = sheets.get(bible.characterId);
+            if (!sheet || !made.some((m) => m.asset.id === sheet.id)) return bible;
+            return {
+              ...bible,
+              references: [
+                ...bible.references.map((r) =>
+                  replaced.has(r.assetId) ? { ...r, status: "retired" as const } : r,
+                ),
+                {
+                  id: sheet.id,
+                  assetId: sheet.id,
+                  view: "turnaround" as const,
+                  status: "candidate" as const,
+                  version: bible.identityVersion,
+                },
+              ],
+            };
+          }),
+        };
+        const drawn = designBoardIr(scope, sheets, sets, { film: { ...film, production } });
+        // Replaced designs stay as assets: the retired references point at them.
+        const ir = VideoIRSchema.parse({
+          ...drawn,
+          assets: [...drawn.assets, ...base.assets.filter((a) => !drawn.assets.some((d) => d.id === a.id))],
+        });
+        await s.commit(async (repos, ctx) => {
+          const project = await repos.projects.get(ctx, projectId);
+          if (!(await repos.projects.getVersion(ctx, versionId))) {
+            await repos.projects.createVersion(ctx, {
+              id: versionId,
+              projectId,
+              ir,
+              source: "planner",
+              ...(project?.currentVersionId ? { parentVersionId: project.currentVersionId } : {}),
+              createdBy: { type: "system", id: ctx.actor.id },
+            });
+          }
+          await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
+        });
+        return { ir, versionId, usage };
+      });
+    },
+  };
+  const g1 = createCreativeGateStage({
+    gate: "G1",
+    name: n.g1,
+    summary: config.gates.g1,
+    revise: designRevise,
+  });
 
   /** After G0: one model sheet per character and one frame per set, shown on the G1 board. */
   const designsStage: StageDefinition = {
@@ -422,17 +617,21 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
     outputSchema: boardsOutput,
     instructions: `${STORYBOARD_CONTRACT}\n\n${config.storyboardInstructions}`,
     taskInput: (input) => {
-      const designs = read(
-        z.object({ ir: VideoIRSchema }),
-        input.outputs[n.designs],
+      // The board G1 approved: the gate's revised one when a reviewer asked for redraws.
+      const revised = (input.outputs[n.g1] as { ir?: unknown } | undefined)?.ir;
+      const board = read(
+        designsOutput,
+        revised === undefined ? input.outputs[n.designs] : { ir: revised },
         `${n.designs} checkpoint`,
       );
-      const film = filmOf(designs.ir);
+      const film = filmOf(board.ir);
       return {
         scope: film.scope,
         sheets: film.production.characters.map((c) => ({
           characterId: c.characterId,
-          references: c.references.map((r) => ({ id: r.id, view: r.view })),
+          references: c.references
+            .filter((r) => r.status !== "retired")
+            .map((r) => ({ id: r.id, view: r.view })),
         })),
       };
     },
@@ -440,7 +639,8 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
   });
 
   const keyframeRequests = (s: StageContext) => {
-    const film = filmOf(irOf(s));
+    const ir = irOf(s);
+    const film = filmOf(ir);
     const { boards } = read(boardsOutput, s.outputs[n.storyboard], "storyboard checkpoint");
     const byShot = boardsFor(film.scope, boards);
     return scopeShots(film.scope).map(({ scene, shot }) => {
@@ -452,6 +652,12 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             .find((c) => c.characterId === lead)
             ?.references.find((r) => r.status !== "retired")
         : undefined;
+      const framed =
+        sheet !== undefined &&
+        hasFilmFrame(
+          ir.assets.find((a) => a.id === sheet.assetId),
+          film.scope,
+        );
       return {
         shot,
         board,
@@ -460,7 +666,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           assetId: `${shot.id}-key`.slice(0, 64),
           kind: "image" as const,
           prompt: keyframePrompt(film.scope, scene.setId, shot, board.frame),
-          params: { aspectRatio: film.scope.aspectRatio },
+          params: framed ? {} : { aspectRatio: film.scope.aspectRatio },
           keyPrefix: `generated/${s.job.id}/keyframes/${shot.id}`,
           maxCostCents: 0,
         } satisfies StoredMediaRequest,
@@ -486,8 +692,6 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         });
       const ir = irOf(s);
       const film = filmOf(ir);
-      const storage = requireService(s, "storage");
-      const workDir = await stageWorkDir(s, n.keyframes);
       const promoted: FilmProduction = {
         ...film.production,
         characters: film.production.characters.map((c) => ({
@@ -501,12 +705,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       };
       const planned = await withCaps(s, keyframeRequests(s));
       const sheetIds = new Set(planned.flatMap((p) => (p.sheet ? [p.sheet.assetId] : [])));
-      const sheetFiles = await downloadIrAssets(
-        storage,
-        s.ctx,
-        { ...ir, assets: ir.assets.filter((a) => sheetIds.has(a.id)) },
-        join(workDir, "sheets"),
-      );
+      const sheetFiles = await downloadMediaInputs(s, n.keyframes, ir, sheetIds);
       let done = 0;
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
         const image = p.sheet ? localFile(sheetFiles, p.sheet.assetId) : undefined;
@@ -535,7 +734,6 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const issues = filmProductionIssues(production, storyboardFromScope(film.scope, next.assets), "design");
       if (issues.length > 0)
         failIssues("The storyboard breaks continuity", issues, "Submit a new job to redraw the storyboard.");
-      await rm(workDir, { recursive: true, force: true });
       return { output: { ir: next }, usage: made.map((m) => m.usage) };
     },
   };
@@ -696,12 +894,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const workDir = await stageWorkDir(s, n.motion);
       const planned = await withCaps(s, clipRequests(s));
       const keyIds = new Set(planned.map((p) => (p.still as ImageShot).assetId));
-      const keyFiles = await downloadIrAssets(
-        storage,
-        s.ctx,
-        { ...ir, assets: ir.assets.filter((a) => keyIds.has(a.id)) },
-        join(workDir, "keyframes"),
-      );
+      const keyFiles = await downloadMediaInputs(s, n.motion, ir, keyIds);
       let done = 0;
       const total = scopeShots(film.scope).length;
       const clips = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
@@ -826,17 +1019,10 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const ir = irOf(s);
       const planned = lipsyncRequests(s);
       if (planned.length === 0) return { output: { ir, lipsynced: 0 } };
-      const storage = requireService(s, "storage");
-      const workDir = await stageWorkDir(s, n.lipsync);
       const inputs = new Set(
         planned.flatMap((p) => [p.shot.type === "video" ? p.shot.assetId : "", p.cue.audioAssetId ?? ""]),
       );
-      const files = await downloadIrAssets(
-        storage,
-        s.ctx,
-        { ...ir, assets: ir.assets.filter((a) => inputs.has(a.id)) },
-        join(workDir, "inputs"),
-      );
+      const files = await downloadMediaInputs(s, n.lipsync, ir, inputs);
       const capped = await withCaps(s, planned);
       let done = 0;
       const made = await mapBounded(capped, MEDIA_CONCURRENCY, async (p) => {
@@ -855,7 +1041,6 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           { ...(m.shot as Extract<Shot, { type: "video" }>), assetId: m.asset.id, muted: true },
         ]),
       );
-      await rm(workDir, { recursive: true, force: true });
       return {
         output: {
           ir: replaceShots(

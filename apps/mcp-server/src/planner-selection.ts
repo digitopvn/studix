@@ -18,5 +18,5 @@ export async function assertPlannerSelection(
       suggestedAction: "Omit planner to use the default planner, or ask the operator to enable it.",
     });
   }
-  await deps.providers.assertUsable(ctx, planner.providerConnectionId);
+  await deps.providers.assertUsable(ctx, planner.providerConnectionId, "claude");
 }

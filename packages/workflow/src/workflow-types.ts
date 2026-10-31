@@ -89,8 +89,13 @@ export interface StageContext {
   outputs: Readonly<Record<string, StageOutput>>;
   /** The stage input parsed by `StageDefinition.inputSchema`; undefined for stages without one. */
   input: unknown;
-  /** Approval that authorized this stage, when it is approval-gated. */
+  /**
+   * Decision that let this approval-gated stage run: an approval, or (creative gates) a change request the
+   * stage acts on before it asks again.
+   */
   approval?: Approval;
+  /** Every request of this stage's gate (its action and scope) in this job, oldest first. */
+  approvalHistory?: readonly Approval[];
   /**
    * Run business writes (projects, renders) only while this worker still owns the job at this attempt.
    * `write` gets repositories bound to one transaction that is locked against reclaim; a stage that

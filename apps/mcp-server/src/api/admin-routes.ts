@@ -1,4 +1,10 @@
-import type { ProviderConnectionService } from "@studix/auth";
+import { listPiCatalog } from "@studix/agent-runtime";
+import type {
+  ModelPreferenceService,
+  PreviewInput,
+  ProviderConnectionService,
+  SaveApiKeyInput,
+} from "@studix/auth";
 import { assertPermission } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { Router } from "express";
@@ -102,6 +108,23 @@ function requireProviders(deps: AppDeps): ProviderConnectionService {
   return deps.providers;
 }
 
+function requireModels(deps: AppDeps): ModelPreferenceService {
+  if (!deps.modelPreferences) {
+    throw new StudixError("UNAVAILABLE", "Model selection is not enabled on this server", {
+      retryable: false,
+    });
+  }
+  return deps.modelPreferences;
+}
+
+/**
+ * The body of an Anthropic-only route; a `provider` field cannot redirect it to another provider. The
+ * service parses the whole body with zod, so the cast only names the shape it will be checked against.
+ */
+function anthropicBody(body: unknown): SaveApiKeyInput {
+  return { ...(body && typeof body === "object" ? body : {}), provider: "anthropic" } as SaveApiKeyInput;
+}
+
 /**
  * Outbound AI provider credentials (Anthropic). Permission checks per owner live in the service;
  * keys are accepted in request bodies only and every response is `no-store` and key-free.
@@ -117,7 +140,9 @@ export function providerRoutes(deps: AppDeps): Router {
     res.json({ ...overview, claudePlanner: deps.claudePlanner === true });
   });
   router.post("/anthropic/api-keys", async (req, res) => {
-    res.status(201).json(await requireProviders(deps).saveApiKey(sessionOf(res).ctx, req.body ?? {}));
+    res
+      .status(201)
+      .json(await requireProviders(deps).saveApiKey(sessionOf(res).ctx, anthropicBody(req.body)));
   });
   router.put("/anthropic/api-keys/:connectionId", async (req, res) => {
     const id = idParam(req, "connectionId");
@@ -128,6 +153,52 @@ export function providerRoutes(deps: AppDeps): Router {
   });
   router.delete("/anthropic/api-keys/:connectionId", async (req, res) => {
     res.json(await requireProviders(deps).remove(sessionOf(res).ctx, idParam(req, "connectionId")));
+  });
+
+  // Every provider the Pi runtime can use, from the pinned SDK catalog; no credentials involved.
+  router.get("/catalog", async (_req, res) => {
+    assertPermission(sessionOf(res).ctx, "workspace:read");
+    res.json({ providers: listPiCatalog() });
+  });
+  router.get("/connections", async (_req, res) => {
+    res.json(await requireProviders(deps).list(sessionOf(res).ctx));
+  });
+  router.post("/connections", async (req, res) => {
+    res.status(201).json(await requireProviders(deps).saveApiKey(sessionOf(res).ctx, req.body ?? {}));
+  });
+  router.put("/connections/:connectionId", async (req, res) => {
+    const id = idParam(req, "connectionId");
+    res.json(await requireProviders(deps).rotateApiKey(sessionOf(res).ctx, id, req.body ?? {}));
+  });
+  router.put("/connections/:connectionId/runtimes", async (req, res) => {
+    const id = idParam(req, "connectionId");
+    res.json(await requireProviders(deps).setRuntimes(sessionOf(res).ctx, id, req.body ?? {}));
+  });
+  router.post("/connections/:connectionId/test", async (req, res) => {
+    res.json(await requireProviders(deps).test(sessionOf(res).ctx, idParam(req, "connectionId")));
+  });
+  router.delete("/connections/:connectionId", async (req, res) => {
+    res.json(await requireProviders(deps).remove(sessionOf(res).ctx, idParam(req, "connectionId")));
+  });
+
+  router.get("/models", async (_req, res) => {
+    res.json(await requireModels(deps).list(sessionOf(res).ctx));
+  });
+  router.put("/models", async (req, res) => {
+    res.json(await requireModels(deps).save(sessionOf(res).ctx, req.body ?? {}));
+  });
+  router.get("/models/preview", async (req, res) => {
+    const query = req.query as Record<string, unknown>;
+    // Parsed by the service against PreviewInput; unknown stages or runtimes fail with VALIDATION.
+    const input = {
+      ...(typeof query.stage === "string" ? { stage: query.stage } : {}),
+      ...(typeof query.runtime === "string" ? { runtime: query.runtime } : {}),
+    } as PreviewInput;
+    res.json(await requireModels(deps).preview(sessionOf(res).ctx, input));
+  });
+  router.delete("/models/:preferenceId", async (req, res) => {
+    await requireModels(deps).remove(sessionOf(res).ctx, idParam(req, "preferenceId"));
+    res.status(204).end();
   });
   return router;
 }

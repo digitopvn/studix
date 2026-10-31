@@ -959,6 +959,53 @@ describe("MultixProvider async jobs", () => {
       expect(runs).toBe(1);
     });
 
+    it("releases the key when atlas run exits 2 (rejected before any submission)", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return runs === 1
+          ? { exitCode: 2, envelope: { error: { message: "bad input" } } }
+          : { envelope: { job: { provider: "atlas", id: "pred_9" }, text: "pred_9" } };
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({ code: "VALIDATION" });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({
+        state: "failed",
+        attempt: 1,
+      });
+      await expect(multix.generate(ctx, upscaleRequest(input))).resolves.toMatchObject({
+        job: { provider: "atlas", id: "pred_9" },
+      });
+      expect(runs).toBe(2);
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ attempt: 2 });
+    });
+
+    it.each([
+      ["TIMEOUT", { stoppedBy: "timeout" as const, exitCode: 143 }],
+      ["CANCELLED", { stoppedBy: "abort" as const, exitCode: 143 }],
+    ])("keeps the record blocked when atlas run ends %s with an unknown outcome", async (code, reply) => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return reply;
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({ code });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "submitting" });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({
+        code: "PROVIDER_ERROR",
+        retryable: false,
+        message: expect.stringContaining("may already have been charged"),
+      });
+      expect(runs).toBe(1);
+    });
+
     it("lets a retry through when multix proves the run was never accepted", async () => {
       const input = join(workDir, "frame.png");
       await writeFile(input, "png");

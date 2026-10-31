@@ -18,6 +18,7 @@ import type { ProjectStoryboard } from "../entities/storyboard.ts";
 import type { ProjectRepository } from "../repositories/project-repository.ts";
 import type { StoryboardRepository } from "../repositories/storyboard-repository.ts";
 import { actorRef, assertPermission, can, type TenantContext } from "../tenant.ts";
+import { isPendingAndLive, requestGateChanges, shownImageAssets } from "./approval-operations.ts";
 import {
   type ShotPlacement,
   type StoryboardTarget,
@@ -600,6 +601,38 @@ function assertPatchScope(patch: VideoIRPatch, allowedPaths: string[]): void {
 
 type FeedbackInputParsed = ReturnType<typeof FeedbackInput.parse>;
 
+/** Approvals read per page while looking for a waiting gate. */
+const GATE_PAGE = 50;
+
+/**
+ * The live creative gate a job of `projectId` is parked at, when `version` is the board it shows (the
+ * project's current version) and `assetId` is an image it shows; otherwise undefined.
+ */
+async function waitingCreativeGate(
+  deps: Deps,
+  ctx: TenantContext,
+  projectId: string,
+  version: ProjectVersion,
+  assetId: string,
+): Promise<Approval | undefined> {
+  if (!shownImageAssets(version.ir).has(assetId)) return undefined;
+  const project = await deps.projects.get(ctx, projectId);
+  if (project?.currentVersionId !== version.id) return undefined;
+  const now = deps.clock.now();
+  let cursor: string | undefined;
+  do {
+    const page = await deps.approvals.list(ctx, { status: "pending", limit: GATE_PAGE, cursor });
+    for (const approval of page.items) {
+      if (approval.action !== "creative.gate" || approval.subject.type !== "job") continue;
+      if (!isPendingAndLive(approval, now)) continue;
+      const job = await deps.jobs.get(ctx, approval.subject.id);
+      if (job?.projectId === projectId && job.status === "waiting_approval") return approval;
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  return undefined;
+}
+
 export interface FeedbackResult {
   feedbackId: string;
   projectId: string;
@@ -770,6 +803,31 @@ export async function submitFeedback(
     replayed: commentReplayed,
   };
   if (!version) {
+    // A note on a design while its job waits at a creative gate sends that gate back to redo the design.
+    const gate =
+      input.assetId && !commentReplayed && can(ctx.actor, "project:write")
+        ? await waitingCreativeGate(deps, ctx, project.id, base, input.assetId)
+        : undefined;
+    if (gate) {
+      const decided = await requestGateChanges(deps, ctx, {
+        approval: gate,
+        targets: [input.assetId as string],
+        note: input.comment,
+      });
+      return {
+        ...common,
+        invalidated: decided.changes?.invalidated ?? [],
+        approval: decided,
+        next: [
+          {
+            tool: STUDIX_TOOLS.getJob,
+            arguments: { jobId: gate.subject.id },
+            reason: `Changes requested at the gate: the job redraws ${input.assetId}, then asks for review again.`,
+            pollAfterMs: 5000,
+          },
+        ],
+      };
+    }
     const example = target.allowedPaths[0];
     return {
       ...common,

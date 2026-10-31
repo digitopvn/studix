@@ -128,6 +128,41 @@ describe("creative gates on the Postgres queue", () => {
     expect(world.runs).toEqual(["bible"]);
   });
 
+  it("asks again, without redoing anything, when a gate that cannot revise gets a change request", async () => {
+    const ctx = await tenant(db.current, "creative-gate-changes");
+    const { repos } = db.current;
+    const world = createWorld();
+    const job = await world.enqueue(ctx);
+    const subject = { type: "job" as const, id: job.id };
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    const g0 = (await repos.approvals.findLatest(ctx, subject, "creative.gate", "gate:G0"))!;
+    await repos.approvals.decide(ctx, g0.id, {
+      status: "changes_requested",
+      decidedBy: reviewer,
+      decidedAt: new Date(),
+      comment: "warmer",
+      changes: { targets: ["poster"], note: "warmer", invalidated: ["asset:poster"] },
+    });
+    expect(await world.queue.resumeDecidedApprovals()).toBeGreaterThanOrEqual(1);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    const again = (await repos.approvals.findLatest(ctx, subject, "creative.gate", "gate:G0"))!;
+    expect(again.id).not.toBe(g0.id);
+    expect(again).toMatchObject({ status: "pending" });
+    expect(again.reason).toContain("cannot redo assets");
+    expect(world.runs).toEqual(["bible"]);
+
+    await decide(ctx, again.id, "approved");
+    expect(await world.queue.resumeDecidedApprovals()).toBeGreaterThanOrEqual(1);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    const done = await repos.jobs.listStages(ctx, job.id);
+    expect(done.find((s) => s.name === "gate.g0")?.output).toEqual({
+      gate: "G0",
+      approvalId: again.id,
+      decidedBy: reviewer.id,
+      decidedAt: expect.any(String),
+    });
+  });
+
   it("fails the job when a gate request expires undecided", async () => {
     const ctx = await tenant(db.current, "creative-gate-expiry");
     const world = createWorld({ approvalTtlMs: 50 });

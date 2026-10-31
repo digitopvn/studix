@@ -5,3 +5,7 @@ export * from "./claude-sdk-transport.ts";
 export * from "./fake-agent-runtime.ts";
 export * from "./fake-claude-transport.ts";
 export * from "./pi-agent-runtime.ts";
+export * from "./pi-binding.ts";
+export * from "./pi-catalog.ts";
+export * from "./pi-key-tester.ts";
+export * from "./pi-sdk-loop.ts";
