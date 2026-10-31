@@ -228,7 +228,7 @@ export const marketingStoryboardStage: StageDefinition = {
       requests,
       MEDIA_CONCURRENCY,
       async (r) => {
-        const media = await generateStoredMedia(s, MV_STAGES.storyboard, r, workDir);
+        const media = await generateStoredMedia(s, MV_STAGES.storyboard, r);
         s.reportProgress(++done / requests.length);
         return { key: r.key, ...media };
       },
@@ -307,7 +307,7 @@ export const marketingReframeStage: StageDefinition = {
       const workDir = await stageWorkDir(s, MV_STAGES.reframe);
       let done = 0;
       generated = await mapBounded(requests, MEDIA_CONCURRENCY, async (r) => {
-        const media = await generateStoredMedia(s, MV_STAGES.reframe, r, workDir);
+        const media = await generateStoredMedia(s, MV_STAGES.reframe, r);
         s.reportProgress(++done / requests.length);
         return { shotId: r.shotId, ...media };
       });
@@ -417,12 +417,10 @@ export const marketingI2vStage: StageDefinition = {
       MEDIA_CONCURRENCY,
       async (c, i) => {
         const request = capped[i] as StoredMediaRequest;
-        const media = await generateStoredMedia(
-          s,
-          MV_STAGES.i2v,
-          { ...request, params: { ...request.params, image: frameFiles[c.image.assetId] } },
-          workDir,
-        );
+        const media = await generateStoredMedia(s, MV_STAGES.i2v, {
+          ...request,
+          params: { ...request.params, image: frameFiles[c.image.assetId] },
+        });
         s.reportProgress(++done / shots.length);
         return { ...c, ...media };
       },
@@ -543,7 +541,7 @@ export const marketingAudioStage: StageDefinition = {
       planned,
       MEDIA_CONCURRENCY,
       async (a, i) => {
-        const media = await generateStoredMedia(s, MV_STAGES.audio, capped[i] as StoredMediaRequest, workDir);
+        const media = await generateStoredMedia(s, MV_STAGES.audio, capped[i] as StoredMediaRequest);
         s.reportProgress(++done / planned.length);
         return { ...a, ...media };
       },

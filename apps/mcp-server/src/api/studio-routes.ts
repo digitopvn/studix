@@ -206,6 +206,11 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     res.json(await deps.studio.cancelJob(ctx, idParam(req, "jobId"), body.reason));
   });
 
+  router.post("/jobs/:jobId/retry", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    res.json(await deps.studio.retryJob(ctx, idParam(req, "jobId")));
+  });
+
   router.get("/renders/:renderId/playback", async (req, res) => {
     const { ctx } = sessionOf(res);
     assertPermission(ctx, "asset:read");

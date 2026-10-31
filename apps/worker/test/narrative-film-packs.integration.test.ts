@@ -317,7 +317,10 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
 
     // Storyboard: the sheets turn canonical and condition every keyframe with a character in it.
     expect(await world.runOnce(job.id)).toBe("succeeded");
-    const keyframes = world.requests.slice(3);
+    // Keyframes are generated concurrently, so their start order is not part of the contract.
+    const keyframes = world.requests
+      .slice(3)
+      .sort((a, b) => a.idempotencyKey.localeCompare(b.idempotencyKey));
     expect(keyframes.map((r) => r.idempotencyKey.split(":").at(-1))).toEqual(
       shotIds.map((id) => `${id}-key`),
     );

@@ -78,6 +78,20 @@
       "when": 1793442813195,
       "tag": "0010_job_deadline_pause",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793444100959,
+      "tag": "0011_rate_limit_buckets",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793445100959,
+      "tag": "0012_api_key_job_retry",
+      "breakpoints": true
     }
   ]
 }

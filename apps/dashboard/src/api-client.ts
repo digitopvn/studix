@@ -388,6 +388,7 @@ export const api = {
   jobs: () => request<Page<Job>>("GET", "/api/jobs?limit=50"),
   job: (id: string) => request<{ job: Job; activity: ActivityEvent[] }>("GET", `/api/jobs/${enc(id)}`),
   cancelJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/cancel`, {}),
+  retryJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/retry`, {}),
   /** `changes_requested` (creative gates) needs `targets` (asset ids to redo) and a `comment` saying how. */
   decideApproval: (
     id: string,

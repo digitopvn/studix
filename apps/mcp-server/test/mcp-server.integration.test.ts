@@ -83,6 +83,7 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
       "studix_inspect",
       "studix_list_agent_tasks",
       "studix_render",
+      "studix_retry_job",
       "studix_submit_agent_task",
     ]);
     for (const tool of tools) {
@@ -137,6 +138,42 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     expect((await call(clientB, "studix_get_job", { jobId })).envelope.data).toMatchObject({
       status: "queued",
     });
+  });
+
+  it("retries a failed job through studix_retry_job: same job, no deadline needed, scope enforced", async () => {
+    const clientA = await app.connect(keyA);
+    const created = await call(clientA, "studix_create_video", { prompt: "Retry me" });
+    const jobId = created.envelope.data?.jobId as string;
+    // A job that never had a deadline (`deadline_at` is null) must still requeue.
+    await app.db.client`update jobs set status = 'failed', deadline_at = null, finished_at = now(),
+      error = ${JSON.stringify({ code: "UNAVAILABLE", message: "bucket missing", retryable: false })}::jsonb
+      where id = ${jobId}`;
+    const failed = await call(clientA, "studix_get_job", { jobId });
+    expect(failed.envelope.next.map((n) => n.tool)).toContain("studix_retry_job");
+
+    // A key without job:retry is refused, even though it can read the job.
+    const noRetry = await app.deps.apiKeys.create(tenantA, {
+      name: "no-retry",
+      scopes: ["workspace:read", "project:read", "job:cancel"],
+    });
+    const limited = await call(await app.connect(noRetry.secret), "studix_retry_job", { jobId });
+    expect(limited.isError).toBe(true);
+    expect(limited.envelope.error?.code).toBe("FORBIDDEN");
+    expect((await call(clientA, "studix_get_job", { jobId })).envelope.data).toMatchObject({
+      status: "failed",
+    });
+
+    // Another tenant cannot see the job, so it cannot retry it.
+    const foreign = await call(await app.connect(keyB), "studix_retry_job", { jobId });
+    expect(foreign.envelope.error?.code).toBe("NOT_FOUND");
+
+    const retried = await call(clientA, "studix_retry_job", { jobId });
+    expect(retried.envelope.status).toBe("ok");
+    expect(retried.envelope.data).toMatchObject({ id: jobId, status: "queued" });
+    expect((await app.deps.repos.jobs.get(tenantA, jobId))?.deadlineAt ?? null).toBeNull();
+
+    // Only a failed job is retryable.
+    expect((await call(clientA, "studix_retry_job", { jobId })).envelope.error?.code).toBe("CONFLICT");
   });
 
   it("returns validation errors as tool envelopes", async () => {

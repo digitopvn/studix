@@ -1,5 +1,5 @@
 import { agentSpendOf, type ClaudeAgentTransport, createClaudeAgentRuntime } from "@studix/agent-runtime";
-import type { ProviderConnectionService } from "@studix/auth";
+import type { ProviderConnectionService, ResolvedProviderCredential } from "@studix/auth";
 import { USAGE_KINDS, usageDedupeKey } from "@studix/billing";
 import type {
   AgentRunResult,
@@ -50,7 +50,12 @@ const INSTRUCTIONS = [
 
 let irSchema: Record<string, unknown> | undefined;
 function videoIrSchema(): Record<string, unknown> {
-  irSchema ??= exportJsonSchemas()["video-ir"];
+  // The Claude CLI validates --json-schema offline and rejects the draft 2020-12 `$schema` URI the export
+  // carries ("no schema with key or ref"), exiting before any request; the rest of the schema is accepted.
+  if (!irSchema) {
+    const { $schema: _draft, ...schema } = exportJsonSchemas()["video-ir"] as Record<string, unknown>;
+    irSchema = schema;
+  }
   return irSchema;
 }
 
@@ -102,6 +107,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
         retryable: false,
       });
     }
+    let resolvedKey: ResolvedProviderCredential | undefined;
     const runtime = createClaudeAgentRuntime({
       transport: deps.transport,
       model: deps.model,
@@ -112,6 +118,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
             connectionId: selection.providerConnectionId,
             requestedBy: ctx.requestedBy,
           });
+          resolvedKey = resolved;
           return resolved.apiKey;
         },
       },
@@ -149,6 +156,12 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
       });
     } catch (err) {
       const error = isStudixError(err) ? err : new StudixError("INTERNAL", String(err));
+      // Anthropic refused this key mid-run; the service re-tests it before it stops accepting the key.
+      if (error.code === "UNAUTHENTICATED" && resolvedKey) {
+        await resolvedKey.markRejected().catch((e: unknown) => {
+          log.warn("rejected key not marked invalid", { jobId: ctx.jobId, error: String(e) });
+        });
+      }
       // A failed run still paid for what the agent did before it stopped; the stage reports no usage.
       const spent = agentSpendOf(error);
       const model = spent?.model ?? deps.model;

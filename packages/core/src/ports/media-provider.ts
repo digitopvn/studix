@@ -1,3 +1,4 @@
+import { StudixError, type StudixErrorOptions } from "@studix/shared";
 import type { TenantContext } from "../tenant.ts";
 
 /**
@@ -73,6 +74,37 @@ export interface MediaGenerationResult {
   costSource?: MediaCostSource;
   /** Present when the work ran as an upstream async job. */
   job?: ProviderJobRef;
+}
+
+/** What the provider already charged for a call that then failed. */
+export interface MediaCharge {
+  provider: string;
+  model: string;
+  costCents: number;
+  costSource: MediaCostSource;
+  /** Present when the work ran as an upstream async job. */
+  job?: ProviderJobRef;
+}
+
+/**
+ * Thrown by a provider whose call failed after the upstream had already charged for it (the job finished
+ * but its result could not be collected or trusted). `charge` is the money spent, so the caller records it
+ * instead of losing it with the error.
+ */
+export class MediaChargedError extends StudixError {
+  constructor(
+    cause: StudixError,
+    readonly charge: MediaCharge,
+  ) {
+    const options: StudixErrorOptions = {
+      retryable: cause.retryable,
+      cause,
+      ...(cause.suggestedAction !== undefined ? { suggestedAction: cause.suggestedAction } : {}),
+      ...(cause.details !== undefined ? { details: cause.details } : {}),
+    };
+    super(cause.code, cause.message, options);
+    this.name = "MediaChargedError";
+  }
 }
 
 /**

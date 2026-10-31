@@ -76,6 +76,7 @@ guide, the per-error value is authoritative.
 | `studix_get_job`      | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                            |
 | `studix_get_project`  | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                        |
 | `studix_cancel_job`   | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                           |
+| `studix_retry_job`    | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                             |
 | `studix_approve`      | Record a decision on a pending approval (for example `video.publish`). Only a human user may approve; an API key gets `FORBIDDEN`.                                                                                                 |
 | `studix_feedback`     | Feedback on one target of the current version: `shotId`, `sceneId`, `assetId`, or `startMs` with `endMs`. Always stored as a comment. With a `patch`, it makes a new version and queues a render job. Async.                       |
 | `studix_render`       | Queue a render of the current version, or of a given `versionId`, at a `renderPreset`. Returns `jobId`; poll `studix_get_job` for the MP4 URL. Async.                                                                              |
@@ -135,8 +136,9 @@ Behavior notes:
   without an approved storyboard fails with `APPROVAL_REQUIRED`.
 - `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
   (6 to 60 s, default 15 s) in the style profile that best matches the brief,
-  with a generated voice-over and burned captions, then renders, QA-gates and
-  uploads it in one job. It has no image-to-video.
+  with a generated voice-over, one SFX accent where the CTA card lands and
+  burned captions, then renders, QA-gates and uploads it in one job. It has no
+  image-to-video and no music.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action
@@ -174,6 +176,22 @@ Behavior notes:
   approves it in the dashboard.
 - Re-sending `studix_create_video` with the same idempotency key in the same
   workspace returns the original job instead of a new one.
+
+### Retrying a failed job
+
+A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jobs/:jobId/retry` on the dashboard API) requeues it as the same job once the cause is fixed, for example a storage bucket that was missing after the provider had already charged for the media.
+
+- Stages that succeeded keep their outputs and are not run again.
+- The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) are reused from the stage's media directory, which belongs to the job and not to the attempt (`<workRoot>/<jobId>/media/<stage>`; only the media provider writes there and stages never clear it), so a retry on the same worker finds the file and does not pay again. After a move to another worker that local file is gone and the call runs again; the journal only records the upstream job, not the file.
+- Usage events keep their `dedupeKey`, which is tied to the upstream job, so the resume bills no call twice.
+- Gates already decided on the job (approved, or consumed) are read from the database and are not asked again.
+- The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window it was created with. The budget is not reset: spend so far still counts against `budgetCents`.
+- Only a `failed` job can be retried (any other status returns `CONFLICT`). `video.publish` jobs cannot (`VALIDATION`: a publish is not idempotent, so start a new one), and neither can a job whose `job.start` approval was expired, rejected or never granted by a person (`APPROVAL_REQUIRED`). Agent stages are not retried automatically, but a manual retry re-runs a failed agent stage and its spend is billed again.
+- The caller needs the `job:retry` permission (owner, admin and editor roles; API keys need the scope). Migration `0012` adds the scope to keys issued before it existed whose scopes were exactly the editor, admin or owner set, so they keep their role label; a key with any other scope set is `custom` and needs a new key that includes `job:retry`.
+- A retried render job only moves its project to `in_review` while the project is still `rendering`, so a later status set by anything else (a newer review decision, an archive) is not overwritten.
+- A job whose Atlas call is stuck in `submitting` after a partial batch failure cannot be recovered by retry; this is existing behaviour tracked in #67 and #69.
+- The dashboard job page shows a **Retry job** button for a `failed` job that is not a publish.
+- The action is audited as `job.retried`. A failed job's `next` list suggests the tool.
 
 ### Feedback, render and storyboard approval
 
