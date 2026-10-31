@@ -19,6 +19,8 @@ export interface Review extends TenantOwned {
   /** End (exclusive) of the commented time range; only with `atMs`. */
   endMs?: number;
   status: ReviewStatus;
+  /** Client retry key of a comment sent without a patch (a patch stores its key on the version). */
+  idempotencyKey?: string;
   updatedAt: Date;
 }
 

@@ -54,6 +54,11 @@ export type NewReview = Omit<NewRecord<Review>, "status">;
 export interface ReviewRepository {
   create(ctx: TenantContext, input: NewReview): Promise<Review>;
   get(ctx: TenantContext, id: string): Promise<Review | undefined>;
+  findByIdempotencyKey(
+    ctx: TenantContext,
+    projectId: string,
+    idempotencyKey: string,
+  ): Promise<Review | undefined>;
   list(
     ctx: TenantContext,
     query: PageRequest & { projectId: string; versionId?: string },
