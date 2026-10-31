@@ -272,7 +272,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
             completedAt: clock.now(),
           });
         }
-        await markInReview(repos, ctx, payload.projectId);
+        await markInReview(repos, ctx, payload.projectId, versionId);
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return {
@@ -293,7 +293,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
       const payload = payloadOf(s);
       const { versionId } = read(ValidateOutput, s.outputs.validate_ir, "validate_ir checkpoint");
       await s.commit(async (repos, ctx) => {
-        await markInReview(repos, ctx, payload.projectId);
+        await markInReview(repos, ctx, payload.projectId, versionId);
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return { output: { projectVersionId: versionId, storyboard: "in_review" } };
@@ -340,17 +340,21 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
 }
 
 /**
- * Hand the project to review when this job's render or storyboard is ready. Only a project in one of `from`
- * (by default just `rendering`) moves: a retried job that finishes after a newer render was approved or
- * published (or after the project was archived) must not put the project back into review.
+ * Hand the project to review when this job's render or storyboard is ready. Only the head version's job
+ * moves the status, and only while the project is in one of `from` (by default just `rendering`): a retry of
+ * an older version's job that finishes while the head renders must not end that render early, and a retried
+ * job that finishes after a newer render was approved or published (or after the project was archived) must
+ * not put the project back into review.
  */
 export async function markInReview(
   repos: FencedRepositories,
   ctx: TenantContext,
   projectId: string,
+  versionId: string,
   from: readonly ProjectStatus[] = ["rendering"],
 ): Promise<void> {
   const project = await repos.projects.get(ctx, projectId);
-  if (project && from.includes(project.status))
+  if (project && from.includes(project.status) && project.currentVersionId === versionId) {
     await repos.projects.update(ctx, projectId, { status: "in_review" });
+  }
 }
