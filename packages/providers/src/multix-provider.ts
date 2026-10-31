@@ -676,12 +676,25 @@ export class MultixProvider implements MediaProvider {
   ): Promise<MediaGenerationResult> {
     const outDir = join(request.workDir, `multix-${sha([ctx.workspaceId, request.idempotencyKey])}`);
     const file = join(outDir, `${plan.role}${plan.outputExt ?? ".bin"}`);
-    const result = (outputs: GeneratedMedia[], costCents: number, costSource: MediaCostSource) => ({
+    // A sync run has no upstream job to resume, but its charge must still be billed once however many
+    // attempts report it. The execution id is the upstream history id when there is one, else it is derived
+    // from the idempotency key, so two assets never share it. Records journaled before this id existed
+    // stored the literal "sync", which would collide across assets, so they fall back to the derived id.
+    const derivedId = `sync-${sha([ctx.workspaceId, request.idempotencyKey], 24)}`;
+    const journaledId = existing?.job?.id;
+    const reusedId = journaledId && journaledId !== "sync" ? journaledId : derivedId;
+    const result = (
+      outputs: GeneratedMedia[],
+      costCents: number,
+      costSource: MediaCostSource,
+      jobId: string,
+    ) => ({
       outputs,
       provider: this.id,
       model: plan.model.id,
       costCents,
       costSource,
+      job: { provider: plan.model.vendor, id: jobId },
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
     });
     if (existing?.state === "completed" && (await fileSize(file)) > 0) {
@@ -689,6 +702,7 @@ export class MultixProvider implements MediaProvider {
         [{ filePath: file, mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream" }],
         existing.receiptCents ?? existing.estimatedCostCents,
         existing.receiptCents !== undefined ? "receipt" : "estimate",
+        reusedId,
       );
     }
     const estimate = await this.estimatePlan(plan, request, request.workDir);
@@ -704,11 +718,13 @@ export class MultixProvider implements MediaProvider {
     );
     // The run succeeded, so the upstream has charged even if its output turns out unusable.
     const [spentCents, spentSource] = this.settleCost(envelope, undefined, estimate);
+    const jobId = envelope.historyId ?? derivedId;
     const charge = this.chargeOf(envelope, {
       provider: this.id,
       model: plan.model.id,
       costCents: spentCents,
       costSource: spentSource,
+      job: { provider: plan.model.vendor, id: jobId },
     });
     const failed = (error: StudixError) => (charge ? new MediaChargedError(error, charge) : error);
     try {
@@ -731,7 +747,7 @@ export class MultixProvider implements MediaProvider {
         idempotencyKey: request.idempotencyKey,
         kind: request.kind,
         model: plan.model.id,
-        job: { provider: plan.model.vendor, id: envelope.historyId ?? "sync" },
+        job: { provider: plan.model.vendor, id: jobId },
         attempt: (existing?.attempt ?? 0) + 1,
         state: "completed",
         estimatedCostCents: estimate,
@@ -742,7 +758,7 @@ export class MultixProvider implements MediaProvider {
       .catch((putErr: unknown) => {
         throw charge ? new MediaChargedError(toStudixError(putErr), charge) : putErr;
       });
-    return result(outputs, receipt ?? estimate, receipt !== undefined ? "receipt" : "estimate");
+    return result(outputs, receipt ?? estimate, receipt !== undefined ? "receipt" : "estimate", jobId);
   }
 
   private assertTrustedOutputs(envelope: MultixEnvelope, job?: ProviderJobRef): void {

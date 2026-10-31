@@ -969,6 +969,27 @@ describe("MultixProvider synchronous audio", () => {
     const again = await multix.generate(ctx, voiceRequest());
     expect(again.outputs).toEqual(result.outputs);
     expect(cli.calls).toHaveLength(2);
+    // Both attempts name the same execution, so the ledger bills the audio once.
+    expect(result.job).toEqual({ provider: "elevenlabs", id: "h_1" });
+    expect(again.job).toEqual(result.job);
+  });
+
+  it("gives each sync asset its own execution id when the upstream reports no history id", async () => {
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate"))
+        return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+      const out = flagValue(argv, "output")!;
+      return { files: { [out]: "mp3" }, envelope: { outputs: [{ path: out }] } };
+    });
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const a = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice:a" });
+    const b = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice:b" });
+    const aAgain = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice:a" });
+    expect(a.job?.id).toBeTruthy();
+    expect(a.job?.id).not.toBe("sync");
+    expect(b.job?.id).not.toBe(a.job?.id);
+    expect(aAgain.job).toEqual(a.job);
   });
 
   it("prices SFX from the assumed ceiling when multix has no estimator", async () => {
