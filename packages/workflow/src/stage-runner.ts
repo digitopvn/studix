@@ -1,6 +1,15 @@
 import { executionUsageDedupeKey, toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
-import type { Approval, BillingPolicy, Job, JobRepository, Stage, TenantContext } from "@studix/core";
+import type {
+  Approval,
+  BillingPolicy,
+  Job,
+  JobRepository,
+  Stage,
+  StageCacheRepository,
+  TenantContext,
+} from "@studix/core";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
+import { contentDigest } from "@studix/video-ir";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
 import type { WorkerJobQueue } from "./worker-job-queue.ts";
 import type { StageContext, StageDefinition, StageOutput, WorkflowDefinition } from "./workflow-types.ts";
@@ -15,6 +24,8 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
   logger: Logger;
   /** Minimum time between persisted in-stage progress updates. */
   progressIntervalMs?: number;
+  /** Tenant-wide memo of stage outputs by cacheKey; without it `cacheKey` is ignored. */
+  stageCache?: StageCacheRepository;
 }
 
 export type StagesOutcome =
@@ -48,6 +59,32 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     signal.addEventListener("abort", onAbort, { once: true });
     work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
   });
+}
+
+/**
+ * Cache key of a stage run: the stage, a version the stage bumps whenever its behavior changes, and the
+ * digest of its canonical input.
+ */
+export function stageCacheKey(stage: string, version: string | number, input: unknown): string {
+  return `${stage}@${version}:${contentDigest(input)}`;
+}
+
+/** Parse the stage input, or fail the stage before it runs. */
+function parseInput(stage: StageDefinition, job: Job, outputs: Record<string, StageOutput>): unknown {
+  if (!stage.inputSchema) return undefined;
+  const parsed = stage.inputSchema.safeParse({ payload: job.payload, outputs });
+  if (parsed.success) return parsed.data;
+  throw new StageFailure(
+    stage,
+    new StudixError("VALIDATION", `Invalid input for stage ${stage.name}`, {
+      retryable: false,
+      details: { issues: parsed.error.issues.slice(0, 10) },
+    }),
+  );
+}
+
+function matchesOutput(stage: StageDefinition, output: StageOutput): boolean {
+  return stage.outputSchema ? stage.outputSchema.safeParse(output).success : true;
 }
 
 /** Latest succeeded output per stage name (any attempt): the checkpoints a resumed job starts from. */
@@ -106,6 +143,7 @@ export async function runStages(
       attempt: job.attempts,
       signal,
       outputs,
+      input: parseInput(stage, job, outputs),
       commit: async (write) => {
         signal.throwIfAborted();
         const result = await queue.commit(job, workerId, write);
@@ -127,6 +165,26 @@ export async function runStages(
           });
       },
     };
+
+    // A cached result of the same work is reused before any gate, budget check or charge.
+    const cacheKey = deps.stageCache ? await stage.cacheKey?.(sctx) : undefined;
+    if (cacheKey !== undefined && deps.stageCache) {
+      const hit = await deps.stageCache.get(ctx, stage.name, cacheKey);
+      if (hit && matchesOutput(stage, hit.output)) {
+        const at = deps.clock.now();
+        await fenced(
+          queue.writeStage(job, workerId, {
+            name: stage.name,
+            status: "succeeded",
+            output: hit.output,
+            startedAt: at,
+            finishedAt: at,
+          }),
+        );
+        outputs[stage.name] = hit.output;
+        continue;
+      }
+    }
 
     if (stage.approval) {
       const gate = await checkApprovalGate(deps, ctx, job, workerId, {
@@ -164,6 +222,11 @@ export async function runStages(
       const result = await untilAborted(stage.run(sctx), signal);
       signal.throwIfAborted();
       output = result.output;
+      if (!matchesOutput(stage, output)) {
+        throw new StudixError("VALIDATION", `Stage ${stage.name} returned an output that fails its schema`, {
+          retryable: false,
+        });
+      }
       for (const usage of result.usage ?? []) {
         await fenced(
           queue.recordUsage(job, workerId, {
@@ -225,6 +288,10 @@ export async function runStages(
       }),
     );
     outputs[stage.name] = output;
+    // After the fenced checkpoint, so a worker that lost the job never publishes its result to the cache.
+    if (cacheKey !== undefined && deps.stageCache) {
+      await deps.stageCache.put(ctx, { stage: stage.name, cacheKey, output, jobId: job.id });
+    }
     if (job.budgetCents !== undefined && spentCents > job.budgetCents) {
       throw budgetError(
         `job spent ${spentCents}¢, over its ${job.budgetCents}¢ budget, after ${stage.name}`,

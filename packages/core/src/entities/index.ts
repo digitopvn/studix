@@ -3,5 +3,6 @@ export * from "./common.ts";
 export * from "./job.ts";
 export * from "./project.ts";
 export * from "./review.ts";
+export * from "./revision.ts";
 export * from "./telemetry.ts";
 export * from "./tenancy.ts";

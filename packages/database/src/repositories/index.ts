@@ -11,6 +11,7 @@ import { createJobStore } from "./job-repository.ts";
 import { createProjectRepository } from "./project-repository.ts";
 import { createProviderConnectionRepository } from "./provider-connection-repository.ts";
 import { createRenderRepository, createWorkflowRunRepository } from "./render-workflow-repositories.ts";
+import { createRevisionRepository, createStageCacheRepository } from "./revision-repositories.ts";
 import { createActivityRepository, createUsageRepository } from "./telemetry-repositories.ts";
 import {
   createApiKeyRepository,
@@ -25,6 +26,7 @@ export * from "./job-repository.ts";
 export * from "./project-repository.ts";
 export * from "./provider-connection-repository.ts";
 export * from "./render-workflow-repositories.ts";
+export * from "./revision-repositories.ts";
 export * from "./telemetry-repositories.ts";
 export * from "./tenancy-repositories.ts";
 
@@ -42,6 +44,8 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     queue,
     renders: createRenderRepository(db, clock),
     workflowRuns: createWorkflowRunRepository(db, clock),
+    revisions: createRevisionRepository(db, clock),
+    stageCache: createStageCacheRepository(db, clock),
     approvals: createApprovalRepository(db, clock),
     reviews: createReviewRepository(db, clock),
     audit: createAuditRepository(db, clock),

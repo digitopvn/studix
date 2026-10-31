@@ -1,7 +1,7 @@
 import type { AssetProvenance } from "@studix/video-ir";
 import type { ActorRef, TenantOwned } from "./common.ts";
 
-export const ASSET_KINDS = ["image", "video", "audio", "font", "document", "render"] as const;
+export const ASSET_KINDS = ["image", "video", "audio", "font", "document", "code", "render"] as const;
 export type AssetKind = (typeof ASSET_KINDS)[number];
 
 /** Library entry; binary content lives in immutable AssetVersions. */

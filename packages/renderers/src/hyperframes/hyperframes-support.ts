@@ -38,6 +38,7 @@ export function hyperframesSupport(ir: VideoIR, spec: RenderSpec): RendererSuppo
     for (const shot of scene.shots) {
       const where = `scene "${scene.id}" shot "${shot.id}"`;
       if (shot.type === "video") reasons.push(`${where}: video shots are not supported yet`);
+      if (shot.type === "composition") reasons.push(`${where}: composition shots are not supported yet`);
       if (shot.type === "image" || shot.type === "logo") checkImage(where, shot.assetId);
     }
   }

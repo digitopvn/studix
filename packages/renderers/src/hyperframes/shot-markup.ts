@@ -190,9 +190,10 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       return { html: `${open}<div class="cta-pill">${escapeHtml(shot.text)}</div>${url}</div>`, css };
     }
     case "video":
+    case "composition":
       throw new StudixError(
         "VALIDATION",
-        `Video shot "${shot.id}" is not supported by the HyperFrames renderer`,
+        `${shot.type === "video" ? "Video" : "Composition"} shot "${shot.id}" is not supported by the HyperFrames renderer`,
         {
           suggestedAction: "Check RendererAdapter.supports() before rendering.",
         },

@@ -77,6 +77,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
     approvalTtlMs: settings.approvalTtlMs ?? WEEK_MS,
     billing: createJobBudgetPolicy(),
     ledger: createUsageLedger(repos.usage),
+    stageCache: repos.stageCache,
     clock,
     logger,
     heartbeatIntervalMs: settings.heartbeatIntervalMs,
