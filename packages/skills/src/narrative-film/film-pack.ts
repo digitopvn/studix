@@ -1,5 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ProjectStatus } from "@studix/core";
 import { FILM_SCENE_MIME, FILM_WEATHER_PRESETS, filmPlateScene } from "@studix/renderers/film-scene";
 import { StudixError } from "@studix/shared";
 import {
@@ -21,6 +22,7 @@ import {
   irOf,
   jobScopedId,
   mapBounded,
+  markInReview,
   type PackPipeline,
   payloadOf,
   RenderOutput,
@@ -229,12 +231,15 @@ function failIssues(what: string, issues: readonly ValidationIssue[], suggestedA
   });
 }
 
+/** Statuses in which a creative board may be put in front of a reviewer. */
+const REVIEW_OPEN: readonly ProjectStatus[] = ["draft", "planning", "rendering", "in_review"];
+
 /**
  * Store `ir` as a project version a reviewer can open on the dashboard and point the project at it, so the
  * creative gate that follows has something to look at. Deterministic id per job and board: a re-run finds
  * the version instead of adding another.
  */
-async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string): Promise<string> {
+export async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string): Promise<string> {
   const { projectId } = payloadOf(s);
   const versionId = jobScopedId(`pv${board}`, s.job.id);
   await s.commit(async (repos, ctx) => {
@@ -247,7 +252,12 @@ async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string)
         createdBy: { type: "system", id: ctx.actor.id },
       });
     }
-    await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
+    // A retried job can outlive an approve, publish or archive: only a project still being worked on is
+    // pointed at the board and handed to review.
+    const project = await repos.projects.get(ctx, projectId);
+    if (project && REVIEW_OPEN.includes(project.status))
+      await repos.projects.update(ctx, projectId, { currentVersionId: versionId });
+    await markInReview(repos, ctx, projectId, REVIEW_OPEN);
   });
   return versionId;
 }

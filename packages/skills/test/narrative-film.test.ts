@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
+import type { ProjectStatus, TenantContext } from "@studix/core";
+import { createInMemoryProjectRepository } from "@studix/core/testing";
 import { validateVideoIR } from "@studix/video-ir";
+import type { StageContext } from "@studix/workflow";
 import { describe, expect, it } from "vitest";
 import {
   animePack,
@@ -22,6 +25,7 @@ import {
   storyboardIr,
   tempCaptions,
 } from "../src/index.ts";
+import { publishReviewVersion } from "../src/narrative-film/film-pack.ts";
 
 const fixture: FilmScopeInput = JSON.parse(
   readFileSync(new URL("./fixtures/anime-scope-vi.json", import.meta.url), "utf8"),
@@ -324,5 +328,52 @@ describe("narrative packs", () => {
     const broken = structuredClone(fixture);
     broken.scenes[0]!.shots[1]!.tier = "T1";
     expect(() => template.run(broken)).toThrow(/production rules/);
+  });
+});
+
+describe("review board publication", () => {
+  const ctx: TenantContext = {
+    organizationId: "org_1",
+    workspaceId: "ws_1",
+    actor: { type: "user", id: "usr_1", role: "owner" },
+  };
+
+  async function publishOn(status: ProjectStatus) {
+    const projects = createInMemoryProjectRepository({ now: () => new Date() });
+    const project = await projects.create(ctx, {
+      title: "Film",
+      status: "draft",
+      brief: {},
+      workflowTemplate: "anime",
+      createdBy: { type: "user", id: "usr_1" },
+    } as never);
+    const first = await projects.createVersion(ctx, {
+      projectId: project.id,
+      ir: bibleBoardIr(scope, {}),
+      source: "planner",
+      createdBy: { type: "user", id: "usr_1" },
+    } as never);
+    await projects.update(ctx, project.id, { currentVersionId: first.id, status });
+    const stage = {
+      job: { id: "job_old", payload: { projectId: project.id } },
+      commit: async (write: (r: never, c: TenantContext) => Promise<unknown>) =>
+        write({ projects } as never, ctx),
+    } as unknown as StageContext;
+    const versionId = await publishReviewVersion(stage, bibleBoardIr(scope, {}), "g0");
+    return { after: await projects.get(ctx, project.id), first, versionId };
+  }
+
+  it("points a project that is still being worked on at the board and opens review", async () => {
+    for (const status of ["draft", "planning", "rendering", "in_review"] as const) {
+      const { after, versionId } = await publishOn(status);
+      expect(after).toMatchObject({ currentVersionId: versionId, status: "in_review" });
+    }
+  });
+
+  it("leaves a project that moved on untouched when a stale job publishes its board", async () => {
+    for (const status of ["approved", "published", "archived", "failed"] as const) {
+      const { after, first } = await publishOn(status);
+      expect(after).toMatchObject({ currentVersionId: first.id, status });
+    }
   });
 });
