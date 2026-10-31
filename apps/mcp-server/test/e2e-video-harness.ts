@@ -77,11 +77,48 @@ export interface WorkerHandle {
   stop(graceMs?: number): Promise<void>;
 }
 
-function descendants(root: number): number[] {
-  const table = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
+/** One `[pid, ppid]` pair per process, from the platform's own process lister. */
+export type ProcessTable = Array<[pid: number, ppid: number]>;
+
+/** Parse `ps -A -o pid=,ppid=` output (POSIX). */
+export function parsePsTable(text: string): ProcessTable {
+  return text
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter((cols): cols is [number, number] => cols.length === 2 && cols.every(Number.isInteger));
+}
+
+/** Parse `Get-CimInstance Win32_Process` piped to `ConvertTo-Csv` output (Windows). */
+export function parseCimCsv(text: string): ProcessTable {
+  const rows: ProcessTable = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^"(\d+)","(\d+)"$/.exec(line.trim());
+    if (m) rows.push([Number(m[1]), Number(m[2])]);
+  }
+  return rows;
+}
+
+/** List every process with its parent, on Linux, macOS and Windows. */
+export function listProcesses(): ProcessTable {
+  if (process.platform === "win32") {
+    const out = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Csv -NoTypeInformation",
+      ],
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+    );
+    return parseCimCsv(out);
+  }
+  return parsePsTable(execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" }));
+}
+
+export function descendants(root: number): number[] {
   const children = new Map<number, number[]>();
-  for (const line of table.trim().split("\n")) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number) as [number, number];
+  for (const [pid, ppid] of listProcesses()) {
     children.set(ppid, [...(children.get(ppid) ?? []), pid]);
   }
   const out: number[] = [];
