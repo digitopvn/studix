@@ -3,6 +3,7 @@ import {
   type AgentRuntime,
   type ApprovalPolicy,
   createDefaultApprovalPolicy,
+  type MediaProvider,
   type PublisherAdapter,
   type RendererAdapter,
   type StorageAdapter,
@@ -10,6 +11,7 @@ import {
 } from "@studix/core";
 import { createRepositories, type StudixDb } from "@studix/database";
 import { type Clock, type Logger, systemClock } from "@studix/shared";
+import { packPipelines, packRegistry } from "@studix/skills";
 import {
   createJobExecutor,
   createVideoCreateWorkflow,
@@ -18,6 +20,7 @@ import {
   createWorkerPool,
   type JobOutcome,
   type Planner,
+  type QaGate,
   type StageContext,
   type WorkerPool,
   type WorkerPoolStatus,
@@ -30,6 +33,10 @@ export interface WorkerPorts {
   storage: StorageAdapter;
   /** Optional: without one, approved publish jobs fail with UNAVAILABLE. */
   publisher?: PublisherAdapter;
+  /** Optional: paid media for pack stages (frames, clips, voice, music). Without it those stages fail UNAVAILABLE. */
+  media?: MediaProvider;
+  /** Optional: the hard QA gate pack stages run on a render. Without it those stages fail UNAVAILABLE. */
+  qa?: QaGate;
   /**
    * Optional: the in-worker agent harness for an agent stage of a job. Without it agent stages run only in
    * host mode (the MCP client's agent completes them).
@@ -88,6 +95,13 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
     stageCache: repos.stageCache,
     storyboardStatus: (ctx, projectId) => storyboardStatus(repos, ctx, projectId),
     agents: { handoffs: repos.agentHandoffs, runtimeFor: deps.agentRuntimeFor },
+    services: {
+      media: deps.media,
+      storage: deps.storage,
+      renderer: deps.renderer,
+      qa: deps.qa,
+      workRoot: settings.workDir,
+    },
     clock,
     logger,
     heartbeatIntervalMs: settings.heartbeatIntervalMs,
@@ -101,6 +115,8 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
         workRoot: settings.workDir,
         renderCentsPerSecond: settings.renderCentsPerSecond,
         clock,
+        // A project's workflowTemplate picks its pack pipeline; brand-intro and no template keep the default.
+        pipelines: packPipelines(packRegistry),
       }),
       createVideoPublishWorkflow({ renders: repos.renders, publisher: deps.publisher }),
     ],

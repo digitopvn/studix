@@ -81,7 +81,10 @@ describe("MCP workflow templates, feedback and render (Postgres)", () => {
     expect(bad.isError).toBe(true);
     expect(bad.envelope.error).toMatchObject({
       code: "VALIDATION",
-      details: { workflowTemplate: "no-such-pack", available: ["brand-intro", "review-explainer"] },
+      details: {
+        workflowTemplate: "no-such-pack",
+        available: ["brand-intro", "marketing-video", "motion-graphic", "review-explainer"],
+      },
     });
     expect(bad.envelope.error?.suggestedAction).toContain("review-explainer");
     const after = await app.db.repos.projects.list(tenantA, { limit: 100 });

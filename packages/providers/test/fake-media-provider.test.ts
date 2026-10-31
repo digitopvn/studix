@@ -117,6 +117,15 @@ describe("FakeMediaProvider", () => {
     ).rejects.toMatchObject({ code: "VALIDATION" });
   });
 
+  it("serves concurrent identical requests, which share one content-addressed file", async () => {
+    const same = request({ kind: "music", params: { durationMs: 1000, seed: "race" } });
+    const results = await Promise.all(Array.from({ length: 8 }, () => provider.generate(ctx, same)));
+    const paths = new Set(results.map((r) => r.outputs[0]?.filePath));
+    expect(paths.size).toBe(1);
+    const hashes = await Promise.all(results.map((r) => sha(r.outputs[0]?.filePath as string)));
+    expect(new Set(hashes).size).toBe(1);
+  });
+
   it("resumes a job by its id without generating again", async () => {
     const first = await provider.generate(ctx, request({ params: { seed: "resume" } }));
     expect(first.job).toEqual({ provider: "fake", id: expect.stringMatching(/^fake_[0-9a-f]{16}$/) });
