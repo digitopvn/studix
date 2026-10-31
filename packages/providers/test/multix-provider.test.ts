@@ -974,22 +974,73 @@ describe("MultixProvider synchronous audio", () => {
     expect(again.job).toEqual(result.job);
   });
 
-  it("gives each sync asset its own execution id when the upstream reports no history id", async () => {
-    const cli = scriptedCli((argv) => {
+  const noHistoryCli = (calls: { runs: number }, outputs = true) =>
+    scriptedCli((argv) => {
       if (argv.includes("--estimate"))
         return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+      calls.runs += 1;
       const out = flagValue(argv, "output")!;
-      return { files: { [out]: "mp3" }, envelope: { outputs: [{ path: out }] } };
+      return outputs
+        ? { files: { [out]: "mp3" }, envelope: { outputs: [{ path: out }] } }
+        : { envelope: { outputs: [] } };
     });
+
+  it("reuses one execution id per sync run and gives each asset its own", async () => {
+    const counts = { runs: 0 };
+    const cli = noHistoryCli(counts);
     const journal = new InMemoryMediaJobJournal();
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
     const a = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice:a" });
     const b = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice:b" });
     const aAgain = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice:a" });
-    expect(a.job?.id).toBeTruthy();
+    expect(counts.runs).toBe(2);
     expect(a.job?.id).not.toBe("sync");
     expect(b.job?.id).not.toBe(a.job?.id);
     expect(aAgain.job).toEqual(a.job);
+  });
+
+  it("gives a run that really repeats a new execution id, so its second charge is billed", async () => {
+    const counts = { runs: 0 };
+    let usable = false;
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate"))
+        return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+      counts.runs += 1;
+      const out = flagValue(argv, "output")!;
+      return usable
+        ? { files: { [out]: "mp3" }, envelope: { outputs: [{ path: out }] } }
+        : { envelope: { outputs: [] } };
+    });
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      journal: new InMemoryMediaJobJournal(),
+    });
+    const first = await multix.generate(ctx, voiceRequest()).catch((e: unknown) => e);
+    expect(first).toBeInstanceOf(MediaChargedError);
+    usable = true;
+    const second = await multix.generate(ctx, voiceRequest());
+    expect(counts.runs).toBe(2);
+    const failedJob = (first as MediaChargedError).charge.job;
+    expect(failedJob?.id).toBeTruthy();
+    expect(second.job?.id).not.toBe(failedJob?.id);
+  });
+
+  it("replaces the legacy literal sync id with an id that differs per asset", async () => {
+    const counts = { runs: 0 };
+    const cli = noHistoryCli(counts);
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const ids: (string | undefined)[] = [];
+    for (const key of ["stage-3:voice:a", "stage-3:voice:b"]) {
+      await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: key });
+      const record = (await journal.get(ctx, key))!;
+      await journal.put(ctx, { ...record, job: { provider: record.job!.provider, id: "sync" } });
+      ids.push((await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: key })).job?.id);
+    }
+    expect(counts.runs).toBe(2);
+    expect(ids[0]).not.toBe("sync");
+    expect(ids[1]).not.toBe(ids[0]);
   });
 
   it("prices SFX from the assumed ceiling when multix has no estimator", async () => {

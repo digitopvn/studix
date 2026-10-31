@@ -676,13 +676,14 @@ export class MultixProvider implements MediaProvider {
   ): Promise<MediaGenerationResult> {
     const outDir = join(request.workDir, `multix-${sha([ctx.workspaceId, request.idempotencyKey])}`);
     const file = join(outDir, `${plan.role}${plan.outputExt ?? ".bin"}`);
-    // A sync run has no upstream job to resume, but its charge must still be billed once however many
-    // attempts report it. The execution id is the upstream history id when there is one, else it is derived
-    // from the idempotency key, so two assets never share it. Records journaled before this id existed
-    // stored the literal "sync", which would collide across assets, so they fall back to the derived id.
-    const derivedId = `sync-${sha([ctx.workspaceId, request.idempotencyKey], 24)}`;
+    // A sync run has no upstream job to resume, but each paid run is one execution: reusing its output on a
+    // later attempt must report the same id (billed once), while a run that really repeats must get a new
+    // id (billed again). The id is the upstream history id when there is one, else unique per run and
+    // journaled so the reuse path returns it. Records journaled before this stored the literal "sync",
+    // which would collide across assets, so those fall back to an id derived from the idempotency key.
+    const legacyId = `sync-${sha([ctx.workspaceId, request.idempotencyKey], 24)}`;
     const journaledId = existing?.job?.id;
-    const reusedId = journaledId && journaledId !== "sync" ? journaledId : derivedId;
+    const reusedId = journaledId && journaledId !== "sync" ? journaledId : legacyId;
     const result = (
       outputs: GeneratedMedia[],
       costCents: number,
@@ -718,7 +719,7 @@ export class MultixProvider implements MediaProvider {
     );
     // The run succeeded, so the upstream has charged even if its output turns out unusable.
     const [spentCents, spentSource] = this.settleCost(envelope, undefined, estimate);
-    const jobId = envelope.historyId ?? derivedId;
+    const jobId = envelope.historyId ?? `sync-${randomUUID()}`;
     const charge = this.chargeOf(envelope, {
       provider: this.id,
       model: plan.model.id,
