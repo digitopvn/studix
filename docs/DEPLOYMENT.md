@@ -94,7 +94,10 @@ resources prefixed `studix-`.
 - Each environment has its own R2 bucket, S3 API with path-style addressing.
 - Secrets: set per project with `tose env push <file> --project <name>` from a
   file outside the repo (mode 600, deleted afterwards). App and worker of one
-  environment share `BETTER_AUTH_SECRET`; environments never share it. Names
+  environment share `BETTER_AUTH_SECRET` and `STUDIX_CREDENTIAL_KEYS` (the
+  app seals workspace AI provider keys, the worker opens them; without it
+  the AI & Models settings answer unavailable); environments never share
+  them. Names
   are listed in `.env.example`; the per-environment ones are `STUDIX_ROLE`,
   `STUDIX_APP_URL` / `STUDIX_PUBLIC_URL` (the environment's hostname),
   `STUDIX_ALLOWED_HOSTS` (the project's TOSE default host),

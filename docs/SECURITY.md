@@ -67,6 +67,13 @@ invisible to other members, and `secretRef` is dropped from every dashboard
 projection. Pi sessions never use `~/.pi/agent` or the server environment as a
 credential source.
 
+Keys are write-only through `/api/providers`: responses carry a short hint and
+are sent with `Cache-Control: no-store`. Users cannot supply a custom provider
+endpoint (`baseUrl`) until outbound URLs are checked against private networks,
+and providers that authenticate from ambient cloud credentials are not offered.
+A failing workspace model falls back to the free rules provider, never to the
+operator's paid credentials. App and worker need the same keyring.
+
 ## MCP-in-MCP connectors
 
 Owner: `packages/mcp-gateway`

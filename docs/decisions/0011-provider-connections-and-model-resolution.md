@@ -51,18 +51,36 @@ operator.
    default (`resolveModelSelection`, pure). No match is an error, never a guess. Fallbacks are only used when the
    preference sets `allowFallback`, and each fallback names its own connection, so a failure never
    changes credential silently.
-8. **Job snapshot.** When a job starts, the resolved choice is stored as a `ResolvedModelSnapshot` (runtime,
-   stage, source, connection id and version, provider, model, auth method, billing source, fallbacks). A retry keeps the
+8. **Job snapshot.** The first time a job resolves a model for a stage, the choice is stored as a
+   `ResolvedModelSnapshot` (runtime, stage, source, connection id and version, provider, model, auth method, billing
+   source, fallbacks) in `job_model_snapshots`, one row per (job, runtime, stage); the first write wins. A retry keeps the
    snapshot's connection and model and reads that connection's current secret, so a rotated key keeps working;
    a changed preference never applies to an existing job.
 9. **Not the MCP keys.** Inbound `stx_` keys (`apikey:manage`) and outbound provider credentials share no table,
    permission or UI: default API key scopes never include `provider:*`.
+10. **Where the workspace model runs.** The worker maps decision kinds to stages (`video.brief` → `plan`). When the
+    workspace or the job's creator chose a Pi model for that stage, the decision runs on it with that connection's key.
+    Without a choice the operator's decision router runs exactly as before. When the workspace model fails (rejected
+    key, outage, invalid answer) the job continues on the free rules provider; it never moves onto credentials the
+    operator pays for. Inside one attempt, a provider failure (including a rejected key) moves to the next fallback
+    only when the preference allowed fallbacks; budget caps, cancellation and invalid output never do.
+11. **No custom endpoints yet.** `baseUrl` is not accepted from users. A user-supplied endpoint would let a tenant make
+    the server call private addresses; it waits for the outbound URL policy that already guards MCP connectors.
+    Providers whose SDK path reads ambient credentials (cloud IAM, ADC, account ids from the environment) are not
+    offered at all.
+12. **Dashboard and API.** Settings > AI & Models (`/api/providers`) lists the Pi catalog, creates API-key
+    connections, tests them with one tiny prompt capped at one cent (cheapest catalog model unless one is named),
+    rotates and deletes them, saves per-stage preferences and previews the model each stage resolves to for the
+    caller. Keys are write-only; responses carry the hint and `Cache-Control: no-store`. Without a credential keyring
+    the API answers `UNAVAILABLE`.
 
 ## Consequences
 
-- One migration (`provider_connections`, `provider_credentials`, `model_preferences`) serves every adapter.
+- One migration (`provider_connections`, `provider_credentials`, `model_preferences`, `job_model_snapshots`) serves
+  every adapter.
 - Operators must set `STUDIX_CREDENTIAL_KEYS` before enabling connection management; without it the vault
-  throws `UNAVAILABLE` and no secret is accepted.
+  throws `UNAVAILABLE` and no secret is accepted. The app (to seal) and the worker (to open) need the same keyring;
+  a worker without it ignores workspace models and keeps the operator router.
 - Losing every key that sealed a secret makes that connection unrecoverable (the user reconnects).
 - New permissions `provider:connect` and `provider:manage` extend the role matrix for users only; inbound API keys do not derive them.
 - Delivery splits into independently mergeable parts: this domain and vault, the Pi runtime and catalog,
