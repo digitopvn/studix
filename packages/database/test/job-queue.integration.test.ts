@@ -38,6 +38,8 @@ describe("Postgres job queue", () => {
     const before = Date.now();
     const retried = await queue.retry(ctx, job.id);
     const window = (retried.deadlineAt?.getTime() ?? 0) - before;
+    // The paused remainder is dropped, or the next claim would re-arm the deadline from it instead.
+    expect(retried.deadlineRemainingMs).toBeUndefined();
     expect(window).toBeLessThanOrEqual(requested + 1000);
     expect(window).toBeGreaterThan(requested - 10_000);
   });

@@ -7,7 +7,6 @@ import {
   type RendererAdapter,
   type RenderRepository,
   type StorageAdapter,
-  type TenantContext,
 } from "@studix/core";
 import { type Clock, StudixError, systemClock } from "@studix/shared";
 import { resolveRenderSpec } from "@studix/video-ir";
@@ -23,7 +22,6 @@ import {
   ValidateOutput,
   VideoCreatePayload,
 } from "./video-create-checkpoints.ts";
-import type { FencedRepositories } from "./worker-job-queue.ts";
 import type {
   EngineStages,
   PackPipeline,
@@ -129,18 +127,6 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
         })),
       };
     },
-  };
-
-  /** Move the project to review, unless a newer version became head: that version's own job settles it. */
-  const settleProjectInReview = async (
-    repos: Pick<FencedRepositories, "projects">,
-    ctx: TenantContext,
-    projectId: string,
-    versionId: string,
-  ) => {
-    const project = await repos.projects.get(ctx, projectId);
-    if (project?.currentVersionId !== undefined && project.currentVersionId !== versionId) return;
-    await repos.projects.update(ctx, projectId, { status: "in_review" });
   };
 
   const validateIr: StageDefinition = {
@@ -283,7 +269,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
             completedAt: clock.now(),
           });
         }
-        await settleProjectInReview(repos, ctx, payload.projectId, versionId);
+        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return {
@@ -304,7 +290,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
       const payload = payloadOf(s);
       const { versionId } = read(ValidateOutput, s.outputs.validate_ir, "validate_ir checkpoint");
       await s.commit(async (repos, ctx) => {
-        await settleProjectInReview(repos, ctx, payload.projectId, versionId);
+        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return { output: { projectVersionId: versionId, storyboard: "in_review" } };

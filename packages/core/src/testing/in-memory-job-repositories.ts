@@ -116,6 +116,7 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         finishedAt: undefined,
         lockedBy: undefined,
         leaseExpiresAt: undefined,
+        deadlineRemainingMs: undefined,
         deadlineAt:
           job.deadlineWindowMs !== undefined
             ? new Date(now.getTime() + job.deadlineWindowMs)

@@ -18,6 +18,7 @@ async function dir(name: string, ageMs: number): Promise<void> {
   const path = join(root, name, "attempt-1");
   await mkdir(path, { recursive: true });
   const when = new Date(Date.now() - ageMs);
+  await utimes(path, when, when);
   await utimes(join(root, name), when, when);
 }
 
@@ -31,6 +32,13 @@ describe("sweepStaleJobDirs", () => {
     const removed = await sweepStaleJobDirs(root, 7 * DAY);
     expect(removed).toEqual([old]);
     expect((await readdir(root)).sort()).toEqual([fresh, "claude"].sort());
+  });
+
+  it("keeps an old job directory whose attempt is still being written", async () => {
+    const running = newId("job");
+    await dir(running, 10 * DAY);
+    await mkdir(join(root, running, "attempt-1", "stage"), { recursive: true });
+    expect(await sweepStaleJobDirs(root, 7 * DAY)).toEqual([]);
   });
 
   it("tolerates a missing work directory", async () => {

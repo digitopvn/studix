@@ -16,7 +16,7 @@ const WorkerEnv = z.object({
     .optional(),
   WORKER_WORK_DIR: z.string().min(1).optional(),
   /** Hours a job's scratch directory is kept after its last write; failed jobs keep theirs for retries. */
-  WORKER_WORK_DIR_RETENTION_HOURS: z.coerce.number().min(1).max(8760).default(168),
+  WORKER_WORK_DIR_RETENTION_HOURS: z.coerce.number().min(24).max(8760).default(168),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(10).max(60_000).default(1000),
   WORKER_SHUTDOWN_GRACE_MS: z.coerce.number().int().min(0).max(600_000).default(25_000),
   /** COGS per rendered second; 0 until compute cost is measured. */

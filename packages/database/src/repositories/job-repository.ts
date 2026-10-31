@@ -290,6 +290,8 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           leaseExpiresAt: null,
           // The window the caller asked for starts again; the failed attempt may have used it up. Jobs created
           // before the window was stored fall back to the span between creation and the deadline.
+          // A deadline paused while parked would override the re-armed one at the next claim.
+          deadlineRemainingMs: null,
           deadlineAt: sql`case
             when ${jobs.deadlineWindowMs} is not null then ${now.toISOString()}::timestamptz + ${jobs.deadlineWindowMs} * interval '1 millisecond'
             when ${jobs.deadlineAt} is null then null

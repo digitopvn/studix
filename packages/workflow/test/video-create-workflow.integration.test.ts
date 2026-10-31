@@ -88,11 +88,7 @@ describe("video.create workflow on Postgres", () => {
       createdBy: author,
     });
     // Patch B already moved the head to v3; the job queued by patch A (v2) is still waiting.
-    // v3's own render is in flight, so the project is rendering.
-    await db.current.repos.projects.update(ctx, first.project.id, {
-      currentVersionId: v3.id,
-      status: "rendering",
-    });
+    await db.current.repos.projects.update(ctx, first.project.id, { currentVersionId: v3.id });
     await db.current.repos.queue.enqueue(ctx, {
       kind: "video.create",
       projectId: first.project.id,
@@ -109,8 +105,8 @@ describe("video.create workflow on Postgres", () => {
     expect((await worker.runOnce())?.outcome).toBe("succeeded");
     const after = (await db.current.repos.projects.get(ctx, first.project.id))!;
     expect(after.currentVersionId).toBe(v3.id);
-    // The older version's job neither flags nor settles the project: v3's job owns the status.
-    expect(after.status).toBe("rendering");
+    // A render of an older version never leaves the project flagged as rendering.
+    expect(after.status).toBe("in_review");
   });
 
   it("returns the same job for a repeated idempotency key", async () => {
