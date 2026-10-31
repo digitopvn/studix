@@ -142,6 +142,15 @@ async function assertSameRequest(
   }
 }
 
+/** Whether the request names the node the stored comment is about; an unknown node is a different request. */
+function sameTarget(base: ProjectVersion, stored: Review, input: FeedbackInputParsed): boolean {
+  try {
+    return stored.targetId === resolveTarget(base.ir, input).key;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * A retry may return the comment stored under its key only when it is the same comment, on the same version,
  * with no patch: a key already spent on a different request must not silently answer for this one.
@@ -159,8 +168,8 @@ async function replayCommentBase(
     stored.body === input.comment &&
     stored.atMs === input.startMs &&
     stored.endMs === input.endMs &&
-    stored.targetId === resolveTarget(base.ir, input).key &&
-    (input.baseVersionId === undefined || input.baseVersionId === base.id);
+    (input.baseVersionId === undefined || input.baseVersionId === base.id) &&
+    sameTarget(base, stored, input);
   if (!base || !sameRequest) {
     throw new StudixError("CONFLICT", "idempotency key was used for a different request", {
       suggestedAction: "Use a new idempotencyKey for a different feedback.",
@@ -720,14 +729,14 @@ export async function submitFeedback(
       base = await requireParentVersion(deps, ctx, winner);
     }
   }
-  const target = resolveTarget(base.ir, input);
+  let target = resolveTarget(base.ir, input);
   const feedback =
     (await deps.reviews.get(ctx, feedbackId)) ??
     (await deps.reviews
       .create(ctx, {
         id: feedbackId,
-        // Only a comment without a patch needs the key here; a patch keeps it on its version.
-        idempotencyKey: input.patch ? undefined : input.idempotencyKey,
+        // One key answers for one request: a comment and a patch sent at once with it cannot both succeed.
+        idempotencyKey: input.idempotencyKey,
         projectId: project.id,
         versionId: base.id,
         author,
@@ -742,6 +751,17 @@ export async function submitFeedback(
         if (!stored) throw error;
         return stored;
       }));
+  if (feedback.id !== feedbackId && !storedComment) {
+    // A request with the same key stored its comment first. It answers for this one only if it is the same
+    // request; otherwise the key was spent on something else.
+    if (version) {
+      throw new StudixError("CONFLICT", "idempotency key was used for a different request", {
+        suggestedAction: "Use a new idempotencyKey for a different feedback.",
+      });
+    }
+    base = await replayCommentBase(deps, ctx, feedback, input);
+    target = resolveTarget(base.ir, input);
+  }
   const common = {
     feedbackId: feedback.id,
     projectId: project.id,

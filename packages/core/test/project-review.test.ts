@@ -124,6 +124,38 @@ describe("project review", () => {
       expect((await env.studio.getProjectReview(env.ctx, env.projectId)).comments).toHaveLength(2);
     });
 
+    it("sent at once with different content: one is stored, the other gets CONFLICT", async () => {
+      const env = await setup();
+      const results = await Promise.allSettled([
+        env.studio.submitFeedback(env.ctx, comment(env, { comment: "dời logo sang trái" })),
+        env.studio.submitFeedback(env.ctx, comment(env, { comment: "đổi sang màu đỏ" })),
+      ]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const failed = results.find((r) => r.status === "rejected");
+      expect(failed).toMatchObject({ reason: { code: "CONFLICT" } });
+      expect((await env.studio.getProjectReview(env.ctx, env.projectId)).comments).toHaveLength(1);
+    });
+
+    it("sent at once with a patch under the same key: only one of them succeeds", async () => {
+      const env = await setup();
+      const results = await Promise.allSettled([
+        env.studio.submitFeedback(env.ctx, comment(env)),
+        env.studio.submitFeedback(
+          env.ctx,
+          comment(env, { patch: replaceText("/scenes/2/shots/0/text", "Mới") }),
+        ),
+      ]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    });
+
+    it("answers CONFLICT, not a lookup error, when a reused key names a node the stored version lacks", async () => {
+      const env = await setup();
+      await env.studio.submitFeedback(env.ctx, comment(env));
+      await expect(
+        env.studio.submitFeedback(env.ctx, comment(env, { shotId: "no-such-shot" })),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    });
+
     it("refuses the key for a different comment or a patch, and a retry still finds the first", async () => {
       const env = await setup();
       const first = await env.studio.submitFeedback(env.ctx, comment(env));
