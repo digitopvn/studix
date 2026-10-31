@@ -445,6 +445,8 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
       ["s4", "video"],
       ["s5", "composition"],
     ]);
+    // Every shot fills the frame; without the full region the renderer draws it as an inset card.
+    expect(cut.scenes.flatMap((sc) => sc.shots).every((s) => s.style?.region === "full")).toBe(true);
     const s2 = cut.scenes[0]?.shots[1];
     expect(s2?.type === "video" && s2.assetId).toBe("s2-sync");
     const buses = (cut.audio ?? []).map((t) => t.kind).sort();

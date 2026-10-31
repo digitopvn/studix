@@ -17,6 +17,11 @@ import { FilmScope, filmFrameSize, scopeDurationMs, scopeShots } from "./film-sc
 
 /** Frame rate of narrative films (the film engine's edit rate). */
 export const FILM_FPS = 24;
+/**
+ * Style of every film shot: the picture fills the frame edge to edge. Without it the renderer draws an image
+ * or clip as an inset card on the theme background.
+ */
+export const FILM_SHOT_STYLE = { region: "full" } as const;
 /** How long a design or bible card stays on screen in a review board. */
 const CARD_MS = 3_000;
 
@@ -235,6 +240,7 @@ export function storyboardIr(
           assetId: frame.id,
           alt: truncateText(shot.beat, 300),
           fit: "cover",
+          style: FILM_SHOT_STYLE,
         };
       }),
       `${sc.title}: ${sc.summary}`,
