@@ -655,12 +655,19 @@ describe("motion-graphic pipeline (fake providers)", () => {
     };
     await h.run({ workflowTemplate: "motion-graphic" }, await newProject(h, "motion-graphic", graphic));
     const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
-    expect(voices.map((r) => r.prompt)).toEqual([expect.any(String), "Trà hái tay mỗi sớm", "Đặt trà ngay"]);
-    expect(voices[0]?.params).toMatchObject({
+    // Beats are voiced concurrently, so look each request up by what it says instead of by call order.
+    expect(voices).toHaveLength(3);
+    const byPrompt = (text: string) => voices.find((r) => r.prompt === text);
+    const keyMessage = byPrompt("Trà hái tay mỗi sớm");
+    const cta = byPrompt("Đặt trà ngay");
+    const script = voices.find((r) => r !== keyMessage && r !== cta);
+    expect(keyMessage).toBeDefined();
+    expect(cta).toBeDefined();
+    expect(script?.params).toMatchObject({
       language: "vi",
       instructions: expect.stringMatching(/Vietnamese.*lean in/),
     });
-    expect(voices[2]?.params?.instructions).toContain("call to action");
+    expect(cta?.params?.instructions).toContain("call to action");
     h.generate.mockClear();
     h.renderer.rendered.length = 0;
     uncached = [MG_STAGES.voice];
