@@ -86,7 +86,30 @@ export const CtaShot = ShotBase.extend({
   url: z.string().max(300).optional(),
 });
 
-export const SHOT_TYPES = ["title", "text", "image", "video", "logo", "cta"] as const;
+/** Composition parameter name: an identifier, so params stay plain data handed to the composition. */
+const ParamName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/, "expected an identifier");
+
+/**
+ * A declarative composition (an HTML composition or a GL scene) stored as a versioned `code` asset. The IR
+ * only names the pinned asset, an entry and plain parameters; how the code is executed is the renderer's
+ * concern, so the IR stays declarative and renderer-neutral.
+ */
+export const CompositionShot = ShotBase.extend({
+  type: z.literal("composition"),
+  /** Code asset id from the IR `assets` list; it must carry an `assetVersionId` (see validateVideoIR). */
+  assetId: IrId,
+  /** Named entry inside the code asset (exported scene or element id); the asset's default when omitted. */
+  entry: z
+    .string()
+    .regex(/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/, "expected an identifier")
+    .optional(),
+  params: z
+    .record(ParamName, z.union([z.string().max(500), z.number(), z.boolean()]))
+    .refine((params) => Object.keys(params).length <= 50, { message: "at most 50 params" })
+    .optional(),
+});
+
+export const SHOT_TYPES = ["title", "text", "image", "video", "logo", "cta", "composition"] as const;
 export const ShotType = z.enum(SHOT_TYPES);
 export type ShotType = z.infer<typeof ShotType>;
 
@@ -97,5 +120,6 @@ export const Shot = z.discriminatedUnion("type", [
   VideoShot,
   LogoShot,
   CtaShot,
+  CompositionShot,
 ]);
 export type Shot = z.infer<typeof Shot>;

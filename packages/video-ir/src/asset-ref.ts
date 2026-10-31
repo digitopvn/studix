@@ -21,7 +21,8 @@ export const AssetProvenance = z.object({
 });
 export type AssetProvenance = z.infer<typeof AssetProvenance>;
 
-export const AssetMediaKind = z.enum(["image", "video", "audio", "font", "document"]);
+/** `code`: a versioned declarative composition (HTML composition or GL scene module) used by composition shots. */
+export const AssetMediaKind = z.enum(["image", "video", "audio", "font", "document", "code"]);
 export type AssetMediaKind = z.infer<typeof AssetMediaKind>;
 
 /**

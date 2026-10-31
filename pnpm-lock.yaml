@@ -444,6 +444,9 @@ importers:
       '@studix/video-ir':
         specifier: workspace:*
         version: link:../video-ir
+      '@studix/workflow':
+        specifier: workspace:*
+        version: link:../workflow
       zod:
         specifier: 4.6.7
         version: 4.6.7

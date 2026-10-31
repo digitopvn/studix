@@ -7,7 +7,7 @@ describe("skill registry", () => {
     const skills = listSkills();
     expect(skills.map((s) => s.id)).toEqual(["brand-intro"]);
     const meta = skills[0]!;
-    expect(meta).toMatchObject({ id: "brand-intro", version: 1, output: "video-ir" });
+    expect(meta).toMatchObject({ id: "brand-intro", pack: "brand-intro", version: 1, output: "video-ir" });
     expect(meta.description.length).toBeGreaterThan(20);
     expect(meta).not.toHaveProperty("run");
     expect(meta.inputSchema).toMatchObject({

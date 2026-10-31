@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { AssetRef } from "./asset-ref.ts";
+import { AudioTrack } from "./audio-captions.ts";
 import { BrandKit } from "./brand-kit.ts";
 import { CreativeBrief } from "./creative-brief.ts";
 import { VideoIRPatch } from "./patch.ts";
 import { RenderSpec } from "./render-spec.ts";
 import { Scene } from "./scene.ts";
 import { Shot } from "./shot.ts";
+import { Storyboard } from "./storyboard.ts";
 import { Timeline } from "./timeline.ts";
 import { VideoIR } from "./video-ir.ts";
 
@@ -20,6 +22,8 @@ export const PUBLISHED_SCHEMAS = {
   "asset-ref": AssetRef,
   "render-spec": RenderSpec,
   "video-ir-patch": VideoIRPatch,
+  storyboard: Storyboard,
+  "audio-track": AudioTrack,
 } as const;
 
 export type PublishedSchemaName = keyof typeof PUBLISHED_SCHEMAS;

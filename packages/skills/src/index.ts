@@ -1,4 +1,10 @@
 export {
+  BRAND_INTRO_COMPOSE_STAGE,
+  brandIntroComposeStage,
+  brandIntroPack,
+  brandIntroSkill,
+} from "./brand-intro/brand-intro-pack.ts";
+export {
   BRAND_INTRO_MAX_MS,
   BRAND_INTRO_MIN_MS,
   BRAND_INTRO_TEMPLATE_VERSION,
@@ -14,12 +20,14 @@ export {
 } from "./brand-intro/brief-draft.ts";
 export { draftBriefFromPrompt } from "./brand-intro/brief-draft-from-prompt.ts";
 export {
-  getSkill,
-  listSkills,
+  createPackRegistry,
+  type PackRegistry,
   type Skill,
   type SkillMetadata,
   type SkillRunOptions,
-} from "./skill-registry.ts";
+  type WorkflowPack,
+} from "./pack-registry.ts";
+export { getSkill, listSkills, packRegistry, registerPack } from "./skill-registry.ts";
 export {
   breakLines,
   detectLanguage,

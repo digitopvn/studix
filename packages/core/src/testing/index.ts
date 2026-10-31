@@ -25,6 +25,7 @@ import { createInMemoryTenancy } from "./in-memory-tenancy.ts";
 export * from "./in-memory-governance-repositories.ts";
 export * from "./in-memory-job-repositories.ts";
 export * from "./in-memory-project-repositories.ts";
+export * from "./in-memory-revision-repositories.ts";
 export * from "./in-memory-table.ts";
 export * from "./in-memory-tenancy.ts";
 

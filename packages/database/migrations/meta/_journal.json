@@ -29,6 +29,13 @@
       "when": 1793422028226,
       "tag": "0003_approvals_pending_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793428922826,
+      "tag": "0004_scene_shot_revisions",
+      "breakpoints": true
     }
   ]
 }

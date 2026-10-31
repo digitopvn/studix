@@ -1,5 +1,6 @@
 import type { ActorRef, Approval, ApprovalAction, Job, PlannerSelection, TenantContext } from "@studix/core";
 import type { CreativeBrief, VideoIR } from "@studix/video-ir";
+import type { z } from "zod";
 import type { FencedRepositories } from "./worker-job-queue.ts";
 
 /** JSON-safe stage output; stored as the stage checkpoint. */
@@ -31,6 +32,8 @@ export interface StageContext {
   signal: AbortSignal;
   /** Checkpointed outputs of the stages that already completed, by stage name. */
   outputs: Readonly<Record<string, StageOutput>>;
+  /** The stage input parsed by `StageDefinition.inputSchema`; undefined for stages without one. */
+  input: unknown;
   /** Approval that authorized this stage, when it is approval-gated. */
   approval?: Approval;
   /**
@@ -44,8 +47,32 @@ export interface StageContext {
   reportProgress(progress: number): void;
 }
 
+/** What a stage's `inputSchema` parses: the job payload and the outputs of the stages before it. */
+export interface StageInputSource {
+  payload: Record<string, unknown>;
+  outputs: Readonly<Record<string, StageOutput>>;
+}
+
 export interface StageDefinition {
   name: string;
+  /**
+   * Parses the stage input from a StageInputSource; the result is `stage.input`. A mismatch fails the
+   * stage with a non-retryable VALIDATION error before anything runs or is charged.
+   */
+  inputSchema?: z.ZodType;
+  /**
+   * Shape of the stage output. Checked before a result is checkpointed or cached; a cached output that no
+   * longer matches is ignored and the stage runs again.
+   */
+  outputSchema?: z.ZodType;
+  /**
+   * Identity of the work, normally `stageCacheKey(name, version, input)`: equal keys must produce
+   * interchangeable outputs. When the runner has a stage cache holding the key for the tenant, the cached
+   * output is reused and the stage is neither run, approval-gated, budget-checked nor charged again.
+   * Return undefined to skip the cache for one run. Only stages with portable outputs (no worker-local
+   * paths) may declare a key.
+   */
+  cacheKey?(stage: StageContext): string | undefined | Promise<string | undefined>;
   /**
    * Estimated cost in cents, checked against the job budget before the stage runs. Stages without an
    * estimate still get a budget check with a zero estimate (already-overspent jobs stop).
