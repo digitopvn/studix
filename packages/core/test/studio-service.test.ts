@@ -17,6 +17,25 @@ async function rejects(promise: Promise<unknown>): Promise<StudixError> {
 }
 
 describe("StudioService.createVideoProject", () => {
+  it("stores an opt-in Claude planner selection on the job and refuses it together with a spec", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const planner = { runtime: "claude" as const, providerConnectionId: "pcn_1" };
+    const out = await studio.createVideoProject(ctx, { brief, planner });
+    const job = await repos.jobs.get(ctx, out.job.id);
+    expect(job?.payload).toMatchObject({ projectId: out.project.id, planner });
+
+    const withSpec = await rejects(studio.createVideoProject(ctx, { brief, spec: brandIntro, planner }));
+    expect(withSpec.code).toBe("VALIDATION");
+    const unknownRuntime = await rejects(
+      studio.createVideoProject(ctx, {
+        brief,
+        planner: { runtime: "gpt", providerConnectionId: "x" } as never,
+      }),
+    );
+    expect(unknownRuntime.code).toBe("VALIDATION");
+  });
+
   it("creates a draft project and a queued job with polling hints", async () => {
     const { studio, repos } = createInMemoryStudio();
     const ctx = testTenant();

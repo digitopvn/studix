@@ -1,3 +1,11 @@
+import { join } from "node:path";
+import { createClaudeSdkTransport } from "@studix/agent-runtime";
+import {
+  createAnthropicKeyTester,
+  createProviderConnectionService,
+  createSecretBox,
+  parseSecretKey,
+} from "@studix/auth";
 import { createDefaultApprovalPolicy } from "@studix/core";
 import { createRepositories } from "@studix/database";
 import { createDecisionRouterFromConfig, RulesAdapter } from "@studix/decision-routing";
@@ -5,8 +13,10 @@ import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@s
 import { createActivityRecorder } from "@studix/observability";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { createS3StorageAdapterFromConfig } from "@studix/storage";
+import type { Planner } from "@studix/workflow";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
 import { registerBriefRule } from "./planner/brief-decision.ts";
+import { createClaudePlanner, createPlannerRouter } from "./planner/claude-planner.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
@@ -28,6 +38,40 @@ function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntim
     logger: logger.child({ component: "mcp-gateway" }),
   });
   return createGatewayBrandLookup({ gateway, tool: settings.brandLookupTool, logger });
+}
+
+/**
+ * Claude Agent SDK planner, built only when STUDIX_CLAUDE_PLANNER is on. It opens the job's selected
+ * Anthropic key through the same service and master key as the app; nothing else is ever substituted.
+ */
+function claudePlanner(settings: WorkerSettings, runtime: WorkerPortsRuntime): Planner | undefined {
+  const claude = settings.claudePlanner;
+  if (!claude) return undefined;
+  const { config } = settings;
+  // loadWorkerSettings refuses the flag without STUDIX_SECRETS_KEY.
+  const masterKey = config.STUDIX_SECRETS_KEY as string;
+  const repos = createRepositories(runtime.db);
+  const providers = createProviderConnectionService({
+    connections: repos.providerConnections,
+    audit: repos.audit,
+    tester: createAnthropicKeyTester({ baseUrl: config.ANTHROPIC_BASE_URL }),
+    secrets: createSecretBox(
+      parseSecretKey(masterKey),
+      config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+    ),
+    logger: runtime.logger,
+  });
+  return createClaudePlanner({
+    transport: createClaudeSdkTransport({
+      baseUrl: config.ANTHROPIC_BASE_URL,
+      workRoot: join(settings.workDir, "claude"),
+      logger: runtime.logger.child({ component: "claude-sdk" }),
+    }),
+    credentials: providers,
+    executions: repos.usage,
+    ...claude,
+    logger: runtime.logger,
+  });
 }
 
 /**
@@ -60,9 +104,13 @@ export async function loadWorkerPorts(
     storage: "s3",
     renderer: renderer.id,
     brandLookup: settings.brandLookupTool ?? "off",
+    claudePlanner: settings.claudePlanner ? settings.claudePlanner.model : "off",
   });
   return {
-    planner: createVideoPlanner({ decisions, brandLookup, logger }),
+    planner: createPlannerRouter({
+      default: createVideoPlanner({ decisions, brandLookup, logger }),
+      claude: claudePlanner(settings, runtime),
+    }),
     renderer,
     storage,
     close: async () => storage.destroy(),

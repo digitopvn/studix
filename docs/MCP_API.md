@@ -89,7 +89,18 @@ Behavior notes:
   ([ADR-0003](decisions/0003-jev-decision-provider-adapter-and-routing-fallback.md)).
 - `studix_create_video` inputs: `prompt` or `brief` (one is required), `spec`,
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
-  past it the job fails with `TIMEOUT`), `renderPreset`.
+  past it the job fails with `TIMEOUT`), `renderPreset`, `planner`.
+- `planner: {runtime: "claude", providerConnectionId}` is opt-in. The worker
+  then plans the VideoIR with the Claude Agent SDK, billed to that Anthropic API
+  key ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
+  Connection ids are listed in the dashboard under **AI & Providers**.
+  - Refused with `VALIDATION` together with `spec`, because a spec is not planned.
+  - Refused at creation with `UNAVAILABLE` when the operator has not enabled
+    `STUDIX_CLAUDE_PLANNER`, or when the connection is missing, revoked or in
+    another workspace; `FORBIDDEN` when it is someone else's personal key.
+    A job created with an `stx_` key can use workspace keys only.
+  - There is no fallback: if Claude cannot plan (rejected key, budget, invalid
+    output), the job fails with that error instead of using the default planner.
 - Publishing is gated: a publish job waits in `waiting_approval` until a human
   approves it in the dashboard.
 - Re-sending `studix_create_video` with the same idempotency key in the same

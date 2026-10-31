@@ -31,6 +31,9 @@ WORKDIR /app
 COPY . .
 
 # Full install (tsx runs the TypeScript sources directly), then build the dashboard SPA.
+# This also installs the pinned Claude Agent SDK and its native CLI: pnpm picks the lockfile's
+# optional @anthropic-ai/claude-agent-sdk-linux-<arch> package matching this glibc image, and it
+# has no install script, so `onlyBuiltDependencies` does not apply. Nothing is installed at runtime.
 RUN pnpm install --frozen-lockfile --prod=false \
  && pnpm --filter @studix/dashboard build \
  && chown -R node:node /app

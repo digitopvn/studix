@@ -55,10 +55,23 @@ const IdempotencyKey = z
   .string()
   .regex(/^[A-Za-z0-9._:-]{1,200}$/, "1-200 chars of letters, digits, '.', '_', ':' or '-'");
 
+/**
+ * Opt-in planner choice. Omitted means the default planner. `claude` plans with the Claude Agent SDK
+ * using one Anthropic provider connection; the worker never falls back to another planner or key.
+ */
+export const PlannerSelection = z
+  .object({
+    runtime: z.literal("claude"),
+    providerConnectionId: z.string().min(1).max(100),
+  })
+  .strict();
+export type PlannerSelection = z.infer<typeof PlannerSelection>;
+
 /** Boundary schema for createVideoProject; `spec` is checked separately with validateVideoIR. */
 export const CreateVideoProjectInput = z.object({
   brief: CreativeBrief,
   spec: z.unknown().optional(),
+  planner: PlannerSelection.optional(),
   title: z.string().trim().min(1).max(200).optional(),
   idempotencyKey: IdempotencyKey.optional(),
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),

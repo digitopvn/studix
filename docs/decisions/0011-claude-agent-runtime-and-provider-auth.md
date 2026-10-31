@@ -14,8 +14,11 @@ not stop the process, and turn/cost limits checked after the run do not cap spen
 ## Decision
 
 - `createClaudeAgentRuntime` (`@studix/agent-runtime`) implements `AgentRuntime`
-  on top of a `ClaudeAgentTransport` seam. CI uses a fake transport; the real SDK
-  adapter is injected by the worker and pinned in the worker image (later PR).
+  on top of a `ClaudeAgentTransport` seam. CI uses `createFakeClaudeTransport`;
+  the worker injects `createClaudeSdkTransport`, which runs
+  `@anthropic-ai/claude-agent-sdk` (pinned to an exact version) in a fresh
+  temporary directory with a minimal environment, no setting sources, no MCP
+  servers and no permission bypass.
 - Limits are enforced **while the session runs**: turns and cost stop the process
   as soon as a usage event crosses the cap; the SDK's own `maxTurns` and
   `maxBudgetUsd` are passed as a second layer.
@@ -31,8 +34,10 @@ not stop the process, and turn/cost limits checked after the run do not cap spen
   automatic fallback between authentication methods.
 - Output is validated by an injected validator (VideoIR for the planner); the
   agent's output is never trusted.
-- Runtime selection stays configuration (`plannerRuntime: default|claude`), not a
-  `core` dependency on any vendor.
+- Runtime selection is per job and opt-in: `planner: {runtime: "claude",
+  providerConnectionId}` on `studix_create_video` or the dashboard form, honoured
+  only when the operator sets `STUDIX_CLAUDE_PLANNER=true`. `core` depends on no
+  vendor; it stores the selection and the worker routes it.
 
 ## Authentication methods
 
@@ -57,8 +62,14 @@ credentials and are never forwarded.
 ## Consequences
 
 - The runtime is testable without tokens or the SDK installed.
-- PR 2 adds encrypted credential storage, the API-key dashboard flow and the
-  restricted OAuth card; PR 3 wires the worker, usage records and an E2E run.
+- PR 2 added encrypted credential storage, the API-key dashboard flow and the
+  restricted OAuth card. PR 3 wired the worker planner, provider execution and
+  usage records, and an E2E run with the fake transport. A live run needs a real
+  key and is opt-in.
+- The agent gets no tools in the planner today. A Studix tool for the agent
+  would need an in-process MCP server and is out of scope.
+- A failed run records a provider execution without cost, because the SDK does
+  not report spend for runs that end in an error. The cost cap still bounds it.
 - The OAuth flow is a separate, compliance-gated PR and is not part of "done" for
   the API-key path.
 

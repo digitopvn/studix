@@ -114,6 +114,11 @@ export interface ProviderConnectionService {
     ctx: TenantContext,
     input: { connectionId: string; requestedBy: ActorRef },
   ): Promise<ResolvedProviderCredential>;
+  /**
+   * Check, without decrypting anything, that the caller could run a job with this connection. Used when a
+   * job is created so a bad selection fails fast; the worker checks again with resolveForExecution.
+   */
+  assertUsable(ctx: TenantContext, connectionId: string): Promise<ProviderConnectionView>;
 }
 
 export interface ProviderConnectionServiceDeps {
@@ -276,6 +281,35 @@ export function createProviderConnectionService(
       },
     });
 
+  /** The rules both resolveForExecution and assertUsable enforce; no fallback to any other row. */
+  async function usableRow(
+    ctx: TenantContext,
+    connectionId: string,
+    requestedBy: ActorRef,
+  ): Promise<ProviderConnectionRecord> {
+    assertPermission(ctx, "project:write");
+    const row = await deps.connections.get(ctx, connectionId);
+    if (!row || row.revokedAt || !row.secretCiphertext || row.authMethod !== "api_key") {
+      throw new StudixError("UNAVAILABLE", "The selected Anthropic connection no longer exists", {
+        retryable: false,
+        suggestedAction: "Choose another provider connection in Settings → AI & Providers.",
+      });
+    }
+    if (row.ownerType === "user" && !(requestedBy.type === "user" && requestedBy.id === row.ownerUserId)) {
+      throw new StudixError("FORBIDDEN", "A personal Anthropic key can only be used by its owner", {
+        retryable: false,
+        suggestedAction: "Use a workspace key or your own personal key.",
+      });
+    }
+    if (row.status === "invalid") {
+      throw new StudixError("UNAUTHENTICATED", "The Anthropic API key was rejected at its last test", {
+        retryable: false,
+        suggestedAction: "Replace the key in Settings → AI & Providers, then retry.",
+      });
+    }
+    return row;
+  }
+
   return {
     async overview(ctx) {
       assertPermission(ctx, "workspace:read");
@@ -391,31 +425,13 @@ export function createProviderConnectionService(
     },
 
     async resolveForExecution(ctx, input) {
-      assertPermission(ctx, "project:write");
-      const row = await deps.connections.get(ctx, input.connectionId);
-      if (!row || row.revokedAt || !row.secretCiphertext || row.authMethod !== "api_key") {
-        throw new StudixError("UNAVAILABLE", "The selected Anthropic connection no longer exists", {
-          retryable: false,
-          suggestedAction: "Choose another provider connection in Settings → AI & Providers.",
-        });
-      }
-      if (
-        row.ownerType === "user" &&
-        !(input.requestedBy.type === "user" && input.requestedBy.id === row.ownerUserId)
-      ) {
-        throw new StudixError("FORBIDDEN", "A personal Anthropic key can only be used by its owner", {
-          retryable: false,
-          suggestedAction: "Use a workspace key or your own personal key.",
-        });
-      }
-      if (row.status === "invalid") {
-        throw new StudixError("UNAUTHENTICATED", "The Anthropic API key was rejected at its last test", {
-          retryable: false,
-          suggestedAction: "Replace the key in Settings → AI & Providers, then retry.",
-        });
-      }
-      const apiKey = openKey(ctx, row, row.secretCiphertext);
+      const row = await usableRow(ctx, input.connectionId, input.requestedBy);
+      const apiKey = openKey(ctx, row, row.secretCiphertext as string);
       return { apiKey, connection: toView(ctx, row) };
+    },
+
+    async assertUsable(ctx, connectionId) {
+      return toView(ctx, await usableRow(ctx, connectionId, actorRef(ctx.actor)));
     },
   };
 }

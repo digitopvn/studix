@@ -95,7 +95,7 @@ sequenceDiagram
   S->>DB: insert project + version + job (unique idempotency key per workspace)
   S-->>C: {status, data:{projectId, jobId, stage}, next:[studix_get_job]}
   W->>DB: claim job (FOR UPDATE SKIP LOCKED, lease)
-  W->>W: plan: host spec validated, or DecisionRouter "video.plan", or Rules template
+  W->>W: plan: host spec validated, or Claude planner (opt-in), or DecisionRouter "video.brief" + template
   W->>W: validate VideoIR, check budget
   W->>R: render preview
   R->>O: put MP4 (versioned key)
@@ -113,6 +113,14 @@ Why this shape:
   is skipped, so the creative model is never paid for twice.
 - The worker is the only role that touches Chromium, FFmpeg, models or media
   providers. The app role stays small and I/O bound.
+- The planner is chosen per job. Without a selection the worker uses the default
+  planner. A job that selected `planner: {runtime: "claude"}` is planned by the
+  Claude Agent SDK subprocess in the worker (`apps/worker/src/planner/claude-planner.ts`)
+  with the job's own Anthropic key, a cost cap no larger than the remaining job
+  budget, no tools, and output accepted only through `validateVideoIR`. Each run
+  writes a provider execution row and a `provider.decision` usage line; there is
+  no fallback to the default planner
+  ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
 
 ## Durable job lifecycle
 

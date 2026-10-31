@@ -77,6 +77,8 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
               projectId: project.id,
               attempt: s.attempt,
               maxCostCents: remaining,
+              requestedBy: s.job.createdBy,
+              planner: payload.planner,
             },
             s.signal,
           );

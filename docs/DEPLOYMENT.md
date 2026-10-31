@@ -51,6 +51,18 @@ saving keys is disabled. Losing it makes every stored key unreadable, so back
 it up with the database secrets. To rotate it, move the old value to
 `STUDIX_SECRETS_KEYS_PREVIOUS` and set a new one.
 
+The Claude planner is off unless `STUDIX_CLAUDE_PLANNER=true`. Set it on both
+the app (so job creation accepts a `planner` selection) and the worker. The
+worker then also needs the same `STUDIX_SECRETS_KEY` to open the selected key,
+and refuses to start without it. Tuning, all optional:
+`STUDIX_CLAUDE_PLANNER_MODEL`, `STUDIX_CLAUDE_PLANNER_MAX_TURNS` (default 4),
+`STUDIX_CLAUDE_PLANNER_MAX_COST_CENTS` (default 200, lowered further by the
+job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
+300). The worker image needs no extra install step: `pnpm install
+--frozen-lockfile` brings the pinned Agent SDK and its platform binary. Each
+run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
+when the run ends.
+
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
 

@@ -42,6 +42,13 @@ export async function createVideoProject(
 ): Promise<CreateVideoProjectResult> {
   assertPermission(ctx, "project:write");
   const input = parseInput(CreateVideoProjectInput, rawInput, "createVideoProject input");
+  if (input.planner && input.spec !== undefined) {
+    // A client spec skips planning, so a planner choice would be silently ignored.
+    throw new StudixError(
+      "VALIDATION",
+      "planner cannot be combined with spec: a supplied spec is not planned",
+    );
+  }
   const spec: VideoIR | undefined =
     input.spec === undefined
       ? undefined
@@ -83,7 +90,12 @@ export async function createVideoProject(
   const enqueued = await queue.enqueue(ctx, {
     kind: JOB_KINDS.createVideo,
     projectId: project.id,
-    payload: { projectId: project.id, versionId: version?.id, renderPreset: input.renderPreset ?? "preview" },
+    payload: {
+      projectId: project.id,
+      versionId: version?.id,
+      renderPreset: input.renderPreset ?? "preview",
+      planner: input.planner,
+    },
     idempotencyKey: input.idempotencyKey,
     budgetCents,
     deadlineAt,

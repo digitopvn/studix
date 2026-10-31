@@ -180,6 +180,7 @@ export async function composeApp(
     connectors: overrides.connectors ?? integrations.connectors,
     metaTools: overrides.metaTools ?? integrations.metaTools,
     providers,
+    claudePlanner: config.STUDIX_CLAUDE_PLANNER,
     activity,
     readiness: [
       {

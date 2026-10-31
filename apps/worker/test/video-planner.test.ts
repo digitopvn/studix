@@ -17,7 +17,14 @@ const PROMPT =
   "Video giới thiệu thương hiệu cà phê Sương Mai cho khách hàng trẻ, dài 6 giây, dọc.\nRang mới mỗi tuần. Giao tận nơi trong 24 giờ.";
 
 function ctx(over: Partial<PlannerContext> = {}): PlannerContext {
-  return { tenant: testTenant(), jobId: "job_1", projectId: "prj_1", attempt: 1, ...over };
+  return {
+    tenant: testTenant(),
+    jobId: "job_1",
+    projectId: "prj_1",
+    attempt: 1,
+    requestedBy: { type: "system", id: "test" },
+    ...over,
+  };
 }
 
 function rulesRouter(model?: FakeDecisionAdapter): DecisionRouter {

@@ -1,3 +1,4 @@
+import { PlannerSelection } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { RenderPreset, unwrapValidation, validateVideoIR } from "@studix/video-ir";
 import { z } from "zod";
@@ -8,6 +9,7 @@ export const VideoCreatePayload = z.object({
   projectId: z.string().min(1),
   versionId: z.string().min(1).optional(),
   renderPreset: RenderPreset.default("preview"),
+  planner: PlannerSelection.optional(),
 });
 export const PlanOutput = z.object({ ir: z.unknown(), versionId: z.string().optional() });
 export const ValidateOutput = z.object({ versionId: z.string() });

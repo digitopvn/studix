@@ -1,5 +1,5 @@
 import { createDb, type StudixDb } from "@studix/database";
-import { createLogger, type Logger } from "@studix/shared";
+import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } from "@studix/shared";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
 import { createWorkerRuntime, type WorkerPorts, type WorkerRuntime } from "./wiring.ts";
@@ -33,7 +33,11 @@ export interface WorkerProcess {
  * resolve adapters, start N claim loops, then drain gracefully on SIGTERM.
  */
 export async function runWorkerProcess(options: WorkerProcessOptions): Promise<WorkerProcess> {
-  const settings = loadWorkerSettings(options.env);
+  const env = options.env ?? process.env;
+  const settings = loadWorkerSettings(env);
+  // Env secrets (database URL, STUDIX_SECRETS_KEY, provider keys) are redacted from every log line.
+  registerSecretsFromEnv(env);
+  for (const key of settings.config.STUDIX_SECRETS_KEYS_PREVIOUS) registerSecret(key);
   const logger = (
     options.logger ?? createLogger({ service: "studix-worker" }, { level: settings.config.LOG_LEVEL })
   ).child({
@@ -105,7 +109,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     await waitForDatabase(handle, { logger, signal: startup.signal });
     ports = await options.resolvePorts(settings, {
       db: handle.db,
-      env: options.env ?? process.env,
+      env,
       logger,
     });
     if (stopping) throw new Error("worker stopped during startup");

@@ -113,7 +113,8 @@ export function providerRoutes(deps: AppDeps): Router {
     next();
   });
   router.get("/anthropic", async (_req, res) => {
-    res.json(await requireProviders(deps).overview(sessionOf(res).ctx));
+    const overview = await requireProviders(deps).overview(sessionOf(res).ctx);
+    res.json({ ...overview, claudePlanner: deps.claudePlanner === true });
   });
   router.post("/anthropic/api-keys", async (req, res) => {
     res.status(201).json(await requireProviders(deps).saveApiKey(sessionOf(res).ctx, req.body ?? {}));
