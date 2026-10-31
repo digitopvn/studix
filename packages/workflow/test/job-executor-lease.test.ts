@@ -90,6 +90,7 @@ function makeExecutor(
     clock: { now: () => new Date() },
     logger: createLogger({}, { level: "error", write: () => {} }),
     heartbeatIntervalMs: INTERVAL_MS,
+    abortGraceMs: 0,
     ...overrides,
   });
 }

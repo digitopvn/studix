@@ -50,6 +50,8 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
   logger: Logger;
   /** Minimum time between persisted in-stage progress updates. */
   progressIntervalMs?: number;
+  /** How long a stage may settle after the job aborts (cancel, deadline) so its paid calls are billed. */
+  abortGraceMs?: number;
   /** Tenant-wide memo of stage outputs by cacheKey; without it `cacheKey` is ignored. */
   stageCache?: StageCacheRepository;
   /**
@@ -150,13 +152,32 @@ export class LeaseLostError extends Error {
   }
 }
 
-/** Settle with the stage, or reject as soon as the signal aborts (a stuck stage cannot hold the worker). */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
+/** How long an aborted stage may keep running to report the paid calls it already made. */
+const DEFAULT_ABORT_GRACE_MS = 5000;
+
+/**
+ * Settle with the stage. When the signal aborts, the stage gets `graceMs` more to settle, so the usage of
+ * paid calls it already finished still reaches the runner; after that (a stuck stage cannot hold the
+ * worker) it rejects with the abort reason.
+ */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal, graceMs: number): Promise<T> {
+  if (signal.aborted) {
+    work.catch(() => {});
+    return Promise.reject(signal.reason);
+  }
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => {
+      // A lost lease fences every write, so waiting could not bill anything.
+      const leaseLost = signal.reason instanceof StudixError && signal.reason.code === "CONFLICT";
+      if (leaseLost || graceMs <= 0) return reject(signal.reason);
+      timer = setTimeout(() => reject(signal.reason), graceMs);
+    };
     signal.addEventListener("abort", onAbort, { once: true });
-    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    work.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+      if (timer) clearTimeout(timer);
+    });
   });
 }
 
@@ -437,7 +458,10 @@ export async function runStages(
 
     let output: StageOutput;
     try {
-      const result = await untilAborted(stage.run(sctx), signal);
+      const result = await untilAborted(stage.run(sctx), signal, deps.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS);
+      // The stage finished while the job was aborting: its result is dropped but its paid calls are billed.
+      if (signal.aborted && result.usage?.length)
+        throw new StageFailedAfterSpend(toStudixError(signal.reason), [...result.usage]);
       signal.throwIfAborted();
       output = result.output;
       if (!matchesOutput(stage, output)) {
@@ -449,9 +473,12 @@ export async function runStages(
     } catch (err) {
       if (err instanceof LeaseLostError) throw err;
       if (err instanceof StageSuspended && !signal.aborted) return await suspend(err);
-      if (err instanceof StageFailedAfterSpend) {
+      // A suspension that reaches here was aborted mid-flight: park nothing, but bill what it spent.
+      const spent =
+        err instanceof StageFailedAfterSpend || err instanceof StageSuspended ? err.usage : undefined;
+      if (spent?.length) {
         try {
-          await recordUsage(err.usage);
+          await recordUsage(spent);
         } catch (usageErr) {
           if (usageErr instanceof LeaseLostError) throw usageErr;
           deps.logger.warn("spend of a failed stage could not be recorded", {

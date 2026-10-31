@@ -1,0 +1,150 @@
+import type { Job } from "@studix/core";
+import { createLogger, StudixError } from "@studix/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createJobExecutor,
+  type JobExecutorDeps,
+  StageFailedAfterSpend,
+  type StageUsage,
+  type WorkerJobQueue,
+  type WorkflowDefinition,
+} from "../src/index.ts";
+
+const job = {
+  id: "job_1",
+  organizationId: "org_1",
+  workspaceId: "ws_1",
+  kind: "test.abort-spend",
+  status: "running",
+  progress: 0,
+  attempts: 1,
+  maxAttempts: 1,
+  spentCents: 0,
+  cancelRequested: false,
+} as unknown as Job;
+
+const GRACE_MS = 2_000;
+
+function fakeQueue() {
+  const settled = () => Promise.resolve(true);
+  return {
+    leaseMs: 600_000,
+    heartbeat: vi.fn(async () => ({ held: true, cancelRequested: false })),
+    updateProgress: vi.fn(settled),
+    writeStage: vi.fn(settled),
+    recordUsage: vi.fn(settled),
+    complete: vi.fn(settled),
+    fail: vi.fn(settled),
+    cancel: vi.fn(settled),
+    retry: vi.fn(settled),
+    release: vi.fn(settled),
+    park: vi.fn(settled),
+  } as unknown as WorkerJobQueue & { recordUsage: ReturnType<typeof vi.fn> };
+}
+
+/** A media provider that charges 3¢ per finished call; the next call blocks until the test releases it. */
+function fakeMediaProvider() {
+  const calls: Array<{ release: () => void }> = [];
+  return {
+    calls,
+    generate(label: string): Promise<StageUsage> {
+      return new Promise((resolve) => {
+        const usage: StageUsage = { item: label, kind: "media", quantity: 1, unit: "image", costCents: 3 };
+        if (label === "first") return resolve(usage);
+        calls.push({ release: () => resolve(usage) });
+      });
+    },
+  };
+}
+
+function executorFor(queue: WorkerJobQueue, workflow: WorkflowDefinition) {
+  return createJobExecutor({
+    queue,
+    workflows: [workflow],
+    jobs: { listStages: async () => [] } as unknown as JobExecutorDeps["jobs"],
+    approvals: {} as JobExecutorDeps["approvals"],
+    approvalPolicy: {} as JobExecutorDeps["approvalPolicy"],
+    approvalTtlMs: 1,
+    billing: { authorizeSpend: async () => ({ allowed: true }) } as unknown as JobExecutorDeps["billing"],
+    ledger: { record: async () => ({}), jobCostCents: async () => 0 } as unknown as JobExecutorDeps["ledger"],
+    clock: { now: () => new Date() },
+    logger: createLogger({}, { level: "error", write: () => {} }),
+    heartbeatIntervalMs: 60_000,
+    abortGraceMs: GRACE_MS,
+  });
+}
+
+function singleStage(run: WorkflowDefinition["stages"][number]["run"]): WorkflowDefinition {
+  return { kind: job.kind, stages: [{ name: "media", run }], result: () => ({}) };
+}
+
+function billed(queue: ReturnType<typeof fakeQueue>): string[] {
+  return queue.recordUsage.mock.calls.map((c) => (c[2] as { costCents: number }).costCents.toString());
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("spend of a stage aborted by cancel or deadline", () => {
+  it("bills the paid call a stage reports after it observes the abort", async () => {
+    const provider = fakeMediaProvider();
+    const queue = fakeQueue();
+    const workflow = singleStage(async (stage) => {
+      const spent = [await provider.generate("first")];
+      await new Promise((resolve) => stage.signal.addEventListener("abort", resolve, { once: true }));
+      throw new StageFailedAfterSpend(new StudixError("CANCELLED", "aborted"), spent);
+    });
+    const shutdown = new AbortController();
+    const outcome = executorFor(queue, workflow).execute(job, "w1", shutdown.signal);
+
+    await vi.advanceTimersByTimeAsync(10);
+    shutdown.abort(new StudixError("CANCELLED", "cancelled by user"));
+    await vi.advanceTimersByTimeAsync(10);
+    await outcome;
+
+    expect(billed(queue)).toEqual(["3"]);
+  });
+
+  it("bills a stage that finishes while the abort is in flight", async () => {
+    const provider = fakeMediaProvider();
+    const queue = fakeQueue();
+    const workflow = singleStage(async () => {
+      const first = await provider.generate("first");
+      const second = await provider.generate("second");
+      return { output: {}, usage: [first, second] };
+    });
+    const shutdown = new AbortController();
+    const outcome = executorFor(queue, workflow).execute(job, "w1", shutdown.signal);
+    await vi.advanceTimersByTimeAsync(10);
+    shutdown.abort(new StudixError("CANCELLED", "cancelled by user"));
+    provider.calls[0]?.release();
+    await vi.advanceTimersByTimeAsync(10);
+    await outcome;
+
+    expect(billed(queue)).toEqual(["3", "3"]);
+  });
+
+  it("does not hold the worker past the grace period for a stage that ignores the abort", async () => {
+    const queue = fakeQueue();
+    const workflow = singleStage(() => new Promise(() => {}));
+    const shutdown = new AbortController();
+    let finished = false;
+    const outcome = executorFor(queue, workflow)
+      .execute(job, "w1", shutdown.signal)
+      .then(() => {
+        finished = true;
+      });
+    await vi.advanceTimersByTimeAsync(10);
+    shutdown.abort(new StudixError("CANCELLED", "cancelled by user"));
+    await vi.advanceTimersByTimeAsync(GRACE_MS - 100);
+    expect(finished).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    await outcome;
+    expect(finished).toBe(true);
+    expect(billed(queue)).toEqual([]);
+  });
+});
