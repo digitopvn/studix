@@ -53,11 +53,17 @@ export const projectVersions = pgTable(
     source: text("source").$type<ProjectVersionSource>().notNull(),
     parentVersionId: text("parent_version_id"),
     patch: jsonb("patch").$type<VideoIRPatch>(),
+    idempotencyKey: text("idempotency_key"),
+    feedbackId: text("feedback_id"),
     createdByType: text("created_by_type").$type<ActorType>().notNull(),
     createdById: text("created_by_id").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("project_versions_project_version_uq").on(t.projectId, t.version)],
+  (t) => [
+    uniqueIndex("project_versions_project_version_uq").on(t.projectId, t.version),
+    // NULLs never collide, so only versions created under a key are constrained.
+    uniqueIndex("project_versions_project_idempotency_uq").on(t.projectId, t.idempotencyKey),
+  ],
 );
 
 export const assets = pgTable(

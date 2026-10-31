@@ -29,6 +29,13 @@ export function createInMemoryProjectRepository(clock: Clock): ProjectRepository
     async createVersion(ctx, input) {
       const project = projects.require(ctx, input.projectId);
       const { advanceFrom, ...fields } = input;
+      if (input.idempotencyKey !== undefined) {
+        const same = versions.filter(
+          ctx,
+          (v) => v.projectId === input.projectId && v.idempotencyKey === input.idempotencyKey,
+        )[0];
+        if (same) return same;
+      }
       if (advanceFrom !== undefined && project.currentVersionId !== advanceFrom) {
         throw new StudixError("CONFLICT", `version ${advanceFrom} is no longer current`, {
           details: { currentVersionId: project.currentVersionId },
@@ -39,6 +46,9 @@ export function createInMemoryProjectRepository(clock: Clock): ProjectRepository
       const created = versions.insert(ctx, { ...fields, version });
       if (advanceFrom !== undefined) projects.update(ctx, input.projectId, { currentVersionId: created.id });
       return created;
+    },
+    async findVersionByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      return versions.filter(ctx, (v) => v.projectId === projectId && v.idempotencyKey === idempotencyKey)[0];
     },
     async getVersion(ctx, versionId) {
       return versions.get(ctx, versionId);

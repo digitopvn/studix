@@ -229,8 +229,16 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
           createdAt: now,
           updatedAt: now,
         })
+        .onConflictDoNothing({ target: reviews.id })
         .returning();
-      return toReview(first(rows, "review"));
+      if (rows.length > 0) return toReview(first(rows, "review"));
+      // An explicit id that is already stored: return that review (tenant-scoped, so another tenant's id fails).
+      const [existing] = await db
+        .select()
+        .from(reviews)
+        .where(scoped(reviews, ctx, eq(reviews.id, input.id ?? "")));
+      if (!existing) throw new StudixError("CONFLICT", `review ${input.id} already exists`);
+      return toReview(existing);
     },
     async list(ctx, query) {
       const limit = pageLimit(query.limit);

@@ -75,7 +75,8 @@ export function createInMemoryReviewRepository(clock: Clock): ReviewRepository {
   const reviews = new InMemoryTenantTable<Review>("rev", clock);
   return {
     async create(ctx, input) {
-      return reviews.insert(ctx, { ...input, status: "open" });
+      const existing = input.id === undefined ? undefined : reviews.get(ctx, input.id);
+      return existing ?? reviews.insert(ctx, { ...input, status: "open" });
     },
     async list(ctx, query) {
       return reviews.page(

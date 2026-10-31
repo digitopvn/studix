@@ -52,6 +52,7 @@ export interface ApprovalRepository {
 export type NewReview = Omit<NewRecord<Review>, "status">;
 
 export interface ReviewRepository {
+  /** With an explicit `id` that already exists in the tenant, returns the stored review instead of failing. */
   create(ctx: TenantContext, input: NewReview): Promise<Review>;
   list(
     ctx: TenantContext,

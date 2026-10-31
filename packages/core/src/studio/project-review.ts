@@ -1,4 +1,4 @@
-import { StudixError } from "@studix/shared";
+import { newId, StudixError } from "@studix/shared";
 import {
   applyPatch,
   dependentsOf,
@@ -531,6 +531,19 @@ function assertPatchScope(patch: VideoIRPatch, allowedPaths: string[]): void {
   }
 }
 
+/** The version a stored patch version was derived from (the version the feedback was written against). */
+async function baseOfStoredVersion(
+  deps: Deps,
+  ctx: TenantContext,
+  stored: ProjectVersion,
+): Promise<ProjectVersion> {
+  const base = stored.parentVersionId
+    ? await deps.projects.getVersion(ctx, stored.parentVersionId)
+    : undefined;
+  if (!base) throw new StudixError("NOT_FOUND", `base of project version ${stored.id} not found`);
+  return base;
+}
+
 type FeedbackInputParsed = ReturnType<typeof FeedbackInput.parse>;
 
 export interface FeedbackResult {
@@ -589,23 +602,36 @@ export async function submitFeedback(
     };
   }
 
-  const base = await requireCurrentVersion(deps, ctx, project);
-  if (input.baseVersionId !== undefined && input.baseVersionId !== base.id) {
-    throw new StudixError("CONFLICT", `version ${input.baseVersionId} is no longer current`, {
-      details: { currentVersionId: base.id },
-      suggestedAction: "Review the current version and send the feedback against it.",
-    });
+  // A version stored under this key by an earlier attempt that did not finish: complete it, do not repeat it.
+  const stored = input.idempotencyKey
+    ? await deps.projects.findVersionByIdempotencyKey(ctx, project.id, input.idempotencyKey)
+    : undefined;
+  let base: ProjectVersion;
+  if (stored) {
+    base = await baseOfStoredVersion(deps, ctx, stored);
+  } else {
+    base = await requireCurrentVersion(deps, ctx, project);
+    if (input.baseVersionId !== undefined && input.baseVersionId !== base.id) {
+      throw new StudixError("CONFLICT", `version ${input.baseVersionId} is no longer current`, {
+        details: { currentVersionId: base.id },
+        suggestedAction: "Review the current version and send the feedback against it.",
+      });
+    }
   }
   const target = resolveTarget(base.ir, input);
   if (input.patch) assertPatchScope(input.patch, target.allowedPaths);
   // Validate the patched IR before anything is stored.
-  const nextIr = input.patch ? applyPatch(base.ir, input.patch) : undefined;
+  const nextIr = input.patch && !stored ? applyPatch(base.ir, input.patch) : undefined;
 
   const author = actorRef(ctx.actor);
   // The version is created first, advancing the project's current version only if `base` is still current.
   // A concurrent request on the same base loses here with CONFLICT, before it stores a comment or a job.
+  // The comment id is chosen up front and kept on the version, so a retry after a later failure writes the
+  // same comment (create is idempotent on id) and a request with the same key returns this version.
+  const feedbackId = stored?.feedbackId ?? newId("rev");
   const version =
-    nextIr && input.patch
+    stored ??
+    (nextIr && input.patch
       ? await deps.projects.createVersion(ctx, {
           projectId: project.id,
           ir: nextIr,
@@ -617,9 +643,16 @@ export async function submitFeedback(
           },
           createdBy: author,
           advanceFrom: base.id,
+          idempotencyKey: input.idempotencyKey,
+          feedbackId,
         })
-      : undefined;
+      : undefined);
+  if (version && version.feedbackId !== undefined && version.feedbackId !== feedbackId) {
+    // Another request with the same key stored the version first: finish its work instead.
+    return submitFeedback(deps, ctx, rawInput);
+  }
   const feedback = await deps.reviews.create(ctx, {
+    id: version ? feedbackId : undefined,
     projectId: project.id,
     versionId: base.id,
     author,

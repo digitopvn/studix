@@ -86,6 +86,72 @@ describe("StudioService over Postgres repositories", () => {
     expect(versions.items.filter((v) => v.parentVersionId === baseVersionId)).toHaveLength(1);
   });
 
+  it("concurrent feedback retries with one key converge on one version, comment and job", async () => {
+    const service = studio();
+    const ctx = await tenant("svc-key-race");
+    const created = await service.createVideoProject(ctx, {
+      brief: { prompt: "Giới thiệu Sương Mai Coffee", language: "vi" },
+      spec: brandIntro,
+    });
+    const send = () =>
+      service.submitFeedback(ctx, {
+        projectId: created.project.id,
+        shotId: "feature-1",
+        comment: "Nhấn mạnh tốc độ giao hàng",
+        idempotencyKey: "fb-key-race",
+        patch: { ops: [{ op: "replace", path: "/scenes/2/shots/0/text", value: "Giao hàng trong 2 giờ" }] },
+      });
+    const results = await Promise.all([send(), send(), send()]);
+    expect(new Set(results.map((r) => r.versionId)).size).toBe(1);
+    expect(new Set(results.map((r) => r.job?.id)).size).toBe(1);
+    expect(new Set(results.map((r) => r.feedbackId)).size).toBe(1);
+
+    const versions = await db.current.repos.projects.listVersions(ctx, created.project.id);
+    expect(versions.items).toHaveLength(2);
+    const comments = await db.current.repos.reviews.list(ctx, { projectId: created.project.id });
+    expect(comments.items).toHaveLength(1);
+    // A later retry replays from the job.
+    expect(await send()).toMatchObject({ replayed: true, versionId: results[0]?.versionId });
+  });
+
+  it("finishes a feedback whose version was stored but whose comment and job were not", async () => {
+    const service = studio();
+    const ctx = await tenant("svc-orphan");
+    const created = await service.createVideoProject(ctx, {
+      brief: { prompt: "Giới thiệu Sương Mai Coffee", language: "vi" },
+      spec: brandIntro,
+    });
+    const repos = db.current.repos;
+    const base = await repos.projects.getVersion(ctx, created.project.currentVersionId ?? "");
+    const ir = structuredClone(base!.ir);
+    (ir.scenes[2]!.shots[0] as { text?: string }).text = "Giao hàng trong 2 giờ";
+    // What an interrupted attempt leaves behind: a current version carrying the key, and nothing else.
+    const orphan = await repos.projects.createVersion(ctx, {
+      projectId: created.project.id,
+      ir,
+      source: "patch",
+      parentVersionId: base!.id,
+      patch: { ops: [{ op: "replace", path: "/scenes/2/shots/0/text", value: "Giao hàng trong 2 giờ" }] },
+      createdBy: { type: "user", id: "usr_1" },
+      advanceFrom: base!.id,
+      idempotencyKey: "fb-orphan",
+      feedbackId: "rev_00000000000000000000000000",
+    });
+    const out = await service.submitFeedback(ctx, {
+      projectId: created.project.id,
+      shotId: "feature-1",
+      comment: "Nhấn mạnh tốc độ giao hàng",
+      baseVersionId: base!.id,
+      idempotencyKey: "fb-orphan",
+      patch: { ops: [{ op: "replace", path: "/scenes/2/shots/0/text", value: "Giao hàng trong 2 giờ" }] },
+    });
+    expect(out).toMatchObject({ versionId: orphan.id, baseVersionId: base!.id, replayed: false });
+    expect(out.job?.status).toBe("queued");
+    expect((await repos.projects.listVersions(ctx, created.project.id)).items).toHaveLength(2);
+    const comments = await repos.reviews.list(ctx, { projectId: created.project.id });
+    expect(comments.items.map((c) => c.id)).toEqual([out.feedbackId]);
+  });
+
   it("parks expensive jobs for approval and blocks publish without approval", async () => {
     const service = studio();
     const ctx = await tenant("svc-approval");

@@ -95,6 +95,86 @@ describe("project review", () => {
     );
   });
 
+  it("a failure after the version is stored is finished by a retry with the same key and base", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    const baseVersionId = (await studio.getProjectReview(ctx, projectId)).currentVersion?.id;
+    const create = repos.reviews.create.bind(repos.reviews);
+    let failures = 1;
+    repos.reviews.create = async (...args) => {
+      if (failures-- > 0) throw new Error("database went away");
+      return create(...args);
+    };
+    const send = () =>
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "Nhấn mạnh tốc độ giao hàng",
+        baseVersionId,
+        idempotencyKey: "fb-retry-1",
+        patch: replaceText("/scenes/2/shots/0/text", "Giao hàng trong 2 giờ"),
+      });
+    await expect(send()).rejects.toThrow("database went away");
+
+    const out = await send();
+    expect(out.replayed).toBe(false);
+    expect(out.baseVersionId).toBe(baseVersionId);
+    expect(out.job?.status).toBe("queued");
+    expect(out.invalidated.sort()).toEqual(["scene:feature", "shot:feature-1"]);
+
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.versions).toHaveLength(2);
+    expect(review.currentVersion?.id).toBe(out.versionId);
+    expect(review.comments).toHaveLength(1);
+    expect(review.comments[0]?.id).toBe(out.feedbackId);
+
+    const again = await send();
+    expect(again).toMatchObject({ replayed: true, feedbackId: out.feedbackId, versionId: out.versionId });
+    expect((await studio.getProjectReview(ctx, projectId)).versions).toHaveLength(2);
+  });
+
+  it("a failure while queueing the job is finished by a retry without baseVersionId, not patched twice", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    const queue = repos.queue;
+    const enqueue = queue.enqueue.bind(queue);
+    let failures = 1;
+    queue.enqueue = async (...args) => {
+      if (failures-- > 0) throw new Error("queue unavailable");
+      return enqueue(...args);
+    };
+    const send = () =>
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "Nhấn mạnh tốc độ giao hàng",
+        idempotencyKey: "fb-retry-2",
+        patch: replaceText("/scenes/2/shots/0/text", "Giao hàng trong 2 giờ"),
+      });
+    await expect(send()).rejects.toThrow("queue unavailable");
+    const out = await send();
+    expect(out.job?.status).toBe("queued");
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.versions).toHaveLength(2);
+    expect(review.comments).toHaveLength(1);
+  });
+
+  it("two retries sent at once with the same key store one version and both succeed", async () => {
+    const { studio, ctx, projectId } = await setup();
+    const send = () =>
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "Nhấn mạnh tốc độ giao hàng",
+        idempotencyKey: "fb-concurrent",
+        patch: replaceText("/scenes/2/shots/0/text", "Giao hàng trong 2 giờ"),
+      });
+    const [a, b] = await Promise.all([send(), send()]);
+    expect(a.versionId).toBe(b.versionId);
+    expect(a.job?.id).toBe(b.job?.id);
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.versions).toHaveLength(2);
+    expect(review.comments).toHaveLength(1);
+  });
+
   it("refuses a patch that reaches outside the feedback target, and stores nothing", async () => {
     const { studio, ctx, projectId } = await setup();
     await expect(

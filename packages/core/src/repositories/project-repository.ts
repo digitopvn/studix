@@ -20,7 +20,18 @@ export interface ProjectRepository {
   update(ctx: TenantContext, id: string, patch: VideoProjectPatch): Promise<VideoProject>;
   /** Hard delete with versions; returns false when nothing was deleted. */
   delete(ctx: TenantContext, id: string): Promise<boolean>;
+  /**
+   * Insert a version. With `advanceFrom`, the project's current version moves to it in the same write, and
+   * the call throws CONFLICT (storing nothing) when `advanceFrom` is no longer current. With
+   * `idempotencyKey`, a version already stored for the project under that key is returned instead
+   * (without advancing anything), so concurrent or repeated requests converge on one version.
+   */
   createVersion(ctx: TenantContext, input: NewProjectVersion): Promise<ProjectVersion>;
+  findVersionByIdempotencyKey(
+    ctx: TenantContext,
+    projectId: string,
+    idempotencyKey: string,
+  ): Promise<ProjectVersion | undefined>;
   getVersion(ctx: TenantContext, versionId: string): Promise<ProjectVersion | undefined>;
   /** Newest version first. */
   listVersions(ctx: TenantContext, projectId: string, query?: PageRequest): Promise<Page<ProjectVersion>>;

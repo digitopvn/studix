@@ -35,6 +35,8 @@ function toVersion(row: VersionRow): ProjectVersion {
     source: row.source,
     parentVersionId: opt(row.parentVersionId),
     patch: opt(row.patch),
+    idempotencyKey: opt(row.idempotencyKey),
+    feedbackId: opt(row.feedbackId),
     createdBy: actorFrom(row.createdByType, row.createdById),
     createdAt: row.createdAt,
   };
@@ -115,6 +117,21 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
           .where(scoped(videoProjects, ctx, eq(videoProjects.id, input.projectId)))
           .for("update");
         if (locked.length === 0) throw new StudixError("NOT_FOUND", `project ${input.projectId} not found`);
+        // Same key under the same lock: converge on the version the first request stored.
+        if (input.idempotencyKey !== undefined) {
+          const [same] = await tx
+            .select()
+            .from(projectVersions)
+            .where(
+              scoped(
+                projectVersions,
+                ctx,
+                eq(projectVersions.projectId, input.projectId),
+                eq(projectVersions.idempotencyKey, input.idempotencyKey),
+              ),
+            );
+          if (same) return toVersion(same);
+        }
         // Compare-and-set under the row lock: of two writers on the same base, only the first one wins.
         if (input.advanceFrom !== undefined && locked[0]?.currentVersionId !== input.advanceFrom) {
           throw new StudixError("CONFLICT", `version ${input.advanceFrom} is no longer current`, {
@@ -137,6 +154,8 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
             source: input.source,
             parentVersionId: input.parentVersionId ?? null,
             patch: input.patch ?? null,
+            idempotencyKey: input.idempotencyKey ?? null,
+            feedbackId: input.feedbackId ?? null,
             createdByType: input.createdBy.type,
             createdById: input.createdBy.id,
             createdAt: clock.now(),
@@ -151,6 +170,21 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
         }
         return toVersion(created);
       });
+    },
+
+    async findVersionByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      const rows = await db
+        .select()
+        .from(projectVersions)
+        .where(
+          scoped(
+            projectVersions,
+            ctx,
+            eq(projectVersions.projectId, projectId),
+            eq(projectVersions.idempotencyKey, idempotencyKey),
+          ),
+        );
+      return rows[0] ? toVersion(rows[0]) : undefined;
     },
 
     async getVersion(ctx, versionId) {
