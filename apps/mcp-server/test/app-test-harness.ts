@@ -113,6 +113,7 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
       signedUrlTtlSeconds: 600,
     },
     storage: fakeSigner,
+    rateLimitStore: repos.rateLimits,
     providers: createProviderConnectionService({
       connections: repos.providerConnections,
       audit: repos.audit,

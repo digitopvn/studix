@@ -10,6 +10,7 @@ const GLOBAL_TABLES = new Set([
   "auth_sessions",
   "auth_accounts",
   "auth_verifications",
+  "rate_limit_buckets",
 ]);
 
 const tables = Object.values(schema).filter((value) => isTable(value));

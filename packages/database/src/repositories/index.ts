@@ -11,6 +11,7 @@ import {
 import { createJobStore } from "./job-repository.ts";
 import { createProjectRepository } from "./project-repository.ts";
 import { createProviderConnectionRepository } from "./provider-connection-repository.ts";
+import { createRateLimitRepository } from "./rate-limit-repository.ts";
 import { createRenderRepository, createWorkflowRunRepository } from "./render-workflow-repositories.ts";
 import { createRevisionRepository, createStageCacheRepository } from "./revision-repositories.ts";
 import { createStoryboardRepository } from "./storyboard-repository.ts";
@@ -28,6 +29,7 @@ export * from "./governance-repositories.ts";
 export * from "./job-repository.ts";
 export * from "./project-repository.ts";
 export * from "./provider-connection-repository.ts";
+export * from "./rate-limit-repository.ts";
 export * from "./render-workflow-repositories.ts";
 export * from "./revision-repositories.ts";
 export * from "./storyboard-repository.ts";
@@ -59,6 +61,7 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     activity: createActivityRepository(db, clock),
     connectors: createConnectorRepository(db, clock),
     providerConnections: createProviderConnectionRepository(db, clock),
+    rateLimits: createRateLimitRepository(db),
   };
 }
 
