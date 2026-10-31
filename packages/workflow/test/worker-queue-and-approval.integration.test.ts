@@ -173,6 +173,60 @@ describe("fenced attempt writes", () => {
     expect(await queue.recordUsage(fresh!, "fresh", usage("current"))).toBe(true);
     await repos.queue.cancel(ctx, job.id);
   });
+
+  it("opens an approval and its audit entry only for the current owner, and reuses a live request", async () => {
+    const ctx = await tenant(db.current, "fenced-approval");
+    const { repos } = db.current;
+    const { job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    const subject = { type: "job" as const, id: job.id };
+    const request = { action: "publish" as const, reason: "needs review", ttlMs: 60_000 };
+    const audits = async () =>
+      (await repos.audit.list(ctx, { subjectType: "job", subjectId: job.id })).items.filter(
+        (e) => e.action === "approval.requested",
+      );
+    const stale = await queue.claim("stalled");
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    const fresh = await queue.claim("fresh");
+
+    // The stalled worker (old attempt, and old worker id) opens nothing.
+    expect(await queue.requestApproval(stale!, "stalled", request)).toEqual({ status: "lost" });
+    expect(await queue.requestApproval(stale!, "fresh", request)).toEqual({ status: "lost" });
+    expect(await repos.approvals.findLatest(ctx, subject, "publish")).toBeUndefined();
+    expect(await audits()).toHaveLength(0);
+
+    // Concurrent requests from the owner collapse into one approval and one audit entry.
+    const results = await Promise.all([
+      queue.requestApproval(fresh!, "fresh", request),
+      queue.requestApproval(fresh!, "fresh", request),
+      queue.requestApproval(fresh!, "fresh", request),
+    ]);
+    expect(results.filter((r) => r.status === "created")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "existing")).toHaveLength(2);
+    const { items } = await repos.approvals.list(ctx, { subject });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ status: "pending", requestedBy: { type: "system", id: "fresh" } });
+    expect(await audits()).toHaveLength(1);
+
+    // A decision that lands after the caller last looked is returned, not shadowed by a new request.
+    await repos.approvals.decide(ctx, items[0]!.id, {
+      status: "rejected",
+      decidedBy: human,
+      decidedAt: new Date(),
+    });
+    expect(await queue.requestApproval(fresh!, "fresh", request)).toMatchObject({
+      status: "decided",
+      approval: { id: items[0]!.id, status: "rejected" },
+    });
+    expect((await repos.approvals.list(ctx, { subject })).items).toHaveLength(1);
+
+    // Once the job is finished, a late request leaves no orphan behind.
+    await queue.complete(fresh!, "fresh", {});
+    expect(await queue.requestApproval(fresh!, "fresh", { ...request, action: "render.final" })).toEqual({
+      status: "lost",
+    });
+    expect((await repos.approvals.list(ctx, { subject })).items).toHaveLength(1);
+  });
 });
 
 describe("publish approval gate", () => {

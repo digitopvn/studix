@@ -19,7 +19,9 @@ jobs failed on startup. Studix already needs PostgreSQL as its system of record.
 - Enqueue takes an idempotency key, unique per workspace.
 - Per-workspace concurrency, cancellation, timeout and budget are checked at
   claim time and at stage boundaries.
-- Approval waits are a persisted state, so they survive restarts.
+- Approval waits are a persisted state, so they survive restarts. A worker opens an approval request and
+  its `approval.requested` audit entry in one transaction that locks the job row and checks `locked_by`,
+  `attempts` and `running`, reusing a live pending request, so a stale worker neither duplicates nor orphans one.
 - Mutating downstream calls with unknown outcome are not retried automatically.
 
 ## Consequences

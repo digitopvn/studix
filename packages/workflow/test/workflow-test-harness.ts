@@ -183,7 +183,6 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
     queue,
     jobs: repos.jobs,
     approvals: repos.approvals,
-    audit: repos.audit,
     approvalPolicy: createDefaultApprovalPolicy({ costThresholdCents: 1000 }),
     approvalTtlMs: 3_600_000,
     billing: createJobBudgetPolicy(),

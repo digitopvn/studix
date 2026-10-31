@@ -8,7 +8,7 @@ import type {
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
 import { and, desc, eq } from "drizzle-orm";
-import type { StudixDb } from "../client.ts";
+import type { DbExecutor, StudixDb } from "../client.ts";
 import { approvals } from "../schema/jobs.ts";
 import { reviews } from "../schema/projects.ts";
 import { auditEvents } from "../schema/telemetry.ts";
@@ -34,7 +34,7 @@ function toApproval(row: typeof approvals.$inferSelect): Approval {
   };
 }
 
-export function createApprovalRepository(db: StudixDb, clock: Clock): ApprovalRepository {
+export function createApprovalRepository(db: DbExecutor, clock: Clock): ApprovalRepository {
   const repo: ApprovalRepository = {
     async create(ctx, input) {
       const rows = await db
@@ -212,7 +212,7 @@ function toAudit(row: typeof auditEvents.$inferSelect): AuditEvent {
   };
 }
 
-export function createAuditRepository(db: StudixDb, clock: Clock): AuditRepository {
+export function createAuditRepository(db: DbExecutor, clock: Clock): AuditRepository {
   return {
     async append(ctx, input) {
       const rows = await db
