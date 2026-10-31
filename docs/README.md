@@ -16,6 +16,7 @@ bug.
 | [ROADMAP.md](ROADMAP.md)                 | P0..P3 and the P0 done-means checklist                                                                 |
 | [METRICS.md](METRICS.md)                 | Baseline metric definitions and results                                                                |
 | [KNOWLEDGE_PACKS.md](KNOWLEDGE_PACKS.md) | Knowledge packs: stage-scoped loading, `hard`/`evidence` checks, pack lint, how to add a pack          |
+| [QA.md](QA.md)                           | QA hard gate, evidence and human review, sandboxed measurement tools, limits, how to add a tool        |
 | [PORTING.md](PORTING.md)                 | What was taken from `motion-mcp`, `zuey-workspace` and `agentkit`, at which SHA, and what was replaced |
 | [porting/](porting/migration-matrix.md)  | Audit and migration matrix for the epic #2 sources                                                     |
 | [decisions/](decisions/README.md)        | Architecture decision records                                                                          |

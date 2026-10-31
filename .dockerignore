@@ -3,6 +3,9 @@
 **/.wrangler
 **/.data
 **/coverage
+**/.venv
+**/__pycache__
+**/.pytest_cache
 **/*.log
 .git
 .github
