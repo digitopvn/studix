@@ -77,13 +77,35 @@ export interface WorkerHandle {
   stop(graceMs?: number): Promise<void>;
 }
 
-function descendants(root: number): number[] {
-  const table = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
+/** Parse `pid ppid` pairs (one per line, whitespace separated) into a parent -> children map. */
+export function parseProcessTable(table: string): Map<number, number[]> {
   const children = new Map<number, number[]>();
-  for (const line of table.trim().split("\n")) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number) as [number, number];
-    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+  for (const line of table.split(/\r?\n/)) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    children.set(ppid as number, [...(children.get(ppid as number) ?? []), pid as number]);
   }
+  return children;
+}
+
+/** Process table as `pid ppid` lines. Windows has no `ps`; the CIM process class carries the parent id. */
+function readProcessTable(): string {
+  if (process.platform === "win32") {
+    return execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+      ],
+      { encoding: "utf8" },
+    );
+  }
+  return execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
+}
+
+export function descendantsFrom(children: Map<number, number[]>, root: number): number[] {
   const out: number[] = [];
   const queue = [root];
   while (queue.length) {
@@ -94,6 +116,10 @@ function descendants(root: number): number[] {
     }
   }
   return out;
+}
+
+function descendants(root: number): number[] {
+  return descendantsFrom(parseProcessTable(readProcessTable()), root);
 }
 
 function killTree(root: number): void {
