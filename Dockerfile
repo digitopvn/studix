@@ -1,7 +1,8 @@
 # Studix runtime image: one image, two roles selected by STUDIX_ROLE.
 #   STUDIX_ROLE=app    -> apps/mcp-server (/mcp, /api, dashboard static, migrations on start)
-#   STUDIX_ROLE=worker -> apps/worker (job claim loops, HyperFrames + FFmpeg rendering, /healthz)
-# Node + FFmpeg + chrome-headless-shell (Chromium on arm64) for rendering, plus the multix CLI.
+#   STUDIX_ROLE=worker -> apps/worker (job claim loops, HyperFrames + FFmpeg rendering, QA tools, /healthz)
+# Node + FFmpeg + chrome-headless-shell (Chromium on arm64) for rendering, the multix CLI, and Python for the
+# QA measurement tools.
 
 # The multix CLI, built from a pinned commit of mrgoonie/multix-cli. No npm release ships the Sume
 # commands yet, so the image builds the commit the adapter was verified against (1.22.0-beta.3).
@@ -38,10 +39,10 @@ ENV NODE_ENV=production \
     STUDIX_DASHBOARD_DIST=/app/apps/dashboard/dist
 
 # FFmpeg for probing/finishing, unzip for HyperFrames' managed Chrome download, fonts and the
-# shared libraries chrome-headless-shell needs.
+# shared libraries chrome-headless-shell needs. python3 runs the QA measurement tools (tools/qa).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl ffmpeg unzip fonts-liberation fontconfig \
+      ca-certificates curl ffmpeg unzip fonts-liberation fontconfig python3 \
       libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libdbus-1-3 \
       libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxext6 libx11-6 libxcb1 \
       libgbm1 libasound2 libpango-1.0-0 libcairo2 libexpat1 libglib2.0-0 \
@@ -61,8 +62,25 @@ COPY . .
 # optional @anthropic-ai/claude-agent-sdk-linux-<arch> package matching this glibc image, and it
 # has no install script, so `onlyBuiltDependencies` does not apply. Nothing is installed at runtime.
 RUN pnpm install --frozen-lockfile --prod=false \
- && pnpm --filter @studix/dashboard build \
- && chown -R node:node /app
+ && pnpm --filter @studix/dashboard build
+
+# QA measurement tools: a venv at tools/qa/.venv (where packages/qa looks by default) on Debian's python3,
+# pinned by tools/qa/uv.lock. uv is used at build time only. The default image has no torch; build the
+# optional image with `--build-arg STUDIX_QA_EXTRAS=depth`, which also bakes the depth model in at a pinned
+# revision (tools never download anything at run time). See docs/QA.md.
+ARG STUDIX_QA_EXTRAS=""
+ARG DEPTH_MODEL_REVISION=5426e4f0f36572d16453bbda7a8389317b1bef99
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
+RUN set -eu; extras=""; for e in $STUDIX_QA_EXTRAS; do extras="$extras --extra $e"; done; \
+    UV_PYTHON_DOWNLOADS=never UV_PYTHON=/usr/bin/python3 UV_NO_CACHE=1 UV_LINK_MODE=copy \
+      uv sync --project tools/qa --locked --no-dev --no-editable $extras; \
+    case " $STUDIX_QA_EXTRAS " in *" depth "*) \
+      tools/qa/.venv/bin/python -m studix_qa.depth_maps fetch /opt/studix-qa/models/depth-anything-v2-small \
+        --revision "$DEPTH_MODEL_REVISION";; \
+    esac; \
+    rm /usr/local/bin/uv; \
+    tools/qa/.venv/bin/python -I -m studix_qa --list; \
+    chown -R node:node /app
 
 # Pin the browser path so the renderer never depends on the runtime user's cache layout.
 # Chrome for Testing ships chrome-headless-shell for linux x64 only; arm64 images (local Apple
