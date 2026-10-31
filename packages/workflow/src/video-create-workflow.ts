@@ -199,6 +199,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
         workDir,
         assetFiles,
         signal: s.signal,
+        deadlineAt: s.job.deadlineAt,
         onProgress: (p) => s.reportProgress(p.progress),
       });
       const seconds = out.probe.durationMs / 1000;
