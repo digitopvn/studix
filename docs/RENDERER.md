@@ -78,8 +78,9 @@ mix sums tracks at their own levels. Looping a short bed would need an IR field.
 
 ## Pinned browser build
 
-The worker image (amd64) and CI install the same `chrome-headless-shell` build,
-`156.0.8078.80`, set once as `ARG CHROME_HEADLESS_SHELL_VERSION` in the root
+The worker image (amd64 and arm64) and CI install the same
+`chrome-headless-shell` build, `156.0.8078.80`, set once as
+`ARG CHROME_HEADLESS_SHELL_VERSION` in the root
 `Dockerfile`; CI reads that line. An unpinned `@stable` let pixels, golden tests
 and the WebGL measurements below change between builds with no code change.
 
@@ -89,9 +90,11 @@ own Chrome at `152.0.7977.30`; moving to that build would mean re-measuring the
 table and is a decision for the film-engine work (#47). To change the build, edit
 the `ARG`, re-run the measurement, and update this section.
 
-The arm64 image (local Apple Silicon) uses Debian's `chromium` package, which is
-not deterministic: its version follows the Debian archive. Do not compare pixels
-or timings across architectures.
+Chrome for Testing publishes `chrome-headless-shell` for `linux-arm64` from build
+153, so the arm64 image (local Apple Silicon) installs the same build id instead
+of Debian's `chromium`. Installing it needs `@puppeteer/browsers` 3.2.0 or later;
+older releases resolve arm64 to the x64 archive. Same build id does not mean same
+pixels: do not compare pixels or timings across architectures.
 
 Check: two builds of the image print the same `chrome --version`; the build
 already runs it as its last browser step.
