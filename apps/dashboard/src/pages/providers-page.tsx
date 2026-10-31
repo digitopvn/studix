@@ -7,6 +7,7 @@ import {
   type SubscriptionMethodInfo,
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { ProviderModelsSection } from "./provider-models-section.tsx";
 
 type Owner = ProviderConnection["owner"];
 
@@ -44,6 +45,7 @@ export function ProvidersPage() {
         />
       )}
       {subscription && <SubscriptionCard method={subscription} />}
+      <ProviderModelsSection />
     </>
   );
 }
@@ -174,7 +176,10 @@ function ApiKeyCard({
           <tbody>
             {connections.map((c) => (
               <tr key={c.id}>
-                <td>{c.label}</td>
+                <td>
+                  {c.label}
+                  {c.runtimes.includes("pi") && <div className="muted">Also enabled for Pi</div>}
+                </td>
                 <td>{c.owner === "workspace" ? "Workspace" : c.ownedByMe ? "Personal (you)" : "Personal"}</td>
                 <td className="mono">{c.keyHint ?? "-"}</td>
                 <td>

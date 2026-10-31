@@ -16,7 +16,10 @@ function fakeFetch(status: number | Error) {
 describe("anthropic key tester", () => {
   it("calls the zero-token models endpoint with the key only in x-api-key", async () => {
     const { fetch, calls } = fakeFetch(200);
-    const result = await createAnthropicKeyTester({ fetch, baseUrl: "https://api.example.test/" }).test(KEY);
+    const result = await createAnthropicKeyTester({ fetch, baseUrl: "https://api.example.test/" }).test(
+      KEY,
+      "anthropic",
+    );
     expect(result).toMatchObject({ ok: true, verdict: "available", httpStatus: 200 });
     expect(calls[0]!.url).toBe("https://api.example.test/v1/models?limit=1");
     expect(calls[0]!.init.method).toBe("GET");
@@ -29,7 +32,7 @@ describe("anthropic key tester", () => {
     [429, "unverified", "RATE_LIMITED"],
     [529, "unverified", "UNAVAILABLE"],
   ] as const)("maps HTTP %i to %s / %s without echoing the key", async (status, verdict, code) => {
-    const result = await createAnthropicKeyTester({ fetch: fakeFetch(status).fetch }).test(KEY);
+    const result = await createAnthropicKeyTester({ fetch: fakeFetch(status).fetch }).test(KEY, "anthropic");
     expect(result).toMatchObject({ ok: false, verdict, httpStatus: status, error: { code } });
     expect(JSON.stringify(result)).not.toContain(KEY);
   });
@@ -37,6 +40,7 @@ describe("anthropic key tester", () => {
   it("reports a network failure as unverified", async () => {
     const result = await createAnthropicKeyTester({ fetch: fakeFetch(new Error(`boom ${KEY}`)).fetch }).test(
       KEY,
+      "anthropic",
     );
     expect(result).toMatchObject({ ok: false, verdict: "unverified", error: { code: "UNAVAILABLE" } });
     expect(JSON.stringify(result)).not.toContain(KEY);

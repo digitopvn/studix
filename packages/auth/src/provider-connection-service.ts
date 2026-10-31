@@ -1,8 +1,11 @@
 import {
   type ActorRef,
+  AGENT_RUNTIMES,
+  type AgentRuntimeName,
   type AuditRepository,
   actorRef,
   assertPermission,
+  type BillingSource,
   can,
   type TenantContext,
 } from "@studix/core";
@@ -22,11 +25,14 @@ import {
 import type { SecretBox } from "./secret-box.ts";
 
 /*
- * Outbound AI provider credentials (Anthropic). Two authentication methods are modelled and kept
- * apart: an API key billed by usage (works today) and a Claude subscription through OAuth, which is
- * reported as restricted until Anthropic approves that use for a multi-tenant service (ADR 0011).
- * Nothing here ever falls back from one method to the other, and Studix inbound credentials
- * (`stx_` keys, dashboard sessions) are never used as provider credentials.
+ * Outbound AI provider credentials. Two authentication methods are modelled and kept apart: an API key
+ * billed by usage (Anthropic and the other providers the Pi runtime supports) and a Claude subscription
+ * through OAuth, which is reported as restricted until Anthropic approves that use for a multi-tenant
+ * service (ADR 0011). Nothing here ever falls back from one method or connection to another, and Studix
+ * inbound credentials (`stx_` keys, dashboard sessions) are never used as provider credentials.
+ *
+ * Each connection lists the agent runtimes allowed to spend it (ADR 0016). The Claude runtime only runs
+ * Anthropic keys; a key enabled only for `claude` is never released to Pi until someone opts in.
  */
 
 export type ConnectionOwner = "workspace" | "user";
@@ -42,9 +48,13 @@ export interface ProviderTestView {
 /** Client-safe view: the key itself never leaves the service, only its hint. */
 export interface ProviderConnectionView {
   id: string;
-  provider: "anthropic";
+  /** Provider id from the Pi catalog, e.g. `anthropic`, `openai`, `openrouter`. */
+  provider: string;
   authMethod: "api_key";
-  billing: "usage_based";
+  billing: BillingSource;
+  runtimes: AgentRuntimeName[];
+  /** Bumped on every key rotation or runtime change. */
+  version: number;
   owner: ConnectionOwner;
   ownedByMe: boolean;
   label: string;
@@ -83,17 +93,72 @@ export interface ProviderConnectionsOverview {
   connections: ProviderConnectionView[];
 }
 
+/** Every connection, of every provider, the caller can see, plus what the caller may add. */
+export interface ProviderConnectionList {
+  storage: "available" | "unavailable";
+  canAddWorkspaceKey: boolean;
+  canAddPersonalKey: boolean;
+  connections: ProviderConnectionView[];
+}
+
+export const ANTHROPIC_PROVIDER = "anthropic";
+const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
+/** Non-Anthropic keys have no common shape; this only rejects pasted junk (spaces, newlines, huge blobs). */
+const GENERIC_API_KEY_PATTERN = /^[\x21-\x7e]{8,512}$/;
+
+const ANTHROPIC_KEY_MESSAGE = "must be an Anthropic API key (sk-ant-…)";
+const GENERIC_KEY_MESSAGE = "must be an API key without spaces";
+
+function keyShapeOk(provider: string, apiKey: string): boolean {
+  return provider === ANTHROPIC_PROVIDER
+    ? ANTHROPIC_API_KEY_PATTERN.test(apiKey)
+    : GENERIC_API_KEY_PATTERN.test(apiKey);
+}
+
+const Runtimes = z
+  .array(z.enum(AGENT_RUNTIMES))
+  .min(1)
+  .max(AGENT_RUNTIMES.length)
+  .refine((list) => new Set(list).size === list.length, "must not repeat a runtime");
+
 export const SaveApiKeyInput = z
   .object({
+    provider: z
+      .string()
+      .trim()
+      .regex(PROVIDER_ID_PATTERN, "must be a provider id")
+      .default(ANTHROPIC_PROVIDER),
     owner: z.enum(["workspace", "user"]),
-    apiKey: z.string().trim().regex(ANTHROPIC_API_KEY_PATTERN, "must be an Anthropic API key (sk-ant-…)"),
+    apiKey: z.string().trim().min(1).max(512),
     label: z.string().trim().min(1).max(80).optional(),
+    /** Default: `["claude"]` for Anthropic, `["pi"]` for every other provider. */
+    runtimes: Runtimes.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, ctx) => {
+    const anthropic = input.provider === ANTHROPIC_PROVIDER;
+    if (!keyShapeOk(input.provider, input.apiKey)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["apiKey"],
+        message: anthropic ? ANTHROPIC_KEY_MESSAGE : GENERIC_KEY_MESSAGE,
+      });
+    }
+    if (!anthropic && input.runtimes?.includes("claude")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["runtimes"],
+        message: "the claude runtime only runs Anthropic keys",
+      });
+    }
+  });
 export type SaveApiKeyInput = z.input<typeof SaveApiKeyInput>;
 
-export const RotateApiKeyInput = SaveApiKeyInput.pick({ apiKey: true }).strict();
+export const RotateApiKeyInput = z.object({ apiKey: z.string().trim().min(1).max(512) }).strict();
 export type RotateApiKeyInput = z.input<typeof RotateApiKeyInput>;
+
+export const SetRuntimesInput = z.object({ runtimes: Runtimes }).strict();
+export type SetRuntimesInput = z.input<typeof SetRuntimesInput>;
 
 export interface ResolvedProviderCredential {
   apiKey: string;
@@ -107,30 +172,46 @@ export interface ResolvedProviderCredential {
 }
 
 export interface ProviderConnectionService {
+  /** The Anthropic view the Claude runtime settings use; every provider is listed by `list`. */
   overview(ctx: TenantContext): Promise<ProviderConnectionsOverview>;
+  list(ctx: TenantContext): Promise<ProviderConnectionList>;
   saveApiKey(ctx: TenantContext, input: SaveApiKeyInput): Promise<ProviderConnectionView>;
   rotateApiKey(ctx: TenantContext, id: string, input: RotateApiKeyInput): Promise<ProviderConnectionView>;
+  /** Opt a connection in or out of agent runtimes; managed by the same people who manage the key. */
+  setRuntimes(ctx: TenantContext, id: string, input: SetRuntimesInput): Promise<ProviderConnectionView>;
   test(ctx: TenantContext, id: string): Promise<ProviderConnectionView>;
   remove(ctx: TenantContext, id: string): Promise<ProviderConnectionView>;
   /**
-   * The plaintext key for one execution. `requestedBy` is whoever asked for the work (the job's
-   * creator): a user-owned key is released only for its owner. Never picks another connection.
+   * The plaintext key for one execution by `runtime`. `requestedBy` is whoever asked for the work (the
+   * job's creator): a user-owned key is released only for its owner, and only to a runtime the
+   * connection is enabled for. Never picks another connection.
    */
   resolveForExecution(
     ctx: TenantContext,
-    input: { connectionId: string; requestedBy: ActorRef },
+    input: { connectionId: string; requestedBy: ActorRef; runtime: AgentRuntimeName },
   ): Promise<ResolvedProviderCredential>;
   /**
-   * Check, without decrypting anything, that the caller could run a job with this connection. Used when a
-   * job is created so a bad selection fails fast; the worker checks again with resolveForExecution.
+   * Check, without decrypting anything, that the caller could run `runtime` with this connection. Used
+   * when a job is created or a preference is saved so a bad selection fails fast; the worker checks
+   * again with resolveForExecution.
    */
-  assertUsable(ctx: TenantContext, connectionId: string): Promise<ProviderConnectionView>;
+  assertUsable(
+    ctx: TenantContext,
+    connectionId: string,
+    runtime: AgentRuntimeName,
+  ): Promise<ProviderConnectionView>;
 }
 
 export interface ProviderConnectionServiceDeps {
   connections: ProviderConnectionRepository;
   audit: AuditRepository;
+  /** Called with the connection's provider; route non-Anthropic providers with `routeKeyTester`. */
   tester: ProviderKeyTester;
+  /**
+   * Providers that may be stored besides Anthropic (the Pi runtime's API-key providers). Without it only
+   * Anthropic keys are accepted.
+   */
+  isSupportedProvider?: (provider: string) => boolean;
   /** Without it the API-key method is reported unavailable and nothing can be stored. */
   secrets?: SecretBox;
   logger?: Logger;
@@ -184,7 +265,9 @@ function toView(ctx: TenantContext, row: ProviderConnectionRecord): ProviderConn
     id: row.id,
     provider: row.provider,
     authMethod: "api_key",
-    billing: "usage_based",
+    billing: row.billingSource,
+    runtimes: row.runtimes,
+    version: row.version,
     owner: row.ownerType,
     ownedByMe: isMine(ctx, row),
     label: row.label,
@@ -206,17 +289,69 @@ function parse<S extends z.ZodType>(schema: S, value: unknown): z.output<S> {
   });
 }
 
+export function providerName(provider: string): string {
+  return provider === ANTHROPIC_PROVIDER ? "Anthropic" : provider;
+}
+
+/** `sk-ant-…a1b2` for Anthropic, `…a1b2` otherwise: enough to tell keys apart, never enough to use one. */
+export function apiKeyHint(provider: string, apiKey: string): string {
+  return provider === ANTHROPIC_PROVIDER ? anthropicKeyHint(apiKey) : `…${apiKey.slice(-4)}`;
+}
+
 /**
- * A key Anthropic refuses is bad input, not a Studix auth failure: answering 401/403 would read as
+ * A key the provider refuses is bad input, not a Studix auth failure: answering 401/403 would read as
  * "your Studix session expired" or "Studix denied you". The upstream verdict stays in details.
  */
-function rejected(result: ProviderKeyTestResult): StudixError {
+function rejected(provider: string, result: ProviderKeyTestResult): StudixError {
   const error = result.error;
-  return new StudixError("VALIDATION", error?.message ?? "Anthropic rejected the API key", {
+  return new StudixError("VALIDATION", error?.message ?? `${providerName(provider)} rejected the API key`, {
     retryable: false,
-    suggestedAction: error?.suggestedAction ?? "Check the key in Claude Console, then paste it again.",
+    suggestedAction: error?.suggestedAction ?? "Check the key with the provider, then paste it again.",
     details: { httpStatus: result.httpStatus, providerCode: error?.code },
   });
+}
+
+/** A rotated key must keep the connection's provider shape. */
+function assertKeyShape(provider: string, apiKey: string): void {
+  if (keyShapeOk(provider, apiKey)) return;
+  throw new StudixError("VALIDATION", "Invalid provider credential request", {
+    details: {
+      issues: [
+        {
+          path: "apiKey",
+          message: provider === ANTHROPIC_PROVIDER ? ANTHROPIC_KEY_MESSAGE : GENERIC_KEY_MESSAGE,
+        },
+      ],
+    },
+  });
+}
+
+function defaultRuntimes(provider: string): AgentRuntimeName[] {
+  return provider === ANTHROPIC_PROVIDER ? ["claude"] : ["pi"];
+}
+
+/**
+ * Send each provider's key to its own tester: Anthropic keeps the free `/v1/models` check, other
+ * providers use `others` (the Pi probe). Without `others`, non-Anthropic keys are stored `unverified`.
+ */
+export function routeKeyTester(anthropic: ProviderKeyTester, others?: ProviderKeyTester): ProviderKeyTester {
+  return {
+    test(apiKey, provider) {
+      if (provider === ANTHROPIC_PROVIDER) return anthropic.test(apiKey, provider);
+      if (others) return others.test(apiKey, provider);
+      return Promise.resolve({
+        ok: false,
+        at: new Date(),
+        latencyMs: 0,
+        verdict: "unverified",
+        error: {
+          code: "UNAVAILABLE",
+          message: `This server cannot test ${providerName(provider)} keys`,
+          retryable: false,
+        },
+      });
+    },
+  };
 }
 
 function canAddPersonal(ctx: TenantContext): boolean {
@@ -246,10 +381,14 @@ export function createProviderConnectionService(
         connectionId: row.id,
         workspaceId: ctx.workspaceId,
       });
-      throw new StudixError("UNAVAILABLE", "The stored Anthropic key can no longer be decrypted", {
-        retryable: false,
-        suggestedAction: "Replace the key in Settings → AI & Providers.",
-      });
+      throw new StudixError(
+        "UNAVAILABLE",
+        `The stored ${providerName(row.provider)} key can no longer be decrypted`,
+        {
+          retryable: false,
+          suggestedAction: "Replace the key in Settings → AI & Providers.",
+        },
+      );
     }
   };
 
@@ -284,6 +423,8 @@ export function createProviderConnectionService(
         owner: row.ownerType,
         status: row.status,
         keyHint: row.secretHint,
+        runtimes: row.runtimes,
+        version: row.version,
       },
     });
 
@@ -292,23 +433,31 @@ export function createProviderConnectionService(
     ctx: TenantContext,
     connectionId: string,
     requestedBy: ActorRef,
+    runtime: AgentRuntimeName,
   ): Promise<ProviderConnectionRecord> {
     assertPermission(ctx, "project:write");
     const row = await deps.connections.get(ctx, connectionId);
     if (!row || row.revokedAt || !row.secretCiphertext || row.authMethod !== "api_key") {
-      throw new StudixError("UNAVAILABLE", "The selected Anthropic connection no longer exists", {
+      throw new StudixError("UNAVAILABLE", "The selected provider connection no longer exists", {
         retryable: false,
         suggestedAction: "Choose another provider connection in Settings → AI & Providers.",
       });
     }
+    const name = providerName(row.provider);
     if (row.ownerType === "user" && !(requestedBy.type === "user" && requestedBy.id === row.ownerUserId)) {
-      throw new StudixError("FORBIDDEN", "A personal Anthropic key can only be used by its owner", {
+      throw new StudixError("FORBIDDEN", `A personal ${name} key can only be used by its owner`, {
         retryable: false,
         suggestedAction: "Use a workspace key or your own personal key.",
       });
     }
+    if (!row.runtimes.includes(runtime) || (runtime === "claude" && row.provider !== ANTHROPIC_PROVIDER)) {
+      throw new StudixError("FORBIDDEN", `This ${name} key is not enabled for the ${runtime} runtime`, {
+        retryable: false,
+        suggestedAction: `Enable the ${runtime} runtime for this key in Settings → AI & Providers, or choose another key.`,
+      });
+    }
     if (row.status === "invalid") {
-      throw new StudixError("UNAUTHENTICATED", "The Anthropic API key was rejected at its last test", {
+      throw new StudixError("UNAUTHENTICATED", `The ${name} API key was rejected at its last test`, {
         retryable: false,
         suggestedAction: "Replace the key in Settings → AI & Providers, then retry.",
       });
@@ -337,6 +486,21 @@ export function createProviderConnectionService(
           SUBSCRIPTION_RESTRICTION,
         ],
         connections: rows
+          .filter(
+            (row) => row.provider === ANTHROPIC_PROVIDER && row.authMethod === "api_key" && canSee(ctx, row),
+          )
+          .map((row) => toView(ctx, row)),
+      };
+    },
+
+    async list(ctx) {
+      assertPermission(ctx, "workspace:read");
+      const rows = await deps.connections.listActive(ctx);
+      return {
+        storage: deps.secrets ? "available" : "unavailable",
+        canAddWorkspaceKey: Boolean(deps.secrets) && can(ctx.actor, "member:manage"),
+        canAddPersonalKey: Boolean(deps.secrets) && canAddPersonal(ctx),
+        connections: rows
           .filter((row) => row.authMethod === "api_key" && canSee(ctx, row))
           .map((row) => toView(ctx, row)),
       };
@@ -351,14 +515,23 @@ export function createProviderConnectionService(
           throw new StudixError("FORBIDDEN", "Personal keys can only be added by a signed-in user");
         }
       }
+      if (input.provider !== ANTHROPIC_PROVIDER && !deps.isSupportedProvider?.(input.provider)) {
+        throw new StudixError("VALIDATION", `Provider ${input.provider} is not supported`, {
+          retryable: false,
+          suggestedAction: "Choose a provider from the catalog in Settings → AI & Providers.",
+        });
+      }
       const secrets = requireSecrets();
-      // Fail before calling Anthropic: the unique index still settles a concurrent race.
+      // Fail before calling the provider: the unique index still settles a concurrent race.
       const ownerUserId = input.owner === "user" ? userId(ctx) : undefined;
       const active = await deps.connections.listActive(ctx);
       if (
         active.some(
           (row) =>
-            row.authMethod === "api_key" && row.ownerType === input.owner && row.ownerUserId === ownerUserId,
+            row.provider === input.provider &&
+            row.authMethod === "api_key" &&
+            row.ownerType === input.owner &&
+            row.ownerUserId === ownerUserId,
         )
       ) {
         throw new StudixError("CONFLICT", "An active connection already exists for this owner", {
@@ -366,20 +539,23 @@ export function createProviderConnectionService(
           suggestedAction: "Replace the existing key instead of adding another one.",
         });
       }
-      const result = await deps.tester.test(input.apiKey);
-      if (result.verdict === "invalid") throw rejected(result);
+      const result = await deps.tester.test(input.apiKey, input.provider);
+      if (result.verdict === "invalid") throw rejected(input.provider, result);
       const id = newId("pcon");
       const row = await deps.connections.create(ctx, {
         id,
-        provider: "anthropic",
+        provider: input.provider,
         authMethod: "api_key",
         ownerType: input.owner,
         ownerUserId,
         label: input.label ?? (input.owner === "workspace" ? "Workspace key" : "Personal key"),
         status: result.verdict,
         secretCiphertext: secrets.seal(input.apiKey, associatedData(ctx, id)),
-        secretHint: anthropicKeyHint(input.apiKey),
+        secretHint: apiKeyHint(input.provider, input.apiKey),
         lastTest: toTestRecord(result),
+        runtimes: input.runtimes ?? defaultRuntimes(input.provider),
+        // Only API keys are stored, and an API key is always billed by usage.
+        billingSource: "usage_based",
         createdBy: actorRef(ctx.actor),
       });
       await audit(ctx, "created", row);
@@ -391,16 +567,31 @@ export function createProviderConnectionService(
       const input = parse(RotateApiKeyInput, rawInput);
       const existing = await load(ctx, id);
       requireManage(ctx, existing);
+      assertKeyShape(existing.provider, input.apiKey);
       const secrets = requireSecrets();
-      const result = await deps.tester.test(input.apiKey);
-      if (result.verdict === "invalid") throw rejected(result);
+      const result = await deps.tester.test(input.apiKey, existing.provider);
+      if (result.verdict === "invalid") throw rejected(existing.provider, result);
       const row = await deps.connections.update(ctx, id, {
         status: result.verdict,
         secretCiphertext: secrets.seal(input.apiKey, associatedData(ctx, id)),
-        secretHint: anthropicKeyHint(input.apiKey),
+        secretHint: apiKeyHint(existing.provider, input.apiKey),
         lastTest: toTestRecord(result),
       });
       await audit(ctx, "rotated", row);
+      return toView(ctx, row);
+    },
+
+    async setRuntimes(ctx, id, rawInput) {
+      const input = parse(SetRuntimesInput, rawInput);
+      const existing = await load(ctx, id);
+      requireManage(ctx, existing);
+      if (existing.provider !== ANTHROPIC_PROVIDER && input.runtimes.includes("claude")) {
+        throw new StudixError("VALIDATION", "The claude runtime only runs Anthropic keys", {
+          retryable: false,
+        });
+      }
+      const row = await deps.connections.update(ctx, id, { runtimes: [...input.runtimes].sort() });
+      await audit(ctx, "runtimes_changed", row);
       return toView(ctx, row);
     },
 
@@ -410,7 +601,7 @@ export function createProviderConnectionService(
       if (!existing.secretCiphertext)
         throw new StudixError("NOT_FOUND", `provider connection ${id} has no key`);
       const apiKey = openKey(ctx, existing, existing.secretCiphertext);
-      const result = await deps.tester.test(apiKey);
+      const result = await deps.tester.test(apiKey, existing.provider);
       const row = await deps.connections.recordTest(ctx, id, existing.secretCiphertext, {
         status: result.verdict,
         lastTest: toTestRecord(result),
@@ -431,7 +622,7 @@ export function createProviderConnectionService(
     },
 
     async resolveForExecution(ctx, input) {
-      const row = await usableRow(ctx, input.connectionId, input.requestedBy);
+      const row = await usableRow(ctx, input.connectionId, input.requestedBy, input.runtime);
       const apiKey = openKey(ctx, row, row.secretCiphertext as string);
       const ciphertext = row.secretCiphertext as string;
       return {
@@ -439,7 +630,7 @@ export function createProviderConnectionService(
         connection: toView(ctx, row),
         async markRejected() {
           // A 401 can come from a gateway or a short provider incident; only a direct test of this key decides.
-          const result = await deps.tester.test(apiKey);
+          const result = await deps.tester.test(apiKey, row.provider);
           if (result.verdict !== "invalid") return;
           const updated = await deps.connections.recordTest(ctx, row.id, ciphertext, {
             status: "invalid",
@@ -447,16 +638,17 @@ export function createProviderConnectionService(
           });
           if (!updated) return;
           await audit(ctx, "rejected", updated);
-          deps.logger?.warn("provider connection marked invalid after Anthropic rejected the key", {
+          deps.logger?.warn("provider connection marked invalid after the provider rejected the key", {
             connectionId: row.id,
+            provider: row.provider,
             workspaceId: ctx.workspaceId,
           });
         },
       };
     },
 
-    async assertUsable(ctx, connectionId) {
-      return toView(ctx, await usableRow(ctx, connectionId, actorRef(ctx.actor)));
+    async assertUsable(ctx, connectionId, runtime) {
+      return toView(ctx, await usableRow(ctx, connectionId, actorRef(ctx.actor), runtime));
     },
   };
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { Job, RendererAdapter, StorageAdapter, TenantContext, UsageEvent } from "@studix/core";
 import {
   createInMemoryJobStore,
@@ -138,6 +138,19 @@ function harness(options: { storyboard?: StoryboardReviewStatus; qaFails?: boole
   const storage = memoryStorage();
   const renderer = fakeRenderer();
   const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
+  const real = media.generate.bind(media);
+  media.generate = async (c, request) => {
+    // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
+    for (const name of ["image", "video", "audio"]) {
+      const value = request.params?.[name];
+      if (typeof value !== "string" || value.startsWith("https://")) continue;
+      const rel = relative(request.workDir ?? "", value);
+      if (!request.workDir || rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+        throw new StudixError("VALIDATION", `params.${name} must be inside workDir`, { retryable: false });
+      }
+    }
+    return real(c, request);
+  };
   const generate = vi.spyOn(media, "generate");
   const usage: UsageEvent[] = [];
   const qaCalls: QaExpectation[] = [];

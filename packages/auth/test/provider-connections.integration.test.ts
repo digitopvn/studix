@@ -175,19 +175,41 @@ describe("provider connections over Postgres", () => {
     const bobRef = { type: "user" as const, id: t.bob.actor.id };
 
     expect(
-      (await svc.resolveForExecution(t.worker, { connectionId: ws.id, requestedBy: bobRef })).apiKey,
+      (
+        await svc.resolveForExecution(t.worker, {
+          connectionId: ws.id,
+          requestedBy: bobRef,
+          runtime: "claude",
+        })
+      ).apiKey,
     ).toBe(KEY_A);
     expect(
-      (await svc.resolveForExecution(t.worker, { connectionId: alice.id, requestedBy: aliceRef })).apiKey,
+      (
+        await svc.resolveForExecution(t.worker, {
+          connectionId: alice.id,
+          requestedBy: aliceRef,
+          runtime: "claude",
+        })
+      ).apiKey,
     ).toBe(KEY_B);
     expect(
-      await codeOf(svc.resolveForExecution(t.worker, { connectionId: alice.id, requestedBy: bobRef })),
+      await codeOf(
+        svc.resolveForExecution(t.worker, { connectionId: alice.id, requestedBy: bobRef, runtime: "claude" }),
+      ),
     ).toBe("FORBIDDEN");
     expect(
-      await codeOf(svc.resolveForExecution(t.viewer, { connectionId: ws.id, requestedBy: bobRef })),
+      await codeOf(
+        svc.resolveForExecution(t.viewer, { connectionId: ws.id, requestedBy: bobRef, runtime: "claude" }),
+      ),
     ).toBe("FORBIDDEN");
     expect(
-      await codeOf(svc.resolveForExecution(other.worker, { connectionId: ws.id, requestedBy: bobRef })),
+      await codeOf(
+        svc.resolveForExecution(other.worker, {
+          connectionId: ws.id,
+          requestedBy: bobRef,
+          runtime: "claude",
+        }),
+      ),
     ).toBe("UNAVAILABLE");
 
     // A ciphertext copied into another tenant's row does not open there.
@@ -198,12 +220,20 @@ describe("provider connections over Postgres", () => {
       .set({ secretCiphertext: mine.secretCiphertext })
       .where(eq(schema.providerConnections.id, theirs.id));
     expect(
-      await codeOf(svc.resolveForExecution(other.worker, { connectionId: theirs.id, requestedBy: bobRef })),
+      await codeOf(
+        svc.resolveForExecution(other.worker, {
+          connectionId: theirs.id,
+          requestedBy: bobRef,
+          runtime: "claude",
+        }),
+      ),
     ).toBe("UNAVAILABLE");
 
     await svc.remove(t.admin, ws.id);
     expect(
-      await codeOf(svc.resolveForExecution(t.worker, { connectionId: ws.id, requestedBy: bobRef })),
+      await codeOf(
+        svc.resolveForExecution(t.worker, { connectionId: ws.id, requestedBy: bobRef, runtime: "claude" }),
+      ),
     ).toBe("UNAVAILABLE");
   });
 
@@ -214,13 +244,13 @@ describe("provider connections over Postgres", () => {
     const ws = await svc.saveApiKey(t.admin, { owner: "workspace", apiKey: KEY_A });
     const alice = await svc.saveApiKey(t.alice, { owner: "user", apiKey: KEY_B });
 
-    const view = await svc.assertUsable(t.bob, ws.id);
+    const view = await svc.assertUsable(t.bob, ws.id, "claude");
     expect(view.id).toBe(ws.id);
     expect(JSON.stringify(view)).not.toContain(KEY_A);
-    expect((await svc.assertUsable(t.alice, alice.id)).id).toBe(alice.id);
-    expect(await codeOf(svc.assertUsable(t.bob, alice.id))).toBe("FORBIDDEN");
-    expect(await codeOf(svc.assertUsable(t.viewer, ws.id))).toBe("FORBIDDEN");
-    expect(await codeOf(svc.assertUsable(other.admin, ws.id))).toBe("UNAVAILABLE");
+    expect((await svc.assertUsable(t.alice, alice.id, "claude")).id).toBe(alice.id);
+    expect(await codeOf(svc.assertUsable(t.bob, alice.id, "claude"))).toBe("FORBIDDEN");
+    expect(await codeOf(svc.assertUsable(t.viewer, ws.id, "claude"))).toBe("FORBIDDEN");
+    expect(await codeOf(svc.assertUsable(other.admin, ws.id, "claude"))).toBe("UNAVAILABLE");
   });
 
   it("refuses to execute with a key whose last test failed", async () => {
@@ -230,7 +260,11 @@ describe("provider connections over Postgres", () => {
     await db.current.repos.providerConnections.update(t.admin, view.id, { status: "invalid" });
     expect(
       await codeOf(
-        svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy: { type: "user", id: "x" } }),
+        svc.resolveForExecution(t.worker, {
+          connectionId: view.id,
+          requestedBy: { type: "user", id: "x" },
+          runtime: "claude",
+        }),
       ),
     ).toBe("UNAUTHENTICATED");
   });
@@ -240,22 +274,30 @@ describe("provider connections over Postgres", () => {
     const t = await workspace("pc-rejected");
     const view = await svc.saveApiKey(t.admin, { owner: "workspace", apiKey: KEY_A });
     const requestedBy = { type: "user", id: "x" } as const;
-    const resolved = await svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy });
+    const resolved = await svc.resolveForExecution(t.worker, {
+      connectionId: view.id,
+      requestedBy,
+      runtime: "claude",
+    });
 
     // A 401 that Anthropic does not repeat (gateway or incident) leaves the key usable.
     await resolved.markRejected();
-    expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
+    expect((await svc.assertUsable(t.admin, view.id, "claude")).status).toBe("available");
 
     // The key is rotated while a run holding the old one still reports a rejection.
     tester.revoked.add(KEY_A);
     await svc.rotateApiKey(t.admin, view.id, { apiKey: KEY_B });
     await resolved.markRejected();
-    expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
+    expect((await svc.assertUsable(t.admin, view.id, "claude")).status).toBe("available");
 
     tester.revoked.add(KEY_B);
-    const current = await svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy });
+    const current = await svc.resolveForExecution(t.worker, {
+      connectionId: view.id,
+      requestedBy,
+      runtime: "claude",
+    });
     await current.markRejected();
-    expect(await codeOf(svc.assertUsable(t.admin, view.id))).toBe("UNAUTHENTICATED");
+    expect(await codeOf(svc.assertUsable(t.admin, view.id, "claude"))).toBe("UNAUTHENTICATED");
     const overview = await svc.overview(t.admin);
     expect(overview.connections[0]).toMatchObject({
       status: "invalid",
@@ -315,7 +357,13 @@ describe("provider connections over Postgres", () => {
     expect((await rowOf(ws.id)).status).toBe("available");
     const aliceRef = { type: "user" as const, id: t.alice.actor.id };
     expect(
-      await codeOf(svc.resolveForExecution(t.worker, { connectionId: mine.id, requestedBy: aliceRef })),
+      await codeOf(
+        svc.resolveForExecution(t.worker, {
+          connectionId: mine.id,
+          requestedBy: aliceRef,
+          runtime: "claude",
+        }),
+      ),
     ).toBe("UNAVAILABLE");
   });
 
