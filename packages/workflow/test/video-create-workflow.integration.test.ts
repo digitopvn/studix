@@ -95,7 +95,7 @@ describe("video.create workflow on Postgres", () => {
       payload: {
         projectId: first.project.id,
         versionId: v2.id,
-        feedbackId: "fbk_stale",
+        makeCurrent: false,
         renderPreset: "preview",
       },
       createdBy: author,

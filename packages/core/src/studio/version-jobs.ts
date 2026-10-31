@@ -16,6 +16,11 @@ export interface VersionJobRequest {
   renderPreset?: RenderPreset;
   idempotencyKey?: string;
   budgetCents?: number;
+  /**
+   * Whether rendering moves the project's head to this version (default true). Turn it off when the head was
+   * already settled at queue time, so a job that runs later cannot revert a newer version.
+   */
+  makeCurrent?: boolean;
   /** Extra payload fields recorded with the job (e.g. the feedback that produced the version). */
   extra?: Record<string, unknown>;
 }
@@ -39,8 +44,8 @@ export async function replayVersionJob(
 }
 
 /**
- * Queue a `video.create` job for a stored version: the worker skips planning, renders the version and makes
- * it current. Gated by the approval policy like any job start (above the threshold it waits for a human).
+ * Queue a `video.create` job for a stored version: the worker skips planning, renders the version and, unless
+ * `makeCurrent` is false, makes it current. Gated by the approval policy like any job start (above the threshold it waits for a human).
  */
 export async function enqueueVersionJob(
   deps: ResolvedStudioDeps,
@@ -66,6 +71,7 @@ export async function enqueueVersionJob(
       projectId: project.id,
       versionId: version.id,
       renderPreset: request.renderPreset ?? "preview",
+      makeCurrent: request.makeCurrent ?? true,
       workflowTemplate: project.workflowTemplate ?? DEFAULT_WORKFLOW_TEMPLATE,
     },
     idempotencyKey: request.idempotencyKey,

@@ -662,6 +662,8 @@ export async function submitFeedback(
     renderPreset: input.renderPreset,
     idempotencyKey: input.idempotencyKey,
     budgetCents: input.budgetCents,
+    // The patch already moved the head above; a later job must not move it back.
+    makeCurrent: false,
     extra: { feedbackId: feedback.id, baseVersionId: base.id },
   });
   await deps.audit.append(ctx, {
@@ -734,6 +736,8 @@ export async function renderVersion(
     renderPreset: input.renderPreset,
     idempotencyKey: input.idempotencyKey,
     budgetCents: input.budgetCents,
+    // Naming a version is a deliberate rollback; rendering "the current one" must not move the head.
+    makeCurrent: input.versionId !== undefined,
   });
   return {
     projectId: project.id,
