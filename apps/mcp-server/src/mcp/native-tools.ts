@@ -274,7 +274,7 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.feedback,
     title: "Feedback on a shot, scene, asset or time range",
     description:
-      "Comment on shotId, sceneId, assetId or startMs+endMs. A patch inside that target makes a new version and render job. Returns ids, invalidated nodes, next.",
+      "Comment on shotId, sceneId, assetId or startMs+endMs. A patch in it makes a new version and render job; a note on a design at a waiting gate redraws it.",
     input: FeedbackToolInput,
     readOnly: false,
     audited: true,
@@ -295,7 +295,7 @@ export const NATIVE_TOOLS = [
           invalidated: out.invalidated,
           shots: out.shots,
           allowedPaths: out.allowedPaths,
-          ...(out.approval ? { approval: out.job?.approval } : {}),
+          ...(out.approval ? { approval: out.job?.approval ?? out.approval } : {}),
           reviewUrl: reviewUrl(ctx.deps, out.projectId),
           ...(preview ? { previewUrl: preview } : {}),
         },

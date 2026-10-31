@@ -21,12 +21,21 @@ const join = (parts: ReadonlyArray<string | undefined | false>) =>
     .join(". ")
     .slice(0, 3_900);
 
-/** Model sheet of one character: turnaround and expressions on a plain ground (the identity reference). */
-export function characterSheetPrompt(scope: FilmScope, c: ScopeCharacter): string {
+/** A reviewer's change to a redrawn design, placed right after what must stay so both survive. */
+const revisionClause = (note: string | undefined) =>
+  note ? `Reviewer's correction, apply it exactly: ${note}` : undefined;
+
+/**
+ * Model sheet of one character: turnaround and expressions on a plain ground (the identity reference).
+ * `revision` is a reviewer's note on a redraw: it is added to the bible's
+ * anchors, which still hold.
+ */
+export function characterSheetPrompt(scope: FilmScope, c: ScopeCharacter, revision?: string): string {
   return join([
     scope.style.look,
     `Character model sheet of ${c.name}, ${c.description}`,
     `Keep exactly: ${c.anchors.join("; ")}`,
+    revisionClause(revision),
     palette(c),
     c.handedness ? `${c.handedness}-handed` : undefined,
     "Turnaround of the same character: front, three-quarter and back views, full body, neutral pose, plus three head expressions; plain light grey background, even studio light",
@@ -35,12 +44,13 @@ export function characterSheetPrompt(scope: FilmScope, c: ScopeCharacter): strin
   ]);
 }
 
-/** Set frame: the location with its light, empty, in real perspective. */
-export function setFramePrompt(scope: FilmScope, set: FilmScope["sets"][number]): string {
+/** Set frame: the location with its light, empty, in real perspective; `revision` as for sheets. */
+export function setFramePrompt(scope: FilmScope, set: FilmScope["sets"][number], revision?: string): string {
   return join([
     scope.style.look,
     `Background set: ${set.description}`,
     `Light: ${set.light}`,
+    revisionClause(revision),
     "Empty set, no characters, real perspective with depth and a clear ground plane, never flat side-on",
     avoid(scope, ["people", "characters"]),
   ]);

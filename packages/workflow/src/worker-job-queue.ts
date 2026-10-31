@@ -165,7 +165,8 @@ export interface WorkerJobQueue {
   failExhaustedLeases(): Promise<number>;
   /**
    * Requeue jobs parked by the worker whose latest gating approval (any action except job.start, which
-   * the studio service resumes itself) was granted by a human or rejected. Returns the count.
+   * the studio service resumes itself) was granted by a human, rejected, or sent back with changes (the
+   * creative gate redoes them and asks again). Returns the count.
    */
   resumeDecidedApprovals(): Promise<number>;
   /**
@@ -564,7 +565,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
                 and a.subject_type = 'job'
                 and a.subject_id = "jobs"."id"
                 and a.action <> 'job.start'
-                and ((a.status = 'approved' and a.decided_by_type = 'user') or a.status = 'rejected')
+                and ((a.status = 'approved' and a.decided_by_type = 'user') or a.status in ('rejected', 'changes_requested'))
                 and a.id = (
                   select max(b.id) from ${approvals} b
                   where b.workspace_id = a.workspace_id and b.subject_type = 'job'

@@ -16,9 +16,11 @@ import {
   VideoIR as VideoIRSchema,
 } from "@studix/video-ir";
 import {
+  type CreativeGateRevise,
   createAgentStage,
   createCreativeGateStage,
   downloadIrAssets,
+  type GateChange,
   irOf,
   jobScopedId,
   mapBounded,
@@ -317,6 +319,87 @@ function alignWords(text: string, durationMs: number) {
 }
 
 /** Builds the stages and pipeline of a narrative film pack (anime, long-form film) from its config. */
+/** Designs of a board: the current asset of each character sheet and set frame, by character or set id. */
+function boardDesigns(scope: FilmScope, ir: VideoIR) {
+  const byId = new Map(ir.assets.map((a) => [a.id, a]));
+  const shown = (shotId: string) => {
+    const shot = ir.scenes.flatMap((sc) => sc.shots).find((sh) => sh.id === shotId.slice(0, 64));
+    return shot && "assetId" in shot && shot.assetId ? byId.get(shot.assetId) : undefined;
+  };
+  const pick = (ids: readonly string[]) =>
+    new Map(
+      ids.flatMap((id) => {
+        const asset = shown(`design-${id}`);
+        return asset ? [[id, asset] as const] : [];
+      }),
+    );
+  return { sheets: pick(scope.characters.map((c) => c.id)), sets: pick(scope.sets.map((st) => st.id)) };
+}
+
+/** Version of a design asset id `<id>-<kind>-v<n>` (`kind` is `sheet` or `set`), else undefined. */
+function designVersion(assetId: string, id: string, kind: "sheet" | "set"): number | undefined {
+  const prefix = `${id}-${kind}-v`;
+  const rest = assetId.startsWith(prefix) ? assetId.slice(prefix.length) : "";
+  return /^[0-9]{1,4}$/.test(rest) ? Number(rest) : undefined;
+}
+
+/**
+ * One image request per design a change names, redrawn under the next version id with the reviewer's note
+ * in its prompt. With `board`, every target must be one of its assets.
+ */
+function redesignRequests(
+  s: StageContext,
+  scope: FilmScope,
+  change: GateChange,
+  stage: string,
+  board?: VideoIR,
+) {
+  const designs = board ? boardDesigns(scope, board) : undefined;
+  const shown = designs && new Set([...designs.sheets.values(), ...designs.sets.values()].map((a) => a.id));
+  return change.targets.map((assetId) => {
+    if (board && !shown?.has(assetId))
+      throw new StudixError("VALIDATION", `${assetId} is not a design shown on the board under review`, {
+        retryable: false,
+        details: { assetId, designs: [...(shown ?? [])] },
+        suggestedAction: "Request changes on the current board's sheet or set asset ids.",
+      });
+    const request = (id: string, prompt: string, aspectRatio: string) =>
+      ({
+        assetId: id,
+        kind: "image" as const,
+        prompt,
+        params: { aspectRatio },
+        keyPrefix: `generated/${s.job.id}/designs/${id}`,
+        maxCostCents: 0,
+      }) satisfies StoredMediaRequest;
+    for (const c of scope.characters) {
+      const v = designVersion(assetId, c.id, "sheet");
+      if (v === undefined) continue;
+      const id = `${c.id}-sheet-v${v + 1}`.slice(0, 64);
+      return {
+        target: { type: "character" as const, id: c.id },
+        stage,
+        request: request(id, characterSheetPrompt(scope, c, change.note), "16:9"),
+      };
+    }
+    for (const set of scope.sets) {
+      const v = designVersion(assetId, set.id, "set");
+      if (v === undefined) continue;
+      const id = `${set.id}-set-v${v + 1}`.slice(0, 64);
+      return {
+        target: { type: "set" as const, id: set.id },
+        stage,
+        request: request(id, setFramePrompt(scope, set, change.note), scope.aspectRatio),
+      };
+    }
+    throw new StudixError("VALIDATION", `${assetId} is not a character sheet or set frame`, {
+      retryable: false,
+      details: { assetId },
+      suggestedAction: "Request changes on the board's sheet or set asset ids.",
+    });
+  });
+}
+
 export function createFilmPack(config: FilmPackConfig): WorkflowPack {
   const n = filmStageNames(config.id);
   const scopeOutput = z.object({ scope: FilmScope });
@@ -363,7 +446,90 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
   };
 
   const g0 = createCreativeGateStage({ gate: "G0", name: n.g0, summary: config.gates.g0 });
-  const g1 = createCreativeGateStage({ gate: "G1", name: n.g1, summary: config.gates.g1 });
+  const designsOutput = z.object({ ir: VideoIRSchema });
+  /**
+   * G1 change requests: redraw only the named sheets and set frames with the reviewer's note (the bible's
+   * anchors stay in the prompt), retire the replaced sheet, and publish the revised board as a child version
+   * of the one reviewed. One version per request, so a replay finds it and pays nothing.
+   */
+  const designRevise: CreativeGateRevise = {
+    initial: (s) => read(designsOutput, s.outputs[n.designs], `${n.designs} checkpoint`).ir,
+    estimateCostCents: (s, change) =>
+      estimateOf(s, redesignRequests(s, filmOf(designRevise.initial(s)).scope, change, n.g1)),
+    async apply(s, base, change) {
+      const { projectId } = payloadOf(s);
+      const versionId = jobScopedId("pvg1c", change.approvalId);
+      const stored = await s.commit((repos, ctx) => repos.projects.getVersion(ctx, versionId));
+      if (stored) return { ir: stored.ir, versionId };
+      const film = filmOf(base);
+      const { scope } = film;
+      const planned = await withCaps(s, redesignRequests(s, scope, change, n.g1, base));
+      const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (d) => ({
+        ...d,
+        ...(await generateStoredMedia(s, n.g1, d.request)),
+      }));
+      const usage = made.map((m) => m.usage);
+      return billedOnFailure(usage, async () => {
+        const { sheets, sets } = boardDesigns(scope, base);
+        const replaced = new Map<string, string>();
+        for (const m of made) {
+          const designs = m.target.type === "character" ? sheets : sets;
+          replaced.set(designs.get(m.target.id)?.id ?? "", m.asset.id);
+          designs.set(m.target.id, m.asset);
+        }
+        // The replaced sheet stays in the bible as history; the redraw is the candidate G1 signs.
+        const production: FilmProduction = {
+          ...film.production,
+          characters: film.production.characters.map((bible) => {
+            const sheet = sheets.get(bible.characterId);
+            if (!sheet || !made.some((m) => m.asset.id === sheet.id)) return bible;
+            return {
+              ...bible,
+              references: [
+                ...bible.references.map((r) =>
+                  replaced.has(r.assetId) ? { ...r, status: "retired" as const } : r,
+                ),
+                {
+                  id: sheet.id,
+                  assetId: sheet.id,
+                  view: "turnaround" as const,
+                  status: "candidate" as const,
+                  version: bible.identityVersion,
+                },
+              ],
+            };
+          }),
+        };
+        const drawn = designBoardIr(scope, sheets, sets, { film: { ...film, production } });
+        // Replaced designs stay as assets: the retired references point at them.
+        const ir = VideoIRSchema.parse({
+          ...drawn,
+          assets: [...drawn.assets, ...base.assets.filter((a) => !drawn.assets.some((d) => d.id === a.id))],
+        });
+        await s.commit(async (repos, ctx) => {
+          const project = await repos.projects.get(ctx, projectId);
+          if (!(await repos.projects.getVersion(ctx, versionId))) {
+            await repos.projects.createVersion(ctx, {
+              id: versionId,
+              projectId,
+              ir,
+              source: "planner",
+              ...(project?.currentVersionId ? { parentVersionId: project.currentVersionId } : {}),
+              createdBy: { type: "system", id: ctx.actor.id },
+            });
+          }
+          await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
+        });
+        return { ir, versionId, usage };
+      });
+    },
+  };
+  const g1 = createCreativeGateStage({
+    gate: "G1",
+    name: n.g1,
+    summary: config.gates.g1,
+    revise: designRevise,
+  });
 
   /** After G0: one model sheet per character and one frame per set, shown on the G1 board. */
   const designsStage: StageDefinition = {
@@ -422,17 +588,21 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
     outputSchema: boardsOutput,
     instructions: `${STORYBOARD_CONTRACT}\n\n${config.storyboardInstructions}`,
     taskInput: (input) => {
-      const designs = read(
-        z.object({ ir: VideoIRSchema }),
-        input.outputs[n.designs],
+      // The board G1 approved: the gate's revised one when a reviewer asked for redraws.
+      const revised = (input.outputs[n.g1] as { ir?: unknown } | undefined)?.ir;
+      const board = read(
+        designsOutput,
+        revised === undefined ? input.outputs[n.designs] : { ir: revised },
         `${n.designs} checkpoint`,
       );
-      const film = filmOf(designs.ir);
+      const film = filmOf(board.ir);
       return {
         scope: film.scope,
         sheets: film.production.characters.map((c) => ({
           characterId: c.characterId,
-          references: c.references.map((r) => ({ id: r.id, view: r.view })),
+          references: c.references
+            .filter((r) => r.status !== "retired")
+            .map((r) => ({ id: r.id, view: r.view })),
         })),
       };
     },

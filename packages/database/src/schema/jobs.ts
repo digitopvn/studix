@@ -1,5 +1,6 @@
 import type {
   ApprovalAction,
+  ApprovalChanges,
   ApprovalStatus,
   ApprovalSubjectType,
   JobStatus,
@@ -129,6 +130,8 @@ export const approvals = pgTable(
     decidedById: text("decided_by_id"),
     decidedAt: ts("decided_at"),
     comment: text("comment"),
+    /** Targets, note and invalidated nodes of a `changes_requested` creative gate. */
+    changes: jsonb("changes").$type<ApprovalChanges>(),
     expiresAt: ts("expires_at"),
     createdAt: createdAt(),
   },

@@ -4,6 +4,7 @@ import type {
   AgentHandoffRepository,
   AgentRuntime,
   Approval,
+  ApprovalAction,
   BillingPolicy,
   Job,
   JobRepository,
@@ -252,6 +253,26 @@ function budgetError(message: string, details: Record<string, unknown>): StudixE
 
 const APPROVAL_PAGE = 100;
 
+/** Every request of one gate (action and scope) of the job, oldest first. */
+async function gateHistory(
+  deps: StageRunnerDeps,
+  ctx: TenantContext,
+  job: Job,
+  action: ApprovalAction,
+  scopeKey: string,
+): Promise<Approval[]> {
+  const subject = { type: "job" as const, id: job.id };
+  const out: Approval[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await deps.approvals.list(ctx, { subject, limit: APPROVAL_PAGE, cursor });
+    out.push(...page.items.filter((a) => a.action === action && (a.scopeKey ?? "") === scopeKey));
+    cursor = page.nextCursor;
+  } while (cursor);
+  // Pages run newest first.
+  return out.reverse();
+}
+
 /** The agent services of one stage run, reading approvals and host tasks on every call (they survive restarts). */
 function agentStageServices(
   deps: StageRunnerDeps,
@@ -400,6 +421,14 @@ export async function runStages(
       if (gate.status === "waiting")
         return { status: "waiting_approval", approval: gate.approval, stage: stage.name };
       sctx.approval = gate.approval;
+      if (stage.approval.scopeKey !== undefined)
+        sctx.approvalHistory = await gateHistory(
+          deps,
+          ctx,
+          job,
+          stage.approval.action,
+          stage.approval.scopeKey,
+        );
     }
 
     const estimate = (await stage.estimateCostCents?.(sctx)) ?? 0;
