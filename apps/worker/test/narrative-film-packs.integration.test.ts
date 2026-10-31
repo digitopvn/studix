@@ -484,7 +484,9 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const outcome = await world.runOnce(job.id);
     expect(outcome, JSON.stringify((await world.repos.jobs.get(ctx, job.id))?.error)).toBe("succeeded");
     const after = world.requests.slice(4);
-    expect(after.map((r) => r.idempotencyKey.split(":").at(-1))).toEqual(shotIds.map((id) => `${id}-key`));
+    expect(after.map((r) => r.idempotencyKey.split(":").at(-1)).sort()).toEqual(
+      shotIds.map((id) => `${id}-key`).sort(),
+    );
     const gate = (await world.repos.jobs.listStages(ctx, job.id)).find((st) => st.name === n.g1);
     expect(gate?.output?.revisions).toEqual([
       expect.objectContaining({

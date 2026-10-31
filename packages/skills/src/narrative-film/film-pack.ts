@@ -457,10 +457,9 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const film = filmOf(base);
       const { scope } = film;
       const planned = await withCaps(s, redesignRequests(s, scope, change, n.g1, base));
-      const workDir = await stageWorkDir(s, n.g1);
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (d) => ({
         ...d,
-        ...(await generateStoredMedia(s, n.g1, d.request, workDir)),
+        ...(await generateStoredMedia(s, n.g1, d.request)),
       }));
       const usage = made.map((m) => m.usage);
       return billedOnFailure(usage, async () => {
@@ -514,7 +513,6 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           }
           await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
         });
-        await rm(workDir, { recursive: true, force: true });
         return { ir, versionId, usage };
       });
     },
