@@ -10,6 +10,8 @@ import {
 } from "../entities/provider-connection.ts";
 
 export interface ModelResolutionRequest {
+  organizationId: string;
+  workspaceId: string;
   runtime: AgentRuntimeId;
   /** The user the job runs on behalf of; user-owned connections are usable only by their owner. */
   userId?: string;
@@ -51,7 +53,13 @@ export function applicablePreferences(
   request: ModelResolutionRequest,
 ): ModelPreference[] {
   return preferences
-    .filter((p) => p.runtime === request.runtime && scopeMatches(p.scope, request))
+    .filter(
+      (p) =>
+        p.organizationId === request.organizationId &&
+        p.workspaceId === request.workspaceId &&
+        p.runtime === request.runtime &&
+        scopeMatches(p.scope, request),
+    )
     .sort((a, b) => PRECEDENCE.indexOf(a.scope.level) - PRECEDENCE.indexOf(b.scope.level));
 }
 
@@ -66,7 +74,13 @@ function connectionProblem(
   choice: ModelChoice,
   request: ModelResolutionRequest,
 ): Problem | undefined {
-  if (!connection) return { kind: "auth", reason: "connection not found" };
+  if (
+    !connection ||
+    connection.organizationId !== request.organizationId ||
+    connection.workspaceId !== request.workspaceId
+  ) {
+    return { kind: "auth", reason: "connection not available" };
+  }
   if (connection.providerId !== choice.providerId) {
     return { kind: "unavailable", reason: "model does not belong to the connection's provider" };
   }
@@ -74,12 +88,55 @@ function connectionProblem(
     return { kind: "unavailable", reason: `connection is not enabled for runtime ${request.runtime}` };
   }
   if (connection.owner.kind === "user" && connection.owner.userId !== request.userId) {
-    return { kind: "auth", reason: "connection belongs to another user" };
+    return { kind: "auth", reason: "connection not available" };
+  }
+  if (
+    connection.owner.kind === "workspace" &&
+    connection.allowedUserIds &&
+    (request.userId === undefined || !connection.allowedUserIds.includes(request.userId))
+  ) {
+    return { kind: "auth", reason: "connection not available" };
   }
   if (!isUsableConnection(connection, request.now)) {
     return { kind: "auth", reason: `connection is ${connection.status}` };
   }
   return undefined;
+}
+
+/**
+ * Re-check a stored snapshot against the connection's current state before a rerun. The snapshot pins
+ * the choice; this guarantees a revoked, expired, re-owned or otherwise unusable connection is not spent.
+ * Throws UNAUTHENTICATED/UNAVAILABLE; catalog availability is checked by the caller's `availability`.
+ */
+export function assertSnapshotUsable(
+  snapshot: ResolvedModelSnapshot,
+  connection: ProviderConnection | undefined,
+  request: ModelResolutionRequest,
+  availability: ModelAvailability,
+): void {
+  const choice: ModelChoice = {
+    providerId: snapshot.providerId,
+    modelId: snapshot.modelId,
+    connectionId: snapshot.connectionId,
+  };
+  let problem = connectionProblem(connection, choice, { ...request, runtime: snapshot.runtime });
+  if (!problem && connection && connection.id === snapshot.connectionId) {
+    const verdict = availability(choice, connection);
+    if (!verdict.ok) problem = { kind: "unavailable", reason: verdict.reason };
+  }
+  if (!problem && connection?.id !== snapshot.connectionId) {
+    problem = { kind: "auth", reason: "connection not available" };
+  }
+  if (problem) {
+    throw new StudixError(
+      problem.kind === "auth" ? "UNAUTHENTICATED" : "UNAVAILABLE",
+      `Pinned model is no longer usable: ${problem.reason}`,
+      {
+        retryable: false,
+        suggestedAction: "Reconnect the provider or choose a model again, then start a new run.",
+      },
+    );
+  }
 }
 
 /**
@@ -94,7 +151,20 @@ export function resolveModelSelection(
   request: ModelResolutionRequest,
   availability: ModelAvailability,
 ): ResolvedModelSnapshot {
-  const [preference] = applicablePreferences(preferences, request);
+  const applicable = applicablePreferences(preferences, request);
+  const [preference] = applicable;
+  const tied = applicable.filter((p) => p.scope.level === preference?.scope.level);
+  if (tied.length > 1) {
+    throw new StudixError(
+      "CONFLICT",
+      `Several ${preference?.scope.level}-level model preferences apply to runtime ${request.runtime}`,
+      {
+        retryable: false,
+        details: { preferenceIds: tied.map((p) => p.id) },
+        suggestedAction: "Keep a single model preference per scope under Settings → AI & Models.",
+      },
+    );
+  }
   if (!preference) {
     throw new StudixError("UNAVAILABLE", `No model is configured for runtime ${request.runtime}`, {
       retryable: false,
@@ -103,7 +173,7 @@ export function resolveModelSelection(
   }
   const byId = new Map(connections.map((c) => [c.id, c]));
   const candidates = [preference.primary, ...preference.fallbacks];
-  const rejected: Array<{ providerId: string; modelId: string; connectionId: string } & Problem> = [];
+  const rejected: Array<{ providerId: string; modelId: string } & Problem> = [];
 
   for (const [index, choice] of candidates.entries()) {
     const connection = byId.get(choice.connectionId);
@@ -113,7 +183,11 @@ export function resolveModelSelection(
       if (!verdict.ok) problem = { kind: "unavailable", reason: verdict.reason };
     }
     if (problem || !connection) {
-      rejected.push({ ...choice, ...(problem ?? { kind: "auth", reason: "connection not found" }) });
+      rejected.push({
+        providerId: choice.providerId,
+        modelId: choice.modelId,
+        ...(problem ?? { kind: "auth", reason: "connection not available" }),
+      });
       continue;
     }
     const usedFallback = index > 0;
@@ -124,7 +198,8 @@ export function resolveModelSelection(
       connectionId: connection.id,
       authMethod: connection.authMethod,
       billingSource: connection.billingSource,
-      source: usedFallback ? "fallback" : preference.scope.level,
+      source: preference.scope.level,
+      preferenceId: preference.id,
       usedFallback,
       resolvedAt: request.now.toISOString(),
     };

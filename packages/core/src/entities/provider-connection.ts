@@ -44,6 +44,11 @@ export interface ProviderConnection extends TenantOwned {
   /** Short non-reversible hint such as `sk-…a1b2` for the UI. */
   maskedHint?: string;
   label?: string;
+  /**
+   * Workspace-owned only: when set, only these users may resolve the connection. Unset means every
+   * workspace member. System/API-key jobs without a user are refused when it is set.
+   */
+  allowedUserIds?: string[];
   /** Runtimes allowed to resolve this connection. */
   runtimes: AgentRuntimeId[];
   /** Why the connection is restricted/invalid/unsupported, shown with remediation. */
@@ -101,8 +106,9 @@ export interface ResolvedModelSnapshot {
   connectionId: string;
   authMethod: AuthMethod;
   billingSource: BillingSource;
-  /** Which preference level produced the choice. */
-  source: ModelPreferenceScope["level"] | "fallback";
+  /** Preference level and id that produced the choice (also when a fallback was used). */
+  source: ModelPreferenceScope["level"];
+  preferenceId: string;
   /** True when a listed fallback was used instead of the primary. */
   usedFallback: boolean;
   resolvedAt: string;

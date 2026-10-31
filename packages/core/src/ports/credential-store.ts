@@ -3,7 +3,9 @@ import type { TenantContext } from "../tenant.ts";
 /** Material handed to a runtime for exactly one execution. */
 export type CredentialMaterial =
   | { kind: "api_key"; apiKey: string }
-  | { kind: "oauth"; accessToken: string; expiresAt?: Date };
+  | { kind: "oauth"; accessToken: string; refreshToken?: string; expiresAt?: Date }
+  /** Custom or OpenAI-compatible endpoint; the key is optional for self-hosted gateways. */
+  | { kind: "custom_endpoint"; baseUrl: string; apiKey?: string };
 
 /**
  * Encrypted, tenant-scoped secret storage behind `ProviderConnection.secretRef`. Implementations must

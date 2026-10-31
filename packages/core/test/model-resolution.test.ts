@@ -2,6 +2,7 @@ import { StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import {
   applicablePreferences,
+  assertSnapshotUsable,
   type ModelChoice,
   type ModelPreference,
   type ProviderConnection,
@@ -36,7 +37,15 @@ const claude = (connectionId: string): ModelChoice => ({
   modelId: "m1",
   connectionId,
 });
-const request = { runtime: "pi", userId: "u1", workflow: "video", stage: "plan", now } as const;
+const request = {
+  organizationId: "o",
+  workspaceId: "w",
+  runtime: "pi",
+  userId: "u1",
+  workflow: "video",
+  stage: "plan",
+  now,
+} as const;
 
 function code(fn: () => unknown): string | undefined {
   try {
@@ -93,7 +102,8 @@ describe("model resolution", () => {
     ];
     expect(resolveModelSelection(prefs, conns, request, ok)).toMatchObject({
       connectionId: "good",
-      source: "fallback",
+      source: "workspace",
+      preferenceId: "p",
       usedFallback: true,
     });
   });
@@ -125,5 +135,96 @@ describe("model resolution", () => {
       ok,
     );
     expect(JSON.stringify(snap)).not.toMatch(/sec_123|sk-/);
+  });
+
+  it("never mixes tenants", () => {
+    const prefs = [preference({ id: "p", primary: claude("c") })];
+    expect(
+      code(() => resolveModelSelection(prefs, [connection({ id: "c", workspaceId: "other" })], request, ok)),
+    ).toBe("UNAUTHENTICATED");
+    expect(
+      code(() =>
+        resolveModelSelection(prefs, [connection({ id: "c", organizationId: "other" })], request, ok),
+      ),
+    ).toBe("UNAUTHENTICATED");
+    const foreign = [preference({ id: "p", workspaceId: "other", primary: claude("c") })];
+    expect(code(() => resolveModelSelection(foreign, [connection({ id: "c" })], request, ok))).toBe(
+      "UNAVAILABLE",
+    );
+  });
+
+  it("enforces workspace connection grants", () => {
+    const prefs = [preference({ id: "p", primary: claude("c") })];
+    const granted = connection({ id: "c", allowedUserIds: ["u2"] });
+    expect(code(() => resolveModelSelection(prefs, [granted], request, ok))).toBe("UNAUTHENTICATED");
+    expect(code(() => resolveModelSelection(prefs, [granted], { ...request, userId: undefined }, ok))).toBe(
+      "UNAUTHENTICATED",
+    );
+    expect(
+      code(() => resolveModelSelection(prefs, [granted], { ...request, userId: "u2" }, ok)),
+    ).toBeUndefined();
+    expect(
+      code(() =>
+        resolveModelSelection(prefs, [connection({ id: "c" })], { ...request, userId: undefined }, ok),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rejects ties at the same level", () => {
+    const prefs = [
+      preference({ id: "a", primary: claude("c") }),
+      preference({ id: "b", primary: claude("c") }),
+    ];
+    expect(code(() => resolveModelSelection(prefs, [connection({ id: "c" })], request, ok))).toBe("CONFLICT");
+  });
+
+  it("rejects restricted, requires_action and the exact expiry instant", () => {
+    const prefs = [preference({ id: "p", primary: claude("c") })];
+    for (const c of [
+      connection({ id: "c", status: "restricted" }),
+      connection({ id: "c", status: "requires_action" }),
+      connection({ id: "c", expiresAt: now }),
+    ]) {
+      expect(code(() => resolveModelSelection(prefs, [c], request, ok))).toBe("UNAUTHENTICATED");
+    }
+    expect(code(() => resolveModelSelection(prefs, [], { ...request, userId: undefined }, ok))).toBe(
+      "UNAVAILABLE",
+    );
+  });
+
+  it("skips user-scope preferences without a user and keeps ids out of error details", () => {
+    const prefs = [preference({ id: "u", scope: { level: "user", userId: "u1" }, primary: claude("c") })];
+    expect(
+      code(() =>
+        resolveModelSelection(prefs, [connection({ id: "c" })], { ...request, userId: undefined }, ok),
+      ),
+    ).toBe("UNAVAILABLE");
+    try {
+      resolveModelSelection(
+        [preference({ id: "p", primary: claude("secret-conn") })],
+        [connection({ id: "secret-conn", owner: { kind: "user", userId: "u2" } })],
+        request,
+        ok,
+      );
+    } catch (err) {
+      expect(JSON.stringify((err as StudixError).details)).not.toContain("secret-conn");
+    }
+  });
+
+  it("re-checks a pinned snapshot before a rerun", () => {
+    const snap = resolveModelSelection(
+      [preference({ id: "p", primary: claude("c") })],
+      [connection({ id: "c" })],
+      request,
+      ok,
+    );
+    expect(code(() => assertSnapshotUsable(snap, connection({ id: "c" }), request, ok))).toBeUndefined();
+    expect(
+      code(() => assertSnapshotUsable(snap, connection({ id: "c", status: "revoked" }), request, ok)),
+    ).toBe("UNAUTHENTICATED");
+    expect(code(() => assertSnapshotUsable(snap, undefined, request, ok))).toBe("UNAUTHENTICATED");
+    expect(code(() => assertSnapshotUsable(snap, connection({ id: "other" }), request, ok))).toBe(
+      "UNAUTHENTICATED",
+    );
   });
 });

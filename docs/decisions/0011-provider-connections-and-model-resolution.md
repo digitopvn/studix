@@ -37,8 +37,16 @@ different concern and stays separate.
   `unknown`. `unknown` is displayed as unknown, never as free.
 - **Ownership.** User-owned connections are usable only by that user.
   Workspace-owned connections are managed by admins (`provider:manage`) and
-  usable by members they are granted to. Members never read another principal's
-  secret.
+  usable by every workspace member unless `allowedUserIds` narrows it to a grant
+  list (system and API-key jobs without a user are then refused). Members never
+  read another principal's secret. Stage and workflow preferences apply to all
+  users, so preference writes must only reference workspace-owned connections
+  usable by the intended users; the resolver fails closed otherwise.
+- **Tenant scoping.** The resolver filters preferences and connections by the
+  request's organization and workspace, so mixed input cannot cross tenants.
+  Two preferences at the same scope are a `CONFLICT`, not an input-order tie.
+- **Provider management** requires `provider:manage`. Do not grant it to `stx_`
+  API keys; outbound credentials are managed by dashboard sessions only.
 - **OAuth compliance gate.** Subscription OAuth for a provider is enabled only
   with a recorded legal basis. Until then the connection is `restricted`.
   Claude Pro/Max OAuth is restricted by default; Anthropic third-party harness
@@ -54,7 +62,9 @@ different concern and stays separate.
 - **Job snapshot.** Each job stores a `ResolvedModelSnapshot` (runtime,
   provider, model, connection id, auth method, billing source, source level,
   fallback flag). A rerun reuses it instead of resolving again, so a retry never
-  silently changes model, provider or credential.
+  silently changes model, provider or credential. The rerun pins the choice but
+  re-checks the connection (`assertSnapshotUsable`), so a revoked or expired
+  credential is never spent.
 - **Pi isolation.** Studix never reads or writes a shared `~/.pi/agent/auth.json`.
   The Pi runtime receives an explicit model and in-memory credentials per job and
   does not inherit server `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY`.
