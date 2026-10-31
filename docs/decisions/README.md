@@ -15,5 +15,6 @@ supersedes the old one; accepted ADRs are not rewritten.
 | [0008](0008-billing-usage-ledger.md)                               | Billing usage ledger                                                       | Accepted |
 | [0009](0009-deployment-cloudflare-and-tose.md)                     | Deployment on Cloudflare and TOSE                                          | Accepted |
 | [0010](0010-renderer-and-media-provider-adapters.md)               | Renderer and media provider adapters                                       | Accepted |
+| [0011](0011-provider-connections-and-model-resolution.md)          | Provider connections, credential vault and model resolution                | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.

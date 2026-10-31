@@ -9,6 +9,11 @@ import {
 } from "./governance-repositories.ts";
 import { createJobStore } from "./job-repository.ts";
 import { createProjectRepository } from "./project-repository.ts";
+import {
+  createModelPreferenceRepository,
+  createProviderConnectionRepository,
+  createSealedCredentialStore,
+} from "./provider-repositories.ts";
 import { createRenderRepository, createWorkflowRunRepository } from "./render-workflow-repositories.ts";
 import { createActivityRepository, createUsageRepository } from "./telemetry-repositories.ts";
 import {
@@ -22,6 +27,7 @@ export * from "./connector-repository.ts";
 export * from "./governance-repositories.ts";
 export * from "./job-repository.ts";
 export * from "./project-repository.ts";
+export * from "./provider-repositories.ts";
 export * from "./render-workflow-repositories.ts";
 export * from "./telemetry-repositories.ts";
 export * from "./tenancy-repositories.ts";
@@ -46,6 +52,9 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     usage: createUsageRepository(db, clock),
     activity: createActivityRepository(db, clock),
     connectors: createConnectorRepository(db, clock),
+    providerConnections: createProviderConnectionRepository(db, clock),
+    modelPreferences: createModelPreferenceRepository(db, clock),
+    sealedCredentials: createSealedCredentialStore(db, clock),
   };
 }
 

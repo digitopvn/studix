@@ -15,6 +15,13 @@
       "when": 1793102649103,
       "tag": "0001_mcp_connectors",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793411240370,
+      "tag": "0002_provider_connections",
+      "breakpoints": true
     }
   ]
 }

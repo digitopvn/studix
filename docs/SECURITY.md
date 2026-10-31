@@ -56,6 +56,17 @@ refused when the connector is added and again at resolve time. Without that
 binding any self-registered workspace could point a connector at its own
 server and receive the operator's token.
 
+### Provider credentials (BYOK)
+
+AI provider credentials are separate from connector credentials and from inbound
+`stx_` keys (ADR 0011). They are sealed with AES-256-GCM, bound to the workspace and
+`secretRef`, and decrypted only at execution time. Keys come from
+`STUDIX_CREDENTIAL_KEYS` (`id:base64 32-byte key`, first entry active; keep old
+entries to read existing secrets while rotating). Personal connections are
+invisible to other members, and `secretRef` is dropped from every dashboard
+projection. Pi sessions never use `~/.pi/agent` or the server environment as a
+credential source.
+
 ## MCP-in-MCP connectors
 
 Owner: `packages/mcp-gateway`
