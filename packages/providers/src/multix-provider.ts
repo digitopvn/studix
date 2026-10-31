@@ -8,6 +8,8 @@ import type {
   MediaCostSource,
   MediaGenerationRequest,
   MediaGenerationResult,
+  MediaJobJournal,
+  MediaJobRecord,
   MediaKind,
   MediaProvider,
   MediaResumeRequest,
@@ -15,7 +17,7 @@ import type {
   TenantContext,
 } from "@studix/core";
 import { type Clock, type StudixConfig, StudixError, systemClock } from "@studix/shared";
-import { InMemoryMediaJobJournal, type MediaJobJournal, type MediaJobRecord } from "./media-job-journal.ts";
+import { InMemoryMediaJobJournal } from "./media-job-journal.ts";
 import { mediaBillingQuantity } from "./media-price-book.ts";
 import {
   assertEstimateRequest,
@@ -59,7 +61,10 @@ export interface MultixProviderOptions {
   allowHomeEnv?: boolean;
   /** Longest wait for one upstream job. */
   waitTimeoutMs?: number;
-  /** Where submitted jobs are remembered so a retry resumes them; defaults to a process-local journal. */
+  /**
+   * Where submitted jobs are remembered when a request brings no `journal` of its own; defaults to a
+   * process-local journal. Workflow stages pass their durable stage journal per request.
+   */
   journal?: MediaJobJournal;
   clock?: Clock;
   /** How long capability probes (`multix check`, model catalogs) are reused. */
@@ -272,13 +277,15 @@ export class MultixProvider implements MediaProvider {
     this.assertEnabled();
     throwIfAborted(request.signal);
     const plan = await planMultixRequest(request, request.workDir, this.planContext());
-    const existing = await this.journal.get(ctx, request.idempotencyKey);
+    // The request's journal (the stage checkpoint) wins, so another worker resumes what this one paid for.
+    const journal = request.journal ?? this.journal;
+    const existing = await journal.get(ctx, request.idempotencyKey);
     if (existing && (existing.kind !== request.kind || existing.model !== plan.model.id)) {
       throw new StudixError("CONFLICT", "This idempotency key already ran a different media request", {
         details: { kind: existing.kind, model: existing.model },
       });
     }
-    if (plan.mode === "sync") return this.runSync(ctx, plan, request, existing, started);
+    if (plan.mode === "sync") return this.runSync(ctx, journal, plan, request, existing, started);
     if (existing?.state === "submitting") {
       // The intent was written but no job id followed: the upstream may already have charged for it and
       // cannot deduplicate, so submitting again could pay twice.
@@ -296,6 +303,7 @@ export class MultixProvider implements MediaProvider {
     if (existing?.job && existing.state !== "failed") {
       return this.collect(existing.job, plan.model.id, request.workDir, request.signal, started, {
         ctx,
+        journal,
         record: existing,
       });
     }
@@ -317,13 +325,17 @@ export class MultixProvider implements MediaProvider {
       plan.mode === "sume-job"
         ? await this.submitSume(ctx, plan, request, attempt)
         : await this.submitAtlas(plan, request, {
-            intent: () => this.journal.put(ctx, { ...base, state: "submitting", updatedAt: at }),
+            intent: () => journal.put(ctx, { ...base, state: "submitting", updatedAt: at }),
             // Only errors proving the request never reached Atlas may release the key for a retry.
-            release: () => this.journal.put(ctx, { ...base, state: "failed", updatedAt: at }),
+            release: () => journal.put(ctx, { ...base, state: "failed", updatedAt: at }),
           });
     const record: MediaJobRecord = { ...base, job, state: "submitted", updatedAt: at };
-    await this.journal.put(ctx, record);
-    return this.collect(job, plan.model.id, request.workDir, request.signal, started, { ctx, record });
+    await journal.put(ctx, record);
+    return this.collect(job, plan.model.id, request.workDir, request.signal, started, {
+      ctx,
+      journal,
+      record,
+    });
   }
 
   /** Collect an upstream job by id without submitting anything (no new charge). */
@@ -524,7 +536,9 @@ export class MultixProvider implements MediaProvider {
     workDir: string,
     signal: AbortSignal | undefined,
     started: number,
-    tracking: { ctx: TenantContext; record: MediaJobRecord } | { estimatedCostCents?: number },
+    tracking:
+      | { ctx: TenantContext; journal: MediaJobJournal; record: MediaJobRecord }
+      | { estimatedCostCents?: number },
   ): Promise<MediaGenerationResult> {
     const outDir = join(
       workDir,
@@ -569,7 +583,7 @@ export class MultixProvider implements MediaProvider {
         err.code === "PROVIDER_ERROR" &&
         !err.retryable
       ) {
-        await this.journal.put(tracking.ctx, {
+        await tracking.journal.put(tracking.ctx, {
           ...record,
           state: "failed",
           updatedAt: this.clock.now().toISOString(),
@@ -605,7 +619,7 @@ export class MultixProvider implements MediaProvider {
             ? [fallback, "estimate"]
             : [0, "unknown"];
     if ("ctx" in tracking && record) {
-      await this.journal.put(tracking.ctx, {
+      await tracking.journal.put(tracking.ctx, {
         ...record,
         state: "completed",
         ...(costSource === "receipt" ? { receiptCents: costCents } : {}),
@@ -626,6 +640,7 @@ export class MultixProvider implements MediaProvider {
   /** Synchronous audio: no upstream job to resume, so a completed output is reused from its fixed path. */
   private async runSync(
     ctx: TenantContext,
+    journal: MediaJobJournal,
     plan: MultixPlan,
     request: MediaGenerationRequest,
     existing: MediaJobRecord | undefined,
@@ -668,7 +683,7 @@ export class MultixProvider implements MediaProvider {
     }
     const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
     const at = this.clock.now().toISOString();
-    await this.journal.put(ctx, {
+    await journal.put(ctx, {
       idempotencyKey: request.idempotencyKey,
       kind: request.kind,
       model: plan.model.id,

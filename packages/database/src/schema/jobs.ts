@@ -1,5 +1,6 @@
 import type {
   ApprovalAction,
+  MediaJobRecord,
   ApprovalStatus,
   ApprovalSubjectType,
   JobStatus,
@@ -89,6 +90,8 @@ export const stages = pgTable(
     status: text("status").$type<StageStatus>().notNull(),
     output: jsonb("output").$type<Record<string, unknown>>(),
     error: jsonb("error").$type<StudixErrorPayload>(),
+    /** Upstream media jobs this attempt submitted; read back by later attempts to resume, never resubmit. */
+    mediaJobs: jsonb("media_jobs").$type<MediaJobRecord[]>(),
     startedAt: ts("started_at"),
     finishedAt: ts("finished_at"),
     createdAt: createdAt(),

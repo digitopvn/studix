@@ -51,6 +51,7 @@ function toStage(row: StageRow): Stage {
     status: row.status,
     output: opt(row.output),
     error: opt(row.error),
+    mediaJobs: opt(row.mediaJobs),
     startedAt: opt(row.startedAt),
     finishedAt: opt(row.finishedAt),
     createdAt: row.createdAt,
@@ -70,6 +71,8 @@ export async function upsertStageRow(
     error: input.error ?? null,
     startedAt: input.startedAt ?? null,
     finishedAt: input.finishedAt ?? null,
+    // Omitted means "keep": progress and outcome writes must not erase the journal of submitted jobs.
+    ...(input.mediaJobs !== undefined ? { mediaJobs: input.mediaJobs } : {}),
   };
   const rows = await db
     .insert(stages)
