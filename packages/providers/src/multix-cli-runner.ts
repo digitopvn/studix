@@ -161,14 +161,42 @@ function parseWarnings(raw: unknown): string[] {
   });
 }
 
-/** A charge the provider reported; a run that sent no request reports none. */
+/** What Sume itself says it captured for a job, in cents. */
+const SUME_CAPTURED_CENTS = "data.job.usage_summary.captured_usd_cents";
+
+/**
+ * A charge the provider reported; a run that sent no request reports none. Sume's own captured amount
+ * wins over multix's `cost_usd`, which has been seen to grow with every status poll of the same job.
+ */
 function parseReceipt(envelope: Json): number | undefined {
+  const captured = num(obj(obj(envelope.usage).metrics)[SUME_CAPTURED_CENTS]);
+  if (captured !== undefined) return captured / 100;
   const cost = obj(envelope.cost);
   if (cost.actual_source !== "no_request") {
     const actual = num(cost.actual_usd) ?? num(obj(cost.provider_reported).cost_usd);
     if (actual !== undefined) return actual;
   }
   return num(obj(envelope.usage).cost_usd);
+}
+
+/**
+ * `sume status --download` and `atlas status --download` leave `outputs` empty and list what they saved
+ * only in `text`: a "Saved N file(s) from job <id>:" (Sume) or "Prediction <id>: saved N file(s)" (Atlas)
+ * line, followed by one indented path per line. Callers still confine these paths to the directory they
+ * asked multix to write into.
+ */
+function savedFiles(text: unknown): MultixOutputFile[] {
+  if (typeof text !== "string") return [];
+  const lines = text.split(/\r?\n/);
+  const head = lines.findIndex((line) => /\bsaved \d+ file\(s\)/i.test(line));
+  if (head === -1) return [];
+  const files: MultixOutputFile[] = [];
+  for (const line of lines.slice(head + 1)) {
+    if (!/^\s+\S/.test(line)) break;
+    const path = line.trim();
+    if (!path.includes("\0")) files.push({ path });
+  }
+  return files;
 }
 
 /** Parse the single-line JSON envelope multix prints on stdout with --json. */
@@ -188,9 +216,10 @@ export function parseMultixEnvelope(stdout: string): MultixEnvelope | undefined 
   if (!isObject(raw) || raw.schema !== "multix.result/v1" || typeof raw.ok !== "boolean") return undefined;
   const error = isObject(raw.error) ? raw.error : undefined;
   const estimate = obj(raw.estimate);
+  const outputs = parseOutputs(raw.outputs);
   const envelope: MultixEnvelope = {
     ok: raw.ok,
-    outputs: parseOutputs(raw.outputs),
+    outputs: outputs.length > 0 ? outputs : savedFiles(raw.text),
     warnings: parseWarnings(raw.warnings),
   };
   const exitCode = typeof raw.exit_code === "number" ? raw.exit_code : undefined;
@@ -224,6 +253,24 @@ export const UNTRUSTED_OUTPUT_WARNINGS: ReadonlySet<string> = new Set([
   "CONTENT_MISMATCH",
   "UNREADABLE_MEDIA",
 ]);
+
+/** STATUS_STACK_BUFFER_OVERRUN: how Node reports a native abort on Windows. */
+const WINDOWS_NATIVE_ABORT = 0xc0000409;
+
+/**
+ * Whether a run succeeded. The envelope is the protocol's result, but the process exit code must agree,
+ * with one exception: Node 24 on Windows can abort at exit (libuv `UV_HANDLE_CLOSING` assertion) after
+ * multix already printed a complete success envelope. That one crash code is accepted when the envelope
+ * itself reports exit code 0.
+ */
+export function multixRunSucceeded(
+  run: MultixRunResult,
+  envelope: MultixEnvelope | undefined,
+): envelope is MultixEnvelope {
+  if (run.stoppedBy || !envelope?.ok) return false;
+  if (run.exitCode === 0) return true;
+  return run.exitCode === WINDOWS_NATIVE_ABORT && envelope.exitCode === 0;
+}
 
 const MAX_MESSAGE = 300;
 
