@@ -17,6 +17,7 @@ import {
   irOf,
   jobScopedId,
   mapBounded,
+  markInReview,
   type PackPipeline,
   payloadOf,
   RenderOutput,
@@ -329,7 +330,7 @@ export const marketingReframeStage: StageDefinition = {
           advanceFrom: versionId,
         });
       }
-      await repos.projects.update(ctx, projectId, { status: "in_review" });
+      await markInReview(repos, ctx, projectId, resultVersionId);
     });
     return {
       output: {
@@ -719,11 +720,7 @@ export const marketingPublishStage: StageDefinition = {
           completedAt: new Date(),
         });
       }
-      // Only the head version's job hands the project to review; a retried older job must not end the head's render.
-      const project = await repos.projects.get(ctx, payload.projectId);
-      if (project?.currentVersionId === versionId) {
-        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
-      }
+      await markInReview(repos, ctx, payload.projectId, versionId);
     });
     const root = requireService(s, "workRoot");
     await rm(join(root, s.job.id), { recursive: true, force: true });

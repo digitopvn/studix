@@ -338,18 +338,20 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
 }
 
 /**
- * Hand the project to review when this job's render or storyboard is ready. Only the head version's job moves
- * the status, and only while the project is still `rendering`: a retry of an older version's job that finishes
- * while the head renders must not end that render's `rendering` state early, and a retried job that finishes after a newer render was approved or published (or after the
- * project was archived) must not put the project back into review.
+ * Hand the project to review when this job's render or storyboard is ready. Only the head version's job
+ * moves the status, and only while the project is still `rendering`: a retry of an older version's job that
+ * finishes while the head renders must not end that render early, and a retried job that finishes after a
+ * newer render was approved or published (or after the project was archived) must not put the project back
+ * into review.
  */
-async function markInReview(
+export async function markInReview(
   repos: FencedRepositories,
   ctx: TenantContext,
   projectId: string,
   versionId: string,
 ): Promise<void> {
   const project = await repos.projects.get(ctx, projectId);
-  if (project?.status === "rendering" && project.currentVersionId === versionId)
+  if (project?.status === "rendering" && project.currentVersionId === versionId) {
     await repos.projects.update(ctx, projectId, { status: "in_review" });
+  }
 }

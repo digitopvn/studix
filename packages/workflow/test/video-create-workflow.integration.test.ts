@@ -88,7 +88,10 @@ describe("video.create workflow on Postgres", () => {
       createdBy: author,
     });
     // Patch B already moved the head to v3; the job queued by patch A (v2) is still waiting.
-    await db.current.repos.projects.update(ctx, first.project.id, { currentVersionId: v3.id });
+    await db.current.repos.projects.update(ctx, first.project.id, {
+      currentVersionId: v3.id,
+      status: "in_review",
+    });
     await db.current.repos.queue.enqueue(ctx, {
       kind: "video.create",
       projectId: first.project.id,
@@ -103,7 +106,11 @@ describe("video.create workflow on Postgres", () => {
       maxAttempts: 3,
     });
     expect((await worker.runOnce())?.outcome).toBe("succeeded");
-    expect((await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId).toBe(v3.id);
+    // A job of a version that is no longer head leaves the status alone too (neither rendering nor review).
+    expect(await db.current.repos.projects.get(ctx, first.project.id)).toMatchObject({
+      currentVersionId: v3.id,
+      status: "in_review",
+    });
   });
 
   it("returns the same job for a repeated idempotency key", async () => {
