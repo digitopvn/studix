@@ -34,6 +34,27 @@ export {
   truePeakSafeFilter,
 } from "./ffmpeg/loudness.ts";
 export {
+  type FilmCompositionRenderInput,
+  type FilmCompositionRenderResult,
+  hasCompositionShots,
+  renderFilmCompositions,
+} from "./film-engine/film-composition-render.ts";
+export {
+  FILM_ENGINE_VERSION,
+  FILM_SCENE_FORMAT,
+  FILM_SCENE_MIME,
+  FilmEdl,
+  FilmScenePackage,
+  filmSceneAssetIds,
+  parseFilmScenePackage,
+} from "./film-engine/film-scene-package.ts";
+export {
+  buildFilmSceneProject,
+  type FilmSceneMedia,
+  type FilmSceneProject,
+  type FilmSceneProjectInput,
+} from "./film-engine/film-scene-project.ts";
+export {
   type BuildCompositionOptions,
   buildComposition,
   type CompositionBuild,
