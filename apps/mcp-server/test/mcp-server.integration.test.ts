@@ -140,6 +140,29 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     });
   });
 
+  it("retries a failed job through studix_retry_job and enforces the job:retry scope", async () => {
+    const owner = await app.connect(keyA);
+    const created = await call(owner, "studix_create_video", { prompt: "Retry through MCP" });
+    const jobId = created.envelope.data?.jobId as string;
+    expect((await call(owner, "studix_retry_job", { jobId })).envelope.error?.code).toBe("CONFLICT");
+
+    await app.db.client`update jobs set status = 'failed', finished_at = now() where id = ${jobId}`;
+    const noRetry = await app.deps.apiKeys.create(tenantA, {
+      name: "no-retry",
+      scopes: ["workspace:read", "project:read", "project:write", "job:cancel"],
+    });
+    const limited = await call(await app.connect(noRetry.secret), "studix_retry_job", { jobId });
+    expect(limited.isError).toBe(true);
+    expect(limited.envelope.error?.code).toBe("FORBIDDEN");
+    expect((await call(owner, "studix_get_job", { jobId })).envelope.data).toMatchObject({
+      status: "failed",
+    });
+
+    const retried = await call(owner, "studix_retry_job", { jobId });
+    expect(retried.envelope.status).toBe("ok");
+    expect(retried.envelope.data).toMatchObject({ id: jobId, status: "queued" });
+  });
+
   it("returns validation errors as tool envelopes", async () => {
     const client = await app.connect(keyA);
     const result = await client.callTool({ name: "studix_create_video", arguments: {} });

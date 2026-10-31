@@ -172,4 +172,69 @@ describe("retrying a failed job", () => {
     expect(await usageCount(ctx, job.id)).toBe(1);
     expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "succeeded", spentCents: 2 });
   });
+
+  it("resumes a journal record still in `submitted` on retry: collects the upstream job instead of submitting", async () => {
+    const ctx = await tenant(db.current, "retry-submitted");
+    const { repos } = db.current;
+    const calls = { submitted: 0, collected: 0 };
+    const seenStates: (string | undefined)[] = [];
+    let providerUp = false;
+    const workflow: WorkflowDefinition = {
+      kind: "test.submitted",
+      stages: [
+        {
+          name: "media",
+          async run(s: StageContext) {
+            const key = KEY(s.job.id);
+            const known = await s.mediaJournal.get(s.ctx, key);
+            seenStates.push(known?.state);
+            const at = new Date().toISOString();
+            if (!known) {
+              calls.submitted++;
+              await s.mediaJournal.put(s.ctx, {
+                idempotencyKey: key,
+                kind: "image",
+                model: "m",
+                job: { provider: "sume", id: "up_9" },
+                attempt: 1,
+                state: "submitted",
+                estimatedCostCents: 2,
+                submittedAt: at,
+                updatedAt: at,
+              });
+            } else {
+              calls.collected++;
+            }
+            // The upstream job is only collectable once the provider is reachable again.
+            if (!providerUp) throw new StudixError("TIMEOUT", "provider unreachable", { retryable: false });
+            const record = (await s.mediaJournal.get(s.ctx, key)) as MediaJobRecord;
+            await s.mediaJournal.put(s.ctx, {
+              ...record,
+              state: "completed",
+              receiptCents: 2,
+              updatedAt: at,
+            });
+            return { output: { upstreamJob: "sume:up_9" } };
+          },
+        },
+      ],
+      result: (outputs) => ({ outputs }),
+    };
+    const w = worker(workflow, "w2");
+    const { job } = await repos.queue.enqueue(ctx, {
+      kind: "test.submitted",
+      payload: {},
+      createdBy: human,
+      budgetCents: 500,
+      maxAttempts: 1,
+    });
+    expect((await w.runOnce())?.outcome).toBe("failed");
+
+    providerUp = true;
+    await repos.queue.retry(ctx, job.id);
+    expect((await w.runOnce())?.outcome).toBe("succeeded");
+    expect(calls).toEqual({ submitted: 1, collected: 1 });
+    // The record the first attempt left behind survived the failure and was read back as `submitted`.
+    expect(seenStates).toEqual([undefined, "submitted"]);
+  });
 });

@@ -20,10 +20,13 @@ export function requireService<K extends keyof StageServices>(
   return service as NonNullable<StageServices[K]>;
 }
 
-/** A fresh-or-reused scratch directory of this stage attempt: `<workRoot>/<jobId>/attempt-<n>/<stage>`. */
+/**
+ * The scratch directory of a stage: `<workRoot>/<jobId>/<stage>`. It is shared by every attempt of the job, so a
+ * retry reuses synchronous media a failed attempt already produced (and paid for) instead of generating it again.
+ */
 export async function stageWorkDir(s: StageContext, stage: string): Promise<string> {
   const root = requireService(s, "workRoot");
-  const dir = join(root, s.job.id, `attempt-${s.attempt}`, stage.replace(/[^A-Za-z0-9_-]/g, "_"));
+  const dir = join(root, s.job.id, stage.replace(/[^A-Za-z0-9_-]/g, "_"));
   await mkdir(dir, { recursive: true });
   return dir;
 }

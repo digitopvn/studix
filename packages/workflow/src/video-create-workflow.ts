@@ -61,6 +61,17 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
   if (!Number.isFinite(rate) || rate < 0) throw new RangeError("renderCentsPerSecond must be >= 0");
   const clock = deps.clock ?? systemClock;
   const jobDir = (jobId: string) => join(deps.workRoot, jobId);
+  /** A job that finishes a version which is no longer the project's head (a retried old job) leaves the status alone. */
+  const markInReviewIfHead = async (
+    repos: { projects: ProjectRepository },
+    ctx: Parameters<ProjectRepository["get"]>[0],
+    projectId: string,
+    versionId: string,
+  ) => {
+    const project = await repos.projects.get(ctx, projectId);
+    if (project?.currentVersionId === versionId)
+      await repos.projects.update(ctx, projectId, { status: "in_review" });
+  };
 
   const brief: StageDefinition = {
     name: "brief",
@@ -155,9 +166,12 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
         // By the time a queued job runs a newer version may be head; jobs that did not ask to move it
         // (feedback patches, renders of "the current version") must not silently revert it.
         const movesHead = payload.makeCurrent && !payload.feedbackId;
+        // Retrying an old job after a newer version became head must not flip the project's status either.
+        const isHead =
+          movesHead || (await repos.projects.get(ctx, payload.projectId))?.currentVersionId === versionId;
         await repos.projects.update(ctx, payload.projectId, {
           ...(movesHead ? { currentVersionId: versionId } : {}),
-          status: "rendering",
+          ...(isHead ? { status: "rendering" as const } : {}),
         });
       });
       return { output: { versionId } };
@@ -266,7 +280,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
             completedAt: clock.now(),
           });
         }
-        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+        await markInReviewIfHead(repos, ctx, payload.projectId, versionId);
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return {
@@ -287,7 +301,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
       const payload = payloadOf(s);
       const { versionId } = read(ValidateOutput, s.outputs.validate_ir, "validate_ir checkpoint");
       await s.commit(async (repos, ctx) => {
-        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+        await markInReviewIfHead(repos, ctx, payload.projectId, versionId);
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return { output: { projectVersionId: versionId, storyboard: "in_review" } };

@@ -22,6 +22,29 @@ const enqueueInput = (key?: string) => ({
 });
 
 describe("Postgres job queue", () => {
+  it("retries a failed job keeping a null deadline null and restarting a deadline window", async () => {
+    const { queue, jobs } = db.current.repos;
+    const ctx = await tenant("retry-deadline");
+    const unbounded = (await queue.enqueue(ctx, enqueueInput("no-deadline"))).job;
+    expect(unbounded.deadlineAt).toBeUndefined();
+    await jobs.update(ctx, unbounded.id, { status: "failed", finishedAt: new Date() });
+    const requeued = await queue.retry(ctx, unbounded.id);
+    expect(requeued).toMatchObject({ status: "queued" });
+    expect(requeued.deadlineAt).toBeUndefined();
+
+    const bounded = (
+      await queue.enqueue(ctx, {
+        ...enqueueInput("with-deadline"),
+        deadlineAt: new Date(Date.now() + 30 * 60_000),
+      })
+    ).job;
+    await jobs.update(ctx, bounded.id, { status: "failed" });
+    const window = bounded.deadlineAt!.getTime() - bounded.createdAt.getTime();
+    const before = Date.now();
+    const again = await queue.retry(ctx, bounded.id);
+    expect(again.deadlineAt!.getTime()).toBeGreaterThanOrEqual(before + window - 1000);
+  });
+
   it("enqueue is idempotent per workspace, including under concurrency", async () => {
     const { queue, jobs } = db.current.repos;
     const a = await tenant("idem-a");

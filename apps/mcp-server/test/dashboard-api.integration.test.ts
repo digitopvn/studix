@@ -126,6 +126,28 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     expect(cancelled.status).toBe(200);
   });
 
+  it("retries a failed job over POST /api/jobs/:jobId/retry and refuses other states and tenants", async () => {
+    const created = await app.api("POST", "/api/projects", {
+      cookie: alice,
+      body: { prompt: "Retry me", aspectRatio: "9:16", idempotencyKey: "dash-retry" },
+    });
+    const { job } = await created.json();
+    const retry = (cookie: string) => app.api("POST", `/api/jobs/${job.id}/retry`, { cookie, body: {} });
+
+    expect((await retry(alice)).status).toBe(409);
+    expect((await app.api("POST", "/api/jobs/job_missing/retry", { cookie: alice, body: {} })).status).toBe(
+      404,
+    );
+    expect((await app.api("POST", `/api/jobs/${job.id}/retry`, { body: {} })).status).toBe(401);
+
+    await app.db.client`update jobs set status = 'failed', finished_at = now() where id = ${job.id}`;
+    expect((await retry(bob)).status).toBe(404);
+    const retried = await retry(alice);
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toMatchObject({ id: job.id, status: "queued" });
+    expect((await retry(alice)).status).toBe(409);
+  });
+
   it("validates input at the boundary", async () => {
     const res = await app.api("POST", "/api/projects", { cookie: alice, body: { prompt: "" } });
     expect(res.status).toBe(400);
