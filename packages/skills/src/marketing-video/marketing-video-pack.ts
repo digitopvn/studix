@@ -332,7 +332,7 @@ export const marketingReframeStage: StageDefinition = {
       }
       // A feedback patch is reframed while the storyboard is in review, or while an earlier job left the project
       // in rendering; a job that outlives an approve, publish or archive must not reopen review.
-      await markInReview(repos, ctx, projectId, ["rendering", "in_review"]);
+      await markInReview(repos, ctx, projectId, resultVersionId, ["rendering", "in_review"]);
     });
     return {
       output: {
@@ -723,7 +723,7 @@ export const marketingPublishStage: StageDefinition = {
           completedAt: new Date(),
         });
       }
-      await markInReview(repos, ctx, payload.projectId);
+      await markInReview(repos, ctx, payload.projectId, versionId);
     });
     const root = requireService(s, "workRoot");
     await rm(join(root, s.job.id), { recursive: true, force: true });

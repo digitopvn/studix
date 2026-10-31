@@ -25,15 +25,19 @@ function harness(
 ) {
   const { jobs } = createInMemoryJobStore(clock);
   const settled = () => Promise.resolve(true);
+  let ledgerCents = 0;
   const queue = {
     leaseMs: 60_000,
     heartbeat: async () => ({ held: true, cancelRequested: false }),
-    updateProgress: settled,
+    updateProgress: vi.fn(async (_job: Job, _w: string, _patch: { spentCents?: number }) => true),
     writeStage: vi.fn(async (job: Job, _w: string, row: Parameters<WorkerJobQueue["writeStage"]>[2]) => {
       await jobs.upsertStage(ctx, { ...row, jobId: job.id, attempt: job.attempts } as never);
       return true;
     }),
-    recordUsage: vi.fn(async (_job: Job, _worker: string, _line: { costCents: number }) => true),
+    recordUsage: vi.fn(async (_job: Job, _worker: string, line: { costCents: number }) => {
+      ledgerCents += line.costCents;
+      return true;
+    }),
     complete: vi.fn(settled),
     fail: vi.fn(settled),
     cancel: vi.fn(settled),
@@ -60,7 +64,10 @@ function harness(
     approvalPolicy: {} as JobExecutorDeps["approvalPolicy"],
     approvalTtlMs: 1,
     billing: { authorizeSpend: async () => ({ allowed: true }) } as unknown as JobExecutorDeps["billing"],
-    ledger: { record: async () => ({}), jobCostCents: async () => 0 } as unknown as JobExecutorDeps["ledger"],
+    ledger: {
+      record: async () => ({}),
+      jobCostCents: async () => ledgerCents,
+    } as unknown as JobExecutorDeps["ledger"],
     clock,
     logger: createLogger({}, { level: "error", write: () => {} }),
     heartbeatIntervalMs: 10_000,
@@ -108,6 +115,9 @@ describe("stage spend on failure", () => {
     await h.run(1);
     expect(billed(h)).toEqual([2]);
     expect(h.queue.fail).toHaveBeenCalledOnce();
+    // The job's own counter follows the ledger, so a retry's budget check starts from what was paid.
+    const spentUpdates = h.queue.updateProgress.mock.calls.map(([, , patch]) => patch.spentCents);
+    expect(spentUpdates.at(-1)).toBe(2);
   });
 
   it("records the spend of a stage whose output fails its schema", async () => {
