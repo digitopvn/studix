@@ -20,15 +20,24 @@ export function requireService<K extends keyof StageServices>(
   return service as NonNullable<StageServices[K]>;
 }
 
-/**
- * The scratch directory of a stage: `<workRoot>/<jobId>/stages/<stage>`. It is scoped to the job, not to the
- * attempt, so a retried job finds the file a synchronous media call already produced and paid for (the
- * stage journal says `completed`) instead of generating and billing it again. A stage that finishes removes
- * its own directory; the job's directory is removed when the job ends.
- */
+/** A fresh-or-reused scratch directory of this stage attempt: `<workRoot>/<jobId>/attempt-<n>/<stage>`. */
 export async function stageWorkDir(s: StageContext, stage: string): Promise<string> {
   const root = requireService(s, "workRoot");
-  const dir = join(root, s.job.id, "stages", stage.replace(/[^A-Za-z0-9_-]/g, "_"));
+  const dir = join(root, s.job.id, `attempt-${s.attempt}`, stage.replace(/[^A-Za-z0-9_-]/g, "_"));
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/**
+ * Where a stage's media provider writes. Unlike `stageWorkDir` it belongs to the job, not the attempt
+ * (`<workRoot>/<jobId>/media/<stage>`), so a retried stage finds the synchronous output (some audio routes)
+ * it already paid for instead of generating and billing it again. Only the media provider writes here, and a
+ * stage never removes it: `finalize` removes the job's whole directory, and a failed job keeps it so a retry
+ * can reuse it.
+ */
+export async function stageMediaDir(s: StageContext, stage: string): Promise<string> {
+  const root = requireService(s, "workRoot");
+  const dir = join(root, s.job.id, "media", stage.replace(/[^A-Za-z0-9_-]/g, "_"));
   await mkdir(dir, { recursive: true });
   return dir;
 }

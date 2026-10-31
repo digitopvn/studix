@@ -413,7 +413,7 @@ describe("video.create workflow on Postgres", () => {
     expect(usage.map((u) => u.kind).sort()).toEqual(["provider.decision", "render.seconds", "storage.bytes"]);
   });
 
-  it("does not put the project back into review when a retried job finishes after the project moved on", async () => {
+  it("does not overwrite a status set after the job failed when the retried job finishes", async () => {
     const ctx = await tenant(db.current, "stale-retry");
     const { project, job } = await enqueueCreate(db.current, ctx);
     const plan = fakePlanner();

@@ -113,7 +113,7 @@ export const motionGraphicVoiceoverStage: StageDefinition = {
     const planned = voiceRequest(s);
     if (!planned) return { output: { ir } };
     const workDir = await stageWorkDir(s, MG_STAGES.voiceover);
-    const media = await generateStoredMedia(s, MG_STAGES.voiceover, await capped(s, planned), workDir);
+    const media = await generateStoredMedia(s, MG_STAGES.voiceover, await capped(s, planned));
     const room = ir.format.durationMs - VO_PAD_MS;
     const next = {
       ...ir,

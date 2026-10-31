@@ -9,6 +9,7 @@ import {
   StageFailedAfterSpend,
   type StageUsage,
   sha256File,
+  stageMediaDir,
 } from "@studix/workflow";
 
 /** One media asset a pack stage generates and keeps in tenant storage. */
@@ -118,11 +119,12 @@ export async function generateStoredMedia(
   s: StageContext,
   stage: string,
   request: StoredMediaRequest,
-  workDir: string,
 ): Promise<StoredMedia> {
   const media = requireService(s, "media");
   const storage = requireService(s, "storage");
-  const result = await media.generate(s.ctx, mediaRequest(s, stage, request, workDir));
+  // The provider writes to the job-scoped media directory, not the attempt scratch `workDir`.
+  const mediaDir = await stageMediaDir(s, stage);
+  const result = await media.generate(s.ctx, mediaRequest(s, stage, request, mediaDir));
   // The provider call is paid from here on: whatever fails next still bills it.
   const usage = mediaUsage(request, result);
   try {

@@ -74,7 +74,7 @@ export interface StageServices {
   storage?: StorageAdapter;
   renderer?: RendererAdapter;
   qa?: QaGate;
-  /** Local scratch root; a stage writes under `<workRoot>/<jobId>/stages/<stage>`. */
+  /** Local scratch root; a stage writes under `<workRoot>/<jobId>/attempt-<n>/<stage>`. */
   workRoot?: string;
 }
 
