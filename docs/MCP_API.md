@@ -178,7 +178,20 @@ Behavior notes:
   in English) fails with `VALIDATION` before G0 is requested. SFX cues describe
   the sound heard, in English, because the effect model reads a cue in another
   language aloud. A scope stored before this rule fails at the score stage,
-  before any music or SFX is paid for.
+  before any music or SFX is paid for. To rewrite cues, send
+  `studix_feedback` on the shot, its scene or a time range over it, with a
+  patch under `/metadata/film/scope/scenes/<i>/shots/<j>/sfx`.
+- A film render pays only for the media whose request changed. Each line, clip,
+  lip-sync pass, score cue and effect is keyed by what produces it: provider,
+  kind, model (the provider's default when none is named), prompt, parameters
+  and the sha256 of its input files. Job, stage and asset ids are not part of
+  the key. A request with the key of an output the workspace already paid for,
+  whose stored object still has the recorded sha256, reuses that output. The
+  stage estimate counts it as free, and the usage line has `quantity` 0,
+  `costCents` 0 and `metadata.reused: true` with `reusedFromJob`. A new SFX cue
+  therefore buys one effect, not the film's lines, clips and lip-sync again. The
+  marketing and motion-graphic packs reuse their clips, music, SFX and
+  voice-over the same way.
 - `planner: {runtime: "claude", providerConnectionId}` is opt-in. The worker
   then plans the VideoIR with the Claude Agent SDK, billed to that Anthropic API
   key ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
@@ -217,8 +230,9 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
 - `studix_feedback` with no `patch` stores a comment and returns
   `allowedPaths`: the JSON pointers a patch for that target may touch (the
   shot, the scene with `/timeline`, the asset, the shots overlapping the time
-  range, or a film character's `voice` in the production bible). `next[]`
-  suggests the call with a patch.
+  range, or a film character's `voice` in the production bible). In a film, the
+  SFX cues of the targeted shots in the scope are allowed too. `next[]` suggests the call with a
+  patch.
 - A `characterId` target is a character of the film's production bible
   (`NOT_FOUND` for any other id, or for a video without one). Its `shots` are
   the shots the character speaks in. The patch changes no scene or shot, so the

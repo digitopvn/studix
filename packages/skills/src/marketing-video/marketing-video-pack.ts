@@ -38,6 +38,7 @@ import {
   billedOnFailure,
   estimateMediaCents,
   generateStoredMedia,
+  reuseOnAssets,
   type StoredMedia,
   type StoredMediaRequest,
 } from "../stored-media.ts";
@@ -377,6 +378,7 @@ function clipRequests(s: StageContext) {
       },
       keyPrefix: `generated/${s.job.id}/clips/${image.id}`,
       maxCostCents: 0,
+      ...reuseOnAssets(ir, { image: image.assetId }),
     } satisfies StoredMediaRequest,
   }));
 }
@@ -471,6 +473,7 @@ function voiceRequests(s: StageContext) {
         params: { language: ir.language, instructions: line.instructions },
         keyPrefix: `generated/${s.job.id}/audio/${v.id}-vo-${i + 1}`,
         maxCostCents: 0,
+        reuse: {},
       } satisfies StoredMediaRequest,
     })),
   );
@@ -495,6 +498,7 @@ function audioRequests(s: StageContext) {
           params: { durationMs: v.durationMs },
           keyPrefix: `${base}-music`,
           maxCostCents: 0,
+          reuse: {},
         } satisfies StoredMediaRequest,
       },
       {
@@ -508,6 +512,7 @@ function audioRequests(s: StageContext) {
           params: { durationMs: 1500 },
           keyPrefix: `${base}-sfx`,
           maxCostCents: 0,
+          reuse: {},
         } satisfies StoredMediaRequest,
       },
     ];

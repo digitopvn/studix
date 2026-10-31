@@ -537,16 +537,21 @@ function resolveTarget(ir: VideoIR, input: FeedbackInputParsed): ResolvedTarget 
   if (input.shotId !== undefined) {
     const at = placements.find((p) => p.shotId === input.shotId);
     if (!at) throw notInVersion("shot", input.shotId);
-    return { key: nodeKey.shot(at.shotId), allowedPaths: [at.pointer], shots: [at.shotId] };
+    return {
+      key: nodeKey.shot(at.shotId),
+      allowedPaths: [at.pointer, ...filmSfxPointers(ir, [at.shotId])],
+      shots: [at.shotId],
+    };
   }
   if (input.sceneId !== undefined) {
     const index = ir.scenes.findIndex((s) => s.id === input.sceneId);
     if (index < 0) throw notInVersion("scene", input.sceneId);
+    const shots = ir.scenes[index]!.shots.map((s) => s.id);
     return {
       key: nodeKey.scene(input.sceneId),
       // A scene's duration lives in the timeline too, so a scene patch may re-time it.
-      allowedPaths: [`/scenes/${index}`, "/timeline"],
-      shots: ir.scenes[index]!.shots.map((s) => s.id),
+      allowedPaths: [`/scenes/${index}`, "/timeline", ...filmSfxPointers(ir, shots)],
+      shots,
     };
   }
   if (input.assetId !== undefined) {
@@ -569,7 +574,31 @@ function resolveTarget(ir: VideoIR, input: FeedbackInputParsed): ResolvedTarget 
     );
   }
   const hit = placements.filter((p) => p.startMs < endMs && p.endMs > startMs);
-  return { allowedPaths: hit.map((p) => p.pointer), shots: hit.map((p) => p.shotId) };
+  const shots = hit.map((p) => p.shotId);
+  return { allowedPaths: [...hit.map((p) => p.pointer), ...filmSfxPointers(ir, shots)], shots };
+}
+
+/** The part of a film's scope a shot, scene or time-range target reads: where each shot's SFX cues are. */
+const FilmScopeShots = z.object({
+  scenes: z.array(z.object({ shots: z.array(z.object({ id: z.string() })) })),
+});
+
+/**
+ * Pointers to the SFX cues of the targeted shots in a film's scope, so feedback on them can rewrite the
+ * sounds they are scored with. None for a video without a film scope or shots the scope does not plan.
+ */
+function filmSfxPointers(ir: VideoIR, shotIds: readonly string[]): string[] {
+  const film = ir.metadata?.film;
+  const scope = FilmScopeShots.safeParse(
+    film !== null && typeof film === "object" ? (film as { scope?: unknown }).scope : undefined,
+  );
+  if (!scope.success) return [];
+  const wanted = new Set(shotIds);
+  return scope.data.scenes.flatMap((scene, i) =>
+    scene.shots.flatMap((shot, j) =>
+      wanted.has(shot.id) ? [`/metadata/film/scope/scenes/${i}/shots/${j}/sfx`] : [],
+    ),
+  );
 }
 
 /** The part of a film's production bible a character target reads: who is cast and who speaks where. */

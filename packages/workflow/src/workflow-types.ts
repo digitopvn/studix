@@ -12,7 +12,7 @@ import type {
   StorageAdapter,
   TenantContext,
 } from "@studix/core";
-import type { CreativeBrief, VideoIR } from "@studix/video-ir";
+import type { AssetRef, CreativeBrief, VideoIR } from "@studix/video-ir";
 import type { z } from "zod";
 import type { FencedRepositories } from "./worker-job-queue.ts";
 
@@ -78,6 +78,24 @@ export interface StageServices {
   workRoot?: string;
 }
 
+/** A media output an earlier job of the tenant paid for and stored, found by the content key of its request. */
+export interface ReusableMedia {
+  asset: AssetRef;
+  /** Job that generated (and paid for) the output. */
+  jobId?: string;
+}
+
+/**
+ * Tenant-wide store of paid media outputs keyed by what produced them (provider, kind, model, prompt,
+ * parameters and the digests of the input files; never job, stage or asset ids). A stage asks it before it
+ * pays for a request, so a change elsewhere in the IR does not buy the same output again.
+ */
+export interface MediaOutputCache {
+  get(key: string): Promise<ReusableMedia | undefined>;
+  /** First write wins: a key already stored keeps its asset. */
+  put(key: string, asset: AssetRef): Promise<void>;
+}
+
 export interface StageContext {
   ctx: TenantContext;
   job: Job;
@@ -112,6 +130,8 @@ export interface StageContext {
    * id instead of submitting it again.
    */
   mediaJournal: MediaJobJournal;
+  /** Paid media outputs of the tenant by content key; undefined when the worker was wired without a stage cache. */
+  mediaOutputs?: MediaOutputCache;
   /** Ports wired by the worker; empty when it wired none. */
   services: StageServices;
   /** Services agent stages run on; undefined when the worker was wired without them. */

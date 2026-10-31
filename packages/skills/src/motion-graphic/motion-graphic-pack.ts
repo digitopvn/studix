@@ -101,6 +101,7 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
       params: { language: ir.language, instructions: line.instructions },
       keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
       maxCostCents: 0,
+      reuse: {},
     },
   }));
 }
@@ -126,6 +127,7 @@ function sfxRequest(s: StageContext): { at: number; request: StoredMediaRequest 
       params: { durationMs: SFX_MS },
       keyPrefix: `generated/${s.job.id}/sfx-accent`,
       maxCostCents: 0,
+      reuse: {},
     },
   };
 }
