@@ -56,6 +56,37 @@ refused when the connector is added and again at resolve time. Without that
 binding any self-registered workspace could point a connector at its own
 server and receive the operator's token.
 
+### Anthropic provider credentials
+
+Workspaces connect Claude through **AI & Providers** in the dashboard
+([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)). The
+two auth methods are separate and are never used as each other's fallback:
+
+- **Anthropic API key**, billed by usage to the key's Anthropic organization.
+  The key is tested before it is saved, with `GET /v1/models`, which runs no
+  model. A key Anthropic rejects is not stored. An accepted key is sealed with
+  AES-256-GCM under `STUDIX_SECRETS_KEY`. The associated data binds the
+  ciphertext to its organization, workspace and connection id, so a row copied
+  to another tenant does not decrypt.
+- Responses, audit events and logs carry only a hint (`sk-ant-…` plus the last
+  4 characters). All provider routes send `Cache-Control: no-store`. Removing a
+  key deletes the ciphertext but does not revoke the key at Anthropic; revoke
+  it in Claude Console.
+- Who can do what:
+  - Workspace keys can be managed only with `member:manage` (owner or admin).
+  - A personal key belongs to its user. It is released for execution only for
+    jobs that user created, and never as a fallback for anyone else. Removing the
+    member from the workspace revokes their personal keys.
+- **Claude subscription (OAuth)** stays _Restricted_. Anthropic does not allow
+  third-party products to offer claude.ai login or route requests through
+  subscription credentials without approval. The dashboard therefore shows the
+  reason and the alternatives, and offers no connect action.
+- Master-key rotation:
+  1. Move the old value into `STUDIX_SECRETS_KEYS_PREVIOUS`.
+  2. Set a new `STUDIX_SECRETS_KEY`.
+  3. Each sealed value records its key id, so existing rows keep decrypting
+     until they are re-saved.
+
 ## MCP-in-MCP connectors
 
 Owner: `packages/mcp-gateway`

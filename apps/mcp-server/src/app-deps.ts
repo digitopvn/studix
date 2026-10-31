@@ -1,4 +1,4 @@
-import type { ApiKeyService } from "@studix/auth";
+import type { ApiKeyService, ProviderConnectionService } from "@studix/auth";
 import type {
   ActivityRepository,
   JobRepository,
@@ -51,6 +51,8 @@ export interface AppDeps {
   storage?: ArtifactUrlSigner;
   /** Workspace connectors (MCP-in-MCP); without it the connector API answers UNAVAILABLE. */
   connectors?: ConnectorAdmin;
+  /** Outbound AI provider credentials; without it the provider API answers UNAVAILABLE. */
+  providers?: ProviderConnectionService;
   /** Meta-tool registration hook from the gateway; without it the meta-tools are not listed. */
   metaTools?: RegisterMetaTools;
   /** Activity/trace recorder for MCP and API mutations (best effort). */

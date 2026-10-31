@@ -1,7 +1,14 @@
+import { randomBytes } from "node:crypto";
 import type { Server } from "node:http";
 import { createServer } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { createApiKeyService, createDashboardAuth } from "@studix/auth";
+import {
+  createApiKeyService,
+  createDashboardAuth,
+  createProviderConnectionService,
+  createSecretBox,
+  type ProviderKeyTester,
+} from "@studix/auth";
 import { createDefaultApprovalPolicy, type Role, StudioService, type TenantContext } from "@studix/core";
 import { createTestDatabase, insertTestUser, type TestDatabase } from "@studix/database/testing";
 import { createActivityRecorder } from "@studix/observability";
@@ -16,6 +23,22 @@ export const TEST_SECRET = "test-dashboard-secret-0123456789-abcdef";
 export const fakeSigner: ArtifactUrlSigner = {
   async signedUrl(ctx, key, options) {
     return `https://storage.test/${ctx.workspaceId}/${key}?ttl=${options?.expiresInSeconds ?? 0}`;
+  },
+};
+
+/** Key tester stand-in: no network; a key containing "rejected" is refused like an HTTP 401. */
+export const fakeKeyTester: ProviderKeyTester = {
+  async test(apiKey) {
+    const base = { at: new Date(), latencyMs: 1 };
+    return apiKey.includes("rejected")
+      ? {
+          ...base,
+          ok: false,
+          verdict: "invalid",
+          httpStatus: 401,
+          error: { code: "UNAUTHENTICATED", message: "Anthropic rejected the API key", retryable: false },
+        }
+      : { ...base, ok: true, verdict: "available", httpStatus: 200 };
   },
 };
 
@@ -83,6 +106,12 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
       signedUrlTtlSeconds: 600,
     },
     storage: fakeSigner,
+    providers: createProviderConnectionService({
+      connections: repos.providerConnections,
+      audit: repos.audit,
+      tester: fakeKeyTester,
+      secrets: createSecretBox(randomBytes(32)),
+    }),
     activity: createActivityRecorder(repos.activity, { logger }),
     readiness: [{ name: "database", check: async () => void (await db.client`select 1`) }],
     ...overrides,
