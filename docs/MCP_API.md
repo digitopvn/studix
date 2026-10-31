@@ -174,15 +174,17 @@ Behavior notes:
 
 ### Retrying a failed job
 
-A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jobs/:jobId/retry` on the dashboard API) requeues it as the same job once the cause is fixed, for example a storage bucket that was missing after the provider had already charged for the media.
+A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jobs/:jobId/retry` on the dashboard API, the **Retry job** button on the dashboard job page) requeues it as the same job once the cause is fixed, for example a storage bucket that was missing after the provider had already charged for the media.
 
 - Stages that succeeded keep their outputs and are not run again.
-- The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) are looked up in the attempt's work directory, so a retry may generate and pay for them again.
+- The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) that completed are copied from the work directory of an earlier attempt of the same job, so they are not generated or billed again. If that directory is gone (the retry runs on another worker), the output is generated again.
 - Usage events keep their `dedupeKey`, which is tied to the upstream job, so the resume bills no call twice.
 - Gates already decided on the job (approved, or consumed) are read from the database and are not asked again.
 - The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window it was created with. The budget is not reset: spend so far still counts against `budgetCents`.
 - Only a `failed` job can be retried (any other status returns `CONFLICT`). `video.publish` jobs cannot (`VALIDATION`: a publish is not idempotent, so start a new one), and neither can a job whose `job.start` approval was expired, rejected or never granted by a person (`APPROVAL_REQUIRED`). Agent stages are not retried automatically, but a manual retry re-runs a failed agent stage and its spend is billed again.
-- The caller needs the `job:retry` permission (owner, admin and editor roles; API keys need the scope).
+- The caller needs the `job:retry` permission (owner, admin and editor roles; API keys need the scope). An API key created before this permission existed does not have it: calls return `FORBIDDEN`, and the key list shows it as `custom` because its scopes no longer match a role exactly. Create a new key with the role, or add `job:retry` to the key's scopes. Keys are never widened automatically.
+- A job stuck in an Atlas `submitting` journal record (the worker died after the intent but before the prediction id was stored) is not recovered by a retry: the record blocks a second submit on purpose, so the call cannot be paid for twice. The retry fails again until an operator resolves the record; operator recovery is tracked in the Atlas intent work (#67, #69).
+- Retrying an older job whose version is no longer the project's current version leaves the project `status` alone.
 - The action is audited as `job.retried`. A failed job's `next` list suggests the tool.
 
 ### Feedback, render and storyboard approval

@@ -35,9 +35,53 @@ function StageTimeline({ job }: { job: Job }) {
   );
 }
 
+/** Only a failed job can be requeued; the server refuses publish jobs, so the button is not offered for them. */
+export function canRetry(job: Job): boolean {
+  return job.status === "failed" && job.kind !== "video.publish";
+}
+
+/** Runs a job action and refreshes the job on success; resolves to the error to display, if any. */
+export async function runJobAction(action: () => Promise<unknown>, refresh: () => void): Promise<unknown> {
+  try {
+    await action();
+    refresh();
+    return undefined;
+  } catch (e) {
+    return e;
+  }
+}
+
+export function JobActions({
+  job,
+  busy,
+  onCancel,
+  onRetry,
+}: {
+  job: Job;
+  busy: boolean;
+  onCancel: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <>
+      {ACTIVE.has(job.status) && (
+        <button type="button" className="danger" onClick={onCancel}>
+          Cancel job
+        </button>
+      )}
+      {canRetry(job) && (
+        <button type="button" disabled={busy} onClick={onRetry}>
+          {busy ? "Retrying..." : "Retry job"}
+        </button>
+      )}
+    </>
+  );
+}
+
 export function JobDetailPage({ jobId }: { jobId: string }) {
   const { data, error, reload } = useAsync(() => api.job(jobId), [jobId]);
   const [actionError, setActionError] = useState<unknown>();
+  const [busy, setBusy] = useState(false);
   const job = data?.job;
   const active = job ? ACTIVE.has(job.status) : false;
 
@@ -50,12 +94,9 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
 
   async function act(action: () => Promise<unknown>) {
     setActionError(undefined);
-    try {
-      await action();
-      reload();
-    } catch (e) {
-      setActionError(e);
-    }
+    setBusy(true);
+    setActionError(await runJobAction(action, reload));
+    setBusy(false);
   }
 
   return (
@@ -66,11 +107,12 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
         <Section
           title={`Job ${job.kind}`}
           actions={
-            active && (
-              <button type="button" className="danger" onClick={() => act(() => api.cancelJob(job.id))}>
-                Cancel job
-              </button>
-            )
+            <JobActions
+              job={job}
+              busy={busy}
+              onCancel={() => act(() => api.cancelJob(job.id))}
+              onRetry={() => act(() => api.retryJob(job.id))}
+            />
           }
         >
           <dl className="facts">
