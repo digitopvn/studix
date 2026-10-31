@@ -67,6 +67,63 @@ describe("project review", () => {
     expect(review.storyboard?.scenes[0]?.shots[0]).toMatchObject({ changed: false, revision: 1 });
   });
 
+  describe("comment without a patch and an idempotencyKey", () => {
+    const comment = (projectId: string, extra: Record<string, unknown> = {}) => ({
+      projectId,
+      shotId: "feature-1",
+      comment: "Cần nhịp nhanh hơn",
+      idempotencyKey: "cmt-1",
+      ...extra,
+    });
+
+    it("returns the stored comment on retry instead of creating another", async () => {
+      const { studio, ctx, projectId } = await setup();
+      const first = await studio.submitFeedback(ctx, comment(projectId));
+      const again = await studio.submitFeedback(ctx, comment(projectId));
+      expect(first.replayed).toBe(false);
+      expect(again).toMatchObject({
+        replayed: true,
+        feedbackId: first.feedbackId,
+        baseVersionId: first.baseVersionId,
+      });
+      expect(again.versionId).toBeUndefined();
+      expect((await studio.getProjectReview(ctx, projectId)).comments).toHaveLength(1);
+    });
+
+    it("stores one comment when two retries arrive at once", async () => {
+      const { studio, ctx, projectId } = await setup();
+      const [a, b] = await Promise.all([
+        studio.submitFeedback(ctx, comment(projectId)),
+        studio.submitFeedback(ctx, comment(projectId)),
+      ]);
+      expect(a.feedbackId).toBe(b.feedbackId);
+      expect((await studio.getProjectReview(ctx, projectId)).comments).toHaveLength(1);
+    });
+
+    it("refuses the key for a different comment or for a patch", async () => {
+      const { studio, ctx, projectId } = await setup();
+      await studio.submitFeedback(ctx, comment(projectId));
+      await expect(
+        studio.submitFeedback(ctx, comment(projectId, { comment: "Nội dung khác" })),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      await expect(
+        studio.submitFeedback(
+          ctx,
+          comment(projectId, { patch: replaceText("/scenes/2/shots/0/text", "Mới") }),
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      expect((await studio.getProjectReview(ctx, projectId)).comments).toHaveLength(1);
+    });
+
+    it("keeps the same key usable on another project", async () => {
+      const { studio, ctx, projectId } = await setup();
+      const other = await studio.createVideoProject(ctx, { brief, spec: brandIntro as VideoIR });
+      await studio.submitFeedback(ctx, comment(projectId));
+      const out = await studio.submitFeedback(ctx, comment(other.project.id));
+      expect(out.replayed).toBe(false);
+    });
+  });
+
   it("two patches sent at once on the same base: one wins, the other gets CONFLICT and leaves nothing behind", async () => {
     const { studio, ctx, projectId, repos } = await setup();
     const review = await studio.getProjectReview(ctx, projectId);
