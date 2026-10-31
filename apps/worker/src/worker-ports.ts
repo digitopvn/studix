@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { createClaudeSdkTransport } from "@studix/agent-runtime";
+import { createClaudeSdkTransport, preflightClaudeRuntime } from "@studix/agent-runtime";
 import {
   createAnthropicKeyTester,
   createProviderConnectionService,
@@ -12,6 +12,7 @@ import { createDecisionRouterFromConfig, RulesAdapter } from "@studix/decision-r
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import { createActivityRecorder } from "@studix/observability";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
+import { StudixError } from "@studix/shared";
 import { createS3StorageAdapterFromConfig } from "@studix/storage";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
 import { registerBriefRule } from "./planner/brief-decision.ts";
@@ -83,6 +84,23 @@ function claudePlanner(settings: WorkerSettings, runtime: WorkerPortsRuntime): C
 }
 
 /**
+ * With STUDIX_CLAUDE_PLANNER on, refuse to start when the Claude process cannot run on this host (no SDK
+ * binary for the platform, a libc mismatch), instead of failing every Claude job until its attempts run out.
+ */
+async function assertClaudeRuntime(settings: WorkerSettings, logger: WorkerPortsRuntime["logger"]) {
+  if (!settings.claudePlanner) return;
+  const check = await preflightClaudeRuntime();
+  if (!check.ok) {
+    throw new StudixError("UNAVAILABLE", `STUDIX_CLAUDE_PLANNER is on but ${check.reason}`, {
+      retryable: false,
+      suggestedAction:
+        "Run the worker on a platform the Claude Agent SDK ships a binary for, or unset STUDIX_CLAUDE_PLANNER.",
+    });
+  }
+  logger.info("Claude runtime ready", { executable: check.executable, version: check.version });
+}
+
+/**
  * Production adapters for the standalone worker: S3-compatible storage, the HyperFrames renderer and
  * the brief planner (DecisionRouter for `video.brief` with a deterministic rules fallback, optional
  * connector brand lookup). Misconfiguration (no bucket, bad decision routes) fails startup loudly.
@@ -105,6 +123,7 @@ export async function loadWorkerPorts(
     ffprobePath: config.FFPROBE_PATH,
     logger: logger.child({ component: "hyperframes-renderer" }),
   });
+  await assertClaudeRuntime(settings, logger);
   const rules = registerBriefRule(new RulesAdapter({ logger }));
   const { usage } = createRepositories(runtime.db);
   const decisions = createDecisionRouterFromConfig(runtime.env, {
