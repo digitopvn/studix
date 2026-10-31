@@ -141,6 +141,8 @@ Owner: `ApprovalPolicy` in `packages/core`, enforced by `packages/workflow`.
 - Publishing and high-cost actions require a recorded human approval. Missing
   approval returns `APPROVAL_REQUIRED`; there is no auto-approval.
 - Approval state lives in Postgres and survives worker restarts.
+- At most one pending approval exists per subject, action and scope (database-enforced); an expired request
+  is closed, and a job parked on it fails with `TIMEOUT` instead of waiting forever.
 - A render that succeeds is not an approval.
 
 ## Artifacts and signed URLs

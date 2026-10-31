@@ -21,7 +21,14 @@ export interface ApprovalDecision {
 }
 
 export interface ApprovalRepository {
+  /** Plain insert for seeding rows; production code requests approval through `open`. */
   create(ctx: TenantContext, input: NewApproval): Promise<Approval>;
+  /**
+   * The one way to request approval: returns the live pending approval for the same subject, action and
+   * scope key, or creates it. Pending requests whose expiry has passed are closed as `expired` first, so
+   * concurrent callers always converge on a single pending row. `created` is false when one already existed.
+   */
+  open(ctx: TenantContext, input: NewApproval): Promise<{ approval: Approval; created: boolean }>;
   get(ctx: TenantContext, id: string): Promise<Approval | undefined>;
   /** Most recent approval for this subject and action, any status. */
   findLatest(
