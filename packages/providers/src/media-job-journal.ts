@@ -1,14 +1,19 @@
 import type { MediaKind, ProviderJobRef, TenantContext } from "@studix/core";
 
-/** submitted: paid and running upstream; completed: outputs collected; failed: ended without outputs. */
-export type MediaJobState = "submitted" | "completed" | "failed";
+/**
+ * submitting: the request is about to reach (or may have reached) an upstream that cannot deduplicate it,
+ * so no job id is known yet; submitted: paid and running upstream; completed: outputs collected;
+ * failed: ended without outputs.
+ */
+export type MediaJobState = "submitting" | "submitted" | "completed" | "failed";
 
 /** What a provider must remember about an upstream job to collect it later instead of paying again. */
 export interface MediaJobRecord {
   idempotencyKey: string;
   kind: MediaKind;
   model: string;
-  job: ProviderJobRef;
+  /** Absent while `state` is "submitting": the upstream has not reported an id yet. */
+  job?: ProviderJobRef;
   /** Submission attempt for this idempotency key; a failed job is resubmitted as the next attempt. */
   attempt: number;
   state: MediaJobState;

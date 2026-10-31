@@ -270,7 +270,21 @@ export class MultixProvider implements MediaProvider {
       });
     }
     if (plan.mode === "sync") return this.runSync(ctx, plan, request, existing, started);
-    if (existing && existing.state !== "failed") {
+    if (existing?.state === "submitting") {
+      // The intent was written but no job id followed: the upstream may already have charged for it and
+      // cannot deduplicate, so submitting again could pay twice.
+      throw new StudixError(
+        "PROVIDER_ERROR",
+        "A previous submission of this request may already have been charged and cannot be deduplicated",
+        {
+          retryable: false,
+          details: { provider: plan.model.vendor, model: existing.model, submittedAt: existing.submittedAt },
+          suggestedAction:
+            "Find the prediction in `multix history` or the provider console, then resume it by job id.",
+        },
+      );
+    }
+    if (existing?.job && existing.state !== "failed") {
       return this.collect(existing.job, plan.model.id, request.workDir, request.signal, started, {
         ctx,
         record: existing,
@@ -281,22 +295,24 @@ export class MultixProvider implements MediaProvider {
     assertWithinBudget(estimate, request.maxCostCents, this.id);
     throwIfAborted(request.signal);
     const attempt = (existing?.attempt ?? 0) + 1;
-    const job =
-      plan.mode === "sume-job"
-        ? await this.submitSume(ctx, plan, request, attempt)
-        : await this.submitAtlas(plan, request);
     const at = this.clock.now().toISOString();
-    const record: MediaJobRecord = {
+    const base = {
       idempotencyKey: request.idempotencyKey,
       kind: request.kind,
       model: plan.model.id,
-      job,
       attempt,
-      state: "submitted",
       estimatedCostCents: estimate,
       submittedAt: at,
-      updatedAt: at,
     };
+    const job =
+      plan.mode === "sume-job"
+        ? await this.submitSume(ctx, plan, request, attempt)
+        : await this.submitAtlas(plan, request, {
+            intent: () => this.journal.put(ctx, { ...base, state: "submitting", updatedAt: at }),
+            // Only errors proving the request never reached Atlas may release the key for a retry.
+            release: () => this.journal.put(ctx, { ...base, state: "failed", updatedAt: at }),
+          });
+    const record: MediaJobRecord = { ...base, job, state: "submitted", updatedAt: at };
     await this.journal.put(ctx, record);
     return this.collect(job, plan.model.id, request.workDir, request.signal, started, { ctx, record });
   }
@@ -436,7 +452,15 @@ export class MultixProvider implements MediaProvider {
     return { provider: "sume", id };
   }
 
-  private async submitAtlas(plan: MultixPlan, request: MediaGenerationRequest): Promise<ProviderJobRef> {
+  /**
+   * Atlas has no idempotency key, so the intent is journaled right before `atlas run`. A crash before the
+   * job id is journaled then leaves a "submitting" record that blocks a blind resubmission.
+   */
+  private async submitAtlas(
+    plan: MultixPlan,
+    request: MediaGenerationRequest,
+    journal: { intent: () => Promise<void>; release: () => Promise<void> },
+  ): Promise<ProviderJobRef> {
     const atlas = plan.atlas!;
     const fields = { ...atlas.fields };
     for (const upload of atlas.uploads) {
@@ -454,13 +478,22 @@ export class MultixProvider implements MediaProvider {
       fields[upload.field] = url;
     }
     if (fields.image === undefined) throw new StudixError("VALIDATION", "upscale needs params.image");
-    const envelope = await this.exec(
-      "atlas submit",
-      ["atlas", "run", atlas.modelId, `--input=${JSON.stringify(fields)}`, "--async", "--json"],
-      request.workDir,
-      PROBE_TIMEOUT_MS * 5,
-      request.signal,
-    );
+    await journal.intent();
+    let envelope: MultixEnvelope;
+    try {
+      envelope = await this.exec(
+        "atlas submit",
+        ["atlas", "run", atlas.modelId, `--input=${JSON.stringify(fields)}`, "--async", "--json"],
+        request.workDir,
+        PROBE_TIMEOUT_MS * 5,
+        request.signal,
+      );
+    } catch (error) {
+      if (error instanceof StudixError && (error.code === "VALIDATION" || error.code === "UNAVAILABLE")) {
+        await journal.release();
+      }
+      throw error;
+    }
     const id = envelope.jobId ?? envelope.text?.trim();
     if (!id || !JOB_ID.test(id)) {
       // Atlas has no idempotency key: a blind retry could pay twice, so this is not retryable.

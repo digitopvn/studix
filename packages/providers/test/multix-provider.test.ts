@@ -477,6 +477,67 @@ describe("MultixProvider async jobs", () => {
     });
   });
 
+  describe("Atlas submission without an idempotency key", () => {
+    const upscaleRequest = (input: string): MediaGenerationRequest => ({
+      kind: "upscale",
+      prompt: "upscale",
+      idempotencyKey: "stage-2:upscale",
+      maxCostCents: 5,
+      workDir,
+      params: { image: input },
+    });
+    const atlasCli = (onRun: () => Reply) =>
+      scriptedCli((argv) => {
+        if (argv[1] === "upload") return { envelope: { text: "https://cdn.atlascloud.ai/u/frame.png" } };
+        if (argv[1] === "run") return onRun();
+        throw new Error(`unexpected argv ${argv.join(" ")}`);
+      });
+
+    it("journals the intent before submitting and refuses to resubmit when the outcome is unknown", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      // The worker dies after Atlas accepted the run but before any job id reaches the journal.
+      const cli = atlasCli(() => {
+        runs += 1;
+        throw new Error("worker crashed");
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toThrow("worker crashed");
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "submitting" });
+
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({
+        code: "PROVIDER_ERROR",
+        retryable: false,
+        message: expect.stringContaining("may already have been charged"),
+      });
+      expect(runs).toBe(1);
+    });
+
+    it("lets a retry through when multix proves the run was never accepted", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return runs === 1
+          ? { exitCode: 3, envelope: { error: { message: "ATLASCLOUD_API_KEY missing" } } }
+          : { envelope: { job: { provider: "atlas", id: "pred_9" }, text: "pred_9" } };
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toMatchObject({
+        code: "UNAVAILABLE",
+      });
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "failed" });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.not.toMatchObject({
+        message: expect.stringContaining("may already have been charged"),
+      });
+      expect(runs).toBe(2);
+    });
+  });
+
   it("rejects local inputs outside the work directory", async () => {
     const other = await realpath(await mkdtemp(join(tmpdir(), "studix-multix-other-")));
     try {
