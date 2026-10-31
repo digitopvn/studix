@@ -187,9 +187,7 @@ describe("model resolution", () => {
     ]) {
       expect(code(() => resolveModelSelection(prefs, [c], request, ok))).toBe("UNAUTHENTICATED");
     }
-    expect(code(() => resolveModelSelection(prefs, [], { ...request, userId: undefined }, ok))).toBe(
-      "UNAVAILABLE",
-    );
+    expect(code(() => resolveModelSelection(prefs, [], request, ok))).toBe("UNAUTHENTICATED");
   });
 
   it("skips user-scope preferences without a user and keeps ids out of error details", () => {
