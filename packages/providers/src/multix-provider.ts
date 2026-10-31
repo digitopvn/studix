@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   GeneratedMedia,
   MediaCapability,
@@ -656,7 +656,7 @@ export class MultixProvider implements MediaProvider {
       costSource,
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
     });
-    if (existing?.state === "completed" && (await fileSize(file)) > 0) {
+    if (existing?.state === "completed" && (await this.reuseSyncFile(file, outDir, request))) {
       return result(
         [{ filePath: file, mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream" }],
         existing.receiptCents ?? existing.estimatedCostCents,
@@ -696,6 +696,27 @@ export class MultixProvider implements MediaProvider {
       updatedAt: at,
     });
     return result(outputs, receipt ?? estimate, receipt !== undefined ? "receipt" : "estimate");
+  }
+
+  /**
+   * True when the completed output is at `file`, copying it there from an earlier attempt's work directory
+   * when only that one still has it (a retry runs in a new attempt directory).
+   */
+  private async reuseSyncFile(
+    file: string,
+    outDir: string,
+    request: MediaGenerationRequest,
+  ): Promise<boolean> {
+    if ((await fileSize(file)) > 0) return true;
+    for (const dir of request.priorWorkDirs ?? []) {
+      const earlier = join(dir, basename(outDir), basename(file));
+      if ((await fileSize(earlier)) > 0) {
+        await mkdir(outDir, { recursive: true });
+        await copyFile(earlier, file);
+        return true;
+      }
+    }
+    return false;
   }
 
   private assertTrustedOutputs(envelope: MultixEnvelope, job?: ProviderJobRef): void {

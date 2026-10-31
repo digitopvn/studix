@@ -4,6 +4,7 @@ import type { MediaGenerationRequest, MediaGenerationResult, MediaKind } from "@
 import { StudixError, toStudixError } from "@studix/shared";
 import type { AssetMediaKind, AssetRef } from "@studix/video-ir";
 import {
+  priorAttemptDirs,
   requireService,
   type StageContext,
   StageFailedAfterSpend,
@@ -58,6 +59,7 @@ export function mediaRequest(
   request: StoredMediaRequest,
   workDir: string,
 ): MediaGenerationRequest {
+  const priorWorkDirs = priorAttemptDirs(s, workDir);
   return {
     kind: request.kind,
     prompt: request.prompt,
@@ -66,6 +68,7 @@ export function mediaRequest(
     idempotencyKey: `${s.job.id}:${stage}:${request.assetId}`,
     maxCostCents: request.maxCostCents,
     workDir,
+    ...(priorWorkDirs.length > 0 ? { priorWorkDirs } : {}),
     signal: s.signal,
     journal: s.mediaJournal,
   };

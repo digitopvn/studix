@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { StudixError, toStudixError } from "@studix/shared";
 import { StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
 import type { StageContext, StageServices, StageUsage } from "./workflow-types.ts";
@@ -26,6 +26,19 @@ export async function stageWorkDir(s: StageContext, stage: string): Promise<stri
   const dir = join(root, s.job.id, `attempt-${s.attempt}`, stage.replace(/[^A-Za-z0-9_-]/g, "_"));
   await mkdir(dir, { recursive: true });
   return dir;
+}
+
+/**
+ * The directories of the earlier attempts that match `workDir` (a directory under this attempt's scratch
+ * root), oldest first. Empty on the first attempt or when `workDir` is not under the attempt root.
+ */
+export function priorAttemptDirs(s: StageContext, workDir: string): string[] {
+  const root = s.services.workRoot;
+  if (root === undefined || s.attempt <= 1) return [];
+  const attemptRoot = (n: number) => join(root, s.job.id, `attempt-${n}`);
+  const rel = relative(attemptRoot(s.attempt), workDir);
+  if (rel === "" || rel.startsWith("..") || rel.startsWith(sep)) return [];
+  return Array.from({ length: s.attempt - 1 }, (_, i) => join(attemptRoot(i + 1), rel));
 }
 
 /**

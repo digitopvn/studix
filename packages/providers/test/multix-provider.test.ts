@@ -888,6 +888,47 @@ describe("MultixProvider synchronous audio", () => {
     expect(cli.calls).toHaveLength(2);
   });
 
+  it("reuses the completed file from an earlier attempt's work directory", async () => {
+    const cli = scriptedCli((argv, options) => {
+      if (argv.includes("--estimate"))
+        return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+      const out = flagValue(argv, "output")!;
+      const copy = join(options.env.MULTIX_OUTPUT_DIR!, "tts.mp3");
+      return {
+        files: { [out]: "mp3", [copy]: "mp3" },
+        envelope: { outputs: [{ path: out }, { path: copy }], history_id: "h_1" },
+      };
+    });
+    const journal = new InMemoryMediaJobJournal();
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const first = await multix.generate(ctx, voiceRequest());
+
+    const retryDir = await mkdtemp(join(tmpdir(), "multix-retry-"));
+    try {
+      const again = await multix.generate(ctx, {
+        ...voiceRequest(),
+        workDir: retryDir,
+        priorWorkDirs: [workDir],
+      });
+      // No second paid call, and the file now lives in the new attempt's directory.
+      expect(cli.calls).toHaveLength(2);
+      expect(again.costCents).toBe(first.costCents);
+      expect(again.outputs[0]!.filePath.startsWith(retryDir)).toBe(true);
+      expect(await readFile(again.outputs[0]!.filePath, "utf8")).toBe("mp3");
+
+      // Without the earlier directory the output cannot be found, so the provider generates again.
+      const other = await mkdtemp(join(tmpdir(), "multix-retry-"));
+      try {
+        await multix.generate(ctx, { ...voiceRequest(), workDir: other });
+        expect(cli.calls.length).toBeGreaterThan(2);
+      } finally {
+        await rm(other, { recursive: true, force: true });
+      }
+    } finally {
+      await rm(retryDir, { recursive: true, force: true });
+    }
+  });
+
   it("prices SFX from the assumed ceiling when multix has no estimator", async () => {
     const cli = scriptedCli(() => {
       throw new Error("no CLI call expected");

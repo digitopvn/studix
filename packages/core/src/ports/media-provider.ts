@@ -33,6 +33,12 @@ export interface MediaGenerationRequest {
   maxCostCents: number;
   /** Directory where the provider writes outputs. */
   workDir: string;
+  /**
+   * The `workDir` equivalents of earlier attempts of the same job. A synchronous provider that already
+   * completed this request (its journal says so) can reuse the output it wrote there instead of generating
+   * and billing it again.
+   */
+  priorWorkDirs?: readonly string[];
   signal?: AbortSignal;
   /**
    * Where the provider remembers the upstream job of this request, so a retry on any worker resumes it

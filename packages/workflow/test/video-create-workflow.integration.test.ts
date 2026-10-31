@@ -106,6 +106,41 @@ describe("video.create workflow on Postgres", () => {
     expect((await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId).toBe(v3.id);
   });
 
+  it("leaves the project status alone when a job of an older version finishes", async () => {
+    const ctx = await tenant(db.current, "stale-status");
+    const first = await enqueueCreate(db.current, ctx);
+    const worker = createTestWorker(db.current, "w1");
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    const v1 = (await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId!;
+    const base = (await db.current.repos.projects.getVersion(ctx, v1))!;
+    const author = { type: "user" as const, id: "usr_1" };
+    const v2 = await db.current.repos.projects.createVersion(ctx, {
+      projectId: first.project.id,
+      ir: base.ir,
+      source: "patch",
+      parentVersionId: v1,
+      createdBy: author,
+    });
+    // v2 is the head and already approved; an old render of v1 (for example a retried job) finishes later.
+    await db.current.repos.projects.update(ctx, first.project.id, {
+      currentVersionId: v2.id,
+      status: "approved",
+    });
+    await db.current.repos.queue.enqueue(ctx, {
+      kind: "video.create",
+      projectId: first.project.id,
+      payload: { projectId: first.project.id, versionId: v1, makeCurrent: false, renderPreset: "preview" },
+      createdBy: author,
+      budgetCents: 500,
+      maxAttempts: 3,
+    });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    expect(await db.current.repos.projects.get(ctx, first.project.id)).toMatchObject({
+      currentVersionId: v2.id,
+      status: "approved",
+    });
+  });
+
   it("returns the same job for a repeated idempotency key", async () => {
     const ctx = await tenant(db.current, "idem");
     const first = await enqueueCreate(db.current, ctx, { idempotencyKey: "brief-1" });
