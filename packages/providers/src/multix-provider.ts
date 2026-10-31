@@ -587,10 +587,18 @@ export class MultixProvider implements MediaProvider {
         signal,
       );
       if (!multixRunSucceeded(result, printed)) {
-        // `--wait --download` can exit non-zero after the job completed (the download failed). The error
-        // envelope still carries the receipt: a positive one proves the job ended upstream and was kept.
+        // `--wait --download` can exit non-zero after the job completed (the download failed). Only Sume
+        // money it reports as captured proves the job ended and was kept: a reservation, a running job
+        // (exit 4 temporary, 6 still running) or a rejection awaiting its refund must not be billed.
         const unproven = printed as MultixEnvelope | undefined;
-        if (unproven?.receiptUsd !== undefined && unproven.receiptUsd > 0 && !result.stoppedBy) {
+        const stillOpen = result.exitCode === 4 || result.exitCode === 6;
+        if (
+          job.provider === "sume" &&
+          unproven?.capturedCents !== undefined &&
+          unproven.capturedCents > 0 &&
+          !stillOpen &&
+          !result.stoppedBy
+        ) {
           const [costCents, costSource] = this.settleCost(unproven, record?.receiptCents, fallback);
           charge = this.chargeOf(unproven, { provider: this.id, model, costCents, costSource, job });
         }
@@ -613,13 +621,11 @@ export class MultixProvider implements MediaProvider {
         err.code === "PROVIDER_ERROR" &&
         !err.retryable
       ) {
-        await tracking.journal
-          .put(tracking.ctx, { ...record, state: "failed", updatedAt: this.clock.now().toISOString() })
-          .catch((putErr: unknown) => {
-            // A journal failure must not hide the charge the error already carries.
-            if (charge) throw new MediaChargedError(toStudixError(putErr), charge);
-            throw putErr;
-          });
+        await tracking.journal.put(tracking.ctx, {
+          ...record,
+          state: "failed",
+          updatedAt: this.clock.now().toISOString(),
+        });
       }
       if (err instanceof StudixError) {
         const wrapped = new StudixError(err.code, err.message, {

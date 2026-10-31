@@ -473,7 +473,13 @@ describe("MultixProvider async jobs", () => {
           envelope: {
             ok: false,
             error: { code: "DOWNLOAD_FAILED", message: "could not save output", retryable: false },
-            usage: { cost_usd: 0.03 },
+            usage: {
+              cost_usd: 0.03,
+              metrics: {
+                "data.job.usage_summary.reserved_usd_cents": 3,
+                "data.job.usage_summary.captured_usd_cents": 3,
+              },
+            },
           },
         };
       }
@@ -508,6 +514,30 @@ describe("MultixProvider async jobs", () => {
     const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
     expect(error).not.toBeInstanceOf(MediaChargedError);
     expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "failed" });
+  });
+
+  it.each([
+    ["exit 6 (still running)", 6],
+    ["exit 4 (temporary failure)", 4],
+    ["exit 5 (rejected, refund not posted yet)", 5],
+  ])("does not bill a reservation that Sume has not captured: %s", async (_name, exitCode) => {
+    const cli = sumeImageCli(() => ({
+      exitCode,
+      envelope: {
+        ok: false,
+        error: { code: "NOT_DONE", message: "no result", retryable: false },
+        usage: {
+          cost_usd: 0.03,
+          metrics: {
+            "data.job.usage_summary.reserved_usd_cents": 3,
+            "data.job.usage_summary.captured_usd_cents": 0,
+          },
+        },
+      },
+    }));
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).not.toBeInstanceOf(MediaChargedError);
   });
 
   it("does not bill a run stopped by timeout even if it printed a receipt", async () => {
