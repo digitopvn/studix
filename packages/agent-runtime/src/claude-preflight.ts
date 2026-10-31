@@ -43,10 +43,31 @@ function runVersion(command: string, args: string[], cwd: string, timeoutMs: num
     execFile(
       command,
       [...args, "--version"],
-      { cwd, timeout: timeoutMs, env: { PATH: process.env.PATH ?? "", HOME: cwd }, encoding: "utf8" },
+      {
+        cwd,
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
+        env: { PATH: process.env.PATH ?? "", HOME: cwd },
+        encoding: "utf8",
+      },
       (err, stdout) => (err ? reject(err) : resolve(stdout.trim())),
     );
   });
+}
+
+const SCRIPT_RUNTIME = /(^|[\\/])(node|bun|deno)(\.exe)?$/i;
+
+/**
+ * Arguments that select the program before `--version`. A script runtime gets everything up to and
+ * including its script (runtime flags may come first); a native binary gets only leading non-flag words.
+ */
+function scriptArgsOf(command: string, args: string[]): string[] {
+  if (SCRIPT_RUNTIME.test(command)) {
+    const script = args.findIndex((arg) => !arg.startsWith("-"));
+    return script < 0 ? [] : args.slice(0, script + 1);
+  }
+  const firstFlag = args.findIndex((arg) => arg.startsWith("-"));
+  return firstFlag < 0 ? args : args.slice(0, firstFlag);
 }
 
 /**
@@ -86,7 +107,7 @@ export async function preflightClaudeRuntime(
   };
   let timer: NodeJS.Timeout | undefined;
   try {
-    const probe = (async () => {
+    const check = async (): Promise<ClaudePreflightResult> => {
       try {
         const stream = await query({ prompt: "preflight", options: queryOptions });
         for await (const _message of stream) {
@@ -95,24 +116,20 @@ export async function preflightClaudeRuntime(
       } catch (err) {
         if (!captured) throw unavailable(reasonOf(err));
       }
-    })();
+      if (!captured) throw unavailable("the SDK did not locate a Claude executable");
+      const { command, args } = captured;
+      const version = await runVersion(command, scriptArgsOf(command, args), sandbox, timeoutMs).catch(
+        (err) => {
+          throw unavailable(`${command} did not run (${reasonOf(err)})`);
+        },
+      );
+      return { command, version };
+    };
+    // One deadline covers locating the executable and running it.
     const timedOut = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(unavailable(`no answer within ${timeoutMs} ms`)), timeoutMs);
     });
-    await Promise.race([probe, timedOut]);
-    if (!captured) throw unavailable("the SDK did not locate a Claude executable");
-    // A node-script runtime passes the script first; the flags that follow belong to the session.
-    const scriptArgs = captured.args.slice(
-      0,
-      Math.max(
-        0,
-        captured.args.findIndex((arg) => arg.startsWith("-")),
-      ),
-    );
-    const version = await runVersion(captured.command, scriptArgs, sandbox, timeoutMs).catch((err) => {
-      throw unavailable(`${captured?.command} did not run (${reasonOf(err)})`);
-    });
-    return { command: captured.command, version };
+    return await Promise.race([check(), timedOut]);
   } finally {
     clearTimeout(timer);
     abortController.abort();

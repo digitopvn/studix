@@ -15,15 +15,17 @@ const KEY_B = "sk-ant-api03-bbbbbbbbbbbbbbbbbbbbbbbb-BBBB";
 const BAD = "sk-ant-api03-rejectedrejectedrejected-XXXX";
 
 /** Accepts every key except BAD; records what was tested. */
-function fakeTester(): ProviderKeyTester & { tested: string[] } {
+function fakeTester(): ProviderKeyTester & { tested: string[]; revoked: Set<string> } {
   const tested: string[] = [];
+  const revoked = new Set<string>();
   return {
     tested,
+    revoked,
     async test(apiKey) {
       tested.push(apiKey);
       const base = { at: new Date(), latencyMs: 1 };
       return (
-        apiKey === BAD
+        apiKey === BAD || revoked.has(apiKey)
           ? {
               ...base,
               ok: false,
@@ -233,23 +235,23 @@ describe("provider connections over Postgres", () => {
     ).toBe("UNAUTHENTICATED");
   });
 
-  it("marks a key rejected during a run invalid, but not a key that was rotated since", async () => {
-    const { svc } = service();
+  it("marks a key rejected during a run invalid only when a new test confirms it and the key is current", async () => {
+    const { svc, tester } = service();
     const t = await workspace("pc-rejected");
-    const error = {
-      code: "UNAUTHENTICATED",
-      message: "Anthropic rejected the API key",
-      retryable: false,
-    } as const;
     const view = await svc.saveApiKey(t.admin, { owner: "workspace", apiKey: KEY_A });
     const requestedBy = { type: "user", id: "x" } as const;
 
-    // A stale report for a key that has been replaced leaves the new key usable.
-    await svc.rotateApiKey(t.admin, view.id, { apiKey: KEY_B });
-    await svc.reportKeyRejected(t.worker, view.id, KEY_A, error);
+    // Anthropic still accepts the key: a report matched on loose text changes nothing.
+    await svc.reportKeyRejected(t.worker, view.id, KEY_A);
     expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
 
-    await svc.reportKeyRejected(t.worker, view.id, KEY_B, error);
+    // A stale report for a key that has been replaced leaves the new key usable.
+    await svc.rotateApiKey(t.admin, view.id, { apiKey: KEY_B });
+    tester.revoked.add(KEY_A).add(KEY_B);
+    await svc.reportKeyRejected(t.worker, view.id, KEY_A);
+    expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
+
+    await svc.reportKeyRejected(t.worker, view.id, KEY_B);
     expect(await codeOf(svc.assertUsable(t.admin, view.id))).toBe("UNAUTHENTICATED");
     expect(await codeOf(svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy }))).toBe(
       "UNAUTHENTICATED",
@@ -258,8 +260,8 @@ describe("provider connections over Postgres", () => {
     expect(row.status).toBe("invalid");
     expect(row.lastTest).toMatchObject({ ok: false, httpStatus: 401 });
     // Reporting again, or for a connection that no longer exists, is harmless.
-    await svc.reportKeyRejected(t.worker, view.id, KEY_B, error);
-    await svc.reportKeyRejected(t.worker, "pcon_missing", KEY_B, error);
+    await svc.reportKeyRejected(t.worker, view.id, KEY_B);
+    await svc.reportKeyRejected(t.worker, "pcon_missing", KEY_B);
   });
 
   it("never lets a slow test of a replaced key overwrite the new key's status", async () => {

@@ -120,16 +120,12 @@ export interface ProviderConnectionService {
    */
   assertUsable(ctx: TenantContext, connectionId: string): Promise<ProviderConnectionView>;
   /**
-   * Record that Anthropic rejected `apiKey` (a 401) during a run, so the connection reads `invalid` and
-   * `assertUsable` stops accepting it. A no-op when the stored key is no longer that key (rotated since the
-   * run started), so a fresh key is never marked dead by a stale failure.
+   * Called when a run reported that Anthropic rejected `apiKey`. The key is tested again and the connection
+   * is marked `invalid` only if that test confirms it, so a failure matched on loose error text, or a
+   * gateway's own 401, never disables a good key. A no-op when the stored key is no longer `apiKey`
+   * (rotated since the run started) or is already invalid.
    */
-  reportKeyRejected(
-    ctx: TenantContext,
-    connectionId: string,
-    apiKey: string,
-    error: StudixErrorPayload,
-  ): Promise<void>;
+  reportKeyRejected(ctx: TenantContext, connectionId: string, apiKey: string): Promise<void>;
 }
 
 export interface ProviderConnectionServiceDeps {
@@ -445,14 +441,16 @@ export function createProviderConnectionService(
       return toView(ctx, await usableRow(ctx, connectionId, actorRef(ctx.actor)));
     },
 
-    async reportKeyRejected(ctx, connectionId, apiKey, error) {
+    async reportKeyRejected(ctx, connectionId, apiKey) {
       assertPermission(ctx, "project:write");
       const row = await deps.connections.get(ctx, connectionId);
       if (!row || row.revokedAt || !row.secretCiphertext || row.status === "invalid") return;
       if (openKey(ctx, row, row.secretCiphertext) !== apiKey) return;
+      const result = await deps.tester.test(apiKey);
+      if (result.verdict !== "invalid") return;
       const updated = await deps.connections.recordTest(ctx, connectionId, row.secretCiphertext, {
         status: "invalid",
-        lastTest: { ok: false, at: new Date(), latencyMs: 0, httpStatus: 401, error },
+        lastTest: toTestRecord(result),
       });
       if (!updated) return;
       await audit(ctx, "rejected", updated);

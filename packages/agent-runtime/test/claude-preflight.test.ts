@@ -16,16 +16,19 @@ function spawning(command: string, args: string[] = ["--output-format", "stream-
 
 describe("preflightClaudeRuntime", () => {
   it("runs the executable the SDK would launch and reports its version", async () => {
-    const result = await preflightClaudeRuntime({ query: spawning(process.execPath) });
+    const result = await preflightClaudeRuntime({ query: spawning(process.execPath, []) });
     expect(result.command).toBe(process.execPath);
     expect(result.version).toMatch(/^v\d+\./);
   });
 
-  it("keeps a leading script argument and drops the session flags", async () => {
-    const result = await preflightClaudeRuntime({
-      query: spawning(process.execPath, ["-p", "ignored"]),
-    });
-    expect(result.version).toMatch(/^v\d+\./);
+  it("keeps a node script and its runtime flags, so a missing script fails", async () => {
+    const missing = spawning(process.execPath, [
+      "--no-warnings",
+      "/nonexistent/cli.js",
+      "--output-format",
+      "x",
+    ]);
+    await expect(preflightClaudeRuntime({ query: missing })).rejects.toMatchObject({ code: "UNAVAILABLE" });
   });
 
   it("fails with non-retryable UNAVAILABLE when the executable is missing", async () => {

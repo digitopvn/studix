@@ -156,7 +156,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
       // Anthropic refused this key: flag the connection so the API pre-check stops accepting it.
       if (error.code === "UNAUTHENTICATED" && usedKey) {
         await deps.credentials
-          .reportKeyRejected(ctx.tenant, selection.providerConnectionId, usedKey, error.toJSON())
+          .reportKeyRejected(ctx.tenant, selection.providerConnectionId, usedKey)
           .catch((e: unknown) => {
             log.warn("rejected key not recorded", { jobId: ctx.jobId, error: String(e) });
           });
