@@ -73,6 +73,31 @@ describe("worker queue", () => {
     for (const id of claimed) await db.current.repos.jobs.update(ctx, id, { status: "succeeded" });
   });
 
+  it("measures leases on the database clock, whatever the worker clocks say", async () => {
+    const ctx = await tenant(db.current, "clock-skew");
+    const { job } = await enqueueCreate(db.current, ctx);
+    const hourMs = 3_600_000;
+    const withSkew = (offsetMs: number) =>
+      createWorkerJobQueue(db.current.db, {
+        leaseMs: 30_000,
+        clock: { now: () => new Date(Date.now() + offsetMs) },
+      });
+    const accurate = withSkew(0);
+    const claimed = (await accurate.claim("w-owner"))!;
+    expect(claimed.id).toBe(job.id);
+    // The lease runs 30s from the database's now.
+    expect(Math.abs(claimed.leaseExpiresAt!.getTime() - (Date.now() + 30_000))).toBeLessThan(5_000);
+
+    // A worker whose clock runs an hour ahead cannot take a lease that is still valid on the database.
+    expect(await withSkew(hourMs).claim("w-ahead")).toBeUndefined();
+    // An owner whose clock runs an hour behind still gets a lease measured from the database's now.
+    const renewed = await withSkew(-hourMs).heartbeat(claimed, "w-owner");
+    expect(renewed.held).toBe(true);
+    expect(Math.abs(renewed.leaseExpiresAt!.getTime() - (Date.now() + 30_000))).toBeLessThan(5_000);
+
+    await db.current.repos.jobs.update(ctx, job.id, { status: "succeeded" });
+  });
+
   it("releases the running job on graceful shutdown without consuming the attempt", async () => {
     const ctx = await tenant(db.current, "shutdown");
     const { job } = await enqueueCreate(db.current, ctx);
@@ -181,6 +206,152 @@ describe("deadline while waiting for a human", () => {
     expect(remainingMs).toBeLessThan(90_000);
     // Run it again: the publish approval is still pending, so it re-parks instead of leaking a queued job into other tests' workers.
     await worker.runOnce();
+  });
+});
+
+describe("fenced attempt writes", () => {
+  it("ignores stage, progress and spend writes from a worker that lost the job", async () => {
+    const ctx = await tenant(db.current, "fenced");
+    const { repos } = db.current;
+    const { job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    const stale = await queue.claim("stalled");
+    expect(stale?.id).toBe(job.id);
+    const usage = (dedupeKey: string) => ({
+      dedupeKey,
+      kind: "render",
+      quantity: 1,
+      unit: "s",
+      costCents: 7,
+      jobId: job.id,
+    });
+
+    // The stalled worker still owns the job: its writes land.
+    expect(await queue.updateProgress(stale!, "stalled", { stage: "plan", progress: 0.1 })).toBe(true);
+    expect(await queue.writeStage(stale!, "stalled", { name: "plan", status: "running" })).toBe(true);
+    expect(await queue.recordUsage(stale!, "stalled", usage("own"))).toBe(true);
+
+    // Its lease lapses and another worker reclaims the job at the next attempt.
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    const fresh = await queue.claim("fresh");
+    expect(fresh).toMatchObject({ id: job.id, attempts: stale!.attempts + 1 });
+
+    expect(await queue.updateProgress(stale!, "stalled", { stage: "old", spentCents: 999 })).toBe(false);
+    expect(await queue.writeStage(stale!, "stalled", { name: "plan", status: "succeeded" })).toBe(false);
+    expect(await queue.recordUsage(stale!, "stalled", usage("late"))).toBe(false);
+    // Right worker id but the previous attempt number is fenced out as well.
+    expect(await queue.writeStage(stale!, "fresh", { name: "plan", status: "failed" })).toBe(false);
+
+    const after = await repos.jobs.get(ctx, job.id);
+    expect(after).toMatchObject({ stage: "plan", spentCents: 0, lockedBy: "fresh" });
+    const stages = await repos.jobs.listStages(ctx, job.id);
+    expect(stages.map((s) => [s.attempt, s.status])).toEqual([[stale!.attempts, "failed"]]);
+    expect((await db.current.repos.usage.list(ctx, { jobId: job.id })).items.map((u) => u.dedupeKey)).toEqual(
+      ["own"],
+    );
+
+    // The current owner writes normally.
+    expect(await queue.writeStage(fresh!, "fresh", { name: "plan", status: "succeeded" })).toBe(true);
+    expect(await queue.recordUsage(fresh!, "fresh", usage("current"))).toBe(true);
+    await repos.queue.cancel(ctx, job.id);
+  });
+
+  it("opens an approval and its audit entry only for the current owner, and reuses a live request", async () => {
+    const ctx = await tenant(db.current, "fenced-approval");
+    const { repos } = db.current;
+    const { job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    const subject = { type: "job" as const, id: job.id };
+    const request = { action: "publish" as const, reason: "needs review", ttlMs: 60_000 };
+    const audits = async () =>
+      (await repos.audit.list(ctx, { subjectType: "job", subjectId: job.id })).items.filter(
+        (e) => e.action === "approval.requested",
+      );
+    const stale = await queue.claim("stalled");
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    const fresh = await queue.claim("fresh");
+
+    // The stalled worker (old attempt, and old worker id) opens nothing.
+    expect(await queue.requestApproval(stale!, "stalled", request)).toEqual({ status: "lost" });
+    expect(await queue.requestApproval(stale!, "fresh", request)).toEqual({ status: "lost" });
+    expect(await repos.approvals.findLatest(ctx, subject, "publish")).toBeUndefined();
+    expect(await audits()).toHaveLength(0);
+
+    // Concurrent requests from the owner collapse into one approval and one audit entry.
+    const results = await Promise.all([
+      queue.requestApproval(fresh!, "fresh", request),
+      queue.requestApproval(fresh!, "fresh", request),
+      queue.requestApproval(fresh!, "fresh", request),
+    ]);
+    expect(results.filter((r) => r.status === "created")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "existing")).toHaveLength(2);
+    const { items } = await repos.approvals.list(ctx, { subject });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ status: "pending", requestedBy: { type: "system", id: "fresh" } });
+    expect(await audits()).toHaveLength(1);
+
+    // A decision that lands after the caller last looked is returned, not shadowed by a new request.
+    await repos.approvals.decide(ctx, items[0]!.id, {
+      status: "rejected",
+      decidedBy: human,
+      decidedAt: new Date(),
+    });
+    expect(await queue.requestApproval(fresh!, "fresh", request)).toMatchObject({
+      status: "decided",
+      approval: { id: items[0]!.id, status: "rejected" },
+    });
+    expect((await repos.approvals.list(ctx, { subject })).items).toHaveLength(1);
+
+    // Once the job is finished, a late request leaves no orphan behind.
+    await queue.complete(fresh!, "fresh", {});
+    expect(await queue.requestApproval(fresh!, "fresh", { ...request, action: "render.final" })).toEqual({
+      status: "lost",
+    });
+    expect((await repos.approvals.list(ctx, { subject })).items).toHaveLength(1);
+  });
+});
+
+describe("fenced business commits", () => {
+  it("applies project writes only for the current owner and rolls back on error", async () => {
+    const ctx = await tenant(db.current, "commit");
+    const { repos } = db.current;
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    const stale = (await queue.claim("stalled"))!;
+
+    const owned = await queue.commit(stale, "stalled", (r, c) =>
+      r.projects.update(c, project.id, { status: "rendering" }),
+    );
+    expect(owned).toMatchObject({ held: true, value: { status: "rendering" } });
+
+    // An error inside the commit undoes every write made in it.
+    await expect(
+      queue.commit(stale, "stalled", async (r, c) => {
+        await r.projects.update(c, project.id, { status: "failed" });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect((await repos.projects.get(ctx, project.id))?.status).toBe("rendering");
+
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    const fresh = (await queue.claim("fresh"))!;
+    for (const [held, worker] of [
+      [stale, "stalled"],
+      [stale, "fresh"], // right worker id, previous attempt
+    ] as const) {
+      const late = await queue.commit(held, worker, (r, c) =>
+        r.projects.update(c, project.id, { status: "in_review" }),
+      );
+      expect(late).toEqual({ held: false });
+    }
+    expect((await repos.projects.get(ctx, project.id))?.status).toBe("rendering");
+
+    const current = await queue.commit(fresh, "fresh", (r, c) =>
+      r.projects.update(c, project.id, { status: "in_review" }),
+    );
+    expect(current).toMatchObject({ held: true });
+    expect((await repos.projects.get(ctx, project.id))?.status).toBe("in_review");
+    await repos.queue.cancel(ctx, job.id);
   });
 });
 

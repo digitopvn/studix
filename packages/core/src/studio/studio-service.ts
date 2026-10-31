@@ -13,13 +13,26 @@ import {
   openApproval,
 } from "./approval-operations.ts";
 import { type CreateVideoProjectResult, createVideoProject } from "./create-video-project.ts";
+import {
+  decideStoryboard,
+  type FeedbackResult,
+  getProjectReview,
+  type ProjectReview,
+  type RenderResult,
+  renderVersion,
+  type StoryboardDecisionResult,
+  submitFeedback,
+} from "./project-review.ts";
 import { loadJobView, parseInput, type ResolvedStudioDeps } from "./studio-input.ts";
 import {
   type CreateVideoProjectInput,
   DecideApprovalInput,
+  type FeedbackInput,
   type JobView,
   RecordAuditInput,
+  type RenderVersionInput,
   RequestApprovalInput,
+  type StoryboardDecisionInput,
   type StudioDefaults,
   type StudioServiceDeps,
 } from "./studio-types.ts";
@@ -138,6 +151,26 @@ export class StudioService {
       subject: { type: input.subjectType, id: input.subjectId },
       estimatedCostCents: input.estimatedCostCents,
     });
+  }
+
+  /** Script, storyboard with review state, shots, timeline, versions, renders, cost and comments. */
+  getProjectReview(ctx: TenantContext, projectId: string): Promise<ProjectReview> {
+    return getProjectReview(this.deps, ctx, projectId);
+  }
+
+  /** Approve or request changes on the storyboard, a scene or a shot (signed-in reviewers only). */
+  decideStoryboard(ctx: TenantContext, input: StoryboardDecisionInput): Promise<StoryboardDecisionResult> {
+    return decideStoryboard(this.deps, ctx, input);
+  }
+
+  /** Comment on a shot, scene, asset or time range; with a patch, store a new version and queue a render. */
+  submitFeedback(ctx: TenantContext, input: FeedbackInput): Promise<FeedbackResult> {
+    return submitFeedback(this.deps, ctx, input);
+  }
+
+  /** Queue a render of a stored version (the current one by default). */
+  renderVersion(ctx: TenantContext, input: RenderVersionInput): Promise<RenderResult> {
+    return renderVersion(this.deps, ctx, input);
   }
 
   async recordAudit(ctx: TenantContext, rawInput: RecordAuditInput): Promise<AuditEvent> {

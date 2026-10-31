@@ -8,6 +8,8 @@ export type ValidationIssueCode =
   | "wrong_asset_kind"
   | "out_of_bounds"
   | "timeline"
+  | "unpinned_code"
+  | "cycle"
   | "unsupported_version";
 
 /** One problem, addressed by RFC 6901 JSON pointer into the validated document. */

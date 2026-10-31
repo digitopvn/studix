@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Job } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
 
-const ACTIVE = new Set(["queued", "running", "waiting_approval"]);
+const ACTIVE = new Set(["queued", "running", "waiting_approval", "waiting_host"]);
 const POLL_MS = 3000;
 
 function durationOf(startedAt?: string, finishedAt?: string): string {

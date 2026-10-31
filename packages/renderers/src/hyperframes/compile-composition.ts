@@ -25,6 +25,13 @@ export const IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
   "image/svg+xml": ".svg",
 };
 
+/** Video MIME types HyperFrames can extract frames from, mapped to the file extension used in the project. */
+export const VIDEO_EXTENSIONS: Readonly<Record<string, string>> = {
+  "video/mp4": ".mp4",
+  "video/webm": ".webm",
+  "video/quicktime": ".mov",
+};
+
 export interface BuildCompositionOptions {
   /** Output frame size (the render size); type and layout scale from it. */
   width: number;
@@ -127,16 +134,23 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
 
   const copies = new Map<string, string>();
   const assetPaths = new Map<string, string>();
+  const videoAssetIds = new Set<string>();
   for (const asset of [...ir.assets].sort((a, b) => cmp(a.id, b.id))) {
     const source = options.assetFiles?.[asset.id];
-    const ext = IMAGE_EXTENSIONS[asset.mime];
-    if (!source || asset.kind !== "image" || !ext) continue;
+    const ext =
+      asset.kind === "image"
+        ? IMAGE_EXTENSIONS[asset.mime]
+        : asset.kind === "video"
+          ? VIDEO_EXTENSIONS[asset.mime]
+          : undefined;
+    if (!source || !ext) continue;
     if (!isAbsolute(source)) {
       throw new StudixError("VALIDATION", `Asset file for "${asset.id}" must be an absolute path`);
     }
     const dest = `assets/media/${asset.id}${ext}`;
     copies.set(dest, source);
     assetPaths.set(asset.id, dest);
+    if (asset.kind === "video") videoAssetIds.add(asset.id);
   }
 
   const cues = captionsByScene(ir);
@@ -155,7 +169,7 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
       palette,
       transitions: sceneTransitions(ir.scenes, index),
       captions: { position, cues: cues.get(scene.id) ?? [] },
-      markup,
+      markup: { ...markup, videoAssetIds },
     }),
   );
 

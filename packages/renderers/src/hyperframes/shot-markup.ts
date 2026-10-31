@@ -1,7 +1,7 @@
 import { StudixError } from "@studix/shared";
 import type { BrandKit, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
 import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
-import { cssRule, escapeHtml, num } from "./html-utils.ts";
+import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
 
 /** What a shot renderer needs to know about the scene being compiled. */
 export interface ShotMarkupContext {
@@ -89,6 +89,35 @@ function assetPath(ctx: ShotMarkupContext, shot: Shot, assetId: string): string 
     );
   }
   return path;
+}
+
+/**
+ * A timed `<video>` clip. HyperFrames extracts its frames with FFmpeg and injects them per captured frame;
+ * the start is local to the scene composition (declared explicitly so it is never read as root-global).
+ * The browser copy is always muted: clip audio is mixed by the FFmpeg finish, not by the browser.
+ */
+export function videoClipTag(clip: {
+  id: string;
+  src: string;
+  startMs: number;
+  durationMs: number;
+  trimStartMs?: number;
+  className?: string;
+}): string {
+  const attrs = [
+    `id="${clip.id}"`,
+    clip.className ? `class="${clip.className}"` : "",
+    `src="${escapeHtml(clip.src)}"`,
+    `data-start="${num(seconds(clip.startMs))}"`,
+    `data-duration="${num(seconds(clip.durationMs))}"`,
+    `data-media-start="${num(seconds(clip.trimStartMs ?? 0))}"`,
+    'data-hf-media-start-basis="local"',
+    'data-track-index="0"',
+    "muted",
+    "playsinline",
+    'preload="auto"',
+  ];
+  return `<video ${attrs.filter(Boolean).join(" ")}></video>`;
 }
 
 /** HTML and CSS for one shot. The outer element carries the DOM id the timeline animates. */
@@ -189,13 +218,31 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       }
       return { html: `${open}<div class="cta-pill">${escapeHtml(shot.text)}</div>${url}</div>`, css };
     }
-    case "video":
+    case "composition":
       throw new StudixError(
         "VALIDATION",
-        `Video shot "${shot.id}" is not supported by the HyperFrames renderer`,
+        `Composition shot "${shot.id}" is not supported by the HyperFrames renderer`,
         {
           suggestedAction: "Check RendererAdapter.supports() before rendering.",
         },
       );
+    case "video": {
+      const src = assetPath(ctx, shot, shot.assetId);
+      const sizing = full ? ["width: 100%;", "height: 100%;"] : [];
+      const tag = videoClipTag({
+        id: `${id}-clip`,
+        src,
+        startMs: shot.startMs,
+        durationMs: shot.durationMs,
+        trimStartMs: shot.trimStartMs,
+      });
+      return {
+        html: `${open}${tag}</div>`,
+        css: [
+          cssRule(sel, [...base, ...sizing]),
+          cssRule(`${sel} video`, imageCss(ctx, shot.fit ?? "cover", full)),
+        ],
+      };
+    }
   }
 }

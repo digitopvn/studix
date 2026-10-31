@@ -1,3 +1,4 @@
+import { PlannerSelection, WorkflowTemplateId } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { RenderPreset, unwrapValidation, validateVideoIR } from "@studix/video-ir";
 import { z } from "zod";
@@ -7,7 +8,13 @@ import type { StageContext } from "./workflow-types.ts";
 export const VideoCreatePayload = z.object({
   projectId: z.string().min(1),
   versionId: z.string().min(1).optional(),
+  /** False when the head was settled at queue time: this job must not move it (default true). */
+  makeCurrent: z.boolean().default(true),
+  /** Feedback jobs queued before `makeCurrent` existed carry only this; their patch already moved the head. */
+  feedbackId: z.string().min(1).optional(),
   renderPreset: RenderPreset.default("preview"),
+  planner: PlannerSelection.optional(),
+  workflowTemplate: WorkflowTemplateId.optional(),
 });
 export const PlanOutput = z.object({ ir: z.unknown(), versionId: z.string().optional() });
 export const ValidateOutput = z.object({ versionId: z.string() });
@@ -42,8 +49,14 @@ export function read<T extends z.ZodType>(
 
 export const payloadOf = (s: StageContext) =>
   read(VideoCreatePayload, s.job.payload, "video.create job payload", "VALIDATION");
-export const irOf = (s: StageContext) =>
-  unwrapValidation(
-    validateVideoIR(read(PlanOutput, s.outputs.plan, "plan checkpoint").ir),
-    "planned VideoIR",
-  );
+/**
+ * The job's current IR: the `ir` of the latest stage output that carries one (stage outputs are kept in
+ * run order). The plan stage writes the first; pack stages that add frames, clips or audio write newer ones.
+ */
+export const irOf = (s: StageContext) => {
+  const latest = Object.values(s.outputs).findLast((o) => o.ir !== undefined);
+  if (!latest) {
+    throw new StudixError("INTERNAL", "No stage before this one produced a VideoIR", { retryable: false });
+  }
+  return unwrapValidation(validateVideoIR(latest.ir), "planned VideoIR");
+};

@@ -56,6 +56,54 @@ refused when the connector is added and again at resolve time. Without that
 binding any self-registered workspace could point a connector at its own
 server and receive the operator's token.
 
+### Anthropic provider credentials
+
+Workspaces connect Claude through **AI & Providers** in the dashboard
+([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)). The
+two auth methods are separate and are never used as each other's fallback:
+
+- **Anthropic API key**, billed by usage to the key's Anthropic organization.
+  The key is tested before it is saved, with `GET /v1/models`, which runs no
+  model. A key Anthropic rejects is not stored. An accepted key is sealed with
+  AES-256-GCM under `STUDIX_SECRETS_KEY`. The associated data binds the
+  ciphertext to its organization, workspace and connection id, so a row copied
+  to another tenant does not decrypt.
+- Responses, audit events and logs carry only a hint (`sk-ant-…` plus the last
+  4 characters). All provider routes send `Cache-Control: no-store`. Removing a
+  key deletes the ciphertext but does not revoke the key at Anthropic; revoke
+  it in Claude Console.
+- Who can do what:
+  - Workspace keys can be managed only with `member:manage` (owner or admin).
+  - A personal key belongs to its user. It is released for execution only for
+    jobs that user created, and never as a fallback for anyone else. Removing the
+    member from the workspace revokes their personal keys.
+- **Running Claude in the worker.** A job uses a key only when it selected that
+  connection (`planner.providerConnectionId`). The key is opened in the worker
+  for that run and passed to the Agent SDK subprocess only as
+  `ANTHROPIC_API_KEY`. The subprocess:
+  - gets a minimal environment, so the database URL, storage keys and the
+    master key are not inherited;
+  - runs in a fresh temporary directory that is deleted afterwards;
+  - loads no user, project or local settings and no MCP servers;
+  - has no tools, and every tool request is denied;
+  - is capped per attempt by turns, cost (never above the job's remaining
+    budget) and a deadline, and is interrupted then killed on cancel, lease
+    loss or shutdown; worker shutdown waits for that process to exit;
+  - bills what a failed run already spent to the job, and a run that spent
+    anything is not retried, so a retry never pays twice.
+
+  The brief is passed as delimited data, never as instructions. The output is
+  accepted only after `validateVideoIR`.
+- **Claude subscription (OAuth)** stays _Restricted_. Anthropic does not allow
+  third-party products to offer claude.ai login or route requests through
+  subscription credentials without approval. The dashboard therefore shows the
+  reason and the alternatives, and offers no connect action.
+- Master-key rotation:
+  1. Move the old value into `STUDIX_SECRETS_KEYS_PREVIOUS`.
+  2. Set a new `STUDIX_SECRETS_KEY`.
+  3. Each sealed value records its key id, so existing rows keep decrypting
+     until they are re-saved.
+
 ## MCP-in-MCP connectors
 
 Owner: `packages/mcp-gateway`
@@ -110,7 +158,12 @@ Owner: `ApprovalPolicy` in `packages/core`, enforced by `packages/workflow`.
 - Publishing and high-cost actions require a recorded human approval. Missing
   approval returns `APPROVAL_REQUIRED`; there is no auto-approval.
 - Approval state lives in Postgres and survives worker restarts.
+- At most one pending approval exists per subject, action and scope (database-enforced); an expired request
+  is closed, and a job parked on it fails with `TIMEOUT` instead of waiting forever.
 - A render that succeeds is not an approval.
+- An agent stage that reaches a cap parks for an `agent.overrun` approval. Only a
+  person can grant it; each grant allows one more run with every cap doubled, is
+  consumed once by the run it authorized, and a rejection fails the stage.
 
 ## Artifacts and signed URLs
 
@@ -131,6 +184,16 @@ or a path guard as a security boundary:
 - Workers get only the credentials their stages need; the app role holds no
   provider keys it does not use.
 - Code Mode, if ever enabled, requires a real sandbox and is off by default (P2).
+- A harness agent stage runs with an explicit tool allowlist (every other tool is
+  denied) and hard caps on turns, tokens, cost and time. A cap stop aborts the
+  session and waits for the agent process to exit; a process that ignores the
+  interrupt is killed, and one still alive after the grace period is reported
+  `INTERNAL` rather than as a clean stop
+  ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)).
+- A host agent's output is untrusted input: it is validated against the stage's
+  output schema before it is stored, it is accepted only for the attempt that
+  handed the stage off (fenced in one transaction with the parked job), and its
+  reported usage is recorded but never billed.
 
 ## Redaction
 
@@ -139,6 +202,8 @@ Owner: `redact()` and the logger in `packages/shared`, spans in
 
 - Logs, traces, errors and usage records redact credentials, `stx_` keys,
   bearer/basic headers, connector secrets and known provider key shapes.
+- Agent outputs (harness and host) are redacted with `redactDeep` before they are
+  stored or returned, and the task input handed to a host agent is redacted too.
 - Raw prompts and downstream payloads are not logged by default; traces record
   provider, model, latency, tokens, cost, bytes and outcome.
 
@@ -165,5 +230,8 @@ Each item maps to a negative test in the owning package.
 | Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                          |
 | Runaway cost                                           | Budgets checked before each costly stage                               |
 | Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                     |
+| Agent run past its caps                                | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate    |
+| Forged or stale host output                            | Output schema check, attempt fencing, idempotent digest per task       |
+| Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key          |
 | Expired artifact URL still valid                       | Presign expiry tests                                                   |
 | Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                            |

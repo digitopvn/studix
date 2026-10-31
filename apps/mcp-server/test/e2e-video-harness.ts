@@ -77,18 +77,75 @@ export interface WorkerHandle {
   stop(graceMs?: number): Promise<void>;
 }
 
-function descendants(root: number): number[] {
-  const table = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
+/**
+ * One row per process. `created` (a monotonic start stamp) is only known on Windows, where a
+ * recorded parent id outlives the parent and PIDs are reused, so an edge is trusted only if the
+ * child started after its parent.
+ */
+export type ProcessTable = Array<{ pid: number; ppid: number; created?: number }>;
+
+/** Parse `ps -A -o pid=,ppid=` output (POSIX). */
+export function parsePsTable(text: string): ProcessTable {
+  const rows: ProcessTable = [];
+  for (const line of text.split("\n")) {
+    const cols = line.trim().split(/\s+/).map(Number);
+    if (cols.length === 2 && cols.every(Number.isInteger)) rows.push({ pid: cols[0]!, ppid: cols[1]! });
+  }
+  return rows;
+}
+
+/** Parse the PowerShell `ConvertTo-Csv` output of ProcessId, ParentProcessId, Created (Windows). */
+export function parseCimCsv(text: string): ProcessTable {
+  const rows: ProcessTable = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^"(\d+)","(\d+)","(\d+)"$/.exec(line.trim());
+    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), created: Number(m[3]) });
+  }
+  return rows;
+}
+
+/** List every process with its parent, on Linux, macOS and Windows. Throws if the output is unusable. */
+export function listProcesses(): ProcessTable {
+  let table: ProcessTable;
+  if (process.platform === "win32") {
+    const out = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,@{n='Created';e={$_.CreationDate.ToFileTimeUtc()}} | ConvertTo-Csv -NoTypeInformation",
+      ],
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 30_000, windowsHide: true },
+    );
+    table = parseCimCsv(out);
+  } else {
+    table = parsePsTable(execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" }));
+  }
+  if (!table.some((row) => row.pid === process.pid)) {
+    throw new Error("process listing did not include this process; cannot walk the process tree");
+  }
+  return table;
+}
+
+export function descendants(root: number): number[] {
+  const table = listProcesses();
+  const created = new Map(table.map((row) => [row.pid, row.created]));
   const children = new Map<number, number[]>();
-  for (const line of table.trim().split("\n")) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number) as [number, number];
+  for (const { pid, ppid } of table) {
+    const born = created.get(pid);
+    const parentBorn = created.get(ppid);
+    if (born !== undefined && parentBorn !== undefined && born < parentBorn) continue;
     children.set(ppid, [...(children.get(ppid) ?? []), pid]);
   }
   const out: number[] = [];
+  const seen = new Set<number>([root]);
   const queue = [root];
   while (queue.length) {
     const pid = queue.shift()!;
     for (const child of children.get(pid) ?? []) {
+      if (seen.has(child)) continue;
+      seen.add(child);
       out.push(child);
       queue.push(child);
     }

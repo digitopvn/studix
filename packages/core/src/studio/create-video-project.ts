@@ -8,7 +8,12 @@ import { actorRef, assertPermission, type TenantContext } from "../tenant.ts";
 import { openApproval } from "./approval-operations.ts";
 import { toJobView } from "./job-view.ts";
 import { loadJobView, parseInput, type ResolvedStudioDeps, titleFromPrompt } from "./studio-input.ts";
-import { CreateVideoProjectInput, type JobView, type NextAction } from "./studio-types.ts";
+import {
+  CreateVideoProjectInput,
+  DEFAULT_WORKFLOW_TEMPLATE,
+  type JobView,
+  type NextAction,
+} from "./studio-types.ts";
 
 export interface CreateVideoProjectResult {
   project: VideoProject;
@@ -42,6 +47,20 @@ export async function createVideoProject(
 ): Promise<CreateVideoProjectResult> {
   assertPermission(ctx, "project:write");
   const input = parseInput(CreateVideoProjectInput, rawInput, "createVideoProject input");
+  if (input.planner && input.spec !== undefined) {
+    // A client spec skips planning, so a planner choice would be silently ignored.
+    throw new StudixError(
+      "VALIDATION",
+      "planner cannot be combined with spec: a supplied spec is not planned",
+    );
+  }
+  if (input.planner && input.workflowTemplate && input.workflowTemplate !== DEFAULT_WORKFLOW_TEMPLATE) {
+    // The Claude planner writes the VideoIR itself and does not run a pack's template.
+    throw new StudixError(
+      "VALIDATION",
+      `planner cannot be combined with workflowTemplate "${input.workflowTemplate}": the planner does not use pack templates`,
+    );
+  }
   const spec: VideoIR | undefined =
     input.spec === undefined
       ? undefined
@@ -51,6 +70,7 @@ export async function createVideoProject(
   const deadlineAt = input.deadlineAt ?? new Date(now.getTime() + defaults.jobDeadlineMs);
   if (deadlineAt <= now) throw new StudixError("VALIDATION", "deadlineAt must be in the future");
   const budgetCents = input.budgetCents ?? defaults.jobBudgetCents;
+  const workflowTemplate = input.workflowTemplate ?? DEFAULT_WORKFLOW_TEMPLATE;
 
   if (input.idempotencyKey) {
     const existing = await jobs.findByIdempotencyKey(ctx, input.idempotencyKey);
@@ -62,6 +82,7 @@ export async function createVideoProject(
     title: input.title ?? input.brief.title ?? spec?.title ?? titleFromPrompt(input.brief.prompt),
     status: "draft",
     brief: input.brief,
+    workflowTemplate,
     createdBy,
   });
   let version: ProjectVersion | undefined;
@@ -83,7 +104,13 @@ export async function createVideoProject(
   const enqueued = await queue.enqueue(ctx, {
     kind: JOB_KINDS.createVideo,
     projectId: project.id,
-    payload: { projectId: project.id, versionId: version?.id, renderPreset: input.renderPreset ?? "preview" },
+    payload: {
+      projectId: project.id,
+      versionId: version?.id,
+      renderPreset: input.renderPreset ?? "preview",
+      planner: input.planner,
+      workflowTemplate,
+    },
     idempotencyKey: input.idempotencyKey,
     budgetCents,
     deadlineAt,

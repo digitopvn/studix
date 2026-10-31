@@ -3,6 +3,7 @@ import type {
   ApprovalStatus,
   ApprovalSubjectType,
   JobStatus,
+  MediaJobRecord,
   StageStatus,
   WorkflowRunStatus,
 } from "@studix/core";
@@ -89,6 +90,8 @@ export const stages = pgTable(
     status: text("status").$type<StageStatus>().notNull(),
     output: jsonb("output").$type<Record<string, unknown>>(),
     error: jsonb("error").$type<StudixErrorPayload>(),
+    /** Upstream media jobs this attempt submitted; read back by later attempts to resume, never resubmit. */
+    mediaJobs: jsonb("media_jobs").$type<MediaJobRecord[]>(),
     startedAt: ts("started_at"),
     finishedAt: ts("finished_at"),
     createdAt: createdAt(),
@@ -106,6 +109,7 @@ export const approvals = pgTable(
     subjectId: text("subject_id").notNull(),
     status: text("status").$type<ApprovalStatus>().notNull(),
     reason: text("reason").notNull(),
+    scopeKey: text("scope_key").notNull().default(""),
     estimatedCostCents: integer("estimated_cost_cents"),
     requestedByType: text("requested_by_type").$type<ActorType>().notNull(),
     requestedById: text("requested_by_id").notNull(),
@@ -119,6 +123,10 @@ export const approvals = pgTable(
   (t) => [
     index("approvals_subject_idx").on(t.workspaceId, t.subjectType, t.subjectId, t.action, t.id),
     index("approvals_tenant_idx").on(t.workspaceId, t.organizationId, t.id),
+    // One pending request per subject, action and scope: concurrent openers cannot both create one.
+    uniqueIndex("approvals_pending_uq")
+      .on(t.workspaceId, t.subjectType, t.subjectId, t.action, t.scopeKey)
+      .where(sql`${t.status} = 'pending'`),
   ],
 );
 

@@ -38,9 +38,12 @@ function gatingAction(job: Job): ApprovalAction {
 /** Job view with stages and, for parked jobs, the approval it waits on. */
 export async function loadJobView(deps: ResolvedStudioDeps, ctx: TenantContext, job: Job): Promise<JobView> {
   const stages = await deps.jobs.listStages(ctx, job.id);
+  const subject = { type: "job" as const, id: job.id };
+  // A stage can park on its own action (an agent overrun, a render gate): show the request that is open.
   const approval =
     job.status === "waiting_approval"
-      ? await deps.approvals.findLatest(ctx, { type: "job", id: job.id }, gatingAction(job))
+      ? ((await deps.approvals.list(ctx, { subject, status: "pending", limit: 1 })).items[0] ??
+        (await deps.approvals.findLatest(ctx, subject, gatingAction(job))))
       : undefined;
   return toJobView(job, stages, approval);
 }

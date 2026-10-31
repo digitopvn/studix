@@ -53,6 +53,20 @@ describe("mutating tools and approvals", () => {
     expect(client.calls).toHaveLength(1);
   });
 
+  it("opens one approval when the same call arrives concurrently", async () => {
+    const { h, client } = await setup();
+    const job = h.call(h.tenantA, { jobId: "job_open_race" });
+    const ids = await Promise.all(
+      Array.from(
+        { length: 5 },
+        async () => (await rejection(h.gateway.execute(job, NOTE))).details?.approvalId,
+      ),
+    );
+    expect(new Set(ids).size).toBe(1);
+    expect((await h.approvals.list(h.tenantA, { status: "pending" })).items).toHaveLength(1);
+    expect(client.calls).toHaveLength(0);
+  });
+
   it("lets only one of two concurrent executes spend an approval", async () => {
     const { h, client } = await setup();
     const job = h.call(h.tenantA, { jobId: "job_race" });
