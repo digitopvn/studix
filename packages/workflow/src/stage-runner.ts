@@ -106,6 +106,12 @@ export async function runStages(
       attempt: job.attempts,
       signal,
       outputs,
+      commit: async (write) => {
+        signal.throwIfAborted();
+        const result = await queue.commit(job, workerId, write);
+        if (!result.held) throw new LeaseLostError();
+        return result.value;
+      },
       reportProgress: (p) => {
         const now = deps.clock.now().getTime();
         if (now - lastProgressAt < (deps.progressIntervalMs ?? 1000)) return;

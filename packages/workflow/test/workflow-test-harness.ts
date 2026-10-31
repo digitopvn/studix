@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { createJobBudgetPolicy, createPostgresUsageLedger } from "@studix/billing";
 import {
   createDefaultApprovalPolicy,
+  type ProjectRepository,
   type PublisherAdapter,
   type RendererAdapter,
+  type RenderRepository,
   type StorageAdapter,
   type TenantContext,
 } from "@studix/core";
@@ -171,6 +173,9 @@ export interface WorkerOptions {
   renderer?: RendererAdapter;
   storage?: StorageAdapter;
   publisher?: PublisherAdapter;
+  /** Read-side project repository the workflow sees (stage writes always go through the fenced commit). */
+  projects?: Pick<ProjectRepository, "get" | "getVersion">;
+  renders?: Pick<RenderRepository, "get">;
   leaseMs?: number;
   heartbeatIntervalMs?: number;
   /** "hang": heartbeats never resolve, like a worker whose database connection froze. */
@@ -202,8 +207,8 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
         planner: options.planner ?? fakePlanner().planner,
         renderer: options.renderer ?? fakeRenderer().renderer,
         storage: options.storage ?? fakeStorage().storage,
-        projects: repos.projects,
-        renders: repos.renders,
+        projects: options.projects ?? repos.projects,
+        renders: options.renders ?? repos.renders,
         workRoot: mkdtempSync(join(tmpdir(), "studix-worker-test-")),
         renderCentsPerSecond: options.renderCentsPerSecond,
       }),
