@@ -1011,6 +1011,30 @@ describe("MultixProvider synchronous audio", () => {
       expect(a.job?.id).not.toBe("sync");
     });
 
+    it("bills a second paid run of the same key separately when its file was gone and no history id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const first = await multix.generate(ctx, voiceRequest());
+      const other = await mkdtemp(join(tmpdir(), "multix-attempt-"));
+      try {
+        const second = await multix.generate(ctx, { ...voiceRequest(), workDir: other });
+        expect(second.job?.id).not.toEqual(first.job?.id);
+        expect((await multix.generate(ctx, { ...voiceRequest(), workDir: other })).job).toEqual(second.job);
+      } finally {
+        await rm(other, { recursive: true, force: true });
+      }
+    });
+
+    it("ignores a history id that is not a valid execution id", async () => {
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: ttsCli("bad id/with+chars").runner,
+        journal: new InMemoryMediaJobJournal(),
+      });
+      const result = await multix.generate(ctx, voiceRequest());
+      expect(result.job?.id).toMatch(/^sync-[0-9a-f]{24}$/);
+    });
+
     it("maps a record journaled with the legacy literal id to the derived id", async () => {
       const journal = new InMemoryMediaJobJournal();
       const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });

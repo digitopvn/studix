@@ -676,11 +676,15 @@ export class MultixProvider implements MediaProvider {
   ): Promise<MediaGenerationResult> {
     const outDir = join(request.workDir, `multix-${sha([ctx.workspaceId, request.idempotencyKey])}`);
     const file = join(outDir, `${plan.role}${plan.outputExt ?? ".bin"}`);
-    // One execution id per paid run, stable across attempts: the upstream history id, else an id derived
-    // from the idempotency key (never a shared literal, which would merge different assets' usage lines).
-    const execution = (historyId: string | undefined): ProviderJobRef => ({
+    // One execution id per paid run: the upstream history id when it is a valid id, else one derived from
+    // the idempotency key and the run's ordinal. The ordinal keeps a second paid run of the same key (the
+    // output file was gone) from sharing the first run's usage line, which the ledger would drop.
+    const execution = (historyId: string | undefined, ordinal: number): ProviderJobRef => ({
       provider: plan.model.vendor,
-      id: historyId ?? `sync-${sha([ctx.workspaceId, request.idempotencyKey], 24)}`,
+      id:
+        historyId !== undefined && JOB_ID.test(historyId)
+          ? historyId
+          : `sync-${sha([ctx.workspaceId, request.idempotencyKey, ordinal], 24)}`,
     });
     const result = (
       outputs: GeneratedMedia[],
@@ -703,7 +707,7 @@ export class MultixProvider implements MediaProvider {
         [{ filePath: file, mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream" }],
         existing.receiptCents ?? existing.estimatedCostCents,
         existing.receiptCents !== undefined ? "receipt" : "estimate",
-        execution(journaled),
+        execution(journaled, existing.attempt),
       );
     }
     const estimate = await this.estimatePlan(plan, request, request.workDir);
@@ -740,7 +744,7 @@ export class MultixProvider implements MediaProvider {
       );
     }
     const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
-    const ran = execution(envelope.historyId);
+    const ran = execution(envelope.historyId, (existing?.attempt ?? 0) + 1);
     const at = this.clock.now().toISOString();
     await journal
       .put(ctx, {
