@@ -33,7 +33,7 @@ interface ApiError {
 const FAILED = {
   status: "failed" as const,
   attempts: 3,
-  error: { code: "UNAVAILABLE", message: "bucket missing", retryable: false },
+  error: { code: "UNAVAILABLE" as const, message: "bucket missing", retryable: false },
   finishedAt: new Date(),
 };
 
@@ -72,7 +72,7 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
 
   /** A video job in the workspace, then marked failed the way a worker leaves it after a non-retryable error. */
   async function failedJobIn(ctx: TenantContext, kind = "video.create"): Promise<string> {
-    const { repos } = app.deps;
+    const { repos } = app.db;
     const { job } = await repos.queue.enqueue(ctx, { kind, payload: {}, createdBy: ctx.actor });
     await repos.jobs.update(ctx, job.id, FAILED);
     return job.id;
@@ -119,7 +119,7 @@ describe("retrying a failed job over the HTTP dashboard API and the MCP surface"
 
       const detail = await dashboard<{ job: JobBody }>("GET", `/api/jobs/${jobId}`, aliceCookie);
       expect(detail.body.job).toMatchObject({ id: jobId, status: "queued" });
-      const audit = await app.deps.repos.audit.list(aliceCtx, { subjectType: "job", subjectId: jobId });
+      const audit = await app.db.repos.audit.list(aliceCtx, { subjectType: "job", subjectId: jobId });
       expect(audit.items.map((e) => e.action)).toContain("job.retried");
     });
 
