@@ -65,6 +65,10 @@ const FORWARDED = [
   "FFPROBE_PATH",
   "HYPERFRAMES_BROWSER_PATH",
   "PRODUCER_HEADLESS_SHELL_PATH",
+  // Windows needs these for Winsock, os.tmpdir(), os.homedir() and spawning programs.
+  ...(process.platform === "win32"
+    ? ["SystemRoot", "windir", "TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "PATHEXT", "ComSpec"]
+    : []),
 ];
 
 export interface WorkerHandle {
@@ -99,7 +103,7 @@ function readProcessTable(): string {
         "-Command",
         'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", windowsHide: true },
     );
   }
   return execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
@@ -107,10 +111,14 @@ function readProcessTable(): string {
 
 export function descendantsFrom(children: Map<number, number[]>, root: number): number[] {
   const out: number[] = [];
+  // Windows keeps a dead parent's id on its children and reuses ids, so the table can contain cycles.
+  const seen = new Set([root]);
   const queue = [root];
   while (queue.length) {
     const pid = queue.shift()!;
     for (const child of children.get(pid) ?? []) {
+      if (seen.has(child)) continue;
+      seen.add(child);
       out.push(child);
       queue.push(child);
     }
@@ -119,7 +127,13 @@ export function descendantsFrom(children: Map<number, number[]>, root: number): 
 }
 
 function descendants(root: number): number[] {
-  return descendantsFrom(parseProcessTable(readProcessTable()), root);
+  try {
+    return descendantsFrom(parseProcessTable(readProcessTable()), root);
+  } catch (error) {
+    // Listing is best effort: a failure must not turn the cleanup path into an uncaught exception.
+    console.warn(`e2e harness: cannot list processes, only the worker root is stopped: ${String(error)}`);
+    return [];
+  }
 }
 
 function killTree(root: number): void {

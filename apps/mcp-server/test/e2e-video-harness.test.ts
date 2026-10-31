@@ -7,4 +7,9 @@ describe("e2e video harness process table", () => {
     expect(descendantsFrom(table, 10).sort((a, b) => a - b)).toEqual([11, 12, 13]);
     expect(descendantsFrom(table, 99)).toEqual([]);
   });
+
+  it("terminates on a cycle from a reused parent id", () => {
+    const table = parseProcessTable("10 1\n11 10\n10 11\n");
+    expect(descendantsFrom(table, 10)).toEqual([11]);
+  });
 });
