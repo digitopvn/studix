@@ -1,5 +1,7 @@
 import type { Job, TenantContext } from "@studix/core";
+import { jobs } from "@studix/database/schema";
 import { withTestDatabase } from "@studix/database/testing";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createWorkerJobQueue, createWorkerPool, type JobOutcome } from "../src/index.ts";
 import {
@@ -124,6 +126,61 @@ describe("worker queue", () => {
     expect(outcomes).toEqual(["released"]);
     expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({ status: "queued", attempts: 0 });
     await db.current.repos.queue.cancel(ctx, job.id);
+  });
+});
+
+describe("deadline while waiting for a human", () => {
+  const HOUR = 3_600_000;
+
+  /** Park a publish job that had 1 minute left when it parked 2 hours ago. */
+  async function parkedLongAgo(ctx: TenantContext) {
+    const job = await enqueuePublish(ctx);
+    await db.current.db
+      .update(jobs)
+      .set({ deadlineAt: new Date(Date.now() + 60_000) })
+      .where(eq(jobs.id, job.id));
+    const worker = createTestWorker(db.current, "w1", { publisher: fakePublisher().publisher });
+    expect((await worker.runOnce())?.outcome).toBe("waiting_approval");
+    await db.current.db
+      .update(jobs)
+      .set({
+        updatedAt: new Date(Date.now() - 2 * HOUR),
+        deadlineAt: new Date(Date.now() - 2 * HOUR + 60_000),
+      })
+      .where(eq(jobs.id, job.id));
+    return { job, worker };
+  }
+
+  it("moves the deadline out by the wait when the sweep resumes an approved gate", async () => {
+    const ctx = await tenant(db.current, "deadline-sweep");
+    const { job, worker } = await parkedLongAgo(ctx);
+    const pending = (await db.current.repos.approvals.findLatest(
+      ctx,
+      { type: "job", id: job.id },
+      "publish",
+    ))!;
+    await db.current.repos.approvals.decide(ctx, pending.id, {
+      status: "approved",
+      decidedBy: human,
+      decidedAt: new Date(),
+    });
+    expect(await worker.queue.resumeDecidedApprovals()).toBe(1);
+    const resumed = (await db.current.repos.jobs.get(ctx, job.id))!;
+    const remainingMs = resumed.deadlineAt!.getTime() - Date.now();
+    expect(remainingMs).toBeGreaterThan(30_000);
+    expect(remainingMs).toBeLessThan(90_000);
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+  });
+
+  it("moves the deadline out by the wait when the producer queue resumes a job", async () => {
+    const ctx = await tenant(db.current, "deadline-resume");
+    const { job, worker } = await parkedLongAgo(ctx);
+    const resumed = await db.current.repos.queue.resume(ctx, job.id);
+    const remainingMs = resumed.deadlineAt!.getTime() - Date.now();
+    expect(remainingMs).toBeGreaterThan(30_000);
+    expect(remainingMs).toBeLessThan(90_000);
+    // Drain the resumed job so it does not leak into other tests' workers (they claim across tenants).
+    await worker.runOnce();
   });
 });
 

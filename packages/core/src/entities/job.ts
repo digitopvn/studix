@@ -18,6 +18,17 @@ export function isTerminalJobStatus(status: JobStatus): boolean {
   return TERMINAL_JOB_STATUSES.has(status);
 }
 
+/**
+ * The deadline bounds active execution, not the time a job waits for a person. Resuming a job that was
+ * parked in `waiting_approval` moves its deadline later by the length of that wait (a parked job's
+ * `updatedAt` is the moment it was parked or created, since nothing writes to it while it waits).
+ */
+export function deadlineAfterWait(job: Pick<Job, "deadlineAt" | "updatedAt">, now: Date): Date | undefined {
+  if (!job.deadlineAt) return undefined;
+  const waitedMs = Math.max(0, now.getTime() - job.updatedAt.getTime());
+  return new Date(job.deadlineAt.getTime() + waitedMs);
+}
+
 /** Well-known job kinds; workflows may register more (kinds are open strings). */
 export const JOB_KINDS = {
   createVideo: "video.create",

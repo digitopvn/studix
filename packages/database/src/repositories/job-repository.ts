@@ -1,4 +1,12 @@
-import type { Job, JobPatch, JobQueue, JobRepository, Stage, TenantContext } from "@studix/core";
+import {
+  deadlineAfterWait,
+  type Job,
+  type JobPatch,
+  type JobQueue,
+  type JobRepository,
+  type Stage,
+  type TenantContext,
+} from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
 import { asc, desc, eq, inArray } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
@@ -238,10 +246,13 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
     },
 
     async resume(ctx, jobId) {
+      const now = clock.now();
+      const row = await getRow(ctx, jobId);
+      const deadlineAt = row ? deadlineAfterWait(toJob(row), now) : undefined;
       return repo.update(
         ctx,
         jobId,
-        { status: "queued", runAfter: clock.now() },
+        { status: "queued", runAfter: now, ...(deadlineAt ? { deadlineAt } : {}) },
         { expectStatus: ["waiting_approval"] },
       );
     },

@@ -1,6 +1,6 @@
 import { type Clock, StudixError } from "@studix/shared";
 import type { Job, Render, Stage, WorkflowRun } from "../entities/job.ts";
-import { isTerminalJobStatus } from "../entities/job.ts";
+import { deadlineAfterWait, isTerminalJobStatus } from "../entities/job.ts";
 import type { JobQueue } from "../ports/job-queue.ts";
 import type {
   JobRepository,
@@ -91,10 +91,13 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
       });
     },
     async resume(ctx, jobId) {
+      const now = clock.now();
+      const current = jobs.require(ctx, jobId);
+      const deadlineAt = deadlineAfterWait(current, now);
       return repo.update(
         ctx,
         jobId,
-        { status: "queued", runAfter: clock.now() },
+        { status: "queued", runAfter: now, ...(deadlineAt ? { deadlineAt } : {}) },
         { expectStatus: ["waiting_approval"] },
       );
     },

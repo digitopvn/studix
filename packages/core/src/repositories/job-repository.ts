@@ -16,6 +16,7 @@ export type JobPatch = Partial<
     | "lockedBy"
     | "leaseExpiresAt"
     | "cancelRequested"
+    | "deadlineAt"
     | "spentCents"
     | "startedAt"
     | "finishedAt"

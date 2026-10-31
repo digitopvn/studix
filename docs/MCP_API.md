@@ -90,6 +90,13 @@ Behavior notes:
 - `studix_create_video` inputs: `prompt` or `brief` (one is required), `spec`,
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
   past it the job fails with `TIMEOUT`), `renderPreset`.
+- The deadline bounds active execution, not the wait for a person. While a job
+  sits in `waiting_approval` (the start gate or a creative gate such as G0, G1
+  or storyboard approval) the clock is paused: when the approval resumes the
+  job, its deadline moves out by the length of the wait, and only the time the
+  job spends queued or running counts against it. A gate wait is limited by the
+  approval's own 7-day expiry, not by the deadline. There is no separate host
+  task wait state yet, so nothing else pauses the deadline.
 - Publishing is gated: a publish job waits in `waiting_approval` until a human
   approves it in the dashboard.
 - Re-sending `studix_create_video` with the same idempotency key in the same
