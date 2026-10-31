@@ -225,8 +225,10 @@ npx wrangler@4 deploy        # needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TO
 
 On SIGTERM the worker stops claiming, lets the running attempt finish within
 the grace period, then aborts and releases the lease so another pod reclaims
-the job. An attempt that fails while the pool is draining (for example because
-Puppeteer closes Chrome on SIGTERM) is released, not failed
+the job. Chrome keeps rendering through the grace period: the HyperFrames
+engine is patched so Puppeteer does not close it on SIGTERM (see
+`docs/RENDERER.md`). An attempt that fails while the pool is draining anyway is
+released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.

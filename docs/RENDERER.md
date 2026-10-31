@@ -83,7 +83,16 @@ to the exact same version in `packages/renderers/package.json` (currently
   quality preset using x264 `fast`
   ([#6640](https://github.com/heygen-com/hyperframes/pull/6640)). Output bytes
   differ from older renders; the contract above (codec, size, loudness) does not.
-- `handleSIGTERM` still cannot be turned off in the engine, so #5 stays open.
+- **`handleSIGTERM` patch.** The engine launches Chrome through
+  `ownedLaunchOptions()`, which leaves Puppeteer's `handleSIGTERM` at `true`,
+  so a worker SIGTERM closed Chrome mid-render and lost the grace period.
+  `patches/@hyperframes__engine@0.8.223.patch` (wired in
+  `pnpm-workspace.yaml` → `patchedDependencies`) adds `handleSIGTERM: false`;
+  the worker then aborts the render itself after the grace period and the
+  producer closes Chrome. The patch is keyed to the exact version, so a bump
+  must redo it (`pnpm patch @hyperframes/engine@<version>`, then
+  `pnpm patch-commit`) or `pnpm install` fails. Drop it once upstream exposes a
+  host switch for SIGTERM like `setHostHandlesSigint`.
 
 ### Pending IR fields
 

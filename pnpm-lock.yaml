@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@hyperframes/engine@0.8.223':
+    hash: 3f8267dc5f2a4c93ab261b68a976a101d088f6349b95414e13eb02c2d3a2ac8b
+    path: patches/@hyperframes__engine@0.8.223.patch
+
 importers:
 
   .:
@@ -3929,7 +3934,7 @@ snapshots:
       - '@types/node'
       - canvas
 
-  '@hyperframes/engine@0.8.223':
+  '@hyperframes/engine@0.8.223(patch_hash=3f8267dc5f2a4c93ab261b68a976a101d088f6349b95414e13eb02c2d3a2ac8b)':
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.14)
       '@hyperframes/core': 0.8.223(@types/node@24.19.2)
@@ -3974,7 +3979,7 @@ snapshots:
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.14)
       '@hyperframes/core': 0.8.223(@types/node@24.19.2)
-      '@hyperframes/engine': 0.8.223
+      '@hyperframes/engine': 0.8.223(patch_hash=3f8267dc5f2a4c93ab261b68a976a101d088f6349b95414e13eb02c2d3a2ac8b)
       '@hyperframes/lint': 0.8.223
       '@hyperframes/parsers': 0.8.223
       '@hyperframes/studio-server': 0.8.223(@types/node@24.19.2)
