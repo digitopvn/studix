@@ -1,5 +1,13 @@
-import { createDefaultApprovalPolicy, StudioService, type TenantContext } from "@studix/core";
-import { schema } from "@studix/database";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  createDefaultApprovalPolicy,
+  PERMISSIONS,
+  type Permission,
+  StudioService,
+  type TenantContext,
+} from "@studix/core";
+import { MIGRATIONS_FOLDER, schema } from "@studix/database";
 import { insertTestUser, withTestDatabase } from "@studix/database/testing";
 import { StudixError, systemClock } from "@studix/shared";
 import { eq } from "drizzle-orm";
@@ -91,5 +99,63 @@ describe("workspace API keys over Postgres", () => {
     expect(inA.replayed).toBe(false);
     // Key management is tenant-scoped too.
     expect(await codeOf(keys.revoke(b, keyA.apiKey.id))).toBe("NOT_FOUND");
+  });
+});
+
+describe("api key scopes after job:retry joined the role matrix", () => {
+  it("upgrades keys issued with a role's earlier scope set and leaves custom keys alone", async () => {
+    const { keys, repos } = services();
+    const ctx = await tenant("pg-retry-scope");
+    const createdBy = { type: "user" as const, id: ctx.actor.id };
+    const issue = (name: string, scopes: Permission[]) =>
+      repos.apiKeys.create(ctx, {
+        name,
+        hash: hashApiKey(`stx_test_${name}`),
+        prefix: name,
+        scopes,
+        createdBy,
+      });
+    // Scope sets as issued before `job:retry` existed, in a shuffled stored order.
+    const editor = await issue("old-editor", [
+      "approval:request",
+      "asset:write",
+      "job:cancel",
+      "project:write",
+      "asset:read",
+      "project:read",
+      "workspace:read",
+    ]);
+    const admin = await issue(
+      "old-admin",
+      PERMISSIONS.filter((p) => p !== "job:retry"),
+    );
+    const custom = await issue("custom", ["project:read", "job:cancel"]);
+    const already = await issue("already", ["project:read", "job:retry"]);
+    // A reviewer key never got job:cancel, so it must not gain job:retry either.
+    const reviewer = await issue("reviewer", [
+      "workspace:read",
+      "project:read",
+      "asset:read",
+      "approval:decide",
+    ]);
+
+    const sql = readFileSync(join(MIGRATIONS_FOLDER, "0011_api_key_job_retry.sql"), "utf8");
+    await db.current.client.unsafe(sql);
+
+    const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
+    expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
+    expect(byId.get(editor.id)?.scopes).toContain("job:retry");
+    // owner and admin share one permission set; the label is the first role that matches.
+    expect(byId.get(admin.id)).toMatchObject({ role: "owner" });
+    expect(byId.get(custom.id)).toMatchObject({ role: "custom", scopes: ["project:read", "job:cancel"] });
+    expect(byId.get(already.id)?.scopes).toEqual(["project:read", "job:retry"]);
+    expect(byId.get(reviewer.id)).toMatchObject({ role: "reviewer" });
+    expect(byId.get(reviewer.id)?.scopes).not.toContain("job:retry");
+
+    // Running it again changes nothing.
+    await db.current.client.unsafe(sql);
+    expect(
+      (await keys.list(ctx)).find((k) => k.id === editor.id)?.scopes.filter((s) => s === "job:retry"),
+    ).toHaveLength(1);
   });
 });

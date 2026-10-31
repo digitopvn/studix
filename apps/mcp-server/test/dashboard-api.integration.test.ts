@@ -126,6 +126,28 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     expect(cancelled.status).toBe(200);
   });
 
+  it("retries a failed job over POST /api/jobs/:id/retry; other tenants get 404, other states 409", async () => {
+    const body = { prompt: "Retry route", aspectRatio: "9:16", idempotencyKey: "dash-retry" };
+    const { job } = await (await app.api("POST", "/api/projects", { cookie: alice, body })).json();
+    expect((await app.api("POST", `/api/jobs/${job.id}/retry`, { cookie: alice, body: {} })).status).toBe(
+      409,
+    );
+
+    await app.db.client`update jobs set status = 'failed', finished_at = now(),
+      error = ${JSON.stringify({ code: "UNAVAILABLE", message: "bucket missing", retryable: false })}::jsonb
+      where id = ${job.id}`;
+    const failed = await (await app.api("GET", `/api/jobs/${job.id}`, { cookie: alice })).json();
+    expect(failed.job).toMatchObject({ status: "failed" });
+
+    expect((await app.api("POST", `/api/jobs/${job.id}/retry`, { cookie: bob, body: {} })).status).toBe(404);
+    const retried = await app.api("POST", `/api/jobs/${job.id}/retry`, { cookie: alice, body: {} });
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toMatchObject({ id: job.id, status: "queued" });
+    expect((await app.api("POST", `/api/jobs/${job.id}/retry`, { cookie: alice, body: {} })).status).toBe(
+      409,
+    );
+  });
+
   it("validates input at the boundary", async () => {
     const res = await app.api("POST", "/api/projects", { cookie: alice, body: { prompt: "" } });
     expect(res.status).toBe(400);

@@ -40,6 +40,8 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
   const [actionError, setActionError] = useState<unknown>();
   const job = data?.job;
   const active = job ? ACTIVE.has(job.status) : false;
+  // A publish is not idempotent, so the server refuses to resume it; do not offer a button that always fails.
+  const retryable = job ? job.status === "failed" && job.kind !== "video.publish" : false;
 
   // Poll while the job is still moving; stop once it reaches a terminal state.
   useEffect(() => {
@@ -66,11 +68,16 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
         <Section
           title={`Job ${job.kind}`}
           actions={
-            active && (
+            (active && (
               <button type="button" className="danger" onClick={() => act(() => api.cancelJob(job.id))}>
                 Cancel job
               </button>
-            )
+            )) ||
+            (retryable && (
+              <button type="button" onClick={() => act(() => api.retryJob(job.id))}>
+                Retry job
+              </button>
+            ))
           }
         >
           <dl className="facts">
