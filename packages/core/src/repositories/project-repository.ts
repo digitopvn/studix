@@ -5,8 +5,12 @@ import type { Page, PageRequest } from "./pagination.ts";
 
 export type NewVideoProject = NewRecord<VideoProject>;
 export type VideoProjectPatch = Partial<Pick<VideoProject, "title" | "status" | "currentVersionId">>;
-/** `version` is assigned by the repository (previous max + 1). */
-export type NewProjectVersion = Omit<NewRecord<ProjectVersion>, "version">;
+/**
+ * `version` is assigned by the repository (previous max + 1).
+ * With `advanceFrom`, the repository makes the new version the project's current one in the same atomic step,
+ * but only while `advanceFrom` is still current; otherwise it throws CONFLICT and stores nothing.
+ */
+export type NewProjectVersion = Omit<NewRecord<ProjectVersion>, "version"> & { advanceFrom?: string };
 
 export interface ProjectRepository {
   create(ctx: TenantContext, input: NewVideoProject): Promise<VideoProject>;

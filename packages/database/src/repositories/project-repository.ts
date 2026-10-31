@@ -110,11 +110,17 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
       return db.transaction(async (tx) => {
         // Lock the project row so concurrent versions get distinct numbers (and prove tenancy).
         const locked = await tx
-          .select({ id: videoProjects.id })
+          .select({ id: videoProjects.id, currentVersionId: videoProjects.currentVersionId })
           .from(videoProjects)
           .where(scoped(videoProjects, ctx, eq(videoProjects.id, input.projectId)))
           .for("update");
         if (locked.length === 0) throw new StudixError("NOT_FOUND", `project ${input.projectId} not found`);
+        // Compare-and-set under the row lock: of two writers on the same base, only the first one wins.
+        if (input.advanceFrom !== undefined && locked[0]?.currentVersionId !== input.advanceFrom) {
+          throw new StudixError("CONFLICT", `version ${input.advanceFrom} is no longer current`, {
+            details: { currentVersionId: locked[0]?.currentVersionId ?? null },
+          });
+        }
         const [current] = await tx
           .select({ version: max(projectVersions.version) })
           .from(projectVersions)
@@ -136,7 +142,14 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
             createdAt: clock.now(),
           })
           .returning();
-        return toVersion(first(rows, "project version"));
+        const created = first(rows, "project version");
+        if (input.advanceFrom !== undefined) {
+          await tx
+            .update(videoProjects)
+            .set({ currentVersionId: created.id, updatedAt: clock.now() })
+            .where(scoped(videoProjects, ctx, eq(videoProjects.id, input.projectId)));
+        }
+        return toVersion(created);
       });
     },
 
