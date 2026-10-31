@@ -56,7 +56,7 @@ export interface SealedCredentialStore {
 
 /**
  * The model a job resolved for a stage, recorded once. Later attempts of the same job read it back instead
- * of re-resolving, so a preference changed mid-job never reroutes it (ADR 0011).
+ * of re-resolving, so a preference changed mid-job never reroutes it (ADR 0012).
  */
 export interface ModelSnapshotRepository {
   /** First write wins: returns the stored snapshot, which is `snapshot` only when none existed yet. */

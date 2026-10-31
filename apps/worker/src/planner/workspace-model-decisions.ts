@@ -39,7 +39,7 @@ export interface WorkspaceModelDecisionDeps {
 }
 
 /**
- * Decisions on the workspace's own provider connection (BYOK, ADR 0011) when it has chosen a model for
+ * Decisions on the workspace's own provider connection (BYOK, ADR 0012) when it has chosen a model for
  * the stage, otherwise the operator's router exactly as before. A workspace model that fails falls back to
  * the free rules provider only: the job never silently moves onto credentials the operator pays for.
  * The resolved model is pinned per job and stage, so a retry keeps it even if the preference changed.

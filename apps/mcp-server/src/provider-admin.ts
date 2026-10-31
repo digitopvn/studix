@@ -36,7 +36,7 @@ const Id = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
 
 /**
  * API-key connections only. There is deliberately no `baseUrl`: custom endpoints stay off until outbound
- * URLs are checked against private networks, and OAuth stays off until a provider is cleared (ADR 0011).
+ * URLs are checked against private networks, and OAuth stays off until a provider is cleared (ADR 0012).
  */
 export const CreateConnectionBody = z
   .object({

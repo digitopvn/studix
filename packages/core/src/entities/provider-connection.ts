@@ -34,7 +34,7 @@ export function isUsableStatus(status: ProviderConnectionStatus): boolean {
 
 /**
  * Where the money comes from. `subscription` is never assumed: OAuth against a third-party harness may
- * bill extra usage instead (see ADR 0011), so OAuth connections default to `unknown` until verified.
+ * bill extra usage instead (see ADR 0012), so OAuth connections default to `unknown` until verified.
  */
 export const BILLING_SOURCES = ["subscription", "extra-usage", "usage-based", "unknown"] as const;
 export type BillingSource = (typeof BILLING_SOURCES)[number];

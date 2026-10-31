@@ -180,7 +180,7 @@ AI client --(inbound credential: stx_ key)--> /mcp
 | App -> tenant data            | Every repository call    | `TenantContext` required; no unscoped query API                                                                                                                       |
 | App/worker -> third-party MCP | Outbound connector call  | URL policy (SSRF, DNS rebinding, redirects), secretRef, caps, re-authorization                                                                                        |
 | Worker -> model providers     | Decision and media calls | Server-held credentials, redaction, budget, timeouts                                                                                                                  |
-| Worker -> provider credential | Decrypt at execution     | Sealed vault bound to workspace and ref, per-connection owner check, in-memory runtime auth ([ADR-0011](decisions/0011-provider-connections-and-model-resolution.md)) |
+| Worker -> provider credential | Decrypt at execution     | Sealed vault bound to workspace and ref, per-connection owner check, in-memory runtime auth ([ADR-0012](decisions/0012-provider-connections-and-model-resolution.md)) |
 | Worker -> agent runtime       | Pi session               | Process/pod isolation, not a path guard; no shell, no secrets in prompt                                                                                               |
 | Storage -> client             | Artifact download        | Short-lived signed URLs, tenant-prefixed keys                                                                                                                         |
 

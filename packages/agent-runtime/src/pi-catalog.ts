@@ -29,7 +29,7 @@ export interface PiCatalogProvider {
 /**
  * Providers whose only credential is the API key we hand the session. Anything with ambient auth (cloud IAM,
  * ADC, account ids read from the environment) or an unverified vendor is left out: the Pi SDK would fall
- * back to the operator's own environment for it, which breaks the per-tenant credential boundary (ADR 0011).
+ * back to the operator's own environment for it, which breaks the per-tenant credential boundary (ADR 0012).
  */
 const RUNTIME_KEY_PROVIDERS: ReadonlySet<string> = new Set([
   "anthropic",
@@ -53,7 +53,7 @@ export function isRuntimeKeyProvider(provider: string): boolean {
 
 /**
  * OAuth is offered per provider, only after the vendor's terms for third-party harnesses were checked
- * (ADR 0011). Nothing is allowed yet, so every OAuth login the SDK knows about is reported as restricted.
+ * (ADR 0012). Nothing is allowed yet, so every OAuth login the SDK knows about is reported as restricted.
  */
 const OAUTH_ALLOWED: ReadonlySet<string> = new Set();
 

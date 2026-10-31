@@ -1,4 +1,4 @@
-# 0011. Provider connections, credential vault and model resolution
+# 0012. Provider connections, credential vault and model resolution
 
 - Status: Accepted
 - Date: 2026-10-31
@@ -9,7 +9,9 @@ Agents (Pi today, the Claude Agent SDK next) need credentials for AI providers. 
 server environment variables (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`) used by the decision layer, and the
 Pi runtime had no real loop. Users must be able to bring their own provider access, pick models, and know which
 connection a job really used. Two adapters must share one credential and model system: a second key or
-OAuth store per adapter would double the attack surface and the UX.
+OAuth store per adapter would double the attack surface and the UX. The Claude Agent SDK runtime contract
+([ADR 0011](0011-claude-agent-runtime-and-provider-auth.md)) expects its encrypted credential storage and API-key
+flow from this shared domain, and its subscription OAuth gate applies here unchanged.
 
 Pi stores credentials in `~/.pi/agent/auth.json` by default and falls back to environment variables. On a
 multi-tenant worker both are wrong: the file is shared by every tenant and the environment belongs to the
