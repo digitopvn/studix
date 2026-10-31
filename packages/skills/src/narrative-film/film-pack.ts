@@ -51,6 +51,7 @@ import {
   bibleBoardIr,
   designBoardIr,
   FILM_FPS,
+  FILM_SHOT_STYLE,
   type FilmMetadata,
   filmOf,
   ShotBoard,
@@ -403,6 +404,17 @@ function replaceShots(ir: VideoIR, next: ReadonlyMap<string, Shot>, assets: read
   for (const scene of copy.scenes) scene.shots = scene.shots.map((shot) => next.get(shot.id) ?? shot);
   const ids = new Set(assets.map((a) => a.id));
   copy.assets = [...copy.assets.filter((a) => !ids.has(a.id)), ...assets];
+  return VideoIRSchema.parse(copy);
+}
+
+/**
+ * The cut the film is rendered from: every shot fills the frame edge to edge. Clips and scenes are made
+ * before this (and cached), so the style is set on the finished cut rather than where each shot is built.
+ */
+function fullFrameCut(ir: VideoIR): VideoIR {
+  const copy = structuredClone(ir);
+  for (const scene of copy.scenes)
+    scene.shots = scene.shots.map((shot) => ({ ...shot, style: { ...shot.style, ...FILM_SHOT_STYLE } }));
   return VideoIRSchema.parse(copy);
 }
 
@@ -1379,7 +1391,12 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           "Fix the listed shots, then render again.",
         );
       return {
-        output: { pass: true, shots: scopeShots(film.scope).length, lines: film.production.dialogue.length },
+        output: {
+          pass: true,
+          shots: scopeShots(film.scope).length,
+          lines: film.production.dialogue.length,
+          ir: fullFrameCut(ir),
+        },
       };
     },
   };
