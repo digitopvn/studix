@@ -34,8 +34,7 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
   tool({
     name: NAMES.list,
     title: "List agent tasks",
-    description:
-      "Stages waiting for your (host agent) output, optionally for one jobId.",
+    description: "Stages waiting for your (host agent) output, optionally for one jobId.",
     input: z.object({
       jobId: Id.optional(),
       limit: z.number().int().min(1).max(100).optional(),
@@ -57,8 +56,7 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
   tool({
     name: NAMES.get,
     title: "Get agent task",
-    description:
-      "A handed-off stage: instructions, input, outputSchema, limits and the attempt to submit.",
+    description: "A handed-off stage: instructions, input, outputSchema, limits and the attempt to submit.",
     input: z.object({ taskId: Id }),
     readOnly: true,
     async run(ctx, input) {

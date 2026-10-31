@@ -204,6 +204,7 @@ function toReview(row: typeof reviews.$inferSelect): Review {
     atMs: opt(row.atMs),
     endMs: opt(row.endMs),
     status: row.status,
+    idempotencyKey: opt(row.idempotencyKey),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -227,6 +228,7 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
           atMs: input.atMs ?? null,
           endMs: input.endMs ?? null,
           status: "open",
+          idempotencyKey: input.idempotencyKey ?? null,
           createdAt: now,
           updatedAt: now,
         })
@@ -238,6 +240,15 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
         .select()
         .from(reviews)
         .where(scoped(reviews, ctx, eq(reviews.id, id)));
+      return rows[0] ? toReview(rows[0]) : undefined;
+    },
+    async findByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      const rows = await db
+        .select()
+        .from(reviews)
+        .where(
+          scoped(reviews, ctx, eq(reviews.projectId, projectId), eq(reviews.idempotencyKey, idempotencyKey)),
+        );
       return rows[0] ? toReview(rows[0]) : undefined;
     },
     async list(ctx, query) {

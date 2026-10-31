@@ -167,4 +167,33 @@ describe("StudioService over Postgres repositories", () => {
     expect(review.versions).toHaveLength(2);
     expect(review.comments).toHaveLength(1);
   });
+  it("stores the idempotency key on a comment without a patch and replays the retry", async () => {
+    const service = studio();
+    const ctx = await tenant("svc-fb-comment");
+    const created = await service.createVideoProject(ctx, {
+      brief: { prompt: "Giới thiệu Sương Mai Coffee", language: "vi" },
+      spec: brandIntro,
+    });
+    const projectId = created.project.id;
+    const input = { projectId, shotId: "feature-1", comment: "nhịp nhanh hơn", idempotencyKey: "fb-cmt-1" };
+    const first = await service.submitFeedback(ctx, input);
+    const stored = await db.current.repos.reviews.findByIdempotencyKey(ctx, projectId, "fb-cmt-1");
+    expect(stored).toMatchObject({ id: first.feedbackId, idempotencyKey: "fb-cmt-1" });
+    await expect(
+      db.current.repos.reviews.create(ctx, {
+        projectId,
+        author: { type: "user", id: "usr_1" },
+        body: "trùng key",
+        idempotencyKey: "fb-cmt-1",
+      }),
+    ).rejects.toThrow();
+
+    const [retried, concurrent] = await Promise.all([
+      service.submitFeedback(ctx, input),
+      service.submitFeedback(ctx, input),
+    ]);
+    expect(retried).toMatchObject({ replayed: true, feedbackId: first.feedbackId });
+    expect(concurrent.feedbackId).toBe(first.feedbackId);
+    expect((await service.getProjectReview(ctx, projectId)).comments).toHaveLength(1);
+  });
 });

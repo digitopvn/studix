@@ -158,10 +158,16 @@ export const reviews = pgTable(
     atMs: integer("at_ms"),
     endMs: integer("end_ms"),
     status: text("status").$type<ReviewStatus>().notNull(),
+    idempotencyKey: text("idempotency_key"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("reviews_project_idx").on(t.projectId, t.id)],
+  (t) => [
+    index("reviews_project_idx").on(t.projectId, t.id),
+    uniqueIndex("reviews_project_idempotency_uq")
+      .on(t.projectId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} is not null`),
+  ],
 );
 
 /** Append-only storyboard revisions with their review state; `revision` is 1-based per project. */

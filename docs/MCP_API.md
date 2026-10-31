@@ -143,6 +143,10 @@ Behavior notes:
   revisions, job), even when `baseVersionId` is no longer current. Retries,
   including concurrent ones, return the same version, comment and job, with
   `replayed: true`.
+- A comment without a patch creates no version or job, so its key is stored on
+  the comment itself (unique per project). A retry returns the stored comment
+  with `replayed: true`; the same key with a different comment or with a patch
+  is `CONFLICT`.
 - `studix_render` renders a stored version, and that version becomes current.
   Both tools accept `idempotencyKey` and `budgetCents`. A budget above the
   approval threshold parks the job in `waiting_approval`.
