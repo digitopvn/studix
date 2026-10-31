@@ -265,6 +265,15 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     return held ? result : { status: "lost" };
   };
 
+  /** Pause the deadline while parked: keep what is left of it and clear the absolute time. */
+  const pausedDeadline = (job: Job): Pick<JobSet, "deadlineAt" | "deadlineRemainingMs"> =>
+    job.deadlineAt
+      ? {
+          deadlineAt: null,
+          deadlineRemainingMs: Math.max(0, job.deadlineAt.getTime() - clock.now().getTime()),
+        }
+      : {};
+
   const finish = async (job: Job, workerId: string, set: JobSet): Promise<boolean> => {
     const rows = await db
       .update(jobs)
@@ -302,6 +311,11 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           lockedBy: workerId,
           leaseExpiresAt: leaseUntil(),
           startedAt: sql`coalesce(${jobs.startedAt}, ${now.toISOString()}::timestamptz)`,
+          // Re-arm a deadline that was paused while the job waited at a gate or for the host agent.
+          deadlineAt: sql`case when ${jobs.deadlineRemainingMs} is not null
+            then ${now.toISOString()}::timestamptz + ${jobs.deadlineRemainingMs} * interval '1 millisecond'
+            else ${jobs.deadlineAt} end`,
+          deadlineRemainingMs: null,
           updatedAt: now,
         })
         .where(inArray(jobs.id, candidate))
@@ -441,9 +455,13 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     release: (job, workerId) =>
       finish(job, workerId, { status: "queued", attempts: job.attempts - 1, runAfter: clock.now() }),
     park: (job, workerId) =>
-      finish(job, workerId, { status: "waiting_approval", attempts: job.attempts - 1 }),
+      finish(job, workerId, {
+        status: "waiting_approval",
+        attempts: job.attempts - 1,
+        ...pausedDeadline(job),
+      }),
     parkForHost: (job, workerId) =>
-      finish(job, workerId, { status: "waiting_host", attempts: job.attempts - 1 }),
+      finish(job, workerId, { status: "waiting_host", attempts: job.attempts - 1, ...pausedDeadline(job) }),
 
     async expireHostHandoffs() {
       const now = clock.now();

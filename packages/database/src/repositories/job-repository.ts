@@ -30,6 +30,7 @@ export function toJob(row: JobRow): Job {
     idempotencyKey: opt(row.idempotencyKey),
     cancelRequested: row.cancelRequested,
     deadlineAt: opt(row.deadlineAt),
+    deadlineRemainingMs: opt(row.deadlineRemainingMs),
     budgetCents: opt(row.budgetCents),
     spentCents: row.spentCents,
     createdBy: actorFrom(row.createdByType, row.createdById),
@@ -205,7 +206,13 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           maxAttempts: input.maxAttempts ?? 3,
           runAfter: input.runAfter ?? now,
           idempotencyKey: input.idempotencyKey ?? null,
-          deadlineAt: input.deadlineAt ?? null,
+          // A job born at a gate has no active execution yet: its deadline starts when it is first claimed.
+          ...(input.initialStatus === "waiting_approval" && input.deadlineAt
+            ? {
+                deadlineAt: null,
+                deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - now.getTime()),
+              }
+            : { deadlineAt: input.deadlineAt ?? null }),
           budgetCents: input.budgetCents ?? null,
           createdByType: input.createdBy.type,
           createdById: input.createdBy.id,

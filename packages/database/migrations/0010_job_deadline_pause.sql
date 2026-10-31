@@ -1,0 +1,1 @@
+ALTER TABLE "jobs" ADD COLUMN "deadline_remaining_ms" bigint;

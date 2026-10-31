@@ -17,7 +17,7 @@ const db = withTestDatabase();
 const human = { type: "user" as const, id: "usr_reviewer" };
 
 /** A finished render plus a video.publish job for it. */
-async function enqueuePublish(ctx: TenantContext): Promise<Job> {
+async function enqueuePublish(ctx: TenantContext, deadlineAt?: Date): Promise<Job> {
   const { repos } = db.current;
   const project = await repos.projects.create(ctx, {
     title: "Publish me",
@@ -43,6 +43,7 @@ async function enqueuePublish(ctx: TenantContext): Promise<Job> {
     kind: "video.publish",
     projectId: project.id,
     payload: { renderId: render.id, title: "Launch" },
+    deadlineAt,
     createdBy: human,
   });
   return job;
@@ -337,6 +338,42 @@ describe("publish approval gate", () => {
       status: "succeeded",
       result: { platform: "fake", externalId: "ext-1", approvalId: pending.id },
     });
+  });
+
+  it("pauses the job deadline while parked at the gate and re-arms it on the next claim", async () => {
+    const ctx = await tenant(db.current, "publish-deadline");
+    const deadlineMs = 1_500;
+    const job = await enqueuePublish(ctx, new Date(Date.now() + deadlineMs));
+    const pub = fakePublisher();
+
+    const first = createTestWorker(db.current, "w1", { publisher: pub.publisher });
+    expect((await first.runOnce())?.outcome).toBe("waiting_approval");
+    const parked = (await db.current.repos.jobs.get(ctx, job.id))!;
+    expect(parked.deadlineAt).toBeUndefined();
+    expect(parked.deadlineRemainingMs).toBeGreaterThan(0);
+    expect(parked.deadlineRemainingMs).toBeLessThanOrEqual(deadlineMs);
+
+    // The review outlasts the whole deadline budget.
+    await new Promise((resolve) => setTimeout(resolve, deadlineMs + 300));
+    const pending = (await db.current.repos.approvals.findLatest(
+      ctx,
+      { type: "job", id: job.id },
+      "publish",
+    ))!;
+    await db.current.repos.approvals.decide(ctx, pending.id, {
+      status: "approved",
+      decidedBy: human,
+      decidedAt: new Date(),
+    });
+    const restarted = createTestWorker(db.current, "w2", { publisher: pub.publisher });
+    expect(await restarted.queue.resumeDecidedApprovals()).toBe(1);
+    const claimedAt = Date.now();
+    expect((await restarted.runOnce())?.outcome).toBe("succeeded");
+    expect(pub.calls).toHaveLength(1);
+    const done = (await db.current.repos.jobs.get(ctx, job.id))!;
+    expect(done.deadlineRemainingMs).toBeUndefined();
+    // Re-armed from the remaining budget at claim time, not the original absolute time.
+    expect(done.deadlineAt!.getTime()).toBeGreaterThan(claimedAt);
   });
 
   it("does not accept an approval granted by a non-human actor", async () => {

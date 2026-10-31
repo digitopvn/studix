@@ -9,7 +9,17 @@ import type {
 } from "@studix/core";
 import type { StudixErrorPayload } from "@studix/shared";
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, jsonb, pgTable, real, text, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  real,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { type ActorType, createdAt, id, ts, updatedAt } from "./columns.ts";
 import { videoProjects } from "./projects.ts";
 import { tenantColumns } from "./tenancy.ts";
@@ -58,6 +68,7 @@ export const jobs = pgTable(
     idempotencyKey: text("idempotency_key"),
     cancelRequested: boolean("cancel_requested").notNull().default(false),
     deadlineAt: ts("deadline_at"),
+    deadlineRemainingMs: bigint("deadline_remaining_ms", { mode: "number" }),
     budgetCents: integer("budget_cents"),
     spentCents: integer("spent_cents").notNull().default(0),
     createdByType: text("created_by_type").$type<ActorType>().notNull(),
