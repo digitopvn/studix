@@ -460,6 +460,12 @@ importers:
 
   packages/skills:
     dependencies:
+      '@studix/billing':
+        specifier: workspace:*
+        version: link:../billing
+      '@studix/core':
+        specifier: workspace:*
+        version: link:../core
       '@studix/shared':
         specifier: workspace:*
         version: link:../shared

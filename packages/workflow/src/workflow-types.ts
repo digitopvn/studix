@@ -28,6 +28,11 @@ export interface StageUsage {
   unit: string;
   costCents: number;
   providerExecutionId?: string;
+  /**
+   * Upstream paid job this line bills (e.g. "sume:job_123"). Like a provider execution, it is billed once
+   * per job whatever attempt reports it, so a stage that resumed a job it paid for never bills it twice.
+   */
+  upstreamJob?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -39,8 +44,6 @@ export interface StageResult {
 /** What a QA hard gate checks a rendered file against. */
 export interface QaExpectation {
   durationMs: number;
-  width: number;
-  height: number;
   fps: number;
   /** The file must carry an audio stream (and pass the loudness and sync checks). */
   requireAudio: boolean;
@@ -54,7 +57,11 @@ export interface QaGate {
    * Measure `filePath` and resolve with the JSON report when every hard check passes. Throws a
    * non-retryable VALIDATION error when one fails; a file that could not be measured never passes.
    */
-  assertPasses(filePath: string, expect: QaExpectation, signal: AbortSignal): Promise<Record<string, unknown>>;
+  assertPasses(
+    filePath: string,
+    expect: QaExpectation,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>>;
 }
 
 /**

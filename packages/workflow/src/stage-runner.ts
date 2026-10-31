@@ -92,7 +92,9 @@ function stageMediaJournal(
     put(c, record) {
       if (!sameTenant(c)) {
         return Promise.reject(
-          new StudixError("FORBIDDEN", "media job journal belongs to another workspace", { retryable: false }),
+          new StudixError("FORBIDDEN", "media job journal belongs to another workspace", {
+            retryable: false,
+          }),
         );
       }
       records.set(record.idempotencyKey, structuredClone(record));
@@ -283,7 +285,9 @@ export async function runStages(
       ctx,
       rows.filter((r) => r.name === stage.name),
       (mediaJobs) =>
-        fenced(queue.writeStage(job, workerId, { name: stage.name, status: "running", startedAt, mediaJobs })),
+        fenced(
+          queue.writeStage(job, workerId, { name: stage.name, status: "running", startedAt, mediaJobs }),
+        ),
     );
     const sctx: StageContext = {
       ctx,
@@ -377,18 +381,19 @@ export async function runStages(
           queue.recordUsage(job, workerId, {
             // A usage line tied to a provider execution is that one call's cost, whatever attempt reports
             // it (e.g. a retry served from the decision cache); anything else re-ran and cost again.
-            dedupeKey: usage.providerExecutionId
-              ? executionUsageDedupeKey({
-                  jobId: job.id,
-                  stage: stage.name,
-                  executionId: usage.providerExecutionId,
-                })
-              : usageDedupeKey({
-                  jobId: job.id,
-                  stage: stage.name,
-                  attempt: job.attempts,
-                  item: usage.item,
-                }),
+            dedupeKey:
+              (usage.providerExecutionId ?? usage.upstreamJob)
+                ? executionUsageDedupeKey({
+                    jobId: job.id,
+                    stage: stage.name,
+                    executionId: (usage.providerExecutionId ?? usage.upstreamJob) as string,
+                  })
+                : usageDedupeKey({
+                    jobId: job.id,
+                    stage: stage.name,
+                    attempt: job.attempts,
+                    item: usage.item,
+                  }),
             kind: usage.kind,
             quantity: usage.quantity,
             unit: usage.unit,

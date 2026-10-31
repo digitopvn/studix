@@ -1,6 +1,6 @@
 import { StudixError } from "@studix/shared";
 import type { VideoIR } from "@studix/video-ir";
-import type { StageDefinition } from "@studix/workflow";
+import type { PackPipeline, StageDefinition } from "@studix/workflow";
 import type { KnowledgeCatalog } from "./knowledge/knowledge-catalog.ts";
 
 export interface SkillMetadata {
@@ -41,6 +41,11 @@ export interface WorkflowPack {
   templates: readonly Skill[];
   /** Stage templates (with input/output schemas and cache keys), unique by name across packs. */
   stages?: readonly StageDefinition[];
+  /**
+   * How a video.create job of this pack runs (its stages woven between the engine's); packs without one
+   * run the engine's default plan -> render chain.
+   */
+  pipeline?: PackPipeline;
 }
 
 export interface PackRegistry {

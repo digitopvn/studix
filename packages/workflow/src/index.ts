@@ -7,6 +7,7 @@ export * from "./retry-backoff.ts";
 export * from "./stage-runner.ts";
 export * from "./stage-services.ts";
 export * from "./stage-signals.ts";
+export * from "./video-create-checkpoints.ts";
 export * from "./video-create-workflow.ts";
 export * from "./video-publish-workflow.ts";
 export * from "./worker-job-queue.ts";

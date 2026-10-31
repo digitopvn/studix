@@ -56,7 +56,9 @@ export const CreativeBrief = z.object({
     .array(CreativeDirection)
     .min(1)
     .max(6)
-    .refine((ds) => new Set(ds.map((d) => d.id)).size === ds.length, { message: "direction ids must be unique" })
+    .refine((ds) => new Set(ds.map((d) => d.id)).size === ds.length, {
+      message: "direction ids must be unique",
+    })
     .optional(),
 });
 export type CreativeBrief = z.infer<typeof CreativeBrief>;
