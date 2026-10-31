@@ -8,16 +8,34 @@ records the contract and the measurements behind it.
 
 ## What renders (Implemented)
 
-| IR element                         | How                                                                                                                                                                  |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`)                                                                                |
-| Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them                     |
-| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `volume` x `gainDb`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`) |
-| Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                |
+| IR element                         | How                                                                                                                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`)                                                                                            |
+| Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them                                 |
+| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `volume` x `gainDb`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`)             |
+| Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                            |
+| Composition shot (film scene)      | Captured first by the ported film engine (`film-engine/film-composition-render.ts`), each scene as its own HyperFrames root composition, then spliced back as a muted video shot |
 
 Media types: images `png/jpeg/webp/gif/avif/svg`, video `mp4/webm/mov`, audio any
 `audio/*` FFmpeg decodes. `hyperframesSupport()` reports anything else instead of
 dropping it.
+
+### Film scenes
+
+A composition shot names a code asset of type `application/vnd.studix.film-scene+json`: a
+versioned package with an EDL and an ES module that exports `scene` (`film-scene-package.ts`).
+The package refers to IR media only as `asset:<id>`; the renderer resolves those tokens to project
+paths, and a malformed package is `VALIDATION`. The engine under `packages/renderers/film-engine/`
+is ported as-is from anime-creator ([PORTING.md](PORTING.md#port-record-film-engine-và-pack-phim)).
+Its page loads GSAP and fonts from the project, and a CSP keeps it off the network.
+
+Captures are keyed by the scene content, its media, params, duration, fps and quality, so a retry
+in the same work directory reuses them.
+
+Packs author scenes through `@studix/renderers/film-scene`, which has no browser dependency.
+`filmPlateScene` builds a one-shot scene that moves a still: a camera push towards a focus point
+and, optionally, particle weather (`petal`, `sakura`, `snow`, `ember`, `leaf`, `ash`). The
+narrative packs use it for T0/T1 shots instead of an image-to-video call.
 
 ## Finish and deliveries (Implemented)
 
@@ -46,6 +64,43 @@ without loudness.
 FFmpeg always runs with an argv array (no shell) and never overwrites silently.
 The behaviour is verified on both FFmpeg 8.0 and the worker image's FFmpeg 5.1.
 
+## HyperFrames version
+
+`@hyperframes/core`, `@hyperframes/lint` and `@hyperframes/producer` are pinned
+to the exact same version in `packages/renderers/package.json` (currently
+`0.8.223`, Apache-2.0). Bump the three together and re-run the renderer tests
+(`compile-composition.test.ts`, the two `*.integration.test.ts` files).
+
+- **FFmpeg 7.1 / 8.0 and width 1080.** Before `0.8.223`
+  ([heygen-com/hyperframes#5559](https://github.com/heygen-com/hyperframes/pull/5559))
+  those FFmpeg versions blacked out the 8 rightmost pixel columns of an SDR MP4
+  whose width is `16k+8`, and 1080 is one. A 1080x1920 or 1080x1080 master rendered
+  on an FFmpeg 8 dev machine got a black edge that the stream-copy carried into the
+  delivery. The worker image (FFmpeg 5.1) was never affected. Keep the pin at
+  `0.8.223` or later.
+- **Encode changes since `0.8.78`:** keyframe interval
+  ([#6444](https://github.com/heygen-com/hyperframes/pull/6444)) and the `high`
+  quality preset using x264 `fast`
+  ([#6640](https://github.com/heygen-com/hyperframes/pull/6640)). Output bytes
+  differ from older renders; the contract above (codec, size, loudness) does not.
+- **`handleSIGTERM` patch.** The engine launches Chrome through
+  `ownedLaunchOptions()`, which leaves Puppeteer's `handleSIGTERM` at `true`,
+  so a worker SIGTERM closed Chrome mid-render and lost the grace period.
+  `patches/@hyperframes__engine@0.8.223.patch` (wired in
+  `pnpm-workspace.yaml` → `patchedDependencies`) adds `handleSIGTERM: false`;
+  the worker then aborts the render itself after the grace period and the
+  producer closes Chrome. The patch is keyed to the exact version, so a bump
+  must redo it (`pnpm patch @hyperframes/engine@<version>`, then
+  `pnpm patch-commit`) or `pnpm install` fails. Drop it once upstream exposes a
+  host switch for SIGTERM like `setHostHandlesSigint`.
+- **Deadline budget.** `RenderOptions.deadlineAt` (the job deadline) becomes the
+  producer's `maxRenderMs` for each capture, read when that capture starts.
+  The producer then fails fast once its projected finish passes the deadline
+  (after its calibration pass, or after about a minute of measured capture),
+  and the renderer reports that as a non-retryable `TIMEOUT`. It is a second
+  stop behind the job executor's deadline abort, aimed at a capture that hangs
+  or crawls.
+
 ### Pending IR fields
 
 The IR has no place yet for the finish choices, so they travel in the renderer's
@@ -57,6 +112,29 @@ own `FinishSpec` (`HyperFramesRendererOptions.finish` or the per-render
 
 Music is not ducked under `dialogue` / `voiceover` yet; the IR allows it but the
 mix sums tracks at their own levels. Looping a short bed would need an IR field.
+
+## Pinned browser build
+
+The worker image (amd64 and arm64) and CI install the same
+`chrome-headless-shell` build, `156.0.8078.80`, set once as
+`ARG CHROME_HEADLESS_SHELL_VERSION` in the root
+`Dockerfile`; CI reads that line. An unpinned `@stable` let pixels, golden tests
+and the WebGL measurements below change between builds with no code change.
+
+Why `156.0.8078.80`: it is the build the WebGL table below was measured on, so
+pinning it invalidates no measurement. `@hyperframes/engine@0.8.223` manages its
+own Chrome at `152.0.7977.30`; moving to that build would mean re-measuring the
+table and is a decision for the film-engine work (#47). To change the build, edit
+the `ARG`, re-run the measurement, and update this section.
+
+Chrome for Testing publishes `chrome-headless-shell` for `linux-arm64` from build
+153, so the arm64 image (local Apple Silicon) installs the same build id instead
+of Debian's `chromium`. Installing it needs `@puppeteer/browsers` 3.2.0 or later;
+older releases resolve arm64 to the x64 archive. Same build id does not mean same
+pixels: do not compare pixels or timings across architectures.
+
+Check: two builds of the image print the same `chrome --version`; the build
+already runs it as its last browser step.
 
 ## WebGL in headless Chromium without a GPU
 

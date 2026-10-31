@@ -193,6 +193,17 @@ const flag = (name: string, value: string | number | undefined): string[] =>
 const inputFlag = (name: string, input: MediaInput | undefined): string[] =>
   input ? [`--${name}=${input.kind === "url" ? input.url : input.path}`] : [];
 
+/**
+ * Resolution Studix asks for when a request names none, by model. Seedance 2.5 bills per output second by
+ * resolution and Sume's own default is far above what a draft or review cut needs, so Studix pins it to
+ * 480p (about $0.10/s); pass `params.resolution` to choose another.
+ */
+export const DEFAULT_VIDEO_RESOLUTIONS: Readonly<Record<string, string>> = { "sume:seedance-2.5": "480p" };
+
+function videoResolution(params: Record<string, unknown>, model: QualifiedModel): string | undefined {
+  return stringParam(params, "resolution", RESOLUTION) ?? DEFAULT_VIDEO_RESOLUTIONS[model.id];
+}
+
 function seconds(params: Record<string, unknown>): number | undefined {
   const ms = numberParam(params, "durationMs", 1, MAX_DURATION_MS);
   return ms === undefined ? undefined : Math.ceil(ms / 1000);
@@ -210,13 +221,60 @@ export interface PlanContext {
   waitTimeoutMs: number;
 }
 
+const codes = (list: string) => list.split(" ");
+/** Languages ElevenLabs multilingual v2 speaks (source: ElevenLabs model docs, as listed by multix 1.26). */
+const ELEVENLABS_V2_LANGUAGES = codes(
+  "en ja zh de hi fr ko pt it es id nl tr fil pl sv bg ro ar cs el fi hr ms sk da ta uk ru",
+);
+/**
+ * What each ElevenLabs speech model speaks, and whether it takes an explicit `language_code`. Multilingual
+ * v2 detects the language from the text and rejects `language_code`; the v2.5 and v3 models take it.
+ */
+const ELEVENLABS_SPEECH: Readonly<Record<string, { languages?: readonly string[]; languageCode: boolean }>> =
+  {
+    eleven_multilingual_v2: { languages: ELEVENLABS_V2_LANGUAGES, languageCode: false },
+    eleven_flash_v2: { languages: ["en"], languageCode: false },
+    eleven_turbo_v2: { languages: ["en"], languageCode: false },
+    eleven_flash_v2_5: { languages: [...ELEVENLABS_V2_LANGUAGES, ...codes("hu no vi")], languageCode: true },
+    eleven_turbo_v2_5: { languages: [...ELEVENLABS_V2_LANGUAGES, ...codes("hu no vi")], languageCode: true },
+    // Seventy-odd languages; Studix leaves the check to ElevenLabs.
+    eleven_v3: { languageCode: true },
+    eleven_v3_conversational: { languageCode: true },
+  };
+/** The speech model a voice request moves to when the default one does not speak its language. */
+export const ELEVENLABS_WIDE_VOICE_MODEL = "elevenlabs:eleven_v3";
+
+/** Primary subtag of a BCP 47 language, lower-case ("vi-VN" -> "vi"); undefined when there is none. */
+function primaryLanguage(params: Record<string, unknown>): string | undefined {
+  return stringParam(params, "language", LANGUAGE)?.split("-")[0]?.toLowerCase();
+}
+
+/** False only when the model is known not to speak `language`. */
+function speaks(model: QualifiedModel, language: string): boolean {
+  if (model.vendor !== "elevenlabs") return true;
+  const languages = ELEVENLABS_SPEECH[model.model]?.languages;
+  return languages === undefined || languages.includes(language);
+}
+
 /** Resolve the role and model of a request without touching its inputs (used for grouping and pricing). */
 export function resolveMultixModel(
   request: Pick<MediaGenerationRequest, "kind" | "model" | "params">,
   defaults: MultixModelDefaults,
 ): { role: MultixRole; model: QualifiedModel } {
-  const role = roleFor(request.kind, request.params ?? {});
-  return { role, model: parseQualifiedModel(request.model ?? defaults[role], role, defaults) };
+  const params = request.params ?? {};
+  const role = roleFor(request.kind, params);
+  const model = parseQualifiedModel(request.model ?? defaults[role], role, defaults);
+  const language = role === "voice" ? primaryLanguage(params) : undefined;
+  if (language === undefined || speaks(model, language)) return { role, model };
+  // A model the request named is the caller's choice: refuse it before anything is paid.
+  if (request.model !== undefined) {
+    throw new StudixError("VALIDATION", `${model.id} does not speak "${language}"`, {
+      retryable: false,
+      details: { model: model.id, language, suggestedModel: ELEVENLABS_WIDE_VOICE_MODEL },
+    });
+  }
+  // The role default cannot say it: use the widest ElevenLabs model instead of a call that is refused.
+  return { role, model: parseQualifiedModel(ELEVENLABS_WIDE_VOICE_MODEL, role, defaults) };
 }
 
 /** Build the multix invocation for a request. Validates every value that reaches argv. */
@@ -268,7 +326,7 @@ export async function planMultixRequest(
           ...inputFlag("image", await input("image")),
           ...inputFlag("end-image", await input("endImage")),
           ...flag("duration", seconds(params)),
-          ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
+          ...flag("resolution", videoResolution(params, model)),
           ...flag("aspect-ratio", stringParam(params, "aspectRatio", ASPECT)),
           ...(audio === undefined ? [] : [audio ? "--generate-audio" : "--no-generate-audio"]),
         ],
@@ -293,7 +351,7 @@ export async function planMultixRequest(
           ...inputFlag("image", video ? undefined : image),
           ...inputFlag("audio", await input("audio")),
           ...flag("duration", seconds(params)),
-          ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
+          ...flag("resolution", videoResolution(params, model)),
         ],
       };
     }
@@ -309,7 +367,7 @@ export async function planMultixRequest(
           `--model=${model.model}`,
           ...inputFlag("video", await input("video")),
           ...flag("duration", seconds(params)),
-          ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
+          ...flag("resolution", videoResolution(params, model)),
         ],
       };
     case "imageUpscale": {
@@ -379,7 +437,11 @@ function voiceArgv(model: QualifiedModel, prompt: string, params: Record<string,
         `--text=${prompt}`,
         `--model=${model.model}`,
         ...flag("voice", voice),
-        ...flag("language-code", language),
+        // Models without `language_code` refuse it; they detect the language from the text.
+        ...flag(
+          "language-code",
+          ELEVENLABS_SPEECH[model.model]?.languageCode === false ? undefined : language,
+        ),
         ...flag("seed", numberParam(params, "seed", 0, 4_294_967_295, true)),
       ];
     case "fish":

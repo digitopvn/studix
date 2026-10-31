@@ -83,3 +83,51 @@ taken after that change should read latency, schema-valid and fallback rates fro
 Output per job: a 6 s, 1080x1920 MP4 of 143,372 bytes, rendered in about 13 s
 of wall time by one worker with 4 GiB memory (HyperFrames low-memory profile,
 software GPU).
+
+## Vertical benchmark (epic #2)
+
+Production benchmark of the two verticals on the shared engine: marketing
+(`marketing-video` ads and a `motion-graphic` video, demo of issue #45) and
+anime (`anime` scene, demo of issue #47). Numbers come only from
+[`benchmark-jobs.ts`](../packages/database/scripts/benchmark-jobs.ts) run
+against the database that ran the demo jobs; nothing here is estimated.
+
+```bash
+pnpm --filter @studix/database benchmark -- <jobId> [jobId...]
+```
+
+`--json` prints the full report (per-job rows, cost by usage kind, QA failure
+messages) instead of the Markdown tables. The script only reads; it needs
+`DATABASE_URL`. Definitions live next to the code in
+[`job-benchmark.ts`](../packages/database/src/benchmark/job-benchmark.ts) and are
+covered by [the fixture test](../packages/database/test/job-benchmark.test.ts)
+and [the Postgres test](../packages/database/test/job-benchmark.integration.test.ts):
+
+| Metric                      | Computed from                                                                                                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Time to preview             | `jobs.created_at` to the first succeeded `renders` row of the job (`completed_at`); also reported minus the time the job's approvals waited for a decision                     |
+| Success rate                | `succeeded` / terminal jobs that were not cancelled; jobs still running or parked at a gate are listed as unfinished                                                           |
+| Cost per video minute       | Sum of `usage_events.cost_cents` of the job (every kind, COGS) / seconds of its succeeded renders (`renders.probe.durationMs`) x 60                                            |
+| Agent cost per video second | `usage_events` of kind `agent.run` / the same seconds; host-agent runs are recorded at 0 cents                                                                                 |
+| Revision rounds             | Per measured project: versions with `source = 'patch'` plus storyboard revisions sent back (`changes_requested`); plus job approvals turned down                               |
+| Asset reuse                 | Assets in the IR of the job's rendered versions whose `sha256` already existed before the job (asset library or an earlier project version of the workspace) / all such assets |
+| Stages served from cache    | Stage rows whose output equals a `stage_cache` entry written by another job                                                                                                    |
+| Quality failures            | Runs of the QA hard-gate stages (`<pack>.qa`, `qa_check`) that failed, with the failure messages from `stages.error.details.failures`                                          |
+| Human intervention points   | `approvals` with the job as subject (creative gates, overruns, spend) plus storyboard reviews (approved or sent back) of the measured projects                                 |
+
+### Results
+
+Chờ số đo từ demo. The job ids of the marketing demo (#45) and the anime demo
+(#47) are added here with the script output once both demos finish.
+
+| Metric                      | Marketing (#45)   | Anime (#47)       |
+| --------------------------- | ----------------- | ----------------- |
+| Jobs                        | chờ số đo từ demo | chờ số đo từ demo |
+| Time to preview p50 / p95   | chờ số đo từ demo | chờ số đo từ demo |
+| Success rate                | chờ số đo từ demo | chờ số đo từ demo |
+| Cost per video minute       | chờ số đo từ demo | chờ số đo từ demo |
+| Agent cost per video second | chờ số đo từ demo | chờ số đo từ demo |
+| Revision rounds             | chờ số đo từ demo | chờ số đo từ demo |
+| Asset reuse                 | chờ số đo từ demo | chờ số đo từ demo |
+| Quality failures (QA)       | chờ số đo từ demo | chờ số đo từ demo |
+| Human intervention points   | chờ số đo từ demo | chờ số đo từ demo |

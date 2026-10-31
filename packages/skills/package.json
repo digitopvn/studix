@@ -7,12 +7,16 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@studix/billing": "workspace:*",
+    "@studix/core": "workspace:*",
+    "@studix/renderers": "workspace:*",
     "@studix/shared": "workspace:*",
     "@studix/video-ir": "workspace:*",
     "@studix/workflow": "workspace:*",
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@studix/providers": "workspace:*",
     "vitest": "5.0.5"
   }
 }

@@ -1,14 +1,26 @@
 import type {
   ApprovalAction,
+  ApprovalChanges,
   ApprovalStatus,
   ApprovalSubjectType,
   JobStatus,
+  MediaJobRecord,
   StageStatus,
   WorkflowRunStatus,
 } from "@studix/core";
 import type { StudixErrorPayload } from "@studix/shared";
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, jsonb, pgTable, real, text, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  real,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { type ActorType, createdAt, id, ts, updatedAt } from "./columns.ts";
 import { videoProjects } from "./projects.ts";
 import { tenantColumns } from "./tenancy.ts";
@@ -57,6 +69,8 @@ export const jobs = pgTable(
     idempotencyKey: text("idempotency_key"),
     cancelRequested: boolean("cancel_requested").notNull().default(false),
     deadlineAt: ts("deadline_at"),
+    deadlineRemainingMs: bigint("deadline_remaining_ms", { mode: "number" }),
+    deadlineWindowMs: bigint("deadline_window_ms", { mode: "number" }),
     budgetCents: integer("budget_cents"),
     spentCents: integer("spent_cents").notNull().default(0),
     createdByType: text("created_by_type").$type<ActorType>().notNull(),
@@ -89,6 +103,8 @@ export const stages = pgTable(
     status: text("status").$type<StageStatus>().notNull(),
     output: jsonb("output").$type<Record<string, unknown>>(),
     error: jsonb("error").$type<StudixErrorPayload>(),
+    /** Upstream media jobs this attempt submitted; read back by later attempts to resume, never resubmit. */
+    mediaJobs: jsonb("media_jobs").$type<MediaJobRecord[]>(),
     startedAt: ts("started_at"),
     finishedAt: ts("finished_at"),
     createdAt: createdAt(),
@@ -114,6 +130,8 @@ export const approvals = pgTable(
     decidedById: text("decided_by_id"),
     decidedAt: ts("decided_at"),
     comment: text("comment"),
+    /** Targets, note and invalidated nodes of a `changes_requested` creative gate. */
+    changes: jsonb("changes").$type<ApprovalChanges>(),
     expiresAt: ts("expires_at"),
     createdAt: createdAt(),
   },

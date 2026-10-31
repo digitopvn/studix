@@ -2,6 +2,7 @@ import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/vid
 import { type StageDefinition, stageCacheKey } from "@studix/workflow";
 import { z } from "zod";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
+import { brandIntroScriptStage } from "./brand-intro-script-stage.ts";
 import { BRAND_INTRO_TEMPLATE_VERSION, brandIntroTemplate } from "./brand-intro-template.ts";
 
 let creativeBriefSchema: Record<string, unknown> | undefined;
@@ -52,5 +53,5 @@ export const brandIntroPack: WorkflowPack = {
   title: "Brand intro",
   version: 1,
   templates: [brandIntroSkill],
-  stages: [brandIntroComposeStage],
+  stages: [brandIntroComposeStage, brandIntroScriptStage],
 };

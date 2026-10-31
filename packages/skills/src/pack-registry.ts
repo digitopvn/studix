@@ -1,6 +1,7 @@
 import { StudixError } from "@studix/shared";
 import type { VideoIR } from "@studix/video-ir";
-import type { StageDefinition } from "@studix/workflow";
+import type { PackPipeline, StageDefinition } from "@studix/workflow";
+import type { KnowledgeCatalog } from "./knowledge/knowledge-catalog.ts";
 
 export interface SkillMetadata {
   /** Stable id, lowercase kebab-case, unique across every registered pack. */
@@ -40,6 +41,11 @@ export interface WorkflowPack {
   templates: readonly Skill[];
   /** Stage templates (with input/output schemas and cache keys), unique by name across packs. */
   stages?: readonly StageDefinition[];
+  /**
+   * How a video.create job of this pack runs (its stages woven between the engine's); packs without one
+   * run the engine's default plan -> render chain.
+   */
+  pipeline?: PackPipeline;
 }
 
 export interface PackRegistry {
@@ -56,7 +62,15 @@ export interface PackRegistry {
 
 const PACK_ID = /^[a-z0-9][a-z0-9-]*$/;
 
-export function createPackRegistry(initial: readonly WorkflowPack[] = []): PackRegistry {
+export interface PackRegistryOptions {
+  /** When set, a stage may only declare `knowledge` ids this catalog holds. */
+  knowledge?: Pick<KnowledgeCatalog, "has">;
+}
+
+export function createPackRegistry(
+  initial: readonly WorkflowPack[] = [],
+  options: PackRegistryOptions = {},
+): PackRegistry {
   const packs: WorkflowPack[] = [];
   const registry: PackRegistry = {
     register(pack) {
@@ -78,6 +92,12 @@ export function createPackRegistry(initial: readonly WorkflowPack[] = []): PackR
       for (const s of pack.stages ?? []) {
         if (stageNames.has(s.name)) throw clash("stage", s.name);
         stageNames.add(s.name);
+        const unknown = (s.knowledge ?? []).filter((id) => options.knowledge && !options.knowledge.has(id));
+        if (unknown.length > 0) {
+          throw new StudixError("VALIDATION", `stage "${s.name}" needs unknown knowledge packs`, {
+            details: { pack: pack.id, stage: s.name, unknown },
+          });
+        }
       }
       packs.push(pack);
       return () => {
@@ -104,4 +124,25 @@ export function createPackRegistry(initial: readonly WorkflowPack[] = []): PackR
   };
   for (const pack of initial) registry.register(pack);
   return registry;
+}
+
+/**
+ * The `pipelines` dependency of the video.create workflow: the pipeline of the job's pack, undefined for
+ * packs that run the default chain (and for jobs without a workflowTemplate). An unknown pack id is a
+ * non-retryable VALIDATION error, so the job fails before any stage runs.
+ */
+export function packPipelines(
+  registry: Pick<PackRegistry, "packs">,
+): (workflowTemplate: string | undefined) => PackPipeline | undefined {
+  return (workflowTemplate) => {
+    if (workflowTemplate === undefined) return undefined;
+    const pack = registry.packs().find((p) => p.id === workflowTemplate);
+    if (!pack) {
+      throw new StudixError("VALIDATION", `Unknown workflowTemplate "${workflowTemplate}"`, {
+        retryable: false,
+        details: { workflowTemplate, available: registry.packs().map((p) => p.id) },
+      });
+    }
+    return pack.pipeline;
+  };
 }

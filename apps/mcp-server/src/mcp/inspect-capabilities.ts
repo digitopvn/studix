@@ -29,6 +29,8 @@ export function inspectCapabilities(input: {
       `Call ${STUDIX_TOOLS.createVideo} with a prompt (or a brief, or a validated VideoIR spec to skip planning).`,
       `Poll ${STUDIX_TOOLS.getJob} until status is succeeded, failed or cancelled; follow next[] hints.`,
       `When succeeded, ${STUDIX_TOOLS.getJob} returns a signed MP4 URL that expires; call it again for a fresh one.`,
+      `Send revisions with ${STUDIX_TOOLS.feedback} on a shot, scene, asset or time range; re-render with ${STUDIX_TOOLS.render}.`,
+      "A person approves the storyboard on reviewUrl; image-to-video stages run only after that approval.",
     ],
     formats: {
       aspectRatios: [...ASPECT_RATIOS],

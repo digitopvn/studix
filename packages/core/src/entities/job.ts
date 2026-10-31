@@ -1,11 +1,14 @@
 import type { StudixErrorPayload } from "@studix/shared";
 import type { RenderPreset, RenderSpec } from "@studix/video-ir";
+import type { MediaJobRecord } from "../ports/media-provider.ts";
 import type { ActorRef, TenantOwned } from "./common.ts";
 
 export const JOB_STATUSES = [
   "queued",
   "running",
   "waiting_approval",
+  /** Parked until the MCP host agent submits the output of a handed-off stage. */
+  "waiting_host",
   "succeeded",
   "failed",
   "cancelled",
@@ -49,6 +52,16 @@ export interface Job extends TenantOwned {
   idempotencyKey?: string;
   cancelRequested: boolean;
   deadlineAt?: Date;
+  /**
+   * Deadline budget left while the job waits at a human gate or for a host agent task. The deadline is
+   * paused then (`deadlineAt` is unset) and re-armed from this value when a worker claims the job again.
+   */
+  deadlineRemainingMs?: number;
+  /**
+   * The execution window the caller asked for when the job was created. A retry re-arms the deadline with
+   * this window, so it never exceeds what was requested (a job born at a gate starts its clock at the first claim).
+   */
+  deadlineWindowMs?: number;
   budgetCents?: number;
   spentCents: number;
   createdBy: ActorRef;
@@ -68,6 +81,12 @@ export interface Stage extends TenantOwned {
   status: StageStatus;
   output?: Record<string, unknown>;
   error?: StudixErrorPayload;
+  /**
+   * Upstream media jobs this attempt submitted (the stage's media job journal), written with the stage row
+   * as soon as a job is submitted. A later attempt of the stage reads them back and collects a paid job by
+   * id instead of submitting it again. Omitted on a write, the stored records are kept.
+   */
+  mediaJobs?: MediaJobRecord[];
   startedAt?: Date;
   finishedAt?: Date;
 }

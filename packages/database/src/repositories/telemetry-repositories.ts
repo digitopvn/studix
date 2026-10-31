@@ -8,7 +8,7 @@ import type {
   UsageRepository,
 } from "@studix/core";
 import { type Clock, newId, redactDeep, StudixError } from "@studix/shared";
-import { and, desc, eq, gte, lt, type SQL, sum } from "drizzle-orm";
+import { and, desc, eq, gte, lt, type SQL, sql, sum } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { activityEvents, providerExecutions, usageEvents } from "../schema/telemetry.ts";
 import { beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -61,6 +61,10 @@ function usageRange(ctx: TenantContext, range: UsageRange): SQL {
   );
 }
 
+function isReceipt(metadata: Record<string, unknown> | undefined): boolean {
+  return metadata?.costSource === "receipt";
+}
+
 export function createUsageRepository(db: DbExecutor, clock: Clock): UsageRepository {
   return {
     async record(ctx, input) {
@@ -82,6 +86,31 @@ export function createUsageRepository(db: DbExecutor, clock: Clock): UsageReposi
         .onConflictDoNothing({ target: [usageEvents.workspaceId, usageEvents.dedupeKey] })
         .returning();
       if (inserted[0]) return { event: toUsage(inserted[0]), created: true };
+      // The first write was an estimate and this one is the provider's receipt: the receipt replaces it
+      // (never adds to it). The condition keeps this atomic, and a receipt is never overwritten.
+      if (isReceipt(input.metadata)) {
+        const upgraded = await db
+          .update(usageEvents)
+          .set({
+            kind: input.kind,
+            quantity: input.quantity,
+            unit: input.unit,
+            costCents: input.costCents,
+            metadata: input.metadata ?? null,
+          })
+          .where(
+            scoped(
+              usageEvents,
+              ctx,
+              and(
+                eq(usageEvents.dedupeKey, input.dedupeKey),
+                sql`${usageEvents.metadata}->>'costSource' = 'estimate'`,
+              ),
+            ),
+          )
+          .returning();
+        if (upgraded[0]) return { event: toUsage(upgraded[0]), created: false };
+      }
       const rows = await db
         .select()
         .from(usageEvents)

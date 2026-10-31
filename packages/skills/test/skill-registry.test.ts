@@ -3,9 +3,15 @@ import { describe, expect, it } from "vitest";
 import { getSkill, listSkills } from "../src/index.ts";
 
 describe("skill registry", () => {
-  it("lists brand-intro with its metadata and a JSON Schema input", () => {
+  it("lists every built-in template, brand-intro first, with its metadata and a JSON Schema input", () => {
     const skills = listSkills();
-    expect(skills.map((s) => s.id)).toEqual(["brand-intro"]);
+    expect(skills.map((s) => s.id)).toEqual([
+      "brand-intro",
+      "marketing-video",
+      "motion-graphic",
+      "anime",
+      "long-form-film",
+    ]);
     const meta = skills[0]!;
     expect(meta).toMatchObject({ id: "brand-intro", pack: "brand-intro", version: 1, output: "video-ir" });
     expect(meta.description.length).toBeGreaterThan(20);

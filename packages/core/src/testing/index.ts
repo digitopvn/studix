@@ -20,12 +20,16 @@ import {
   createInMemoryAssetRepository,
   createInMemoryProjectRepository,
 } from "./in-memory-project-repositories.ts";
+import { createInMemoryRevisionRepository } from "./in-memory-revision-repositories.ts";
+import { createInMemoryStoryboardRepository } from "./in-memory-storyboard-repository.ts";
 import { createInMemoryTenancy } from "./in-memory-tenancy.ts";
 
+export * from "./in-memory-agent-handoff-repository.ts";
 export * from "./in-memory-governance-repositories.ts";
 export * from "./in-memory-job-repositories.ts";
 export * from "./in-memory-project-repositories.ts";
 export * from "./in-memory-revision-repositories.ts";
+export * from "./in-memory-storyboard-repository.ts";
 export * from "./in-memory-table.ts";
 export * from "./in-memory-tenancy.ts";
 
@@ -67,8 +71,11 @@ export interface InMemoryStudioOptions {
 export function createInMemoryStudio(options: InMemoryStudioOptions = {}) {
   const clock = options.clock ?? createManualClock(new Date("2026-01-01T00:00:00Z"));
   const { jobs, queue } = createInMemoryJobStore(clock);
+  const projects = createInMemoryProjectRepository(clock);
   const repos = {
-    projects: createInMemoryProjectRepository(clock),
+    projects,
+    revisions: createInMemoryRevisionRepository(clock, projects),
+    storyboards: createInMemoryStoryboardRepository(clock, projects),
     assets: createInMemoryAssetRepository(clock),
     jobs,
     queue,

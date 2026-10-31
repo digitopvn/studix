@@ -53,7 +53,7 @@ merged.
 | `packages/pi-runtime`                                       | `@studix/agent-runtime`                                  | Generalized    | `AgentRuntime` boundary + fake; worker-pod isolation instead of relying on the path guard                                                                                                      |
 | `packages/jev-router` + `packages/llm`                      | `@studix/decision-routing`                               | Generalized    | `DecisionRouter` + `DecisionProviderAdapter`; OpenRouter, TypeSafeAI, Rules, Fake adapters ([ADR-0003](decisions/0003-jev-decision-provider-adapter-and-routing-fallback.md))                  |
 | `packages/director`                                         | planning via `DecisionRouter("video.plan")` or host spec | Not yet ported | Director prompts and critique loops revisit in P2                                                                                                                                              |
-| `packages/domain-pack`                                      | `@studix/skills`                                         | Generalized    | Versioned templates; P0 ships the brand-intro template only, style content not ported                                                                                                          |
+| `packages/domain-pack`                                      | `@studix/skills`                                         | Generalized    | Versioned templates and pack pipelines: brand-intro, marketing-video, motion-graphic (28 aesthetic style profiles); brand-inspired profiles await owner review                                 |
 | `packages/billing` ledger                                   | `@studix/billing`                                        | Replaced       | Postgres usage ledger, COGS vs price ([ADR-0008](decisions/0008-billing-usage-ledger.md))                                                                                                      |
 | `packages/billing` Polar, credit prices                     | none                                                     | Not yet ported | Pricing undecided                                                                                                                                                                              |
 | `packages/database` drizzle schema                          | `@studix/database`                                       | Generalized    | Tenant-scoped repositories, migrations ([ADR-0007](decisions/0007-tenancy-isolation.md))                                                                                                       |
@@ -142,6 +142,64 @@ Dạng rút gọn dùng trong issue và docs: `zuey-workspace` `10719856`, `agen
 - Golden test port từ nguồn ghi nguồn ở đầu file test.
 - Bảng file-level port record cho hai nguồn này được thêm vào file này khi file đầu tiên
   được port (từ #41 trở đi).
+
+### File-level port record (zuey-workspace và agentkit)
+
+Path nguồn tương đối với root repo nguồn, tại SHA đã pin; path Studix tương đối với
+`packages/skills/src/knowledge/`. Knowledge pack ghi nguồn đầy đủ trong trường `sources` của
+chính nó ([KNOWLEDGE_PACKS.md](KNOWLEDGE_PACKS.md)).
+
+| Nguồn                                                                                                                              | Studix file                                                                      | Cách port                                                                             |
+| ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `zuey-workspace` `.agents/skills/anime-creator/knowledge/packs/<id>.json` (bảy pack, AC-37)                                        | `packs/<id>-pack.ts`                                                             | Port gần nguyên; id check đổi theo id pack                                            |
+| `zuey-workspace` `.agents/skills/anime-creator/SKILL.md` failure modes, ngưỡng của `scripts/qa-*.py`, `audit-mix-buses.py` (AC-38) | `packs/production-failure-modes-pack.ts`                                         | Chuyển thành check `hard`/`evidence`                                                  |
+| `agentkit` `kits/marketing/skills/ak-creativity/` `styles.csv`, `voiceover.csv`, `color-psychology.md` (CR-04)                     | `packs/creative-direction-pack.ts`                                               | Chắt lọc; bỏ cột thương hiệu ví dụ                                                    |
+| `agentkit` `kits/marketing/skills/ak-elevenlabs/references/scriptwriting-and-performance-guide.md` (EL-05)                         | `packs/voice-performance-pack.ts`                                                | Chắt lọc, trung lập provider                                                          |
+| `agentkit` `kits/marketing/skills/ak-motion-design/` (MD-01, MD-02; MIT, LottieFiles)                                              | `packs/motion-design-pack.ts`                                                    | Chắt lọc; gộp hai bảng easing; giữ notice MIT                                         |
+| `agentkit` `kits/marketing/skills/ak-motion-video/references/story-and-shots.md`, `motion-craft.md` (MV-17)                        | `packs/motion-craft-pack.ts`                                                     | Chắt lọc; giữ notice MIT của phần vox-director                                        |
+| `agentkit` `kits/core/skills/ak-remotion/rules/` (RM-01)                                                                           | `packs/composition-timing-pack.ts`                                               | Chắt lọc, trung lập renderer                                                          |
+| `agentkit` `kits/engineer/skills/ak-shader/references/` trừ built-in reference (SH-01)                                             | `packs/shader-gl-pack.ts`                                                        | Viết lại bằng lời, không chép code listing                                            |
+| `agentkit` `kits/engineer/skills/ak-threejs/` CSV API, category, use case, guide 00–18 (TJ-02)                                     | `packs/threejs-pack.ts`                                                          | Chắt lọc; nguồn không nêu phiên bản Three.js                                          |
+| `agentkit` `ak-creativity/scripts/core.py`, `ak-threejs/scripts/core.py` BM25 (CR-01, TJ-01)                                       | `knowledge-search.ts`                                                            | Viết lại bằng TypeScript, một engine dùng chung                                       |
+| `agentkit` `kits/marketing/skills/ak-creativity/data/creative-reasoning.csv` (CR-05, chủ sở hữu duyệt 2026-10-31)                  | `packs/creative-direction-pack.ts`                                               | Port 30 dòng; nền tảng ghi theo định dạng                                             |
+| `agentkit` `kits/marketing/skills/ak-creativity/data/music.csv` (CR-06, chủ sở hữu duyệt 2026-10-31)                               | `packs/creative-direction-pack.ts`                                               | Port một phần: 10 thể loại có cách cấp license rõ                                     |
+| `agentkit` `kits/engineer/skills/ak-shader/references/` listing GLSL trừ built-in reference (SH-03)                                | `packs/shader-gl-listings.ts`                                                    | Giữ code như nguồn; notice MIT cho simplex noise và `hsb2rgb`                         |
+| `agentkit` `kits/engineer/skills/ak-threejs/data/examples-all.csv` (TJ-03)                                                         | `packs/threejs-examples.ts`                                                      | Port 556 dòng; URL và mô tả suy ra từ file; notice MIT của three.js                   |
+| `agentkit` `kits/marketing/skills/ak-motion-video/references/styles/profiles/` 40 profile brand-inspired (MV-14)                   | `packs/signature-motion-styles-data.ts`, `packs/signature-motion-styles-pack.ts` | Alias thương hiệu thay bằng mô tả phong cách; font mang tên công ty thay bằng font mở |
+
+### Port record: tool QA
+
+Path nguồn tương đối với `.agents/skills/anime-creator/scripts/` của `zuey-workspace` tại
+`10719856`; path Studix tương đối với `tools/qa/`. Contract và giới hạn ở [QA.md](QA.md).
+
+| Nguồn                                          | Studix file                                                                  | Cách port                                                                |
+| ---------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `qa-prescan.py` (AC-27)                        | `src/studix_qa/prescan.py`                                                   | Giữ thuật toán và ngưỡng; ffmpeg bằng argv, input qua grant, output JSON |
+| `qa-gate-check.py` (AC-27, AC-29)              | `src/studix_qa/judge_reports.py`                                             | Chỉ gộp report; kết quả là evidence, không chặn                          |
+| `audit-mix-buses.py` (AC-28)                   | `src/studix_qa/mix_buses.py`                                                 | Nhận stem có sẵn thay vì tự mix bus; key camelCase                       |
+| `studio/delivery_encodes.py` (AC-28)           | `src/studix_qa/loudness.py`                                                  | Chỉ phần đo `ebur128`                                                    |
+| `make-depth-maps.py` (AC-30)                   | `src/studix_qa/depth_maps.py`                                                | Model đọc local tại revision pin, extra `depth`                          |
+| `tests/test_delivery_and_mix_tools.py` (AC-31) | `tests/test_prescan_and_mix_golden.py`, `tests/test_judge_reports_golden.py` | Golden test, media sinh bằng `lavfi`                                     |
+
+| `qa-shot-boundaries.py` (AC-27) | `src/studix_qa/shot_boundaries.py` | Giữ `join_metrics`, `judge` và ngưỡng; join lấy từ timeline của một bản render thay vì clip theo EDL; bỏ strip và chain still |
+
+Chưa port: `ai-shot-qa.py` (gọi model trả tiền; Studix nhận report của nó qua `judge-reports`),
+`estimate-plate-depth.py`. `probe`, `black-frames` và `sync` viết mới trên cùng khung sandbox.
+
+### Port record: film-engine và pack phim
+
+Film-engine port gần nguyên (AC-14) từ `.agents/skills/anime-creator/assets/film-engine/` của
+`zuey-workspace` tại `10719856`. Mỗi file ghi nguồn ở comment đầu file và đánh dấu chỗ đổi bằng
+`Studix:`. Path Studix tương đối với `packages/`.
+
+| Nguồn                                                                                                               | Studix file                                                                           | Cách port                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `engine/src/` (`boot-film-engine.js`, `core/*`, `edit/*`, `gl/*`)                                                   | `renderers/film-engine/src/`                                                          | Port nguyên; font card khai báo một lần từ font đi kèm renderer (`film-scene-fonts.ts`)                            |
+| `scene-template/src/edit-template.html`                                                                             | `renderers/film-engine/edit-template.html`                                            | Port nguyên; GSAP và font nạp từ project, CSP chặn network, slot do `film-scene-project.ts` điền thay `build-edit` |
+| `anime-creator` `SKILL.md` (tier, gate G0–G4, failure modes, tier mix) (AC-02, AC-04)                               | `skills/src/narrative-film/anime-pack.ts`, `film-scope.ts`                            | Viết lại thành rule kiểm tra scope và chỉ dẫn agent; G0, G1 là creative gate trên cơ chế approval                  |
+| `anime-creator` series bible và prompt compiler (AC-05, AC-12)                                                      | `skills/src/narrative-film/film-prompts.ts`                                           | Viết lại: prompt dựng từ bible (style, cast clause, anchor, margin 8%, negative), không chép prompt nguồn          |
+| `agentkit` `kits/marketing/skills/ak-filmmaking/` `SKILL.md`, render class, continuity (FM-04, FM-05, FM-08, FM-10) | `video-ir/src/film-production.ts`, `skills/src/narrative-film/long-form-film-pack.ts` | Schema TS chung cho cả hai pack; rule định tuyến theo render class và chuỗi `continuityFrom` thuộc pack            |
+| Cả hai nguồn: storyboard, keyframe, lipsync audio-first                                                             | `skills/src/narrative-film/film-pack.ts`, `film-boards.ts`                            | Một factory dùng chung cho `anime` và `long-form-film`, không nhân đôi primitive                                   |
 
 ### Quy trình sync có kiểm soát
 

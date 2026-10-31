@@ -31,6 +31,8 @@ jobs:
       S3_ACCESS_KEY_ID: studix
       S3_SECRET_ACCESS_KEY: studix-local-secret
       S3_FORCE_PATH_STYLE: "true"
+      # The QA media tests fail instead of skipping when ffmpeg or the QA venv is missing.
+      STUDIX_QA_REQUIRE_TOOLCHAIN: "1"
     steps:
       - uses: actions/checkout@v7
 
@@ -53,9 +55,13 @@ jobs:
           sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends ffmpeg
-          npx --yes --package @puppeteer/browsers@2.13.0 -- browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer
+          # Same build id as the worker image: read it from the Dockerfile so they cannot diverge.
+          chrome_version="$(sed -n 's/^ARG CHROME_HEADLESS_SHELL_VERSION=//p' Dockerfile)"
+          test -n "$chrome_version"
+          # Outside the checkout, so npx fetches the package instead of reusing pnpm's bin-less copy.
+          (cd "$RUNNER_TEMP" && npx --yes --package @puppeteer/browsers@3.2.6 -- browsers install "chrome-headless-shell@${chrome_version}" --path ~/.cache/puppeteer)
 
-      # uv runs the Python MCP SDK client test against /mcp.
+      # uv runs the Python MCP SDK client test against /mcp and the QA tools' pytest (pnpm test).
       - uses: astral-sh/setup-uv@v6
 
       - name: Lint
@@ -64,6 +70,7 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # pytest for tools/qa (it also creates tools/qa/.venv), then the TypeScript unit tests.
       - name: Unit tests
         run: pnpm test
 

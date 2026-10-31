@@ -32,6 +32,25 @@ Owner: `packages/auth`.
   resolve to a membership and then a workspace.
 - Inbound OAuth for AI clients: [ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md).
 
+## Rate limiting
+
+Owner: `apps/mcp-server` (`http/rate-limit.ts`), store in `packages/database`.
+
+- Token buckets live in the Postgres table `rate_limit_buckets`, updated with one
+  atomic upsert on the database clock, so limits hold across app replicas and
+  survive restarts.
+- Keys: `/mcp` per workspace after the key is verified (the real quota) plus a
+  generous per-IP flood guard before it (hosted AI clients share egress IPs
+  across tenants); `/api/auth` and `/api` per client IP. IPv6 clients share one
+  bucket per /64. The IP comes from `STUDIX_TRUST_PROXY`, so set it when the app
+  runs behind an ingress.
+- Refused keys are remembered in process until a token can exist again, so a
+  flood of refused requests costs no database writes.
+- If the store errors or takes longer than 250 ms, the call is decided by a
+  per-process bucket, so limits temporarily multiply by replica count but
+  requests are never held on the store. The warning is logged at most every 30 s.
+- Idle buckets (an hour, far beyond refill) are pruned by one pruner per process.
+
 ## Inbound vs outbound credentials
 
 Two independent trust boundaries:
@@ -161,6 +180,9 @@ Owner: `ApprovalPolicy` in `packages/core`, enforced by `packages/workflow`.
 - At most one pending approval exists per subject, action and scope (database-enforced); an expired request
   is closed, and a job parked on it fails with `TIMEOUT` instead of waiting forever.
 - A render that succeeds is not an approval.
+- An agent stage that reaches a cap parks for an `agent.overrun` approval. Only a
+  person can grant it; each grant allows one more run with every cap doubled, is
+  consumed once by the run it authorized, and a rejection fails the stage.
 
 ## Artifacts and signed URLs
 
@@ -181,6 +203,16 @@ or a path guard as a security boundary:
 - Workers get only the credentials their stages need; the app role holds no
   provider keys it does not use.
 - Code Mode, if ever enabled, requires a real sandbox and is off by default (P2).
+- A harness agent stage runs with an explicit tool allowlist (every other tool is
+  denied) and hard caps on turns, tokens, cost and time. A cap stop aborts the
+  session and waits for the agent process to exit; a process that ignores the
+  interrupt is killed, and one still alive after the grace period is reported
+  `INTERNAL` rather than as a clean stop
+  ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)).
+- A host agent's output is untrusted input: it is validated against the stage's
+  output schema before it is stored, it is accepted only for the attempt that
+  handed the stage off (fenced in one transaction with the parked job), and its
+  reported usage is recorded but never billed.
 
 ## Redaction
 
@@ -189,6 +221,8 @@ Owner: `redact()` and the logger in `packages/shared`, spans in
 
 - Logs, traces, errors and usage records redact credentials, `stx_` keys,
   bearer/basic headers, connector secrets and known provider key shapes.
+- Agent outputs (harness and host) are redacted with `redactDeep` before they are
+  stored or returned, and the task input handed to a host agent is redacted too.
 - Raw prompts and downstream payloads are not logged by default; traces record
   provider, model, latency, tokens, cost, bytes and outcome.
 
@@ -215,6 +249,8 @@ Each item maps to a negative test in the owning package.
 | Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                          |
 | Runaway cost                                           | Budgets checked before each costly stage                               |
 | Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                     |
+| Agent run past its caps                                | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate    |
+| Forged or stale host output                            | Output schema check, attempt fencing, idempotent digest per task       |
 | Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key          |
 | Expired artifact URL still valid                       | Presign expiry tests                                                   |
 | Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                            |

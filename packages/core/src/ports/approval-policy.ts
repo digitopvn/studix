@@ -24,7 +24,12 @@ export interface DefaultApprovalPolicyOptions {
 }
 
 /** Actions that always need a human, regardless of cost. */
-const ALWAYS_REQUIRED: ReadonlySet<ApprovalAction> = new Set(["publish", "delete"]);
+const ALWAYS_REQUIRED: ReadonlySet<ApprovalAction> = new Set([
+  "publish",
+  "delete",
+  "agent.overrun",
+  "creative.gate",
+]);
 /** Actions gated only by cost. */
 const COST_GATED: ReadonlySet<ApprovalAction> = new Set([
   "job.start",

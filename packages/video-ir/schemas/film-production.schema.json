@@ -1,0 +1,383 @@
+{
+  "$id": "studix:film-production",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "characters": {
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "characterId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "identityVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "anchors": {
+            "minItems": 1,
+            "maxItems": 24,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "palette": {
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 60
+                },
+                "hex": {
+                  "type": "string",
+                  "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+                }
+              },
+              "required": [
+                "name",
+                "hex"
+              ]
+            }
+          },
+          "handedness": {
+            "type": "string",
+            "enum": [
+              "left",
+              "right",
+              "ambidextrous"
+            ]
+          },
+          "negatives": {
+            "maxItems": 24,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "voice": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "voiceRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "language": {
+                "type": "string",
+                "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"
+              }
+            }
+          },
+          "acting": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "references": {
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                },
+                "assetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                },
+                "view": {
+                  "type": "string",
+                  "enum": [
+                    "front",
+                    "three_quarter_left",
+                    "three_quarter_right",
+                    "profile",
+                    "full_body",
+                    "back",
+                    "expression",
+                    "detail",
+                    "turnaround",
+                    "expression_sheet",
+                    "wide"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "canonical",
+                    "candidate",
+                    "retired"
+                  ]
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "promotedFrom": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                }
+              },
+              "required": [
+                "id",
+                "assetId",
+                "view",
+                "status",
+                "version"
+              ]
+            }
+          }
+        },
+        "required": [
+          "characterId",
+          "identityVersion",
+          "anchors",
+          "palette",
+          "negatives",
+          "references"
+        ]
+      }
+    },
+    "shots": {
+      "maxItems": 2000,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "shotId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "renderClass": {
+            "type": "string",
+            "enum": [
+              "PREVIS",
+              "CHEAP_BROLL",
+              "STANDARD",
+              "CHARACTER_CRITICAL",
+              "HERO"
+            ]
+          },
+          "visibleSpeakers": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            }
+          },
+          "lipsync": {
+            "type": "string",
+            "enum": [
+              "none",
+              "native",
+              "dedicated"
+            ]
+          },
+          "continuityFrom": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "boundary": {
+            "default": "intentional-cut",
+            "type": "string",
+            "enum": [
+              "locked-composition",
+              "camera-transition",
+              "intentional-cut"
+            ]
+          },
+          "state": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "changes": {
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120,
+                  "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "field",
+                "reason"
+              ]
+            }
+          },
+          "conditioningRefs": {
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            }
+          }
+        },
+        "required": [
+          "shotId",
+          "renderClass",
+          "visibleSpeakers",
+          "lipsync",
+          "state",
+          "changes"
+        ]
+      }
+    },
+    "dialogue": {
+      "maxItems": 5000,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "shotId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "characterId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "temp",
+              "master"
+            ]
+          },
+          "audioAssetId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "alignment": {
+            "type": "object",
+            "properties": {
+              "words": {
+                "minItems": 1,
+                "maxItems": 2000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "startMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 3600000
+                    },
+                    "endMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 3600000
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "startMs",
+                    "endMs"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "words"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "shotId",
+          "characterId",
+          "text",
+          "status"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "characters",
+    "shots",
+    "dialogue"
+  ]
+}

@@ -26,12 +26,13 @@ generation. The app role does not invoke them; shipping one image keeps build,
 pinning and rollback to a single artifact.
 
 multix is built in a separate stage from a pinned commit of
-`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `a2507d55`, which reports
-1.22.0-beta.3). The stage fails if the fetched HEAD is not that commit. Risk:
-no npm release contains the Sume commands yet (npm 1.24.0 does not), so the
-image cannot pin a registry version with a lockfile integrity hash. When a
-release with Sume ships, switch the stage to `npm install -g
-@mrgoonie/multix@<version>` and re-run the live smoke test.
+`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `7922a274`, the commit tagged
+v1.26.0). The stage fails if the fetched HEAD is not that commit. 1.26.0 is the
+first stable release with the Sume commands and counts Sume cost once per job.
+The image keeps the git build instead of `npm install -g @mrgoonie/multix`,
+because a commit pin is checked and an npm install here has no lockfile
+integrity hash. To upgrade, set `MULTIX_COMMIT` to the new release tag's commit
+and re-run the live smoke test.
 
 ## Configuration
 
@@ -63,7 +64,10 @@ it up with the database secrets. To rotate it, move the old value to
 The Claude planner is off unless `STUDIX_CLAUDE_PLANNER=true`. Set it on both
 the app (so job creation accepts a `planner` selection) and the worker. The
 worker then also needs the same `STUDIX_SECRETS_KEY` to open the selected key,
-and refuses to start without it. Tuning, all optional:
+and refuses to start without it. At startup the worker also runs the Claude
+binary with `--version` (no model call, no key) and refuses to start when it
+cannot run on the host, for example an image platform the SDK ships no binary
+for; unset the flag to run without the planner. Tuning, all optional:
 `STUDIX_CLAUDE_PLANNER_MODEL`, `STUDIX_CLAUDE_PLANNER_MAX_TURNS` (default 4),
 `STUDIX_CLAUDE_PLANNER_MAX_COST_CENTS` (default 200, lowered further by the
 job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
@@ -72,6 +76,19 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
 when the run ends; the worker creates that directory at startup and removes
 sandboxes left by a crashed worker once they are older than the run timeout.
+Job scratch directories (`WORKER_WORK_DIR/<jobId>`) are removed when the job
+finishes; those of failed jobs are kept for retries and swept after
+`WORKER_WORK_DIR_RETENTION_HOURS` (default 168, minimum 24) without writes.
+When Anthropic answers a run with 401, the worker re-tests that key directly
+and, only if it is still rejected and was not rotated meanwhile, marks its
+connection `invalid`, so job creation stops accepting it until the key is
+replaced. A 401 that the re-test does not repeat (a gateway token, a short
+Anthropic incident) leaves the key alone.
+
+Smoke tests of the planner live in the `live` test project (`STUDIX_LIVE=1
+ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
+plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the
+rejected-key test uses a made-up key and costs nothing.
 
 Paid media runs through the Multix provider (`packages/providers`), which is
 off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
@@ -85,18 +102,30 @@ advertised only when `multix check` reports its vendor key. Default models per
 role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`;
 `MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
 job. Every paid call is estimated first and refused above the request's cap.
+A video request on `sume:seedance-2.5` runs at `480p` unless it passes
+`params.resolution`; a higher resolution is an explicit, separately estimated
+choice
+([`DEFAULT_VIDEO_RESOLUTIONS`](../packages/providers/src/multix-routes.ts)).
 Sume jobs are submitted with an idempotency key and collected with `status
---wait --download`, so a retry resumes the paid job by its id. The job journal
-is in memory per worker process until the workflow stores it with the stage
-checkpoint; until then a worker restart in the middle of a job relies on the
-Sume idempotency key. Atlas Cloud has no idempotency key, so the adapter
+--wait --download`, so a retry resumes the paid job by its id. Stages pass the
+provider a job journal stored on the stage row (`stages.media_jobs`), written
+right after each submission: a worker that dies mid-stage leaves the upstream
+job ids behind, and the next attempt, on any worker, collects those jobs
+instead of submitting again. Atlas Cloud has no idempotency key, so the adapter
 journals a `submitting` record right before `atlas run`. If the worker dies
 before the job id is journaled, a retry with the same idempotency key is
 refused (non-retryable) instead of paying twice for one upscale (about $0.01):
 find the prediction in `multix history` or the Atlas Cloud console and resume
 it by job id. Only errors that prove Atlas never accepted the run (invalid
-request, missing key) release the key for a retry. This protection lasts as
-long as the journal does, so it needs the durable journal described above.
+request, missing key) release the key for a retry. Calls made outside a
+workflow stage fall back to an in-process journal, which a restart loses.
+
+Pack stages (`marketing-video`, `motion-graphic`) get the media provider, the
+storage, the renderer and the hard QA gate from the worker
+([`pack-services.ts`](../apps/worker/src/pack-services.ts)). Without
+`MULTIX_BIN` their paid stages fail with `UNAVAILABLE`; without the QA
+toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
+is never published.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
@@ -212,8 +241,10 @@ npx wrangler@4 deploy        # needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TO
 
 On SIGTERM the worker stops claiming, lets the running attempt finish within
 the grace period, then aborts and releases the lease so another pod reclaims
-the job. An attempt that fails while the pool is draining (for example because
-Puppeteer closes Chrome on SIGTERM) is released, not failed
+the job. Chrome keeps rendering through the grace period: the HyperFrames
+engine is patched so Puppeteer does not close it on SIGTERM (see
+`docs/RENDERER.md`). An attempt that fails while the pool is draining anyway is
+released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.

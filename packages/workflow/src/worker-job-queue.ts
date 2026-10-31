@@ -1,15 +1,18 @@
 import { createUsageLedger, type UsageInput } from "@studix/billing";
 import {
+  type AgentHandoff,
   type Approval,
   type ApprovalAction,
   actorRef,
   type Job,
   type JobPatch,
+  type NewAgentHandoff,
   type ProjectRepository,
   type RenderRepository,
   type TenantContext,
 } from "@studix/core";
 import {
+  createAgentHandoffRepository,
   createApprovalRepository,
   createAuditRepository,
   createProjectRepository,
@@ -22,9 +25,9 @@ import {
   upsertStageRow,
 } from "@studix/database";
 import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared";
-import { and, asc, eq, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, lte, ne, or, type SQL, sql } from "drizzle-orm";
 
-const { jobs, approvals, stages } = schema;
+const { jobs, approvals, stages, agentHandoffs } = schema;
 type JobSet = Partial<typeof jobs.$inferInsert>;
 
 /** A gated action's pending approval request, opened on behalf of a claimed attempt. */
@@ -34,7 +37,17 @@ export interface ApprovalRequest {
   estimatedCostCents?: number;
   /** Lifetime of a newly opened request. */
   ttlMs: number;
+  /**
+   * Scope of the request (`""`, the default, is the stage gate of the action). Besides it the worker uses
+   * `agent:<stage>` (agent overruns) and `gate:<id>` (creative gates); all of them park the job and expire.
+   */
+  scopeKey?: string;
 }
+
+/** A host-agent task opened for the attempt; `lost` means this worker no longer owns the job. */
+export type HandoffOpenResult =
+  | { status: "lost" }
+  | { status: "created" | "existing"; handoff: AgentHandoff };
 
 /**
  * `lost`: this worker no longer owns the job, nothing was written. `existing`: a live request was reused.
@@ -108,6 +121,21 @@ export interface WorkerJobQueue {
    */
   requestApproval(job: Job, workerId: string, request: ApprovalRequest): Promise<ApprovalRequestResult>;
   /**
+   * Spend a human-approved request (approved -> consumed) and audit it, fenced like the writes above.
+   * Returns false when this worker lost the job; a request that is no longer approved is left alone.
+   */
+  consumeApproval(job: Job, workerId: string, approvalId: string): Promise<boolean>;
+  /**
+   * Open the host-agent task of a stage for this attempt, fenced like the writes above. The live pending
+   * task of the same attempt is reused; one left by an earlier attempt is cancelled first, since only the
+   * attempt that parks the job can be answered.
+   */
+  openHandoff(
+    job: Job,
+    workerId: string,
+    handoff: Omit<NewAgentHandoff, "jobId" | "attempt">,
+  ): Promise<HandoffOpenResult>;
+  /**
    * Run business writes (projects, renders) in one transaction that holds the job row locked after the
    * same ownership check. Nothing is written, and `held` is false, once another worker owns the job; a
    * throw from `write` rolls the whole commit back.
@@ -126,11 +154,19 @@ export interface WorkerJobQueue {
   release(job: Job, workerId: string): Promise<boolean>;
   /** Park in waiting_approval without consuming the attempt; resumed by resumeDecidedApprovals. */
   park(job: Job, workerId: string): Promise<boolean>;
+  /** Park in waiting_host without consuming the attempt; resumed by an accepted host submission. */
+  parkForHost(job: Job, workerId: string): Promise<boolean>;
+  /**
+   * Expire pending host-agent tasks past their time limit whose job is parked in waiting_host, and requeue
+   * those jobs so the stage asks a person for more time. Returns the number of tasks expired.
+   */
+  expireHostHandoffs(): Promise<number>;
   /** Fail running jobs whose lease expired after their last allowed attempt. Returns the count. */
   failExhaustedLeases(): Promise<number>;
   /**
    * Requeue jobs parked by the worker whose latest gating approval (any action except job.start, which
-   * the studio service resumes itself) was granted by a human or rejected. Returns the count.
+   * the studio service resumes itself) was granted by a human, rejected, or sent back with changes (the
+   * creative gate redoes them and asks again). Returns the count.
    */
   resumeDecidedApprovals(): Promise<number>;
   /**
@@ -189,7 +225,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     const held = await fenced(job, workerId, async (tx, ctx) => {
       const approvalRepo = createApprovalRepository(tx, clock);
       const subject = { type: "job" as const, id: job.id };
-      const latest = await approvalRepo.findLatest(ctx, subject, request.action);
+      const scopeKey = request.scopeKey ?? "";
+      const latest = await approvalRepo.findLatest(ctx, subject, request.action, scopeKey);
       const now = clock.now();
       if (
         latest &&
@@ -205,6 +242,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       const opened = await approvalRepo.open(ctx, {
         action: request.action,
         subject,
+        ...(scopeKey ? { scopeKey } : {}),
         reason: request.reason,
         estimatedCostCents: request.estimatedCostCents,
         requestedBy: actorRef(ctx.actor),
@@ -221,12 +259,21 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         action: "approval.requested",
         subjectType: "job",
         subjectId: job.id,
-        data: { approvalId: approval.id, action: request.action, reason: request.reason },
+        data: { approvalId: approval.id, action: request.action, reason: request.reason, scopeKey },
       });
       result = { status: "created", approval };
     });
     return held ? result : { status: "lost" };
   };
+
+  /** Pause the deadline while parked: keep what is left of it and clear the absolute time. */
+  const pausedDeadline = (job: Job): Pick<JobSet, "deadlineAt" | "deadlineRemainingMs"> =>
+    job.deadlineAt
+      ? {
+          deadlineAt: null,
+          deadlineRemainingMs: Math.max(0, job.deadlineAt.getTime() - clock.now().getTime()),
+        }
+      : {};
 
   const finish = async (job: Job, workerId: string, set: JobSet): Promise<boolean> => {
     const rows = await db
@@ -265,6 +312,11 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           lockedBy: workerId,
           leaseExpiresAt: leaseUntil(),
           startedAt: sql`coalesce(${jobs.startedAt}, ${now.toISOString()}::timestamptz)`,
+          // Re-arm a deadline that was paused while the job waited at a gate or for the host agent.
+          deadlineAt: sql`case when ${jobs.deadlineRemainingMs} is not null
+            then ${now.toISOString()}::timestamptz + ${jobs.deadlineRemainingMs} * interval '1 millisecond'
+            else ${jobs.deadlineAt} end`,
+          deadlineRemainingMs: null,
           updatedAt: now,
         })
         .where(inArray(jobs.id, candidate))
@@ -326,6 +378,60 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       ),
 
     requestApproval,
+
+    async consumeApproval(job, workerId, approvalId) {
+      return fenced(job, workerId, async (tx, ctx) => {
+        if (!(await createApprovalRepository(tx, clock).consume(ctx, approvalId))) return;
+        await createAuditRepository(tx, clock).append(ctx, {
+          actor: actorRef(ctx.actor),
+          action: "approval.consumed",
+          subjectType: "job",
+          subjectId: job.id,
+          data: { approvalId },
+        });
+      });
+    },
+
+    async openHandoff(job, workerId, handoff) {
+      const result = await fencedValue(job, workerId, async (tx, ctx) => {
+        const now = clock.now();
+        // A task left pending by an earlier attempt can no longer be submitted: close it.
+        await tx
+          .update(agentHandoffs)
+          .set({ status: "cancelled", updatedAt: now })
+          .where(
+            and(
+              eq(agentHandoffs.jobId, job.id),
+              eq(agentHandoffs.stage, handoff.stage),
+              eq(agentHandoffs.status, "pending"),
+              ne(agentHandoffs.attempt, job.attempts),
+            ),
+          );
+        const opened = await createAgentHandoffRepository(tx, clock).open(ctx, {
+          ...handoff,
+          jobId: job.id,
+          attempt: job.attempts,
+        });
+        if (opened.created) {
+          await createAuditRepository(tx, clock).append(ctx, {
+            actor: actorRef(ctx.actor),
+            action: "agent_task.opened",
+            subjectType: "job",
+            subjectId: job.id,
+            data: {
+              taskId: opened.handoff.id,
+              stage: handoff.stage,
+              attempt: job.attempts,
+              round: handoff.round,
+            },
+          });
+        }
+        return opened;
+      });
+      if (!result.held) return { status: "lost" };
+      return { status: result.value.created ? "created" : "existing", handoff: result.value.handoff };
+    },
+
     commit: (job, workerId, write) =>
       fencedValue(job, workerId, (tx, ctx) =>
         write(
@@ -350,7 +456,69 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     release: (job, workerId) =>
       finish(job, workerId, { status: "queued", attempts: job.attempts - 1, runAfter: clock.now() }),
     park: (job, workerId) =>
-      finish(job, workerId, { status: "waiting_approval", attempts: job.attempts - 1 }),
+      finish(job, workerId, {
+        status: "waiting_approval",
+        attempts: job.attempts - 1,
+        ...pausedDeadline(job),
+      }),
+    parkForHost: (job, workerId) =>
+      finish(job, workerId, { status: "waiting_host", attempts: job.attempts - 1, ...pausedDeadline(job) }),
+
+    async expireHostHandoffs() {
+      const now = clock.now();
+      return db.transaction(async (tx) => {
+        const expired = await tx
+          .update(agentHandoffs)
+          .set({ status: "expired", updatedAt: now })
+          .where(
+            and(
+              eq(agentHandoffs.status, "pending"),
+              lte(agentHandoffs.expiresAt, now),
+              sql`exists (
+                select 1 from ${jobs} j
+                where j.id = ${agentHandoffs.jobId} and j.workspace_id = ${agentHandoffs.workspaceId}
+                  and j.organization_id = ${agentHandoffs.organizationId} and j.status = 'waiting_host'
+              )`,
+            ),
+          )
+          .returning({
+            id: agentHandoffs.id,
+            jobId: agentHandoffs.jobId,
+            stage: agentHandoffs.stage,
+            workspaceId: agentHandoffs.workspaceId,
+            organizationId: agentHandoffs.organizationId,
+          });
+        if (expired.length === 0) return 0;
+        // The stage runs again, finds its task expired and asks a person whether it gets more time.
+        await tx
+          .update(jobs)
+          .set({ status: "queued", runAfter: now, updatedAt: now })
+          .where(
+            and(
+              inArray(
+                jobs.id,
+                expired.map((e) => e.jobId),
+              ),
+              eq(jobs.status, "waiting_host"),
+            ),
+          );
+        const audit = createAuditRepository(tx, clock);
+        const systemActor = { type: "system" as const, id: "handoff-sweeper" };
+        for (const task of expired) {
+          await audit.append(
+            { organizationId: task.organizationId, workspaceId: task.workspaceId, actor: systemActor },
+            {
+              actor: actorRef(systemActor),
+              action: "agent_task.expired",
+              subjectType: "job",
+              subjectId: task.jobId,
+              data: { taskId: task.id, stage: task.stage },
+            },
+          );
+        }
+        return expired.length;
+      });
+    },
 
     async failExhaustedLeases() {
       const now = clock.now();
@@ -397,7 +565,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
                 and a.subject_type = 'job'
                 and a.subject_id = "jobs"."id"
                 and a.action <> 'job.start'
-                and ((a.status = 'approved' and a.decided_by_type = 'user') or a.status = 'rejected')
+                and ((a.status = 'approved' and a.decided_by_type = 'user') or a.status in ('rejected', 'changes_requested'))
                 and a.id = (
                   select max(b.id) from ${approvals} b
                   where b.workspace_id = a.workspace_id and b.subject_type = 'job'
@@ -457,7 +625,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         // Driven by the job, not by the rows closed above: an approval can also be closed elsewhere (a
         // reviewer answering after expiry, opening a new request, a migration), which leaves the job parked
         // with nothing pending. Fail it when its latest approval expired and no request is still open. Only workflow
-        // gate requests (empty scope key) count: connector requests carry no expiry and must not park the job.
+        // gate requests (empty scope key), agent overrun requests (`agent:<stage>`) and creative gates
+        // (`gate:<id>`) count: connector requests carry no expiry and must not park the job.
         const failed = await tx
           .update(jobs)
           .set({
@@ -469,7 +638,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
               'message', (select l.action from ${approvals} l where l.id = (
                 select max(m.id) from ${approvals} m
                 where m.workspace_id = "jobs"."workspace_id" and m.subject_type = 'job' and m.subject_id = "jobs"."id"
-                  and m.scope_key = ''
+                  and (m.scope_key = '' or m.scope_key like 'agent:%' or m.scope_key like 'gate:%')
               )) || ' approval expired before a reviewer decided',
               'retryable', false,
               'suggestedAction', 'Submit the job again and ask a reviewer to approve it before the request expires.',
@@ -482,16 +651,16 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
               sql`not exists (
                 select 1 from ${approvals} p
                 where p.workspace_id = "jobs"."workspace_id" and p.subject_type = 'job'
-                  and p.subject_id = "jobs"."id" and p.status = 'pending' and p.scope_key = ''
+                  and p.subject_id = "jobs"."id" and p.status = 'pending' and (p.scope_key = '' or p.scope_key like 'agent:%' or p.scope_key like 'gate:%')
               )`,
               sql`exists (
                 select 1 from ${approvals} l
                 where l.workspace_id = "jobs"."workspace_id" and l.subject_type = 'job'
-                  and l.subject_id = "jobs"."id" and l.status = 'expired' and l.scope_key = ''
+                  and l.subject_id = "jobs"."id" and l.status = 'expired' and (l.scope_key = '' or l.scope_key like 'agent:%' or l.scope_key like 'gate:%')
                   and l.id = (
                     select max(m.id) from ${approvals} m
                     where m.workspace_id = l.workspace_id and m.subject_type = 'job' and m.subject_id = l.subject_id
-                      and m.scope_key = ''
+                      and (m.scope_key = '' or m.scope_key like 'agent:%' or m.scope_key like 'gate:%')
                   )
               )`,
             ),

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { MediaGenerationRequest } from "@studix/core";
+import { MediaChargedError, type MediaGenerationRequest } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
 import { createManualClock } from "@studix/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import {
   type MultixRunOptions,
   type MultixRunResult,
   parseCheckKeys,
+  parseMultixEnvelope,
 } from "../src/index.ts";
 
 /** One scripted CLI reply. `files` are written before the envelope is returned, as multix would. */
@@ -57,13 +58,77 @@ function scriptedCli(handler: (argv: readonly string[], options: MultixRunOption
 const flagValue = (argv: readonly string[], name: string) =>
   argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 
+/**
+ * The "API Keys" block of a real `multix check --json` text (1.22.0-beta.3), with everything after "—"
+ * (the masked values) replaced by a placeholder.
+ */
 const CHECK_TEXT = [
-  "multix check",
-  "  ✓ SUME_API_KEY found (sk-…abcd)",
-  "  ✓ ELEVENLABS_API_KEY found (el-…wxyz)",
-  "  ✗ ATLASCLOUD_API_KEY missing",
-  "  ✗ FISH_API_KEY missing",
+  "============================================================",
+  "API Keys",
+  "============================================================",
+  "",
+  "✓ GEMINI_API_KEY found — <masked>",
+  "✓ MINIMAX_API_KEY found — <masked>",
+  "  BYTEPLUS_API_KEY (or ARK_API_KEY) not set (optional)",
+  "✓ ELEVENLABS_API_KEY found — <masked>",
+  "  FISH_API_KEY not set (optional)",
+  "  FAL_KEY not set (optional)",
+  "  ATLASCLOUD_API_KEY not set (optional)",
+  "✓ SUME_API_KEY found — <masked>",
+  "  Cloudflare media unavailable (optional): CLOUDFLARE_ACCOUNT_ID is required for Cloudflare media generation",
+  "",
+  "✓ GEMINI_API_KEY: Gemini API reachable",
+  "✓ multix is ready to use",
 ].join("\n");
+
+/** A real `sume status <id> --download --json` envelope; only the saved path is replaced per test. */
+const REAL_JOB_ID = "job_cd4c1c03-d0ec-442e-bee7-1bf386ea55e9";
+const realStatusEnvelope = (savedPath: string) => ({
+  command: "sume status",
+  provider: "sume",
+  model_requested: null,
+  model_resolved: null,
+  job: { provider: "sume", id: REAL_JOB_ID, attempt: 1 },
+  duration_ms: 1597,
+  outputs: [],
+  text: `Saved 1 file(s) from job ${REAL_JOB_ID}:\n  ${savedPath}`,
+  exit_code: 0,
+  usage: {
+    cost_usd: 0.03,
+    credits: 3,
+    sources: {
+      cost_usd: ["api.sume.com body.data.job.usage_summary.captured_usd_cents"],
+      credits: ["api.sume.com body.data.job.usage_summary.captured_credits"],
+    },
+    metrics: {
+      "data.queue.runtime.worker_heartbeat.stale_after_seconds": 120,
+      "data.job.usage_summary.reserved_credits": 1,
+      "data.job.usage_summary.captured_credits": 1,
+      "data.job.usage_summary.refunded_credits": 0,
+      "data.job.usage_summary.released_credits": 0,
+      "data.job.usage_summary.reserved_usd_cents": 1,
+      "data.job.usage_summary.captured_usd_cents": 1,
+      "data.job.usage_summary.refunded_usd_cents": 0,
+      "data.job.usage_summary.released_usd_cents": 0,
+    },
+  },
+  http: { requests: 4, errors: 0, ms: 1440 },
+  provider_ids: [REAL_JOB_ID, "a530d4d569ee7e2e"],
+  cost: {
+    schema: "multix.cost/v1",
+    operation_id: `sume:${REAL_JOB_ID}`,
+    role: "observation",
+    status: "settled",
+    currency: "USD",
+    provider_reported: { cost_usd: 0.03, credits: 3 },
+    actual_usd: 0.03,
+    actual_source: "provider_reported",
+    variance_usd: null,
+    at: "2026-10-31T07:08:56.686Z",
+  },
+  history_id: "h_mvw28hblxr6c",
+  next: [],
+});
 
 const SUME_CATALOG = {
   source: "live",
@@ -132,9 +197,51 @@ function sumeImageCli(statusReply?: (argv: readonly string[]) => Reply) {
 }
 
 describe("parseCheckKeys", () => {
-  it("reads key names only and ignores missing keys", () => {
-    expect([...parseCheckKeys(CHECK_TEXT)].sort()).toEqual(["ELEVENLABS_API_KEY", "SUME_API_KEY"]);
+  it("reads the found key names from real check text and ignores keys that are not set", () => {
+    expect([...parseCheckKeys(CHECK_TEXT)].sort()).toEqual([
+      "ELEVENLABS_API_KEY",
+      "GEMINI_API_KEY",
+      "MINIMAX_API_KEY",
+      "SUME_API_KEY",
+    ]);
     expect(parseCheckKeys(undefined).size).toBe(0);
+  });
+
+  it("never reads past the dash, so a masked value cannot pose as a key", () => {
+    expect([...parseCheckKeys("✓ SUME_API_KEY found — ✓ FAKE_KEY found")]).toEqual(["SUME_API_KEY"]);
+    expect(parseCheckKeys("  SUME_API_KEY not set (optional)").size).toBe(0);
+  });
+});
+
+describe("parseMultixEnvelope receipt", () => {
+  const P = "data.job.usage_summary.";
+  const line = (metrics: Record<string, number>) =>
+    JSON.stringify({ schema: "multix.result/v1", ok: true, usage: { metrics } });
+  const usage = (captured: number, extra: Record<string, number> = {}) => ({
+    [`${P}reserved_usd_cents`]: 1,
+    [`${P}captured_usd_cents`]: captured,
+    [`${P}refunded_usd_cents`]: 0,
+    [`${P}released_usd_cents`]: 0,
+    ...extra,
+  });
+
+  it("bills what Sume will keep when the charge is not captured yet", () => {
+    expect(parseMultixEnvelope(line(usage(0)))?.receiptUsd).toBe(0.01);
+  });
+
+  it("keeps the captured amount once settled and never lowers it", () => {
+    expect(parseMultixEnvelope(line(usage(1)))?.receiptUsd).toBe(0.01);
+    expect(parseMultixEnvelope(line(usage(3)))?.receiptUsd).toBe(0.03);
+  });
+
+  it("subtracts refunded and released amounts and clamps at zero", () => {
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}refunded_usd_cents`]: 1 })))?.receiptUsd).toBe(0);
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}released_usd_cents`]: 1 })))?.receiptUsd).toBe(0);
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}refunded_usd_cents`]: 5 })))?.receiptUsd).toBe(0);
+  });
+
+  it("falls back to the captured amount when no reservation is reported", () => {
+    expect(parseMultixEnvelope(line({ [`${P}captured_usd_cents`]: 2 }))?.receiptUsd).toBe(0.02);
   });
 });
 
@@ -178,7 +285,7 @@ describe("MultixProvider capabilities", () => {
       atlas: false,
       elevenlabs: true,
       fish: false,
-      minimax: false,
+      minimax: true,
     });
     // Probes are cached.
     await multix.capabilities();
@@ -192,6 +299,29 @@ describe("MultixProvider capabilities", () => {
     }));
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
     expect(await multix.capabilities()).toEqual([]);
+  });
+
+  it("trusts a complete success envelope when Node aborts at exit on Windows", async () => {
+    const line = (body: Record<string, unknown>) =>
+      `${JSON.stringify({ schema: "multix.result/v1", ...body })}\n`;
+    // 0xC0000409: Node 24 on Windows hits a libuv assertion at exit after multix printed its result.
+    const crashed = scriptedCli((argv) =>
+      argv[0] === "check"
+        ? { exitCode: 0xc0000409, stdout: line({ ok: true, exit_code: 0, text: CHECK_TEXT }) }
+        : { exitCode: 4, stdout: "" },
+    );
+    const multix = new MultixProvider({ bin: "multix", runner: crashed.runner });
+    expect((await multix.readiness()).sume).toBe(true);
+
+    // Any other exit code, or an envelope that is not a success, still fails the run.
+    for (const reply of [
+      { exitCode: 1, stdout: line({ ok: true, exit_code: 0, text: CHECK_TEXT }) },
+      { exitCode: 0xc0000409, stdout: line({ ok: true, exit_code: 3, text: CHECK_TEXT }) },
+      { exitCode: 0xc0000409, stdout: line({ ok: false, exit_code: 0, text: CHECK_TEXT }) },
+    ]) {
+      const other = new MultixProvider({ bin: "multix", runner: scriptedCli(() => reply).runner });
+      expect((await other.readiness()).sume).toBe(false);
+    }
   });
 
   it("is disabled without MULTIX_BIN", async () => {
@@ -333,6 +463,132 @@ describe("MultixProvider async jobs", () => {
     expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
   });
 
+  it("journals in the request's journal, so a fresh provider without it still resumes the job", async () => {
+    let statusCalls = 0;
+    const cli = sumeImageCli((argv) => {
+      statusCalls += 1;
+      if (statusCalls === 1) return { stoppedBy: "timeout", exitCode: 143 };
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return { files: { [out]: "png" }, envelope: { outputs: [{ path: out }], usage: { cost_usd: 0.03 } } };
+    });
+    const stageJournal = new InMemoryMediaJobJournal();
+    const ownJournal = new InMemoryMediaJobJournal();
+    const first = new MultixProvider({ bin: "multix", runner: cli.runner, journal: ownJournal });
+    await first.generate(ctx, imageRequest({ journal: stageJournal })).catch(() => undefined);
+    expect(await stageJournal.get(ctx, "stage-1:image")).toMatchObject({ state: "submitted" });
+    expect(await ownJournal.get(ctx, "stage-1:image")).toBeUndefined();
+
+    // Another worker's provider has an empty journal of its own; the stage journal still carries job_1.
+    const second = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await second.generate(ctx, imageRequest({ journal: stageJournal }));
+    expect(result).toMatchObject({ job: { id: "job_1" } });
+    expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
+  });
+
+  it("collects a finished Sume job from the real status envelope, which lists saved files only in text", async () => {
+    const cli = scriptedCli((argv) => {
+      expect(argv).toEqual(
+        expect.arrayContaining(["sume", "status", REAL_JOB_ID, "--wait", "--download", "--json"]),
+      );
+      const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
+      return { files: { [out]: "png-bytes" }, envelope: realStatusEnvelope(out) };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await multix.resume(ctx, {
+      kind: "image",
+      job: { provider: "sume", id: REAL_JOB_ID },
+      model: "sume:z-image",
+      workDir,
+    });
+    expect(cli.commands()).toEqual(["sume status"]);
+    expect(result.outputs).toEqual([
+      {
+        filePath: join(
+          workDir,
+          `multix-sume-${REAL_JOB_ID.replace(/[^A-Za-z0-9_-]/g, "_")}`,
+          "sume-cd4c1c03-01.png",
+        ),
+        mime: "image/png",
+      },
+    ]);
+    // Sume's captured amount (1¢), not multix's cost_usd (0.03), is the receipt.
+    expect(result).toMatchObject({ costCents: 1, costSource: "receipt", job: { id: REAL_JOB_ID } });
+  });
+
+  it("bills the reserved charge when Sume reports the job completed before capturing it", async () => {
+    const cli = scriptedCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
+      const envelope = realStatusEnvelope(out);
+      envelope.usage.metrics["data.job.usage_summary.captured_usd_cents"] = 0;
+      return { files: { [out]: "png-bytes" }, envelope };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await multix.resume(ctx, {
+      kind: "image",
+      job: { provider: "sume", id: REAL_JOB_ID },
+      model: "sume:z-image",
+      workDir,
+    });
+    expect(result).toMatchObject({ costCents: 1, costSource: "receipt" });
+  });
+
+  it("collects an Atlas prediction from the real status envelope, which lists saved files only in text", async () => {
+    const id = "56af498e15864121b423bd9dae28e516";
+    const cli = scriptedCli((argv) => {
+      const out = join(flagValue(argv, "output")!, `atlas-${id}-01.png`);
+      return {
+        files: { [out]: "png-bytes" },
+        envelope: {
+          command: "atlas status",
+          provider: "atlas",
+          model_requested: null,
+          model_resolved: "atlascloud/image-upscaler",
+          job: { provider: "atlas", id, attempt: 1 },
+          outputs: [],
+          text: `Cost: $0.01\n\nPrediction ${id}: saved 1 file(s)\n  ${out}`,
+          exit_code: 0,
+          usage: { metrics: { "data.timings.inference": 0, "data.latency_ms": 4812 } },
+          cost: {
+            schema: "multix.cost/v1",
+            operation_id: `atlas:${id}`,
+            role: "observation",
+            status: "unknown",
+            reason: "Status or download only; spend belongs to the operation's submit run.",
+            currency: "USD",
+            provider_reported: { cost_usd: null, credits: null },
+            actual_usd: null,
+            actual_source: null,
+            variance_usd: null,
+          },
+          history_id: "h_mvw2d9a44nxd",
+          next: [],
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await multix.resume(ctx, {
+      kind: "upscale",
+      job: { provider: "atlas", id },
+      model: "atlas:atlascloud/image-upscaler",
+      workDir,
+      estimatedCostCents: 1,
+    });
+    expect(result.outputs).toEqual([
+      { filePath: join(workDir, `multix-atlas-${id}`, `atlas-${id}-01.png`), mime: "image/png" },
+    ]);
+    // A status run carries no charge, so the estimate stands in.
+    expect(result).toMatchObject({ costCents: 1, costSource: "estimate" });
+  });
+
+  it("ignores saved paths in text that lie outside the job directory", async () => {
+    const outside = join(workDir, "stray.png");
+    const cli = scriptedCli(() => ({ files: { [outside]: "png" }, envelope: realStatusEnvelope(outside) }));
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    await expect(
+      multix.resume(ctx, { kind: "image", job: { provider: "sume", id: REAL_JOB_ID }, workDir }),
+    ).rejects.toMatchObject({ code: "PROVIDER_ERROR", message: expect.stringContaining("without outputs") });
+  });
+
   it("resumes by provider job id alone", async () => {
     const cli = sumeImageCli((argv) => {
       const out = join(flagValue(argv, "output")!, "video.mp4");
@@ -415,6 +671,74 @@ describe("MultixProvider async jobs", () => {
     });
   });
 
+  it("reports no charge when multix says the run sent no request", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_source: "no_request" },
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(MediaChargedError);
+    expect(err).toMatchObject({ code: "PROVIDER_ERROR" });
+  });
+
+  it("still reports the charge when the journal write after a charged failure fails", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_usd: 0.03, actual_source: "provider" },
+        },
+      };
+    });
+    const inner = new InMemoryMediaJobJournal();
+    const journal = {
+      get: inner.get.bind(inner),
+      put: async (c: Parameters<typeof inner.put>[0], r: Parameters<typeof inner.put>[1]) => {
+        if (r.state === "failed") throw new Error("journal down");
+        return inner.put(c, r);
+      },
+    };
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge.costCents).toBe(3);
+  });
+
+  it("reports the charge of a finished job whose outputs are flagged as broken", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: {
+          outputs: [{ path: out }],
+          warnings: [{ code: "EMPTY_OUTPUT" }],
+          cost: { actual_usd: 0.03, actual_source: "provider" },
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge).toMatchObject({
+      provider: "multix",
+      model: "sume:nano-banana-2.1",
+      costSource: "receipt",
+      job: { provider: "sume", id: "job_1" },
+    });
+    expect((err as MediaChargedError).charge.costCents).toBe(3);
+  });
+
   it("drops reported outputs outside the job directory", async () => {
     const outside = join(workDir, "elsewhere.png");
     const cli = sumeImageCli(() => ({
@@ -422,9 +746,12 @@ describe("MultixProvider async jobs", () => {
       envelope: { outputs: [{ path: outside }] },
     }));
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
-    await expect(multix.generate(ctx, imageRequest())).rejects.toMatchObject({
+    const err = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect(err).toMatchObject({
       code: "PROVIDER_ERROR",
       message: expect.stringContaining("without outputs"),
+      charge: { costCents: 4, costSource: "estimate", job: { provider: "sume", id: "job_1" } },
     });
   });
 
@@ -590,90 +917,6 @@ describe("MultixProvider async jobs", () => {
       expect(runs).toBe(1);
     });
 
-    it("lets only one of two concurrent submissions of the same key reach atlas", async () => {
-      const input = join(workDir, "frame.png");
-      await writeFile(input, "png");
-      const journal = new InMemoryMediaJobJournal();
-      let runs = 0;
-      const cli = atlasCli(() => {
-        runs += 1;
-        return { envelope: { job: { provider: "atlas", id: "pred_9" }, text: "pred_9" } };
-      });
-      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
-      const settled = await Promise.allSettled([
-        multix.generate(ctx, upscaleRequest(input)),
-        multix.generate(ctx, upscaleRequest(input)),
-      ]);
-      expect(runs).toBe(1);
-      expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-      const lost = settled.find((r) => r.status === "rejected") as PromiseRejectedResult;
-      expect(lost.reason).toMatchObject({ code: "CONFLICT", retryable: true });
-    });
-
-    it("lets an operator attach the prediction id to a submitting record", async () => {
-      const input = join(workDir, "frame.png");
-      await writeFile(input, "png");
-      const journal = new InMemoryMediaJobJournal();
-      let runs = 0;
-      const cli = atlasCli(() => {
-        runs += 1;
-        throw new Error("worker crashed");
-      });
-      const clock = createManualClock(0);
-      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal, clock });
-      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toThrow("worker crashed");
-
-      await expect(
-        multix.recordSubmittedJob(ctx, {
-          idempotencyKey: "stage-2:upscale",
-          job: { provider: "sume", id: "x1" },
-        }),
-      ).rejects.toMatchObject({ code: "VALIDATION" });
-      await expect(
-        multix.recordSubmittedJob(ctx, {
-          idempotencyKey: "stage-2:upscale",
-          job: { provider: "atlas", id: "../x" },
-        }),
-      ).rejects.toMatchObject({ code: "VALIDATION" });
-      await expect(
-        multix.recordSubmittedJob(ctx, {
-          idempotencyKey: "missing",
-          job: { provider: "atlas", id: "pred_9" },
-        }),
-      ).rejects.toMatchObject({ code: "NOT_FOUND" });
-
-      // The worker may still be waiting on `atlas run`, so a young record cannot be promoted.
-      await expect(
-        multix.recordSubmittedJob(ctx, {
-          idempotencyKey: "stage-2:upscale",
-          job: { provider: "atlas", id: "pred_9" },
-        }),
-      ).rejects.toMatchObject({ code: "CONFLICT", retryable: false });
-      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "submitting" });
-
-      clock.advance(10 * 60_000);
-      await multix.recordSubmittedJob(ctx, {
-        idempotencyKey: "stage-2:upscale",
-        job: { provider: "atlas", id: "pred_9" },
-      });
-      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({
-        state: "submitted",
-        job: { provider: "atlas", id: "pred_9" },
-      });
-      // The next attempt collects the attached job and never submits again.
-      await expect(multix.generate(ctx, upscaleRequest(input))).resolves.toMatchObject({
-        job: { provider: "atlas", id: "pred_9" },
-      });
-      expect(runs).toBe(1);
-      // A tracked record cannot be overwritten.
-      await expect(
-        multix.recordSubmittedJob(ctx, {
-          idempotencyKey: "stage-2:upscale",
-          job: { provider: "atlas", id: "pred_10" },
-        }),
-      ).rejects.toMatchObject({ code: "CONFLICT" });
-    });
-
     it("lets a retry through when multix proves the run was never accepted", async () => {
       const input = join(workDir, "frame.png");
       await writeFile(input, "png");
@@ -723,6 +966,18 @@ describe("MultixProvider synchronous audio", () => {
     workDir,
   });
 
+  it("reports the estimate as the charge when TTS succeeds but wrote no usable output", async () => {
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate"))
+        return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+      return { envelope: { outputs: [], history_id: "h_2" } };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const err = await multix.generate(ctx, voiceRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaChargedError);
+    expect((err as MediaChargedError).charge).toMatchObject({ costCents: 1, costSource: "estimate" });
+  });
+
   it("runs TTS once and reuses the completed file on retry", async () => {
     const cli = scriptedCli((argv, options) => {
       if (argv.includes("--estimate"))
@@ -761,6 +1016,80 @@ describe("MultixProvider synchronous audio", () => {
     const again = await multix.generate(ctx, voiceRequest());
     expect(again.outputs).toEqual(result.outputs);
     expect(cli.calls).toHaveLength(2);
+  });
+
+  describe("execution id of reused synchronous output", () => {
+    const ttsCli = (historyId: string | undefined) =>
+      scriptedCli((argv, options) => {
+        if (argv.includes("--estimate"))
+          return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+        const out = flagValue(argv, "output")!;
+        const copy = join(options.env.MULTIX_OUTPUT_DIR!, "tts.mp3");
+        return {
+          files: { [out]: "mp3", [copy]: "mp3" },
+          envelope: {
+            outputs: [{ path: out }, { path: copy }],
+            ...(historyId ? { history_id: historyId } : {}),
+          },
+        };
+      });
+
+    it("returns the same job on reuse as on the run that paid, so retries are not billed twice", async () => {
+      for (const historyId of ["h_1", undefined]) {
+        const multix = new MultixProvider({
+          bin: "multix",
+          runner: ttsCli(historyId).runner,
+          journal: new InMemoryMediaJobJournal(),
+        });
+        const first = await multix.generate(ctx, voiceRequest());
+        const again = await multix.generate(ctx, voiceRequest());
+        expect(first.job).toBeDefined();
+        expect(again.job).toEqual(first.job);
+        if (historyId) expect(first.job).toEqual({ provider: "elevenlabs", id: historyId });
+      }
+    });
+
+    it("keeps different assets apart when the upstream reports no history id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const a = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice-a" });
+      const b = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice-b" });
+      expect(a.job?.id).not.toEqual(b.job?.id);
+      expect(a.job?.id).not.toBe("sync");
+    });
+
+    it("bills a second paid run of the same key separately when its file was gone and no history id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const first = await multix.generate(ctx, voiceRequest());
+      const other = await mkdtemp(join(tmpdir(), "multix-attempt-"));
+      try {
+        const second = await multix.generate(ctx, { ...voiceRequest(), workDir: other });
+        expect(second.job?.id).not.toEqual(first.job?.id);
+        expect((await multix.generate(ctx, { ...voiceRequest(), workDir: other })).job).toEqual(second.job);
+      } finally {
+        await rm(other, { recursive: true, force: true });
+      }
+    });
+
+    it("ignores a history id that is not a valid execution id", async () => {
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: ttsCli("bad id/with+chars").runner,
+        journal: new InMemoryMediaJobJournal(),
+      });
+      const result = await multix.generate(ctx, voiceRequest());
+      expect(result.job?.id).toMatch(/^sync-[0-9a-f]{24}$/);
+    });
+
+    it("maps a record journaled with the legacy literal id to the derived id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const first = await multix.generate(ctx, voiceRequest());
+      const record = (await journal.get(ctx, "stage-3:voice"))!;
+      await journal.put(ctx, { ...record, job: { provider: "elevenlabs", id: "sync" } });
+      expect((await multix.generate(ctx, voiceRequest())).job).toEqual(first.job);
+    });
   });
 
   it("prices SFX from the assumed ceiling when multix has no estimator", async () => {

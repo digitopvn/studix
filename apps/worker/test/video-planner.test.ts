@@ -210,3 +210,67 @@ describe("applyBrandFacts", () => {
     expect(applyBrandFacts(brief, { colors: { primary: "#5B3A29" } }).brand?.palette.primary).toBe("#5B3A29");
   });
 });
+
+describe("workflow template selection", () => {
+  const brief = { prompt: PROMPT } as Parameters<ReturnType<typeof createVideoPlanner>>[0];
+
+  it("builds the IR with the template of the job's workflow pack", async () => {
+    const calls: unknown[] = [];
+    const base = createVideoPlanner({ decisions: rulesRouter(), logger });
+    const reference = await base(brief, ctx(), new AbortController().signal);
+    const planner = createVideoPlanner({
+      decisions: rulesRouter(),
+      logger,
+      packs: {
+        packs: () => [
+          {
+            id: "sample-explainer",
+            title: "Sample",
+            version: 1,
+            templates: [
+              {
+                id: "sample-explainer",
+                title: "Sample",
+                description: "test",
+                version: 1,
+                inputSchema: {},
+                output: "video-ir",
+                run: (input) => {
+                  calls.push(input);
+                  return { ...reference.ir, title: "Sample explainer" };
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const out = await planner(
+      brief,
+      ctx({ workflowTemplate: "sample-explainer" }),
+      new AbortController().signal,
+    );
+    expect(out.ir.title).toBe("Sample explainer");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("fails an unknown pack before any decision is made", async () => {
+    let decided = 0;
+    const planner = createVideoPlanner({
+      decisions: {
+        decide: async () => {
+          decided++;
+          throw new Error("must not be called");
+        },
+      },
+      logger,
+    });
+    await expect(
+      planner(brief, ctx({ workflowTemplate: "no-such-pack" }), new AbortController().signal),
+    ).rejects.toMatchObject({
+      code: "VALIDATION",
+      details: { available: ["brand-intro", "marketing-video", "motion-graphic", "anime", "long-form-film"] },
+    });
+    expect(decided).toBe(0);
+  });
+});

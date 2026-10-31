@@ -12,9 +12,11 @@ import type {
   CreativeBrief,
   RenderPreset,
   RenderSpec,
+  Storyboard,
   VideoIR,
   VideoIRPatch,
 } from "@studix/video-ir";
+import { sql } from "drizzle-orm";
 import { bigint, index, integer, jsonb, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 import { type ActorType, createdAt, id, ts, updatedAt } from "./columns.ts";
 import { tenantColumns } from "./tenancy.ts";
@@ -27,6 +29,7 @@ export const videoProjects = pgTable(
     title: text("title").notNull(),
     status: text("status").$type<ProjectStatus>().notNull(),
     brief: jsonb("brief").$type<CreativeBrief>().notNull(),
+    workflowTemplate: text("workflow_template"),
     currentVersionId: text("current_version_id"),
     createdByType: text("created_by_type").$type<ActorType>().notNull(),
     createdById: text("created_by_id").notNull(),
@@ -51,11 +54,18 @@ export const projectVersions = pgTable(
     source: text("source").$type<ProjectVersionSource>().notNull(),
     parentVersionId: text("parent_version_id"),
     patch: jsonb("patch").$type<VideoIRPatch>(),
+    idempotencyKey: text("idempotency_key"),
+    feedbackId: text("feedback_id"),
     createdByType: text("created_by_type").$type<ActorType>().notNull(),
     createdById: text("created_by_id").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("project_versions_project_version_uq").on(t.projectId, t.version)],
+  (t) => [
+    uniqueIndex("project_versions_project_version_uq").on(t.projectId, t.version),
+    uniqueIndex("project_versions_project_idempotency_uq")
+      .on(t.projectId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} is not null`),
+  ],
 );
 
 export const assets = pgTable(
@@ -146,9 +156,37 @@ export const reviews = pgTable(
     body: text("body").notNull(),
     targetId: text("target_id"),
     atMs: integer("at_ms"),
+    endMs: integer("end_ms"),
     status: text("status").$type<ReviewStatus>().notNull(),
+    idempotencyKey: text("idempotency_key"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("reviews_project_idx").on(t.projectId, t.id)],
+  (t) => [
+    index("reviews_project_idx").on(t.projectId, t.id),
+    uniqueIndex("reviews_project_idempotency_uq")
+      .on(t.projectId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} is not null`),
+  ],
+);
+
+/** Append-only storyboard revisions with their review state; `revision` is 1-based per project. */
+export const projectStoryboards = pgTable(
+  "project_storyboards",
+  {
+    id: id(),
+    ...tenantColumns(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => videoProjects.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    versionId: text("version_id")
+      .notNull()
+      .references(() => projectVersions.id, { onDelete: "cascade" }),
+    storyboard: jsonb("storyboard").$type<Storyboard>().notNull(),
+    createdByType: text("created_by_type").$type<ActorType>().notNull(),
+    createdById: text("created_by_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("project_storyboards_project_revision_uq").on(t.projectId, t.revision)],
 );

@@ -14,6 +14,7 @@ import { type ExtraDelivery, type FinishedFile, finishDeliveries } from "../ffmp
 import { FfmpegProbe, probeMismatches } from "../ffmpeg/ffmpeg-probe.ts";
 import type { GradeLook } from "../ffmpeg/grade.ts";
 import { normalizeLoudness } from "../ffmpeg/loudness.ts";
+import { hasCompositionShots, renderFilmCompositions } from "../film-engine/film-composition-render.ts";
 import { buildComposition, writeComposition } from "./compile-composition.ts";
 import { hyperframesSupport } from "./hyperframes-support.ts";
 import { renderWithProducer } from "./producer-render.ts";
@@ -50,6 +51,8 @@ export interface HyperFramesRenderOptions extends RenderOptions {
 
 /** Progress budget per phase; capture dominates wall time. */
 const PHASES = { compile: 0.05, capture: 0.85, mix: 0.88, finish: 0.97 } as const;
+/** Share of the progress before the main capture spent capturing film scenes, when the IR has any. */
+const FILM_SHARE = 0.4;
 
 /**
  * RendererAdapter over HyperFrames: compiles the IR into an HTML/GSAP composition at the render size,
@@ -71,7 +74,7 @@ export class HyperFramesRenderer implements RendererAdapter {
   }
 
   async render(ir: VideoIR, options: HyperFramesRenderOptions): Promise<RenderOutput> {
-    const { spec, workDir, signal } = options;
+    const { spec, workDir, signal, deadlineAt } = options;
     const support = this.supports(ir, spec);
     if (!support.supported) {
       throw new StudixError("VALIDATION", `IR cannot be rendered by HyperFrames: ${support.reasons[0]}`, {
@@ -106,28 +109,54 @@ export class HyperFramesRenderer implements RendererAdapter {
       report(0, "compile");
       await mkdir(workDir, { recursive: true });
       await rm(projectDir, { recursive: true, force: true });
-      const build = buildComposition(ir, { width, height, assetFiles: options.assetFiles });
+      const quality = spec.preset === "final" ? "high" : "draft";
+      // Composition shots (film scenes) are captured first, each as its own root composition, and come back
+      // as muted video shots; everything after this point renders the spliced IR.
+      let renderIr = ir;
+      let assetFiles = options.assetFiles;
+      let captureFrom: number = PHASES.compile;
+      if (hasCompositionShots(ir)) {
+        report(0, "film");
+        const film = await renderFilmCompositions({
+          ir,
+          assetFiles,
+          workDir,
+          fps,
+          quality,
+          crf: spec.crf,
+          workers: this.options.workers,
+          logger: this.log,
+          signal,
+          deadlineAt,
+          onProgress: (p) => report(p * FILM_SHARE, "film"),
+        });
+        renderIr = film.ir;
+        assetFiles = film.assetFiles;
+        captureFrom = FILM_SHARE;
+      }
+      const build = buildComposition(renderIr, { width, height, assetFiles });
       for (const warning of build.warnings) this.log.warn(warning);
       await writeComposition(build, projectDir);
-      report(PHASES.compile, "capture");
+      report(captureFrom, "capture");
 
       if (signal?.aborted) throw cancelled();
       const { warnings } = await renderWithProducer({
         projectDir,
         outputPath: rawPath,
         fps,
-        quality: spec.preset === "final" ? "high" : "draft",
+        quality,
         crf: spec.crf,
         workers: this.options.workers,
         logger: this.log,
         signal,
-        onProgress: (p, stage) => report(PHASES.compile + p * (PHASES.capture - PHASES.compile), stage),
+        deadlineAt,
+        onProgress: (p, stage) => report(captureFrom + p * (PHASES.capture - captureFrom), stage),
       });
       for (const warning of warnings) this.log.warn("hyperframes render warning", { warning });
 
       if (signal?.aborted) throw cancelled();
       report(PHASES.capture, "mix");
-      const audio = await this.mix(ir, options.assetFiles, mixPath, normalizedMixPath, signal);
+      const audio = await this.mix(renderIr, assetFiles, mixPath, normalizedMixPath, signal);
 
       if (signal?.aborted) throw cancelled();
       report(PHASES.mix, "finish");

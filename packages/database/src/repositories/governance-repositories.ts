@@ -33,6 +33,7 @@ function toApproval(row: typeof approvals.$inferSelect): Approval {
       row.decidedByType && row.decidedById ? actorFrom(row.decidedByType, row.decidedById) : undefined,
     decidedAt: opt(row.decidedAt),
     comment: opt(row.comment),
+    changes: opt(row.changes),
     expiresAt: opt(row.expiresAt),
     createdAt: row.createdAt,
   };
@@ -124,7 +125,7 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
         .where(scoped(approvals, ctx, eq(approvals.id, id)));
       return rows[0] ? toApproval(rows[0]) : undefined;
     },
-    async findLatest(ctx, subject, action) {
+    async findLatest(ctx, subject, action, scopeKey) {
       const rows = await db
         .select()
         .from(approvals)
@@ -135,6 +136,7 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
             eq(approvals.subjectType, subject.type),
             eq(approvals.subjectId, subject.id),
             eq(approvals.action, action),
+            scopeKey === undefined ? undefined : eq(approvals.scopeKey, scopeKey),
           ),
         )
         .orderBy(desc(approvals.id))
@@ -170,6 +172,7 @@ export function createApprovalRepository(db: DbExecutor, clock: Clock): Approval
           decidedById: decision.decidedBy?.id ?? null,
           decidedAt: decision.decidedAt,
           comment: decision.comment ?? null,
+          changes: decision.changes ?? null,
         })
         .where(scoped(approvals, ctx, eq(approvals.id, id), eq(approvals.status, "pending")))
         .returning();
@@ -201,7 +204,9 @@ function toReview(row: typeof reviews.$inferSelect): Review {
     body: row.body,
     targetId: opt(row.targetId),
     atMs: opt(row.atMs),
+    endMs: opt(row.endMs),
     status: row.status,
+    idempotencyKey: opt(row.idempotencyKey),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -223,12 +228,30 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
           body: input.body,
           targetId: input.targetId ?? null,
           atMs: input.atMs ?? null,
+          endMs: input.endMs ?? null,
           status: "open",
+          idempotencyKey: input.idempotencyKey ?? null,
           createdAt: now,
           updatedAt: now,
         })
         .returning();
       return toReview(first(rows, "review"));
+    },
+    async get(ctx, id) {
+      const rows = await db
+        .select()
+        .from(reviews)
+        .where(scoped(reviews, ctx, eq(reviews.id, id)));
+      return rows[0] ? toReview(rows[0]) : undefined;
+    },
+    async findByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      const rows = await db
+        .select()
+        .from(reviews)
+        .where(
+          scoped(reviews, ctx, eq(reviews.projectId, projectId), eq(reviews.idempotencyKey, idempotencyKey)),
+        );
+      return rows[0] ? toReview(rows[0]) : undefined;
     },
     async list(ctx, query) {
       const limit = pageLimit(query.limit);

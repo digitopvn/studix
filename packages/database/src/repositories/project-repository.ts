@@ -16,6 +16,7 @@ function toProject(row: ProjectRow): VideoProject {
     title: row.title,
     status: row.status,
     brief: row.brief,
+    workflowTemplate: opt(row.workflowTemplate),
     currentVersionId: opt(row.currentVersionId),
     createdBy: actorFrom(row.createdByType, row.createdById),
     createdAt: row.createdAt,
@@ -34,6 +35,8 @@ function toVersion(row: VersionRow): ProjectVersion {
     source: row.source,
     parentVersionId: opt(row.parentVersionId),
     patch: opt(row.patch),
+    idempotencyKey: opt(row.idempotencyKey),
+    feedbackId: opt(row.feedbackId),
     createdBy: actorFrom(row.createdByType, row.createdById),
     createdAt: row.createdAt,
   };
@@ -51,6 +54,7 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
           title: input.title,
           status: input.status,
           brief: input.brief,
+          workflowTemplate: input.workflowTemplate ?? null,
           currentVersionId: input.currentVersionId ?? null,
           createdByType: input.createdBy.type,
           createdById: input.createdBy.id,
@@ -108,11 +112,33 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
       return db.transaction(async (tx) => {
         // Lock the project row so concurrent versions get distinct numbers (and prove tenancy).
         const locked = await tx
-          .select({ id: videoProjects.id })
+          .select({ id: videoProjects.id, currentVersionId: videoProjects.currentVersionId })
           .from(videoProjects)
           .where(scoped(videoProjects, ctx, eq(videoProjects.id, input.projectId)))
           .for("update");
         if (locked.length === 0) throw new StudixError("NOT_FOUND", `project ${input.projectId} not found`);
+        // Compare-and-set under the row lock: of two writers on the same base, only the first one wins.
+        if (input.advanceFrom !== undefined && locked[0]?.currentVersionId !== input.advanceFrom) {
+          throw new StudixError("CONFLICT", `version ${input.advanceFrom} is no longer current`, {
+            details: { currentVersionId: locked[0]?.currentVersionId ?? null },
+          });
+        }
+        if (input.idempotencyKey !== undefined) {
+          const used = await tx
+            .select({ id: projectVersions.id })
+            .from(projectVersions)
+            .where(
+              scoped(
+                projectVersions,
+                ctx,
+                eq(projectVersions.projectId, input.projectId),
+                eq(projectVersions.idempotencyKey, input.idempotencyKey),
+              ),
+            );
+          if (used.length > 0) {
+            throw new StudixError("CONFLICT", `idempotency key ${input.idempotencyKey} is already used`);
+          }
+        }
         const [current] = await tx
           .select({ version: max(projectVersions.version) })
           .from(projectVersions)
@@ -129,12 +155,21 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
             source: input.source,
             parentVersionId: input.parentVersionId ?? null,
             patch: input.patch ?? null,
+            idempotencyKey: input.idempotencyKey ?? null,
+            feedbackId: input.feedbackId ?? null,
             createdByType: input.createdBy.type,
             createdById: input.createdBy.id,
             createdAt: clock.now(),
           })
           .returning();
-        return toVersion(first(rows, "project version"));
+        const created = first(rows, "project version");
+        if (input.advanceFrom !== undefined) {
+          await tx
+            .update(videoProjects)
+            .set({ currentVersionId: created.id, updatedAt: clock.now() })
+            .where(scoped(videoProjects, ctx, eq(videoProjects.id, input.projectId)));
+        }
+        return toVersion(created);
       });
     },
 
@@ -143,6 +178,21 @@ export function createProjectRepository(db: DbExecutor, clock: Clock): ProjectRe
         .select()
         .from(projectVersions)
         .where(scoped(projectVersions, ctx, eq(projectVersions.id, versionId)));
+      return rows[0] ? toVersion(rows[0]) : undefined;
+    },
+
+    async findVersionByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      const rows = await db
+        .select()
+        .from(projectVersions)
+        .where(
+          scoped(
+            projectVersions,
+            ctx,
+            eq(projectVersions.projectId, projectId),
+            eq(projectVersions.idempotencyKey, idempotencyKey),
+          ),
+        );
       return rows[0] ? toVersion(rows[0]) : undefined;
     },
 

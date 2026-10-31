@@ -1,6 +1,13 @@
 import type { AgentRunResult, AgentRuntime, AgentTask, TenantContext } from "@studix/core";
-import { type Clock, StudixError, systemClock } from "@studix/shared";
-import { abortReason, assertAgentTask } from "./bounded-agent-runtime.ts";
+import { type Clock, redactDeep, StudixError, systemClock } from "@studix/shared";
+import {
+  type AgentSpend,
+  abortReason,
+  agentCapError,
+  assertAgentTask,
+  withSpend as attachSpend,
+  capExceeded,
+} from "./bounded-agent-runtime.ts";
 
 export const CLAUDE_AGENT_RUNTIME_ID = "claude-agent-sdk";
 
@@ -166,7 +173,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
       task.signal?.addEventListener("abort", onAbort, { once: true });
       const deadlineTimer = task.deadlineAt
         ? setTimeout(
-            () => stop(new StudixError("TIMEOUT", "agent task deadline reached", { retryable: false })),
+            () => stop(agentCapError("time", "agent task deadline reached")),
             Math.min(2 ** 31 - 1, Math.max(0, task.deadlineAt.getTime() - clock.now().getTime())),
           )
         : undefined;
@@ -212,25 +219,8 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
               });
               break;
             }
-            if (usage.turns > task.maxTurns) {
-              stop(
-                new StudixError(
-                  "PROVIDER_ERROR",
-                  `agent used ${usage.turns} turns, over the ${task.maxTurns} limit`,
-                  {
-                    retryable: false,
-                  },
-                ),
-              );
-            } else if (usage.costUsd * 100 > task.maxCostCents) {
-              stop(
-                new StudixError(
-                  "BUDGET_EXCEEDED",
-                  `agent cost ${(usage.costUsd * 100).toFixed(2)}¢ exceeds the ${task.maxCostCents}¢ task limit`,
-                  { retryable: false },
-                ),
-              );
-            }
+            const over = capExceeded(task, { ...usage, costCents: usage.costUsd * 100 });
+            if (over) stop(over);
           } else if (event.type === "result") {
             final = { output: event.output };
             break;
@@ -282,7 +272,8 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
         );
       }
       const result: AgentRunResult = {
-        output,
+        // Whatever the agent wrote, a credential it saw never leaves the run.
+        output: redactDeep(output),
         turns: usage.turns,
         costCents: Math.round(usage.costUsd * 1e6) / 1e4,
         inputTokens: usage.inputTokens,
@@ -294,30 +285,11 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
   };
 }
 
-/** What a failed run had already spent, as reported by the agent before it stopped. */
-export interface AgentSpend {
-  costCents: number;
-  inputTokens: number;
-  outputTokens: number;
-  turns: number;
-  model?: string;
-}
-
-/** The spend carried by an error from `createClaudeAgentRuntime().run`, if the agent reported any. */
-export function agentSpendOf(err: unknown): AgentSpend | undefined {
-  const spent = err instanceof StudixError ? err.details?.spent : undefined;
-  return spent && typeof spent === "object" ? (spent as AgentSpend) : undefined;
-}
-
-/**
- * A run that fails after the agent reported usage still cost money on the tenant's key. The spend rides on
- * the error so the caller can bill it, and the error is no longer retryable: a retry would pay again.
- */
+/** Attach what the session spent (in USD as the SDK reports it) to a failure. */
 function withSpend(
   err: StudixError,
   usage: { turns: number; inputTokens: number; outputTokens: number; costUsd: number; model?: string },
 ): StudixError {
-  if (!(usage.costUsd > 0 || usage.inputTokens > 0 || usage.outputTokens > 0)) return err;
   const spent: AgentSpend = {
     costCents: Math.round(usage.costUsd * 1e6) / 1e4,
     inputTokens: usage.inputTokens,
@@ -325,12 +297,7 @@ function withSpend(
     turns: usage.turns,
     model: usage.model,
   };
-  return new StudixError(err.code, err.message, {
-    retryable: false,
-    suggestedAction: err.suggestedAction,
-    details: { ...err.details, spent },
-    cause: err,
-  });
+  return attachSpend(err, spent);
 }
 
 function defaultValidate(output: unknown): unknown {

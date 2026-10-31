@@ -1,60 +1,12 @@
-import type { MediaKind, ProviderJobRef, TenantContext } from "@studix/core";
+import type { MediaJobJournal, MediaJobRecord, TenantContext } from "@studix/core";
+
+/** The journal contract lives in `@studix/core` so workflow stages can hand providers a durable one. */
+export type { MediaJobJournal, MediaJobRecord, MediaJobState } from "@studix/core";
 
 /**
- * submitting: the request is about to reach (or may have reached) an upstream that cannot deduplicate it,
- * so no job id is known yet; submitted: paid and running upstream; completed: outputs collected;
- * failed: ended without outputs.
- */
-export type MediaJobState = "submitting" | "submitted" | "completed" | "failed";
-
-/** What a provider must remember about an upstream job to collect it later instead of paying again. */
-export interface MediaJobRecord {
-  idempotencyKey: string;
-  kind: MediaKind;
-  model: string;
-  /** Absent while `state` is "submitting": the upstream has not reported an id yet. */
-  job?: ProviderJobRef;
-  /** Submission attempt for this idempotency key; a failed job is resubmitted as the next attempt. */
-  attempt: number;
-  state: MediaJobState;
-  estimatedCostCents: number;
-  /** Charge reported when the job completed. */
-  receiptCents?: number;
-  submittedAt: string;
-  updatedAt: string;
-}
-
-/**
- * Durable memory of upstream jobs, keyed by workspace and idempotency key. The record is written right
- * after submission, so a worker that dies while waiting leaves enough behind for the next attempt to
- * resume the same paid job. Implementations must scope reads and writes by `ctx.workspaceId`. `put` is an
- * unconditional overwrite, so it is only safe for transitions of a record the caller already owns. The
- * "submitting" intent goes through `claim`, which is atomic: of two callers racing to submit the same
- * idempotency key, exactly one wins.
- */
-export interface MediaJobJournal {
-  get(ctx: TenantContext, idempotencyKey: string): Promise<MediaJobRecord | undefined>;
-  put(ctx: TenantContext, record: MediaJobRecord): Promise<void>;
-  /**
-   * Atomically write `record` only if no record exists for its idempotency key, or the stored one is a
-   * "failed" record of the previous attempt (`record.attempt - 1`). Returns false, writing nothing, when
-   * another caller already holds the key. A durable implementation must do this in one conditional write.
-   */
-  claim(ctx: TenantContext, record: MediaJobRecord): Promise<boolean>;
-}
-
-/**
- * The rule `claim` enforces: the stored record is none, or the failed previous attempt. A durable
- * implementation must apply it inside one conditional write (for example a SQL `WHERE`), never as a
- * separate read followed by a write.
- */
-export function canClaim(stored: MediaJobRecord | undefined, record: MediaJobRecord): boolean {
-  return stored === undefined || (stored.state === "failed" && stored.attempt === record.attempt - 1);
-}
-
-/**
- * Process-local journal. It survives retries inside one worker process only; production wiring stores the
- * record with the stage checkpoint so another worker can resume it.
+ * Process-local journal, the provider's fallback when a request brings none. It survives retries inside one
+ * worker process only; workflow stages pass their stage journal (`StageContext.mediaJournal`), which is
+ * stored with the stage checkpoint so another worker can resume the job.
  */
 export class InMemoryMediaJobJournal implements MediaJobJournal {
   private readonly records = new Map<string, MediaJobRecord>();
@@ -66,14 +18,6 @@ export class InMemoryMediaJobJournal implements MediaJobJournal {
 
   async put(ctx: TenantContext, record: MediaJobRecord): Promise<void> {
     this.records.set(this.key(ctx, record.idempotencyKey), structuredClone(record));
-  }
-
-  async claim(ctx: TenantContext, record: MediaJobRecord): Promise<boolean> {
-    // No await between the check and the write, so this is atomic within the process.
-    const key = this.key(ctx, record.idempotencyKey);
-    if (!canClaim(this.records.get(key), record)) return false;
-    this.records.set(key, structuredClone(record));
-    return true;
   }
 
   private key(ctx: TenantContext, idempotencyKey: string): string {

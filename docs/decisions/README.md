@@ -18,5 +18,6 @@ supersedes the old one; accepted ADRs are not rewritten.
 | [0011](0011-claude-agent-runtime-and-provider-auth.md)             | Claude Agent SDK runtime and provider authentication                       | Accepted |
 | [0013](0013-hybrid-port-and-workflow-packs.md)                     | Port lai (lõi TS, Python tool trong sandbox worker) và port theo pack      | Accepted |
 | [0014](0014-storyboard-revisions-and-stage-cache.md)               | Storyboard, revision scene/shot, stage cache và pack registry              | Accepted |
+| [0015](0015-agent-stage-caps-and-host-handoff.md)                  | Agent stage: cap cứng trong harness và handoff cho host agent              | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.
