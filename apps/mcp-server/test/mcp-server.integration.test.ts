@@ -145,7 +145,8 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     const created = await call(clientA, "studix_create_video", { prompt: "Retry me" });
     const jobId = created.envelope.data?.jobId as string;
     // A job that never had a deadline (`deadline_at` is null) must still requeue.
-    await app.db.client`update jobs set status = 'failed', deadline_at = null, finished_at = now(),
+    await app.db
+      .client`update jobs set status = 'failed', deadline_at = null, deadline_window_ms = null, finished_at = now(),
       error = ${JSON.stringify({ code: "UNAVAILABLE", message: "bucket missing", retryable: false })}::jsonb
       where id = ${jobId}`;
     const failed = await call(clientA, "studix_get_job", { jobId });

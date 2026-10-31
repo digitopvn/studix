@@ -1,5 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ProjectStatus } from "@studix/core";
 import { FILM_SCENE_MIME, FILM_WEATHER_PRESETS, filmPlateScene } from "@studix/renderers/film-scene";
 import { StudixError } from "@studix/shared";
 import {
@@ -229,6 +230,8 @@ function failIssues(what: string, issues: readonly ValidationIssue[], suggestedA
   });
 }
 
+const CLOSED_PROJECT_STATUSES: readonly ProjectStatus[] = ["approved", "published", "archived", "failed"];
+
 /**
  * Store `ir` as a project version a reviewer can open on the dashboard and point the project at it, so the
  * creative gate that follows has something to look at. Deterministic id per job and board: a re-run finds
@@ -247,7 +250,11 @@ async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string)
         createdBy: { type: "system", id: ctx.actor.id },
       });
     }
-    await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
+    // A job that outlives an approve, publish or archive must not point the project back at a board in review.
+    const project = await repos.projects.get(ctx, projectId);
+    if (project && !CLOSED_PROJECT_STATUSES.includes(project.status)) {
+      await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
+    }
   });
   return versionId;
 }
