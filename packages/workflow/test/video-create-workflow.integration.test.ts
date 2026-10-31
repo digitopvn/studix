@@ -450,6 +450,40 @@ describe("video.create workflow on Postgres", () => {
     expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({ status: "in_review" });
   });
 
+  it("keeps the project rendering when a retried job of an older version finishes while the head renders", async () => {
+    const ctx = await tenant(db.current, "stale-version-retry");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const plan = fakePlanner();
+    const crashing = createTestWorker(db.current, "w-crash", {
+      planner: plan.planner,
+      renderer: fakeRenderer({ crash: Promise.resolve() }).renderer,
+    });
+    expect((await crashing.runOnce())?.outcome).toBe("failed");
+    const older = await db.current.repos.projects.get(ctx, project.id);
+
+    // A newer version became head and is still rendering when the old job is retried.
+    const olderVersion = await db.current.repos.projects.getVersion(ctx, older?.currentVersionId as string);
+    if (!olderVersion) throw new Error("the failed job left no version");
+    const head = await db.current.repos.projects.createVersion(ctx, {
+      projectId: project.id,
+      ir: olderVersion.ir,
+      source: "patch",
+      createdBy: { type: "user", id: "usr_1" },
+    });
+    await db.current.repos.projects.update(ctx, project.id, {
+      currentVersionId: head.id,
+      status: "rendering",
+    });
+    await db.current.repos.queue.retry(ctx, job.id);
+    const worker = createTestWorker(db.current, "w-retry", { planner: plan.planner });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+
+    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({
+      status: "rendering",
+      currentVersionId: head.id,
+    });
+  });
+
   it("fails immediately on non-retryable errors", async () => {
     const ctx = await tenant(db.current, "fatal");
     const { job } = await enqueueCreate(db.current, ctx);
