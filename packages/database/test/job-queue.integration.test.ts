@@ -153,3 +153,69 @@ describe("Postgres job queue", () => {
     expect(await usage.totalCostCents(ctx, { jobId: job.id })).toBeCloseTo(2.6234, 4);
   });
 });
+
+describe("Postgres job queue retry", () => {
+  const failedJob = async (ctx: TenantContext, deadlineAt?: Date) => {
+    const { queue, jobs } = db.current.repos;
+    const { job } = await queue.enqueue(ctx, { ...enqueueInput(), deadlineAt, maxAttempts: 2 });
+    return jobs.update(ctx, job.id, {
+      status: "failed",
+      attempts: 2,
+      lockedBy: "w-old",
+      leaseExpiresAt: new Date(Date.now() - 1_000),
+      error: { code: "UNAVAILABLE", message: "bucket missing", retryable: false },
+      finishedAt: new Date(),
+    });
+  };
+
+  it("requeues a failed job without a deadline as the same job, with no deadline and a fresh allowance", async () => {
+    const { queue } = db.current.repos;
+    const ctx = await tenant("retry-no-deadline");
+    const failed = await failedJob(ctx);
+    expect(failed.deadlineAt).toBeUndefined();
+
+    const requeued = await queue.retry(ctx, failed.id);
+    expect(requeued).toMatchObject({
+      id: failed.id,
+      status: "queued",
+      attempts: 2,
+      maxAttempts: 5,
+      cancelRequested: false,
+      lockedBy: undefined,
+      leaseExpiresAt: undefined,
+      finishedAt: undefined,
+      error: undefined,
+    });
+    expect(requeued.deadlineAt).toBeUndefined();
+    expect(requeued.runAfter!.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("restarts a deadline with the same window the job was created with", async () => {
+    const { queue } = db.current.repos;
+    const ctx = await tenant("retry-deadline");
+    const failed = await failedJob(ctx, new Date(Date.now() + 120_000));
+    const before = Date.now();
+    const requeued = await queue.retry(ctx, failed.id);
+    const window = failed.deadlineAt!.getTime() - failed.createdAt.getTime();
+    expect(requeued.deadlineAt!.getTime() - before).toBeGreaterThanOrEqual(window - 1_000);
+    expect(requeued.deadlineAt!.getTime() - Date.now()).toBeLessThanOrEqual(window + 1_000);
+  });
+
+  it("refuses non-failed jobs with CONFLICT and reports the current status, including a second retry", async () => {
+    const { queue } = db.current.repos;
+    const ctx = await tenant("retry-conflict");
+    const failed = await failedJob(ctx);
+    await queue.retry(ctx, failed.id);
+    const err = await queue.retry(ctx, failed.id).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "CONFLICT", details: { status: "queued", expected: ["failed"] } });
+  });
+
+  it("hides other tenants' failed jobs as NOT_FOUND and leaves them failed", async () => {
+    const { queue, jobs } = db.current.repos;
+    const owner = await tenant("retry-owner");
+    const intruder = await tenant("retry-intruder");
+    const failed = await failedJob(owner);
+    await expect(queue.retry(intruder, failed.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await jobs.get(owner, failed.id)).toMatchObject({ status: "failed" });
+  });
+});
