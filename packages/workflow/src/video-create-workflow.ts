@@ -4,6 +4,7 @@ import { USAGE_KINDS } from "@studix/billing";
 import {
   JOB_KINDS,
   type ProjectRepository,
+  type ProjectStatus,
   type RendererAdapter,
   type RenderRepository,
   type StorageAdapter,
@@ -157,9 +158,12 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
         // By the time a queued job runs a newer version may be head; jobs that did not ask to move it
         // (feedback patches, renders of "the current version") must not silently revert it.
         const movesHead = payload.makeCurrent && !payload.feedbackId;
+        const project = await repos.projects.get(ctx, payload.projectId);
+        const isHead = movesHead || project?.currentVersionId === versionId;
+        // Only the job of the head version owns the project's status: another job's render must not flag it.
         await repos.projects.update(ctx, payload.projectId, {
           ...(movesHead ? { currentVersionId: versionId } : {}),
-          status: "rendering",
+          ...(isHead ? { status: "rendering" as const } : {}),
         });
       });
       return { output: { versionId } };
@@ -336,15 +340,17 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
 }
 
 /**
- * Hand the project to review when this job's render or storyboard is ready. Only a project that is still
- * `rendering` moves: a retried job that finishes after a newer render was approved or published (or after the
- * project was archived) must not put the project back into review.
+ * Hand the project to review when this job's render or storyboard is ready. Only a project in one of `from`
+ * (by default just `rendering`) moves: a retried job that finishes after a newer render was approved or
+ * published (or after the project was archived) must not put the project back into review.
  */
 export async function markInReview(
   repos: FencedRepositories,
   ctx: TenantContext,
   projectId: string,
+  from: readonly ProjectStatus[] = ["rendering"],
 ): Promise<void> {
   const project = await repos.projects.get(ctx, projectId);
-  if (project?.status === "rendering") await repos.projects.update(ctx, projectId, { status: "in_review" });
+  if (project && from.includes(project.status))
+    await repos.projects.update(ctx, projectId, { status: "in_review" });
 }

@@ -290,8 +290,7 @@ async function reframeRequests(s: StageContext): Promise<Array<StoredMediaReques
  * Reviewer feedback on the storyboard -> new frames for the shots it changed, and back to review. The patch
  * already stored a version with the new shot descriptions; this stage generates a frame for each changed
  * shot only, stores the result as the next version (current, if nobody moved the project on meanwhile) and
- * keeps the project in review. A project that is still `rendering` moves to review; one that was approved,
- * published or archived meanwhile is left as it is. Unchanged shots keep their frames and their review state.
+ * leaves the project in review. Unchanged shots keep their frames and their review state.
  */
 export const marketingReframeStage: StageDefinition = {
   name: MV_STAGES.reframe,
@@ -331,7 +330,9 @@ export const marketingReframeStage: StageDefinition = {
           advanceFrom: versionId,
         });
       }
-      await markInReview(repos, ctx, projectId);
+      // A feedback patch is reframed while the storyboard is in review, or while an earlier job left the project
+      // in rendering; a job that outlives an approve, publish or archive must not reopen review.
+      await markInReview(repos, ctx, projectId, ["rendering", "in_review"]);
     });
     return {
       output: {
