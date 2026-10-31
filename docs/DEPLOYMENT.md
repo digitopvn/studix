@@ -89,8 +89,14 @@ Sume jobs are submitted with an idempotency key and collected with `status
 --wait --download`, so a retry resumes the paid job by its id. The job journal
 is in memory per worker process until the workflow stores it with the stage
 checkpoint; until then a worker restart in the middle of a job relies on the
-Sume idempotency key. Atlas Cloud has no idempotency key, so a crash between
-submit and the journal write can pay twice for one upscale (about $0.01).
+Sume idempotency key. Atlas Cloud has no idempotency key, so the adapter
+journals a `submitting` record right before `atlas run`. If the worker dies
+before the job id is journaled, a retry with the same idempotency key is
+refused (non-retryable) instead of paying twice for one upscale (about $0.01):
+find the prediction in `multix history` or the Atlas Cloud console and resume
+it by job id. Only errors that prove Atlas never accepted the run (invalid
+request, missing key) release the key for a retry. This protection lasts as
+long as the journal does, so it needs the durable journal described above.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
