@@ -654,7 +654,11 @@ describe("motion-graphic pipeline (fake providers)", () => {
       callToAction: "Đặt trà ngay",
     };
     await h.run({ workflowTemplate: "motion-graphic" }, await newProject(h, "motion-graphic", graphic));
-    const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    // The beats are voiced concurrently, so call order varies; the key ends in the beat's asset id.
+    const voices = h.generate.mock.calls
+      .filter(([, r]) => r.kind === "voice")
+      .map(([, r]) => r)
+      .sort((a, b) => (a.idempotencyKey ?? "").localeCompare(b.idempotencyKey ?? ""));
     expect(voices.map((r) => r.prompt)).toEqual([expect.any(String), "Trà hái tay mỗi sớm", "Đặt trà ngay"]);
     expect(voices[0]?.params).toMatchObject({
       language: "vi",
