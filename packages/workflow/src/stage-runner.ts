@@ -2,10 +2,13 @@ import { toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing
 import type { Approval, BillingPolicy, Job, JobRepository, Stage, TenantContext } from "@studix/core";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
+import type { WorkerJobQueue } from "./worker-job-queue.ts";
 import type { StageContext, StageDefinition, StageOutput, WorkflowDefinition } from "./workflow-types.ts";
 
 export interface StageRunnerDeps extends ApprovalGateDeps {
+  /** Source of stage reads; every write goes through the fenced `queue`. */
   jobs: JobRepository;
+  queue: WorkerJobQueue;
   billing: BillingPolicy;
   ledger: UsageLedger;
   clock: Clock;
@@ -26,6 +29,14 @@ export class StageFailure extends Error {
   ) {
     super(error.message, { cause: error });
     this.name = "StageFailure";
+  }
+}
+
+/** A fenced write was refused: another worker owns the job now, so this attempt must stop writing. */
+export class LeaseLostError extends Error {
+  constructor() {
+    super("Job lease was lost to another worker");
+    this.name = "LeaseLostError";
   }
 }
 
@@ -67,9 +78,14 @@ export async function runStages(
   deps: StageRunnerDeps,
   ctx: TenantContext,
   job: Job,
+  workerId: string,
   workflow: WorkflowDefinition,
   signal: AbortSignal,
 ): Promise<StagesOutcome> {
+  const { queue } = deps;
+  const fenced = async (write: Promise<boolean>): Promise<void> => {
+    if (!(await write)) throw new LeaseLostError();
+  };
   const saved = checkpoints(await deps.jobs.listStages(ctx, job.id));
   const outputs: Record<string, StageOutput> = {};
   let spentCents = job.spentCents;
@@ -95,17 +111,23 @@ export async function runStages(
         if (now - lastProgressAt < (deps.progressIntervalMs ?? 1000)) return;
         lastProgressAt = now;
         const progress = (index + Math.min(Math.max(p, 0), 1)) / total;
-        deps.jobs.update(ctx, job.id, { progress }).catch((err) => {
-          deps.logger.warn("progress update failed", { jobId: job.id, error: String(err) });
-        });
+        queue
+          .updateProgress(job, workerId, { progress })
+          .then((held) => {
+            if (!held) deps.logger.warn("progress dropped, job lease lost", { jobId: job.id });
+          })
+          .catch((err) => {
+            deps.logger.warn("progress update failed", { jobId: job.id, error: String(err) });
+          });
       },
     };
 
     if (stage.approval) {
-      const gate = await checkApprovalGate(deps, ctx, job, {
+      const gate = await checkApprovalGate(deps, ctx, job, workerId, {
         action: stage.approval.action,
         estimatedCostCents: stage.approval.estimateCostCents?.(job),
       });
+      if (gate.status === "lease_lost") throw new LeaseLostError();
       if (gate.status === "waiting")
         return { status: "waiting_approval", approval: gate.approval, stage: stage.name };
       sctx.approval = gate.approval;
@@ -129,62 +151,65 @@ export async function runStages(
     }
 
     const startedAt = deps.clock.now();
-    await deps.jobs.update(ctx, job.id, { stage: stage.name, progress: index / total });
-    await deps.jobs.upsertStage(ctx, {
-      jobId: job.id,
-      name: stage.name,
-      attempt: job.attempts,
-      status: "running",
-      startedAt,
-    });
+    await fenced(queue.updateProgress(job, workerId, { stage: stage.name, progress: index / total }));
+    await fenced(queue.writeStage(job, workerId, { name: stage.name, status: "running", startedAt }));
     let output: StageOutput;
     try {
       const result = await untilAborted(stage.run(sctx), signal);
       signal.throwIfAborted();
       output = result.output;
       for (const usage of result.usage ?? []) {
-        await deps.ledger.record(ctx, {
-          dedupeKey: usageDedupeKey({
+        await fenced(
+          queue.recordUsage(job, workerId, {
+            dedupeKey: usageDedupeKey({
+              jobId: job.id,
+              stage: stage.name,
+              attempt: job.attempts,
+              item: usage.item,
+            }),
+            kind: usage.kind,
+            quantity: usage.quantity,
+            unit: usage.unit,
+            costCents: usage.costCents,
             jobId: job.id,
-            stage: stage.name,
-            attempt: job.attempts,
-            item: usage.item,
+            providerExecutionId: usage.providerExecutionId,
+            metadata: { ...usage.metadata, stage: stage.name, attempt: job.attempts },
           }),
-          kind: usage.kind,
-          quantity: usage.quantity,
-          unit: usage.unit,
-          costCents: usage.costCents,
-          jobId: job.id,
-          providerExecutionId: usage.providerExecutionId,
-          metadata: { ...usage.metadata, stage: stage.name, attempt: job.attempts },
-        });
+        );
       }
     } catch (err) {
       const reason: unknown = signal.aborted ? signal.reason : err;
       const error = toStudixError(reason);
-      await deps.jobs.upsertStage(ctx, {
-        jobId: job.id,
-        name: stage.name,
-        attempt: job.attempts,
-        status: error.code === "CANCELLED" ? "cancelled" : "failed",
-        error: error.toJSON(),
-        startedAt,
-        finishedAt: deps.clock.now(),
-      });
+      if (err instanceof LeaseLostError) throw err;
+      try {
+        await fenced(
+          queue.writeStage(job, workerId, {
+            name: stage.name,
+            status: error.code === "CANCELLED" ? "cancelled" : "failed",
+            error: error.toJSON(),
+            startedAt,
+            finishedAt: deps.clock.now(),
+          }),
+        );
+      } catch (writeErr) {
+        if (writeErr instanceof LeaseLostError) throw writeErr;
+        // Keep the stage's own failure so its retry policy (e.g. publish: never) still applies.
+        deps.logger.warn("failed stage row could not be written", { jobId: job.id, error: String(writeErr) });
+      }
       throw new StageFailure(stage, error);
     }
 
     spentCents = toBudgetCents(await deps.ledger.jobCostCents(ctx, job.id));
-    await deps.jobs.update(ctx, job.id, { spentCents, progress: (index + 1) / total });
-    await deps.jobs.upsertStage(ctx, {
-      jobId: job.id,
-      name: stage.name,
-      attempt: job.attempts,
-      status: "succeeded",
-      output,
-      startedAt,
-      finishedAt: deps.clock.now(),
-    });
+    await fenced(queue.updateProgress(job, workerId, { spentCents, progress: (index + 1) / total }));
+    await fenced(
+      queue.writeStage(job, workerId, {
+        name: stage.name,
+        status: "succeeded",
+        output,
+        startedAt,
+        finishedAt: deps.clock.now(),
+      }),
+    );
     outputs[stage.name] = output;
     if (job.budgetCents !== undefined && spentCents > job.budgetCents) {
       throw budgetError(

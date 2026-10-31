@@ -1,14 +1,17 @@
-import type {
-  Approval,
-  ApprovalRepository,
-  AuditEvent,
-  AuditRepository,
-  Review,
-  ReviewRepository,
+import {
+  type Approval,
+  type ApprovalRepository,
+  type AuditEvent,
+  type AuditRepository,
+  actorRef,
+  type NewApproval,
+  type Review,
+  type ReviewRepository,
+  type TenantContext,
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { and, desc, eq } from "drizzle-orm";
-import type { StudixDb } from "../client.ts";
+import { and, desc, eq, isNotNull, lte, sql } from "drizzle-orm";
+import type { DbExecutor, StudixDb } from "../client.ts";
 import { approvals } from "../schema/jobs.ts";
 import { reviews } from "../schema/projects.ts";
 import { auditEvents } from "../schema/telemetry.ts";
@@ -23,6 +26,7 @@ function toApproval(row: typeof approvals.$inferSelect): Approval {
     subject: { type: row.subjectType, id: row.subjectId },
     status: row.status,
     reason: row.reason,
+    scopeKey: row.scopeKey === "" ? undefined : row.scopeKey,
     estimatedCostCents: opt(row.estimatedCostCents),
     requestedBy: actorFrom(row.requestedByType, row.requestedById),
     decidedBy:
@@ -34,27 +38,84 @@ function toApproval(row: typeof approvals.$inferSelect): Approval {
   };
 }
 
-export function createApprovalRepository(db: StudixDb, clock: Clock): ApprovalRepository {
+export function createApprovalRepository(db: DbExecutor, clock: Clock): ApprovalRepository {
+  const values = (ctx: TenantContext, input: NewApproval) => ({
+    id: input.id ?? newId("apr"),
+    ...tenantValues(ctx),
+    action: input.action,
+    subjectType: input.subject.type,
+    subjectId: input.subject.id,
+    status: "pending" as const,
+    reason: input.reason,
+    scopeKey: input.scopeKey ?? "",
+    estimatedCostCents: input.estimatedCostCents ?? null,
+    requestedByType: input.requestedBy.type,
+    requestedById: input.requestedBy.id,
+    expiresAt: input.expiresAt ?? null,
+    createdAt: clock.now(),
+  });
   const repo: ApprovalRepository = {
     async create(ctx, input) {
-      const rows = await db
-        .insert(approvals)
-        .values({
-          id: input.id ?? newId("apr"),
-          ...tenantValues(ctx),
-          action: input.action,
-          subjectType: input.subject.type,
-          subjectId: input.subject.id,
-          status: "pending",
-          reason: input.reason,
-          estimatedCostCents: input.estimatedCostCents ?? null,
-          requestedByType: input.requestedBy.type,
-          requestedById: input.requestedBy.id,
-          expiresAt: input.expiresAt ?? null,
-          createdAt: clock.now(),
-        })
-        .returning();
+      const rows = await db.insert(approvals).values(values(ctx, input)).returning();
       return toApproval(first(rows, "approval"));
+    },
+    async open(ctx, input) {
+      const sameRequest = and(
+        eq(approvals.subjectType, input.subject.type),
+        eq(approvals.subjectId, input.subject.id),
+        eq(approvals.action, input.action),
+        eq(approvals.scopeKey, input.scopeKey ?? ""),
+        eq(approvals.status, "pending"),
+      );
+      // An expired request still occupies the unique slot until it is closed.
+      const now = clock.now();
+      const expired = await db
+        .update(approvals)
+        .set({ status: "expired", decidedAt: now })
+        .where(
+          scoped(approvals, ctx, sameRequest, isNotNull(approvals.expiresAt), lte(approvals.expiresAt, now)),
+        )
+        .returning({ id: approvals.id });
+      const sweeper = { type: "system" as const, id: "approval-sweeper" };
+      for (const row of expired) {
+        await createAuditRepository(db, clock).append(
+          { ...ctx, actor: sweeper },
+          {
+            actor: actorRef(sweeper),
+            action: "approval.expired",
+            subjectType: input.subject.type,
+            subjectId: input.subject.id,
+            data: { approvalId: row.id, action: input.action },
+          },
+        );
+      }
+      // The request found pending can be decided between the insert conflict and the read; retry then.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const inserted = await db
+          .insert(approvals)
+          .values(values(ctx, input))
+          .onConflictDoNothing({
+            target: [
+              approvals.workspaceId,
+              approvals.subjectType,
+              approvals.subjectId,
+              approvals.action,
+              approvals.scopeKey,
+            ],
+            where: sql`${approvals.status} = 'pending'`,
+          })
+          .returning();
+        if (inserted[0]) return { approval: toApproval(inserted[0]), created: true };
+        const existing = await db
+          .select()
+          .from(approvals)
+          .where(scoped(approvals, ctx, sameRequest))
+          .limit(1);
+        if (existing[0]) return { approval: toApproval(existing[0]), created: false };
+      }
+      throw new StudixError("CONFLICT", "approval request is changing concurrently; retry", {
+        retryable: true,
+      });
     },
     async get(ctx, id) {
       const rows = await db
@@ -212,7 +273,7 @@ function toAudit(row: typeof auditEvents.$inferSelect): AuditEvent {
   };
 }
 
-export function createAuditRepository(db: StudixDb, clock: Clock): AuditRepository {
+export function createAuditRepository(db: DbExecutor, clock: Clock): AuditRepository {
   return {
     async append(ctx, input) {
       const rows = await db
