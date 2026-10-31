@@ -41,9 +41,17 @@ function fullBleed(shot: Shot): Shot {
   return { ...shot, style: { ...shot.style, region: "full" } };
 }
 
+const COPY_TYPES = new Set<Shot["type"]>(["title", "text", "logo", "cta"]);
+
+/** Copy over footage sits on a brand-background card so it stays legible whatever the clip shows. */
+function onFootage(shot: Shot): Shot {
+  if (!COPY_TYPES.has(shot.type) || shot.style?.background) return shot;
+  return { ...shot, style: { ...shot.style, background: "background" } };
+}
+
 /**
  * The standalone IR of one ad: its scene alone, with the audio tracks and caption cues that fall inside
- * the ad moved to start at zero, its pictures full-bleed, and only the assets it uses. Each ad renders and
+ * the ad moved to start at zero, its pictures full-bleed under carded copy, and only the assets it uses. Each ad renders and
  * ships as its own file.
  */
 export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
@@ -66,13 +74,15 @@ export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
   if (scene.background?.assetId) used.add(scene.background.assetId);
   if (ir.brand?.logoAssetId) used.add(ir.brand.logoAssetId);
   for (const track of audio) used.add(track.assetId);
+  const pictures = scene.shots.map(fullBleed);
+  const shots = pictures.some((s) => s.style?.region === "full") ? pictures.map(onFootage) : pictures;
   const { captions: _captions, audio: _audio, ...rest } = ir;
   return {
     ...rest,
     title: `${ir.title} — ${variant.name}`.slice(0, 200),
     format: { ...ir.format, durationMs: variant.durationMs },
     assets: ir.assets.filter((a) => used.has(a.id)),
-    scenes: [{ ...scene, shots: scene.shots.map(fullBleed), durationMs: variant.durationMs }],
+    scenes: [{ ...scene, shots, durationMs: variant.durationMs }],
     timeline: buildSequentialTimeline([{ id: scene.id, durationMs: variant.durationMs }]),
     ...(audio.length > 0 ? { audio } : {}),
     ...(cues.length > 0 && ir.captions ? { captions: { ...ir.captions, cues } } : {}),
