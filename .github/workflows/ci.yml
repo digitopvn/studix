@@ -1,10 +1,13 @@
 # Lint, typecheck, unit + integration tests and build. Never calls paid provider APIs:
 # the live test project only runs when STUDIX_LIVE=1, which CI never sets.
-# Pushes to dev and main run it through deploy.yml, which deploys only after it passes.
+# Pushes to main run it through deploy.yml, which deploys only after it passes.
+# During the bootstrap stage pull requests into dev and pushes to dev skip CI; contributors run
+# `pnpm check` locally before merging. Remove the dev exclusions to gate dev again.
 name: ci
 
 on:
   pull_request:
+    branches-ignore: [dev]
   workflow_call:
 
 permissions:

@@ -1,5 +1,5 @@
-# Push to dev deploys the dev environment, push to main deploys production, each only after CI
-# passes. TOSE builds the image from the pushed branch (projects have auto-deploy off); the
+# Push to dev deploys the dev environment, push to main deploys production after CI passes.
+# During the bootstrap stage dev deploys without CI (see ci.yml). TOSE builds the image from the pushed branch (projects have auto-deploy off); the
 # environment's variables name the projects and the public URL, its secret holds the TOSE key.
 name: deploy
 
@@ -13,12 +13,16 @@ permissions:
 
 jobs:
   ci:
+    if: github.ref_name != 'dev'
     uses: ./.github/workflows/ci.yml
 
   deploy:
     needs: ci
-    # Manual runs from other branches still run CI but deploy nothing.
-    if: github.ref_name == 'dev' || github.ref_name == 'main'
+    # Manual runs from other branches still run CI but deploy nothing. Dev deploys with CI skipped.
+    if: >-
+      always() &&
+      (github.ref_name == 'main' && needs.ci.result == 'success' ||
+       github.ref_name == 'dev' && needs.ci.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment:

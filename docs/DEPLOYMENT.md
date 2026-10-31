@@ -123,7 +123,9 @@ resources prefixed `studix-`.
 ### CI deploy
 
 `.github/workflows/deploy.yml`: a push to `dev` deploys dev, a push to `main`
-deploys production. It runs `ci.yml` first and deploys only if it passes, then
+deploys production. It runs `ci.yml` first and deploys only if it passes (during
+the bootstrap stage `dev` skips CI, on pushes and on pull requests into it, and
+deploys directly; `main` stays gated), then
 `deploy/tose/deploy.ts` triggers a TOSE build of the app project, waits until it
 is live (the app migrates on start), does the same for the worker, and checks
 `/healthz` and `/readyz` on the public hostname.
