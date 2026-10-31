@@ -1,4 +1,4 @@
-import type { Approval, ApprovalAction, Job, TenantContext } from "@studix/core";
+import type { ActorRef, Approval, ApprovalAction, Job, PlannerSelection, TenantContext } from "@studix/core";
 import type { CreativeBrief, VideoIR } from "@studix/video-ir";
 
 /** JSON-safe stage output; stored as the stage checkpoint. */
@@ -89,6 +89,10 @@ export interface PlannerContext {
   attempt: number;
   /** Remaining job budget in cents, when the job has one. */
   maxCostCents?: number;
+  /** Who created the job; decides which provider credentials the planner may use. */
+  requestedBy: ActorRef;
+  /** Planner chosen for the job; omitted means the default planner. */
+  planner?: PlannerSelection;
 }
 
 /** Turns a creative brief into a VideoIR (backed by the DecisionRouter / brand-intro skill). */

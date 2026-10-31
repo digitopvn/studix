@@ -10,6 +10,8 @@
     "start": "tsx src/main.ts"
   },
   "dependencies": {
+    "@studix/agent-runtime": "workspace:*",
+    "@studix/auth": "workspace:*",
     "@studix/billing": "workspace:*",
     "@studix/core": "workspace:*",
     "@studix/database": "workspace:*",

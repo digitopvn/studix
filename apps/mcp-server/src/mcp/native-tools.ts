@@ -1,9 +1,10 @@
-import { type NextAction, STUDIX_TOOLS, type TenantContext } from "@studix/core";
+import { type NextAction, PlannerSelection, STUDIX_TOOLS, type TenantContext } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { RenderPreset } from "@studix/video-ir";
 import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
 import type { ArtifactUrlDeps } from "../artifact-urls.ts";
+import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
 
@@ -73,6 +74,9 @@ const CreateVideoInput = z
       .optional()
       .describe("Wall-clock limit for the job from now; past it the job fails with TIMEOUT."),
     renderPreset: RenderPreset.optional(),
+    planner: PlannerSelection.optional().describe(
+      "Opt-in: plan with Claude using one Anthropic key connection id from the dashboard (AI & Providers). Not with spec.",
+    ),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
     message: "Provide prompt or brief",
@@ -108,6 +112,7 @@ export const NATIVE_TOOLS = [
     audited: true,
     async run(ctx, input) {
       const brief = input.brief ?? { prompt: input.prompt };
+      if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, input.planner);
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
         spec: input.spec,
@@ -116,6 +121,7 @@ export const NATIVE_TOOLS = [
         budgetCents: input.budgetCents,
         ...(input.deadlineSeconds ? { deadlineAt: new Date(Date.now() + input.deadlineSeconds * 1000) } : {}),
         renderPreset: input.renderPreset,
+        planner: input.planner,
       });
       return {
         data: {

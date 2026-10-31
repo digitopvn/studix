@@ -77,6 +77,23 @@ two auth methods are separate and are never used as each other's fallback:
   - A personal key belongs to its user. It is released for execution only for
     jobs that user created, and never as a fallback for anyone else. Removing the
     member from the workspace revokes their personal keys.
+- **Running Claude in the worker.** A job uses a key only when it selected that
+  connection (`planner.providerConnectionId`). The key is opened in the worker
+  for that run and passed to the Agent SDK subprocess only as
+  `ANTHROPIC_API_KEY`. The subprocess:
+  - gets a minimal environment, so the database URL, storage keys and the
+    master key are not inherited;
+  - runs in a fresh temporary directory that is deleted afterwards;
+  - loads no user, project or local settings and no MCP servers;
+  - has no tools, and every tool request is denied;
+  - is capped per attempt by turns, cost (never above the job's remaining
+    budget) and a deadline, and is interrupted then killed on cancel, lease
+    loss or shutdown; worker shutdown waits for that process to exit;
+  - bills what a failed run already spent to the job, and a run that spent
+    anything is not retried, so a retry never pays twice.
+
+  The brief is passed as delimited data, never as instructions. The output is
+  accepted only after `validateVideoIR`.
 - **Claude subscription (OAuth)** stays _Restricted_. Anthropic does not allow
   third-party products to offer claude.ai login or route requests through
   subscription credentials without approval. The dashboard therefore shows the
@@ -198,5 +215,6 @@ Each item maps to a negative test in the owning package.
 | Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                          |
 | Runaway cost                                           | Budgets checked before each costly stage                               |
 | Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                     |
+| Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key          |
 | Expired artifact URL still valid                       | Presign expiry tests                                                   |
 | Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                            |

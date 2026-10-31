@@ -265,17 +265,21 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
         }
       }
 
-      if (failure) throw failure;
-      if (stopReason) throw stopReason;
-      if (!final) throw new StudixError("PROVIDER_ERROR", "agent finished without a result");
+      if (failure) throw withSpend(failure, usage);
+      if (stopReason) throw withSpend(stopReason, usage);
+      if (!final)
+        throw withSpend(new StudixError("PROVIDER_ERROR", "agent finished without a result"), usage);
       let output: unknown;
       try {
         output = (options.validateOutput ?? defaultValidate)(final.output, task);
       } catch (err) {
-        throw new StudixError("PROVIDER_ERROR", "agent output failed validation", {
-          retryable: false,
-          cause: err,
-        });
+        throw withSpend(
+          new StudixError("PROVIDER_ERROR", "agent output failed validation", {
+            retryable: false,
+            cause: err,
+          }),
+          usage,
+        );
       }
       const result: AgentRunResult = {
         output,
@@ -288,6 +292,45 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
       return result;
     },
   };
+}
+
+/** What a failed run had already spent, as reported by the agent before it stopped. */
+export interface AgentSpend {
+  costCents: number;
+  inputTokens: number;
+  outputTokens: number;
+  turns: number;
+  model?: string;
+}
+
+/** The spend carried by an error from `createClaudeAgentRuntime().run`, if the agent reported any. */
+export function agentSpendOf(err: unknown): AgentSpend | undefined {
+  const spent = err instanceof StudixError ? err.details?.spent : undefined;
+  return spent && typeof spent === "object" ? (spent as AgentSpend) : undefined;
+}
+
+/**
+ * A run that fails after the agent reported usage still cost money on the tenant's key. The spend rides on
+ * the error so the caller can bill it, and the error is no longer retryable: a retry would pay again.
+ */
+function withSpend(
+  err: StudixError,
+  usage: { turns: number; inputTokens: number; outputTokens: number; costUsd: number; model?: string },
+): StudixError {
+  if (!(usage.costUsd > 0 || usage.inputTokens > 0 || usage.outputTokens > 0)) return err;
+  const spent: AgentSpend = {
+    costCents: Math.round(usage.costUsd * 1e6) / 1e4,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    turns: usage.turns,
+    model: usage.model,
+  };
+  return new StudixError(err.code, err.message, {
+    retryable: false,
+    suggestedAction: err.suggestedAction,
+    details: { ...err.details, spent },
+    cause: err,
+  });
 }
 
 function defaultValidate(output: unknown): unknown {

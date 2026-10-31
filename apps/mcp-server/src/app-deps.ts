@@ -53,6 +53,8 @@ export interface AppDeps {
   connectors?: ConnectorAdmin;
   /** Outbound AI provider credentials; without it the provider API answers UNAVAILABLE. */
   providers?: ProviderConnectionService;
+  /** STUDIX_CLAUDE_PLANNER: jobs may select the Claude planner. */
+  claudePlanner?: boolean;
   /** Meta-tool registration hook from the gateway; without it the meta-tools are not listed. */
   metaTools?: RegisterMetaTools;
   /** Activity/trace recorder for MCP and API mutations (best effort). */

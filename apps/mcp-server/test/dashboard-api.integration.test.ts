@@ -198,4 +198,53 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     const after = await (await app.api("GET", "/api/providers/anthropic", { cookie: alice })).json();
     expect(after.connections).toEqual([]);
   });
+
+  it("accepts an opt-in Claude planner only when enabled and usable by the caller", async () => {
+    const key = await app.api("POST", "/api/providers/anthropic/api-keys", {
+      cookie: alice,
+      body: { owner: "user", apiKey: "sk-ant-api03-plannerselectionkey-PLAN", label: "planner" },
+    });
+    const connection = await key.json();
+    const body = {
+      prompt: "Brand intro",
+      planner: { runtime: "claude", providerConnectionId: connection.id },
+    };
+    const errorCode = async (res: Response) => ((await res.json()) as { error: { code: string } }).error.code;
+
+    expect(
+      (await (await app.api("GET", "/api/providers/anthropic", { cookie: alice })).json()).claudePlanner,
+    ).toBe(false);
+    expect(await errorCode(await app.api("POST", "/api/projects", { cookie: alice, body }))).toBe(
+      "UNAVAILABLE",
+    );
+
+    app.deps.claudePlanner = true;
+    try {
+      const created = await app.api("POST", "/api/projects", { cookie: alice, body });
+      expect(created.status).toBe(201);
+      const { job } = await created.json();
+      const stored = await app.db.repos.jobs.get(
+        { ...(await sessionTenant(app, alice)), actor: { type: "system", id: "test" } },
+        job.id,
+      );
+      expect(stored?.payload).toMatchObject({ planner: body.planner });
+      // Bob's workspace cannot select Alice's connection.
+      expect(await errorCode(await app.api("POST", "/api/projects", { cookie: bob, body }))).toBe(
+        "UNAVAILABLE",
+      );
+      const unknown = await app.api("POST", "/api/projects", {
+        cookie: alice,
+        body: { ...body, planner: { runtime: "other", providerConnectionId: connection.id } },
+      });
+      expect(unknown.status).toBe(400);
+    } finally {
+      app.deps.claudePlanner = false;
+    }
+  });
 });
+
+/** Tenant ids of the session's current workspace, via /api/me. */
+async function sessionTenant(app: TestApp, cookie: string) {
+  const me = await (await app.api("GET", "/api/me", { cookie })).json();
+  return { organizationId: me.organization.id as string, workspaceId: me.workspace.id as string };
+}

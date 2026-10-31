@@ -14,7 +14,7 @@ not stop the process, and turn/cost limits checked after the run do not cap spen
 ## Decision
 
 - `createClaudeAgentRuntime` (`@studix/agent-runtime`) implements `AgentRuntime`
-  on top of a `ClaudeAgentTransport` seam. CI uses a fake transport; the worker
+  on top of a `ClaudeAgentTransport` seam. CI uses `createFakeClaudeTransport`; the worker
   injects `createClaudeSdkTransport`, the adapter over
   `@anthropic-ai/claude-agent-sdk` (exact version in `package.json`, installed into
   the image from the frozen lockfile).
@@ -47,8 +47,10 @@ not stop the process, and turn/cost limits checked after the run do not cap spen
   automatic fallback between authentication methods.
 - Output is validated by an injected validator (VideoIR for the planner); the
   agent's output is never trusted.
-- Runtime selection stays configuration (`plannerRuntime: default|claude`), not a
-  `core` dependency on any vendor.
+- Runtime selection is per job and opt-in: `planner: {runtime: "claude",
+  providerConnectionId}` on `studix_create_video` or the dashboard form, honoured
+  only when the operator sets `STUDIX_CLAUDE_PLANNER=true`. `core` depends on no
+  vendor; it stores the selection and the worker routes it.
 
 ## Authentication methods
 
@@ -73,8 +75,17 @@ credentials and are never forwarded.
 ## Consequences
 
 - The runtime is testable without tokens or the SDK installed.
-- PR 2 adds encrypted credential storage, the API-key dashboard flow and the
-  restricted OAuth card; PR 3 wires the worker, usage records and an E2E run.
+- PR 2 added encrypted credential storage, the API-key dashboard flow and the
+  restricted OAuth card. PR 3 wired the worker planner, provider execution and
+  usage records, and an E2E run with the fake transport. A live run needs a real
+  key and is opt-in.
+- The agent gets no tools in the planner today. A Studix tool for the agent
+  would need an in-process MCP server and is out of scope.
+- A run that fails after the agent reported usage (cost cap, turn limit,
+  invalid output, process crash) carries that spend on its error. The planner
+  records it on the provider execution and in the job's usage ledger, and the
+  error is not retryable: each retry would spend on the tenant's key again. A
+  failure before any usage (credential lookup, SDK import) stays retryable.
 - The OAuth flow is a separate, compliance-gated PR and is not part of "done" for
   the API-key path.
 

@@ -205,6 +205,22 @@ describe("provider connections over Postgres", () => {
     ).toBe("UNAVAILABLE");
   });
 
+  it("checks a planner selection for the caller without exposing the key", async () => {
+    const { svc } = service();
+    const t = await workspace("pc-usable");
+    const other = await workspace("pc-usable-other");
+    const ws = await svc.saveApiKey(t.admin, { owner: "workspace", apiKey: KEY_A });
+    const alice = await svc.saveApiKey(t.alice, { owner: "user", apiKey: KEY_B });
+
+    const view = await svc.assertUsable(t.bob, ws.id);
+    expect(view.id).toBe(ws.id);
+    expect(JSON.stringify(view)).not.toContain(KEY_A);
+    expect((await svc.assertUsable(t.alice, alice.id)).id).toBe(alice.id);
+    expect(await codeOf(svc.assertUsable(t.bob, alice.id))).toBe("FORBIDDEN");
+    expect(await codeOf(svc.assertUsable(t.viewer, ws.id))).toBe("FORBIDDEN");
+    expect(await codeOf(svc.assertUsable(other.admin, ws.id))).toBe("UNAVAILABLE");
+  });
+
   it("refuses to execute with a key whose last test failed", async () => {
     const { svc } = service();
     const t = await workspace("pc-invalid");

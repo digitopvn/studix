@@ -234,6 +234,13 @@ export interface AnthropicProvider {
   provider: "anthropic";
   methods: [ApiKeyMethodInfo, SubscriptionMethodInfo];
   connections: ProviderConnection[];
+  /** Jobs may select the Claude planner on this server. */
+  claudePlanner: boolean;
+}
+
+export interface PlannerSelection {
+  runtime: "claude";
+  providerConnectionId: string;
 }
 
 export interface CreateVideoRequest {
@@ -244,6 +251,7 @@ export interface CreateVideoRequest {
   language?: string;
   budgetCents?: number;
   idempotencyKey?: string;
+  planner?: PlannerSelection;
 }
 
 const enc = encodeURIComponent;

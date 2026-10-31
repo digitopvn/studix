@@ -1,9 +1,10 @@
-import { assertPermission, JOB_STATUSES, PROJECT_STATUSES } from "@studix/core";
+import { assertPermission, JOB_STATUSES, PlannerSelection, PROJECT_STATUSES } from "@studix/core";
 import { AspectRatio, LanguageTag } from "@studix/video-ir";
 import { Router } from "express";
 import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, playbackForRender } from "../artifact-urls.ts";
+import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
 
@@ -27,6 +28,7 @@ const CreateVideoBody = z
       .string()
       .regex(/^[A-Za-z0-9._:-]{1,200}$/)
       .optional(),
+    planner: PlannerSelection.optional(),
   })
   .strict();
 
@@ -72,6 +74,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
   router.post("/projects", async (req, res) => {
     const { ctx } = sessionOf(res);
     const body = parseBody(CreateVideoBody, req.body, "video request");
+    await assertPlannerSelection(deps, ctx, body.planner);
     const result = await deps.studio.createVideoProject(ctx, {
       brief: {
         prompt: body.prompt,
@@ -82,6 +85,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       title: body.title,
       budgetCents: body.budgetCents,
       idempotencyKey: body.idempotencyKey,
+      planner: body.planner,
     });
     await deps.activity?.record(ctx, {
       name: "dashboard.create_video",

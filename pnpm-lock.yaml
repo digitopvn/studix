@@ -152,6 +152,12 @@ importers:
 
   apps/worker:
     dependencies:
+      '@studix/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
+      '@studix/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@studix/billing':
         specifier: workspace:*
         version: link:../../packages/billing
