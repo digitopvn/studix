@@ -4,9 +4,11 @@ import type {
   ModelChoice,
   ProviderAuthMethod,
   ProviderConnectionStatus,
+  ResolvedModelSnapshot,
 } from "@studix/core";
 import { boolean, index, integer, jsonb, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 import { type ActorType, createdAt, id, ts, updatedAt } from "./columns.ts";
+import { jobs } from "./jobs.ts";
 import { tenantColumns } from "./tenancy.ts";
 
 /** `at` is an ISO string inside jsonb and revived as a Date by the repository. */
@@ -88,4 +90,20 @@ export const modelPreferences = pgTable(
     index("model_preferences_tenant_idx").on(t.workspaceId, t.organizationId),
     index("model_preferences_connection_idx").on(t.connectionId),
   ],
+);
+
+/** One resolved model per (job, runtime, stage), written once when the stage first runs. */
+export const jobModelSnapshots = pgTable(
+  "job_model_snapshots",
+  {
+    ...tenantColumns(),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    runtime: text("runtime").$type<AgentRuntimeId>().notNull(),
+    stage: text("stage").notNull(),
+    snapshot: jsonb("snapshot").$type<ResolvedModelSnapshot>().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("job_model_snapshots_uq").on(t.jobId, t.runtime, t.stage)],
 );

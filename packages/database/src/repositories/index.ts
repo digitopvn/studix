@@ -11,6 +11,7 @@ import { createJobStore } from "./job-repository.ts";
 import { createProjectRepository } from "./project-repository.ts";
 import {
   createModelPreferenceRepository,
+  createModelSnapshotRepository,
   createProviderConnectionRepository,
   createSealedCredentialStore,
 } from "./provider-repositories.ts";
@@ -55,6 +56,7 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     providerConnections: createProviderConnectionRepository(db, clock),
     modelPreferences: createModelPreferenceRepository(db, clock),
     sealedCredentials: createSealedCredentialStore(db, clock),
+    modelSnapshots: createModelSnapshotRepository(db, clock),
   };
 }
 

@@ -93,7 +93,7 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
         choice: ModelChoice,
       ): Promise<{ binding: PiRunBinding; connection: ProviderConnection }> => {
         const connection = await options.connections.get(lookup, choice.connectionId);
-        if (!connection || !connection.secretRef) {
+        if (!connection?.secretRef) {
           throw reconnect("The selected provider connection no longer exists", {
             connectionId: choice.connectionId,
           });

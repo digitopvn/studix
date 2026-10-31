@@ -1,6 +1,8 @@
 import type {
+  AgentRuntimeId,
   ModelPreference,
   ModelPreferenceRepository,
+  ModelSnapshotRepository,
   ProviderConnection,
   ProviderConnectionRepository,
   SealedCredentialStore,
@@ -9,7 +11,13 @@ import type {
 import { type Clock, newId, StudixError } from "@studix/shared";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
-import { modelPreferences, providerConnections, providerCredentials } from "../schema/providers.ts";
+import { jobs } from "../schema/jobs.ts";
+import {
+  jobModelSnapshots,
+  modelPreferences,
+  providerConnections,
+  providerCredentials,
+} from "../schema/providers.ts";
 import { actorFrom, first, isUniqueViolation, scoped, tenantValues } from "./helpers.ts";
 
 const MAX_LIST = 200;
@@ -297,6 +305,48 @@ export function createSealedCredentialStore(db: StudixDb, clock: Clock): SealedC
       await db
         .delete(providerCredentials)
         .where(scoped(providerCredentials, ctx, eq(providerCredentials.secretRef, secretRef)));
+    },
+  };
+}
+
+export function createModelSnapshotRepository(db: StudixDb, clock: Clock): ModelSnapshotRepository {
+  const read = async (ctx: TenantContext, jobId: string, runtime: AgentRuntimeId, stage: string) => {
+    const rows = await db
+      .select({ snapshot: jobModelSnapshots.snapshot })
+      .from(jobModelSnapshots)
+      .where(
+        scoped(
+          jobModelSnapshots,
+          ctx,
+          eq(jobModelSnapshots.jobId, jobId),
+          eq(jobModelSnapshots.runtime, runtime),
+          eq(jobModelSnapshots.stage, stage),
+        ),
+      );
+    return rows[0]?.snapshot;
+  };
+  return {
+    async pin(ctx, jobId, snapshot) {
+      const owned = await db
+        .select({ id: jobs.id })
+        .from(jobs)
+        .where(scoped(jobs, ctx, eq(jobs.id, jobId)));
+      if (owned.length === 0) throw new StudixError("NOT_FOUND", `Job ${jobId} not found`);
+      await db
+        .insert(jobModelSnapshots)
+        .values({
+          ...tenantValues(ctx),
+          jobId,
+          runtime: snapshot.runtime,
+          stage: snapshot.stage,
+          snapshot,
+          createdAt: clock.now(),
+        })
+        .onConflictDoNothing();
+      return (await read(ctx, jobId, snapshot.runtime, snapshot.stage)) ?? snapshot;
+    },
+    get(ctx, jobId, key) {
+      return read(ctx, jobId, key.runtime, key.stage);
     },
   };
 }

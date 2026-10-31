@@ -1,6 +1,11 @@
+import { createCredentialVault, parseCredentialKeyring } from "@studix/auth";
 import { createDefaultApprovalPolicy } from "@studix/core";
 import { createRepositories } from "@studix/database";
-import { createDecisionRouterFromConfig, RulesAdapter } from "@studix/decision-routing";
+import {
+  createDecisionRouterFromConfig,
+  type DecisionProvider,
+  RulesAdapter,
+} from "@studix/decision-routing";
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import { createActivityRecorder } from "@studix/observability";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
@@ -8,6 +13,7 @@ import { createS3StorageAdapterFromConfig } from "@studix/storage";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
 import { registerBriefRule } from "./planner/brief-decision.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
+import { createWorkspaceModelDecisions } from "./planner/workspace-model-decisions.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
@@ -28,6 +34,33 @@ function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntim
     logger: logger.child({ component: "mcp-gateway" }),
   });
   return createGatewayBrandLookup({ gateway, tool: settings.brandLookupTool, logger });
+}
+
+/**
+ * Workspace-chosen models (BYOK) in front of the operator router. Opening stored provider keys needs the
+ * credential keyring; without it no workspace can have stored a key, so the operator router runs alone.
+ */
+function withWorkspaceModels(
+  operator: DecisionProvider,
+  rules: RulesAdapter,
+  runtime: WorkerPortsRuntime,
+): DecisionProvider {
+  const keyringSpec = runtime.env.STUDIX_CREDENTIAL_KEYS;
+  if (!keyringSpec?.trim()) return operator;
+  const repos = createRepositories(runtime.db);
+  return createWorkspaceModelDecisions({
+    operator,
+    rules,
+    jobs: repos.jobs,
+    connections: repos.providerConnections,
+    preferences: repos.modelPreferences,
+    snapshots: repos.modelSnapshots,
+    vault: createCredentialVault({
+      store: repos.sealedCredentials,
+      keyring: parseCredentialKeyring(keyringSpec),
+    }),
+    logger: runtime.logger,
+  });
 }
 
 /**
@@ -54,12 +87,17 @@ export async function loadWorkerPorts(
     logger: logger.child({ component: "hyperframes-renderer" }),
   });
   const rules = registerBriefRule(new RulesAdapter({ logger }));
-  const decisions = createDecisionRouterFromConfig(runtime.env, { rules, logger });
+  const decisions = withWorkspaceModels(
+    createDecisionRouterFromConfig(runtime.env, { rules, logger }),
+    rules,
+    runtime,
+  );
   const brandLookup = gatewayBrandLookup(settings, runtime);
   logger.info("worker adapters ready", {
     storage: "s3",
     renderer: renderer.id,
     brandLookup: settings.brandLookupTool ?? "off",
+    workspaceModels: decisions.id === "workspace-model" ? "on" : "off",
   });
   return {
     planner: createVideoPlanner({ decisions, brandLookup, logger }),

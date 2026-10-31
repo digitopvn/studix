@@ -4,6 +4,7 @@ import type {
   ProviderConnection,
   ProviderConnectionStatus,
   ProviderConnectionTestResult,
+  ResolvedModelSnapshot,
 } from "../entities/provider-connection.ts";
 import type { TenantContext } from "../tenant.ts";
 
@@ -51,4 +52,18 @@ export interface SealedCredentialStore {
   put(ctx: TenantContext, secretRef: string, sealed: string): Promise<void>;
   get(ctx: TenantContext, secretRef: string): Promise<string | undefined>;
   delete(ctx: TenantContext, secretRef: string): Promise<void>;
+}
+
+/**
+ * The model a job resolved for a stage, recorded once. Later attempts of the same job read it back instead
+ * of re-resolving, so a preference changed mid-job never reroutes it (ADR 0011).
+ */
+export interface ModelSnapshotRepository {
+  /** First write wins: returns the stored snapshot, which is `snapshot` only when none existed yet. */
+  pin(ctx: TenantContext, jobId: string, snapshot: ResolvedModelSnapshot): Promise<ResolvedModelSnapshot>;
+  get(
+    ctx: TenantContext,
+    jobId: string,
+    key: Pick<ResolvedModelSnapshot, "runtime" | "stage">,
+  ): Promise<ResolvedModelSnapshot | undefined>;
 }

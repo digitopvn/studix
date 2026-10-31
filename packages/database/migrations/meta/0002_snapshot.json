@@ -1,5 +1,5 @@
 {
-  "id": "376d3177-705c-44a7-af4b-6357a7d5988d",
+  "id": "f3c1baf7-0aed-4fac-8e9e-1937cc60d9e9",
   "prevId": "b447ee4c-3e0e-449f-a75e-eade6c44d0cb",
   "version": "7",
   "dialect": "postgresql",
@@ -2055,6 +2055,130 @@
           "tableTo": "workspaces",
           "columnsFrom": [
             "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.job_model_snapshots": {
+      "name": "job_model_snapshots",
+      "schema": "",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "runtime": {
+          "name": "runtime",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stage": {
+          "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "job_model_snapshots_uq": {
+          "name": "job_model_snapshots_uq",
+          "columns": [
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "runtime",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "stage",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "job_model_snapshots_organization_id_organizations_id_fk": {
+          "name": "job_model_snapshots_organization_id_organizations_id_fk",
+          "tableFrom": "job_model_snapshots",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "job_model_snapshots_workspace_id_workspaces_id_fk": {
+          "name": "job_model_snapshots_workspace_id_workspaces_id_fk",
+          "tableFrom": "job_model_snapshots",
+          "tableTo": "workspaces",
+          "columnsFrom": [
+            "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "job_model_snapshots_job_id_jobs_id_fk": {
+          "name": "job_model_snapshots_job_id_jobs_id_fk",
+          "tableFrom": "job_model_snapshots",
+          "tableTo": "jobs",
+          "columnsFrom": [
+            "job_id"
           ],
           "columnsTo": [
             "id"

@@ -221,4 +221,43 @@ describe("provider connections (Postgres)", () => {
     await r.providerConnections.delete(ctx, conn.id);
     expect(await r.sealedCredentials.get(ctx, secretRef)).toBeUndefined();
   });
+
+  it("pins the first model snapshot of a job and hides it from other workspaces", async () => {
+    const r = db.current.repos;
+    const ctx = await provision("pc-snap", "u1");
+    const other = await provision("pc-snap-2", "u1");
+    const project = await r.projects.create(ctx, {
+      title: "Snap",
+      status: "draft",
+      brief: { prompt: "intro" },
+      createdBy: { type: "user", id: "u1" },
+    });
+    const { job } = await r.queue.enqueue(ctx, {
+      kind: "video.create",
+      projectId: project.id,
+      payload: { projectId: project.id },
+      createdBy: { type: "user", id: "u1" },
+    });
+    const snapshot = {
+      runtime: "pi" as const,
+      stage: "plan",
+      source: "workspace-stage" as const,
+      connectionId: "pconn_1",
+      connectionVersion: 1,
+      provider: "openrouter",
+      modelId: "model/a",
+      authMethod: "api_key" as const,
+      billingSource: "usage-based" as const,
+      allowFallback: false,
+      fallbacks: [],
+    };
+
+    expect(await r.modelSnapshots.pin(ctx, job.id, snapshot)).toEqual(snapshot);
+    expect(await r.modelSnapshots.pin(ctx, job.id, { ...snapshot, modelId: "model/b" })).toEqual(snapshot);
+    expect(await r.modelSnapshots.get(ctx, job.id, { runtime: "pi", stage: "plan" })).toEqual(snapshot);
+    expect(await r.modelSnapshots.get(ctx, job.id, { runtime: "pi", stage: "render" })).toBeUndefined();
+
+    expect(await r.modelSnapshots.get(other, job.id, { runtime: "pi", stage: "plan" })).toBeUndefined();
+    await expect(r.modelSnapshots.pin(other, job.id, snapshot)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
 });

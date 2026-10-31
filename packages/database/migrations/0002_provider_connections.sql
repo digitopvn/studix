@@ -1,3 +1,13 @@
+CREATE TABLE "job_model_snapshots" (
+	"organization_id" text NOT NULL,
+	"workspace_id" text NOT NULL,
+	"job_id" text NOT NULL,
+	"runtime" text NOT NULL,
+	"stage" text NOT NULL,
+	"snapshot" jsonb NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "model_preferences" (
 	"id" text PRIMARY KEY NOT NULL,
 	"organization_id" text NOT NULL,
@@ -45,6 +55,9 @@ CREATE TABLE "provider_credentials" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+ALTER TABLE "job_model_snapshots" ADD CONSTRAINT "job_model_snapshots_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "job_model_snapshots" ADD CONSTRAINT "job_model_snapshots_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "job_model_snapshots" ADD CONSTRAINT "job_model_snapshots_job_id_jobs_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."jobs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "model_preferences" ADD CONSTRAINT "model_preferences_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "model_preferences" ADD CONSTRAINT "model_preferences_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "model_preferences" ADD CONSTRAINT "model_preferences_connection_id_provider_connections_id_fk" FOREIGN KEY ("connection_id") REFERENCES "public"."provider_connections"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -52,6 +65,7 @@ ALTER TABLE "provider_connections" ADD CONSTRAINT "provider_connections_organiza
 ALTER TABLE "provider_connections" ADD CONSTRAINT "provider_connections_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "job_model_snapshots_uq" ON "job_model_snapshots" USING btree ("job_id","runtime","stage");--> statement-breakpoint
 CREATE UNIQUE INDEX "model_preferences_scope_uq" ON "model_preferences" USING btree ("workspace_id","scope_user_id","stage","runtime");--> statement-breakpoint
 CREATE INDEX "model_preferences_tenant_idx" ON "model_preferences" USING btree ("workspace_id","organization_id");--> statement-breakpoint
 CREATE INDEX "model_preferences_connection_idx" ON "model_preferences" USING btree ("connection_id");--> statement-breakpoint
