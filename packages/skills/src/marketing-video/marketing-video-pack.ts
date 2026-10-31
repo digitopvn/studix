@@ -33,6 +33,7 @@ import {
 import { z } from "zod";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
 import {
+  billedOnFailure,
   estimateMediaCents,
   generateStoredMedia,
   type StoredMedia,
@@ -443,7 +444,8 @@ export const marketingI2vStage: StageDefinition = {
     }
     next.assets = [...next.assets, ...clips.map((c) => c.asset)];
     await rm(workDir, { recursive: true, force: true });
-    return { output: { ir: VideoIR.parse(next) }, usage: clips.map((c) => c.usage) };
+    const usage = clips.map((c) => c.usage);
+    return { output: { ir: await billedOnFailure(usage, () => VideoIR.parse(next)) }, usage };
   },
 };
 
@@ -568,7 +570,8 @@ export const marketingAudioStage: StageDefinition = {
       audio: [...(ir.audio ?? []).filter((t) => !tracks.some((n) => n.id === t.id)), ...tracks],
     };
     await rm(workDir, { recursive: true, force: true });
-    return { output: { ir: VideoIR.parse(next) }, usage: generated.map((g) => g.usage) };
+    const usage = generated.map((g) => g.usage);
+    return { output: { ir: await billedOnFailure(usage, () => VideoIR.parse(next)) }, usage };
   },
 };
 
