@@ -14,8 +14,24 @@ not stop the process, and turn/cost limits checked after the run do not cap spen
 ## Decision
 
 - `createClaudeAgentRuntime` (`@studix/agent-runtime`) implements `AgentRuntime`
-  on top of a `ClaudeAgentTransport` seam. CI uses a fake transport; the real SDK
-  adapter is injected by the worker and pinned in the worker image (later PR).
+  on top of a `ClaudeAgentTransport` seam. CI uses a fake transport; the worker
+  injects `createClaudeSdkTransport`, the adapter over
+  `@anthropic-ai/claude-agent-sdk` (exact version in `package.json`, installed into
+  the image from the frozen lockfile).
+- Each SDK session gets a throwaway working directory that is also its `HOME`, an
+  environment built from scratch (`PATH`, the session key, auto-update and
+  non-essential traffic off), no settings files, no persisted session and no
+  built-in tools (`tools: []`). The adapter spawns the Claude process itself, so
+  `kill()` reaches it by handle, and `closed` settles only after that process has
+  exited and the directory is removed. A stop that lands before the SDK spawns
+  refuses the spawn.
+- Turns are counted as model calls (distinct assistant message ids). The SDK's
+  `num_turns` counts the structured-output round as an extra turn, so a one-call
+  plan reports 2 and would trip `maxTurns: 1`.
+- Only failures that come from Anthropic (an `API Error: NNN` status or an
+  Anthropic error type) are provider errors and are not retried. A failure on the
+  worker's side (SDK import, spawn, process crash or OOM kill) is `UNAVAILABLE`
+  and retryable, with the raw text only in redacted `details`.
 - Limits are enforced **while the session runs**: turns and cost stop the process
   as soon as a usage event crosses the cap; the SDK's own `maxTurns` and
   `maxBudgetUsd` are passed as a second layer.
