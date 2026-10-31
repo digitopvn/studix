@@ -11,6 +11,7 @@ import {
   type VideoIRPatch,
   videoIrNodes,
 } from "@studix/video-ir";
+import { z } from "zod";
 import type { Render } from "../entities/job.ts";
 import type { ProjectVersion, ProjectVersionSource, VideoProject } from "../entities/project.ts";
 import type { Approval, Review } from "../entities/review.ts";
@@ -558,6 +559,7 @@ function resolveTarget(ir: VideoIR, input: FeedbackInputParsed): ResolvedTarget 
       shots: placements.filter((p) => affected.has(nodeKey.shot(p.shotId))).map((p) => p.shotId),
     };
   }
+  if (input.characterId !== undefined) return characterTarget(ir, input.characterId);
   const startMs = input.startMs as number;
   const endMs = input.endMs as number;
   if (startMs >= ir.format.durationMs) {
@@ -570,9 +572,38 @@ function resolveTarget(ir: VideoIR, input: FeedbackInputParsed): ResolvedTarget 
   return { allowedPaths: hit.map((p) => p.pointer), shots: hit.map((p) => p.shotId) };
 }
 
+/** The part of a film's production bible a character target reads: who is cast and who speaks where. */
+const FilmCast = z.object({
+  characters: z.array(z.object({ characterId: z.string() })),
+  dialogue: z.array(z.object({ shotId: z.string(), characterId: z.string() })),
+});
+
+/**
+ * A film character's voice: a patch may only change `voice` of that character's bible (cast voice, delivery
+ * direction, language), so it re-voices their lines and nothing else. The shots are the ones they speak in.
+ */
+function characterTarget(ir: VideoIR, characterId: string): ResolvedTarget {
+  const film = ir.metadata?.film;
+  const cast = FilmCast.safeParse(
+    film !== null && typeof film === "object" ? (film as { production?: unknown }).production : undefined,
+  );
+  const index = cast.success ? cast.data.characters.findIndex((c) => c.characterId === characterId) : -1;
+  if (!cast.success || index < 0) throw notInVersion("character", characterId);
+  const spoken = new Set(
+    cast.data.dialogue.filter((d) => d.characterId === characterId).map((d) => d.shotId),
+  );
+  return {
+    key: `character:${characterId}`,
+    allowedPaths: [`/metadata/film/production/characters/${index}/voice`],
+    shots: shotPlacements(ir)
+      .filter((p) => spoken.has(p.shotId))
+      .map((p) => p.shotId),
+  };
+}
+
 function notInVersion(kind: string, id: string): StudixError {
   return new StudixError("NOT_FOUND", `${kind} ${id} is not in the current version`, {
-    suggestedAction: "Call studix_get_project with includeIr to list scene, shot and asset ids.",
+    suggestedAction: "Call studix_get_project with includeIr to list scene, shot, asset and character ids.",
   });
 }
 
@@ -593,7 +624,7 @@ function assertPatchScope(patch: VideoIRPatch, allowedPaths: string[]): void {
       {
         details: { outside, allowedPaths },
         suggestedAction:
-          "Only change the targeted shot, scene or asset; send other changes as separate feedback.",
+          "Only change the targeted shot, scene, asset or character voice; send other changes as separate feedback.",
       },
     );
   }
@@ -654,7 +685,7 @@ export interface FeedbackResult {
 }
 
 /**
- * Feedback on a shot, scene, asset or time range. Always stored as a comment on the version it was written
+ * Feedback on a shot, scene, asset, film character voice or time range. Always stored as a comment on the version it was written
  * against. With a patch, the patch (scoped to the target) produces a new immutable version whose scene/shot
  * revisions are recorded, and a render job is queued: only nodes depending on the change get new digests,
  * so cached stage work for everything else is reused.
@@ -841,6 +872,7 @@ export async function submitFeedback(
                 ...(input.shotId ? { shotId: input.shotId } : {}),
                 ...(input.sceneId ? { sceneId: input.sceneId } : {}),
                 ...(input.assetId ? { assetId: input.assetId } : {}),
+                ...(input.characterId ? { characterId: input.characterId } : {}),
                 ...(input.startMs !== undefined ? { startMs: input.startMs, endMs: input.endMs } : {}),
                 comment: input.comment,
                 baseVersionId: base.id,

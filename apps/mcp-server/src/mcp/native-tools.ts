@@ -129,6 +129,7 @@ const FeedbackToolInput = z.object({
   shotId: Id.optional(),
   sceneId: Id.optional(),
   assetId: Id.optional(),
+  characterId: Id.optional().describe("Film character; a patch may only change its voice."),
   startMs: Ms.describe("Time range start; with endMs instead of an id."),
   endMs: Ms,
   comment: z.string().trim().min(1).max(2000),
@@ -272,9 +273,9 @@ export const NATIVE_TOOLS = [
   }),
   tool({
     name: NATIVE_TOOL_NAMES.feedback,
-    title: "Feedback on a shot, scene, asset or time range",
+    title: "Feedback on a shot, scene, asset, character voice or time range",
     description:
-      "Comment on shotId, sceneId, assetId or startMs+endMs. A patch in it makes a new version and render job; a note on a design at a waiting gate redraws it.",
+      "Comment on shotId, sceneId, assetId, characterId or startMs+endMs. A patch in it makes a new version and render job; a note on a design at a waiting gate redraws it.",
     input: FeedbackToolInput,
     readOnly: false,
     audited: true,
