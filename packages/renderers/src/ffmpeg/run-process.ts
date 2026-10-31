@@ -91,3 +91,32 @@ export function runProcess(
     child.on("close", (code) => finish(() => resolvePromise({ exitCode: code ?? -1, stdout, stderr })));
   });
 }
+
+export interface RunFfmpegOptions {
+  /** ffmpeg binary; pass config.FFMPEG_PATH. */
+  ffmpegPath?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+/**
+ * Run ffmpeg with an argv array and fail with the stderr tail on a non-zero exit. `what` names the step in
+ * the error. Resolves with stderr, where analysis filters (loudnorm) print their measurements.
+ */
+export async function runFfmpeg(
+  what: string,
+  args: readonly string[],
+  options: RunFfmpegOptions,
+): Promise<string> {
+  const result = await runProcess(
+    options.ffmpegPath ?? "ffmpeg",
+    ["-nostdin", "-hide_banner", "-nostats", ...args],
+    { timeoutMs: options.timeoutMs ?? 10 * 60_000, signal: options.signal },
+  );
+  if (result.exitCode !== 0) {
+    throw new StudixError("INTERNAL", `ffmpeg ${what} failed (exit ${result.exitCode})`, {
+      details: { stderr: result.stderr.slice(-2000) },
+    });
+  }
+  return result.stderr;
+}

@@ -8,7 +8,7 @@ import {
   writeShotMotion,
   writeTransition,
 } from "./scene-timeline.ts";
-import { renderShotMarkup, type ShotMarkupContext, shotDomId } from "./shot-markup.ts";
+import { renderShotMarkup, type ShotMarkupContext, shotDomId, videoClipTag } from "./shot-markup.ts";
 
 /** A burned-in caption cue in scene-local milliseconds. */
 export interface SceneCaptionCue {
@@ -22,7 +22,10 @@ export interface SceneCompileInput {
   palette: Record<ColorRole, string>;
   transitions: { in?: ResolvedTransition; out?: ResolvedTransition };
   captions: { position: "top" | "middle" | "bottom"; cues: SceneCaptionCue[] };
-  markup: Omit<ShotMarkupContext, "prefix">;
+  markup: Omit<ShotMarkupContext, "prefix"> & {
+    /** Asset ids copied as video files; a background with one of these plays as a clip. */
+    videoAssetIds: ReadonlySet<string>;
+  };
 }
 
 export interface CompiledScene {
@@ -98,7 +101,17 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   if (scene.background?.assetId) {
     const src = markup.assetPaths.get(scene.background.assetId);
     if (src) {
-      underlay.push(`<img class="bg" src="${escapeHtml(src)}" alt="" />`);
+      underlay.push(
+        markup.videoAssetIds.has(scene.background.assetId)
+          ? videoClipTag({
+              id: `${prefix}bg-clip`,
+              className: "bg",
+              src,
+              startMs: 0,
+              durationMs: scene.durationMs,
+            })
+          : `<img class="bg" src="${escapeHtml(src)}" alt="" />`,
+      );
       css.push(cssRule(`#${stageId} .bg`, ["width: 100%;", "height: 100%;", "object-fit: cover;"]));
     }
   }

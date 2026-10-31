@@ -17,11 +17,29 @@ export interface RenderOptions {
   onProgress?: (progress: RenderProgress) => void;
 }
 
-export interface RenderOutput {
-  /** Absolute path of the produced media file inside workDir. */
+/** Loudness of a delivered file's audio, measured after encoding. */
+export interface DeliveryLoudness {
+  integratedLufs: number;
+  truePeakDbtp: number;
+}
+
+/** One delivered file. `master` is the same file as RenderOutput.filePath. */
+export interface RenderDelivery {
+  kind: "master" | "preview" | "phone";
   filePath: string;
   mime: string;
   probe: MediaProbe;
+  /** Absent when the render has no sound. */
+  loudness?: DeliveryLoudness;
+}
+
+export interface RenderOutput {
+  /** Absolute path of the produced media file inside workDir (the master delivery). */
+  filePath: string;
+  mime: string;
+  probe: MediaProbe;
+  /** Every delivered file, master first, when the adapter produces more than one. */
+  deliveries?: RenderDelivery[];
 }
 
 export interface RendererSupport {
