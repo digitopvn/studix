@@ -7,6 +7,7 @@ import { CreateVideoPage } from "./pages/create-video-page.tsx";
 import { JobDetailPage } from "./pages/job-detail-page.tsx";
 import { JobsPage } from "./pages/jobs-page.tsx";
 import { ProjectDetailPage } from "./pages/project-detail-page.tsx";
+import { ProjectReviewPage } from "./pages/project-review-page.tsx";
 import { ProjectsPage } from "./pages/projects-page.tsx";
 import { ProvidersPage } from "./pages/providers-page.tsx";
 import { ErrorBanner, Link } from "./ui.tsx";
@@ -24,10 +25,11 @@ const NAV = [
 type SessionState = { status: "loading" } | { status: "anonymous" } | { status: "ready"; me: Me };
 
 function Route({ segments, me }: { segments: string[]; me: Me }) {
-  const [section, id] = segments;
+  const [section, id, view] = segments;
   switch (section) {
     case undefined:
     case "projects":
+      if (id && view === "review") return <ProjectReviewPage projectId={id} />;
       return id ? <ProjectDetailPage projectId={id} /> : <ProjectsPage />;
     case "jobs":
       return id ? <JobDetailPage jobId={id} /> : <JobsPage />;

@@ -264,6 +264,88 @@ th {
   color: var(--warn);
 }
 
+.badge-in_review,
+.badge-changes_requested {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+/* Render state is drawn outlined so it never reads as an approval. */
+.badge-render {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.badge-render-rendered {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.badge-render-outdated {
+  border-style: dashed;
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.review-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.review-actions textarea,
+.comment-form textarea {
+  font: inherit;
+  width: 100%;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.comment-form {
+  margin-top: 0.5rem;
+  align-items: flex-start;
+}
+
+.shot-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  height: 2.2rem;
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.shot-segment {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  padding: 0.5rem 0.3rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-right: 1px solid var(--surface);
+  background: var(--border);
+}
+
+.shot-segment-approved {
+  background: color-mix(in srgb, var(--success) 30%, transparent);
+}
+
+.shot-segment-changes_requested {
+  background: color-mix(in srgb, var(--danger) 25%, transparent);
+}
+
+.shot-segment-in_review {
+  background: color-mix(in srgb, var(--warn) 25%, transparent);
+}
+
 .banner {
   border: 1px solid var(--border);
   border-radius: 8px;

@@ -5,6 +5,7 @@ import {
   type PublisherAdapter,
   type RendererAdapter,
   type StorageAdapter,
+  storyboardStatus,
 } from "@studix/core";
 import { createRepositories, type StudixDb } from "@studix/database";
 import { type Clock, type Logger, systemClock } from "@studix/shared";
@@ -78,6 +79,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
     billing: createJobBudgetPolicy(),
     ledger: createUsageLedger(repos.usage),
     stageCache: repos.stageCache,
+    storyboardStatus: (ctx, projectId) => storyboardStatus(repos, ctx, projectId),
     clock,
     logger,
     heartbeatIntervalMs: settings.heartbeatIntervalMs,

@@ -17,6 +17,8 @@ export interface VideoProject extends TenantOwned {
   title: string;
   status: ProjectStatus;
   brief: CreativeBrief;
+  /** Workflow pack id from the pack registry (e.g. `brand-intro`); undefined for legacy projects. */
+  workflowTemplate?: string;
   /** Latest accepted IR version; undefined until planning produced one. */
   currentVersionId?: string;
   createdBy: ActorRef;

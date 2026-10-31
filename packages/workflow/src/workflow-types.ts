@@ -86,6 +86,12 @@ export interface StageDefinition {
   /** Gate the stage behind a human approval for this action (subject: the job). */
   approval?: { action: ApprovalAction; estimateCostCents?(job: Job): number | undefined };
   /**
+   * Run only when a person approved the project's storyboard (image-to-video and other per-shot generation
+   * that spends on the plan). Checked before the stage cache; otherwise the job fails with a non-retryable
+   * APPROVAL_REQUIRED and nothing is run or charged.
+   */
+  requiresApprovedStoryboard?: boolean;
+  /**
    * "never": failures of this stage are not retried automatically (mutating downstream calls whose
    * outcome is unknown, e.g. publishing).
    */
@@ -133,6 +139,8 @@ export interface PlannerContext {
   requestedBy: ActorRef;
   /** Planner chosen for the job; omitted means the default planner. */
   planner?: PlannerSelection;
+  /** Workflow pack id from the pack registry; omitted for jobs created before packs were selectable. */
+  workflowTemplate?: string;
 }
 
 /** Turns a creative brief into a VideoIR (backed by the DecisionRouter / brand-intro skill). */

@@ -80,6 +80,7 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
               maxCostCents: remaining,
               requestedBy: s.job.createdBy,
               planner: payload.planner,
+              workflowTemplate: payload.workflowTemplate,
             },
             s.signal,
           );

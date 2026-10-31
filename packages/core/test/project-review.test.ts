@@ -1,0 +1,236 @@
+import type { VideoIR } from "@studix/video-ir";
+import brandIntro from "@studix/video-ir/fixtures/brand-intro-9x16.json" with { type: "json" };
+import { describe, expect, it } from "vitest";
+import { storyboardStatus } from "../src/index.ts";
+import { createInMemoryStudio, testTenant, withActor } from "../src/testing/index.ts";
+
+const brief = { prompt: "Video giới thiệu thương hiệu cà phê Sương Mai, 15 giây, dọc", language: "vi" };
+
+async function setup() {
+  const env = createInMemoryStudio();
+  const ctx = testTenant();
+  const created = await env.studio.createVideoProject(ctx, { brief, spec: brandIntro as VideoIR });
+  return { ...env, ctx, projectId: created.project.id };
+}
+
+const replaceText = (path: string, value: string) => ({ ops: [{ op: "replace" as const, path, value }] });
+
+describe("project review", () => {
+  it("shows the storyboard of the current version in draft, with script, timeline and nothing rendered", async () => {
+    const { studio, ctx, projectId } = await setup();
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.workflowTemplate).toBe("brand-intro");
+    expect(review.storyboard?.approval.status).toBe("draft");
+    expect(review.storyboard?.stored).toBe(false);
+    expect(review.storyboard?.scenes.map((s) => s.id)).toEqual(["hook", "intro", "feature", "cta"]);
+    const feature2 = review.storyboard?.scenes[2]?.shots[1];
+    expect(feature2).toMatchObject({
+      id: "feature-2",
+      startMs: 9300,
+      endMs: 11500,
+      pointer: "/scenes/2/shots/1",
+      render: "not_rendered",
+      approval: { status: "draft" },
+    });
+    expect(review.script.lines.length).toBeGreaterThan(0);
+    expect(review.timeline).toMatchObject({ durationMs: 15000, aspectRatio: "9:16" });
+    expect(review.storyboard?.pendingShots).toBe(6);
+  });
+
+  it("feedback with a patch on one shot stores a new version, invalidates only that shot and its scene", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    const out = await studio.submitFeedback(ctx, {
+      projectId,
+      shotId: "feature-1",
+      comment: "Nhấn mạnh tốc độ giao hàng",
+      patch: replaceText("/scenes/2/shots/0/text", "Giao hàng trong 2 giờ"),
+    });
+    expect(out.versionId).toEqual(expect.any(String));
+    expect(out.version).toBe(2);
+    expect(out.invalidated.sort()).toEqual(["scene:feature", "shot:feature-1"]);
+    expect(out.job?.status).toBe("queued");
+    expect(out.next[0]?.tool).toBe("studix_get_job");
+    const job = await repos.jobs.get(ctx, out.job!.id);
+    expect(job?.payload).toMatchObject({ versionId: out.versionId, workflowTemplate: "brand-intro" });
+
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.currentVersion?.id).toBe(out.versionId);
+    expect(review.invalidated.sort()).toEqual(["scene:feature", "shot:feature-1"]);
+    expect(review.comments).toHaveLength(1);
+    expect(review.comments[0]).toMatchObject({ targetId: "shot:feature-1", versionId: out.baseVersionId });
+    const shot = review.storyboard?.scenes[2]?.shots[0];
+    expect(shot).toMatchObject({ changed: true, revision: 2, comments: 1 });
+    expect(review.storyboard?.scenes[0]?.shots[0]).toMatchObject({ changed: false, revision: 1 });
+  });
+
+  it("refuses a patch that reaches outside the feedback target, and stores nothing", async () => {
+    const { studio, ctx, projectId } = await setup();
+    await expect(
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "đổi luôn câu mở đầu",
+        patch: replaceText("/scenes/0/shots/0/text", "Khác"),
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION", details: { allowedPaths: ["/scenes/2/shots/0"] } });
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.comments).toHaveLength(0);
+    expect(review.versions).toHaveLength(1);
+  });
+
+  it("feedback on a time range is a comment about the overlapping shots with the paths a patch may touch", async () => {
+    const { studio, ctx, projectId } = await setup();
+    const out = await studio.submitFeedback(ctx, {
+      projectId,
+      startMs: 2500,
+      endMs: 3500,
+      comment: "Cắt nhanh hơn",
+    });
+    expect(out.job).toBeUndefined();
+    expect(out.shots).toEqual(["hook-title", "intro-logo"]);
+    expect(out.allowedPaths).toEqual(["/scenes/0/shots/0", "/scenes/1/shots/0"]);
+    expect(out.next[0]).toMatchObject({ tool: "studix_feedback" });
+    const [comment] = (await studio.getProjectReview(ctx, projectId)).comments;
+    expect(comment).toMatchObject({ atMs: 2500, endMs: 3500 });
+    expect(comment?.targetId).toBeUndefined();
+  });
+
+  it("rejects unknown targets, ambiguous targets and stale base versions", async () => {
+    const { studio, ctx, projectId } = await setup();
+    await expect(
+      studio.submitFeedback(ctx, { projectId, shotId: "nope", comment: "x" }),
+    ).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await expect(
+      studio.submitFeedback(ctx, { projectId, assetId: "logo", comment: "x" }),
+    ).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await expect(
+      studio.submitFeedback(ctx, { projectId, shotId: "hook-title", sceneId: "hook", comment: "x" }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "hook-title",
+        comment: "x",
+        baseVersionId: "pver_old",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("a person approves the storyboard; the approval survives an unrelated patch only where nothing changed", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    for (const id of ["hook-title", "feature-1"]) {
+      await studio.decideStoryboard(ctx, { projectId, target: "shot", targetId: id, decision: "approved" });
+    }
+    const approved = await studio.decideStoryboard(ctx, {
+      projectId,
+      target: "storyboard",
+      decision: "approved",
+      expectedRevision: 2,
+    });
+    expect(approved.storyboard.revision).toBe(3);
+    expect(await storyboardStatus(repos, ctx, projectId)).toBe("approved");
+
+    await studio.submitFeedback(ctx, {
+      projectId,
+      shotId: "feature-1",
+      comment: "Đổi câu",
+      patch: replaceText("/scenes/2/shots/0/text", "Giao hàng trong 2 giờ"),
+    });
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.storyboard?.approval.status).toBe("in_review");
+    expect(review.storyboard?.scenes[0]?.shots[0]?.approval.status).toBe("approved");
+    expect(review.storyboard?.scenes[2]?.shots[0]?.approval.status).toBe("in_review");
+    expect(await storyboardStatus(repos, ctx, projectId)).toBe("in_review");
+  });
+
+  it("requesting changes stores the note as a comment and blocks approving the storyboard", async () => {
+    const { studio, ctx, projectId } = await setup();
+    const out = await studio.decideStoryboard(ctx, {
+      projectId,
+      target: "shot",
+      targetId: "cta-button",
+      decision: "changes_requested",
+      note: "CTA chưa rõ",
+    });
+    expect(out.comment).toMatchObject({ targetId: "shot:cta-button", body: "CTA chưa rõ" });
+    await expect(
+      studio.decideStoryboard(ctx, { projectId, target: "storyboard", decision: "approved" }),
+    ).rejects.toMatchObject({ code: "CONFLICT", details: { shots: ["cta-button"] } });
+    await expect(
+      studio.decideStoryboard(ctx, {
+        projectId,
+        target: "shot",
+        targetId: "x",
+        decision: "approved",
+        expectedRevision: 0,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("only signed-in reviewers decide; API keys and viewers cannot, and viewers cannot comment", async () => {
+    const { studio, ctx, projectId } = await setup();
+    const key = withActor(ctx, {
+      type: "apiKey",
+      id: "key_1",
+      scopes: ["project:read", "project:write", "approval:decide"],
+    });
+    await expect(
+      studio.decideStoryboard(key, { projectId, target: "storyboard", decision: "approved" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const viewer = withActor(ctx, { type: "user", id: "usr_viewer", role: "viewer" });
+    await expect(
+      studio.decideStoryboard(viewer, { projectId, target: "storyboard", decision: "approved" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      studio.submitFeedback(viewer, { projectId, shotId: "hook-title", comment: "x" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const reviewer = withActor(ctx, { type: "user", id: "usr_reviewer", role: "reviewer" });
+    await expect(
+      studio.submitFeedback(reviewer, { projectId, shotId: "hook-title", comment: "ok" }),
+    ).resolves.toBeDefined();
+    await expect(
+      studio.submitFeedback(reviewer, {
+        projectId,
+        shotId: "hook-title",
+        comment: "x",
+        patch: replaceText("/scenes/0/shots/0/text", "y"),
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("keeps projects of other tenants invisible", async () => {
+    const { studio, projectId } = await setup();
+    const other = testTenant();
+    await expect(studio.getProjectReview(other, projectId)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      studio.submitFeedback(other, { projectId, shotId: "hook-title", comment: "x" }),
+    ).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await expect(studio.renderVersion(other, { projectId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      studio.decideStoryboard(other, { projectId, target: "storyboard", decision: "approved" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("render queues a job for the current version and replays by idempotency key", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    const first = await studio.renderVersion(ctx, {
+      projectId,
+      renderPreset: "final",
+      idempotencyKey: "r-1",
+    });
+    expect(first).toMatchObject({ version: 1, replayed: false });
+    expect((await repos.jobs.get(ctx, first.job.id))?.payload).toMatchObject({ renderPreset: "final" });
+    const again = await studio.renderVersion(ctx, { projectId, idempotencyKey: "r-1" });
+    expect(again).toMatchObject({ replayed: true, versionId: first.versionId });
+    expect(again.job.id).toBe(first.job.id);
+    await expect(studio.renderVersion(ctx, { projectId, versionId: "pver_missing" })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+});
