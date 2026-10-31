@@ -71,17 +71,27 @@ export function voiceoverWordBudget(durationMs: number): number {
   return Math.floor(((durationMs - 2 * VO_PAD_MS) / 1000) * VO_WORDS_PER_SECOND);
 }
 
-/** Beats when a direction brings none: hook, up to two messages, the call to action. */
+/** Shot types of the derived message beats, in order, so no two beats of one ad ask for the same still. */
+const MESSAGE_SHOTS = ["Close-up detail shot", "Medium shot"] as const;
+
+/**
+ * Beats when a direction brings none: hook, up to two messages, the call to action. A visual describes
+ * the scene only. The brand name, the hook and the messages are words the overlay sets in the brand's
+ * type; put into an image prompt, the model paints them as garbled lettering.
+ */
 function derivedBeats(direction: CreativeDirection, brief: CreativeBrief, cta: string) {
-  const subject = brief.brand?.name ?? brief.title ?? "";
-  const messages = (direction.keyMessages ?? brief.keyMessages ?? []).slice(0, 2);
+  const messages = (direction.keyMessages ?? brief.keyMessages ?? []).slice(0, MESSAGE_SHOTS.length);
   const hook = direction.hook ?? direction.name;
   return [
-    { visual: `${direction.concept} Opening shot, ${subject}`.trim(), onScreen: hook, voiceover: hook },
-    ...messages.map((m) => ({ visual: `${direction.concept} ${m}`, onScreen: m, voiceover: m })),
+    { visual: `Wide establishing shot. ${direction.concept}`, onScreen: hook, voiceover: hook },
+    ...messages.map((m, i) => ({
+      visual: `${MESSAGE_SHOTS[i]}. ${direction.concept}`,
+      onScreen: m,
+      voiceover: m,
+    })),
     {
-      // Closing frame in the ad's own setting, so the variants do not share one identical end shot.
-      visual: `${subject} product hero shot, closing frame. ${direction.concept}`.trim(),
+      // The closing shot stays in the ad's own setting, so the variants do not share one end shot.
+      visual: `Hero shot of the product, centred, calm closing composition. ${direction.concept}`,
       onScreen: cta,
       voiceover: cta,
     },

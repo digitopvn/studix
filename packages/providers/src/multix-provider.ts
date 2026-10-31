@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
   GeneratedMedia,
   MediaCapability,
@@ -69,6 +70,11 @@ export interface MultixProviderOptions {
   clock?: Clock;
   /** How long capability probes (`multix check`, model catalogs) are reused. */
   capabilityTtlMs?: number;
+  /**
+   * How often, and how far apart, a completed Sume job whose charge is not settled yet is read again for
+   * its captured amount. Defaults to 5 reads, 2s apart.
+   */
+  receiptChecks?: { attempts: number; intervalMs: number };
 }
 
 export type MultixReadiness = Readonly<Record<MultixVendor, boolean>>;
@@ -84,6 +90,7 @@ export interface MultixProviderStatus {
 const DEFAULT_WAIT_MS = 900_000;
 const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
+const DEFAULT_RECEIPT_CHECKS = { attempts: 5, intervalMs: 2_000 } as const;
 /** Time the CLI gets beyond its own wait timeout to download outputs and print the envelope. */
 const RUN_MARGIN_MS = 120_000;
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -189,6 +196,7 @@ export class MultixProvider implements MediaProvider {
   private readonly journal: MediaJobJournal;
   private readonly clock: Clock;
   private readonly capabilityTtlMs: number;
+  private readonly receiptChecks: { attempts: number; intervalMs: number };
   private probe: { at: number; value: Promise<MediaCapability[]> } | undefined;
   private lastReadiness: MultixReadiness | undefined;
 
@@ -209,6 +217,11 @@ export class MultixProvider implements MediaProvider {
     this.journal = options.journal ?? new InMemoryMediaJobJournal();
     this.clock = options.clock ?? systemClock;
     this.capabilityTtlMs = options.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS;
+    const checks = options.receiptChecks ?? DEFAULT_RECEIPT_CHECKS;
+    if (!Number.isInteger(checks.attempts) || checks.attempts < 0 || !(checks.intervalMs >= 0)) {
+      throw new StudixError("VALIDATION", "receiptChecks needs a whole attempts >= 0 and intervalMs >= 0");
+    }
+    this.receiptChecks = { attempts: checks.attempts, intervalMs: checks.intervalMs };
   }
 
   get enabled(): boolean {
@@ -606,8 +619,9 @@ export class MultixProvider implements MediaProvider {
         details: { job },
       });
     }
-    const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
+    const { receipt, owed } = await this.settledCharge(job, envelope, outDir, signal);
     const fallback =
+      owed ??
       record?.estimatedCostCents ??
       ("estimatedCostCents" in tracking ? tracking.estimatedCostCents : undefined);
     const [costCents, costSource]: [number, MediaCostSource] =
@@ -635,6 +649,41 @@ export class MultixProvider implements MediaProvider {
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
       job,
     };
+  }
+
+  /**
+   * The charge of a completed job, in cents. Sume can report a job completed before it captured the
+   * reserved charge, with `captured = 0`; recording that as the receipt would under-bill the job for good.
+   * Such a job is read again with a plain `sume status` (no wait, no download), a bounded number of times.
+   * If the charge is still not settled, `owed` is what Sume will capture: the reservation minus refunds
+   * and releases, billed as an estimate.
+   */
+  private async settledCharge(
+    job: ProviderJobRef,
+    envelope: MultixEnvelope,
+    cwd: string,
+    signal: AbortSignal | undefined,
+  ): Promise<{ receipt?: number; owed?: number }> {
+    if (envelope.receiptUsd !== undefined) return { receipt: toCents(envelope.receiptUsd) };
+    let pending = envelope.pendingCharge;
+    if (job.provider !== "sume" || !pending) return {};
+    for (let i = 0; i < this.receiptChecks.attempts && !signal?.aborted; i += 1) {
+      try {
+        await delay(this.receiptChecks.intervalMs, undefined, signal ? { signal } : {});
+        const read = await this.exec(
+          "sume status",
+          ["sume", "status", job.id, "--json"],
+          cwd,
+          PROBE_TIMEOUT_MS,
+          signal,
+        );
+        if (read.receiptUsd !== undefined) return { receipt: toCents(read.receiptUsd) };
+        pending = read.pendingCharge ?? pending;
+      } catch {
+        // A failed read never fails a completed job; the next read, or the owed amount, stands in.
+      }
+    }
+    return pending.cents > 0 ? { owed: pending.cents } : {};
   }
 
   /** Synchronous audio: no upstream job to resume, so a completed output is reused from its fixed path. */

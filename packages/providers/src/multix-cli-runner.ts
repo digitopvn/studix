@@ -121,6 +121,11 @@ export interface MultixEnvelope {
   estimateHighUsd?: number;
   /** What the provider charged, when the run reported it. */
   receiptUsd?: number;
+  /**
+   * Sume reported a charge it has not settled yet: part of the reservation is neither captured, refunded
+   * nor released. `receiptUsd` is then absent, and `cents` is what Sume will capture once it settles.
+   */
+  pendingCharge?: { cents: number };
   historyId?: string;
 }
 
@@ -161,16 +166,40 @@ function parseWarnings(raw: unknown): string[] {
   });
 }
 
-/** What Sume itself says it captured for a job, in cents. */
-const SUME_CAPTURED_CENTS = "data.job.usage_summary.captured_usd_cents";
+/** Sume's charge summary for a job, in cents, as multix flattens it into `usage.metrics`. */
+const SUME_SUMMARY = "data.job.usage_summary.";
+
+interface SumeCharge {
+  captured: number;
+  /** Reserved minus what was refunded or released: what Sume keeps once the charge settles. */
+  owed: number;
+  settled: boolean;
+}
+
+/**
+ * Sume reserves a job's price on submit and captures it some time after the job completes, so a status
+ * read right at completion can report `captured = 0`. The charge is settled once the whole reservation is
+ * captured, refunded or released; a summary where nothing moved yet is never settled.
+ */
+function parseSumeCharge(envelope: Json): SumeCharge | undefined {
+  const metrics = obj(obj(envelope.usage).metrics);
+  const cents = (name: string) => num(metrics[`${SUME_SUMMARY}${name}_usd_cents`]);
+  const captured = cents("captured");
+  if (captured === undefined) return undefined;
+  const reserved = cents("reserved") ?? 0;
+  const returned = (cents("refunded") ?? 0) + (cents("released") ?? 0);
+  const moved = captured + returned;
+  return { captured, owed: Math.max(0, reserved - returned), settled: moved > 0 && moved >= reserved };
+}
 
 /**
  * A charge the provider reported; a run that sent no request reports none. Sume's own captured amount
- * wins over multix's `cost_usd`, which has been seen to grow with every status poll of the same job.
+ * wins over multix's `cost_usd`, which has been seen to grow with every status poll of the same job. An
+ * unsettled Sume charge is no receipt at all: its captured amount, and multix's cost derived from it, are
+ * still 0.
  */
-function parseReceipt(envelope: Json): number | undefined {
-  const captured = num(obj(obj(envelope.usage).metrics)[SUME_CAPTURED_CENTS]);
-  if (captured !== undefined) return captured / 100;
+function parseReceipt(envelope: Json, sume: SumeCharge | undefined): number | undefined {
+  if (sume) return sume.settled ? sume.captured / 100 : undefined;
   const cost = obj(envelope.cost);
   if (cost.actual_source !== "no_request") {
     const actual = num(cost.actual_usd) ?? num(obj(cost.provider_reported).cost_usd);
@@ -240,8 +269,10 @@ export function parseMultixEnvelope(stdout: string): MultixEnvelope | undefined 
   }
   const high = estimate.status === "estimated" ? num(estimate.high_usd) : undefined;
   if (high !== undefined) envelope.estimateHighUsd = high;
-  const receipt = parseReceipt(raw);
+  const sume = parseSumeCharge(raw);
+  const receipt = parseReceipt(raw, sume);
   if (receipt !== undefined) envelope.receiptUsd = receipt;
+  if (sume && !sume.settled) envelope.pendingCharge = { cents: sume.owed };
   const historyId = str(raw.history_id);
   if (historyId) envelope.historyId = historyId;
   return envelope;
