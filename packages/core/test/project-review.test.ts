@@ -63,6 +63,38 @@ describe("project review", () => {
     expect(review.storyboard?.scenes[0]?.shots[0]).toMatchObject({ changed: false, revision: 1 });
   });
 
+  it("two patches sent at once on the same base: one wins, the other gets CONFLICT and leaves nothing behind", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    const review = await studio.getProjectReview(ctx, projectId);
+    const baseVersionId = review.currentVersion?.id;
+    const send = (text: string) =>
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: `đổi thành ${text}`,
+        baseVersionId,
+        patch: replaceText("/scenes/2/shots/0/text", text),
+      });
+    const results = await Promise.allSettled([send("Một"), send("Hai")]);
+    const won = results.filter((r) => r.status === "fulfilled");
+    const lost = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(lost[0]?.reason).toMatchObject({
+      code: "CONFLICT",
+      details: { currentVersionId: expect.any(String) },
+    });
+
+    const after = await studio.getProjectReview(ctx, projectId);
+    expect(after.versions).toHaveLength(2);
+    expect(after.comments).toHaveLength(1);
+    const versions = await repos.projects.listVersions(ctx, projectId);
+    expect(versions.items.filter((v) => v.parentVersionId === baseVersionId)).toHaveLength(1);
+    expect(after.currentVersion?.id).toBe(
+      (won[0] as PromiseFulfilledResult<{ versionId?: string }>).value.versionId,
+    );
+  });
+
   it("refuses a patch that reaches outside the feedback target, and stores nothing", async () => {
     const { studio, ctx, projectId } = await setup();
     await expect(

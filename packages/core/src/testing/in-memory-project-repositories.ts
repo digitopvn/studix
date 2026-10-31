@@ -27,10 +27,18 @@ export function createInMemoryProjectRepository(clock: Clock): ProjectRepository
       return projects.delete(ctx, id);
     },
     async createVersion(ctx, input) {
-      projects.require(ctx, input.projectId);
+      const project = projects.require(ctx, input.projectId);
+      const { advanceFrom, ...fields } = input;
+      if (advanceFrom !== undefined && project.currentVersionId !== advanceFrom) {
+        throw new StudixError("CONFLICT", `version ${advanceFrom} is no longer current`, {
+          details: { currentVersionId: project.currentVersionId },
+        });
+      }
       const existing = versions.filter(ctx, (v) => v.projectId === input.projectId);
       const version = Math.max(0, ...existing.map((v) => v.version)) + 1;
-      return versions.insert(ctx, { ...input, version });
+      const created = versions.insert(ctx, { ...fields, version });
+      if (advanceFrom !== undefined) projects.update(ctx, input.projectId, { currentVersionId: created.id });
+      return created;
     },
     async getVersion(ctx, versionId) {
       return versions.get(ctx, versionId);

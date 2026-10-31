@@ -56,6 +56,36 @@ describe("StudioService over Postgres repositories", () => {
     expect((await service.listProjects(other)).items).toEqual([]);
   });
 
+  it("serializes concurrent feedback patches on the same base: one wins, the other gets CONFLICT", async () => {
+    const service = studio();
+    const ctx = await tenant("svc-race");
+    const created = await service.createVideoProject(ctx, {
+      brief: { prompt: "Giới thiệu Sương Mai Coffee", language: "vi" },
+      spec: brandIntro,
+    });
+    const baseVersionId = created.project.currentVersionId;
+    const send = (text: string) =>
+      service.submitFeedback(ctx, {
+        projectId: created.project.id,
+        shotId: "feature-1",
+        comment: `đổi thành ${text}`,
+        baseVersionId,
+        patch: { ops: [{ op: "replace", path: "/scenes/2/shots/0/text", value: text }] },
+      });
+    const results = await Promise.allSettled([send("Một"), send("Hai"), send("Ba")]);
+    const won = results.filter((r) => r.status === "fulfilled");
+    const lost = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(2);
+    for (const r of lost) expect(r.reason).toMatchObject({ code: "CONFLICT" });
+
+    const versions = await db.current.repos.projects.listVersions(ctx, created.project.id);
+    expect(versions.items).toHaveLength(2);
+    const project = await db.current.repos.projects.get(ctx, created.project.id);
+    expect(project?.currentVersionId).toBe(versions.items[0]?.id);
+    expect(versions.items.filter((v) => v.parentVersionId === baseVersionId)).toHaveLength(1);
+  });
+
   it("parks expensive jobs for approval and blocks publish without approval", async () => {
     const service = studio();
     const ctx = await tenant("svc-approval");
