@@ -92,6 +92,7 @@ export function toJobView(job: Job, stages: Stage[], approval?: Approval): JobVi
     cancelRequested: job.cancelRequested,
     budget: { limitCents: job.budgetCents, spentCents: job.spentCents },
     deadlineAt: job.deadlineAt,
+    deadlineRemainingMs: job.deadlineRemainingMs,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     startedAt: job.startedAt,

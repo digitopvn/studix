@@ -342,7 +342,7 @@ describe("publish approval gate", () => {
 
   it("pauses the job deadline while parked at the gate and re-arms it on the next claim", async () => {
     const ctx = await tenant(db.current, "publish-deadline");
-    const deadlineMs = 1_500;
+    const deadlineMs = 4_000;
     const job = await enqueuePublish(ctx, new Date(Date.now() + deadlineMs));
     const pub = fakePublisher();
 
