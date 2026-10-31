@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { SealedCredentialStore, TenantContext } from "@studix/core";
+import { redact } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import {
   createCredentialVault,
@@ -115,9 +116,41 @@ describe("credential vault", () => {
   });
 });
 
+describe("opening sealed credentials", () => {
+  const ring = () => parseCredentialKeyring(`k1:${key()}`);
+
+  it("rejects a truncated auth tag, a wrong iv length and extra segments", () => {
+    const keyring = ring();
+    const sealed = sealCredential(keyring, "ws_a", "cred_1", "secret-value-123");
+    const [v, k, iv, tag, ct] = sealed.split(".") as [string, string, string, string, string];
+    const shortTag = Buffer.from(tag, "base64url").subarray(0, 4).toString("base64url");
+    const shortIv = Buffer.from(iv, "base64url").subarray(0, 8).toString("base64url");
+    for (const bad of [
+      [v, k, iv, shortTag, ct].join("."),
+      [v, k, shortIv, tag, ct].join("."),
+      `${sealed}.extra`,
+    ]) {
+      expect(() => openCredential(keyring, "ws_a", "cred_1", bad)).toThrow(/cannot be opened/);
+    }
+    expect(openCredential(keyring, "ws_a", "cred_1", sealed)).toBe("secret-value-123");
+  });
+
+  it("registers each OAuth token with the redactor on reveal", async () => {
+    const store = memoryStore();
+    const vault = createCredentialVault({ store, keyring: ring() });
+    const ctx = ctxOf("ws_a");
+    const ref = await vault.put(
+      ctx,
+      JSON.stringify({ access_token: "at-0123456789abcdef", refresh_token: "rt-fedcba9876543210" }),
+    );
+    await vault.reveal(ctx, ref);
+    expect(redact("log: at-0123456789abcdef and rt-fedcba9876543210")).toBe("log: [redacted] and [redacted]");
+  });
+});
+
 describe("keyHintOf", () => {
   it("masks the middle and hides short secrets entirely", () => {
-    expect(keyHintOf("sk-ant-api03-abcdefghijklmnop1234")).toBe("sk-ant-…1234");
+    expect(keyHintOf("sk-ant-api03-abcdefghijklmnop12345678abcd1234")).toBe("sk-an…1234");
     expect(keyHintOf("short")).toBe("••••");
   });
 });

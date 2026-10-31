@@ -7,7 +7,7 @@ import type {
   TenantContext,
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { modelPreferences, providerConnections, providerCredentials } from "../schema/providers.ts";
 import { actorFrom, first, isUniqueViolation, scoped, tenantValues } from "./helpers.ts";
@@ -20,6 +20,13 @@ function visibleTo(ctx: TenantContext) {
   return userId
     ? or(eq(providerConnections.ownerUserId, ""), eq(providerConnections.ownerUserId, userId))
     : eq(providerConnections.ownerUserId, "");
+}
+
+/** A personal row may only be written by the user it belongs to; no other actor can plant one for someone. */
+function assertOwnUser(ctx: TenantContext, userId: string, what: string): void {
+  if (ctx.actor.type !== "user" || ctx.actor.id !== userId) {
+    throw new StudixError("FORBIDDEN", `A personal ${what} can only be created by its own user`);
+  }
 }
 
 function toConnection(row: typeof providerConnections.$inferSelect): ProviderConnection {
@@ -48,6 +55,7 @@ function toConnection(row: typeof providerConnections.$inferSelect): ProviderCon
 export function createProviderConnectionRepository(db: StudixDb, clock: Clock): ProviderConnectionRepository {
   return {
     async create(ctx, input) {
+      if (input.owner.type === "user") assertOwnUser(ctx, input.owner.userId, "connection");
       const now = clock.now();
       try {
         const rows = await db
@@ -125,9 +133,18 @@ export function createProviderConnectionRepository(db: StudixDb, clock: Clock): 
       return toConnection(first(rows, `provider connection ${id}`));
     },
     async delete(ctx, id) {
-      await db
+      const where = scoped(providerConnections, ctx, eq(providerConnections.id, id), visibleTo(ctx));
+      const rows = await db
         .delete(providerConnections)
-        .where(scoped(providerConnections, ctx, eq(providerConnections.id, id), visibleTo(ctx)));
+        .where(where)
+        .returning({ ref: providerConnections.secretRef });
+      // The sealed secret goes with its connection; a dangling credential has no owner left to manage it.
+      const secretRef = rows[0]?.ref;
+      if (secretRef) {
+        await db
+          .delete(providerCredentials)
+          .where(scoped(providerCredentials, ctx, eq(providerCredentials.secretRef, secretRef)));
+      }
     },
   };
 }
@@ -157,11 +174,39 @@ function preferencesVisibleTo(ctx: TenantContext) {
     : eq(modelPreferences.scopeUserId, "");
 }
 
+/**
+ * Every connection a preference points at (primary and fallbacks) must exist in the caller's workspace,
+ * be visible to the caller, and, for a workspace-wide preference, be workspace-owned so one member's
+ * personal credential never becomes everyone's default.
+ */
+async function assertChoicesUsable(
+  db: StudixDb,
+  ctx: TenantContext,
+  scope: "workspace" | "user",
+  choices: ReadonlyArray<{ connectionId: string }>,
+): Promise<void> {
+  const ids = [...new Set(choices.map((c) => c.connectionId))];
+  const rows = await db
+    .select({ id: providerConnections.id, owner: providerConnections.ownerUserId })
+    .from(providerConnections)
+    .where(scoped(providerConnections, ctx, inArray(providerConnections.id, ids), visibleTo(ctx)));
+  const found = new Map(rows.map((r) => [r.id, r.owner]));
+  for (const id of ids) {
+    const owner = found.get(id);
+    if (owner === undefined) throw new StudixError("NOT_FOUND", `Connection ${id} not found`);
+    if (scope === "workspace" && owner !== "") {
+      throw new StudixError("VALIDATION", "A workspace preference cannot use a personal connection");
+    }
+  }
+}
+
 export function createModelPreferenceRepository(db: StudixDb, clock: Clock): ModelPreferenceRepository {
   return {
     async upsert(ctx, input) {
       const now = clock.now();
+      if (input.scope.type === "user") assertOwnUser(ctx, input.scope.userId, "preference");
       const scopeUserId = input.scope.type === "user" ? input.scope.userId : "";
+      await assertChoicesUsable(db, ctx, input.scope.type, [input, ...input.fallbacks]);
       const rows = await db
         .insert(modelPreferences)
         .values({

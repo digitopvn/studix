@@ -1,5 +1,5 @@
 {
-  "id": "147e58a6-74cb-4895-a277-e237cacdb37e",
+  "id": "376d3177-705c-44a7-af4b-6357a7d5988d",
   "prevId": "b447ee4c-3e0e-449f-a75e-eade6c44d0cb",
   "version": "7",
   "dialect": "postgresql",
@@ -2201,6 +2201,21 @@
             },
             {
               "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "model_preferences_connection_idx": {
+          "name": "model_preferences_connection_idx",
+          "columns": [
+            {
+              "expression": "connection_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

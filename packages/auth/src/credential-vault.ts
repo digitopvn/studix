@@ -13,6 +13,7 @@ import { newId, registerSecret, StudixError } from "@studix/shared";
 const ALGORITHM = "aes-256-gcm";
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
+const TAG_BYTES = 16;
 const SECRET_REF_PREFIX = "cred_";
 
 export interface CredentialKeyring {
@@ -73,7 +74,7 @@ export function sealCredential(
   const key = keyring.keys.get(keyring.activeKeyId);
   if (!key) throw new StudixError("INTERNAL", "Active credential key is missing from the keyring");
   const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGORITHM, key, iv);
+  const cipher = createCipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
   cipher.setAAD(aad(workspaceId, secretRef));
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return ["v1", keyring.activeKeyId, b64(iv), b64(cipher.getAuthTag()), b64(ciphertext)].join(".");
@@ -85,15 +86,26 @@ export function openCredential(
   secretRef: string,
   sealed: string,
 ): string {
-  const [version, keyId, iv, tag, ciphertext] = sealed.split(".");
+  const parts = sealed.split(".");
+  const [version, keyId, iv, tag, ciphertext] = parts;
   const key = keyId ? keyring.keys.get(keyId) : undefined;
-  if (version !== "v1" || !key || !iv || !tag || !ciphertext) {
+  const ivBytes = Buffer.from(iv ?? "", "base64url");
+  const tagBytes = Buffer.from(tag ?? "", "base64url");
+  if (
+    parts.length !== 5 ||
+    version !== "v1" ||
+    !key ||
+    !ciphertext ||
+    ivBytes.length !== IV_BYTES ||
+    tagBytes.length !== TAG_BYTES
+  ) {
     throw new StudixError("UNAVAILABLE", "Stored credential cannot be opened", { retryable: false });
   }
   try {
-    const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(iv, "base64url"));
+    // A truncated GCM tag still verifies in Node unless the length is pinned, so pin it.
+    const decipher = createDecipheriv(ALGORITHM, key, ivBytes, { authTagLength: TAG_BYTES });
     decipher.setAAD(aad(workspaceId, secretRef));
-    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    decipher.setAuthTag(tagBytes);
     return Buffer.concat([decipher.update(Buffer.from(ciphertext, "base64url")), decipher.final()]).toString(
       "utf8",
     );
@@ -139,6 +151,7 @@ export function createCredentialVault(options: {
       if (!sealed) throw new StudixError("NOT_FOUND", "Credential not found");
       const plaintext = openCredential(keyring, ctx.workspaceId, secretRef, sealed);
       registerSecret(plaintext);
+      for (const token of oauthTokenValues(plaintext)) registerSecret(token);
       return plaintext;
     },
     async remove(ctx, secretRef) {
@@ -148,8 +161,23 @@ export function createCredentialVault(options: {
   };
 }
 
-/** Display hint that never reveals the secret: prefix up to 7 chars plus the last 4, or just dots. */
+/** OAuth token sets are JSON; their individual tokens must reach the redactor, not only the blob. */
+function oauthTokenValues(plaintext: string): string[] {
+  if (!plaintext.startsWith("{")) return [];
+  try {
+    const parsed: unknown = JSON.parse(plaintext);
+    if (typeof parsed !== "object" || parsed === null) return [];
+    return Object.values(parsed).filter((v): v is string => typeof v === "string" && v.length >= 8);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Display hint that never reveals the secret: a short prefix plus the last 4 for long keys, or just dots.
+ * Short secrets show nothing because each revealed character is lost entropy.
+ */
 export function keyHintOf(secret: string): string {
-  if (secret.length < 16) return "••••";
-  return `${secret.slice(0, 7)}…${secret.slice(-4)}`;
+  if (secret.length < 32) return "••••";
+  return `${secret.slice(0, 5)}…${secret.slice(-4)}`;
 }

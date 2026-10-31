@@ -30,8 +30,10 @@ operator.
    `secretRef`.
 3. **Ownership and visibility.** Workspace-owned connections are created by holders of `provider:manage`
    (owner, admin). Personal connections need `provider:connect` (editor and up) and are visible and
-   usable only by their owner; repositories filter on the caller, so another member's personal connection is
-   invisible, not just forbidden. A workspace connection may be used by any member's job; a personal one only by
+   usable only by their owner; repositories filter reads on the caller, so another member's personal connection is
+   invisible, not just forbidden, and refuse to create a personal connection or preference for any user
+   other than the calling user. A preference may only point at connections visible to the caller; a workspace
+   preference may only point at workspace-owned ones. A workspace connection may be used by any member's job; a personal one only by
    its owner's jobs.
 4. **Status and cost honesty.** Only `connected` connections are handed to a runtime. `billingSource` is
    never assumed: API keys are `usage-based`; OAuth connections start `unknown` and are shown as `extra-usage` or
@@ -50,10 +52,11 @@ operator.
    preference sets `allowFallback`, and each fallback names its own connection, so a failure never
    changes credential silently.
 8. **Job snapshot.** When a job starts, the resolved choice is stored as a `ResolvedModelSnapshot` (runtime,
-   stage, source, connection id and version, provider, model, auth method, billing source, fallbacks). Retries and
-   re-runs use the snapshot; changed preferences or rotated keys apply to new jobs only.
+   stage, source, connection id and version, provider, model, auth method, billing source, fallbacks). A retry keeps the
+   snapshot's connection and model and reads that connection's current secret, so a rotated key keeps working;
+   a changed preference never applies to an existing job.
 9. **Not the MCP keys.** Inbound `stx_` keys (`apikey:manage`) and outbound provider credentials share no table,
-   permission or UI.
+   permission or UI: default API key scopes never include `provider:*`.
 
 ## Consequences
 
@@ -61,7 +64,7 @@ operator.
 - Operators must set `STUDIX_CREDENTIAL_KEYS` before enabling connection management; without it the vault
   throws `UNAVAILABLE` and no secret is accepted.
 - Losing every key that sealed a secret makes that connection unrecoverable (the user reconnects).
-- New permissions `provider:connect` and `provider:manage` extend the role matrix and API key scopes.
+- New permissions `provider:connect` and `provider:manage` extend the role matrix for users only; inbound API keys do not derive them.
 - Delivery splits into independently mergeable parts: this domain and vault, the Pi runtime and catalog,
   the dashboard and API-key flow, then OAuth per provider.
 

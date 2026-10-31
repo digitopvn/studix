@@ -148,4 +148,77 @@ describe("provider connections (Postgres)", () => {
     await r.providerConnections.delete(ctx, conn.id);
     expect(await r.modelPreferences.list(ctx)).toEqual([]);
   });
+
+  it("refuses to create personal rows for a different user or a non-user actor", async () => {
+    const r = db.current.repos;
+    const ctx = await provision("pc-bind", "u1");
+    const personal = newConnection({ label: "p", owner: { type: "user", userId: "someone_else" } });
+    await expect(r.providerConnections.create(ctx, personal)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const system: TenantContext = { ...ctx, actor: { type: "system", id: "worker" } };
+    await expect(r.providerConnections.create(system, personal)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const conn = await r.providerConnections.create(ctx, newConnection());
+    const pref = {
+      scope: { type: "user" as const, userId: "someone_else" },
+      stage: "default",
+      runtime: "pi" as const,
+      connectionId: conn.id,
+      provider: "anthropic",
+      modelId: "m",
+      allowFallback: false,
+      fallbacks: [],
+    };
+    await expect(r.modelPreferences.upsert(ctx, pref)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("only accepts preference connections the caller can see, and workspace-owned ones for workspace scope", async () => {
+    const r = db.current.repos;
+    const ctx = await provision("pc-pref-conn", "u1");
+    const other = await provision("pc-pref-other", "u1");
+    const foreign = await r.providerConnections.create(other, newConnection());
+    const mine = await r.providerConnections.create(
+      ctx,
+      newConnection({ label: "p", owner: { type: "user", userId: "u1" } }),
+    );
+    const base = {
+      stage: "default",
+      runtime: "pi" as const,
+      provider: "anthropic",
+      modelId: "m",
+      allowFallback: true,
+      fallbacks: [],
+    };
+    await expect(
+      r.modelPreferences.upsert(ctx, { ...base, scope: { type: "workspace" }, connectionId: foreign.id }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      r.modelPreferences.upsert(ctx, { ...base, scope: { type: "workspace" }, connectionId: mine.id }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    const shared = await r.providerConnections.create(ctx, newConnection());
+    await expect(
+      r.modelPreferences.upsert(ctx, {
+        ...base,
+        scope: { type: "workspace" },
+        connectionId: shared.id,
+        fallbacks: [{ connectionId: mine.id, provider: "anthropic", modelId: "m" }],
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    await r.modelPreferences.upsert(ctx, {
+      ...base,
+      scope: { type: "user", userId: "u1" },
+      connectionId: mine.id,
+    });
+  });
+
+  it("deletes the sealed secret together with its connection", async () => {
+    const r = db.current.repos;
+    const ctx = await provision("pc-del-secret", "u1");
+    const vault = createCredentialVault({
+      store: r.sealedCredentials,
+      keyring: parseCredentialKeyring(`k1:${randomBytes(32).toString("base64")}`),
+    });
+    const secretRef = await vault.put(ctx, "sk-ant-api03-supersecretvalue1234");
+    const conn = await r.providerConnections.create(ctx, newConnection({ secretRef }));
+    await r.providerConnections.delete(ctx, conn.id);
+    expect(await r.sealedCredentials.get(ctx, secretRef)).toBeUndefined();
+  });
 });

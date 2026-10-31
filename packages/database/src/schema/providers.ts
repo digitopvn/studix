@@ -86,5 +86,6 @@ export const modelPreferences = pgTable(
   (t) => [
     uniqueIndex("model_preferences_scope_uq").on(t.workspaceId, t.scopeUserId, t.stage, t.runtime),
     index("model_preferences_tenant_idx").on(t.workspaceId, t.organizationId),
+    index("model_preferences_connection_idx").on(t.connectionId),
   ],
 );

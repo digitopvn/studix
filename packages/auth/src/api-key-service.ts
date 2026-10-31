@@ -80,10 +80,13 @@ function unauthenticated(message: string): StudixError {
   return new StudixError("UNAUTHENTICATED", message, { suggestedAction: UNAUTHENTICATED_ACTION });
 }
 
+/** Outbound provider credentials are never part of an inbound MCP key, whatever role it mirrors. */
+const isProviderPermission = (permission: Permission): boolean => permission.startsWith("provider:");
+
 function roleForScopes(scopes: readonly Permission[]): Role | "custom" {
-  const set = new Set(scopes);
+  const set = new Set(scopes.filter((p) => !isProviderPermission(p)));
   for (const role of ROLES) {
-    const perms = ROLE_PERMISSIONS[role];
+    const perms = new Set([...ROLE_PERMISSIONS[role]].filter((p) => !isProviderPermission(p)));
     if (perms.size === set.size && [...perms].every((p) => set.has(p))) return role;
   }
   return "custom";
@@ -125,9 +128,9 @@ export function createApiKeyService(deps: ApiKeyServiceDeps): ApiKeyService {
       if (input.expiresAt && input.expiresAt <= now) {
         throw new StudixError("VALIDATION", "expiresAt must be in the future");
       }
-      const scopes = (input.scopes as Permission[] | undefined) ?? [
-        ...ROLE_PERMISSIONS[input.role ?? "editor"],
-      ];
+      const scopes =
+        (input.scopes as Permission[] | undefined) ??
+        [...ROLE_PERMISSIONS[input.role ?? "editor"]].filter((p) => !isProviderPermission(p));
       // No privilege escalation: a key can only carry permissions its creator holds.
       const missing = [...new Set(scopes)].filter((scope) => !can(ctx.actor, scope));
       if (missing.length > 0) {

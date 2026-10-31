@@ -54,6 +54,7 @@ ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_organiza
 ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "model_preferences_scope_uq" ON "model_preferences" USING btree ("workspace_id","scope_user_id","stage","runtime");--> statement-breakpoint
 CREATE INDEX "model_preferences_tenant_idx" ON "model_preferences" USING btree ("workspace_id","organization_id");--> statement-breakpoint
+CREATE INDEX "model_preferences_connection_idx" ON "model_preferences" USING btree ("connection_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "provider_connections_workspace_label_uq" ON "provider_connections" USING btree ("workspace_id","owner_user_id","label");--> statement-breakpoint
 CREATE INDEX "provider_connections_tenant_idx" ON "provider_connections" USING btree ("workspace_id","organization_id","id");--> statement-breakpoint
 CREATE INDEX "provider_credentials_tenant_idx" ON "provider_credentials" USING btree ("workspace_id","organization_id");
