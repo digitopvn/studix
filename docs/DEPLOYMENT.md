@@ -83,6 +83,9 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
 when the run ends; the worker creates that directory at startup and removes
 sandboxes left by a crashed worker once they are older than the run timeout.
+Job scratch directories (`WORKER_WORK_DIR/<jobId>`) are removed when the job
+finishes; those of failed jobs are kept for retries and swept after
+`WORKER_WORK_DIR_RETENTION_HOURS` (default 168, minimum 24) without writes.
 When Anthropic answers a run with 401, the worker re-tests that key directly
 and, only if it is still rejected and was not rotated meanwhile, marks its
 connection `invalid`, so job creation stops accepting it until the key is
@@ -245,8 +248,10 @@ npx wrangler@4 deploy        # needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TO
 
 On SIGTERM the worker stops claiming, lets the running attempt finish within
 the grace period, then aborts and releases the lease so another pod reclaims
-the job. An attempt that fails while the pool is draining (for example because
-Puppeteer closes Chrome on SIGTERM) is released, not failed
+the job. Chrome keeps rendering through the grace period: the HyperFrames
+engine is patched so Puppeteer does not close it on SIGTERM (see
+`docs/RENDERER.md`). An attempt that fails while the pool is draining anyway is
+released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.

@@ -149,7 +149,11 @@ Behavior notes:
   signed. An API key cannot approve a gate. After G1 the storyboard agent writes
   one panel per shot, every shot gets a keyframe conditioned on its lead
   character's approved sheet, and the job stops with the project `in_review`.
-  Rejecting a gate fails the job with `FORBIDDEN`. After a person approves the
+  Rejecting a gate fails the job with `FORBIDDEN`. At G1 the reviewer can also
+  request changes on named designs instead (see the next section): the job
+  redraws only those sheets or set frames, with the note added to the prompt and
+  the bible's anchors kept, publishes the revised board as a new version and
+  asks G1 again. Each redraw is billed once. After a person approves the
   storyboard, `studix_render` records the dialogue first, turns T2/T3 shots into
   480p image-to-video clips and T0/T1 shots into film-engine scenes, lip-syncs
   every shot with a visible speaker on the recorded line, adds one score cue per
@@ -181,12 +185,13 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
 - The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) are reused from the stage's media directory, which belongs to the job and not to the attempt (`<workRoot>/<jobId>/media/<stage>`; only the media provider writes there and stages never clear it), so a retry on the same worker finds the file and does not pay again. After a move to another worker that local file is gone and the call runs again; the journal only records the upstream job, not the file.
 - Usage events keep their `dedupeKey`, which is tied to the upstream job, so the resume bills no call twice.
 - Gates already decided on the job (approved, or consumed) are read from the database and are not asked again.
-- The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window it was created with. The budget is not reset: spend so far still counts against `budgetCents`.
+- The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window the caller asked for when the job was created (stored with the job, so a job that waited at a gate gets the same window, not a longer one). The budget is not reset: spend so far still counts against `budgetCents`.
 - Only a `failed` job can be retried (any other status returns `CONFLICT`). `video.publish` jobs cannot (`VALIDATION`: a publish is not idempotent, so start a new one), and neither can a job whose `job.start` approval was expired, rejected or never granted by a person (`APPROVAL_REQUIRED`). Agent stages are not retried automatically, but a manual retry re-runs a failed agent stage and its spend is billed again.
 - The caller needs the `job:retry` permission (owner, admin and editor roles; API keys need the scope). Migration `0012` adds the scope to keys issued before it existed whose scopes were exactly the editor, admin or owner set, so they keep their role label; a key with any other scope set is `custom` and needs a new key that includes `job:retry`.
 - A retried render job only moves its project to `in_review` while the project is still `rendering`, so a later status set by anything else (a newer review decision, an archive) is not overwritten.
 - A job whose Atlas call is stuck in `submitting` after a partial batch failure cannot be recovered by retry; this is existing behaviour tracked in #67 and #69.
 - The dashboard job page shows a **Retry job** button for a `failed` job that is not a publish.
+- A failed job keeps its attempt work directories so the retry can reuse synced media; the worker removes a job's directory once nothing has written to it for `WORKER_WORK_DIR_RETENTION_HOURS` (default 168, checked at startup and hourly; activity is the newest write under the job directory). Past that, a retry regenerates that media.
 - The action is audited as `job.retried`. A failed job's `next` list suggests the tool.
 
 ### Feedback, render and storyboard approval
@@ -202,6 +207,16 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
   the change are invalidated, and they are returned as `invalidated`
   (`shot:<id>`, `scene:<id>`, ...). The render job reuses cached stage work for
   everything else.
+- A comment without a `patch` on an `assetId` the current version shows, while
+  a job of the project waits at a creative gate, requests changes on that gate
+  (the API key needs `project:write`). The approval comes back as
+  `changes_requested` with `changes: {targets, note, invalidated}`, where
+  `invalidated` lists every node of the reviewed board that depends on the
+  asset; `next[]` suggests polling the job. A request is not an approval: the
+  gate is asked again after the redraw, and only a signed-in person can approve
+  it. On the dashboard, `POST /api/approvals/:approvalId/decision` takes
+  `{decision: "changes_requested", targets: [assetId, ...], comment}` for the
+  same decision; `approved` and `rejected` are unchanged.
 - `baseVersionId` is optional. When it is not the current version, the call
   fails with `CONFLICT`, so feedback is never applied to a newer version than
   the one it was written for.

@@ -3,3 +3,5 @@ packages:
   - packages/*
 onlyBuiltDependencies:
   - esbuild
+patchedDependencies:
+  "@hyperframes/engine@0.8.223": patches/@hyperframes__engine@0.8.223.patch

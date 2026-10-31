@@ -1,5 +1,5 @@
 import { StudixError } from "@studix/shared";
-import { buildSequentialTimeline, type VideoIR } from "@studix/video-ir";
+import { buildSequentialTimeline, type Shot, type VideoIR } from "@studix/video-ir";
 import { z } from "zod";
 
 export const VariantSpan = z.object({
@@ -33,8 +33,18 @@ export function irVariants(ir: VideoIR): VariantSpan[] {
 }
 
 /**
+ * Ads are full-bleed: a frame or clip that names no region fills the whole frame under the copy (its
+ * storyboard prompt leaves room above and below for the text). A region the IR names is kept.
+ */
+function fullBleed(shot: Shot): Shot {
+  if ((shot.type !== "image" && shot.type !== "video") || shot.style?.region) return shot;
+  return { ...shot, style: { ...shot.style, region: "full" } };
+}
+
+/**
  * The standalone IR of one ad: its scene alone, with the audio tracks and caption cues that fall inside
- * the ad moved to start at zero and only the assets it uses. Each ad renders and ships as its own file.
+ * the ad moved to start at zero, its pictures full-bleed, and only the assets it uses. Each ad renders and
+ * ships as its own file.
  */
 export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
   const scene = ir.scenes.find((s) => s.id === variant.sceneId);
@@ -62,7 +72,7 @@ export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
     title: `${ir.title} — ${variant.name}`.slice(0, 200),
     format: { ...ir.format, durationMs: variant.durationMs },
     assets: ir.assets.filter((a) => used.has(a.id)),
-    scenes: [{ ...scene, durationMs: variant.durationMs }],
+    scenes: [{ ...scene, shots: scene.shots.map(fullBleed), durationMs: variant.durationMs }],
     timeline: buildSequentialTimeline([{ id: scene.id, durationMs: variant.durationMs }]),
     ...(audio.length > 0 ? { audio } : {}),
     ...(cues.length > 0 && ir.captions ? { captions: { ...ir.captions, cues } } : {}),

@@ -464,8 +464,12 @@ export const api = {
   job: (id: string) => request<{ job: Job; activity: ActivityEvent[] }>("GET", `/api/jobs/${enc(id)}`),
   cancelJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/cancel`, {}),
   retryJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/retry`, {}),
-  decideApproval: (id: string, decision: "approved" | "rejected") =>
-    request("POST", `/api/approvals/${enc(id)}/decision`, { decision }),
+  /** `changes_requested` (creative gates) needs `targets` (asset ids to redo) and a `comment` saying how. */
+  decideApproval: (
+    id: string,
+    decision: "approved" | "rejected" | "changes_requested",
+    extra: { comment?: string; targets?: string[] } = {},
+  ) => request("POST", `/api/approvals/${enc(id)}/decision`, { decision, ...extra }),
   apiKeys: () => request<{ items: ApiKey[] }>("GET", "/api/api-keys"),
   createApiKey: (input: { name: string; role?: string; expiresAt?: string }) =>
     request<{ apiKey: ApiKey; secret: string }>("POST", "/api/api-keys", input),

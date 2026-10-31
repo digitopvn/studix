@@ -23,9 +23,14 @@ export interface ApprovalGateDeps {
 export type ApprovalGateResult =
   | { status: "approved"; approval?: Approval }
   | { status: "waiting"; approval: Approval }
+  /** A reviewer sent a creative gate back with assets to redo; the stage redoes them and asks again. */
+  | { status: "changes_requested"; approval: Approval }
   | { status: "lease_lost" };
 
-/** The gate's answer when `latest` is already settled (granted, rejected, or still pending); else undefined. */
+/**
+ * The gate's answer when `latest` is already settled (granted, rejected, sent back with changes, or still
+ * pending); else undefined.
+ */
 function settle(
   action: ApprovalAction,
   latest: Approval | undefined,
@@ -40,6 +45,9 @@ function settle(
       details: { approvalId: latest.id, comment: latest.comment },
       suggestedAction: "Address the reviewer's comment and submit a new job.",
     });
+  }
+  if (latest?.status === "changes_requested" && latest.changes) {
+    return { status: "changes_requested", approval: latest };
   }
   if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
     return { status: "waiting", approval: latest };

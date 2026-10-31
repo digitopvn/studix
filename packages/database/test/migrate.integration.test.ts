@@ -16,4 +16,16 @@ describe("migrate", () => {
     const rows = await db.current.client`select count(*)::int as n from drizzle.__drizzle_migrations`;
     expect(rows[0]?.n).toBe(journal.entries.length);
   });
+
+  it("restores the deadline window column on a database that skipped its out-of-order migration", async () => {
+    await migrate(db.current.url);
+    const sql = db.current.client;
+    // The state of a database that applied 0012 before 0013 was journaled: it has 0014 but not 0013's column.
+    await sql`alter table jobs drop column deadline_window_ms`;
+    await sql`delete from drizzle.__drizzle_migrations where id = (select max(id) from drizzle.__drizzle_migrations)`;
+    await migrate(db.current.url);
+    const cols = await sql`
+      select 1 from information_schema.columns where table_name = 'jobs' and column_name = 'deadline_window_ms'`;
+    expect(cols).toHaveLength(1);
+  });
 });
