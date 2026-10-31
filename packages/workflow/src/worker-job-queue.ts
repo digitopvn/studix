@@ -415,7 +415,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         }
         // Driven by the job, not by the rows closed above: an approval can also be closed elsewhere (a
         // reviewer answering after expiry, opening a new request, a migration), which leaves the job parked
-        // with nothing pending. Fail it when its latest approval expired and no request is still open.
+        // with nothing pending. Fail it when its latest approval expired and no request is still open. Only workflow
+        // gate requests (empty scope key) count: connector requests carry no expiry and must not park the job.
         const failed = await tx
           .update(jobs)
           .set({
@@ -427,6 +428,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
               'message', (select l.action from ${approvals} l where l.id = (
                 select max(m.id) from ${approvals} m
                 where m.workspace_id = "jobs"."workspace_id" and m.subject_type = 'job' and m.subject_id = "jobs"."id"
+                  and m.scope_key = ''
               )) || ' approval expired before a reviewer decided',
               'retryable', false,
               'suggestedAction', 'Submit the job again and ask a reviewer to approve it before the request expires.',
@@ -439,15 +441,16 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
               sql`not exists (
                 select 1 from ${approvals} p
                 where p.workspace_id = "jobs"."workspace_id" and p.subject_type = 'job'
-                  and p.subject_id = "jobs"."id" and p.status = 'pending'
+                  and p.subject_id = "jobs"."id" and p.status = 'pending' and p.scope_key = ''
               )`,
               sql`exists (
                 select 1 from ${approvals} l
                 where l.workspace_id = "jobs"."workspace_id" and l.subject_type = 'job'
-                  and l.subject_id = "jobs"."id" and l.status = 'expired'
+                  and l.subject_id = "jobs"."id" and l.status = 'expired' and l.scope_key = ''
                   and l.id = (
                     select max(m.id) from ${approvals} m
                     where m.workspace_id = l.workspace_id and m.subject_type = 'job' and m.subject_id = l.subject_id
+                      and m.scope_key = ''
                   )
               )`,
             ),

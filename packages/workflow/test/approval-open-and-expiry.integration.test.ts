@@ -158,6 +158,22 @@ describe("expired approvals on parked jobs", () => {
     expect(await repos.approvals.get(ctx, approval.id)).toMatchObject({ status: "expired" });
   });
 
+  it("is not held by a connector request that carries no expiry", async () => {
+    const { ctx, repos, queue, job, subject, approval } = await parkedJob("expiry-connector-pending");
+    await repos.approvals.open(ctx, {
+      action: "connector.execute",
+      subject,
+      reason: "execute mutating connector tool x",
+      scopeKey: "x",
+      requestedBy: human,
+    });
+    await db.current.db.execute(
+      sql`update approvals set expires_at = now() - interval '1 minute' where id = ${approval.id}`,
+    );
+    expect(await queue.failExpiredApprovals()).toBe(1);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "failed" });
+  });
+
   it("fails a parked job whose approval was closed elsewhere, such as a reviewer answering after expiry", async () => {
     const { ctx, repos, queue, job, approval } = await parkedJob("expiry-closed-elsewhere");
     await db.current.db.execute(

@@ -136,7 +136,10 @@ export async function decideApproval(
       data: { approvalId: approval.id, action: approval.action },
     });
     throw new StudixError("CONFLICT", "approval request expired", {
-      suggestedAction: "Request approval again.",
+      suggestedAction:
+        approval.subject.type === "job"
+          ? "Submit the job again and ask a reviewer to approve it before the request expires."
+          : "Request approval again.",
     });
   }
   const decided = await deps.approvals.decide(ctx, approval.id, {
