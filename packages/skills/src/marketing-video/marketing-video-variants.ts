@@ -1,5 +1,5 @@
 import { StudixError } from "@studix/shared";
-import { buildSequentialTimeline, type Shot, type VideoIR } from "@studix/video-ir";
+import { buildSequentialTimeline, type CaptionCue, type Shot, type VideoIR } from "@studix/video-ir";
 import { z } from "zod";
 
 export const VariantSpan = z.object({
@@ -43,15 +43,56 @@ function fullBleed(shot: Shot): Shot {
 
 const COPY_TYPES = new Set<Shot["type"]>(["title", "text", "logo", "cta"]);
 
-/** Copy over footage sits on a brand-background card so it stays legible whatever the clip shows. */
+/**
+ * Copy over footage sits on a brand-background card so it stays legible whatever the clip shows. A CTA in
+ * the middle would cover the clip's subject, which the frame centres, so it joins the logo at the top, the
+ * band the storyboard prompt keeps clear for text.
+ */
 function onFootage(shot: Shot): Shot {
-  if (!COPY_TYPES.has(shot.type) || shot.style?.background) return shot;
-  return { ...shot, style: { ...shot.style, background: "background" } };
+  if (!COPY_TYPES.has(shot.type)) return shot;
+  const region =
+    shot.type === "cta" && (shot.style?.region ?? "middle") === "middle" ? "top" : shot.style?.region;
+  return {
+    ...shot,
+    style: {
+      ...shot.style,
+      background: shot.style?.background ?? "background",
+      ...(region ? { region } : {}),
+    },
+  };
+}
+
+/** Lower-case words only, so a caption chunk matches its line whatever the breaks and punctuation. */
+const words = (text: string) =>
+  text
+    .normalize("NFC")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .join(" ");
+
+/**
+ * Whether a caption cue only repeats copy already on screen while it shows: a burned caption of the same
+ * words adds nothing and crowds the frame. Captions of a voice-over that says something else are kept.
+ */
+function repeatsCopy(cue: CaptionCue, shots: readonly Shot[]): boolean {
+  const said = words(cue.text);
+  if (!said) return false;
+  return shots.some(
+    (s) =>
+      COPY_TYPES.has(s.type) &&
+      "text" in s &&
+      typeof s.text === "string" &&
+      s.startMs < cue.endMs &&
+      s.startMs + s.durationMs > cue.startMs &&
+      ` ${words(s.text)} `.includes(` ${said} `),
+  );
 }
 
 /**
  * The standalone IR of one ad: its scene alone, with the audio tracks and caption cues that fall inside
- * the ad moved to start at zero, its pictures full-bleed under carded copy, and only the assets it uses. Each ad renders and
+ * the ad moved to start at zero (minus captions that only repeat on-screen copy), its pictures full-bleed
+ * under carded copy, and only the assets it uses. Each ad renders and
  * ships as its own file.
  */
 export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
@@ -66,9 +107,6 @@ export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
       startMs: t.startMs - from,
       durationMs: Math.min(t.durationMs ?? to - t.startMs, to - t.startMs),
     }));
-  const cues = (ir.captions?.cues ?? [])
-    .filter((c) => c.startMs >= from && c.endMs <= to)
-    .map((c) => ({ ...c, startMs: c.startMs - from, endMs: c.endMs - from }));
   const used = new Set<string>();
   for (const shot of scene.shots) if ("assetId" in shot && shot.assetId) used.add(shot.assetId);
   if (scene.background?.assetId) used.add(scene.background.assetId);
@@ -76,6 +114,10 @@ export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
   for (const track of audio) used.add(track.assetId);
   const pictures = scene.shots.map(fullBleed);
   const shots = pictures.some((s) => s.style?.region === "full") ? pictures.map(onFootage) : pictures;
+  const cues = (ir.captions?.cues ?? [])
+    .filter((c) => c.startMs >= from && c.endMs <= to)
+    .map((c) => ({ ...c, startMs: c.startMs - from, endMs: c.endMs - from }))
+    .filter((c) => !repeatsCopy(c, shots));
   const { captions: _captions, audio: _audio, ...rest } = ir;
   return {
     ...rest,

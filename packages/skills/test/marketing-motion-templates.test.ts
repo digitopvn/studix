@@ -146,12 +146,18 @@ describe("marketing-video IR and variants", () => {
     expect(ir.format.durationMs).toBe(40_000);
     const variants = irVariants(ir);
     expect(variants.map((v) => v.startMs)).toEqual([0, 20_000]);
+    // A caption the second ad's copy does not already show, so it survives into that ad.
+    ir.captions?.cues.push({ startMs: 24_000, endMs: 25_000, text: "Một câu nói khác hẳn" });
     const second = variantIr(ir, variants[1] as (typeof variants)[number]);
     expect(validateVideoIR(second).ok).toBe(true);
     expect(second.scenes).toHaveLength(1);
     expect(second.format.durationMs).toBe(20_000);
     expect(second.captions?.cues.every((c) => c.startMs >= 0 && c.endMs <= 20_000)).toBe(true);
-    expect(second.captions?.cues.length).toBeGreaterThan(0);
+    expect(second.captions?.cues).toContainEqual({
+      startMs: 4_000,
+      endMs: 5_000,
+      text: "Một câu nói khác hẳn",
+    });
   });
 
   it("renders each ad's pictures full-bleed unless the IR names a region", () => {
@@ -208,6 +214,64 @@ describe("marketing-video IR and variants", () => {
     const ir = marketingVideoTemplate(brief);
     const one = variantIr(ir, irVariants(ir)[0] as ReturnType<typeof irVariants>[number]);
     expect(one.scenes[0]?.shots.every((s) => s.style?.background === undefined)).toBe(true);
+  });
+
+  it("moves the CTA off the centred subject to the top band only over footage", () => {
+    const plain = marketingVideoTemplate(brief);
+    const first = (ir: typeof plain) =>
+      variantIr(ir, irVariants(ir)[0] as ReturnType<typeof irVariants>[number]);
+    const ctaOf = (ir: typeof plain) => ir.scenes[0]?.shots.find((s) => s.type === "cta");
+    expect(ctaOf(first(plain))?.style?.region).toBe("middle");
+    const footage = marketingVideoTemplate(brief);
+    const scene = footage.scenes[0] as (typeof footage.scenes)[number];
+    footage.assets.push({
+      id: "frame-a",
+      kind: "image",
+      storageKey: "k/frame-a.png",
+      sha256: "a".repeat(64),
+      mime: "image/png",
+      provenance: { source: "generated" },
+    });
+    scene.shots.unshift({
+      id: "pic",
+      type: "image",
+      startMs: 0,
+      durationMs: 20_000,
+      assetId: "frame-a",
+      fit: "cover",
+      alt: "Tea on a windowsill",
+    });
+    const one = first(footage);
+    expect(validateVideoIR(one).ok).toBe(true);
+    expect(ctaOf(one)?.style?.region).toBe("top");
+    // Nothing else the copy shows sits in the middle of the frame either.
+    const copy = one.scenes[0]?.shots.filter((s) => s.type !== "image" && s.type !== "video") ?? [];
+    expect(copy.every((s) => s.style?.region !== "middle")).toBe(true);
+  });
+
+  it("drops burned captions that only repeat the line on screen and keeps the rest", () => {
+    const ir = marketingVideoTemplate(brief);
+    const variant = irVariants(ir)[0] as ReturnType<typeof irVariants>[number];
+    const own = (ir.captions?.cues ?? []).filter((c) => c.endMs <= variant.startMs + variant.durationMs);
+    expect(own.length).toBeGreaterThan(0);
+    ir.captions?.cues.push({ startMs: 4_000, endMs: 5_000, text: "Một câu nói khác hẳn" });
+    const one = variantIr(ir, variant);
+    const shots = one.scenes[0]?.shots ?? [];
+    const words = (t: string) =>
+      t
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+    const onScreen = (startMs: number, endMs: number) =>
+      shots
+        .filter((s) => "text" in s && s.text && s.startMs < endMs && s.startMs + s.durationMs > startMs)
+        .map((s) => words((s as { text: string }).text));
+    const kept = one.captions?.cues ?? [];
+    expect(kept.length).toBeLessThan(own.length + 1);
+    for (const cue of kept) {
+      expect(onScreen(cue.startMs, cue.endMs).some((line) => line.includes(words(cue.text)))).toBe(false);
+    }
+    expect(kept.map((c) => c.text)).toContain("Một câu nói khác hẳn");
   });
 
   it("rejects an IR that carries no variants", () => {
