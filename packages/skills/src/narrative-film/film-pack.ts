@@ -1,5 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ProjectStatus } from "@studix/core";
 import { FILM_SCENE_MIME, FILM_WEATHER_PRESETS, filmPlateScene } from "@studix/renderers/film-scene";
 import { StudixError } from "@studix/shared";
 import {
@@ -21,6 +22,7 @@ import {
   irOf,
   jobScopedId,
   mapBounded,
+  markInReview,
   type PackPipeline,
   payloadOf,
   RenderOutput,
@@ -229,6 +231,9 @@ function failIssues(what: string, issues: readonly ValidationIssue[], suggestedA
   });
 }
 
+/** Project states in which a G0/G1 board may become the head and hand the project to review. */
+const REVIEWABLE: readonly ProjectStatus[] = ["draft", "planning", "rendering", "in_review"];
+
 /**
  * Store `ir` as a project version a reviewer can open on the dashboard and point the project at it, so the
  * creative gate that follows has something to look at. Deterministic id per job and board: a re-run finds
@@ -247,7 +252,13 @@ async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string)
         createdBy: { type: "system", id: ctx.actor.id },
       });
     }
-    await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
+    // A retried job that outlives an approve, publish, archive or failure must neither reopen review nor move
+    // the project's head back to its stale board; the version above stays stored and reachable by id.
+    const project = await repos.projects.get(ctx, projectId);
+    if (project && REVIEWABLE.includes(project.status)) {
+      await repos.projects.update(ctx, projectId, { currentVersionId: versionId });
+      await markInReview(repos, ctx, projectId, REVIEWABLE);
+    }
   });
   return versionId;
 }
