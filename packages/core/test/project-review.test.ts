@@ -153,6 +153,46 @@ describe("project review", () => {
       expect(review.comments).toHaveLength(1);
     });
 
+    it("does not complete a version that a newer patch has superseded", async () => {
+      const env = await setup();
+      await failOnce(env, "enqueue");
+      await expect(env.studio.submitFeedback(env.ctx, request(env))).rejects.toThrow("enqueue failed");
+      await env.studio.submitFeedback(env.ctx, {
+        projectId: env.projectId,
+        shotId: "feature-1",
+        comment: "sửa tiếp",
+        patch: replaceText("/scenes/2/shots/0/text", "Khác"),
+      });
+      await expect(env.studio.submitFeedback(env.ctx, request(env))).rejects.toMatchObject({
+        code: "CONFLICT",
+      });
+      expect((await env.studio.getProjectReview(env.ctx, env.projectId)).versions).toHaveLength(3);
+    });
+
+    it("refuses a reused key for a different request, and a reviewer cannot complete it", async () => {
+      const env = await setup();
+      await failOnce(env, "enqueue");
+      await expect(env.studio.submitFeedback(env.ctx, request(env))).rejects.toThrow("enqueue failed");
+      await expect(
+        env.studio.submitFeedback(env.ctx, {
+          ...request(env),
+          patch: replaceText("/scenes/2/shots/0/text", "Không phải"),
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      const reviewer = withActor(env.ctx, { type: "user", id: "usr_rev", role: "reviewer" });
+      await expect(
+        env.studio.submitFeedback(reviewer, {
+          projectId: env.projectId,
+          shotId: "feature-1",
+          comment: "x",
+          idempotencyKey: "fb-1",
+        }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(env.studio.submitFeedback(env.ctx, request(env))).resolves.toMatchObject({
+        replayed: false,
+      });
+    });
+
     it("two retries sent at once with the same key end in one version, one comment and one job", async () => {
       const env = await setup();
       const baseVersionId = (await env.studio.getProjectReview(env.ctx, env.projectId)).currentVersion?.id;

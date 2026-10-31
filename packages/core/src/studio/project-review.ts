@@ -115,6 +115,33 @@ async function requireCurrentVersion(
   return version;
 }
 
+/**
+ * A retry may complete the version stored under its idempotency key only when it is the same request
+ * (same patch, sent by someone who may write) and that version is still the project's current one: a
+ * newer version means completing it would queue a render that moves the project back.
+ */
+async function assertSameRequest(
+  deps: Deps,
+  ctx: TenantContext,
+  projectId: string,
+  version: ProjectVersion,
+  input: FeedbackInput,
+): Promise<void> {
+  assertPermission(ctx, "project:write");
+  if (!input.patch || JSON.stringify(input.patch.ops) !== JSON.stringify(version.patch?.ops)) {
+    throw new StudixError("CONFLICT", "idempotency key was used for a different request", {
+      suggestedAction: "Use a new idempotencyKey for a different feedback.",
+    });
+  }
+  const current = await requireProject(deps, ctx, projectId);
+  if (current.currentVersionId !== version.id) {
+    throw new StudixError("CONFLICT", `version ${version.id} was superseded by a newer version`, {
+      details: { currentVersionId: current.currentVersionId ?? null },
+      suggestedAction: "Review the current version and send the feedback again with a new idempotencyKey.",
+    });
+  }
+}
+
 /** The version a stored patch version was derived from. */
 async function requireParentVersion(
   deps: Deps,
@@ -610,6 +637,7 @@ export async function submitFeedback(
   let base: ProjectVersion;
   let feedbackId = version?.feedbackId ?? newId("rev");
   if (version) {
+    await assertSameRequest(deps, ctx, project.id, version, input);
     base = await requireParentVersion(deps, ctx, version);
   } else {
     base = await requireCurrentVersion(deps, ctx, project);
@@ -651,6 +679,7 @@ export async function submitFeedback(
           ? await deps.projects.findVersionByIdempotencyKey(ctx, project.id, input.idempotencyKey)
           : undefined;
       if (!winner) throw error;
+      await assertSameRequest(deps, ctx, project.id, winner, input);
       version = winner;
       feedbackId = winner.feedbackId ?? feedbackId;
       base = await requireParentVersion(deps, ctx, winner);
@@ -720,18 +749,19 @@ export async function submitFeedback(
     budgetCents: input.budgetCents,
     extra: { feedbackId: feedback.id, baseVersionId: base.id },
   });
-  await deps.audit.append(ctx, {
-    actor: author,
-    action: "project.feedback_applied",
-    subjectType: "project",
-    subjectId: project.id,
-    data: {
-      feedbackId: feedback.id,
-      versionId: version.id,
-      invalidated: recorded.invalidated,
-      jobId: queued.job.id,
-    },
-  });
+  if (!queued.replayed)
+    await deps.audit.append(ctx, {
+      actor: author,
+      action: "project.feedback_applied",
+      subjectType: "project",
+      subjectId: project.id,
+      data: {
+        feedbackId: feedback.id,
+        versionId: version.id,
+        invalidated: recorded.invalidated,
+        jobId: queued.job.id,
+      },
+    });
   return {
     ...common,
     versionId: version.id,
