@@ -59,3 +59,12 @@ describe("tenant object keys", () => {
     expect(() => assertRelativeStorageKey(key)).toThrow(StudixError);
   });
 });
+
+describe("provider:manage", () => {
+  it("is held by owners and admins only", () => {
+    expect(can({ type: "user", id: "u", role: "admin" }, "provider:manage")).toBe(true);
+    expect(can({ type: "user", id: "u", role: "owner" }, "provider:manage")).toBe(true);
+    expect(can({ type: "user", id: "u", role: "editor" }, "provider:manage")).toBe(false);
+    expect(can({ type: "user", id: "u", role: "viewer" }, "provider:manage")).toBe(false);
+  });
+});
