@@ -519,6 +519,9 @@ export async function runStages(
       if (spent.length > 0) {
         try {
           await recordUsage(spent);
+          // Keep the job's counter on the ledger, so the dashboard and a retry's budget check see the spend.
+          spentCents = toBudgetCents(await deps.ledger.jobCostCents(ctx, job.id));
+          await fenced(queue.updateProgress(job, workerId, { spentCents }));
         } catch (usageErr) {
           if (usageErr instanceof LeaseLostError) throw usageErr;
           deps.logger.warn("spend of a failed stage could not be recorded", {
