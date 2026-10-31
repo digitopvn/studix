@@ -1,5 +1,6 @@
 import type { TenantContext } from "@studix/core";
 import { withTestDatabase } from "@studix/database/testing";
+import { StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import {
   createTestWorker,
@@ -436,6 +437,29 @@ describe("video.create workflow on Postgres", () => {
     expect(plan.state.calls).toBe(1);
     expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({ status: "approved" });
     expect((await db.current.repos.renders.listByProject(ctx, project.id)).items).toHaveLength(1);
+  });
+
+  it("does not reopen a project that was approved while the job sat failed before planning", async () => {
+    const ctx = await tenant(db.current, "stale-plan");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const good = fakePlanner();
+    let first = true;
+    const planner: typeof good.planner = async (...args) => {
+      if (first) {
+        first = false;
+        throw new StudixError("VALIDATION", "planner refused", { retryable: false });
+      }
+      return good.planner(...args);
+    };
+    const failing = createTestWorker(db.current, "w-fail", { planner });
+    expect((await failing.runOnce())?.outcome).toBe("failed");
+
+    await db.current.repos.projects.update(ctx, project.id, { status: "approved" });
+    await db.current.repos.queue.retry(ctx, job.id);
+    const worker = createTestWorker(db.current, "w-retry", { planner });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+
+    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({ status: "approved" });
   });
 
   it("still hands a retried job's project to review while it is the one rendering", async () => {

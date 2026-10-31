@@ -283,13 +283,20 @@ async function approveStoryboard(ctx: TenantContext, projectId: string) {
 describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake providers)", (pack) => {
   const n = filmStageNames(pack);
 
-  it("does not reopen review or move the current version when the project has already moved on", async () => {
+  it("stops a stale job without a creative gate when the project has already moved on", async () => {
     const world = createWorld();
     const { ctx, project } = await newFilm(`film-closed-${pack}`, pack);
     await db.current.repos.projects.update(ctx, project.id, { status: "published" });
     const job = await enqueue(ctx, project.id, pack);
 
-    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    expect(await world.runOnce(job.id)).toBe("failed");
+    expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({
+      status: "failed",
+      error: { code: "CONFLICT" },
+    });
+    expect(
+      await world.repos.approvals.findLatest(ctx, { type: "job", id: job.id }, "creative.gate", "gate:G0"),
+    ).toBeUndefined();
     const after = await db.current.repos.projects.get(ctx, project.id);
     expect(after?.status).toBe("published");
     expect(after?.currentVersionId).toBe(project.currentVersionId);
