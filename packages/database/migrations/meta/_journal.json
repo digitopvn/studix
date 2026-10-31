@@ -43,6 +43,13 @@
       "when": 1793430553178,
       "tag": "0005_storyboard_review",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793432533063,
+      "tag": "0006_project_version_idempotency",
+      "breakpoints": true
     }
   ]
 }

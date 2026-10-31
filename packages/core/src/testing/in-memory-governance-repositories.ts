@@ -77,6 +77,9 @@ export function createInMemoryReviewRepository(clock: Clock): ReviewRepository {
     async create(ctx, input) {
       return reviews.insert(ctx, { ...input, status: "open" });
     },
+    async get(ctx, id) {
+      return reviews.get(ctx, id);
+    },
     async list(ctx, query) {
       return reviews.page(
         ctx,

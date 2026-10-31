@@ -137,6 +137,12 @@ Behavior notes:
 - `baseVersionId` is optional. When it is not the current version, the call
   fails with `CONFLICT`, so feedback is never applied to a newer version than
   the one it was written for.
+- With an `idempotencyKey`, `studix_feedback` is safe to retry. The key is
+  stored on the new version together with the comment id, so a call that
+  stopped after the version was stored is completed by the retry (comment,
+  revisions, job), even when `baseVersionId` is no longer current. Retries,
+  including concurrent ones, return the same version, comment and job, with
+  `replayed: true`.
 - `studix_render` renders a stored version, and that version becomes current.
   Both tools accept `idempotencyKey` and `budgetCents`. A budget above the
   approval threshold parks the job in `waiting_approval`.

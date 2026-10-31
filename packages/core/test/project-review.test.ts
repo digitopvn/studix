@@ -95,6 +95,81 @@ describe("project review", () => {
     );
   });
 
+  describe("a feedback request that stopped after its version was stored", () => {
+    async function failOnce(env: Awaited<ReturnType<typeof setup>>, step: "recordVersion" | "enqueue") {
+      const target = step === "recordVersion" ? env.repos.revisions : env.repos.queue;
+      const name = step === "recordVersion" ? "recordVersion" : "enqueue";
+      const record = target as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      const original = record[name] as (...args: unknown[]) => Promise<unknown>;
+      let armed = true;
+      record[name] = async (...args) => {
+        if (armed) {
+          armed = false;
+          throw new Error(`${step} failed`);
+        }
+        return original.apply(target, args);
+      };
+    }
+    const request = (env: Awaited<ReturnType<typeof setup>>, baseVersionId?: string) => ({
+      projectId: env.projectId,
+      shotId: "feature-1",
+      comment: "đổi tiêu đề",
+      idempotencyKey: "fb-1",
+      baseVersionId,
+      patch: replaceText("/scenes/2/shots/0/text", "Mới"),
+    });
+
+    for (const step of ["recordVersion", "enqueue"] as const) {
+      it(`is completed by a retry with the same key and base version (${step} failed)`, async () => {
+        const env = await setup();
+        const baseVersionId = (await env.studio.getProjectReview(env.ctx, env.projectId)).currentVersion?.id;
+        await failOnce(env, step);
+        await expect(env.studio.submitFeedback(env.ctx, request(env, baseVersionId))).rejects.toThrow(
+          `${step} failed`,
+        );
+
+        const out = await env.studio.submitFeedback(env.ctx, request(env, baseVersionId));
+        expect(out.job).toBeDefined();
+        expect(out.versionId).toBeDefined();
+        const review = await env.studio.getProjectReview(env.ctx, env.projectId);
+        expect(review.versions).toHaveLength(2);
+        expect(review.comments).toHaveLength(1);
+        expect(review.currentVersion?.id).toBe(out.versionId);
+
+        const again = await env.studio.submitFeedback(env.ctx, request(env, baseVersionId));
+        expect(again).toMatchObject({ replayed: true, versionId: out.versionId, feedbackId: out.feedbackId });
+        expect((await env.studio.getProjectReview(env.ctx, env.projectId)).versions).toHaveLength(2);
+      });
+    }
+
+    it("a retry without a base version does not patch the orphan version a second time", async () => {
+      const env = await setup();
+      await failOnce(env, "enqueue");
+      await expect(env.studio.submitFeedback(env.ctx, request(env))).rejects.toThrow("enqueue failed");
+      const out = await env.studio.submitFeedback(env.ctx, request(env));
+      const review = await env.studio.getProjectReview(env.ctx, env.projectId);
+      expect(review.versions).toHaveLength(2);
+      expect(review.currentVersion?.id).toBe(out.versionId);
+      expect(review.comments).toHaveLength(1);
+    });
+
+    it("two retries sent at once with the same key end in one version, one comment and one job", async () => {
+      const env = await setup();
+      const baseVersionId = (await env.studio.getProjectReview(env.ctx, env.projectId)).currentVersion?.id;
+      const [a, b] = await Promise.all([
+        env.studio.submitFeedback(env.ctx, request(env, baseVersionId)),
+        env.studio.submitFeedback(env.ctx, request(env, baseVersionId)),
+      ]);
+      expect(a.versionId).toBe(b.versionId);
+      expect(a.feedbackId).toBe(b.feedbackId);
+      expect(a.job?.id).toBe(b.job?.id);
+      expect([a.replayed, b.replayed].filter(Boolean)).toHaveLength(1);
+      const review = await env.studio.getProjectReview(env.ctx, env.projectId);
+      expect(review.versions).toHaveLength(2);
+      expect(review.comments).toHaveLength(1);
+    });
+  });
+
   it("refuses a patch that reaches outside the feedback target, and stores nothing", async () => {
     const { studio, ctx, projectId } = await setup();
     await expect(

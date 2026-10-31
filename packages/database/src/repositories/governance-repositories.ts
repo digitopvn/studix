@@ -232,6 +232,13 @@ export function createReviewRepository(db: StudixDb, clock: Clock): ReviewReposi
         .returning();
       return toReview(first(rows, "review"));
     },
+    async get(ctx, id) {
+      const rows = await db
+        .select()
+        .from(reviews)
+        .where(scoped(reviews, ctx, eq(reviews.id, id)));
+      return rows[0] ? toReview(rows[0]) : undefined;
+    },
     async list(ctx, query) {
       const limit = pageLimit(query.limit);
       const rows = await db

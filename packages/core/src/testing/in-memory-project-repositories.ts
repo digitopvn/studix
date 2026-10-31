@@ -35,6 +35,12 @@ export function createInMemoryProjectRepository(clock: Clock): ProjectRepository
         });
       }
       const existing = versions.filter(ctx, (v) => v.projectId === input.projectId);
+      if (
+        input.idempotencyKey !== undefined &&
+        existing.some((v) => v.idempotencyKey === input.idempotencyKey)
+      ) {
+        throw new StudixError("CONFLICT", `idempotency key ${input.idempotencyKey} is already used`);
+      }
       const version = Math.max(0, ...existing.map((v) => v.version)) + 1;
       const created = versions.insert(ctx, { ...fields, version });
       if (advanceFrom !== undefined) projects.update(ctx, input.projectId, { currentVersionId: created.id });
@@ -42,6 +48,9 @@ export function createInMemoryProjectRepository(clock: Clock): ProjectRepository
     },
     async getVersion(ctx, versionId) {
       return versions.get(ctx, versionId);
+    },
+    async findVersionByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      return versions.filter(ctx, (v) => v.projectId === projectId && v.idempotencyKey === idempotencyKey)[0];
     },
     async listVersions(ctx, projectId, query = {}) {
       return versions.page(ctx, query, (v) => v.projectId === projectId);
