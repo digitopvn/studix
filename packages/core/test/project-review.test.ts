@@ -157,6 +157,43 @@ describe("project review", () => {
     expect(review.comments).toHaveLength(1);
   });
 
+  it("refuses to resume under a reused key: comment-only, different patch, or after the project moved on", async () => {
+    const { studio, ctx, projectId, repos } = await setup();
+    const enqueue = repos.queue.enqueue.bind(repos.queue);
+    let failures = 1;
+    repos.queue.enqueue = async (...args) => {
+      if (failures-- > 0) throw new Error("queue unavailable");
+      return enqueue(...args);
+    };
+    const base = {
+      projectId,
+      shotId: "feature-1",
+      comment: "Nhấn mạnh tốc độ giao hàng",
+      idempotencyKey: "fb-reuse",
+    };
+    const patch = replaceText("/scenes/2/shots/0/text", "Giao hàng trong 2 giờ");
+    await expect(studio.submitFeedback(ctx, { ...base, patch })).rejects.toThrow("queue unavailable");
+
+    // A comment that reuses the key stores only a comment: it never queues render work.
+    const commentOnly = await studio.submitFeedback(ctx, base);
+    expect(commentOnly.job).toBeUndefined();
+    expect(commentOnly.versionId).toBeUndefined();
+    await expect(
+      studio.submitFeedback(ctx, { ...base, patch: replaceText("/scenes/2/shots/0/text", "Khác") }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    // Another request moves the project past the orphan version.
+    await studio.submitFeedback(ctx, {
+      projectId,
+      shotId: "feature-1",
+      comment: "sửa tiếp",
+      patch: replaceText("/scenes/2/shots/0/text", "Bản mới"),
+    });
+    await expect(studio.submitFeedback(ctx, { ...base, patch })).rejects.toMatchObject({ code: "CONFLICT" });
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.versions).toHaveLength(3);
+    expect(review.comments).toHaveLength(3);
+  });
+
   it("two retries sent at once with the same key store one version and both succeed", async () => {
     const { studio, ctx, projectId } = await setup();
     const send = () =>

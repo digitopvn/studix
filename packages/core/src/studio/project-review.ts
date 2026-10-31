@@ -531,6 +531,30 @@ function assertPatchScope(patch: VideoIRPatch, allowedPaths: string[]): void {
   }
 }
 
+/**
+ * A retry may only finish the request that stored the version: same patch, same base, and the version still
+ * current (a render of an older version would otherwise roll the project back past later work).
+ */
+function assertSameRequest(
+  stored: ProjectVersion,
+  input: FeedbackInputParsed,
+  currentVersionId: string | undefined,
+): void {
+  const samePatch = JSON.stringify(stored.patch?.ops) === JSON.stringify(input.patch?.ops);
+  const sameBase = input.baseVersionId === undefined || input.baseVersionId === stored.parentVersionId;
+  if (!samePatch || !sameBase) {
+    throw new StudixError("CONFLICT", "idempotency key was used for a different feedback request", {
+      suggestedAction: "Use a new idempotencyKey for a different patch or base version.",
+    });
+  }
+  if (currentVersionId !== stored.id) {
+    throw new StudixError("CONFLICT", `version ${stored.id} is no longer current`, {
+      details: { currentVersionId: currentVersionId ?? null },
+      suggestedAction: "Review the current version and send the feedback against it.",
+    });
+  }
+}
+
 /** The version a stored patch version was derived from (the version the feedback was written against). */
 async function baseOfStoredVersion(
   deps: Deps,
@@ -572,10 +596,15 @@ export interface FeedbackResult {
  * revisions are recorded, and a render job is queued: only nodes depending on the change get new digests,
  * so cached stage work for everything else is reused.
  */
-export async function submitFeedback(
+export function submitFeedback(deps: Deps, ctx: TenantContext, rawInput: unknown): Promise<FeedbackResult> {
+  return submitFeedbackOnce(deps, ctx, rawInput, true);
+}
+
+async function submitFeedbackOnce(
   deps: Deps,
   ctx: TenantContext,
   rawInput: unknown,
+  mayRetry: boolean,
 ): Promise<FeedbackResult> {
   const input = parseInput(FeedbackInput, rawInput, "feedback");
   if (input.patch) assertPermission(ctx, "project:write");
@@ -603,11 +632,14 @@ export async function submitFeedback(
   }
 
   // A version stored under this key by an earlier attempt that did not finish: complete it, do not repeat it.
-  const stored = input.idempotencyKey
-    ? await deps.projects.findVersionByIdempotencyKey(ctx, project.id, input.idempotencyKey)
-    : undefined;
+  // Only a patch request can own such a version; a comment-only request never queues render work.
+  const stored =
+    input.idempotencyKey && input.patch
+      ? await deps.projects.findVersionByIdempotencyKey(ctx, project.id, input.idempotencyKey)
+      : undefined;
   let base: ProjectVersion;
   if (stored) {
+    assertSameRequest(stored, input, project.currentVersionId);
     base = await baseOfStoredVersion(deps, ctx, stored);
   } else {
     base = await requireCurrentVersion(deps, ctx, project);
@@ -649,7 +681,8 @@ export async function submitFeedback(
       : undefined);
   if (version && version.feedbackId !== undefined && version.feedbackId !== feedbackId) {
     // Another request with the same key stored the version first: finish its work instead.
-    return submitFeedback(deps, ctx, rawInput);
+    if (!mayRetry) throw new StudixError("CONFLICT", "idempotency key is already used by another request");
+    return submitFeedbackOnce(deps, ctx, rawInput, false);
   }
   const feedback = await deps.reviews.create(ctx, {
     id: version ? feedbackId : undefined,
@@ -705,18 +738,20 @@ export async function submitFeedback(
     budgetCents: input.budgetCents,
     extra: { feedbackId: feedback.id, baseVersionId: base.id },
   });
-  await deps.audit.append(ctx, {
-    actor: author,
-    action: "project.feedback_applied",
-    subjectType: "project",
-    subjectId: project.id,
-    data: {
-      feedbackId: feedback.id,
-      versionId: version.id,
-      invalidated: recorded.invalidated,
-      jobId: queued.job.id,
-    },
-  });
+  // A concurrent request that converged on the same job has nothing new to record.
+  if (!queued.replayed)
+    await deps.audit.append(ctx, {
+      actor: author,
+      action: "project.feedback_applied",
+      subjectType: "project",
+      subjectId: project.id,
+      data: {
+        feedbackId: feedback.id,
+        versionId: version.id,
+        invalidated: recorded.invalidated,
+        jobId: queued.job.id,
+      },
+    });
   return {
     ...common,
     versionId: version.id,
