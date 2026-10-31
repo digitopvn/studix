@@ -229,6 +229,27 @@ describe("motion graphic", () => {
     expect(style.id).toEqual(expect.any(String));
   });
 
+  it("sets every line in a colour that reads on its scene", () => {
+    const ir = motionGraphicTemplate({
+      prompt: "Lá Mây",
+      keyMessages: ["Trà hái tay mỗi sớm", "Hộp trà giao tận nơi"],
+      callToAction: "Ghé Lá Mây hôm nay",
+      brand: { ...brief.brand, palette: { ...brief.brand.palette, accent: "#d98e3f" } },
+    });
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const ink = (sceneId: string, shotId: string) =>
+      ir.scenes.find((s) => s.id === sceneId)?.shots.find((s) => s.id === shotId)?.style?.color;
+    // Dark green primary: the cream background colour, not the near-black foreground or the orange accent.
+    expect(ir.scenes.find((s) => s.id === "message-1")?.background?.color).toBe("primary");
+    expect(ink("message-1", "message-1-text")).toBe("background");
+    expect(ir.scenes.find((s) => s.id === "cta")?.background?.color).toBe("primary");
+    expect(ink("cta", "cta-text")).toBe("background");
+    expect(ink("cta", "cta-logo")).toBe("background");
+    // Cream background: the brand's own foreground.
+    expect(ink("hook", "hook-text")).toBe("foreground");
+    expect(ink("message-2", "message-2-text")).toBe("foreground");
+  });
+
   it("builds a valid captioned IR with its voice-over script and rejects one that cannot fit", () => {
     const ir = motionGraphicTemplate({
       prompt: "Lá Mây",
