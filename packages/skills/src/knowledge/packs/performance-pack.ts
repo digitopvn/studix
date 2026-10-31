@@ -1,3 +1,4 @@
+// Ported from zuey-workspace@10719856:.agents/skills/anime-creator/knowledge/packs/performance.json
 import type { KnowledgePack } from "../knowledge-pack-schema.ts";
 import { animeCreatorSource } from "../knowledge-sources.ts";
 

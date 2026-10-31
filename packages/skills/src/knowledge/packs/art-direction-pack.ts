@@ -1,3 +1,4 @@
+// Ported from zuey-workspace@10719856:.agents/skills/anime-creator/knowledge/packs/art-direction.json
 import type { KnowledgeEntry, KnowledgePack } from "../knowledge-pack-schema.ts";
 import { animeCreatorSource } from "../knowledge-sources.ts";
 
