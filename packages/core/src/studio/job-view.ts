@@ -72,7 +72,8 @@ export function nextActionsForJob(job: Job, approval?: Approval): NextAction[] {
           reason: job.error?.suggestedAction ?? "Inspect the project and its last version before retrying.",
         });
       }
-      if (job.status === "failed") {
+      // Retrying cannot help a rejected gate or an exhausted budget (spend is kept across a retry).
+      if (!["FORBIDDEN", "BUDGET_EXCEEDED", "APPROVAL_REQUIRED"].includes(job.error?.code ?? "")) {
         hints.push({
           tool: STUDIX_TOOLS.retryJob,
           arguments: { jobId: job.id },

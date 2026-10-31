@@ -1,6 +1,6 @@
 import type { Job, JobPatch, JobQueue, JobRepository, Stage, TenantContext } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -267,7 +267,7 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
         .set({
           status: "queued",
           runAfter: now,
-          maxAttempts: row.attempts + options.maxAttempts,
+          maxAttempts: sql`${jobs.attempts} + ${options.maxAttempts}`,
           cancelRequested: false,
           error: null,
           finishedAt: null,

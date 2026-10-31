@@ -217,6 +217,36 @@ describe("jobs, lists and audit", () => {
     expect((await rejects(studio.retryJob(ctx, job.id))).code).toBe("CONFLICT");
   });
 
+  it("does not requeue a failed job whose start approval no person granted", async () => {
+    const { studio, repos, ctx } = await setup();
+    const { job } = await studio.createVideoProject(ctx, { brief, budgetCents: 5000 });
+    expect(job.status).toBe("waiting_approval");
+    // The request lapsed and the sweeper failed the job.
+    await repos.jobs.update(ctx, job.id, {
+      status: "failed",
+      error: { code: "TIMEOUT", message: "approval expired", retryable: false },
+    });
+    expect((await rejects(studio.retryJob(ctx, job.id))).code).toBe("APPROVAL_REQUIRED");
+    expect((await repos.jobs.get(ctx, job.id))?.status).toBe("failed");
+  });
+
+  it("never requeues a failed publish job and offers no retry hint for a rejected gate", async () => {
+    const { studio, repos, ctx } = await setup();
+    const { job } = await studio.createVideoProject(ctx, { brief });
+    await repos.jobs.update(ctx, job.id, {
+      status: "failed",
+      error: { code: "BUDGET_EXCEEDED", message: "over budget", retryable: false },
+    });
+    expect((await studio.getJob(ctx, job.id)).next.map((n) => n.tool)).not.toContain("studix_retry_job");
+    const { job: publish } = await repos.queue.enqueue(ctx, {
+      kind: "video.publish",
+      payload: {},
+      createdBy: { type: "user", id: "usr_1" },
+    });
+    await repos.jobs.update(ctx, publish.id, { status: "failed" });
+    expect((await rejects(studio.retryJob(ctx, publish.id))).code).toBe("CONFLICT");
+  });
+
   it("paginates projects newest first", async () => {
     const { studio, ctx } = await setup();
     for (let i = 0; i < 4; i++) await studio.createVideoProject(ctx, { brief: { prompt: `p${i}` } });

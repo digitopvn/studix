@@ -1,6 +1,6 @@
 import { StudixError } from "@studix/shared";
 import type { Asset, AssetKind } from "../entities/asset.ts";
-import type { Render } from "../entities/job.ts";
+import { JOB_KINDS, type Render } from "../entities/job.ts";
 import type { ProjectVersion, VideoProject } from "../entities/project.ts";
 import type { Approval } from "../entities/review.ts";
 import type { AuditEvent } from "../entities/telemetry.ts";
@@ -105,6 +105,21 @@ export class StudioService {
     assertPermission(ctx, "job:retry");
     const job = await this.deps.jobs.get(ctx, jobId);
     if (!job) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
+    if (job.kind === JOB_KINDS.publish) {
+      throw new StudixError("CONFLICT", "a failed publish job is never requeued", {
+        retryable: false,
+        suggestedAction: "Check the destination, then request a new publish approval and job.",
+      });
+    }
+    // A job that never had its start approval granted by a person must not get past that gate by failing
+    // (for example when the request expired) and being requeued.
+    const start = await this.deps.approvals.findLatest(ctx, { type: "job", id: jobId }, "job.start");
+    if (start && !(start.decidedBy?.type === "user" && ["approved", "consumed"].includes(start.status))) {
+      throw new StudixError("APPROVAL_REQUIRED", `job.start was never approved (${start.status})`, {
+        details: { approvalId: start.id, action: start.action, subjectType: "job", subjectId: jobId },
+        suggestedAction: "Submit a new job and have a workspace member approve it in the Studix dashboard.",
+      });
+    }
     const requeued = await this.deps.queue.retryFailed(ctx, jobId, {
       maxAttempts: this.deps.defaults.jobMaxAttempts,
     });
