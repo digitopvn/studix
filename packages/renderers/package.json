@@ -9,9 +9,9 @@
   "dependencies": {
     "@fontsource/be-vietnam-pro": "5.3.0",
     "@fontsource/inter": "5.3.0",
-    "@hyperframes/core": "0.8.78",
-    "@hyperframes/lint": "0.8.78",
-    "@hyperframes/producer": "0.8.78",
+    "@hyperframes/core": "0.8.223",
+    "@hyperframes/lint": "0.8.223",
+    "@hyperframes/producer": "0.8.223",
     "@studix/core": "workspace:*",
     "@studix/shared": "workspace:*",
     "@studix/video-ir": "workspace:*",
