@@ -125,4 +125,46 @@ describe("StudioService over Postgres repositories", () => {
       expect.arrayContaining(["project.created", "approval.blocked", "approval.approved"]),
     );
   });
+  it("stores the idempotency key and feedback id on a patch version, refuses a reused key and replays the retry", async () => {
+    const service = studio();
+    const ctx = await tenant("svc-fb");
+    const created = await service.createVideoProject(ctx, {
+      brief: { prompt: "Giới thiệu Sương Mai Coffee", language: "vi" },
+      spec: brandIntro,
+    });
+    const projectId = created.project.id;
+    const base = (await service.getProjectReview(ctx, projectId)).currentVersion;
+    const input = {
+      projectId,
+      shotId: "feature-1",
+      comment: "đổi tiêu đề",
+      idempotencyKey: "fb-pg-1",
+      baseVersionId: base?.id,
+      patch: { ops: [{ op: "replace" as const, path: "/scenes/2/shots/0/text", value: "Mới" }] },
+    };
+    const first = await service.submitFeedback(ctx, input);
+    expect(first.replayed).toBe(false);
+    const stored = await db.current.repos.projects.findVersionByIdempotencyKey(ctx, projectId, "fb-pg-1");
+    expect(stored).toMatchObject({ id: first.versionId, feedbackId: first.feedbackId });
+    await expect(
+      db.current.repos.projects.createVersion(ctx, {
+        projectId,
+        ir: stored!.ir,
+        source: "patch",
+        parentVersionId: base?.id,
+        idempotencyKey: "fb-pg-1",
+        createdBy: { type: "user", id: "usr_1" },
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const retried = await service.submitFeedback(ctx, input);
+    expect(retried).toMatchObject({
+      replayed: true,
+      versionId: first.versionId,
+      feedbackId: first.feedbackId,
+    });
+    const review = await service.getProjectReview(ctx, projectId);
+    expect(review.versions).toHaveLength(2);
+    expect(review.comments).toHaveLength(1);
+  });
 });
