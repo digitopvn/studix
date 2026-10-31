@@ -1,5 +1,6 @@
 import type { KnowledgeEntry, KnowledgePack } from "../knowledge-pack-schema.ts";
 import { agentkitSource } from "../knowledge-sources.ts";
+import { THREEJS_EXAMPLE_SECTIONS } from "./threejs-examples.ts";
 
 const SKILL = "kits/engineer/skills/ak-threejs";
 const source = (path: string) => agentkitSource(`${SKILL}/${path}`, "TJ-02");
@@ -58,7 +59,7 @@ function useCase(
 
 export const threejsPack: KnowledgePack = {
   id: "threejs",
-  version: "1.0.0",
+  version: "1.1.0",
   title: "Three.js real-time 3D",
   summary:
     "Scenes, cameras, lights, PBR materials, glTF loading, animation, post-processing, TSL/WebGPU, shaders, XR.",
@@ -66,7 +67,8 @@ export const threejsPack: KnowledgePack = {
     "Build and review real-time 3D scenes rendered with Three.js: pick the right class for the job, set up colour, " +
     "light and camera correctly, keep the frame budget and release GPU memory. The source does not pin a Three.js " +
     "version; it relies on the r152 colour-management API but mixes idioms from older and newer releases, so read " +
-    "the installed version and renderer before applying any recipe here.",
+    "the installed version and renderer before applying any recipe here. The `examples-*` sections index the " +
+    "upstream three.js examples by category, as working references to study.",
   sources: [
     source("SKILL.md"),
     source("data/api-reference.csv"),
@@ -92,6 +94,11 @@ export const threejsPack: KnowledgePack = {
     source("references/16-webgpu.md"),
     source("references/17-shader.md"),
     source("references/18-geometry.md"),
+    agentkitSource(
+      `${SKILL}/data/examples-all.csv`,
+      "TJ-03",
+      "Index of the three.js examples (names and file names); three.js is MIT License, Copyright three.js authors.",
+    ),
   ],
   phases: ["design", "motion", "composition", "qa"],
   loadWhen: [
@@ -1173,6 +1180,7 @@ export const threejsPack: KnowledgePack = {
         },
       ],
     },
+    ...THREEJS_EXAMPLE_SECTIONS,
   ],
   checks: [
     {

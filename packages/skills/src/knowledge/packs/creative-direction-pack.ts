@@ -54,12 +54,62 @@ function color(
   };
 }
 
+/** One campaign category of the creative reasoning table; `styles` are ids of the visual style registry. */
+function campaign(
+  id: string,
+  title: string,
+  styles: readonly [string, string],
+  f: {
+    colorMood: string;
+    musicMood: string;
+    voiceStyle: string;
+    keyEffects: string;
+    platformPriority: string;
+    audience: string;
+    decisionRules: string;
+    antiPatterns: string;
+    severity: "high" | "medium";
+  },
+): KnowledgeEntry {
+  return {
+    id: `campaign-${id}`,
+    title,
+    text: `Lead with ${styles.join(" and ")}. ${f.decisionRules} Avoid: ${f.antiPatterns}.`,
+    fields: { stylePriority: styles.join(", "), ...f },
+    tags: ["campaign-reasoning"],
+  };
+}
+
+/** One music genre whose source note states how it is licensed; `styleMatch` lists visual style ids. */
+function music(
+  id: string,
+  title: string,
+  f: {
+    mood: string;
+    bpm: string;
+    instruments: string;
+    bestFor: string;
+    styleMatch: string;
+    avoidFor: string;
+    licence: string;
+  },
+): KnowledgeEntry {
+  return {
+    id: `music-${id}`,
+    title,
+    text: `${f.mood}; ${f.instruments.toLowerCase()}. Licence route: ${f.licence.toLowerCase()}.`,
+    fields: f,
+    tags: ["music"],
+  };
+}
+
 export const creativeDirectionPack: KnowledgePack = {
   id: "creative-direction",
-  version: "1.0.0",
+  version: "1.1.0",
   title: "Creative direction",
   summary:
-    "Visual style registry, voice-over style registry and colour psychology for briefing a video's look and sound.",
+    "Visual and voice-over style registries, colour psychology, campaign reasoning by category and music sources " +
+    "with a stated licence route.",
   purpose:
     "Pick a visual style, a voice-over style and a palette that fit the audience, the message and the established " +
     "brand. The registries are suggestions: a style may be rejected for a reason taken from the brief, and every " +
@@ -70,6 +120,8 @@ export const creativeDirectionPack: KnowledgePack = {
     agentkitSource(`${CREATIVITY}/data/voiceover.csv`, "CR-04"),
     agentkitSource(`${CREATIVITY}/references/voiceover-styles.md`, "CR-04"),
     agentkitSource(`${CREATIVITY}/references/color-psychology.md`, "CR-04"),
+    agentkitSource(`${CREATIVITY}/data/creative-reasoning.csv`, "CR-05"),
+    agentkitSource(`${CREATIVITY}/data/music.csv`, "CR-06"),
   ],
   phases: ["brief", "design", "grade", "sound", "qa"],
   loadWhen: [
@@ -83,6 +135,11 @@ export const creativeDirectionPack: KnowledgePack = {
     "voice-over",
     "narrator tone",
     "brief",
+    "campaign",
+    "campaign category",
+    "music",
+    "soundtrack",
+    "music licence",
   ],
   useCases: [
     "Writing the creative brief: match audience, goal and industry to a short list of visual styles, then justify the pick.",
@@ -90,6 +147,8 @@ export const creativeDirectionPack: KnowledgePack = {
     "Casting and directing a voice-over: choose a delivery style and hand the talent or voice tool its direction keywords.",
     "Choosing a palette: primary colour from brand personality, accent for hierarchy, harmony rule for the overall mood.",
     "Reviewing assets for palette consistency, text contrast and cultural fit before delivery.",
+    "Starting a brief from its campaign category: a style pair, moods, voice, platform formats and the rules that apply.",
+    "Choosing a music genre for the style and recording the licence of every track before it is used.",
   ],
   antiPatterns: [
     "Treating a registry row as a rule: applying a style because the table lists the audience, without a brief-based reason.",
@@ -99,6 +158,7 @@ export const creativeDirectionPack: KnowledgePack = {
     "Assuming colour meanings are universal; the same colour can mean luck in one culture and danger in another.",
     "Defaulting every voice-over to the same announcer voice regardless of brand and audience.",
     "Mixing palettes across the assets of one campaign so they no longer read as one piece.",
+    "Using a track because its genre is listed as royalty-free, without a recorded licence for this use.",
   ],
   sections: [
     {
@@ -1257,6 +1317,481 @@ export const creativeDirectionPack: KnowledgePack = {
         },
       ],
     },
+    {
+      id: "campaign-reasoning",
+      title: "Campaign reasoning by category",
+      entries: [
+        {
+          id: "campaign-reasoning-use",
+          title: "How to use the campaign rows",
+          text:
+            "Find the row for the campaign category, start from its style pair, colour mood, music mood and voice, " +
+            "then apply each conditional rule whose condition the brief meets. `must have` items hold for every " +
+            "piece in the category. The anti-patterns are what reviewers check against. Severity is how costly the " +
+            "source rates a mismatch. Platforms are named by format, not by service; map them to the services the " +
+            "brief targets. A row is a starting argument: the brief can overrule it with a stated reason.",
+          tags: ["campaign-reasoning", "rule"],
+        },
+        campaign("saas-product-launch", "SaaS product launch", ["gradient-smooth", "minimalist-tech"], {
+          colorMood: "Tech blue with a clean accent",
+          musicMood: "Ambient electronic, building",
+          voiceStyle: "Modern, clean, confident",
+          keyEffects: "Smooth transitions, interface demos, feature reveals",
+          platformPriority: "Long-form video, professional network, microblog feed",
+          audience: "Professionals 25-54",
+          decisionRules: "If demo-heavy: add screen recordings. If B2B: emphasise ROI.",
+          antiPatterns: "Overly playful tone, UGC style, loud music",
+          severity: "high",
+        }),
+        campaign(
+          "consumer-product-launch",
+          "Consumer product launch",
+          ["lifestyle-aspirational", "bright-cheerful"],
+          {
+            colorMood: "Vibrant brand colours with warmth",
+            musicMood: "Upbeat pop, trending",
+            voiceStyle: "Energetic, friendly",
+            keyEffects: "Product reveals, lifestyle shots, unboxing",
+            platformPriority: "Visual social feed, short vertical video feed, long-form video",
+            audience: "Consumers 18-44",
+            decisionRules: "If premium: switch to quiet-luxury. If Gen Z: add UGC elements.",
+            antiPatterns: "Corporate tone, dark moody look, slow pacing",
+            severity: "high",
+          },
+        ),
+        campaign("brand-awareness", "Brand awareness", ["emotional-storytelling", "cinematic-documentary"], {
+          colorMood: "Brand colours with emotional warmth",
+          musicMood: "Orchestral, building emotionally",
+          voiceStyle: "Warm, genuine, inspiring",
+          keyEffects: "Narrative arc, real people, emotional beats",
+          platformPriority: "Long-form video, TV and streaming, general social network",
+          audience: "Broad, 25-54",
+          decisionRules: "If cause-driven: increase authenticity. If premium: cinematic production quality.",
+          antiPatterns: "Sales focus, product-heavy cuts, hard call to action",
+          severity: "high",
+        }),
+        campaign("lead-generation", "Lead generation", ["authoritative-expert", "data-visualization"], {
+          colorMood: "Trust blue, professional",
+          musicMood: "Subtle corporate, confident",
+          voiceStyle: "Professional, measured, expert",
+          keyEffects: "Data graphics, expert quotes, proof points",
+          platformPriority: "Professional network, long-form video, email",
+          audience: "B2B decision makers 30-54",
+          decisionRules: "Must have: a clear value proposition. If complex: simplify the message.",
+          antiPatterns: "Playful tone, trendy music, casual style",
+          severity: "high",
+        }),
+        campaign("ecommerce-conversion", "E-commerce conversion", ["bold-color-clash", "bright-cheerful"], {
+          colorMood: "Vibrant with an urgency orange",
+          musicMood: "Upbeat, energetic",
+          voiceStyle: "Friendly, urgent, persuasive",
+          keyEffects: "Product close-ups, social proof, urgency",
+          platformPriority: "Visual social feed, short vertical video feed, general social network",
+          audience: "Shoppers 18-44",
+          decisionRules: "If luxury: switch to quiet-luxury. If a flash sale: add urgency.",
+          antiPatterns: "Slow reveals, complex messaging, no call to action",
+          severity: "high",
+        }),
+        campaign("community-building", "Community building", ["authentic-ugc", "behind-the-scenes"], {
+          colorMood: "Warm and authentic with a brand accent",
+          musicMood: "Lo-fi beats, trending sounds",
+          voiceStyle: "Conversational, genuine",
+          keyEffects: "Real customers, behind-the-scenes content, user stories",
+          platformPriority: "Short vertical video feed, visual social feed, community groups",
+          audience: "Community members and engaged fans",
+          decisionRules: "Must have: real people. If a testimonial: let users speak.",
+          antiPatterns: "Polished corporate look, scripted lines, actor-heavy casting",
+          severity: "high",
+        }),
+        campaign("thought-leadership", "Thought leadership", ["authoritative-expert", "corporate-modern"], {
+          colorMood: "Navy with gold accents",
+          musicMood: "Subtle orchestral, confident",
+          voiceStyle: "Expert, authoritative, measured",
+          keyEffects: "Data overlays, expert interviews, insights",
+          platformPriority: "Professional network, long-form video, podcast",
+          audience: "Executives and professionals 35-60",
+          decisionRules: "Must have: credentials visible. If data-heavy: visualise the statistics.",
+          antiPatterns: "Trendy music, casual tone, Gen Z style",
+          severity: "high",
+        }),
+        campaign(
+          "recruitment-employer-brand",
+          "Recruitment and employer brand",
+          ["behind-the-scenes", "lifestyle-aspirational"],
+          {
+            colorMood: "Brand colours, warm",
+            musicMood: "Upbeat, positive, authentic",
+            voiceStyle: "Friendly, warm, genuine",
+            keyEffects: "Team footage, culture shots, real employees",
+            platformPriority: "Professional network, visual social feed, long-form video",
+            audience: "Job seekers 22-40",
+            decisionRules: "Must have: real employees. If tech: show the workspace.",
+            antiPatterns: "Stock footage, scripted lines, overly corporate tone",
+            severity: "medium",
+          },
+        ),
+        campaign("gen-z-campaign", "Gen Z campaign", ["raw-unpolished", "nostalgic-90s"], {
+          colorMood: "Neon and trending colours",
+          musicMood: "Trending sounds, lo-fi",
+          voiceStyle: "Casual, authentic, relatable",
+          keyEffects: "Jump cuts, memes, trends, unpolished footage",
+          platformPriority: "Short vertical video feed, ephemeral stories",
+          audience: "Gen Z 16-25",
+          decisionRules: "Must have: platform-native format. If branded: integrate the brand subtly.",
+          antiPatterns: "Corporate polish, scripted lines, old trends",
+          severity: "high",
+        }),
+        campaign(
+          "millennial-campaign",
+          "Millennial campaign",
+          ["conversational-casual", "lifestyle-aspirational"],
+          {
+            colorMood: "Warm and aspirational",
+            musicMood: "Indie acoustic, chill pop",
+            voiceStyle: "Friendly, warm, relatable",
+            keyEffects: "Lifestyle shots, humour, authenticity",
+            platformPriority: "Visual social feed, long-form video, short vertical video feed",
+            audience: "Millennials 26-40",
+            decisionRules: "If nostalgia: add 90s elements. If values-led: show authenticity.",
+            antiPatterns: "Too corporate, too Gen Z, inauthentic",
+            severity: "medium",
+          },
+        ),
+        campaign(
+          "gen-x-boomer-campaign",
+          "Gen X and Boomer campaign",
+          ["emotional-storytelling", "cinematic-documentary"],
+          {
+            colorMood: "Warm, traditional, trustworthy",
+            musicMood: "Classic rock, orchestral",
+            voiceStyle: "Trustworthy, warm, experienced",
+            keyEffects: "High production value, storytelling, family",
+            platformPriority: "General social network, long-form video, TV",
+            audience: "Gen X and Boomers 45+",
+            decisionRules: "Must have: clear audio. If tech: simplify the UI shown.",
+            antiPatterns: "Short-video trends, slang, low production value",
+            severity: "medium",
+          },
+        ),
+        campaign("healthcare", "Healthcare", ["emotional-storytelling", "pastel-soft"], {
+          colorMood: "Calm blue and health green",
+          musicMood: "Gentle piano, reassuring",
+          voiceStyle: "Warm, reassuring, professional",
+          keyEffects: "Real patients, gentle transitions, trust",
+          platformPriority: "Long-form video, general social network, TV",
+          audience: "Patients and caregivers 35+",
+          decisionRules: "Must have: compliance review. Must have: accessible delivery.",
+          antiPatterns: "Bright neon, fast cuts, trendy music",
+          severity: "high",
+        }),
+        campaign("finance-banking", "Finance and banking", ["authoritative-expert", "minimalist-clean"], {
+          colorMood: "Navy, gold and trust blue",
+          musicMood: "Subtle, confident, professional",
+          voiceStyle: "Professional, trustworthy, confident",
+          keyEffects: "Clean graphics, security indicators, data",
+          platformPriority: "Long-form video, professional network, TV",
+          audience: "Adults 30+ and professionals",
+          decisionRules: "Must have: compliance approval. Must have: trust signals.",
+          antiPatterns: "Playful or trendy tone, UGC style, casual delivery",
+          severity: "high",
+        }),
+        campaign("food-beverage", "Food and beverage", ["macro-close-up", "bright-cheerful"], {
+          colorMood: "Warm, appetising, product colours",
+          musicMood: "Upbeat, satisfying",
+          voiceStyle: "Friendly, appetising, enthusiastic",
+          keyEffects: "Close-ups, satisfying shots, appetite appeal",
+          platformPriority: "Visual social feed, short vertical video feed, TV",
+          audience: "Food lovers, broad 18-54",
+          decisionRules: "Must have: high-quality food shots. If a recipe: show the process.",
+          antiPatterns: "Unappetising lighting, fast cuts, no food beauty shots",
+          severity: "high",
+        }),
+        campaign("fashion-beauty", "Fashion and beauty", ["minimalist-clean", "lifestyle-aspirational"], {
+          colorMood: "Brand colours, skin-flattering",
+          musicMood: "Stylish, trending",
+          voiceStyle: "Sophisticated, aspirational",
+          keyEffects: "Model shots, texture details, lifestyle",
+          platformPriority: "Visual social feed, short vertical video feed, image discovery boards",
+          audience: "Fashion-forward 18-44",
+          decisionRules: "If luxury: quiet-luxury. If trend-led: add UGC.",
+          antiPatterns: "Unflattering lighting, low quality, over-retouching",
+          severity: "high",
+        }),
+        campaign("gaming", "Gaming", ["cyberpunk-digital", "retro-futurism"], {
+          colorMood: "Neon on dark backgrounds",
+          musicMood: "Electronic, epic",
+          voiceStyle: "Energetic, edgy, exciting",
+          keyEffects: "Gameplay, epic moments, hype build",
+          platformPriority: "Long-form video, short vertical video feed, live game streaming",
+          audience: "Gamers 16-34",
+          decisionRules: "Must have: gameplay footage. If competitive: show skill.",
+          antiPatterns: "Corporate tone, slow pacing, non-gaming aesthetic",
+          severity: "high",
+        }),
+        campaign("travel-tourism", "Travel and tourism", ["cinematic-documentary", "drone-aerial"], {
+          colorMood: "Destination colours, inspiring",
+          musicMood: "Epic orchestral, inspiring",
+          voiceStyle: "Inspiring, warm, adventurous",
+          keyEffects: "Drone shots, immersive scenery, experiences",
+          platformPriority: "Long-form video, visual social feed, image discovery boards",
+          audience: "Travellers 25-54",
+          decisionRules: "Must have: stunning visuals. If adventure: action shots.",
+          antiPatterns: "Stock-footage feel, generic imagery, indoor-heavy shots",
+          severity: "high",
+        }),
+        campaign("real-estate", "Real estate", ["drone-aerial", "cinematic-documentary"], {
+          colorMood: "Clean, luxe neutrals",
+          musicMood: "Elegant, aspirational",
+          voiceStyle: "Professional, confident, welcoming",
+          keyEffects: "Drone tours, interior reveals, neighbourhood",
+          platformPriority: "Long-form video, general social network, property listing portals",
+          audience: "Buyers and sellers 30-60",
+          decisionRules: "Must have: quality property shots. If luxury: premium production.",
+          antiPatterns: "Poor photography, shaky video, unstaged rooms",
+          severity: "high",
+        }),
+        campaign("automotive", "Automotive", ["cinematic-documentary", "slow-motion"], {
+          colorMood: "Brand colours, metallic",
+          musicMood: "Epic, with engine sounds",
+          voiceStyle: "Confident, powerful, aspirational",
+          keyEffects: "Car reveals, performance shots, lifestyle",
+          platformPriority: "Long-form video, TV, visual social feed",
+          audience: "Buyers 25-54",
+          decisionRules: "Must have: hero car shots. If performance-led: action footage.",
+          antiPatterns: "Static shots, poor lighting, no emotion",
+          severity: "high",
+        }),
+        campaign("non-profit-cause", "Non-profit and cause", ["emotional-storytelling", "authentic-ugc"], {
+          colorMood: "Warm, hopeful, cause colours",
+          musicMood: "Emotional piano, building",
+          voiceStyle: "Genuine, emotional, heartfelt",
+          keyEffects: "Real stories, impact footage, hope",
+          platformPriority: "Long-form video, general social network, TV",
+          audience: "Donors and advocates 35+",
+          decisionRules: "Must have: real beneficiaries. Must have: clear impact.",
+          antiPatterns: "Guilt-heavy, graphic or hopeless tone",
+          severity: "high",
+        }),
+        campaign("sports-fitness", "Sports and fitness", ["inspirational-motivational", "slow-motion"], {
+          colorMood: "Energetic, achievement gold",
+          musicMood: "Anthemic, pump-up",
+          voiceStyle: "Powerful, motivating, inspiring",
+          keyEffects: "Action shots, transformation, achievement",
+          platformPriority: "Long-form video, visual social feed, short vertical video feed",
+          audience: "Athletes and fitness audiences 18-44",
+          decisionRules: "Must have: action footage. If a transformation: before and after.",
+          antiPatterns: "Static shots, no energy, overly commercial tone",
+          severity: "high",
+        }),
+        campaign("technology-startup", "Technology and startup", ["futuristic-sci-fi", "gradient-smooth"], {
+          colorMood: "Tech blue with an innovation accent",
+          musicMood: "Ambient electronic, building",
+          voiceStyle: "Modern, confident, innovative",
+          keyEffects: "Product demos, interface shots, innovation",
+          platformPriority: "Long-form video, professional network, product launch directories",
+          audience: "Tech enthusiasts and investors 25-44",
+          decisionRules: "If a demo: show the working product. If B2B: focus on ROI.",
+          antiPatterns: "Outdated aesthetic, boring corporate tone, no demo",
+          severity: "high",
+        }),
+        campaign("education-edtech", "Education and edtech", ["clean-infographic", "conversational-casual"], {
+          colorMood: "Friendly, educational colours",
+          musicMood: "Gentle, encouraging",
+          voiceStyle: "Friendly, encouraging, clear",
+          keyEffects: "Animations, diagrams, student success",
+          platformPriority: "Long-form video, visual social feed, short vertical video feed",
+          audience: "Students, parents and educators 18-50",
+          decisionRules: "Must have: a clear explanation. If for children: playful elements.",
+          antiPatterns: "Boring, overly complex, no engagement",
+          severity: "medium",
+        }),
+        campaign("luxury-goods", "Luxury goods", ["quiet-luxury", "dark-moody-cinematic"], {
+          colorMood: "Muted neutrals and gold",
+          musicMood: "Classical, elegant",
+          voiceStyle: "Refined, sophisticated, hushed",
+          keyEffects: "Texture details, craftsmanship, exclusivity",
+          platformPriority: "Long-form video, visual social feed, image discovery boards",
+          audience: "Affluent 30-60",
+          decisionRules: "Must have: premium production. Must have: material focus.",
+          antiPatterns: "Bright, loud, mass-market feel, UGC",
+          severity: "high",
+        }),
+        campaign("entertainment-media", "Entertainment and media", ["maximalist-bold", "festival-vibrant"], {
+          colorMood: "Vibrant neon, dynamic",
+          musicMood: "Trending, high energy",
+          voiceStyle: "Energetic, exciting, playful",
+          keyEffects: "Hype cuts, star moments, excitement",
+          platformPriority: "Long-form video, short vertical video feed, visual social feed",
+          audience: "Entertainment fans 16-44",
+          decisionRules: "If a film: cinematic trailer grammar. If music: focus on the artist.",
+          antiPatterns: "Boring, slow, corporate, no excitement",
+          severity: "high",
+        }),
+        campaign("event-promotion", "Event promotion", ["festival-vibrant", "time-lapse"], {
+          colorMood: "Event colours, energy",
+          musicMood: "Building, hype",
+          voiceStyle: "Exciting, energetic, urgent",
+          keyEffects: "Countdown, highlights, fear-of-missing-out content",
+          platformPriority: "Visual social feed, short vertical video feed, event listings",
+          audience: "Event-goers 18-44",
+          decisionRules: "Must have: the date visible. Must have: a clear call to action.",
+          antiPatterns: "No urgency, vague details, boring",
+          severity: "high",
+        }),
+        campaign("sustainability-eco", "Sustainability and eco", ["earthy-organic", "nature-inspired"], {
+          colorMood: "Earth tones and green",
+          musicMood: "Acoustic, nature sounds",
+          voiceStyle: "Genuine, warm, authentic",
+          keyEffects: "Nature footage, process, impact",
+          platformPriority: "Visual social feed, long-form video, image discovery boards",
+          audience: "Eco-conscious 25-44",
+          decisionRules: "Must have: authenticity. Must have: proof, not claims.",
+          antiPatterns: "Greenwashing, corporate tone, inauthentic",
+          severity: "high",
+        }),
+        campaign("pet-products", "Pet products", ["bright-cheerful", "authentic-ugc"], {
+          colorMood: "Warm, playful",
+          musicMood: "Upbeat, playful",
+          voiceStyle: "Friendly, warm, loving",
+          keyEffects: "Pet footage, owner testimonials, cute moments",
+          platformPriority: "Short vertical video feed, visual social feed, general social network",
+          audience: "Pet owners 25-54",
+          decisionRules: "Must have: real pets. If funny: embrace the humour.",
+          antiPatterns: "Stock pets, overly serious tone, no pets visible",
+          severity: "medium",
+        }),
+        campaign("subscription-service", "Subscription service", ["split-screen", "data-visualization"], {
+          colorMood: "Brand colours with a value accent",
+          musicMood: "Modern, confident",
+          voiceStyle: "Clear, friendly, persuasive",
+          keyEffects: "Before and after, value comparison, features",
+          platformPriority: "Long-form video, visual social feed, display ads",
+          audience: "Target subscribers 25-44",
+          decisionRules: "Must have: a clear value proposition. If a free trial: a low-risk call to action.",
+          antiPatterns: "Complex pricing, hidden value, confusing flow",
+          severity: "high",
+        }),
+        campaign("local-business", "Local business", ["conversational-casual", "behind-the-scenes"], {
+          colorMood: "Warm, local, brand colours",
+          musicMood: "Friendly, local, acoustic",
+          voiceStyle: "Friendly, warm, local",
+          keyEffects: "Owner story, local connection, community",
+          platformPriority: "General social network, visual social feed, local search and maps",
+          audience: "Local customers 30+",
+          decisionRules: "Must have: local authenticity. If a service: show results.",
+          antiPatterns: "Generic look, stock footage, no local feel",
+          severity: "medium",
+        }),
+      ],
+    },
+    {
+      id: "music-sources",
+      title: "Music sources with a stated licence route",
+      entries: [
+        {
+          id: "music-licence-rule",
+          title: "Only sources whose licence route is stated",
+          text:
+            "This list keeps only the music genres whose source note states how the music is licensed. A route is " +
+            "not a licence: before a track is used, record the actual licence (who grants it, the licence or " +
+            "contract reference, and the media, territory and term it covers) and keep it with the job. Genres " +
+            "whose licence was unclear in the source are left out: lo-fi, electronic dance, classical, jazz, " +
+            "platform-trending sounds, hip-hop and world fusion. Recordings of public-domain works, DJ mixes, " +
+            "samples and platform-provided audio need their own clearance with the rights holder.",
+          tags: ["music", "licence", "rule"],
+        },
+        music("ambient-electronic", "Ambient electronic", {
+          mood: "Calm, modern, tech-forward",
+          bpm: "60-90",
+          instruments: "Synth pads, soft beats, atmospheric textures",
+          bestFor: "SaaS, tech, modern brands, tutorials",
+          styleMatch: "minimalist-clean, gradient-smooth, futuristic-sci-fi, minimalist-tech",
+          avoidFor: "Energetic campaigns, youth, entertainment",
+          licence: "Royalty-free library licence; widely available",
+        }),
+        music("upbeat-pop", "Upbeat pop", {
+          mood: "Happy, energetic, positive",
+          bpm: "110-130",
+          instruments: "Synths, drums, bass, vocals or instrumental",
+          bestFor: "Consumer goods, lifestyle, bright campaigns",
+          styleMatch: "bright-cheerful, maximalist-bold, festival-vibrant",
+          avoidFor: "B2B, serious topics, luxury",
+          licence: "Sync licence required for major commercial tracks",
+        }),
+        music("indie-acoustic", "Indie acoustic", {
+          mood: "Warm, authentic, friendly",
+          bpm: "80-110",
+          instruments: "Acoustic guitar, soft percussion, piano",
+          bestFor: "Lifestyle, community, authentic brands",
+          styleMatch: "conversational-casual, earthy-organic, emotional-storytelling",
+          avoidFor: "Tech, gaming, corporate",
+          licence: "Royalty-free library licence; many options",
+        }),
+        music("orchestral-cinematic", "Orchestral cinematic", {
+          mood: "Epic, dramatic, emotional",
+          bpm: "Varies",
+          instruments: "Orchestra, strings, brass, percussion",
+          bestFor: "Premium brands, film, sports, causes",
+          styleMatch: "cinematic-documentary, inspirational-motivational, emotional-storytelling",
+          avoidFor: "Casual content, quick social cuts",
+          licence: "Commissioned composer licence, or a production-library licence",
+        }),
+        music("synthwave", "Synthwave", {
+          mood: "Nostalgic, 80s, retro-futuristic",
+          bpm: "100-120",
+          instruments: "Vintage synths, drum machines, arpeggios",
+          bestFor: "Retro campaigns, gaming, Gen X and Millennial nostalgia",
+          styleMatch: "nostalgic-80s, retro-futurism, neon-cyber",
+          avoidFor: "Traditional, conservative, elderly audiences",
+          licence: "Royalty-free library licence; growing catalogue",
+        }),
+        music("corporate-subtle", "Corporate subtle", {
+          mood: "Professional, neutral, unobtrusive",
+          bpm: "80-100",
+          instruments: "Light synths, soft piano, minimal arrangement",
+          bestFor: "B2B, corporate, professional services",
+          styleMatch: "corporate-modern, authoritative-expert, data-visualization",
+          avoidFor: "Entertainment, youth, emotional pieces",
+          licence: "Royalty-free library licence; abundant",
+        }),
+        music("nature-ambient", "Nature ambient", {
+          mood: "Peaceful, organic, calming",
+          bpm: "None, or 60-80",
+          instruments: "Nature sounds, soft pads, minimal arrangement",
+          bestFor: "Wellness, eco brands, outdoor, spa",
+          styleMatch: "earthy-organic, nature-inspired, pastel-soft",
+          avoidFor: "Urban, tech, high-energy pieces",
+          licence: "Royalty-free library licence, including nature sound recordings",
+        }),
+        music("anthemic-rock", "Anthemic rock", {
+          mood: "Powerful, triumphant, motivating",
+          bpm: "120-140",
+          instruments: "Electric guitars, drums, bass",
+          bestFor: "Sports, achievements, launches",
+          styleMatch: "inspirational-motivational, bold-color-clash",
+          avoidFor: "Luxury, calm, B2B, healthcare",
+          licence: "Sync licence for major-artist tracks, at high cost",
+        }),
+        music("quirky-playful", "Quirky playful", {
+          mood: "Fun, unexpected, humorous",
+          bpm: "100-130",
+          instruments: "Unusual instruments, pizzicato, whistling",
+          bestFor: "Humour, creative, children, playful pieces",
+          styleMatch: "humor-comedic, pop-art",
+          avoidFor: "Serious, B2B, luxury, formal pieces",
+          licence: "Royalty-free library licence; good availability",
+        }),
+        music("dark-electronic", "Dark electronic", {
+          mood: "Edgy, intense, moody",
+          bpm: "90-130",
+          instruments: "Dark synths, industrial beats, bass",
+          bestFor: "Gaming, tech, edgy brands, thrillers",
+          styleMatch: "cyberpunk-digital, dark-moody-cinematic, provocative-edgy",
+          avoidFor: "Family, wellness, bright brands",
+          licence: "Royalty-free library licence",
+        }),
+      ],
+    },
   ],
   checks: [
     {
@@ -1309,6 +1844,28 @@ export const creativeDirectionPack: KnowledgePack = {
       judges: ["human"],
       evidence: ["contact-sheet", "document"],
       pass: "The user confirms no colour or style carries an unintended meaning in the target market.",
+    },
+    {
+      id: "creative-direction.campaign-anti-patterns",
+      kind: "evidence",
+      level: "video",
+      measure: "The finished piece against the anti-patterns and must-have rules of its campaign category.",
+      judges: ["ai", "human"],
+      evidence: ["contact-sheet", "document"],
+      pass:
+        "No anti-pattern of the category appears and every must-have is present, unless the brief states why " +
+        "the piece departs from the row.",
+    },
+    {
+      id: "creative-direction.music-licence",
+      kind: "evidence",
+      level: "job",
+      measure: "The licence record of every music track in the delivered mix.",
+      judges: ["human"],
+      evidence: ["document"],
+      pass:
+        "Every track has a recorded licence naming who grants it and covering the delivery's media, territory " +
+        "and term; a track without one is removed.",
     },
   ],
 };

@@ -1,19 +1,31 @@
 import type { KnowledgePack } from "../knowledge-pack-schema.ts";
 import { agentkitSource } from "../knowledge-sources.ts";
+import { SHADER_GLSL_LISTINGS } from "./shader-gl-listings.ts";
 
 const SHADER = "kits/engineer/skills/ak-shader";
 const ref = (name: string) => agentkitSource(`${SHADER}/references/${name}.md`, "SH-01");
+/** A reference whose GLSL listings are carried as published (the owner approved the derived content). */
+const listing = (name: string, notice?: string) =>
+  agentkitSource(`${SHADER}/references/${name}.md`, "SH-03", notice);
+
+const SIMPLEX_NOTICE =
+  "The 2D simplex noise listing is the webgl-noise implementation by Ian McEwan and Stefan Gustavson " +
+  "(Ashima Arts), MIT License, Copyright (C) 2011 Ashima Arts.";
+const HSV_NOTICE =
+  "The hsb2rgb listing is the smooth HSV conversion by Inigo Quilez, whose algorithm code is published " +
+  "under the MIT License.";
 
 export const shaderGlPack: KnowledgePack = {
   id: "shader-gl",
-  version: "1.0.0",
+  version: "1.1.0",
   title: "GL fragment shader craft",
   summary:
     "Fragment shader fundamentals, shaping curves, colour spaces, SDF shapes, patterns, noise, fBm and procedural textures.",
   purpose:
     "Give the GL film engine a working vocabulary for procedural sets and FX: how a fragment shader thinks per " +
     "pixel, how to shape values, draw and combine shapes with distance fields, repeat and warp space, and build " +
-    "organic surfaces from noise. Every shader is proven by rendering it in the actual target, not by compiling it.",
+    "organic surfaces from noise. The `*-glsl` sections hold the source's GLSL ES 1 listings for each technique. " +
+    "Every shader is proven by rendering it in the actual target, not by compiling it.",
   sources: [
     agentkitSource(`${SHADER}/SKILL.md`, "SH-01"),
     ref("glsl-fundamentals-data-types-vectors-precision-coordinates"),
@@ -27,6 +39,17 @@ export const shaderGlPack: KnowledgePack = {
     ref("glsl-cellular-voronoi-worley-noise-patterns"),
     ref("glsl-fbm-fractional-brownian-motion-turbulence-octaves"),
     ref("glsl-procedural-textures-clouds-marble-wood-terrain"),
+    listing("glsl-fundamentals-data-types-vectors-precision-coordinates"),
+    listing("glsl-shaping-functions-step-smoothstep-curves-interpolation"),
+    listing("glsl-colors-rgb-hsb-gradients-mixing-color-spaces", HSV_NOTICE),
+    listing("glsl-shapes-sdf-circles-rectangles-polar-distance-fields"),
+    listing("glsl-shapes-polygon-star-polar-sdf-combinations"),
+    listing("glsl-patterns-tiling-fract-matrices-transformations"),
+    listing("glsl-pattern-symmetry-truchet-domain-warping"),
+    listing("glsl-noise-random-perlin-simplex-cellular-voronoi", SIMPLEX_NOTICE),
+    listing("glsl-cellular-voronoi-worley-noise-patterns"),
+    listing("glsl-fbm-fractional-brownian-motion-turbulence-octaves"),
+    listing("glsl-procedural-textures-clouds-marble-wood-terrain"),
   ],
   phases: ["design", "composition", "motion"],
   loadWhen: [
@@ -571,6 +594,7 @@ export const shaderGlPack: KnowledgePack = {
         },
       ],
     },
+    ...SHADER_GLSL_LISTINGS,
   ],
   checks: [
     {
