@@ -1,5 +1,6 @@
-import { type ClaudeAgentTransport, createClaudeAgentRuntime } from "@studix/agent-runtime";
+import { agentSpendOf, type ClaudeAgentTransport, createClaudeAgentRuntime } from "@studix/agent-runtime";
 import type { ProviderConnectionService } from "@studix/auth";
+import { USAGE_KINDS, usageDedupeKey } from "@studix/billing";
 import type {
   AgentRunResult,
   NewProviderExecution,
@@ -19,8 +20,11 @@ export interface ClaudePlannerDeps {
   /** Per-plan cost cap; the job's remaining budget lowers it further. */
   maxCostCents: number;
   timeoutMs: number;
-  /** Records one provider execution per planning attempt, succeeded or not (best effort). */
-  executions?: Pick<UsageRepository, "recordProviderExecution">;
+  /**
+   * Records one provider execution per planning attempt, succeeded or not, and bills what a failed run
+   * spent to the job's ledger (best effort). A successful run is billed by the plan stage.
+   */
+  executions?: Pick<UsageRepository, "recordProviderExecution" | "record">;
   logger: Logger;
   clock?: Clock;
 }
@@ -31,6 +35,12 @@ const EXECUTION_STATUS: Partial<Record<string, ProviderExecutionStatus>> = {
 };
 
 export const CLAUDE_PLAN_SKILL = "video.plan.claude";
+
+/** A planner whose runs can be awaited at shutdown, so no Claude process or sandbox outlives the worker. */
+export type ClaudePlanner = Planner & {
+  /** Resolves true once every run has settled (its process exited), false if `timeoutMs` passed first. */
+  idle(timeoutMs: number): Promise<boolean>;
+};
 
 const INSTRUCTIONS = [
   "You are the planning step of a video studio. Turn the creative brief into one VideoIR document.",
@@ -50,10 +60,36 @@ function videoIrSchema(): Record<string, unknown> {
  * Its output is accepted only if it passes validateVideoIR; a rejected output fails the stage instead of
  * falling back to another planner.
  */
-export function createClaudePlanner(deps: ClaudePlannerDeps): Planner {
+export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
   const clock = deps.clock ?? systemClock;
   const log = deps.logger.child({ component: "claude-planner" });
-  return async (brief, ctx, signal) => {
+  const inFlight = new Set<Promise<unknown>>();
+  // The stage stops waiting on abort; the run itself settles only after its process has closed.
+  const planner: Planner = (brief, ctx, signal) => {
+    const run = plan(brief, ctx, signal);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    inFlight.add(settled);
+    void settled.then(() => inFlight.delete(settled));
+    return run;
+  };
+  const idle = async (timeoutMs: number) => {
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    });
+    const done = Promise.all([...inFlight]).then(() => true as const);
+    try {
+      return await Promise.race([done, timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  return Object.assign(planner, { idle });
+
+  async function plan(...[brief, ctx, signal]: Parameters<Planner>): ReturnType<Planner> {
     const selection = ctx.planner;
     if (selection?.runtime !== "claude") {
       throw new StudixError("INTERNAL", "Claude planner called without a Claude planner selection", {
@@ -113,15 +149,49 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): Planner {
       });
     } catch (err) {
       const error = isStudixError(err) ? err : new StudixError("INTERNAL", String(err));
-      // The runtime does not report spend for a failed run, so the record carries no cost.
-      await record({
-        model: deps.model,
+      // A failed run still paid for what the agent did before it stopped; the stage reports no usage.
+      const spent = agentSpendOf(error);
+      const model = spent?.model ?? deps.model;
+      const providerExecutionId = await record({
+        model,
         status: EXECUTION_STATUS[error.code] ?? "failed",
         latencyMs: clock.now().getTime() - started,
-        costCents: 0,
+        inputTokens: spent?.inputTokens,
+        outputTokens: spent?.outputTokens,
+        costCents: spent?.costCents ?? 0,
         error: error.toJSON(),
       });
-      throw err;
+      if (spent && spent.costCents > 0) {
+        await deps.executions
+          ?.record(ctx.tenant, {
+            dedupeKey: usageDedupeKey({
+              jobId: ctx.jobId,
+              stage: "plan",
+              attempt: ctx.attempt,
+              item: "claude-failed",
+            }),
+            kind: USAGE_KINDS.providerDecision,
+            quantity: 1,
+            unit: "call",
+            costCents: spent.costCents,
+            jobId: ctx.jobId,
+            providerExecutionId,
+            metadata: {
+              stage: "plan",
+              attempt: ctx.attempt,
+              provider: "anthropic",
+              model,
+              inputTokens: spent.inputTokens,
+              outputTokens: spent.outputTokens,
+              operation: CLAUDE_PLAN_SKILL,
+              failed: true,
+            },
+          })
+          .catch((e: unknown) => {
+            log.warn("failed-run spend not recorded", { jobId: ctx.jobId, error: String(e) });
+          });
+      }
+      throw error;
     }
     const ir = result.output as VideoIR;
     const latencyMs = clock.now().getTime() - started;
@@ -157,7 +227,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): Planner {
         },
       ],
     };
-  };
+  }
 }
 
 /**

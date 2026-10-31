@@ -86,8 +86,11 @@ two auth methods are separate and are never used as each other's fallback:
   - runs in a fresh temporary directory that is deleted afterwards;
   - loads no user, project or local settings and no MCP servers;
   - has no tools, and every tool request is denied;
-  - is capped by turns, cost (never above the job's remaining budget) and a
-    deadline, and is interrupted then killed on cancel, lease loss or shutdown.
+  - is capped per attempt by turns, cost (never above the job's remaining
+    budget) and a deadline, and is interrupted then killed on cancel, lease
+    loss or shutdown; worker shutdown waits for that process to exit;
+  - bills what a failed run already spent to the job, and a run that spent
+    anything is not retried, so a retry never pays twice.
 
   The brief is passed as delimited data, never as instructions. The output is
   accepted only after `validateVideoIR`.

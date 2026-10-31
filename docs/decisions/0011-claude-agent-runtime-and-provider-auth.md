@@ -81,8 +81,11 @@ credentials and are never forwarded.
   key and is opt-in.
 - The agent gets no tools in the planner today. A Studix tool for the agent
   would need an in-process MCP server and is out of scope.
-- A failed run records a provider execution without cost, because the SDK does
-  not report spend for runs that end in an error. The cost cap still bounds it.
+- A run that fails after the agent reported usage (cost cap, turn limit,
+  invalid output, process crash) carries that spend on its error. The planner
+  records it on the provider execution and in the job's usage ledger, and the
+  error is not retryable: each retry would spend on the tenant's key again. A
+  failure before any usage (credential lookup, SDK import) stays retryable.
 - The OAuth flow is a separate, compliance-gated PR and is not part of "done" for
   the API-key path.
 

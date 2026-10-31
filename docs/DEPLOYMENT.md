@@ -61,7 +61,8 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 300). The worker image needs no extra install step: `pnpm install
 --frozen-lockfile` brings the pinned Agent SDK and its platform binary. Each
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
-when the run ends.
+when the run ends; the worker creates that directory at startup and removes
+sandboxes left by a crashed worker once they are older than the run timeout.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.

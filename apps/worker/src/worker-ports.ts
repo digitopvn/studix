@@ -13,14 +13,17 @@ import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@s
 import { createActivityRecorder } from "@studix/observability";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { createS3StorageAdapterFromConfig } from "@studix/storage";
-import type { Planner } from "@studix/workflow";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
 import { registerBriefRule } from "./planner/brief-decision.ts";
-import { createClaudePlanner, createPlannerRouter } from "./planner/claude-planner.ts";
+import { type ClaudePlanner, createClaudePlanner, createPlannerRouter } from "./planner/claude-planner.ts";
+import { prepareClaudeSandboxRoot } from "./planner/claude-sandbox.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
+
+/** Covers the runtime's interrupt-then-kill sequence for runs aborted by shutdown. */
+const CLAUDE_SHUTDOWN_GRACE_MS = 15_000;
 
 /** Brand lookup through the workspace's MCP connectors, built only when STUDIX_BRAND_LOOKUP_TOOL is set. */
 function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntime): BrandLookup | undefined {
@@ -44,7 +47,7 @@ function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntim
  * Claude Agent SDK planner, built only when STUDIX_CLAUDE_PLANNER is on. It opens the job's selected
  * Anthropic key through the same service and master key as the app; nothing else is ever substituted.
  */
-function claudePlanner(settings: WorkerSettings, runtime: WorkerPortsRuntime): Planner | undefined {
+function claudePlanner(settings: WorkerSettings, runtime: WorkerPortsRuntime): ClaudePlanner | undefined {
   const claude = settings.claudePlanner;
   if (!claude) return undefined;
   const { config } = settings;
@@ -64,7 +67,12 @@ function claudePlanner(settings: WorkerSettings, runtime: WorkerPortsRuntime): P
   return createClaudePlanner({
     transport: createClaudeSdkTransport({
       baseUrl: config.ANTHROPIC_BASE_URL,
-      sandboxRoot: join(settings.workDir, "claude"),
+      // A session never outlives its deadline plus the runtime's interrupt-then-kill grace.
+      sandboxRoot: prepareClaudeSandboxRoot(
+        join(settings.workDir, "claude"),
+        claude.timeoutMs + 60_000,
+        runtime.logger,
+      ),
     }),
     credentials: providers,
     executions: repos.usage,
@@ -105,13 +113,20 @@ export async function loadWorkerPorts(
     brandLookup: settings.brandLookupTool ?? "off",
     claudePlanner: settings.claudePlanner ? settings.claudePlanner.model : "off",
   });
+  const claude = claudePlanner(settings, runtime);
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),
-      claude: claudePlanner(settings, runtime),
+      claude,
     }),
     renderer,
     storage,
-    close: async () => storage.destroy(),
+    close: async () => {
+      // Shutdown stops waiting on stages at once; let aborted Claude runs finish killing their process.
+      if (claude && !(await claude.idle(CLAUDE_SHUTDOWN_GRACE_MS))) {
+        logger.warn("Claude runs still closing at shutdown", { graceMs: CLAUDE_SHUTDOWN_GRACE_MS });
+      }
+      await storage.destroy();
+    },
   };
 }

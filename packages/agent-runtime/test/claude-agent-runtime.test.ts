@@ -2,6 +2,7 @@ import type { AgentTask } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
 import { describe, expect, it } from "vitest";
 import {
+  agentSpendOf,
   type ClaudeAgentEvent,
   type ClaudeAgentSession,
   type ClaudeSessionRequest,
@@ -129,6 +130,38 @@ describe("claude agent runtime", () => {
     proc.push({ type: "usage", turns: 1, inputTokens: 1, outputTokens: 1, costUsd: 0.51 });
     await expect(runtime.run(testTenant(), task())).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
     expect(proc.state).toMatchObject({ interrupts: 1, closed: true });
+  });
+
+  it("carries what a failed run spent on the error and makes it non-retryable", async () => {
+    const proc = fakeProcess();
+    const { runtime } = setup(proc);
+    proc.push({ type: "usage", turns: 1, inputTokens: 900, outputTokens: 300, costUsd: 0.51 });
+    const err = await runtime.run(testTenant(), task()).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "BUDGET_EXCEEDED", retryable: false });
+    expect(agentSpendOf(err)).toEqual({
+      costCents: 51,
+      inputTokens: 900,
+      outputTokens: 300,
+      turns: 1,
+      model: "claude-test",
+    });
+
+    // A run that crashed after spending is not retried either.
+    const crash = fakeProcess();
+    const second = setup(crash);
+    crash.push({ type: "usage", turns: 1, inputTokens: 10, outputTokens: 0, costUsd: 0.02 });
+    crash.end();
+    const lost = await second.runtime.run(testTenant(), task()).catch((e: unknown) => e);
+    expect(lost).toMatchObject({ code: "PROVIDER_ERROR", retryable: false });
+    expect(agentSpendOf(lost)?.costCents).toBe(2);
+
+    // Nothing spent: the error is passed through untouched.
+    const idle = fakeProcess();
+    const third = setup(idle);
+    idle.end();
+    expect(
+      agentSpendOf(await third.runtime.run(testTenant(), task()).catch((e: unknown) => e)),
+    ).toBeUndefined();
   });
 
   it("stops the process when turns are exceeded", async () => {

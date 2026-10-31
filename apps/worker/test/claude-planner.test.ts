@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { type ClaudeAgentEvent, createFakeClaudeTransport } from "@studix/agent-runtime";
 import type { ResolvedProviderCredential } from "@studix/auth";
-import type { ActorRef, NewProviderExecution, ProviderExecution } from "@studix/core";
+import type {
+  ActorRef,
+  NewProviderExecution,
+  NewUsageEvent,
+  ProviderExecution,
+  UsageEvent,
+} from "@studix/core";
 import { testTenant } from "@studix/core/testing";
 import { createLogger, StudixError } from "@studix/shared";
 import type { Planner, PlannerContext } from "@studix/workflow";
@@ -144,6 +150,19 @@ describe("Claude planner", () => {
     expect(transport.sessions[0]?.interrupts).toBeGreaterThan(0);
   });
 
+  it("reports idle only once an aborted run has closed its session", async () => {
+    const { planner, transport } = setup(() => new Promise<ClaudeAgentEvent[]>(() => {}));
+    expect(await planner.idle(10)).toBe(true);
+    const controller = new AbortController();
+    const running = planner(brief, ctx(), controller.signal).catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+    expect(await planner.idle(10)).toBe(false);
+    controller.abort(new StudixError("UNAVAILABLE", "Worker is shutting down"));
+    expect(await planner.idle(1000)).toBe(true);
+    expect(transport.sessions[0]?.closed).toBe(true);
+    await running;
+  });
+
   it("maps a rejected key to UNAUTHENTICATED", async () => {
     const { planner } = setup([{ type: "error", status: 401, message: "invalid x-api-key" }]);
     await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
@@ -181,6 +200,7 @@ describe("planner router", () => {
 describe("Claude planner execution records", () => {
   function recorded(events: ClaudeAgentEvent[]) {
     const rows: NewProviderExecution[] = [];
+    const ledger: NewUsageEvent[] = [];
     const planner = createClaudePlanner({
       transport: createFakeClaudeTransport(() => events),
       credentials: { resolveForExecution: async () => ({ apiKey: FAKE_KEY }) as ResolvedProviderCredential },
@@ -189,6 +209,10 @@ describe("Claude planner execution records", () => {
           rows.push(input);
           return { ...input, id: `pex_${rows.length}` } as ProviderExecution;
         },
+        async record(_ctx, input) {
+          ledger.push(input);
+          return { event: input as UsageEvent, created: true };
+        },
       },
       model: "claude-test",
       maxTurns: 4,
@@ -196,7 +220,7 @@ describe("Claude planner execution records", () => {
       timeoutMs: 60_000,
       logger,
     });
-    return { planner, rows };
+    return { planner, rows, ledger };
   }
 
   it("links the usage line to a succeeded execution with tokens and cost", async () => {
@@ -226,5 +250,34 @@ describe("Claude planner execution records", () => {
       }),
     ]);
     expect(JSON.stringify(rows)).not.toContain(FAKE_KEY);
+  });
+
+  it("bills what a failed run spent to the execution and the job ledger", async () => {
+    const { planner, rows, ledger } = recorded([
+      { type: "usage", turns: 1, inputTokens: 5000, outputTokens: 2000, costUsd: 0.37, model: "claude-test" },
+      { type: "result", output: { version: 1, title: "not an IR" } },
+    ]);
+    await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
+      code: "PROVIDER_ERROR",
+      retryable: false,
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({ status: "failed", costCents: 37, inputTokens: 5000, outputTokens: 2000 }),
+    ]);
+    expect(ledger).toEqual([
+      expect.objectContaining({
+        kind: "provider.decision",
+        costCents: 37,
+        jobId: "job_1",
+        providerExecutionId: "pex_1",
+        dedupeKey: expect.stringContaining("claude-failed"),
+      }),
+    ]);
+  });
+
+  it("writes no ledger line when a failed run spent nothing", async () => {
+    const { planner, ledger } = recorded([{ type: "error", status: 401, message: "invalid x-api-key" }]);
+    await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toThrow();
+    expect(ledger).toEqual([]);
   });
 });
