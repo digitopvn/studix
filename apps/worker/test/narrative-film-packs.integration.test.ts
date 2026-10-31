@@ -283,6 +283,18 @@ async function approveStoryboard(ctx: TenantContext, projectId: string) {
 describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake providers)", (pack) => {
   const n = filmStageNames(pack);
 
+  it("does not reopen review or move the current version when the project has already moved on", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-closed-${pack}`, pack);
+    await db.current.repos.projects.update(ctx, project.id, { status: "published" });
+    const job = await enqueue(ctx, project.id, pack);
+
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    const after = await db.current.repos.projects.get(ctx, project.id);
+    expect(after?.status).toBe("published");
+    expect(after?.currentVersionId).toBe(project.currentVersionId);
+  });
+
   it("stops at G0 and G1 for a person, then storyboards on the approved sheets, then renders on an approved storyboard", async () => {
     const world = createWorld();
     const { ctx, project } = await newFilm(`film-${pack}`, pack);
@@ -317,7 +329,10 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
 
     // Storyboard: the sheets turn canonical and condition every keyframe with a character in it.
     expect(await world.runOnce(job.id)).toBe("succeeded");
-    const keyframes = world.requests.slice(3);
+    // Keyframes are generated concurrently, so their start order is not part of the contract.
+    const keyframes = world.requests
+      .slice(3)
+      .sort((a, b) => a.idempotencyKey.localeCompare(b.idempotencyKey));
     expect(keyframes.map((r) => r.idempotencyKey.split(":").at(-1))).toEqual(
       shotIds.map((id) => `${id}-key`),
     );

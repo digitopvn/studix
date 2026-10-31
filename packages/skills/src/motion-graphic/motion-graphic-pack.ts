@@ -151,7 +151,7 @@ export const motionGraphicVoiceoverStage: StageDefinition = {
     const [voice, sfx] = await mapBounded(
       requests,
       requests.length,
-      (r) => generateStoredMedia(s, MG_STAGES.voiceover, r, workDir),
+      (r) => generateStoredMedia(s, MG_STAGES.voiceover, r),
       (m) => [m.usage],
     );
     if (!voice || !sfx) throw new StudixError("INTERNAL", "motion-graphic audio returned too few results");

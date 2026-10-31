@@ -1,5 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ProjectStatus } from "@studix/core";
 import { FILM_SCENE_MIME, FILM_WEATHER_PRESETS, filmPlateScene } from "@studix/renderers/film-scene";
 import { StudixError } from "@studix/shared";
 import {
@@ -229,6 +230,8 @@ function failIssues(what: string, issues: readonly ValidationIssue[], suggestedA
   });
 }
 
+const CLOSED_PROJECT_STATUSES: readonly ProjectStatus[] = ["approved", "published", "archived", "failed"];
+
 /**
  * Store `ir` as a project version a reviewer can open on the dashboard and point the project at it, so the
  * creative gate that follows has something to look at. Deterministic id per job and board: a re-run finds
@@ -247,7 +250,11 @@ async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string)
         createdBy: { type: "system", id: ctx.actor.id },
       });
     }
-    await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
+    // A job that outlives an approve, publish or archive must not point the project back at a board in review.
+    const project = await repos.projects.get(ctx, projectId);
+    if (project && !CLOSED_PROJECT_STATUSES.includes(project.status)) {
+      await repos.projects.update(ctx, projectId, { currentVersionId: versionId, status: "in_review" });
+    }
   });
   return versionId;
 }
@@ -370,7 +377,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const planned = await withCaps(s, designRequests(s, scope, n.designs));
       let done = 0;
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (d) => {
-        const media = await generateStoredMedia(s, n.designs, d.request, workDir);
+        const media = await generateStoredMedia(s, n.designs, d.request);
         s.reportProgress(++done / planned.length);
         return { ...d, ...media };
       });
@@ -503,12 +510,10 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       let done = 0;
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
         const image = p.sheet ? localFile(sheetFiles, p.sheet.assetId) : undefined;
-        const media = await generateStoredMedia(
-          s,
-          n.keyframes,
-          { ...p.request, params: { ...p.request.params, ...(image ? { image } : {}) } },
-          workDir,
-        );
+        const media = await generateStoredMedia(s, n.keyframes, {
+          ...p.request,
+          params: { ...p.request.params, ...(image ? { image } : {}) },
+        });
         s.reportProgress(++done / planned.length);
         return { ...p, ...media };
       });
@@ -576,7 +581,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const planned = await withCaps(s, dialogueRequests(s));
       let done = 0;
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const media = await generateStoredMedia(s, n.dialogue, p.request, workDir);
+        const media = await generateStoredMedia(s, n.dialogue, p.request);
         s.reportProgress(++done / planned.length);
         return { ...p, ...media };
       });
@@ -700,15 +705,10 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       let done = 0;
       const total = scopeShots(film.scope).length;
       const clips = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const media = await generateStoredMedia(
-          s,
-          n.motion,
-          {
-            ...p.request,
-            params: { ...p.request.params, image: localFile(keyFiles, (p.still as ImageShot).assetId) },
-          },
-          workDir,
-        );
+        const media = await generateStoredMedia(s, n.motion, {
+          ...p.request,
+          params: { ...p.request.params, image: localFile(keyFiles, (p.still as ImageShot).assetId) },
+        });
         s.reportProgress(++done / total);
         return { ...p, ...media };
       });
@@ -842,12 +842,10 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const made = await mapBounded(capped, MEDIA_CONCURRENCY, async (p) => {
         const clip = localFile(files, (p.shot as Extract<Shot, { type: "video" }>).assetId);
         const audio = localFile(files, p.cue.audioAssetId as string);
-        const media = await generateStoredMedia(
-          s,
-          n.lipsync,
-          { ...p.request, params: { ...p.request.params, video: clip, audio } },
-          workDir,
-        );
+        const media = await generateStoredMedia(s, n.lipsync, {
+          ...p.request,
+          params: { ...p.request.params, video: clip, audio },
+        });
         s.reportProgress(++done / capped.length);
         return { ...p, ...media };
       });
@@ -928,7 +926,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const planned = await withCaps(s, scoreRequests(s));
       let done = 0;
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const media = await generateStoredMedia(s, n.score, p.request, workDir);
+        const media = await generateStoredMedia(s, n.score, p.request);
         s.reportProgress(++done / planned.length);
         return { ...p, ...media };
       });

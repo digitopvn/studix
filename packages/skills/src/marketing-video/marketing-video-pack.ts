@@ -17,6 +17,7 @@ import {
   irOf,
   jobScopedId,
   mapBounded,
+  markInReview,
   type PackPipeline,
   payloadOf,
   RenderOutput,
@@ -228,7 +229,7 @@ export const marketingStoryboardStage: StageDefinition = {
       requests,
       MEDIA_CONCURRENCY,
       async (r) => {
-        const media = await generateStoredMedia(s, MV_STAGES.storyboard, r, workDir);
+        const media = await generateStoredMedia(s, MV_STAGES.storyboard, r);
         s.reportProgress(++done / requests.length);
         return { key: r.key, ...media };
       },
@@ -307,7 +308,7 @@ export const marketingReframeStage: StageDefinition = {
       const workDir = await stageWorkDir(s, MV_STAGES.reframe);
       let done = 0;
       generated = await mapBounded(requests, MEDIA_CONCURRENCY, async (r) => {
-        const media = await generateStoredMedia(s, MV_STAGES.reframe, r, workDir);
+        const media = await generateStoredMedia(s, MV_STAGES.reframe, r);
         s.reportProgress(++done / requests.length);
         return { shotId: r.shotId, ...media };
       });
@@ -329,7 +330,9 @@ export const marketingReframeStage: StageDefinition = {
           advanceFrom: versionId,
         });
       }
-      await repos.projects.update(ctx, projectId, { status: "in_review" });
+      // A feedback patch is reframed while the storyboard is in review, or while an earlier job left the project
+      // in rendering; a job that outlives an approve, publish or archive must not reopen review.
+      await markInReview(repos, ctx, projectId, ["rendering", "in_review"]);
     });
     return {
       output: {
@@ -417,12 +420,10 @@ export const marketingI2vStage: StageDefinition = {
       MEDIA_CONCURRENCY,
       async (c, i) => {
         const request = capped[i] as StoredMediaRequest;
-        const media = await generateStoredMedia(
-          s,
-          MV_STAGES.i2v,
-          { ...request, params: { ...request.params, image: frameFiles[c.image.assetId] } },
-          workDir,
-        );
+        const media = await generateStoredMedia(s, MV_STAGES.i2v, {
+          ...request,
+          params: { ...request.params, image: frameFiles[c.image.assetId] },
+        });
         s.reportProgress(++done / shots.length);
         return { ...c, ...media };
       },
@@ -543,7 +544,7 @@ export const marketingAudioStage: StageDefinition = {
       planned,
       MEDIA_CONCURRENCY,
       async (a, i) => {
-        const media = await generateStoredMedia(s, MV_STAGES.audio, capped[i] as StoredMediaRequest, workDir);
+        const media = await generateStoredMedia(s, MV_STAGES.audio, capped[i] as StoredMediaRequest);
         s.reportProgress(++done / planned.length);
         return { ...a, ...media };
       },
@@ -721,7 +722,7 @@ export const marketingPublishStage: StageDefinition = {
           completedAt: new Date(),
         });
       }
-      await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+      await markInReview(repos, ctx, payload.projectId);
     });
     const root = requireService(s, "workRoot");
     await rm(join(root, s.job.id), { recursive: true, force: true });

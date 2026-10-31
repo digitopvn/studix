@@ -74,7 +74,7 @@ describe("media spend of a failed stage", () => {
       },
     };
     (s as unknown as { services: { media: MediaProvider } }).services.media = charged;
-    const err = await generateStoredMedia(s, "designs", request("a"), root).catch((e: unknown) => e);
+    const err = await generateStoredMedia(s, "designs", request("a")).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StageFailedAfterSpend);
     const failed = err as StageFailedAfterSpend;
     expect(failed.error.code).toBe("PROVIDER_ERROR");
@@ -99,14 +99,14 @@ describe("media spend of a failed stage", () => {
       },
     };
     (s as unknown as { services: { media: MediaProvider } }).services.media = down;
-    const err = await generateStoredMedia(s, "designs", request("a"), root).catch((e: unknown) => e);
+    const err = await generateStoredMedia(s, "designs", request("a")).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StudixError);
     expect(err).not.toBeInstanceOf(StageFailedAfterSpend);
   });
 
   it("bills a generation whose upload failed", async () => {
     const { s } = stageWith(new Set(["a"]));
-    const err = await generateStoredMedia(s, "designs", request("a"), root).catch((e: unknown) => e);
+    const err = await generateStoredMedia(s, "designs", request("a")).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StageFailedAfterSpend);
     const failed = err as StageFailedAfterSpend;
     expect(failed.error.code).toBe("UNAVAILABLE");
@@ -125,7 +125,7 @@ describe("media spend of a failed stage", () => {
     const batch = mapBounded(
       ["a", "b", "c"],
       3,
-      (id) => generateStoredMedia(s, "designs", request(id), root),
+      (id) => generateStoredMedia(s, "designs", request(id)),
       (r: StoredMedia) => [r.usage],
     )
       .catch((e: unknown) => e)

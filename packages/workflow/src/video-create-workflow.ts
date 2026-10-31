@@ -4,9 +4,11 @@ import { USAGE_KINDS } from "@studix/billing";
 import {
   JOB_KINDS,
   type ProjectRepository,
+  type ProjectStatus,
   type RendererAdapter,
   type RenderRepository,
   type StorageAdapter,
+  type TenantContext,
 } from "@studix/core";
 import { type Clock, StudixError, systemClock } from "@studix/shared";
 import { resolveRenderSpec } from "@studix/video-ir";
@@ -22,6 +24,7 @@ import {
   ValidateOutput,
   VideoCreatePayload,
 } from "./video-create-checkpoints.ts";
+import type { FencedRepositories } from "./worker-job-queue.ts";
 import type {
   EngineStages,
   PackPipeline,
@@ -155,9 +158,12 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
         // By the time a queued job runs a newer version may be head; jobs that did not ask to move it
         // (feedback patches, renders of "the current version") must not silently revert it.
         const movesHead = payload.makeCurrent && !payload.feedbackId;
+        const project = await repos.projects.get(ctx, payload.projectId);
+        const isHead = movesHead || project?.currentVersionId === versionId;
+        // Only the job of the head version owns the project's status: another job's render must not flag it.
         await repos.projects.update(ctx, payload.projectId, {
           ...(movesHead ? { currentVersionId: versionId } : {}),
-          status: "rendering",
+          ...(isHead ? { status: "rendering" as const } : {}),
         });
       });
       return { output: { versionId } };
@@ -266,7 +272,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
             completedAt: clock.now(),
           });
         }
-        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+        await markInReview(repos, ctx, payload.projectId);
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return {
@@ -287,7 +293,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
       const payload = payloadOf(s);
       const { versionId } = read(ValidateOutput, s.outputs.validate_ir, "validate_ir checkpoint");
       await s.commit(async (repos, ctx) => {
-        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+        await markInReview(repos, ctx, payload.projectId);
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return { output: { projectVersionId: versionId, storyboard: "in_review" } };
@@ -331,4 +337,20 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
       };
     },
   };
+}
+
+/**
+ * Hand the project to review when this job's render or storyboard is ready. Only a project in one of `from`
+ * (by default just `rendering`) moves: a retried job that finishes after a newer render was approved or
+ * published (or after the project was archived) must not put the project back into review.
+ */
+export async function markInReview(
+  repos: FencedRepositories,
+  ctx: TenantContext,
+  projectId: string,
+  from: readonly ProjectStatus[] = ["rendering"],
+): Promise<void> {
+  const project = await repos.projects.get(ctx, projectId);
+  if (project && from.includes(project.status))
+    await repos.projects.update(ctx, projectId, { status: "in_review" });
 }

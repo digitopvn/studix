@@ -676,19 +676,38 @@ export class MultixProvider implements MediaProvider {
   ): Promise<MediaGenerationResult> {
     const outDir = join(request.workDir, `multix-${sha([ctx.workspaceId, request.idempotencyKey])}`);
     const file = join(outDir, `${plan.role}${plan.outputExt ?? ".bin"}`);
-    const result = (outputs: GeneratedMedia[], costCents: number, costSource: MediaCostSource) => ({
+    // One execution id per paid run: the upstream history id when it is a valid id, else one derived from
+    // the idempotency key and the run's ordinal. The ordinal keeps a second paid run of the same key (the
+    // output file was gone) from sharing the first run's usage line, which the ledger would drop.
+    const execution = (historyId: string | undefined, ordinal: number): ProviderJobRef => ({
+      provider: plan.model.vendor,
+      id:
+        historyId !== undefined && JOB_ID.test(historyId)
+          ? historyId
+          : `sync-${sha([ctx.workspaceId, request.idempotencyKey, ordinal], 24)}`,
+    });
+    const result = (
+      outputs: GeneratedMedia[],
+      costCents: number,
+      costSource: MediaCostSource,
+      job: ProviderJobRef,
+    ) => ({
       outputs,
       provider: this.id,
       model: plan.model.id,
       costCents,
       costSource,
+      job,
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
     });
     if (existing?.state === "completed" && (await fileSize(file)) > 0) {
+      // Records written before the id was derived hold the literal "sync".
+      const journaled = existing.job?.id === "sync" ? undefined : existing.job?.id;
       return result(
         [{ filePath: file, mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream" }],
         existing.receiptCents ?? existing.estimatedCostCents,
         existing.receiptCents !== undefined ? "receipt" : "estimate",
+        execution(journaled, existing.attempt),
       );
     }
     const estimate = await this.estimatePlan(plan, request, request.workDir);
@@ -725,13 +744,14 @@ export class MultixProvider implements MediaProvider {
       );
     }
     const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
+    const ran = execution(envelope.historyId, (existing?.attempt ?? 0) + 1);
     const at = this.clock.now().toISOString();
     await journal
       .put(ctx, {
         idempotencyKey: request.idempotencyKey,
         kind: request.kind,
         model: plan.model.id,
-        job: { provider: plan.model.vendor, id: envelope.historyId ?? "sync" },
+        job: ran,
         attempt: (existing?.attempt ?? 0) + 1,
         state: "completed",
         estimatedCostCents: estimate,
@@ -742,7 +762,7 @@ export class MultixProvider implements MediaProvider {
       .catch((putErr: unknown) => {
         throw charge ? new MediaChargedError(toStudixError(putErr), charge) : putErr;
       });
-    return result(outputs, receipt ?? estimate, receipt !== undefined ? "receipt" : "estimate");
+    return result(outputs, receipt ?? estimate, receipt !== undefined ? "receipt" : "estimate", ran);
   }
 
   private assertTrustedOutputs(envelope: MultixEnvelope, job?: ProviderJobRef): void {

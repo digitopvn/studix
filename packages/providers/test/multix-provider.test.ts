@@ -971,6 +971,80 @@ describe("MultixProvider synchronous audio", () => {
     expect(cli.calls).toHaveLength(2);
   });
 
+  describe("execution id of reused synchronous output", () => {
+    const ttsCli = (historyId: string | undefined) =>
+      scriptedCli((argv, options) => {
+        if (argv.includes("--estimate"))
+          return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+        const out = flagValue(argv, "output")!;
+        const copy = join(options.env.MULTIX_OUTPUT_DIR!, "tts.mp3");
+        return {
+          files: { [out]: "mp3", [copy]: "mp3" },
+          envelope: {
+            outputs: [{ path: out }, { path: copy }],
+            ...(historyId ? { history_id: historyId } : {}),
+          },
+        };
+      });
+
+    it("returns the same job on reuse as on the run that paid, so retries are not billed twice", async () => {
+      for (const historyId of ["h_1", undefined]) {
+        const multix = new MultixProvider({
+          bin: "multix",
+          runner: ttsCli(historyId).runner,
+          journal: new InMemoryMediaJobJournal(),
+        });
+        const first = await multix.generate(ctx, voiceRequest());
+        const again = await multix.generate(ctx, voiceRequest());
+        expect(first.job).toBeDefined();
+        expect(again.job).toEqual(first.job);
+        if (historyId) expect(first.job).toEqual({ provider: "elevenlabs", id: historyId });
+      }
+    });
+
+    it("keeps different assets apart when the upstream reports no history id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const a = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice-a" });
+      const b = await multix.generate(ctx, { ...voiceRequest(), idempotencyKey: "stage-3:voice-b" });
+      expect(a.job?.id).not.toEqual(b.job?.id);
+      expect(a.job?.id).not.toBe("sync");
+    });
+
+    it("bills a second paid run of the same key separately when its file was gone and no history id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const first = await multix.generate(ctx, voiceRequest());
+      const other = await mkdtemp(join(tmpdir(), "multix-attempt-"));
+      try {
+        const second = await multix.generate(ctx, { ...voiceRequest(), workDir: other });
+        expect(second.job?.id).not.toEqual(first.job?.id);
+        expect((await multix.generate(ctx, { ...voiceRequest(), workDir: other })).job).toEqual(second.job);
+      } finally {
+        await rm(other, { recursive: true, force: true });
+      }
+    });
+
+    it("ignores a history id that is not a valid execution id", async () => {
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: ttsCli("bad id/with+chars").runner,
+        journal: new InMemoryMediaJobJournal(),
+      });
+      const result = await multix.generate(ctx, voiceRequest());
+      expect(result.job?.id).toMatch(/^sync-[0-9a-f]{24}$/);
+    });
+
+    it("maps a record journaled with the legacy literal id to the derived id", async () => {
+      const journal = new InMemoryMediaJobJournal();
+      const multix = new MultixProvider({ bin: "multix", runner: ttsCli(undefined).runner, journal });
+      const first = await multix.generate(ctx, voiceRequest());
+      const record = (await journal.get(ctx, "stage-3:voice"))!;
+      await journal.put(ctx, { ...record, job: { provider: "elevenlabs", id: "sync" } });
+      expect((await multix.generate(ctx, voiceRequest())).job).toEqual(first.job);
+    });
+  });
+
   it("prices SFX from the assumed ceiling when multix has no estimator", async () => {
     const cli = scriptedCli(() => {
       throw new Error("no CLI call expected");
