@@ -181,6 +181,64 @@ export interface Connector {
   lastError?: string;
 }
 
+export interface ProviderModel {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  contextWindow: number;
+  /** Dollars per million tokens. */
+  cost: { input: number; output: number };
+}
+
+export interface ProviderCatalogEntry {
+  id: string;
+  name: string;
+  authMethods: Array<"api_key" | "oauth">;
+  oauthRestriction?: string;
+  models: ProviderModel[];
+}
+
+/** A stored provider key. The key itself never comes back; `keyHint` is all the dashboard sees. */
+export interface ProviderConnection {
+  id: string;
+  provider: string;
+  label: string;
+  authMethod: "api_key" | "oauth";
+  owner: { type: "workspace" } | { type: "user"; userId: string };
+  status: string;
+  billingSource: string;
+  keyHint?: string;
+  lastTest?: { ok: boolean; at: string; latencyMs: number; code?: string; message?: string };
+  version: number;
+  updatedAt: string;
+}
+
+export interface ModelChoice {
+  connectionId: string;
+  modelId: string;
+}
+
+export interface ModelPreference extends ModelChoice {
+  id: string;
+  scope: { type: "workspace" } | { type: "user"; userId: string };
+  stage: string;
+  provider: string;
+  allowFallback: boolean;
+  fallbacks: Array<ModelChoice & { provider: string }>;
+}
+
+export interface ModelPreferenceInput extends ModelChoice {
+  scope: "workspace" | "personal";
+  stage: string;
+  allowFallback?: boolean;
+  fallbacks?: ModelChoice[];
+}
+
+export interface StageResolution {
+  stage: string;
+  choice?: { source: string; connectionId: string; provider: string; modelId: string };
+}
+
 export interface CreateVideoRequest {
   prompt: string;
   title?: string;
@@ -223,4 +281,26 @@ export const api = {
       {},
     ),
   disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
+  providerCatalog: () => request<{ items: ProviderCatalogEntry[] }>("GET", "/api/providers/catalog"),
+  providerConnections: () => request<{ items: ProviderConnection[] }>("GET", "/api/providers/connections"),
+  addProviderConnection: (input: {
+    provider: string;
+    label: string;
+    owner: "workspace" | "personal";
+    apiKey: string;
+  }) => request<ProviderConnection>("POST", "/api/providers/connections", input),
+  testProviderConnection: (id: string, modelId?: string) =>
+    request<ProviderConnection>(
+      "POST",
+      `/api/providers/connections/${enc(id)}/test`,
+      modelId ? { modelId } : {},
+    ),
+  rotateProviderConnection: (id: string, apiKey: string) =>
+    request<ProviderConnection>("POST", `/api/providers/connections/${enc(id)}/rotate`, { apiKey }),
+  deleteProviderConnection: (id: string) => request<void>("DELETE", `/api/providers/connections/${enc(id)}`),
+  modelPreferences: () => request<{ items: ModelPreference[] }>("GET", "/api/providers/preferences"),
+  saveModelPreference: (input: ModelPreferenceInput) =>
+    request<ModelPreference>("PUT", "/api/providers/preferences", input),
+  deleteModelPreference: (id: string) => request<void>("DELETE", `/api/providers/preferences/${enc(id)}`),
+  modelResolution: () => request<{ items: StageResolution[] }>("GET", "/api/providers/resolution"),
 };

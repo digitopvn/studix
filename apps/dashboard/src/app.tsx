@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me, selectedWorkspace, selectWorkspace } from "./api-client.ts";
+import { AiModelsPage } from "./pages/ai-models-page.tsx";
 import { ApiKeysPage } from "./pages/api-keys-page.tsx";
 import { AuthPage } from "./pages/auth-page.tsx";
 import { ConnectorsPage } from "./pages/connectors-page.tsx";
@@ -17,6 +18,7 @@ const NAV = [
   { to: "/create", label: "New video" },
   { to: "/api-keys", label: "API keys" },
   { to: "/connectors", label: "Connectors" },
+  { to: "/ai-models", label: "AI & Models" },
 ] as const;
 
 type SessionState = { status: "loading" } | { status: "anonymous" } | { status: "ready"; me: Me };
@@ -35,6 +37,8 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
       return <ApiKeysPage mcpUrl={me.mcpUrl} />;
     case "connectors":
       return <ConnectorsPage />;
+    case "ai-models":
+      return <AiModelsPage role={me.role} />;
     default:
       return <p className="muted">Page not found.</p>;
   }

@@ -218,6 +218,7 @@ th {
 .badge-succeeded,
 .badge-active,
 .badge-approved,
+.badge-connected,
 .badge-ready {
   background: color-mix(in srgb, var(--success) 20%, transparent);
   color: var(--success);
@@ -226,6 +227,7 @@ th {
 .badge-failed,
 .badge-revoked,
 .badge-error,
+.badge-invalid,
 .badge-rejected {
   background: color-mix(in srgb, var(--danger) 18%, transparent);
   color: var(--danger);
@@ -240,6 +242,8 @@ th {
 
 .badge-waiting_approval,
 .badge-expired,
+.badge-restricted,
+.badge-requires_action,
 .badge-pending {
   background: color-mix(in srgb, var(--warn) 18%, transparent);
   color: var(--warn);
