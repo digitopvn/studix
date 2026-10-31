@@ -77,6 +77,8 @@ export async function decideBriefDraft(
   });
   return {
     draft: result.output,
+    // On a replay this is still the original call's cost: the ledger dedupes by execution id, so a first
+    // run that failed before recording usage is billed exactly once.
     usage: {
       provider: result.providerId,
       model: result.model,

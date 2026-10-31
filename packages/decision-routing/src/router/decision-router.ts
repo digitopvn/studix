@@ -43,6 +43,15 @@ export interface DecisionRouterOptions {
 const MAX_BACKOFF_MS = 5_000;
 
 /**
+ * A cached result describes the one provider call that was made. It keeps that call's cost and execution
+ * id so a caller whose first run never reached the ledger can still bill it; `replayed` tells callers
+ * that no new spend happened, and the ledger dedupes by execution id.
+ */
+function asReplay<T>(result: DecisionResult<T>): DecisionResult<T> {
+  return { ...result, replayed: true };
+}
+
+/**
  * Jev policy layer: per-kind provider chains, per-call budget and deadline, bounded retries of retryable
  * failures, fallback on failure / invalid output / budget, circuit breaking, idempotency, execution
  * records and spans. Exhausting the chain always throws: no valid decision means no decision.
@@ -87,8 +96,11 @@ export class DecisionRouter implements DecisionProvider {
     if (!this.#cache) return this.#route(request, chain);
     const { tenant, kind, idempotencyKey } = request;
     const key = `${tenant.organizationId}:${tenant.workspaceId}:${kind}:${idempotencyKey}`;
-    return this.#cache.run(key, fingerprintOf({ input: request.input, version: request.schemaVersion }), () =>
-      this.#route(request, chain),
+    return this.#cache.run(
+      key,
+      fingerprintOf({ input: request.input, version: request.schemaVersion }),
+      () => this.#route(request, chain),
+      asReplay,
     );
   }
 

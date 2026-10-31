@@ -37,6 +37,28 @@ function rulesRouter(model?: FakeDecisionAdapter): DecisionRouter {
   });
 }
 
+describe("brief decision replay", () => {
+  it("keeps the original usage and execution id when a retry is served from the cache", async () => {
+    const planner = createVideoPlanner({
+      decisions: rulesRouter(
+        new FakeDecisionAdapter({
+          id: "model",
+          fallback: { output: { brandName: "Sương Mai", keyMessages: ["Rang mới mỗi tuần"] }, costCents: 2 },
+        }),
+      ),
+      logger,
+    });
+    const brief = { prompt: PROMPT } as Parameters<typeof planner>[0];
+    const tenant = testTenant();
+    const first = await planner(brief, ctx({ tenant }), new AbortController().signal);
+    const retry = await planner(brief, ctx({ tenant, attempt: 2 }), new AbortController().signal);
+    expect(first.usage).toHaveLength(1);
+    expect(first.usage[0]?.costCents).toBe(2);
+    expect(retry.usage).toEqual(first.usage);
+    expect(retry.ir).toEqual(first.ir);
+  });
+});
+
 type ExecuteResult = Awaited<ReturnType<McpGateway["execute"]>>;
 function gatewayReturning(
   result: Partial<ToolExecuteData["result"]>,
