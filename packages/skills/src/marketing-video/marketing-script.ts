@@ -79,7 +79,12 @@ function derivedBeats(direction: CreativeDirection, brief: CreativeBrief, cta: s
   return [
     { visual: `${direction.concept} Opening shot, ${subject}`.trim(), onScreen: hook, voiceover: hook },
     ...messages.map((m) => ({ visual: `${direction.concept} ${m}`, onScreen: m, voiceover: m })),
-    { visual: `${subject} product hero shot, clean background`.trim(), onScreen: cta, voiceover: cta },
+    {
+      // Closing frame in the ad's own setting, so the variants do not share one identical end shot.
+      visual: `${subject} product hero shot, closing frame. ${direction.concept}`.trim(),
+      onScreen: cta,
+      voiceover: cta,
+    },
   ];
 }
 
