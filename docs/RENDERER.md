@@ -8,12 +8,12 @@ records the contract and the measurements behind it.
 
 ## What renders (Implemented)
 
-| IR element                         | How                                                                                                                                                       |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`)                                                                     |
-| Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them          |
-| Audio tracks (music, voice, SFX)   | Mixed by FFmpeg, never by the browser: trim, `volume`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`) |
-| Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                     |
+| IR element                         | How                                                                                                                                                                  |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`)                                                                                |
+| Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them                     |
+| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `volume` x `gainDb`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`) |
+| Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                |
 
 Media types: images `png/jpeg/webp/gif/avif/svg`, video `mp4/webm/mov`, audio any
 `audio/*` FFmpeg decodes. `hyperframesSupport()` reports anything else instead of
@@ -55,8 +55,8 @@ own `FinishSpec` (`HyperFramesRendererOptions.finish` or the per-render
 - `RenderSpec.grade?: "warm" | "neutral" | "night" | "dusk"`
 - `RenderSpec.deliveries?: ("preview" | "phone")[]`
 
-`AudioTrack.volume` is a 0..1 multiplier, so a track cannot be boosted; a dB gain,
-looping and ducking would also need IR fields.
+Music is not ducked under `dialogue` / `voiceover` yet; the IR allows it but the
+mix sums tracks at their own levels. Looping a short bed would need an IR field.
 
 ## WebGL in headless Chromium without a GPU
 

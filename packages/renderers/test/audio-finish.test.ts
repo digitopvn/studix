@@ -81,6 +81,26 @@ describe("planAudioClips", () => {
     ]);
   });
 
+  it("folds gainDb into the linear level and keeps dialogue on its own bus", () => {
+    const ir = promoWithClip();
+    ir.audio = [
+      {
+        id: "line",
+        kind: "dialogue",
+        assetId: "music",
+        startMs: 0,
+        durationMs: 1000,
+        volume: 0.5,
+        gainDb: 6,
+      },
+      { id: "hit", kind: "sfx", assetId: "music", startMs: 0, durationMs: 1000, volume: 1, gainDb: -20 },
+    ];
+    const [line, hit] = planAudioClips(ir, files, sources);
+    expect(line).toMatchObject({ kind: "dialogue" });
+    expect(line!.volume).toBeCloseTo(0.9976, 4);
+    expect(hit!.volume).toBeCloseTo(0.1, 6);
+  });
+
   it("shortens fades that would not fit inside the clip", () => {
     const ir = promoWithClip();
     ir.audio = [

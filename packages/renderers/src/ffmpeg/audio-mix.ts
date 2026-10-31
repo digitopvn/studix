@@ -1,7 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { StudixError } from "@studix/shared";
-import { resolveSceneSpans, type VideoIR } from "@studix/video-ir";
+import { type AudioTrackKind, resolveSceneSpans, type VideoIR } from "@studix/video-ir";
 import { type RunFfmpegOptions, runFfmpeg } from "./run-process.ts";
 
 /** Mix sample rate; every delivery carries 48 kHz stereo AAC. */
@@ -11,14 +11,14 @@ export const MIX_SAMPLE_RATE = 48_000;
 export interface AudioClip {
   /** IR audio track id, or the video shot id for clip sound. */
   id: string;
-  kind: "music" | "voiceover" | "sfx" | "video";
+  kind: AudioTrackKind | "video";
   /** Local file with at least one audio stream. */
   file: string;
   startMs: number;
   durationMs: number;
   /** Offset into the source. */
   trimStartMs: number;
-  /** Linear gain, 0..1. */
+  /** Linear gain: the track's `volume` scaled by its `gainDb`, so it may exceed 1. */
   volume: number;
   fadeInMs: number;
   fadeOutMs: number;
@@ -63,7 +63,7 @@ export function planAudioClips(
         kind: track.kind,
         startMs: track.startMs,
         trimStartMs: track.trimStartMs ?? 0,
-        volume: track.volume,
+        volume: track.volume * 10 ** ((track.gainDb ?? 0) / 20),
         fadeInMs: track.fadeInMs ?? 0,
         fadeOutMs: track.fadeOutMs ?? 0,
       },
