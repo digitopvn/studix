@@ -193,9 +193,21 @@ describe("marketing-video IR and variants", () => {
     const shots = Object.fromEntries((one.scenes[0]?.shots ?? []).map((s) => [s.id, s]));
     expect(shots["pic-free"]?.style?.region).toBe("full");
     expect(shots["pic-top"]?.style?.region).toBe("top");
-    // Copy keeps its own layout.
-    const copy = one.scenes[0]?.shots.find((s) => s.type === "title" || s.type === "text");
-    expect(copy?.style?.region).not.toBe("full");
+    // Copy keeps its own layout and sits on a card over the footage.
+    const copy = (one.scenes[0]?.shots ?? []).filter((s) =>
+      ["title", "text", "logo", "cta"].includes(s.type),
+    );
+    expect(copy.length).toBeGreaterThan(2);
+    for (const shot of copy) {
+      expect(shot.style?.region).not.toBe("full");
+      expect(shot.style?.background).toBe("background");
+    }
+  });
+
+  it("leaves copy uncarded when an ad has no full-bleed picture", () => {
+    const ir = marketingVideoTemplate(brief);
+    const one = variantIr(ir, irVariants(ir)[0] as ReturnType<typeof irVariants>[number]);
+    expect(one.scenes[0]?.shots.every((s) => s.style?.background === undefined)).toBe(true);
   });
 
   it("rejects an IR that carries no variants", () => {
