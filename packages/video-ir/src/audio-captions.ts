@@ -1,9 +1,20 @@
 import { z } from "zod";
 import { IrId, LanguageTag, Milliseconds, PositiveMilliseconds } from "./primitives.ts";
 
+/**
+ * Mix bus of a track. `dialogue` is on-screen speech (lip-synced to a character), `voiceover` is
+ * off-screen narration; renderers may duck music under both.
+ */
+export const AudioTrackKind = z.enum(["dialogue", "voiceover", "music", "sfx"]);
+export type AudioTrackKind = z.infer<typeof AudioTrackKind>;
+
+/**
+ * One clip on the multi-track mix. Every track is placed on the absolute timeline; tracks of any kind may
+ * overlap. Effective level = `volume` (linear 0..1) scaled by `gainDb` (default 0 dB), with linear fades.
+ */
 export const AudioTrack = z.object({
   id: IrId,
-  kind: z.enum(["music", "voiceover", "sfx"]),
+  kind: AudioTrackKind,
   /** Audio asset id from the IR `assets` list. */
   assetId: IrId,
   startMs: Milliseconds,
@@ -12,6 +23,8 @@ export const AudioTrack = z.object({
   /** Offset into the source audio. */
   trimStartMs: Milliseconds.optional(),
   volume: z.number().min(0).max(1),
+  /** Extra gain in dB applied after `volume` (e.g. -6 to sit SFX under dialogue). */
+  gainDb: z.number().min(-60).max(12).optional(),
   fadeInMs: z.number().int().min(0).max(10_000).optional(),
   fadeOutMs: z.number().int().min(0).max(10_000).optional(),
 });

@@ -1,6 +1,7 @@
 import { testTenant } from "@studix/core/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DecisionRouter, FakeDecisionAdapter, RulesAdapter } from "../src/index.ts";
+import { type ProviderExecutionSink, SINK_TIMEOUT_MS } from "../src/router/provider-execution-sink.ts";
 import { CONTRACT_KIND, CONTRACT_VALID_OUTPUT, contractRequest } from "../src/testing/index.ts";
 import { useInMemoryTracing } from "./otel-in-memory-tracing.ts";
 import { testRouter, unavailable } from "./router-test-helpers.ts";
@@ -16,8 +17,27 @@ describe("DecisionRouter idempotency", () => {
     const request = contractRequest();
     const first = await router.decide(request);
     const second = await router.decide({ ...request });
-    expect(second).toBe(first);
+    expect(second).toMatchObject({ output: first.output, providerId: first.providerId, replayed: true });
+    expect(first.replayed).toBeUndefined();
     expect(fake.invocations).toHaveLength(1);
+  });
+
+  it("keeps the original cost and execution link on a replay so the ledger can dedupe by execution", async () => {
+    const executions: string[] = [];
+    const sink: ProviderExecutionSink = {
+      record: (_ctx, execution) => void executions.push(String(execution.id)),
+    };
+    const { router } = testRouter([valid()], { sink });
+    const request = contractRequest();
+    const first = await router.decide(request);
+    const second = await router.decide({ ...request });
+    expect(first.providerExecutionId).toBeDefined();
+    expect(second).toMatchObject({
+      replayed: true,
+      costCents: first.costCents,
+      providerExecutionId: first.providerExecutionId,
+    });
+    expect(executions).toHaveLength(1);
   });
 
   it("shares one in-flight call between concurrent callers", async () => {
@@ -28,7 +48,8 @@ describe("DecisionRouter idempotency", () => {
     const { router } = testRouter([fake]);
     const request = contractRequest();
     const [a, b] = await Promise.all([router.decide(request), router.decide({ ...request })]);
-    expect(a).toBe(b);
+    expect(a.output).toEqual(b.output);
+    expect([a.replayed, b.replayed].filter(Boolean)).toHaveLength(1);
     expect(fake.invocations).toHaveLength(1);
   });
 
@@ -197,6 +218,26 @@ describe("DecisionRouter telemetry", () => {
         },
       },
     });
-    await expect(router.decide(contractRequest())).resolves.toMatchObject({ providerId: "fake" });
+    const result = await router.decide(contractRequest());
+    expect(result.providerId).toBe("fake");
+    // Nothing was stored, so nothing may be linked from usage events.
+    expect(result.providerExecutionId).toBeUndefined();
+    expect(result.fallbackChain[0]?.executionId).toBeUndefined();
+  });
+});
+
+describe("provider execution sink on the critical path", () => {
+  it("does not let a hung sink hold the decision or link a missing execution", async () => {
+    vi.useFakeTimers();
+    try {
+      const hung = { record: () => new Promise<void>(() => {}) };
+      const { router } = testRouter([valid()], { sink: hung });
+      const pending = router.decide(contractRequest());
+      await vi.advanceTimersByTimeAsync(SINK_TIMEOUT_MS + 1);
+      const result = await pending;
+      expect(result.providerExecutionId).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

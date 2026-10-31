@@ -65,6 +65,47 @@ describe("video.create workflow on Postgres", () => {
     ]);
   });
 
+  it("does not move the project pointer back when a feedback job runs after a newer patch", async () => {
+    const ctx = await tenant(db.current, "stale-pointer");
+    const first = await enqueueCreate(db.current, ctx);
+    const worker = createTestWorker(db.current, "w1");
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    const v1 = (await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId!;
+    const base = (await db.current.repos.projects.getVersion(ctx, v1))!;
+    const author = { type: "user" as const, id: "usr_1" };
+    const v2 = await db.current.repos.projects.createVersion(ctx, {
+      projectId: first.project.id,
+      ir: base.ir,
+      source: "patch",
+      parentVersionId: v1,
+      createdBy: author,
+    });
+    const v3 = await db.current.repos.projects.createVersion(ctx, {
+      projectId: first.project.id,
+      ir: base.ir,
+      source: "patch",
+      parentVersionId: v2.id,
+      createdBy: author,
+    });
+    // Patch B already moved the head to v3; the job queued by patch A (v2) is still waiting.
+    await db.current.repos.projects.update(ctx, first.project.id, { currentVersionId: v3.id });
+    await db.current.repos.queue.enqueue(ctx, {
+      kind: "video.create",
+      projectId: first.project.id,
+      payload: {
+        projectId: first.project.id,
+        versionId: v2.id,
+        makeCurrent: false,
+        renderPreset: "preview",
+      },
+      createdBy: author,
+      budgetCents: 500,
+      maxAttempts: 3,
+    });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    expect((await db.current.repos.projects.get(ctx, first.project.id))!.currentVersionId).toBe(v3.id);
+  });
+
   it("returns the same job for a repeated idempotency key", async () => {
     const ctx = await tenant(db.current, "idem");
     const first = await enqueueCreate(db.current, ctx, { idempotencyKey: "brief-1" });
@@ -82,12 +123,13 @@ describe("video.create workflow on Postgres", () => {
     const ctx = await tenant(db.current, "crash");
     const { job } = await enqueueCreate(db.current, ctx);
     const plan = fakePlanner();
-    // Worker A never heartbeats and its renderer hangs: it behaves like a process that died mid-render.
+    // Worker A's heartbeats hang and its renderer hangs: it behaves like a process that died mid-render.
     const a = createTestWorker(db.current, "worker-a", {
       planner: plan.planner,
       renderer: fakeRenderer({ hold: "forever" }).renderer,
       leaseMs: 3000,
-      heartbeatIntervalMs: 60_000,
+      heartbeatIntervalMs: 1000,
+      heartbeat: "hang",
     });
     const claimed = (await a.queue.claim("worker-a"))!;
     const aOutcome = a.executor.execute(claimed, "worker-a", a.shutdown.signal);
@@ -107,6 +149,7 @@ describe("video.create workflow on Postgres", () => {
     expect(done).toMatchObject({ status: "succeeded", attempts: 2 });
     const stages = await db.current.repos.jobs.listStages(ctx, job.id);
     expect(stages.filter((s) => s.name === "plan")).toHaveLength(1);
+    // The stale attempt's row is closed when the job is reclaimed; its late writes are fenced out.
     expect(stages.filter((s) => s.name === "render").map((s) => [s.attempt, s.status])).toEqual([
       [1, "failed"],
       [2, "succeeded"],
@@ -167,6 +210,87 @@ describe("video.create workflow on Postgres", () => {
     expect(await a.executor.execute(claimed, "worker-settle", a.shutdown.signal)).toBe("succeeded");
     await new Promise((r) => setTimeout(r, 800));
     expect(beats).toBe(1);
+  });
+
+  it("does not apply a stalled worker's project writes after another worker finished the job", async () => {
+    const ctx = await tenant(db.current, "stall-write");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const { repos } = db.current;
+    // Worker A reads the project in validate_ir and then freezes (GC pause, frozen pod) before writing.
+    let wake!: () => void;
+    const frozen = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    const a = createTestWorker(db.current, "worker-a", {
+      projects: {
+        ...repos.projects,
+        getVersion: async (c, id) => {
+          await frozen;
+          return repos.projects.getVersion(c, id);
+        },
+      },
+      // Its heartbeats hang too, so nothing on its side notices the lease running out.
+      heartbeat: "hang",
+    });
+    const claimed = (await a.queue.claim("worker-a"))!;
+    const aOutcome = a.executor.execute(claimed, "worker-a", a.shutdown.signal);
+    await waitFor(async () => (await repos.jobs.get(ctx, job.id))?.stage === "validate_ir");
+    // A's lease lapses while it is frozen, and B reclaims the job.
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+
+    const b = createTestWorker(db.current, "worker-b");
+    const reclaimed = await waitFor(() => b.queue.claim("worker-b"));
+    expect(await b.executor.execute(reclaimed, "worker-b", b.shutdown.signal)).toBe("succeeded");
+    const finished = (await repos.projects.get(ctx, project.id))!;
+    expect(finished.status).toBe("in_review");
+    const versions = await repos.projects.listVersions(ctx, project.id);
+    expect(versions.items).toHaveLength(1);
+
+    wake();
+    expect(await aOutcome).toBe("lease_lost");
+    // Without the fence A would set status back to "rendering" and leave the project stuck there.
+    expect(await repos.projects.get(ctx, project.id)).toMatchObject({
+      status: "in_review",
+      currentVersionId: finished.currentVersionId,
+    });
+    expect((await repos.projects.listVersions(ctx, project.id)).items).toHaveLength(1);
+    expect((await repos.jobs.get(ctx, job.id))?.status).toBe("succeeded");
+  });
+
+  it("does not create a render from a stalled worker after another worker finalized the job", async () => {
+    const ctx = await tenant(db.current, "stall-render");
+    const { project, job } = await enqueueCreate(db.current, ctx);
+    const { repos } = db.current;
+    let wake!: () => void;
+    const frozen = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    // Worker A freezes in finalize after reading "no render yet".
+    const a = createTestWorker(db.current, "worker-a", {
+      renders: {
+        get: async () => {
+          await frozen;
+          return undefined;
+        },
+      },
+      // Its heartbeats hang too, so nothing on its side notices the lease running out.
+      heartbeat: "hang",
+    });
+    const claimed = (await a.queue.claim("worker-a"))!;
+    const aOutcome = a.executor.execute(claimed, "worker-a", a.shutdown.signal);
+    await waitFor(async () => (await repos.jobs.get(ctx, job.id))?.stage === "finalize");
+    // A's lease lapses while it is frozen, and B reclaims the job.
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+
+    const b = createTestWorker(db.current, "worker-b");
+    const reclaimed = await waitFor(() => b.queue.claim("worker-b"));
+    expect(await b.executor.execute(reclaimed, "worker-b", b.shutdown.signal)).toBe("succeeded");
+
+    wake();
+    // A's create is refused by the fence (a CONFLICT on the render id would mean it reached the table).
+    expect(await aOutcome).toBe("lease_lost");
+    expect((await repos.renders.listByProject(ctx, project.id)).items).toHaveLength(1);
+    expect((await repos.projects.get(ctx, project.id))?.status).toBe("in_review");
   });
 
   it("abandons an attempt before its lease lapses when heartbeats keep failing", async () => {

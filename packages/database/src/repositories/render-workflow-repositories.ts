@@ -1,7 +1,7 @@
 import type { Render, RenderRepository, WorkflowRun, WorkflowRunRepository } from "@studix/core";
 import { type Clock, newId } from "@studix/shared";
 import { desc, eq } from "drizzle-orm";
-import type { StudixDb } from "../client.ts";
+import type { DbExecutor, StudixDb } from "../client.ts";
 import { workflowRuns } from "../schema/jobs.ts";
 import { renders } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -43,7 +43,7 @@ function toRun(row: typeof workflowRuns.$inferSelect): WorkflowRun {
   };
 }
 
-export function createRenderRepository(db: StudixDb, clock: Clock): RenderRepository {
+export function createRenderRepository(db: DbExecutor, clock: Clock): RenderRepository {
   return {
     async create(ctx, input) {
       const now = clock.now();

@@ -22,6 +22,62 @@
       "when": 1793420620098,
       "tag": "0002_provider_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793422028226,
+      "tag": "0003_approvals_pending_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793428922826,
+      "tag": "0004_scene_shot_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793430553178,
+      "tag": "0005_storyboard_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793432533063,
+      "tag": "0006_project_version_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793433043535,
+      "tag": "0007_review_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793433415971,
+      "tag": "0008_agent_handoffs",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793433808111,
+      "tag": "0009_stage_media_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793442813195,
+      "tag": "0010_job_deadline_pause",
+      "breakpoints": true
     }
   ]
 }

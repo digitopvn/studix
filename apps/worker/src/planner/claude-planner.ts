@@ -52,8 +52,10 @@ let irSchema: Record<string, unknown> | undefined;
 function videoIrSchema(): Record<string, unknown> {
   // The Claude CLI validates --json-schema offline and rejects the draft 2020-12 `$schema` URI the export
   // carries ("no schema with key or ref"), exiting before any request; the rest of the schema is accepted.
-  const { $schema: _draft, ...schema } = exportJsonSchemas()["video-ir"] as Record<string, unknown>;
-  irSchema ??= schema;
+  if (!irSchema) {
+    const { $schema: _draft, ...schema } = exportJsonSchemas()["video-ir"] as Record<string, unknown>;
+    irSchema = schema;
+  }
   return irSchema;
 }
 

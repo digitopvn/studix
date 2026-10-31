@@ -36,6 +36,17 @@ describe("StudioService.createVideoProject", () => {
     expect(unknownRuntime.code).toBe("VALIDATION");
   });
 
+  it("carries the agent mode into the job payload and rejects unknown modes", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const host = await studio.createVideoProject(ctx, { brief, agentMode: "host" });
+    expect((await repos.jobs.get(ctx, host.job.id))?.payload).toMatchObject({ agentMode: "host" });
+    const plain = await studio.createVideoProject(ctx, { brief });
+    expect((await repos.jobs.get(ctx, plain.job.id))?.payload).not.toHaveProperty("agentMode");
+    const bogus = await rejects(studio.createVideoProject(ctx, { brief, agentMode: "cloud" as never }));
+    expect(bogus.code).toBe("VALIDATION");
+  });
+
   it("creates a draft project and a queued job with polling hints", async () => {
     const { studio, repos } = createInMemoryStudio();
     const ctx = testTenant();

@@ -8,7 +8,15 @@ export type ValidationIssueCode =
   | "wrong_asset_kind"
   | "out_of_bounds"
   | "timeline"
-  | "unsupported_version";
+  | "unpinned_code"
+  | "cycle"
+  | "unsupported_version"
+  /** A shot hands on state its successor contradicts, or conditions on a stale reference. */
+  | "continuity"
+  /** Lipsync routing disagrees with who speaks on screen. */
+  | "lipsync"
+  /** A prerequisite of the requested production phase is missing. */
+  | "not_ready";
 
 /** One problem, addressed by RFC 6901 JSON pointer into the validated document. */
 export interface ValidationIssue {

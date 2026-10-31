@@ -1,0 +1,448 @@
+import type { MediaGenerationRequest, MediaKind } from "@studix/core";
+import { StudixError } from "@studix/shared";
+import type { MediaBillingUnit } from "./media-price-book.ts";
+import { type MediaInput, numberParam, resolveMediaInput, stringParam } from "./media-request-guards.ts";
+
+/** Upstream routes Studix drives through multix. Media runs on Sume; audio and image upscale do not. */
+export const MULTIX_VENDORS = ["sume", "atlas", "elevenlabs", "fish", "minimax"] as const;
+export type MultixVendor = (typeof MULTIX_VENDORS)[number];
+
+/** The key `multix check` must report for a vendor before its kinds are advertised. */
+export const MULTIX_VENDOR_KEYS: Readonly<Record<MultixVendor, string>> = {
+  sume: "SUME_API_KEY",
+  atlas: "ATLASCLOUD_API_KEY",
+  elevenlabs: "ELEVENLABS_API_KEY",
+  fish: "FISH_API_KEY",
+  minimax: "MINIMAX_API_KEY",
+};
+
+/** A media role is a kind refined by its inputs (lip-sync is video with audio; upscale splits by input). */
+export type MultixRole =
+  | "image"
+  | "video"
+  | "lipsync"
+  | "voice"
+  | "music"
+  | "sfx"
+  | "imageUpscale"
+  | "videoUpscale";
+
+export const MULTIX_ROLE_VENDORS: Readonly<Record<MultixRole, readonly MultixVendor[]>> = {
+  image: ["sume"],
+  video: ["sume"],
+  lipsync: ["sume"],
+  videoUpscale: ["sume"],
+  imageUpscale: ["atlas"],
+  voice: ["elevenlabs", "fish", "minimax"],
+  music: ["elevenlabs", "minimax"],
+  sfx: ["elevenlabs"],
+};
+
+/**
+ * Built-in defaults, each overridable through config (MULTIX_<ROLE>_MODEL). They live here, in the
+ * adapter, so workflow code never names a model.
+ */
+export const DEFAULT_MULTIX_MODELS: Readonly<Record<MultixRole, string>> = {
+  image: "sume:nano-banana-2.1",
+  video: "sume:seedance-2-mini",
+  lipsync: "sume:sync-lipsync-2",
+  videoUpscale: "sume:topaz-video",
+  imageUpscale: "atlas:atlascloud/image-upscaler",
+  voice: "elevenlabs:eleven_multilingual_v2",
+  music: "elevenlabs:music_v1",
+  sfx: "elevenlabs:sound-effects",
+};
+
+export type MultixModelDefaults = Readonly<Record<MultixRole, string>>;
+
+export interface QualifiedModel {
+  vendor: MultixVendor;
+  model: string;
+  /** "<vendor>:<model>", the id results and capabilities use. */
+  id: string;
+}
+
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+
+/** Parse "<vendor>:<model>" (or a bare model, which takes the role's default vendor). */
+export function parseQualifiedModel(
+  value: string,
+  role: MultixRole,
+  defaults: MultixModelDefaults,
+): QualifiedModel {
+  const allowed = MULTIX_ROLE_VENDORS[role];
+  const sep = value.indexOf(":");
+  const vendor =
+    sep === -1
+      ? parseQualifiedModel(defaults[role], role, DEFAULT_MULTIX_MODELS).vendor
+      : value.slice(0, sep);
+  const model = sep === -1 ? value : value.slice(sep + 1);
+  if (!(allowed as readonly string[]).includes(vendor)) {
+    throw new StudixError(
+      "VALIDATION",
+      `Model "${value}" is not served by ${allowed.join(" or ")} for ${role}`,
+      {
+        details: { role, allowedVendors: allowed },
+      },
+    );
+  }
+  if (!MODEL_ID.test(model)) throw new StudixError("VALIDATION", `Invalid model id "${value}"`);
+  return { vendor: vendor as MultixVendor, model, id: `${vendor}:${model}` };
+}
+
+export function roleFor(kind: MediaKind, params: Record<string, unknown>): MultixRole {
+  switch (kind) {
+    case "image":
+      return "image";
+    case "video":
+      return params.audio !== undefined ? "lipsync" : "video";
+    case "voice":
+      return "voice";
+    case "music":
+      return "music";
+    case "sfx":
+      return "sfx";
+    case "upscale":
+      if (params.video !== undefined && params.image !== undefined) {
+        throw new StudixError("VALIDATION", "upscale takes params.image or params.video, not both");
+      }
+      if (params.video !== undefined) return "videoUpscale";
+      if (params.image !== undefined) return "imageUpscale";
+      throw new StudixError("VALIDATION", "upscale needs params.image or params.video");
+    case "audio":
+      throw new StudixError(
+        "UNAVAILABLE",
+        "Multix serves audio as voice, music or sfx; pick one of those kinds",
+        {
+          retryable: false,
+        },
+      );
+  }
+}
+
+/**
+ * Prices Studix assumes for routes multix cannot price before the call. They only bound a single call;
+ * batches on these models still run the probe first (see runMediaBatchWithProbe).
+ */
+export interface AssumedPrice {
+  usdPerUnit: number;
+  unit: MediaBillingUnit;
+  /** Quantity to bill when the request does not state one. */
+  defaultQuantity: number;
+  source: string;
+}
+
+export function assumedPrice(role: MultixRole, model: QualifiedModel): AssumedPrice | undefined {
+  if (role === "sfx" && model.vendor === "elevenlabs") {
+    return {
+      usdPerUnit: 0.01,
+      unit: "second",
+      defaultQuantity: 30,
+      source: "source audit: SFX up to $0.01/s",
+    };
+  }
+  if (role === "music" && model.vendor === "elevenlabs") {
+    return { usdPerUnit: 0.015, unit: "second", defaultQuantity: 30, source: "assumed ceiling" };
+  }
+  if (role === "music" && model.vendor === "minimax") {
+    return { usdPerUnit: 0.25, unit: "call", defaultQuantity: 1, source: "assumed ceiling" };
+  }
+  if (role === "voice" && model.vendor === "minimax") {
+    return { usdPerUnit: 0.0001, unit: "character", defaultQuantity: 1, source: "assumed ceiling" };
+  }
+  if (role === "imageUpscale" && model.id === "atlas:atlascloud/image-upscaler") {
+    return {
+      usdPerUnit: 0.01,
+      unit: "image",
+      defaultQuantity: 1,
+      source: "Atlas Cloud model list 2026-10-31",
+    };
+  }
+  return undefined;
+}
+
+export type MultixPlanMode = "sume-job" | "atlas-job" | "sync";
+
+/** How one request runs through multix. argv never includes --json or run-specific flags. */
+export interface MultixPlan {
+  role: MultixRole;
+  model: QualifiedModel;
+  mode: MultixPlanMode;
+  argv: string[];
+  /** Positional prompt, passed after "--" so it can never be read as a flag. */
+  operand?: string;
+  /** multix can price argv with --estimate. */
+  priced: boolean;
+  assumed?: AssumedPrice;
+  /** Atlas: request fields, and local files to upload into `uploads` fields before submitting. */
+  atlas?: { modelId: string; fields: Record<string, unknown>; uploads: { field: string; path: string }[] };
+  /** Sync runs: extension of the file multix writes. */
+  outputExt?: string;
+  waitTimeoutMs: number;
+}
+
+const ASPECT = /^(\d{1,2}:\d{1,2}|auto|adaptive)$/;
+const RESOLUTION = /^(\d{3,4}p|[1-8][Kk])$/;
+const TOKEN = /^[A-Za-z0-9_.-]{1,128}$/;
+const LANGUAGE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$/;
+const IMAGE_FORMAT = /^(png|jpeg|jpg|webp)$/;
+const MAX_DURATION_MS = 600_000;
+
+const flag = (name: string, value: string | number | undefined): string[] =>
+  value === undefined ? [] : [`--${name}=${value}`];
+const inputFlag = (name: string, input: MediaInput | undefined): string[] =>
+  input ? [`--${name}=${input.kind === "url" ? input.url : input.path}`] : [];
+
+/**
+ * Resolution Studix asks for when a request names none, by model. Seedance 2.5 bills per output second by
+ * resolution and Sume's own default is far above what a draft or review cut needs, so Studix pins it to
+ * 480p (about $0.10/s); pass `params.resolution` to choose another.
+ */
+export const DEFAULT_VIDEO_RESOLUTIONS: Readonly<Record<string, string>> = { "sume:seedance-2.5": "480p" };
+
+function videoResolution(params: Record<string, unknown>, model: QualifiedModel): string | undefined {
+  return stringParam(params, "resolution", RESOLUTION) ?? DEFAULT_VIDEO_RESOLUTIONS[model.id];
+}
+
+function seconds(params: Record<string, unknown>): number | undefined {
+  const ms = numberParam(params, "durationMs", 1, MAX_DURATION_MS);
+  return ms === undefined ? undefined : Math.ceil(ms / 1000);
+}
+
+function boolParam(params: Record<string, unknown>, name: string): boolean | undefined {
+  const value = params[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw new StudixError("VALIDATION", `params.${name} must be a boolean`);
+  return value;
+}
+
+export interface PlanContext {
+  defaults: MultixModelDefaults;
+  waitTimeoutMs: number;
+}
+
+/** Resolve the role and model of a request without touching its inputs (used for grouping and pricing). */
+export function resolveMultixModel(
+  request: Pick<MediaGenerationRequest, "kind" | "model" | "params">,
+  defaults: MultixModelDefaults,
+): { role: MultixRole; model: QualifiedModel } {
+  const role = roleFor(request.kind, request.params ?? {});
+  return { role, model: parseQualifiedModel(request.model ?? defaults[role], role, defaults) };
+}
+
+/** Build the multix invocation for a request. Validates every value that reaches argv. */
+export async function planMultixRequest(
+  request: Pick<MediaGenerationRequest, "kind" | "model" | "params" | "prompt">,
+  workDir: string | undefined,
+  context: PlanContext,
+): Promise<MultixPlan> {
+  const params = request.params ?? {};
+  const { role, model } = resolveMultixModel(request, context.defaults);
+  const input = async (name: string) =>
+    workDir === undefined ? estimateInput(params, name) : resolveMediaInput(params, name, workDir);
+  const base = { role, model, assumed: assumedPrice(role, model) };
+  const wait = (ms: number) => Math.min(ms, context.waitTimeoutMs);
+
+  switch (role) {
+    case "image": {
+      const image = await input("image");
+      return {
+        ...base,
+        mode: "sume-job",
+        priced: true,
+        waitTimeoutMs: wait(300_000),
+        argv: [
+          "sume",
+          "image",
+          `--model=${model.model}`,
+          ...inputFlag("image", image),
+          ...flag("aspect-ratio", stringParam(params, "aspectRatio", ASPECT)),
+          ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
+          ...flag("quality", stringParam(params, "quality", TOKEN)),
+          ...flag("num-images", numberParam(params, "numImages", 1, 4, true)),
+          ...flag("output-format", stringParam(params, "outputFormat", IMAGE_FORMAT)),
+        ],
+        operand: request.prompt,
+      };
+    }
+    case "video": {
+      const audio = boolParam(params, "generateAudio");
+      return {
+        ...base,
+        mode: "sume-job",
+        priced: true,
+        waitTimeoutMs: wait(900_000),
+        argv: [
+          "sume",
+          "video",
+          `--model=${model.model}`,
+          ...inputFlag("image", await input("image")),
+          ...inputFlag("end-image", await input("endImage")),
+          ...flag("duration", seconds(params)),
+          ...flag("resolution", videoResolution(params, model)),
+          ...flag("aspect-ratio", stringParam(params, "aspectRatio", ASPECT)),
+          ...(audio === undefined ? [] : [audio ? "--generate-audio" : "--no-generate-audio"]),
+        ],
+        operand: request.prompt,
+      };
+    }
+    case "lipsync": {
+      const video = await input("video");
+      const image = await input("image");
+      if (!video && !image)
+        throw new StudixError("VALIDATION", "lip-sync needs params.video or params.image");
+      return {
+        ...base,
+        mode: "sume-job",
+        priced: true,
+        waitTimeoutMs: wait(900_000),
+        argv: [
+          "sume",
+          "video",
+          `--model=${model.model}`,
+          ...inputFlag("video", video),
+          ...inputFlag("image", video ? undefined : image),
+          ...inputFlag("audio", await input("audio")),
+          ...flag("duration", seconds(params)),
+          ...flag("resolution", videoResolution(params, model)),
+        ],
+      };
+    }
+    case "videoUpscale":
+      return {
+        ...base,
+        mode: "sume-job",
+        priced: true,
+        waitTimeoutMs: wait(900_000),
+        argv: [
+          "sume",
+          "video",
+          `--model=${model.model}`,
+          ...inputFlag("video", await input("video")),
+          ...flag("duration", seconds(params)),
+          ...flag("resolution", videoResolution(params, model)),
+        ],
+      };
+    case "imageUpscale": {
+      const image = await input("image");
+      const fields: Record<string, unknown> = {
+        outscale: numberParam(params, "scale", 1, 4) ?? 2,
+        output_format: stringParam(params, "outputFormat", IMAGE_FORMAT) ?? "png",
+      };
+      const uploads: { field: string; path: string }[] = [];
+      if (image?.kind === "url") fields.image = image.url;
+      if (image?.kind === "file") uploads.push({ field: "image", path: image.path });
+      return {
+        ...base,
+        mode: "atlas-job",
+        priced: false,
+        waitTimeoutMs: wait(300_000),
+        argv: [],
+        atlas: { modelId: model.model, fields, uploads },
+      };
+    }
+    case "voice":
+      return {
+        ...base,
+        mode: "sync",
+        priced: model.vendor !== "minimax",
+        outputExt: ".mp3",
+        waitTimeoutMs: wait(300_000),
+        argv: voiceArgv(model, request.prompt, params),
+      };
+    case "music":
+      return {
+        ...base,
+        mode: "sync",
+        priced: false,
+        outputExt: ".mp3",
+        waitTimeoutMs: wait(600_000),
+        argv: musicArgv(model, request.prompt, params),
+      };
+    case "sfx": {
+      const ms = numberParam(params, "durationMs", 500, 30_000);
+      return {
+        ...base,
+        mode: "sync",
+        priced: false,
+        outputExt: ".mp3",
+        waitTimeoutMs: wait(300_000),
+        argv: [
+          "elevenlabs",
+          "sfx",
+          `--text=${request.prompt}`,
+          ...flag("duration-seconds", ms === undefined ? undefined : ms / 1000),
+          ...(boolParam(params, "loop") ? ["--loop"] : []),
+        ],
+      };
+    }
+  }
+}
+
+function voiceArgv(model: QualifiedModel, prompt: string, params: Record<string, unknown>): string[] {
+  const voice = stringParam(params, "voice", TOKEN);
+  const language = stringParam(params, "language", LANGUAGE);
+  switch (model.vendor) {
+    case "elevenlabs":
+      return [
+        "elevenlabs",
+        "tts",
+        `--text=${prompt}`,
+        `--model=${model.model}`,
+        ...flag("voice", voice),
+        ...flag("language-code", language),
+        ...flag("seed", numberParam(params, "seed", 0, 4_294_967_295, true)),
+      ];
+    case "fish":
+      return [
+        "fish",
+        "tts",
+        `--text=${prompt}`,
+        `--model=${model.model}`,
+        "--format=mp3",
+        ...flag("voice", voice),
+        ...flag("language", language),
+      ];
+    default:
+      return [
+        "minimax",
+        "generate-speech",
+        `--text=${prompt}`,
+        `--model=${model.model}`,
+        "--output-format=mp3",
+        ...flag("voice", voice),
+      ];
+  }
+}
+
+const DEFAULT_MUSIC_MS = 30_000;
+
+function musicArgv(model: QualifiedModel, prompt: string, params: Record<string, unknown>): string[] {
+  if (model.vendor === "minimax") {
+    const lyrics = params.lyrics;
+    if (lyrics !== undefined && (typeof lyrics !== "string" || lyrics.length > 4000)) {
+      throw new StudixError("VALIDATION", "params.lyrics must be a string of at most 4000 characters");
+    }
+    return [
+      "minimax",
+      "generate-music",
+      `--prompt=${prompt}`,
+      `--model=${model.model}`,
+      "--output-format=mp3",
+      ...flag("lyrics", lyrics as string | undefined),
+    ];
+  }
+  // A stated length keeps the price bounded; the model would otherwise choose one.
+  const ms = numberParam(params, "durationMs", 3_000, 300_000, true) ?? DEFAULT_MUSIC_MS;
+  return ["elevenlabs", "music", `--prompt=${prompt}`, `--model=${model.model}`, `--music-length-ms=${ms}`];
+}
+
+/** For estimates no file is read: local inputs are checked for shape only and stand in as their path. */
+function estimateInput(params: Record<string, unknown>, name: string): MediaInput | undefined {
+  const value = params[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "" || /[\r\n\0]/.test(value)) {
+    throw new StudixError("VALIDATION", `params.${name} must be a file path or an https URL`);
+  }
+  return /^https:\/\//i.test(value) ? { kind: "url", url: value } : { kind: "file", path: value };
+}

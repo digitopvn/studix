@@ -1,9 +1,19 @@
-import { type NextAction, PlannerSelection, STUDIX_TOOLS, type TenantContext } from "@studix/core";
+import {
+  type FeedbackInput,
+  type NextAction,
+  PlannerSelection,
+  RenderVersionInput,
+  resolveWorkflowPack,
+  STUDIX_TOOLS,
+  type TenantContext,
+  WorkflowTemplateId,
+} from "@studix/core";
 import { StudixError } from "@studix/shared";
+import { packRegistry } from "@studix/skills";
 import { RenderPreset } from "@studix/video-ir";
 import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
-import type { ArtifactUrlDeps } from "../artifact-urls.ts";
+import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
@@ -46,6 +56,20 @@ function tool<I extends z.ZodType>(def: NativeTool<I>): NativeTool<I> {
   return def;
 }
 
+/** Dashboard page where a person reviews and approves the project's storyboard and shots. */
+export function reviewUrl(deps: Pick<AppDeps, "appUrl">, projectId: string): string {
+  return `${deps.appUrl}/#/projects/${encodeURIComponent(projectId)}/review`;
+}
+
+/** Signed preview URL of the newest finished render of a project, when storage can sign one. */
+async function latestPreview(ctx: ToolContext, projectId: string): Promise<string | undefined> {
+  const renders = await ctx.artifacts.renders.listByProject(ctx.tenant, projectId, { limit: 20 });
+  const render = renders.items.find(isPlayable);
+  if (!render) return undefined;
+  const signed = await signRender(ctx.artifacts, ctx.tenant, render).catch(() => undefined);
+  return signed?.url;
+}
+
 const Id = z.string().trim().min(1).max(100);
 
 const CreateVideoInput = z
@@ -58,7 +82,7 @@ const CreateVideoInput = z
     spec: z
       .record(z.string(), z.unknown())
       .optional()
-      .describe("Complete VideoIR authored by the host; skips internal planning."),
+      .describe("Complete VideoIR from the host; skips planning."),
     title: z.string().trim().min(1).max(200).optional(),
     idempotencyKey: z
       .string()
@@ -72,16 +96,63 @@ const CreateVideoInput = z
       .min(10)
       .max(7 * 24 * 3600)
       .optional()
-      .describe("Wall-clock limit for the job from now; past it the job fails with TIMEOUT."),
+      .describe("Seconds from now until the job fails with TIMEOUT."),
     renderPreset: RenderPreset.optional(),
     planner: PlannerSelection.optional().describe(
-      "Opt-in: plan with Claude using one Anthropic key connection id from the dashboard (AI & Providers). Not with spec.",
+      "Opt-in Claude planner: an Anthropic key connection id (dashboard, AI & Providers). Not with spec.",
     ),
+    workflowTemplate: WorkflowTemplateId.optional().describe(
+      "Workflow pack id (studix_inspect skills). Default brand-intro.",
+    ),
+    // Where creative agent stages run: in Studix (harness, the default) or on the host's agent through the
+    // agent task tools. Left undescribed on the wire to keep the tool list within its size budget.
+    agentMode: z.enum(["harness", "host"]).optional(),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
     message: "Provide prompt or brief",
     path: ["prompt"],
   });
+
+const IdempotencyKey = z
+  .string()
+  .regex(/^[A-Za-z0-9._:-]{1,200}$/)
+  .optional();
+const Ms = z.number().int().min(0).max(600_000).optional();
+
+/**
+ * Compact wire schema for feedback: the tool list stays small, and StudioService re-validates the call
+ * against the full `FeedbackInput` (one target, pointer syntax, patch shape) before anything is stored.
+ */
+const FeedbackToolInput = z.object({
+  projectId: Id,
+  shotId: Id.optional(),
+  sceneId: Id.optional(),
+  assetId: Id.optional(),
+  startMs: Ms.describe("Time range start; with endMs instead of an id."),
+  endMs: Ms,
+  comment: z.string().trim().min(1).max(2000),
+  patch: z
+    .object({
+      description: z.string().max(500).optional(),
+      ops: z
+        .array(
+          z.object({
+            op: z.enum(["add", "remove", "replace", "move", "copy", "test"]),
+            path: z.string().max(500),
+            from: z.string().max(500).optional(),
+            value: z.unknown().optional(),
+          }),
+        )
+        .min(1)
+        .max(500),
+    })
+    .optional()
+    .describe("JSON Patch on the VideoIR; paths must stay inside the target (see allowedPaths)."),
+  baseVersionId: Id.optional(),
+  renderPreset: RenderPreset.optional(),
+  idempotencyKey: IdempotencyKey,
+  budgetCents: z.number().int().min(0).max(10_000_000).optional(),
+});
 
 export const NATIVE_TOOLS = [
   tool({
@@ -112,6 +183,7 @@ export const NATIVE_TOOLS = [
     audited: true,
     async run(ctx, input) {
       const brief = input.brief ?? { prompt: input.prompt };
+      const pack = resolveWorkflowPack(packRegistry, input.workflowTemplate);
       if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, input.planner);
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
@@ -122,15 +194,19 @@ export const NATIVE_TOOLS = [
         ...(input.deadlineSeconds ? { deadlineAt: new Date(Date.now() + input.deadlineSeconds * 1000) } : {}),
         renderPreset: input.renderPreset,
         planner: input.planner,
+        workflowTemplate: pack.id,
+        agentMode: input.agentMode,
       });
       return {
         data: {
           projectId: result.project.id,
           jobId: result.job.id,
+          workflowTemplate: result.project.workflowTemplate ?? pack.id,
           status: result.job.status,
           stage: result.job.stage ?? null,
           replayed: result.replayed,
           ...(result.approval ? { approval: result.job.approval } : {}),
+          reviewUrl: reviewUrl(ctx.deps, result.project.id),
         },
         next: result.next,
         scope: { jobId: result.job.id, projectId: result.project.id },
@@ -147,7 +223,8 @@ export const NATIVE_TOOLS = [
     async run(ctx, input) {
       const job = await ctx.deps.studio.getJob(ctx.tenant, input.jobId);
       const view = await jobWithVideo(ctx.artifacts, ctx.tenant, job);
-      return { data: view, next: job.next };
+      const data = job.projectId ? { ...view, reviewUrl: reviewUrl(ctx.deps, job.projectId) } : view;
+      return { data, next: job.next };
     },
   }),
   tool({
@@ -159,9 +236,10 @@ export const NATIVE_TOOLS = [
     readOnly: true,
     async run(ctx, input) {
       const details = await ctx.deps.studio.getProject(ctx.tenant, input.projectId);
-      const data = await projectView(ctx.artifacts, ctx.tenant, details, {
+      const view = await projectView(ctx.artifacts, ctx.tenant, details, {
         includeIr: input.includeIr ?? false,
       });
+      const data = { ...view, reviewUrl: reviewUrl(ctx.deps, details.project.id) };
       return { data, next: details.jobs[0]?.next ?? [] };
     },
   }),
@@ -176,6 +254,66 @@ export const NATIVE_TOOLS = [
     async run(ctx, input) {
       const job = await ctx.deps.studio.cancelJob(ctx.tenant, input.jobId, input.reason);
       return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
+    },
+  }),
+  tool({
+    name: NATIVE_TOOL_NAMES.feedback,
+    title: "Feedback on a shot, scene, asset or time range",
+    description:
+      "Comment on shotId, sceneId, assetId or startMs+endMs. A patch inside that target makes a new version and render job. Returns ids, invalidated nodes, next.",
+    input: FeedbackToolInput,
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      // The compact wire shape is looser than FeedbackInput; the service parses it with the full schema.
+      const out = await ctx.deps.studio.submitFeedback(ctx.tenant, input as FeedbackInput);
+      const preview = out.job ? undefined : await latestPreview(ctx, out.projectId);
+      return {
+        data: {
+          feedbackId: out.feedbackId,
+          projectId: out.projectId,
+          baseVersionId: out.baseVersionId,
+          versionId: out.versionId ?? null,
+          version: out.version ?? null,
+          jobId: out.job?.id ?? null,
+          status: out.job?.status ?? null,
+          replayed: out.replayed,
+          invalidated: out.invalidated,
+          shots: out.shots,
+          allowedPaths: out.allowedPaths,
+          ...(out.approval ? { approval: out.job?.approval } : {}),
+          reviewUrl: reviewUrl(ctx.deps, out.projectId),
+          ...(preview ? { previewUrl: preview } : {}),
+        },
+        next: out.next,
+        scope: { projectId: out.projectId, jobId: out.job?.id },
+      };
+    },
+  }),
+  tool({
+    name: NATIVE_TOOL_NAMES.render,
+    title: "Render a version",
+    description:
+      "Queue a render of the current or a given version at a preset; that version becomes current. Returns jobId; poll studix_get_job for the MP4 URL.",
+    input: RenderVersionInput,
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      const out = await ctx.deps.studio.renderVersion(ctx.tenant, input);
+      return {
+        data: {
+          projectId: out.projectId,
+          versionId: out.versionId,
+          version: out.version,
+          jobId: out.job.id,
+          status: out.job.status,
+          replayed: out.replayed,
+          ...(out.approval ? { approval: out.job.approval } : {}),
+          reviewUrl: reviewUrl(ctx.deps, out.projectId),
+        },
+        next: out.next,
+        scope: { projectId: out.projectId, jobId: out.job.id },
+      };
     },
   }),
   tool({

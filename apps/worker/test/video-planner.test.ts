@@ -37,6 +37,28 @@ function rulesRouter(model?: FakeDecisionAdapter): DecisionRouter {
   });
 }
 
+describe("brief decision replay", () => {
+  it("keeps the original usage and execution id when a retry is served from the cache", async () => {
+    const planner = createVideoPlanner({
+      decisions: rulesRouter(
+        new FakeDecisionAdapter({
+          id: "model",
+          fallback: { output: { brandName: "Sương Mai", keyMessages: ["Rang mới mỗi tuần"] }, costCents: 2 },
+        }),
+      ),
+      logger,
+    });
+    const brief = { prompt: PROMPT } as Parameters<typeof planner>[0];
+    const tenant = testTenant();
+    const first = await planner(brief, ctx({ tenant }), new AbortController().signal);
+    const retry = await planner(brief, ctx({ tenant, attempt: 2 }), new AbortController().signal);
+    expect(first.usage).toHaveLength(1);
+    expect(first.usage[0]?.costCents).toBe(2);
+    expect(retry.usage).toEqual(first.usage);
+    expect(retry.ir).toEqual(first.ir);
+  });
+});
+
 type ExecuteResult = Awaited<ReturnType<McpGateway["execute"]>>;
 function gatewayReturning(
   result: Partial<ToolExecuteData["result"]>,
@@ -186,5 +208,69 @@ describe("applyBrandFacts", () => {
     const out = applyBrandFacts(brief, { colors: { primary: "#FFFFF0" } });
     expect(out.brand?.palette.primary).toBe("#2563EB");
     expect(applyBrandFacts(brief, { colors: { primary: "#5B3A29" } }).brand?.palette.primary).toBe("#5B3A29");
+  });
+});
+
+describe("workflow template selection", () => {
+  const brief = { prompt: PROMPT } as Parameters<ReturnType<typeof createVideoPlanner>>[0];
+
+  it("builds the IR with the template of the job's workflow pack", async () => {
+    const calls: unknown[] = [];
+    const base = createVideoPlanner({ decisions: rulesRouter(), logger });
+    const reference = await base(brief, ctx(), new AbortController().signal);
+    const planner = createVideoPlanner({
+      decisions: rulesRouter(),
+      logger,
+      packs: {
+        packs: () => [
+          {
+            id: "sample-explainer",
+            title: "Sample",
+            version: 1,
+            templates: [
+              {
+                id: "sample-explainer",
+                title: "Sample",
+                description: "test",
+                version: 1,
+                inputSchema: {},
+                output: "video-ir",
+                run: (input) => {
+                  calls.push(input);
+                  return { ...reference.ir, title: "Sample explainer" };
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const out = await planner(
+      brief,
+      ctx({ workflowTemplate: "sample-explainer" }),
+      new AbortController().signal,
+    );
+    expect(out.ir.title).toBe("Sample explainer");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("fails an unknown pack before any decision is made", async () => {
+    let decided = 0;
+    const planner = createVideoPlanner({
+      decisions: {
+        decide: async () => {
+          decided++;
+          throw new Error("must not be called");
+        },
+      },
+      logger,
+    });
+    await expect(
+      planner(brief, ctx({ workflowTemplate: "no-such-pack" }), new AbortController().signal),
+    ).rejects.toMatchObject({
+      code: "VALIDATION",
+      details: { available: ["brand-intro", "marketing-video", "motion-graphic", "anime", "long-form-film"] },
+    });
+    expect(decided).toBe(0);
   });
 });

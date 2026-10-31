@@ -16,7 +16,8 @@
         "video",
         "audio",
         "font",
-        "document"
+        "document",
+        "code"
       ]
     },
     "storageKey": {

@@ -21,8 +21,18 @@ Marketing runs on the Digitop Cloudflare account (`digitop.vn@gmail.com`).
 ## The image
 
 Root `Dockerfile`, one image for both roles. It contains Node, Chromium, FFmpeg
-and HyperFrames because the worker renders. The app role does not invoke them;
-shipping one image keeps build, pinning and rollback to a single artifact.
+and HyperFrames because the worker renders, and the multix CLI for paid media
+generation. The app role does not invoke them; shipping one image keeps build,
+pinning and rollback to a single artifact.
+
+multix is built in a separate stage from a pinned commit of
+`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `7922a274`, the commit tagged
+v1.26.0). The stage fails if the fetched HEAD is not that commit. 1.26.0 is the
+first stable release with the Sume commands and counts Sume cost once per job.
+The image keeps the git build instead of `npm install -g @mrgoonie/multix`,
+because a commit pin is checked and an npm install here has no lockfile
+integrity hash. To upgrade, set `MULTIX_COMMIT` to the new release tag's commit
+and re-run the live smoke test.
 
 ## Configuration
 
@@ -73,9 +83,46 @@ replaced. A 401 that the re-test does not repeat (a gateway token, a short
 Anthropic incident) leaves the key alone.
 
 Smoke tests of the planner live in the `live` test project (`STUDIX_LIVE=1
-pnpm test:live`). The plan test also needs `ANTHROPIC_API_KEY` and is capped by
-`STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the rejected-key test uses a
-made-up key and costs nothing.
+ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
+plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the
+rejected-key test uses a made-up key and costs nothing.
+
+Paid media runs through the Multix provider (`packages/providers`), which is
+off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
+video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
+music and SFX on ElevenLabs, Fish or MiniMax. The worker passes only
+`SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`, `FISH_API_KEY` and
+`MINIMAX_API_KEY` (plus PATH, HOME, temp and proxy variables) to the CLI, and
+sets `MULTIX_DISABLE_HOME_ENV=1` so `~/.multix/.env` is never read on servers
+(`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A kind is
+advertised only when `multix check` reports its vendor key. Default models per
+role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`;
+`MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
+job. Every paid call is estimated first and refused above the request's cap.
+A video request on `sume:seedance-2.5` runs at `480p` unless it passes
+`params.resolution`; a higher resolution is an explicit, separately estimated
+choice
+([`DEFAULT_VIDEO_RESOLUTIONS`](../packages/providers/src/multix-routes.ts)).
+Sume jobs are submitted with an idempotency key and collected with `status
+--wait --download`, so a retry resumes the paid job by its id. Stages pass the
+provider a job journal stored on the stage row (`stages.media_jobs`), written
+right after each submission: a worker that dies mid-stage leaves the upstream
+job ids behind, and the next attempt, on any worker, collects those jobs
+instead of submitting again. Atlas Cloud has no idempotency key, so the adapter
+journals a `submitting` record right before `atlas run`. If the worker dies
+before the job id is journaled, a retry with the same idempotency key is
+refused (non-retryable) instead of paying twice for one upscale (about $0.01):
+find the prediction in `multix history` or the Atlas Cloud console and resume
+it by job id. Only errors that prove Atlas never accepted the run (invalid
+request, missing key) release the key for a retry. Calls made outside a
+workflow stage fall back to an in-process journal, which a restart loses.
+
+Pack stages (`marketing-video`, `motion-graphic`) get the media provider, the
+storage, the renderer and the hard QA gate from the worker
+([`pack-services.ts`](../apps/worker/src/pack-services.ts)). Without
+`MULTIX_BIN` their paid stages fail with `UNAVAILABLE`; without the QA
+toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
+is never published.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
@@ -136,7 +183,9 @@ resources prefixed `studix-`.
 ### CI deploy
 
 `.github/workflows/deploy.yml`: a push to `dev` deploys dev, a push to `main`
-deploys production. It runs `ci.yml` first and deploys only if it passes, then
+deploys production. It runs `ci.yml` first and deploys only if it passes (during
+the bootstrap stage `dev` skips CI, on pushes and on pull requests into it, and
+deploys directly; `main` stays gated), then
 `deploy/tose/deploy.ts` triggers a TOSE build of the app project, waits until it
 is live (the app migrates on start), does the same for the worker, and checks
 `/healthz` and `/readyz` on the public hostname.
@@ -194,6 +243,12 @@ Puppeteer closes Chrome on SIGTERM) is released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.
+
+## Approvals migration
+
+Migration `0003` adds a unique index on pending approvals. Roll it out with the old app instances stopped
+or drained first: an old instance still inserts approvals without conflict handling and would hit a unique
+violation on a duplicate request (or make the index build fail if it commits a duplicate mid-migration).
 
 ## Smoke test
 

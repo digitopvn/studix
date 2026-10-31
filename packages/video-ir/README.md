@@ -15,6 +15,32 @@ Renderer-neutral video intermediate representation (VideoIR) and the creative in
 - A stored IR is immutable. Edits are `VideoIRPatch` (RFC 6902 subset) applied with `applyPatch`,
   which returns a new validated document and leaves the input untouched; each result is stored as a new
   project version.
+- Shot types: `title`, `text`, `image`, `video`, `logo`, `cta` and `composition`. A composition shot
+  points at a `code` asset (a GL scene or HyperFrames composition) with `assetId`, an optional `entry`
+  and flat `params`. The asset must carry `assetVersionId`, so the IR stays declarative and a render is
+  reproducible; which renderer can draw it is the renderer's `supports()` decision.
+- `audio` tracks have a `kind` (`dialogue`, `voiceover`, `music`, `sfx`), placement (`startMs`,
+  `durationMs`, `trimStartMs`), `volume` (0..1), `gainDb` (-60..12, applied on top of volume) and
+  `fadeInMs` / `fadeOutMs` (both must fit inside `durationMs`). See `schemas/audio-track.schema.json`.
+
+## Storyboard
+
+`Storyboard` is the pre-production contract a genre pack fills before any media is generated:
+`characters` (with reference assets and voice), `assets`, `beats` (with dialogue), `scenes` of
+`shots` (`kind`, `description`, `durationMs`, `camera`, `beatIds`, `characterIds`, `assetIds`,
+`dependsOn` for continuity) and an `approval` (`draft`, `in_review`, `approved`, `changes_requested`)
+on the storyboard, every scene and every shot. `validateStoryboard` checks references, duplicate ids
+and continuity cycles; `applyStoryboardPatch` edits it like a VideoIR; `pendingApprovals` lists what
+still needs review.
+
+## Dependency digests and invalidation
+
+`videoIrNodes(ir)` and `storyboardNodes(sb)` describe a document as a dependency graph (format, brand,
+assets, characters, beats, shots, scenes, document). `nodeDigests(nodes)` gives each node a Merkle
+digest of its canonical JSON plus the digests of its dependencies, so a node's digest changes exactly
+when it or something it depends on changes. `invalidatedNodes(before, after)` lists the nodes a patch
+invalidated; everything else can reuse work cached under its unchanged digest. Approval status is not
+part of a storyboard digest: approving a shot invalidates nothing.
 
 ## JSON Schema
 

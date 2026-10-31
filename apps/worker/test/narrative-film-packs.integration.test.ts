@@ -1,0 +1,430 @@
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  type ClaudeAgentEvent,
+  type ClaudeSessionRequest,
+  createClaudeAgentRuntime,
+  createFakeClaudeTransport,
+} from "@studix/agent-runtime";
+import { createJobBudgetPolicy, createUsageLedger, USAGE_KINDS } from "@studix/billing";
+import {
+  createDefaultApprovalPolicy,
+  type MediaGenerationRequest,
+  type RendererAdapter,
+  type StorageAdapter,
+  storyboardFromVideoIR,
+  storyboardStatus,
+  type TenantContext,
+} from "@studix/core";
+import { withTestDatabase } from "@studix/database/testing";
+import { FakeMediaProvider } from "@studix/providers";
+import { FILM_SCENE_MIME, parseFilmScenePackage } from "@studix/renderers";
+import { createLogger, StudixError } from "@studix/shared";
+import { filmOf, filmStageNames, packPipelines, packRegistry } from "@studix/skills";
+import type { VideoIR } from "@studix/video-ir";
+import {
+  createJobExecutor,
+  createVideoCreateWorkflow,
+  createWorkerJobQueue,
+  type QaExpectation,
+  type QaGate,
+} from "@studix/workflow";
+import { describe, expect, it } from "vitest";
+
+/**
+ * Both narrative packs end to end on the Postgres queue with fake providers: the scope and storyboard agents
+ * (a fake Claude transport), G0 and G1 signed by a test reviewer on the approval mechanism, fake media, and
+ * then, on an approved storyboard, dialogue, motion, lip-sync, score, continuity, render, QA and upload.
+ */
+const db = withTestDatabase();
+const logger = createLogger({}, { level: "error", write: () => {} });
+const actor = { type: "user", id: "usr_1" } as const;
+const reviewer = { type: "user" as const, id: "usr_reviewer" };
+
+const scope = JSON.parse(
+  readFileSync(
+    new URL("../../../packages/skills/test/fixtures/anime-scope-vi.json", import.meta.url),
+    "utf8",
+  ),
+);
+const shotIds: string[] = scope.scenes.flatMap((s: { shots: { id: string }[] }) => s.shots.map((x) => x.id));
+
+/** The scope agent answers with the fixture, the storyboard agent with one panel per shot. */
+function agentTranscript(request: ClaudeSessionRequest): ClaudeAgentEvent[] {
+  const usage: ClaudeAgentEvent = {
+    type: "usage",
+    turns: 1,
+    inputTokens: 400,
+    outputTokens: 900,
+    costUsd: 0.02,
+  };
+  if ("brief" in request.input) return [usage, { type: "result", output: { scope } }];
+  const boards = shotIds.map((shotId, i) => ({
+    shotId,
+    frame: `Panel ${i + 1}: staging as the continuity state says`,
+    motion: `Panel ${i + 1} motion`,
+    ...(i === 0 ? { focus: [0.4, 0.5] } : {}),
+  }));
+  return [usage, { type: "result", output: { boards } }];
+}
+
+function memoryStorage(): StorageAdapter {
+  const objects = new Map<string, Buffer>();
+  const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+  return {
+    async put(_ctx, key, body, opts) {
+      if (!("filePath" in body)) throw new Error("memory storage takes files only");
+      const bytes = await readFile(body.filePath);
+      objects.set(key, bytes);
+      return { key, bytes: bytes.length, sha256: sha(bytes), contentType: opts.contentType };
+    },
+    get: async () => {
+      throw new Error("not used");
+    },
+    async download(_ctx, key, filePath) {
+      const bytes = objects.get(key);
+      if (!bytes) throw new StudixError("NOT_FOUND", `no object ${key}`);
+      await writeFile(filePath, bytes);
+      return { sha256: sha(bytes), bytes: bytes.length };
+    },
+    head: async () => undefined,
+    signedUrl: async (_ctx, key) => `https://storage.test/${key}`,
+    delete: async () => {},
+  };
+}
+
+function createWorld() {
+  const { repos } = db.current;
+  const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+  const workRoot = mkdtempSync(join(tmpdir(), "studix-film-packs-"));
+  const storage = memoryStorage();
+  const rendered: VideoIR[] = [];
+  const renderer: RendererAdapter = {
+    id: "hyperframes",
+    supports: () => ({ supported: true, reasons: [] }),
+    async render(ir, opts) {
+      rendered.push(ir);
+      for (const asset of ir.assets) expect(opts.assetFiles[asset.id], asset.id).toBeDefined();
+      // Every film-engine shot is a valid, pinned film scene over a downloaded keyframe.
+      for (const asset of ir.assets.filter((a) => a.mime === FILM_SCENE_MIME)) {
+        expect(asset.assetVersionId).toMatch(/^asv_/);
+        parseFilmScenePackage(await readFile(opts.assetFiles[asset.id]!, "utf8"), asset.id);
+      }
+      const filePath = join(opts.workDir, "film.mp4");
+      await writeFile(filePath, `mp4:${ir.title}`);
+      return {
+        filePath,
+        mime: "video/mp4",
+        probe: {
+          durationMs: ir.format.durationMs,
+          width: 1920,
+          height: 1080,
+          fps: 24,
+          videoCodec: "h264",
+          bytes: 0,
+        },
+      };
+    },
+  };
+  const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
+  const requests: MediaGenerationRequest[] = [];
+  const generate = media.generate.bind(media);
+  media.generate = async (ctx, request) => {
+    requests.push(request);
+    return generate(ctx, request);
+  };
+  const qaCalls: QaExpectation[] = [];
+  const qa: QaGate = {
+    async assertPasses(_file, expectation) {
+      qaCalls.push(expectation);
+      return { pass: true };
+    },
+  };
+  const transport = createFakeClaudeTransport(agentTranscript);
+  const runtime = createClaudeAgentRuntime({
+    transport,
+    model: "claude-test",
+    killAfterMs: 20,
+    closeTimeoutMs: 100,
+    credentials: { resolve: async () => "sk-ant-api03-film-test-key-000000000000" },
+  });
+  const executor = createJobExecutor({
+    queue,
+    jobs: repos.jobs,
+    approvals: repos.approvals,
+    approvalPolicy: createDefaultApprovalPolicy({ costThresholdCents: 1000 }),
+    approvalTtlMs: 3_600_000,
+    billing: createJobBudgetPolicy(),
+    ledger: createUsageLedger(repos.usage),
+    stageCache: repos.stageCache,
+    storyboardStatus: (ctx, projectId) => storyboardStatus(repos, ctx, projectId),
+    agents: { handoffs: repos.agentHandoffs, runtimeFor: () => runtime },
+    clock: { now: () => new Date() },
+    logger,
+    heartbeatIntervalMs: 50,
+    services: { media, storage, renderer, qa, workRoot },
+    workflows: [
+      createVideoCreateWorkflow({
+        planner: async () => {
+          throw new Error("narrative packs never call the default planner");
+        },
+        renderer,
+        storage,
+        projects: repos.projects,
+        renders: repos.renders,
+        workRoot,
+        pipelines: packPipelines(packRegistry),
+      }),
+    ],
+  });
+
+  return {
+    repos,
+    queue,
+    requests,
+    rendered,
+    qaCalls,
+    transport,
+    async runOnce(jobId: string) {
+      const job = await queue.claim("worker-film");
+      expect(job?.id).toBe(jobId);
+      return executor.execute(job!, "worker-film", new AbortController().signal);
+    },
+  };
+}
+
+async function newFilm(slug: string, pack: string) {
+  const { repos } = db.current;
+  const { organization, workspace } = await repos.directory.provisionWorkspace({
+    organization: { name: slug, slug },
+    workspace: { name: "Main", slug: "main" },
+  });
+  const ctx: TenantContext = {
+    organizationId: organization.id,
+    workspaceId: workspace.id,
+    actor: { type: "user", id: "usr_1", role: "owner" },
+  };
+  const project = await repos.projects.create(ctx, {
+    title: "Hẹn trên sân thượng",
+    status: "draft",
+    brief: {
+      prompt: "Một cảnh anime 15 giây: hai người bạn hẹn nhau xem pháo hoa trên sân thượng, có thoại",
+      language: "vi",
+      aspectRatio: "16:9",
+      durationMs: 15_000,
+    },
+    workflowTemplate: pack,
+    createdBy: actor,
+  });
+  return { ctx, project };
+}
+
+async function enqueue(
+  ctx: TenantContext,
+  projectId: string,
+  pack: string,
+  extra: Record<string, unknown> = {},
+) {
+  const { job } = await db.current.repos.queue.enqueue(ctx, {
+    kind: "video.create",
+    projectId,
+    payload: { projectId, renderPreset: "preview", workflowTemplate: pack, ...extra },
+    createdBy: actor,
+    budgetCents: 500,
+    maxAttempts: 2,
+  });
+  return job;
+}
+
+async function signGate(
+  world: ReturnType<typeof createWorld>,
+  ctx: TenantContext,
+  jobId: string,
+  gate: string,
+) {
+  const approval = await world.repos.approvals.findLatest(
+    ctx,
+    { type: "job", id: jobId },
+    "creative.gate",
+    `gate:${gate}`,
+  );
+  expect(approval).toMatchObject({ status: "pending" });
+  await world.repos.approvals.decide(ctx, approval!.id, {
+    status: "approved",
+    decidedBy: reviewer,
+    decidedAt: new Date(),
+  });
+  expect(await world.queue.resumeDecidedApprovals()).toBeGreaterThanOrEqual(1);
+  return approval!;
+}
+
+async function currentIr(ctx: TenantContext, projectId: string) {
+  const project = await db.current.repos.projects.get(ctx, projectId);
+  const version = await db.current.repos.projects.getVersion(ctx, project!.currentVersionId!);
+  return { project: project!, version: version!, ir: version!.ir as VideoIR };
+}
+
+/** What a person does on the dashboard: approve the storyboard of the current version. */
+async function approveStoryboard(ctx: TenantContext, projectId: string) {
+  const { version, ir } = await currentIr(ctx, projectId);
+  const storyboard = storyboardFromVideoIR(ir);
+  await db.current.repos.storyboards.append(ctx, {
+    projectId,
+    revision: 1,
+    versionId: version.id,
+    storyboard: { ...storyboard, approval: { status: "approved", reviewer: reviewer.id } },
+    createdBy: reviewer,
+  });
+}
+
+describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake providers)", (pack) => {
+  const n = filmStageNames(pack);
+
+  it("stops at G0 and G1 for a person, then storyboards on the approved sheets, then renders on an approved storyboard", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-${pack}`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+
+    // G0: the scope agent wrote the bible and beat sheet; the board is the project's current version. No media.
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    expect(world.requests).toHaveLength(0);
+    const g0 = await currentIr(ctx, project.id);
+    expect(g0.project.status).toBe("in_review");
+    expect(g0.ir.scenes[0]?.id).toBe("board-bible");
+    expect(filmOf(g0.ir).pack).toBe(pack);
+    expect(world.transport.requests[0]?.instructions).toContain("Characters, designs and names are original");
+    const g0Approval = await signGate(world, ctx, job.id, "G0");
+    expect(g0Approval.reason).toMatch(/^G0: Approve the/);
+
+    // G1: one sheet per character and a frame per set, as candidates on the design board.
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    expect(world.requests.map((r) => r.kind)).toEqual(["image", "image", "image"]);
+    const g1 = await currentIr(ctx, project.id);
+    expect(g1.version.id).not.toBe(g0.version.id);
+    expect(g1.ir.scenes[0]?.shots.map((s) => s.id)).toEqual([
+      "design-mai",
+      "design-tun",
+      "design-san-thuong",
+    ]);
+    expect(filmOf(g1.ir).production.characters.flatMap((c) => c.references.map((r) => r.status))).toEqual([
+      "candidate",
+      "candidate",
+    ]);
+    await signGate(world, ctx, job.id, "G1");
+
+    // Storyboard: the sheets turn canonical and condition every keyframe with a character in it.
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+    const keyframes = world.requests.slice(3);
+    expect(keyframes.map((r) => r.idempotencyKey.split(":").at(-1))).toEqual(
+      shotIds.map((id) => `${id}-key`),
+    );
+    expect(keyframes.map((r) => typeof r.params?.image === "string")).toEqual([
+      false,
+      true,
+      true,
+      true,
+      false,
+    ]);
+    const board = await currentIr(ctx, project.id);
+    expect(board.project.status).toBe("in_review");
+    expect(board.ir.scenes[0]?.shots.map((s) => [s.id, s.type])).toEqual(shotIds.map((id) => [id, "image"]));
+    const film = filmOf(board.ir);
+    expect(film.production.characters.flatMap((c) => c.references.map((r) => r.status))).toEqual([
+      "canonical",
+      "canonical",
+    ]);
+    expect(film.production.shots.find((s) => s.shotId === "s4")?.conditioningRefs).toEqual(["mai-sheet-v1"]);
+    expect(film.boards).toHaveLength(5);
+    const stages = (await world.repos.jobs.listStages(ctx, job.id)).map((s) => s.name);
+    expect(stages).toEqual(
+      expect.arrayContaining([n.scope, n.bible, n.g0, n.designs, n.g1, n.storyboard, n.keyframes]),
+    );
+
+    // Without the storyboard approval nothing paid runs.
+    world.requests.length = 0;
+    const early = await enqueue(ctx, project.id, pack, { versionId: board.version.id });
+    expect(await world.runOnce(early.id)).toBe("failed");
+    expect(await world.repos.jobs.get(ctx, early.id)).toMatchObject({ error: { code: "APPROVAL_REQUIRED" } });
+    expect(world.requests).toHaveLength(0);
+
+    // Approved: dialogue first, then motion, lip-sync on the master lines, score and SFX, render, QA, upload.
+    await approveStoryboard(ctx, project.id);
+    const render = await enqueue(ctx, project.id, pack, { versionId: board.version.id });
+    expect(await world.runOnce(render.id)).toBe("succeeded");
+    const kinds = world.requests.map((r) => r.kind);
+    expect(kinds.filter((k) => k === "voice")).toHaveLength(3);
+    const videos = world.requests.filter((r) => r.kind === "video");
+    const clips = videos.filter((r) => r.params?.audio === undefined);
+    const syncs = videos.filter((r) => r.params?.audio !== undefined);
+    expect(clips.map((r) => r.params?.resolution)).toEqual(["480p", "480p", "480p"]);
+    expect(clips.every((r) => typeof r.params?.image === "string" && r.params.generateAudio === false)).toBe(
+      true,
+    );
+    expect(syncs).toHaveLength(2);
+    expect(
+      syncs.every((r) => typeof r.params?.video === "string" && typeof r.params.audio === "string"),
+    ).toBe(true);
+    expect(kinds.indexOf("voice")).toBeLessThan(kinds.indexOf("video"));
+    expect(kinds.filter((k) => k === "music")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "sfx")).toHaveLength(4);
+
+    expect(world.rendered).toHaveLength(1);
+    const cut = world.rendered[0]!;
+    expect(cut.format).toMatchObject({ durationMs: 15_000, fps: 24 });
+    expect(cut.scenes[0]?.shots.map((s) => [s.id, s.type])).toEqual([
+      ["s1", "composition"],
+      ["s2", "video"],
+      ["s3", "video"],
+      ["s4", "video"],
+      ["s5", "composition"],
+    ]);
+    const s2 = cut.scenes[0]?.shots[1];
+    expect(s2?.type === "video" && s2.assetId).toBe("s2-sync");
+    const buses = (cut.audio ?? []).map((t) => t.kind).sort();
+    expect(buses).toEqual(["dialogue", "dialogue", "dialogue", "music", "sfx", "sfx", "sfx", "sfx"]);
+    expect((cut.audio ?? []).every((t) => t.startMs + (t.durationMs ?? 0) <= 15_000)).toBe(true);
+    // A lip-synced line starts with its shot; captions follow the recorded lines.
+    expect(cut.audio?.find((t) => t.assetId === "s2-l1-vo")?.startMs).toBe(2_000);
+    expect(cut.captions?.cues.map((c) => c.text)).toEqual([
+      "Cậu lại đến muộn rồi.",
+      "Xin lỗi, tàu điện bị trễ.",
+      "Vừa kịp lúc.",
+    ]);
+    const master = filmOf(cut).production.dialogue;
+    expect(master.every((c) => c.status === "master" && c.alignment && c.audioAssetId)).toBe(true);
+
+    expect(world.qaCalls).toEqual([
+      expect.objectContaining({ requireAudio: true, durationMs: 15_000, fps: 24 }),
+    ]);
+    const published = await world.repos.renders.listByProject(ctx, project.id);
+    expect(published.items.filter((r) => r.jobId === render.id)).toHaveLength(1);
+    const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
+    expect(new Set(usage.map((u) => u.dedupeKey)).size).toBe(usage.length);
+    expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(world.requests.length);
+  });
+
+  it("fails the job and spends nothing on designs when the reviewer rejects G0", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-${pack}-reject`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    const g0 = await world.repos.approvals.findLatest(
+      ctx,
+      { type: "job", id: job.id },
+      "creative.gate",
+      "gate:G0",
+    );
+    await world.repos.approvals.decide(ctx, g0!.id, {
+      status: "rejected",
+      decidedBy: reviewer,
+      decidedAt: new Date(),
+    });
+    expect(await world.queue.resumeDecidedApprovals()).toBeGreaterThanOrEqual(1);
+    expect(await world.runOnce(job.id)).toBe("failed");
+    expect(await world.repos.jobs.get(ctx, job.id)).toMatchObject({ error: { code: "FORBIDDEN" } });
+    expect(world.requests).toHaveLength(0);
+  });
+});

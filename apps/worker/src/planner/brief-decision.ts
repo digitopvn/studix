@@ -73,9 +73,12 @@ export async function decideBriefDraft(
     idempotencyKey: `${ctx.jobId}:${VIDEO_BRIEF_DECISION}`,
     signal,
     jobId: ctx.jobId,
+    stageId: "plan",
   });
   return {
     draft: result.output,
+    // On a replay this is still the original call's cost: the ledger dedupes by execution id, so a first
+    // run that failed before recording usage is billed exactly once.
     usage: {
       provider: result.providerId,
       model: result.model,
@@ -84,6 +87,7 @@ export async function decideBriefDraft(
       outputTokens: result.usage.outputTokens,
       latencyMs: result.latencyMs,
       operation: VIDEO_BRIEF_DECISION,
+      ...(result.providerExecutionId ? { providerExecutionId: result.providerExecutionId } : {}),
     },
     ...(result.fallbackReason ? { fallbackReason: result.fallbackReason } : {}),
   };

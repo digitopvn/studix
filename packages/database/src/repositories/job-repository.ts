@@ -1,7 +1,7 @@
 import type { Job, JobPatch, JobQueue, JobRepository, Stage, TenantContext } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
 import { asc, desc, eq, inArray } from "drizzle-orm";
-import type { StudixDb } from "../client.ts";
+import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
 
@@ -30,6 +30,7 @@ export function toJob(row: JobRow): Job {
     idempotencyKey: opt(row.idempotencyKey),
     cancelRequested: row.cancelRequested,
     deadlineAt: opt(row.deadlineAt),
+    deadlineRemainingMs: opt(row.deadlineRemainingMs),
     budgetCents: opt(row.budgetCents),
     spentCents: row.spentCents,
     createdBy: actorFrom(row.createdByType, row.createdById),
@@ -51,10 +52,47 @@ function toStage(row: StageRow): Stage {
     status: row.status,
     output: opt(row.output),
     error: opt(row.error),
+    mediaJobs: opt(row.mediaJobs),
     startedAt: opt(row.startedAt),
     finishedAt: opt(row.finishedAt),
     createdAt: row.createdAt,
   };
+}
+
+/** Insert or update the stage row (jobId, name, attempt); the caller has already checked the job exists. */
+export async function upsertStageRow(
+  db: DbExecutor,
+  clock: Clock,
+  ctx: TenantContext,
+  input: Parameters<JobRepository["upsertStage"]>[1],
+): Promise<Stage> {
+  const values = {
+    status: input.status,
+    output: input.output ?? null,
+    error: input.error ?? null,
+    startedAt: input.startedAt ?? null,
+    finishedAt: input.finishedAt ?? null,
+    // Omitted means "keep": progress and outcome writes must not erase the journal of submitted jobs.
+    ...(input.mediaJobs !== undefined ? { mediaJobs: input.mediaJobs } : {}),
+  };
+  const rows = await db
+    .insert(stages)
+    .values({
+      id: newId("stg"),
+      ...tenantValues(ctx),
+      jobId: input.jobId,
+      name: input.name,
+      attempt: input.attempt,
+      ...values,
+      createdAt: clock.now(),
+    })
+    .onConflictDoUpdate({
+      target: [stages.jobId, stages.name, stages.attempt],
+      set: values,
+      setWhere: scoped(stages, ctx),
+    })
+    .returning();
+  return toStage(first(rows, "stage"));
 }
 
 /**
@@ -139,31 +177,7 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
     async upsertStage(ctx, input) {
       if (!(await getRow(ctx, input.jobId)))
         throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
-      const values = {
-        status: input.status,
-        output: input.output ?? null,
-        error: input.error ?? null,
-        startedAt: input.startedAt ?? null,
-        finishedAt: input.finishedAt ?? null,
-      };
-      const rows = await db
-        .insert(stages)
-        .values({
-          id: newId("stg"),
-          ...tenantValues(ctx),
-          jobId: input.jobId,
-          name: input.name,
-          attempt: input.attempt,
-          ...values,
-          createdAt: clock.now(),
-        })
-        .onConflictDoUpdate({
-          target: [stages.jobId, stages.name, stages.attempt],
-          set: values,
-          setWhere: scoped(stages, ctx),
-        })
-        .returning();
-      return toStage(first(rows, "stage"));
+      return upsertStageRow(db, clock, ctx, input);
     },
 
     async listStages(ctx, jobId) {
@@ -192,7 +206,13 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           maxAttempts: input.maxAttempts ?? 3,
           runAfter: input.runAfter ?? now,
           idempotencyKey: input.idempotencyKey ?? null,
-          deadlineAt: input.deadlineAt ?? null,
+          // A job born at a gate has no active execution yet: its deadline starts when it is first claimed.
+          ...(input.initialStatus === "waiting_approval" && input.deadlineAt
+            ? {
+                deadlineAt: null,
+                deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - now.getTime()),
+              }
+            : { deadlineAt: input.deadlineAt ?? null }),
           budgetCents: input.budgetCents ?? null,
           createdByType: input.createdBy.type,
           createdById: input.createdBy.id,
@@ -223,7 +243,14 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           leaseExpiresAt: null,
           error: { code: "CANCELLED", message: reason ?? "cancelled", retryable: false },
         })
-        .where(scoped(jobs, ctx, eq(jobs.id, jobId), inArray(jobs.status, ["queued", "waiting_approval"])))
+        .where(
+          scoped(
+            jobs,
+            ctx,
+            eq(jobs.id, jobId),
+            inArray(jobs.status, ["queued", "waiting_approval", "waiting_host"]),
+          ),
+        )
         .returning();
       if (stopped[0]) return toJob(stopped[0]);
       const flagged = await db

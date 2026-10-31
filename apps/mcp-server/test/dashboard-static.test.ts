@@ -67,4 +67,22 @@ describe("dashboard static hosting", () => {
     const res = await fetch(`${missing.base}/`);
     expect(res.status).toBe(503);
   });
+
+  it("serves the shell when the build sits under a dot directory", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "studix-dot-"));
+    const hiddenDist = join(parent, ".hidden", "dist");
+    mkdirSync(hiddenDist, { recursive: true });
+    writeFileSync(join(hiddenDist, "index.html"), "<!doctype html><div id=root></div>");
+    const hidden = await serve(hiddenDist);
+    try {
+      const root = await fetch(`${hidden.base}/`);
+      expect(root.status).toBe(200);
+      expect(await root.text()).toContain("id=root");
+      const deep = await fetch(`${hidden.base}/projects/p1/review`, { headers: { accept: "text/html" } });
+      expect(deep.status).toBe(200);
+    } finally {
+      hidden.server.close();
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
 });

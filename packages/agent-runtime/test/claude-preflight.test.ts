@@ -18,8 +18,11 @@ function fakeBinary(mode = 0o755): string {
   return path;
 }
 
+// The fake binary is a shell script with POSIX mode bits; Windows can neither run it nor honour the bits.
+const posix = process.platform !== "win32";
+
 describe("preflightClaudeRuntime", () => {
-  it("accepts a binary that launches and reports its version", async () => {
+  it.runIf(posix)("accepts a binary that launches and reports its version", async () => {
     const executable = fakeBinary();
     expect(await preflightClaudeRuntime({ pathToClaudeCodeExecutable: executable })).toEqual({
       ok: true,
@@ -33,7 +36,7 @@ describe("preflightClaudeRuntime", () => {
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("does not exist") });
   });
 
-  it("rejects a file that is not executable", async () => {
+  it.runIf(posix)("rejects a file that is not executable", async () => {
     const result = await preflightClaudeRuntime({ pathToClaudeCodeExecutable: fakeBinary(0o644) });
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("not executable") });
   });

@@ -1,9 +1,20 @@
-import { assertPermission, JOB_STATUSES, PlannerSelection, PROJECT_STATUSES } from "@studix/core";
+import {
+  assertPermission,
+  FeedbackInput,
+  JOB_STATUSES,
+  PlannerSelection,
+  PROJECT_STATUSES,
+  RenderVersionInput,
+  resolveWorkflowPack,
+  StoryboardDecisionInput,
+  WorkflowTemplateId,
+} from "@studix/core";
+import { packRegistry } from "@studix/skills";
 import { AspectRatio, LanguageTag } from "@studix/video-ir";
 import { Router } from "express";
 import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
-import { type ArtifactUrlDeps, playbackForRender } from "../artifact-urls.ts";
+import { type ArtifactUrlDeps, isPlayable, playbackForRender, signRender } from "../artifact-urls.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
@@ -29,12 +40,19 @@ const CreateVideoBody = z
       .regex(/^[A-Za-z0-9._:-]{1,200}$/)
       .optional(),
     planner: PlannerSelection.optional(),
+    workflowTemplate: WorkflowTemplateId.optional(),
   })
   .strict();
 
 const DecisionBody = z
   .object({ decision: z.enum(["approved", "rejected"]), comment: z.string().trim().max(2000).optional() })
   .strict();
+
+/** The JSON body with the path's project id; a body naming another project cannot redirect the call. */
+function withProject(body: unknown, projectId: string): unknown {
+  const fields = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  return { ...fields, projectId };
+}
 
 /**
  * Dashboard JSON API over StudioService and tenant-scoped repositories. Every handler runs in the session's
@@ -74,6 +92,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
   router.post("/projects", async (req, res) => {
     const { ctx } = sessionOf(res);
     const body = parseBody(CreateVideoBody, req.body, "video request");
+    const pack = resolveWorkflowPack(packRegistry, body.workflowTemplate);
     await assertPlannerSelection(deps, ctx, body.planner);
     const result = await deps.studio.createVideoProject(ctx, {
       brief: {
@@ -86,6 +105,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       budgetCents: body.budgetCents,
       idempotencyKey: body.idempotencyKey,
       planner: body.planner,
+      workflowTemplate: pack.id,
     });
     await deps.activity?.record(ctx, {
       name: "dashboard.create_video",
@@ -99,6 +119,49 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     const { ctx } = sessionOf(res);
     const details = await deps.studio.getProject(ctx, idParam(req, "projectId"));
     res.json(await projectView(artifacts, ctx, details, { includeIr: req.query.includeIr === "true" }));
+  });
+
+  router.get("/projects/:projectId/review", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    const review = await deps.studio.getProjectReview(ctx, idParam(req, "projectId"));
+    const renders = await Promise.all(
+      review.renders.map(async (render) => {
+        const { spec: _spec, ...rest } = render;
+        const playback = isPlayable(render)
+          ? await signRender(artifacts, ctx, render).catch(() => undefined)
+          : undefined;
+        return { ...rest, ...(playback ? { url: playback.url, urlExpiresAt: playback.expiresAt } : {}) };
+      }),
+    );
+    res.set("Cache-Control", "no-store").json({ ...review, renders });
+  });
+
+  router.post("/projects/:projectId/storyboard/decision", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    const input = parseBody(
+      StoryboardDecisionInput,
+      withProject(req.body, idParam(req, "projectId")),
+      "storyboard decision",
+    );
+    res.json(await deps.studio.decideStoryboard(ctx, input));
+  });
+
+  router.post("/projects/:projectId/feedback", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    const input = parseBody(FeedbackInput, withProject(req.body, idParam(req, "projectId")), "feedback");
+    const result = await deps.studio.submitFeedback(ctx, input);
+    res.status(result.replayed ? 200 : 201).json(result);
+  });
+
+  router.post("/projects/:projectId/render", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    const input = parseBody(
+      RenderVersionInput,
+      withProject(req.body, idParam(req, "projectId")),
+      "render request",
+    );
+    const result = await deps.studio.renderVersion(ctx, input);
+    res.status(result.replayed ? 200 : 201).json(result);
   });
 
   router.get("/jobs", async (req, res) => {
