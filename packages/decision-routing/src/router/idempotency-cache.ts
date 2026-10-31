@@ -49,7 +49,8 @@ export class IdempotencyCache {
     this.#maxEntries = Math.max(1, Math.floor(options.maxEntries ?? 1000));
   }
 
-  run<T>(key: string, fingerprint: string, work: () => Promise<T>): Promise<T> {
+  /** `replay` maps the shared value for every caller that did not run `work` itself. */
+  run<T>(key: string, fingerprint: string, work: () => Promise<T>, replay: (value: T) => T): Promise<T> {
     const now = this.#clock.now().getTime();
     const existing = this.#entries.get(key);
     if (existing && (existing.expiresAt === undefined || existing.expiresAt > now)) {
@@ -61,7 +62,7 @@ export class IdempotencyCache {
           }),
         );
       }
-      return existing.promise as Promise<T>;
+      return (existing.promise as Promise<T>).then(replay);
     }
     this.#entries.delete(key);
     const entry: Entry = { fingerprint, promise: Promise.resolve() };

@@ -1,6 +1,12 @@
 import { testTenant } from "@studix/core/testing";
 import { describe, expect, it } from "vitest";
-import { createJobBudgetPolicy, toBudgetCents, USAGE_KINDS, usageDedupeKey } from "../src/index.ts";
+import {
+  createJobBudgetPolicy,
+  executionUsageDedupeKey,
+  toBudgetCents,
+  USAGE_KINDS,
+  usageDedupeKey,
+} from "../src/index.ts";
 import { createInMemoryUsageLedger } from "../src/testing.ts";
 
 const usage = (key: string, costCents: number, jobId = "job_1") => ({
@@ -93,5 +99,13 @@ describe("job budget policy", () => {
     await expect(
       policy.authorizeSpend(ctx, { purpose: "render", estimatedCostCents: 1, budgetCents: -5 }),
     ).resolves.toMatchObject({ allowed: false });
+  });
+});
+
+describe("executionUsageDedupeKey", () => {
+  it("is the same for every attempt that reports one provider execution", () => {
+    const key = executionUsageDedupeKey({ jobId: "job_1", stage: "plan", executionId: "pex_1" });
+    expect(key).toBe("job_1:plan:exec:pex_1");
+    expect(() => executionUsageDedupeKey({ jobId: "job_1", stage: "plan", executionId: "pex 1" })).toThrow();
   });
 });

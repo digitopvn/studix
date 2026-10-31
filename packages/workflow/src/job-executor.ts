@@ -28,12 +28,23 @@ export interface JobExecutor {
    * `draining` marks that the process is stopping: an attempt that fails after it fired is released
    * too, because the failure is usually collateral (e.g. Puppeteer closes Chrome on SIGTERM).
    */
-  execute(job: Job, workerId: string, shutdown: AbortSignal, draining?: AbortSignal): Promise<JobOutcome>;
+  execute(
+    job: Job,
+    workerId: string,
+    shutdown: AbortSignal,
+    draining?: AbortSignal,
+    /** Epoch ms on the executor clock just before the claim was sent; defaults to now (later, so less safe). */
+    leaseRequestedAt?: number,
+  ): Promise<JobOutcome>;
 }
 
 /** setTimeout overflows above 2^31-1 ms; longer deadlines are re-checked at claim time. */
 const MAX_TIMER_MS = 2_147_000_000;
-/** Stop this long before the lease lapses when it cannot be renewed (capped at one heartbeat interval). */
+/**
+ * Stop this long before the lease lapses when it cannot be renewed (capped at one heartbeat interval).
+ * The lease is measured on the worker's own clock from the moment each renewal was requested, so this
+ * only has to cover request latency and timer jitter, not clock skew against the database.
+ */
 const LEASE_SAFETY_MARGIN_MS = 5_000;
 /** Delay before retrying a failed heartbeat (capped at a fifth of the heartbeat interval). */
 const HEARTBEAT_RETRY_MS = 1_000;
@@ -57,12 +68,19 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
   if (!Number.isInteger(deps.heartbeatIntervalMs) || deps.heartbeatIntervalMs < 10) {
     throw new RangeError("heartbeatIntervalMs must be an integer >= 10");
   }
+  const { queue, clock, logger } = deps;
+  const safetyMarginMs = Math.min(deps.heartbeatIntervalMs, LEASE_SAFETY_MARGIN_MS);
+  // The first renewal has to be sent before the watchdog fires; the remaining headroom absorbs its latency.
+  if (deps.heartbeatIntervalMs + safetyMarginMs >= queue.leaseMs) {
+    throw new RangeError(
+      `heartbeatIntervalMs (${deps.heartbeatIntervalMs}) plus the ${safetyMarginMs}ms safety margin must be shorter than the lease (${queue.leaseMs}ms)`,
+    );
+  }
   const registry = new Map(deps.workflows.map((w) => [w.kind, w]));
   const backoff = deps.retryBackoff ?? DEFAULT_RETRY_BACKOFF;
-  const { queue, clock, logger } = deps;
 
   return {
-    async execute(job, workerId, shutdown, draining) {
+    async execute(job, workerId, shutdown, draining, leaseRequestedAt) {
       const log = logger.child({ jobId: job.id, kind: job.kind, attempt: job.attempts, workerId });
       const ctx: TenantContext = {
         organizationId: job.organizationId,
@@ -106,8 +124,11 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       // Renew the lease every interval; after a failed beat retry sooner, so one database blip costs
       // nothing. A separate watchdog stops the attempt shortly before the lease would lapse (all beats
       // failing or hung): past that point another worker may claim the job and both would run it.
-      let leaseExpiresAt = job.leaseExpiresAt?.getTime();
-      const safetyMarginMs = Math.min(deps.heartbeatIntervalMs, LEASE_SAFETY_MARGIN_MS);
+      // Lease deadline on this worker's clock: when the request that granted the lease was sent, plus the
+      // lease length. The database granted it no earlier than that, so the deadline is never too late, and
+      // no timestamp from the database is compared with the local clock. For the first lease that moment
+      // is the claim request; callers that cannot supply it fall back to now, which is later.
+      let leaseDeadline = (leaseRequestedAt ?? clock.now().getTime()) + queue.leaseMs;
       const retryMs = Math.min(Math.ceil(deps.heartbeatIntervalMs / 5), HEARTBEAT_RETRY_MS);
       let watchdog: ReturnType<typeof setTimeout> | undefined;
       // Set once the attempt settles: a beat still in flight then must not schedule more timers.
@@ -115,8 +136,7 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       const armWatchdog = () => {
         clearTimeout(watchdog);
         if (settled) return;
-        if (leaseExpiresAt === undefined) return;
-        const ms = leaseExpiresAt - safetyMarginMs - clock.now().getTime();
+        const ms = leaseDeadline - safetyMarginMs - clock.now().getTime();
         watchdog = setTimeout(
           () => {
             log.warn("lease could not be renewed in time, abandoning the attempt");
@@ -131,18 +151,15 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
       };
       const beat = () => {
         if (stop || settled) return;
-        // Armed from the first beat on: a beat that hangs or keeps failing must not outlive the lease.
-        if (watchdog === undefined) armWatchdog();
+        const requestedAt = clock.now().getTime();
         queue
           .heartbeat(job, workerId)
           .then((hb) => {
             if (settled) return;
             if (!hb.held) return abort("lease_lost");
             if (hb.cancelRequested) return abort("cancel");
-            if (hb.leaseExpiresAt) {
-              leaseExpiresAt = hb.leaseExpiresAt.getTime();
-              armWatchdog();
-            }
+            leaseDeadline = requestedAt + queue.leaseMs;
+            armWatchdog();
             scheduleBeat(deps.heartbeatIntervalMs);
           })
           .catch((err) => {
@@ -150,6 +167,8 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
             scheduleBeat(retryMs);
           });
       };
+      // Armed before the first beat: a beat that hangs or keeps failing must not outlive the lease.
+      armWatchdog();
       scheduleBeat(deps.heartbeatIntervalMs);
       const deadline = job.deadlineAt
         ? setTimeout(

@@ -5,11 +5,15 @@ import {
   actorRef,
   type Job,
   type JobPatch,
+  type ProjectRepository,
+  type RenderRepository,
   type TenantContext,
 } from "@studix/core";
 import {
   createApprovalRepository,
   createAuditRepository,
+  createProjectRepository,
+  createRenderRepository,
   createUsageRepository,
   type DbExecutor,
   type StudixDb,
@@ -44,6 +48,12 @@ export type ApprovalRequestResult =
 /** A stage row written on behalf of a claimed attempt (the tenant and job come from the job). */
 export type StageWrite = Omit<Parameters<typeof upsertStageRow>[3], "jobId" | "attempt">;
 
+/** Business repositories bound to the transaction of a fenced commit. */
+export interface FencedRepositories {
+  projects: ProjectRepository;
+  renders: RenderRepository;
+}
+
 export interface WorkerJobQueueOptions {
   /** How long a claim is valid without a heartbeat. */
   leaseMs: number;
@@ -54,7 +64,10 @@ export interface HeartbeatResult {
   /** False when this worker no longer owns the job (lease expired and someone else claimed it). */
   held: boolean;
   cancelRequested: boolean;
-  /** The renewed lease expiry, when held. */
+  /**
+   * The renewed lease expiry on the database clock, when held. Informational: it is not comparable with
+   * the worker's clock, so deadlines are derived from `leaseMs` and the worker's own elapsed time.
+   */
   leaseExpiresAt?: Date;
 }
 
@@ -65,6 +78,8 @@ export interface HeartbeatResult {
  * new owner's state.
  */
 export interface WorkerJobQueue {
+  /** Length of every lease granted by `claim` and `heartbeat`, counted from the database's now(). */
+  readonly leaseMs: number;
   /**
    * Claim the next runnable job: queued and due, or running with an expired lease (its worker died).
    * Increments attempts; jobs at maxAttempts are never claimed (see failExhaustedLeases).
@@ -92,6 +107,16 @@ export interface WorkerJobQueue {
    * duplicate that shadows the owner's request nor leave a pending one behind for a finished job.
    */
   requestApproval(job: Job, workerId: string, request: ApprovalRequest): Promise<ApprovalRequestResult>;
+  /**
+   * Run business writes (projects, renders) in one transaction that holds the job row locked after the
+   * same ownership check. Nothing is written, and `held` is false, once another worker owns the job; a
+   * throw from `write` rolls the whole commit back.
+   */
+  commit<T>(
+    job: Job,
+    workerId: string,
+    write: (repos: FencedRepositories, ctx: TenantContext) => Promise<T>,
+  ): Promise<{ held: true; value: T } | { held: false }>;
   complete(job: Job, workerId: string, result: Record<string, unknown>): Promise<boolean>;
   fail(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
   cancel(job: Job, workerId: string, error: StudixErrorPayload): Promise<boolean>;
@@ -121,7 +146,9 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     throw new RangeError("leaseMs must be an integer >= 100");
   }
   const clock = options.clock ?? systemClock;
-  const leaseUntil = () => new Date(clock.now().getTime() + options.leaseMs);
+  // Lease expiry is written and compared on the database clock, so worker clock skew cannot shorten
+  // or stretch a lease. now() is the transaction start, never later than the moment the lease is granted.
+  const leaseUntil = () => sql`now() + ${options.leaseMs} * interval '1 millisecond'`;
 
   const owned = (job: Job, workerId: string): SQL =>
     and(
@@ -134,11 +161,11 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     )!;
 
   /** Run `write` in a transaction that holds the job row locked while ownership is verified. */
-  const fenced = async (
+  const fencedValue = async <T>(
     job: Job,
     workerId: string,
-    write: (tx: DbExecutor, ctx: TenantContext) => Promise<unknown>,
-  ): Promise<boolean> => {
+    write: (tx: DbExecutor, ctx: TenantContext) => Promise<T>,
+  ): Promise<{ held: true; value: T } | { held: false }> => {
     const ctx: TenantContext = {
       organizationId: job.organizationId,
       workspaceId: job.workspaceId,
@@ -146,11 +173,16 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     };
     return db.transaction(async (tx) => {
       const held = await tx.select({ id: jobs.id }).from(jobs).where(owned(job, workerId)).for("update");
-      if (held.length === 0) return false;
-      await write(tx, ctx);
-      return true;
+      if (held.length === 0) return { held: false as const };
+      return { held: true as const, value: await write(tx, ctx) };
     });
   };
+
+  const fenced = async (
+    job: Job,
+    workerId: string,
+    write: (tx: DbExecutor, ctx: TenantContext) => Promise<unknown>,
+  ): Promise<boolean> => (await fencedValue(job, workerId, write)).held;
 
   const requestApproval: WorkerJobQueue["requestApproval"] = async (job, workerId, request) => {
     let result: ApprovalRequestResult = { status: "lost" };
@@ -206,6 +238,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
   };
 
   return {
+    leaseMs: options.leaseMs,
+
     async claim(workerId) {
       const now = clock.now();
       const candidate = db
@@ -215,7 +249,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           and(
             or(
               and(eq(jobs.status, "queued"), lte(jobs.runAfter, now)),
-              and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, now)),
+              and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, sql`now()`)),
             ),
             lt(jobs.attempts, jobs.maxAttempts),
           ),
@@ -292,6 +326,13 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
       ),
 
     requestApproval,
+    commit: (job, workerId, write) =>
+      fencedValue(job, workerId, (tx, ctx) =>
+        write(
+          { projects: createProjectRepository(tx, clock), renders: createRenderRepository(tx, clock) },
+          ctx,
+        ),
+      ),
 
     complete: (job, workerId, result) =>
       finish(job, workerId, {
@@ -332,7 +373,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         .where(
           and(
             eq(jobs.status, "running"),
-            lt(jobs.leaseExpiresAt, now),
+            lt(jobs.leaseExpiresAt, sql`now()`),
             sql`${jobs.attempts} >= ${jobs.maxAttempts}`,
           ),
         )

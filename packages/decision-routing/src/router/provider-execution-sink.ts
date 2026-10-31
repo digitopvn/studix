@@ -1,5 +1,5 @@
 import type { NewRecord, ProviderExecution, ProviderExecutionStatus, TenantContext } from "@studix/core";
-import type { Logger, StudixError } from "@studix/shared";
+import { type Logger, newId, type StudixError } from "@studix/shared";
 import type { DecisionRequest, TokenUsage } from "../decision-types.ts";
 
 /** ProviderExecution create-input produced for every provider invocation the router makes. */
@@ -33,8 +33,10 @@ function statusOf(error: StudixError | undefined): ProviderExecutionStatus {
 export function buildExecutionRecord(
   request: DecisionRequest<unknown>,
   outcome: ExecutionOutcome,
+  id: string = newId("pex"),
 ): DecisionExecutionRecord {
   return {
+    id,
     ...(request.jobId !== undefined ? { jobId: request.jobId } : {}),
     ...(request.stageId !== undefined ? { stageId: request.stageId } : {}),
     provider: outcome.providerId,
@@ -51,21 +53,50 @@ export function buildExecutionRecord(
   };
 }
 
-/** Record one execution; a failing sink is logged (redacted) and never breaks the decision. */
+/** Upper bound on how long a sink write may hold the decision on its critical path. */
+export const SINK_TIMEOUT_MS = 2_000;
+
+/**
+ * Record one execution; a failing sink is logged (redacted) and never breaks the decision.
+ * Returns the stored execution id, or undefined when nothing was stored, so callers only link
+ * usage to executions that exist.
+ */
 export async function recordExecution(
   sink: ProviderExecutionSink | undefined,
   logger: Logger | undefined,
   request: DecisionRequest<unknown>,
   outcome: ExecutionOutcome,
-): Promise<void> {
-  if (!sink) return;
+): Promise<string | undefined> {
+  if (!sink) return undefined;
+  const record = buildExecutionRecord(request, outcome);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
-    await sink.record(request.tenant, buildExecutionRecord(request, outcome));
+    const write = Promise.resolve(sink.record(request.tenant, record));
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error("sink timed out"));
+      }, SINK_TIMEOUT_MS);
+    });
+    // A write that outlives the timeout cannot be cancelled; keep its late failure visible.
+    write.catch((error: unknown) => {
+      if (!timedOut) return;
+      logger?.error("provider execution sink failed after timeout", {
+        provider: outcome.providerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    await Promise.race([write, timeout]);
+    return record.id;
   } catch (error) {
     logger?.error("provider execution sink failed", {
       provider: outcome.providerId,
       kind: request.kind,
       error: error instanceof Error ? error.message : String(error),
     });
+    return undefined;
+  } finally {
+    clearTimeout(timer);
   }
 }

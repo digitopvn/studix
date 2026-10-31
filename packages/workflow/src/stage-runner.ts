@@ -1,4 +1,4 @@
-import { toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
+import { executionUsageDedupeKey, toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
 import type { Approval, BillingPolicy, Job, JobRepository, Stage, TenantContext } from "@studix/core";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
@@ -106,6 +106,12 @@ export async function runStages(
       attempt: job.attempts,
       signal,
       outputs,
+      commit: async (write) => {
+        signal.throwIfAborted();
+        const result = await queue.commit(job, workerId, write);
+        if (!result.held) throw new LeaseLostError();
+        return result.value;
+      },
       reportProgress: (p) => {
         const now = deps.clock.now().getTime();
         if (now - lastProgressAt < (deps.progressIntervalMs ?? 1000)) return;
@@ -161,12 +167,20 @@ export async function runStages(
       for (const usage of result.usage ?? []) {
         await fenced(
           queue.recordUsage(job, workerId, {
-            dedupeKey: usageDedupeKey({
-              jobId: job.id,
-              stage: stage.name,
-              attempt: job.attempts,
-              item: usage.item,
-            }),
+            // A usage line tied to a provider execution is that one call's cost, whatever attempt reports
+            // it (e.g. a retry served from the decision cache); anything else re-ran and cost again.
+            dedupeKey: usage.providerExecutionId
+              ? executionUsageDedupeKey({
+                  jobId: job.id,
+                  stage: stage.name,
+                  executionId: usage.providerExecutionId,
+                })
+              : usageDedupeKey({
+                  jobId: job.id,
+                  stage: stage.name,
+                  attempt: job.attempts,
+                  item: usage.item,
+                }),
             kind: usage.kind,
             quantity: usage.quantity,
             unit: usage.unit,

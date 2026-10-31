@@ -29,8 +29,9 @@ export interface VideoCreateWorkflowDeps {
   planner: Planner;
   renderer: RendererAdapter;
   storage: StorageAdapter;
-  projects: ProjectRepository;
-  renders: RenderRepository;
+  /** Read side only: every write goes through `StageContext.commit` so it is fenced by job ownership. */
+  projects: Pick<ProjectRepository, "get" | "getVersion">;
+  renders: Pick<RenderRepository, "get">;
   /** Local scratch root; each job attempt renders into `<workRoot>/<jobId>/attempt-<n>`. */
   workRoot: string;
   /** COGS per rendered output second (compute cost). Defaults to 0 until measured. */
@@ -109,25 +110,26 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
           const ir = irOf(s);
           const planned = read(PlanOutput, s.outputs.plan, "plan checkpoint");
           const payload = payloadOf(s);
-          let versionId = planned.versionId;
-          if (!versionId) {
-            // Deterministic id: a re-run after a crash finds the version instead of adding another.
-            const id = jobScopedId("pver", s.job.id);
-            const existing = await deps.projects.getVersion(s.ctx, id);
-            const version =
-              existing ??
-              (await deps.projects.createVersion(s.ctx, {
-                id,
+          // Deterministic id: a re-run after a crash finds the version instead of adding another.
+          const newVersionId = planned.versionId ? undefined : jobScopedId("pver", s.job.id);
+          const versionId = planned.versionId ?? (newVersionId as string);
+          const needsVersion =
+            newVersionId !== undefined && !(await deps.projects.getVersion(s.ctx, versionId));
+          // One commit: the version and the project pointing at it land together or not at all.
+          await s.commit(async (repos, ctx) => {
+            if (needsVersion) {
+              await repos.projects.createVersion(ctx, {
+                id: versionId,
                 projectId: payload.projectId,
                 ir,
                 source: "planner",
-                createdBy: { type: "system", id: s.ctx.actor.id },
-              }));
-            versionId = version.id;
-          }
-          await deps.projects.update(s.ctx, payload.projectId, {
-            currentVersionId: versionId,
-            status: "rendering",
+                createdBy: { type: "system", id: ctx.actor.id },
+              });
+            }
+            await repos.projects.update(ctx, payload.projectId, {
+              currentVersionId: versionId,
+              status: "rendering",
+            });
           });
           return { output: { versionId } };
         },
@@ -217,21 +219,23 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
           const renderId = jobScopedId("rnd", s.job.id);
           const spec = resolveRenderSpec(payload.renderPreset);
           const existing = await deps.renders.get(s.ctx, renderId);
-          if (!existing) {
-            await deps.renders.create(s.ctx, {
-              id: renderId,
-              projectId: payload.projectId,
-              versionId,
-              jobId: s.job.id,
-              preset: spec.preset,
-              spec,
-              status: "succeeded",
-              storageKey: uploaded.storageKey,
-              probe: { ...rendered.probe, bytes: uploaded.bytes },
-              completedAt: clock.now(),
-            });
-          }
-          await deps.projects.update(s.ctx, payload.projectId, { status: "in_review" });
+          await s.commit(async (repos, ctx) => {
+            if (!existing) {
+              await repos.renders.create(ctx, {
+                id: renderId,
+                projectId: payload.projectId,
+                versionId,
+                jobId: s.job.id,
+                preset: spec.preset,
+                spec,
+                status: "succeeded",
+                storageKey: uploaded.storageKey,
+                probe: { ...rendered.probe, bytes: uploaded.bytes },
+                completedAt: clock.now(),
+              });
+            }
+            await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+          });
           await rm(jobDir(s.job.id), { recursive: true, force: true });
           return {
             output: {
