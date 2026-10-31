@@ -122,6 +122,12 @@ Why this shape:
   writes a provider execution row and a `provider.decision` usage line; there is
   no fallback to the default planner
   ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
+- Without a per-job planner, a stage can run on a model the workspace or the
+  member chose in **AI & Providers**, through the Pi runtime and a workspace key
+  enabled for Pi (`apps/worker/src/planner/workspace-model-decisions.ts`). The
+  choice is pinned per job at the first attempt; without a choice the operator
+  routing runs as before
+  ([ADR-0016](decisions/0016-provider-connections-runtimes-and-model-preferences.md)).
 
 ## Durable job lifecycle
 

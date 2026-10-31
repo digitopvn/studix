@@ -213,12 +213,17 @@ export interface ProviderConnectionTest {
   error?: StudixErrorPayload & { retryable: boolean };
 }
 
-/** A stored Anthropic API key binding; the secret itself never leaves the server, only `keyHint`. */
+export type AgentRuntimeName = "claude" | "pi";
+
+/** A stored provider API key binding; the secret itself never leaves the server, only `keyHint`. */
 export interface ProviderConnection {
   id: string;
   provider: string;
   authMethod: "api_key";
-  billing: "usage_based";
+  billing: "usage_based" | "subscription" | "extra_usage" | "unknown";
+  /** Agent runtimes allowed to spend this key; Anthropic keys start with `claude` only. */
+  runtimes: AgentRuntimeName[];
+  version: number;
   owner: "workspace" | "user";
   ownedByMe: boolean;
   label: string;
@@ -236,6 +241,76 @@ export interface AnthropicProvider {
   connections: ProviderConnection[];
   /** Jobs may select the Claude planner on this server. */
   claudePlanner: boolean;
+}
+
+export interface ProviderConnectionList {
+  storage: "available" | "unavailable";
+  canAddWorkspaceKey: boolean;
+  canAddPersonalKey: boolean;
+  connections: ProviderConnection[];
+}
+
+export interface CatalogModel {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  contextWindow: number;
+  maxTokens: number;
+  /** Dollars per million tokens. */
+  cost: { input: number; output: number };
+}
+
+export interface CatalogProvider {
+  id: string;
+  name: string;
+  authMethods: Array<"api_key">;
+  oauthRestriction?: string;
+  models: CatalogModel[];
+}
+
+export interface ModelChoice {
+  connectionId: string;
+  provider: string;
+  modelId: string;
+}
+
+export interface ModelPreference extends ModelChoice {
+  id: string;
+  scope: "workspace" | "user";
+  stage: string;
+  runtime: AgentRuntimeName;
+  allowFallback: boolean;
+  fallbacks: ModelChoice[];
+  canManage: boolean;
+  updatedAt: string;
+}
+
+export interface ModelPreferenceList {
+  stages: string[];
+  runtimes: AgentRuntimeName[];
+  canEditWorkspace: boolean;
+  canEditPersonal: boolean;
+  preferences: ModelPreference[];
+}
+
+export interface ModelPreview {
+  runtime: AgentRuntimeName;
+  stage: string;
+  selection?: {
+    source: "user-stage" | "workspace-stage" | "user-default" | "workspace-default";
+    preference: ModelPreference;
+    usable: boolean;
+    problem?: string;
+  };
+}
+
+export interface SaveModelPreference {
+  scope: "workspace" | "user";
+  stage: string;
+  connectionId: string;
+  modelId: string;
+  allowFallback?: boolean;
+  fallbacks?: Array<{ connectionId: string; modelId: string }>;
 }
 
 export interface PlannerSelection {
@@ -414,4 +489,26 @@ export const api = {
     request<ProviderConnection>("POST", `/api/providers/anthropic/api-keys/${enc(id)}/test`, {}),
   removeAnthropicKey: (id: string) =>
     request<ProviderConnection>("DELETE", `/api/providers/anthropic/api-keys/${enc(id)}`),
+  providerCatalog: () => request<{ providers: CatalogProvider[] }>("GET", "/api/providers/catalog"),
+  providerConnections: () => request<ProviderConnectionList>("GET", "/api/providers/connections"),
+  addProviderKey: (input: {
+    provider: string;
+    owner: "workspace" | "user";
+    apiKey: string;
+    label?: string;
+  }) => request<ProviderConnection>("POST", "/api/providers/connections", input),
+  replaceProviderKey: (id: string, apiKey: string) =>
+    request<ProviderConnection>("PUT", `/api/providers/connections/${enc(id)}`, { apiKey }),
+  setProviderRuntimes: (id: string, runtimes: AgentRuntimeName[]) =>
+    request<ProviderConnection>("PUT", `/api/providers/connections/${enc(id)}/runtimes`, { runtimes }),
+  testProviderKey: (id: string) =>
+    request<ProviderConnection>("POST", `/api/providers/connections/${enc(id)}/test`, {}),
+  removeProviderKey: (id: string) =>
+    request<ProviderConnection>("DELETE", `/api/providers/connections/${enc(id)}`),
+  modelPreferences: () => request<ModelPreferenceList>("GET", "/api/providers/models"),
+  saveModelPreference: (input: SaveModelPreference) =>
+    request<ModelPreference>("PUT", "/api/providers/models", input),
+  removeModelPreference: (id: string) => request<void>("DELETE", `/api/providers/models/${enc(id)}`),
+  modelPreview: (stage: string) =>
+    request<ModelPreview>("GET", `/api/providers/models/preview?stage=${enc(stage)}`),
 };
