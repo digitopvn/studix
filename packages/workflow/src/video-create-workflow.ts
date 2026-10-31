@@ -157,9 +157,12 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
         // By the time a queued job runs a newer version may be head; jobs that did not ask to move it
         // (feedback patches, renders of "the current version") must not silently revert it.
         const movesHead = payload.makeCurrent && !payload.feedbackId;
+        const project = await repos.projects.get(ctx, payload.projectId);
+        const isHead = movesHead || project?.currentVersionId === versionId;
+        // Only the job of the head version owns the project's status: another job's render must not flag it.
         await repos.projects.update(ctx, payload.projectId, {
           ...(movesHead ? { currentVersionId: versionId } : {}),
-          status: "rendering",
+          ...(isHead ? { status: "rendering" as const } : {}),
         });
       });
       return { output: { versionId } };
