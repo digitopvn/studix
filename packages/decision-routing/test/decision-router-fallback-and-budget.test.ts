@@ -47,6 +47,11 @@ describe("DecisionRouter fallback order", () => {
 
     expect(records).toHaveLength(5);
     expect(records.every((r) => r.ctx === request.tenant)).toBe(true);
+    const ids = records.map((r) => r.execution.id);
+    expect(ids.every((id) => typeof id === "string" && id.startsWith("pex_"))).toBe(true);
+    expect(new Set(ids).size).toBe(5);
+    expect(result.fallbackChain.map((s) => s.executionId)).toEqual(ids);
+    expect(result.providerExecutionId).toBe(ids[4]);
     expect(records[2]?.execution).toMatchObject({
       jobId: "job_1",
       stageId: "plan",

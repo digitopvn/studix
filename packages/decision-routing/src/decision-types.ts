@@ -66,6 +66,8 @@ export interface FallbackStep {
   errorCode?: string;
   latencyMs: number;
   costCents: number;
+  /** Id of the stored provider execution for this attempt; absent when none was recorded. */
+  executionId?: string;
 }
 
 export interface DecisionResult<T> {
@@ -86,6 +88,8 @@ export interface DecisionResult<T> {
   /** Invalid output never leaves the decision layer, so this is always true. */
   schemaValid: true;
   traceId: string;
+  /** Provider execution recorded for the winning attempt, for linking usage events to it. */
+  providerExecutionId?: string;
 }
 
 /** Stable adapter interface implemented by every decision provider (and by DecisionRouter). */

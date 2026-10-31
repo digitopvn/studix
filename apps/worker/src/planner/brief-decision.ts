@@ -73,6 +73,7 @@ export async function decideBriefDraft(
     idempotencyKey: `${ctx.jobId}:${VIDEO_BRIEF_DECISION}`,
     signal,
     jobId: ctx.jobId,
+    stageId: "plan",
   });
   return {
     draft: result.output,
@@ -84,6 +85,7 @@ export async function decideBriefDraft(
       outputTokens: result.usage.outputTokens,
       latencyMs: result.latencyMs,
       operation: VIDEO_BRIEF_DECISION,
+      ...(result.providerExecutionId ? { providerExecutionId: result.providerExecutionId } : {}),
     },
     ...(result.fallbackReason ? { fallbackReason: result.fallbackReason } : {}),
   };

@@ -1,5 +1,5 @@
 import type { NewRecord, ProviderExecution, ProviderExecutionStatus, TenantContext } from "@studix/core";
-import type { Logger, StudixError } from "@studix/shared";
+import { type Logger, newId, type StudixError } from "@studix/shared";
 import type { DecisionRequest, TokenUsage } from "../decision-types.ts";
 
 /** ProviderExecution create-input produced for every provider invocation the router makes. */
@@ -33,8 +33,10 @@ function statusOf(error: StudixError | undefined): ProviderExecutionStatus {
 export function buildExecutionRecord(
   request: DecisionRequest<unknown>,
   outcome: ExecutionOutcome,
+  id: string = newId("pex"),
 ): DecisionExecutionRecord {
   return {
+    id,
     ...(request.jobId !== undefined ? { jobId: request.jobId } : {}),
     ...(request.stageId !== undefined ? { stageId: request.stageId } : {}),
     provider: outcome.providerId,
@@ -51,21 +53,28 @@ export function buildExecutionRecord(
   };
 }
 
-/** Record one execution; a failing sink is logged (redacted) and never breaks the decision. */
+/**
+ * Record one execution; a failing sink is logged (redacted) and never breaks the decision.
+ * Returns the stored execution id, or undefined when nothing was stored, so callers only link
+ * usage to executions that exist.
+ */
 export async function recordExecution(
   sink: ProviderExecutionSink | undefined,
   logger: Logger | undefined,
   request: DecisionRequest<unknown>,
   outcome: ExecutionOutcome,
-): Promise<void> {
-  if (!sink) return;
+): Promise<string | undefined> {
+  if (!sink) return undefined;
+  const record = buildExecutionRecord(request, outcome);
   try {
-    await sink.record(request.tenant, buildExecutionRecord(request, outcome));
+    await sink.record(request.tenant, record);
+    return record.id;
   } catch (error) {
     logger?.error("provider execution sink failed", {
       provider: outcome.providerId,
       kind: request.kind,
       error: error instanceof Error ? error.message : String(error),
     });
+    return undefined;
   }
 }
