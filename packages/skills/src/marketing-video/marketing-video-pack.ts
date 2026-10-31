@@ -217,11 +217,16 @@ export const marketingStoryboardStage: StageDefinition = {
     const workDir = await stageWorkDir(s, MV_STAGES.storyboard);
     const requests = await withCaps(s, frameRequests(s));
     let done = 0;
-    const generated = await mapBounded(requests, MEDIA_CONCURRENCY, async (r) => {
-      const media = await generateStoredMedia(s, MV_STAGES.storyboard, r, workDir);
-      s.reportProgress(++done / requests.length);
-      return { key: r.key, ...media };
-    });
+    const generated = await mapBounded(
+      requests,
+      MEDIA_CONCURRENCY,
+      async (r) => {
+        const media = await generateStoredMedia(s, MV_STAGES.storyboard, r, workDir);
+        s.reportProgress(++done / requests.length);
+        return { key: r.key, ...media };
+      },
+      (r) => [r.usage],
+    );
     const frames = Object.fromEntries(generated.map((g) => [g.key, g.asset]));
     const title = brief.title ?? brief.brand?.name ?? "Marketing video";
     const ir = marketingVideoIr(script, brief.brand, title, { frames });
@@ -300,17 +305,22 @@ export const marketingI2vStage: StageDefinition = {
       join(workDir, "frames"),
     );
     let done = 0;
-    const clips = await mapBounded(shots, MEDIA_CONCURRENCY, async (c, i) => {
-      const request = capped[i] as StoredMediaRequest;
-      const media = await generateStoredMedia(
-        s,
-        MV_STAGES.i2v,
-        { ...request, params: { ...request.params, image: frameFiles[c.image.assetId] } },
-        workDir,
-      );
-      s.reportProgress(++done / shots.length);
-      return { ...c, ...media };
-    });
+    const clips = await mapBounded(
+      shots,
+      MEDIA_CONCURRENCY,
+      async (c, i) => {
+        const request = capped[i] as StoredMediaRequest;
+        const media = await generateStoredMedia(
+          s,
+          MV_STAGES.i2v,
+          { ...request, params: { ...request.params, image: frameFiles[c.image.assetId] } },
+          workDir,
+        );
+        s.reportProgress(++done / shots.length);
+        return { ...c, ...media };
+      },
+      (r) => [r.usage],
+    );
     const next = structuredClone(ir);
     for (const c of clips) {
       const scene = next.scenes[c.scene];
@@ -421,11 +431,16 @@ export const marketingAudioStage: StageDefinition = {
       planned.map((a) => a.request),
     );
     let done = 0;
-    const generated = await mapBounded(planned, MEDIA_CONCURRENCY, async (a, i) => {
-      const media = await generateStoredMedia(s, MV_STAGES.audio, capped[i] as StoredMediaRequest, workDir);
-      s.reportProgress(++done / planned.length);
-      return { ...a, ...media };
-    });
+    const generated = await mapBounded(
+      planned,
+      MEDIA_CONCURRENCY,
+      async (a, i) => {
+        const media = await generateStoredMedia(s, MV_STAGES.audio, capped[i] as StoredMediaRequest, workDir);
+        s.reportProgress(++done / planned.length);
+        return { ...a, ...media };
+      },
+      (r) => [r.usage],
+    );
     const tracks: AudioTrack[] = generated.map((g) => {
       const end = g.variant.startMs + g.variant.durationMs;
       const room = end - g.at;
