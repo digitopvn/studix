@@ -57,6 +57,18 @@ describe("usage ledger", () => {
     expect(await ledger.listForJob(ctx, "job_1")).toHaveLength(1);
   });
 
+  it("keeps the stored job and execution ids when the receipt replaces the estimate", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    const base = { ...usage("job_1:media:exec:sume:j1", 10), providerExecutionId: "pex_1" };
+    await ledger.record(ctx, { ...base, metadata: { costSource: "estimate" } });
+    const { jobId: _job, providerExecutionId: _exec, ...bare } = base;
+    await ledger.record(ctx, { ...bare, costCents: 7, metadata: { costSource: "receipt" } });
+    const [event] = await ledger.listForJob(ctx, "job_1");
+    expect(event).toMatchObject({ jobId: "job_1", providerExecutionId: "pex_1", costCents: 7 });
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7);
+  });
+
   it("keeps a receipt over a later estimate and the first of two estimates or two receipts", async () => {
     const ledger = createInMemoryUsageLedger();
     const ctx = testTenant();

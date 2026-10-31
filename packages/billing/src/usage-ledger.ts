@@ -17,7 +17,10 @@ export const USAGE_KINDS = {
 
 /** One billable usage line as recorded by a stage. `costCents` is COGS (what Studix paid). */
 export interface UsageInput {
-  /** Unique per workspace; recording the same key twice is a no-op. Use usageDedupeKey(). */
+  /**
+   * Unique per workspace; recording the same key twice is a no-op, except that a stored
+   * `metadata.costSource: "estimate"` is replaced by a receipt for the same key. Use usageDedupeKey().
+   */
   dedupeKey: string;
   kind: string;
   quantity: number;
@@ -31,7 +34,7 @@ export interface UsageInput {
 
 export interface RecordUsageResult {
   event: UsageEvent;
-  /** False when an event with the same dedupe key already existed (a retry). */
+  /** False when an event with the same dedupe key already existed (a retry, or an estimate replaced by its receipt). */
   created: boolean;
 }
 

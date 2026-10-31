@@ -146,8 +146,11 @@ export function createInMemoryUsageRepository(clock: Clock): UsageRepository {
       if (existing) {
         // An estimate is replaced by the receipt for the same job, never added to.
         if (existing.metadata?.costSource === "estimate" && input.metadata?.costSource === "receipt") {
-          const { id: _id, ...fields } = input;
-          return { event: usage.update(ctx, existing.id, { ...fields, id: existing.id }), created: false };
+          const { kind, quantity, unit, costCents, metadata } = input;
+          return {
+            event: usage.update(ctx, existing.id, { kind, quantity, unit, costCents, metadata }),
+            created: false,
+          };
         }
         return { event: existing, created: false };
       }
