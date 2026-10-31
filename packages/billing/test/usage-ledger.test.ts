@@ -40,6 +40,51 @@ describe("usage ledger", () => {
     ]);
   });
 
+  it("replaces an estimate with the receipt of the same job instead of adding to it", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    const line = (costCents: number, costSource: string) => ({
+      ...usage("job_1:media:exec:sume:j1", costCents),
+      metadata: { costSource },
+    });
+    const first = await ledger.record(ctx, line(10, "estimate"));
+    const receipt = await ledger.record(ctx, line(7, "receipt"));
+    expect(first.created).toBe(true);
+    expect(receipt.created).toBe(false);
+    expect(receipt.event.id).toBe(first.event.id);
+    expect(receipt.event.costCents).toBe(7);
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7);
+    expect(await ledger.listForJob(ctx, "job_1")).toHaveLength(1);
+  });
+
+  it("keeps the stored job and execution ids when the receipt replaces the estimate", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    const base = { ...usage("job_1:media:exec:sume:j1", 10), providerExecutionId: "pex_1" };
+    await ledger.record(ctx, { ...base, metadata: { costSource: "estimate" } });
+    const { jobId: _job, providerExecutionId: _exec, ...bare } = base;
+    await ledger.record(ctx, { ...bare, costCents: 7, metadata: { costSource: "receipt" } });
+    const [event] = await ledger.listForJob(ctx, "job_1");
+    expect(event).toMatchObject({ jobId: "job_1", providerExecutionId: "pex_1", costCents: 7 });
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7);
+  });
+
+  it("keeps a receipt over a later estimate and the first of two estimates or two receipts", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    const line = (key: string, costCents: number, costSource: string) => ({
+      ...usage(key, costCents),
+      metadata: { costSource },
+    });
+    await ledger.record(ctx, line("a", 7, "receipt"));
+    await ledger.record(ctx, line("a", 10, "estimate"));
+    await ledger.record(ctx, line("b", 10, "estimate"));
+    await ledger.record(ctx, line("b", 12, "estimate"));
+    await ledger.record(ctx, line("c", 5, "receipt"));
+    await ledger.record(ctx, line("c", 6, "receipt"));
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7 + 10 + 5);
+  });
+
   it("isolates dedupe keys per workspace", async () => {
     const ledger = createInMemoryUsageLedger();
     const a = await ledger.record(testTenant(), usage("same", 1));
