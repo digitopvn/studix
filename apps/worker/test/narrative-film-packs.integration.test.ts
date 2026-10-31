@@ -434,6 +434,14 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(kinds.indexOf("voice")).toBeLessThan(kinds.indexOf("video"));
     expect(kinds.filter((k) => k === "music")).toHaveLength(1);
     expect(kinds.filter((k) => k === "sfx")).toHaveLength(4);
+    // Effects are asked for as sounds only, so nothing in the cue is read out.
+    const effects = world.requests.filter((r) => r.kind === "sfx").map((r) => r.prompt);
+    expect(effects.sort()).toEqual([
+      "Sound effect only, no voice, speech, words or singing: distant fireworks launching",
+      "Sound effect only, no voice, speech, words or singing: fireworks bursting overhead",
+      "Sound effect only, no voice, speech, words or singing: heavy panting after a run",
+      "Sound effect only, no voice, speech, words or singing: soft wind over a rooftop",
+    ]);
 
     expect(world.rendered).toHaveLength(1);
     const cut = world.rendered[0]!;
