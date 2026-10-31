@@ -1,5 +1,5 @@
 import type { AgentRunResult, AgentRuntime, AgentTask, TenantContext } from "@studix/core";
-import { type Clock, StudixError, systemClock, toStudixError } from "@studix/shared";
+import { type Clock, StudixError, systemClock } from "@studix/shared";
 import { abortReason, assertAgentTask } from "./bounded-agent-runtime.ts";
 
 export const CLAUDE_AGENT_RUNTIME_ID = "claude-agent-sdk";
@@ -51,7 +51,7 @@ export interface ClaudeAgentTransport {
 
 export interface ClaudeCredentialResolver {
   /** Resolve the credential this tenant is allowed to use; throws UNAUTHENTICATED/FORBIDDEN/UNAVAILABLE. */
-  resolve(ctx: TenantContext): Promise<string>;
+  resolve(ctx: TenantContext, signal?: AbortSignal): Promise<string>;
 }
 
 export interface ClaudeAgentRuntimeOptions {
@@ -87,14 +87,46 @@ export function mapClaudeError(status: number | undefined, message: string): Stu
   return new StudixError("PROVIDER_ERROR", `Claude agent failed: ${safe}`);
 }
 
-function timeout(ms: number): Promise<"timeout"> {
-  return new Promise((resolve) => setTimeout(() => resolve("timeout"), ms).unref?.());
+/** Map anything thrown by the transport; keys are redacted and 401/403/429 are recognised. */
+export function mapClaudeThrown(err: unknown): StudixError {
+  if (err instanceof StudixError) return err;
+  const message = err instanceof Error ? err.message : String(err);
+  const raw = (err as { status?: unknown } | null)?.status;
+  const status = typeof raw === "number" ? raw : Number(/\b(401|403|429)\b/.exec(message)?.[1]) || undefined;
+  return mapClaudeError(status, message);
+}
+
+function timeout(ms: number): { promise: Promise<"timeout">; cancel(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), ms);
+  });
+  return { promise, cancel: () => clearTimeout(timer) };
+}
+
+/** Wait for the process to exit, tolerating a rejecting `closed` (non-zero exit after interrupt). */
+async function waitClosed(session: ClaudeAgentSession, ms: number): Promise<boolean> {
+  const t = timeout(ms);
+  try {
+    const r = await Promise.race([
+      session.closed.then(
+        () => "closed" as const,
+        () => "closed" as const,
+      ),
+      t.promise,
+    ]);
+    return r === "closed";
+  } finally {
+    t.cancel();
+  }
 }
 
 /**
  * AgentRuntime backed by the Claude Agent SDK. Unlike the bounded wrapper, limits are enforced while
  * the session runs: turns and cost stop the process mid-run, abort and deadline interrupt then kill
- * it, and `run` only settles after the process has closed. After an abort no tool call is permitted.
+ * it, and `run` only settles after the process has closed. Once the run is stopping or finished no
+ * tool call is permitted. A failure seen before a stop wins over the stop reason; a process that
+ * survives a kill is reported as INTERNAL whatever else happened.
  */
 export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): AgentRuntime {
   const clock = options.clock ?? systemClock;
@@ -104,23 +136,17 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
     id: CLAUDE_AGENT_RUNTIME_ID,
     async run(ctx, task) {
       assertAgentTask(task, clock.now());
+      if (task.maxCostCents <= 0)
+        throw new StudixError(
+          "VALIDATION",
+          "Invalid agent task: maxCostCents must be > 0 for the Claude runtime",
+        );
       if (task.signal?.aborted) throw abortReason(task.signal);
-      const credential = await options.credentials.resolve(ctx);
 
+      // Abort and deadline are armed before anything slow (credential lookup) happens.
       let stopReason: StudixError | undefined;
-      const allowed = new Set((task.tools ?? []).map((t) => t.name));
-      const session = options.transport.start({
-        model: options.model,
-        instructions: task.instructions,
-        input: task.input,
-        allowedTools: [...allowed],
-        outputSchema: task.outputSchema,
-        maxTurns: task.maxTurns,
-        maxBudgetUsd: task.maxCostCents / 100,
-        credential,
-        canUseTool: async (name) => stopReason === undefined && allowed.has(name),
-      });
-
+      let closing = false;
+      let session: ClaudeAgentSession | undefined;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       let signalStop!: () => void;
       const stopped = new Promise<"stopped">((resolve) => {
@@ -129,31 +155,63 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
       const stop = (reason: StudixError) => {
         if (stopReason) return;
         stopReason = reason;
+        closing = true;
         signalStop();
-        session.interrupt();
-        killTimer = setTimeout(() => session.kill(), killAfterMs);
+        if (session) {
+          session.interrupt();
+          killTimer = setTimeout(() => session?.kill(), killAfterMs);
+        }
       };
       const onAbort = () => stop(abortReason(task.signal!));
       task.signal?.addEventListener("abort", onAbort, { once: true });
       const deadlineTimer = task.deadlineAt
         ? setTimeout(
             () => stop(new StudixError("TIMEOUT", "agent task deadline reached", { retryable: false })),
-            Math.max(0, task.deadlineAt.getTime() - clock.now().getTime()),
+            Math.min(2 ** 31 - 1, Math.max(0, task.deadlineAt.getTime() - clock.now().getTime())),
           )
         : undefined;
 
+      const allowed = new Set((task.tools ?? []).map((t) => t.name));
       let usage = { turns: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, model: options.model };
       let final: { output: unknown } | undefined;
       let failure: StudixError | undefined;
+      let iterator: AsyncIterator<ClaudeAgentEvent> | undefined;
       try {
-        const iterator = session.events[Symbol.asyncIterator]();
+        const credential = await Promise.race([options.credentials.resolve(ctx, task.signal), stopped]);
+        if (credential === "stopped") throw stopReason;
+        if (stopReason) throw stopReason;
+        session = options.transport.start({
+          model: options.model,
+          instructions: task.instructions,
+          input: task.input,
+          allowedTools: [...allowed],
+          outputSchema: task.outputSchema,
+          maxTurns: task.maxTurns,
+          maxBudgetUsd: task.maxCostCents / 100,
+          credential,
+          canUseTool: async (name) => !closing && allowed.has(name),
+        });
+        iterator = session.events[Symbol.asyncIterator]();
         while (!stopReason) {
           // Racing the stop signal keeps a silent process from holding the loop open.
           const next = await Promise.race([iterator.next(), stopped]);
           if (next === "stopped" || next.done) break;
           const event = next.value;
           if (event.type === "usage") {
-            usage = { ...usage, ...event, model: event.model ?? usage.model };
+            const num = (v: number, prev: number) => (Number.isFinite(v) ? Math.max(v, prev) : Number.NaN);
+            usage = {
+              turns: num(event.turns, usage.turns),
+              inputTokens: num(event.inputTokens, usage.inputTokens),
+              outputTokens: num(event.outputTokens, usage.outputTokens),
+              costUsd: num(event.costUsd, usage.costUsd),
+              model: event.model ?? usage.model,
+            };
+            if (Object.values(usage).some((v) => typeof v === "number" && Number.isNaN(v))) {
+              failure = new StudixError("PROVIDER_ERROR", "agent reported invalid usage", {
+                retryable: false,
+              });
+              break;
+            }
             if (usage.turns > task.maxTurns) {
               stop(
                 new StudixError(
@@ -164,7 +222,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
                   },
                 ),
               );
-            } else if (!Number.isFinite(usage.costUsd) || usage.costUsd * 100 > task.maxCostCents) {
+            } else if (usage.costUsd * 100 > task.maxCostCents) {
               stop(
                 new StudixError(
                   "BUDGET_EXCEEDED",
@@ -173,36 +231,42 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
                 ),
               );
             }
-          } else if (event.type === "result") final = { output: event.output };
-          else failure ??= mapClaudeError(event.status, event.message);
+          } else if (event.type === "result") {
+            final = { output: event.output };
+            break;
+          } else {
+            failure = mapClaudeError(event.status, event.message);
+            break;
+          }
         }
       } catch (err) {
-        failure ??= toStudixError(err, "PROVIDER_ERROR");
+        if (err !== stopReason) failure ??= mapClaudeThrown(err);
       } finally {
+        closing = true;
         if (deadlineTimer) clearTimeout(deadlineTimer);
         task.signal?.removeEventListener("abort", onAbort);
-        // Whatever ended the loop, make sure the process is gone before reporting back.
-        if (!stopReason && (!final || failure)) session.interrupt();
-        const exited = await Promise.race([
-          session.closed.then(() => "closed" as const),
-          timeout(killAfterMs),
-        ]);
-        if (exited === "timeout") {
-          session.kill();
-          const killed = await Promise.race([
-            session.closed.then(() => "closed" as const),
-            timeout(closeTimeoutMs),
-          ]);
-          if (killed === "timeout")
-            failure ??= new StudixError("INTERNAL", "agent process did not exit after kill", {
+        // The iterator may be stuck in next(); never await its return().
+        void Promise.resolve(iterator?.return?.()).catch(() => {});
+        if (session) {
+          if (!stopReason) session.interrupt();
+          let exited = await waitClosed(session, killAfterMs);
+          if (!exited) {
+            session.kill();
+            exited = await waitClosed(session, closeTimeoutMs);
+          }
+          if (killTimer) clearTimeout(killTimer);
+          if (!exited) {
+            failure = new StudixError("INTERNAL", "agent process did not exit after kill", {
               retryable: false,
+              details: { stopCode: stopReason?.code },
             });
+            stopReason = undefined;
+          }
         }
-        if (killTimer) clearTimeout(killTimer);
       }
 
-      if (stopReason) throw stopReason;
       if (failure) throw failure;
+      if (stopReason) throw stopReason;
       if (!final) throw new StudixError("PROVIDER_ERROR", "agent finished without a result");
       let output: unknown;
       try {
@@ -216,7 +280,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
       const result: AgentRunResult = {
         output,
         turns: usage.turns,
-        costCents: usage.costUsd * 100,
+        costCents: Math.round(usage.costUsd * 1e6) / 1e4,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
         model: usage.model,
