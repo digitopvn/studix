@@ -98,6 +98,12 @@ export type RotateApiKeyInput = z.input<typeof RotateApiKeyInput>;
 export interface ResolvedProviderCredential {
   apiKey: string;
   connection: ProviderConnectionView;
+  /**
+   * Called after a run got a 401 with this key. It re-tests the key directly and, only if Anthropic
+   * still rejects it, marks the connection `invalid` so the API pre-check stops accepting it. A key
+   * rotated in the meantime is left alone.
+   */
+  markRejected(): Promise<void>;
 }
 
 export interface ProviderConnectionService {
@@ -427,7 +433,26 @@ export function createProviderConnectionService(
     async resolveForExecution(ctx, input) {
       const row = await usableRow(ctx, input.connectionId, input.requestedBy);
       const apiKey = openKey(ctx, row, row.secretCiphertext as string);
-      return { apiKey, connection: toView(ctx, row) };
+      const ciphertext = row.secretCiphertext as string;
+      return {
+        apiKey,
+        connection: toView(ctx, row),
+        async markRejected() {
+          // A 401 can come from a gateway or a short provider incident; only a direct test of this key decides.
+          const result = await deps.tester.test(apiKey);
+          if (result.verdict !== "invalid") return;
+          const updated = await deps.connections.recordTest(ctx, row.id, ciphertext, {
+            status: "invalid",
+            lastTest: toTestRecord(result),
+          });
+          if (!updated) return;
+          await audit(ctx, "rejected", updated);
+          deps.logger?.warn("provider connection marked invalid after Anthropic rejected the key", {
+            connectionId: row.id,
+            workspaceId: ctx.workspaceId,
+          });
+        },
+      };
     },
 
     async assertUsable(ctx, connectionId) {

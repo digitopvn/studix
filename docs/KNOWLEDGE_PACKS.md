@@ -23,7 +23,8 @@ giải thích cách dùng và cách thêm pack.
 Pack có sẵn: `narrative`, `performance`, `art-direction`, `dop-camera`, `wardrobe-props`,
 `physics-lite`, `sound` (bảy pack của anime-creator), `production-failure-modes` (failure mode
 đã đo trong `SKILL.md` nguồn), `creative-direction`, `voice-performance`, `motion-design`,
-`motion-craft`, `composition-timing`, `shader-gl`, `threejs`. Nguồn từng pack ghi trong trường
+`motion-craft`, `composition-timing`, `shader-gl`, `threejs`, `signature-motion-styles` (40 style motion
+đặt tên theo phong cách, không theo thương hiệu). Nguồn từng pack ghi trong trường
 `sources` và trong [PORTING.md](PORTING.md#file-level-port-record-zuey-workspace-và-agentkit).
 
 ## Stage nạp pack

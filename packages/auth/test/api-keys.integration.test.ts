@@ -139,7 +139,7 @@ describe("api key scopes after job:retry joined the role matrix", () => {
       "approval:decide",
     ]);
 
-    const sql = readFileSync(join(MIGRATIONS_FOLDER, "0011_api_key_job_retry.sql"), "utf8");
+    const sql = readFileSync(join(MIGRATIONS_FOLDER, "0012_api_key_job_retry.sql"), "utf8");
     await db.current.client.unsafe(sql);
 
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));

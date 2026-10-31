@@ -64,7 +64,10 @@ it up with the database secrets. To rotate it, move the old value to
 The Claude planner is off unless `STUDIX_CLAUDE_PLANNER=true`. Set it on both
 the app (so job creation accepts a `planner` selection) and the worker. The
 worker then also needs the same `STUDIX_SECRETS_KEY` to open the selected key,
-and refuses to start without it. Tuning, all optional:
+and refuses to start without it. At startup the worker also runs the Claude
+binary with `--version` (no model call, no key) and refuses to start when it
+cannot run on the host, for example an image platform the SDK ships no binary
+for; unset the flag to run without the planner. Tuning, all optional:
 `STUDIX_CLAUDE_PLANNER_MODEL`, `STUDIX_CLAUDE_PLANNER_MAX_TURNS` (default 4),
 `STUDIX_CLAUDE_PLANNER_MAX_COST_CENTS` (default 200, lowered further by the
 job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
@@ -73,6 +76,16 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
 when the run ends; the worker creates that directory at startup and removes
 sandboxes left by a crashed worker once they are older than the run timeout.
+When Anthropic answers a run with 401, the worker re-tests that key directly
+and, only if it is still rejected and was not rotated meanwhile, marks its
+connection `invalid`, so job creation stops accepting it until the key is
+replaced. A 401 that the re-test does not repeat (a gateway token, a short
+Anthropic incident) leaves the key alone.
+
+Smoke tests of the planner live in the `live` test project (`STUDIX_LIVE=1
+ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
+plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the
+rejected-key test uses a made-up key and costs nothing.
 
 Paid media runs through the Multix provider (`packages/providers`), which is
 off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
