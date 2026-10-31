@@ -465,6 +465,106 @@ describe("project review", () => {
     });
   });
 
+  describe("feedback on a film shot's SFX cues", () => {
+    const scope = {
+      scenes: [
+        { id: "sc-1", shots: [{ id: "feature-1", sfx: ["pháo hoa nổ"] }] },
+        { id: "sc-2", shots: [{ id: "feature-2", sfx: ["tiếng gió"] }] },
+      ],
+    };
+
+    async function filmSetup() {
+      const env = createInMemoryStudio();
+      const ctx = testTenant();
+      const spec = { ...(brandIntro as VideoIR), metadata: { film: { scope } } };
+      const created = await env.studio.createVideoProject(ctx, { brief, spec });
+      return { ...env, ctx, projectId: created.project.id };
+    }
+
+    it("rewrites one shot's cues in the scope, keeping the approved storyboard", async () => {
+      const { studio, ctx, projectId, repos } = await filmSetup();
+      await studio.decideStoryboard(ctx, { projectId, target: "storyboard", decision: "approved" });
+      const out = await studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "SFX phải là tiếng, không phải lời",
+        patch: replaceText("/metadata/film/scope/scenes/0/shots/0/sfx/0", "fireworks bursting overhead"),
+      });
+      expect(out.allowedPaths).toEqual([
+        expect.stringMatching(/^\/scenes\/\d+\/shots\/\d+$/),
+        "/metadata/film/scope/scenes/0/shots/0/sfx",
+      ]);
+      expect(out.invalidated.filter((k) => k.startsWith("shot:") || k.startsWith("scene:"))).toEqual([]);
+      const current = await repos.projects.getVersion(ctx, out.versionId!);
+      const film = current?.ir.metadata?.film as { scope: typeof scope };
+      expect(film.scope.scenes.map((sc) => sc.shots[0]?.sfx)).toEqual([
+        ["fireworks bursting overhead"],
+        ["tiếng gió"],
+      ]);
+      expect(await storyboardStatus(repos, ctx, projectId)).toBe("approved");
+    });
+
+    it("rewrites the cues of every shot a time range covers in one patch", async () => {
+      const { studio, ctx, projectId, repos } = await filmSetup();
+      const ir = (await repos.projects.getVersion(
+        ctx,
+        (await repos.projects.get(ctx, projectId))!.currentVersionId!,
+      ))!.ir;
+      const out = await studio.submitFeedback(ctx, {
+        projectId,
+        startMs: 0,
+        endMs: ir.format.durationMs,
+        comment: "SFX bằng tiếng Anh",
+        patch: {
+          ops: [
+            {
+              op: "replace",
+              path: "/metadata/film/scope/scenes/0/shots/0/sfx/0",
+              value: "fireworks bursting overhead",
+            },
+            {
+              op: "replace",
+              path: "/metadata/film/scope/scenes/1/shots/0/sfx/0",
+              value: "soft wind over a rooftop",
+            },
+          ],
+        },
+      });
+      expect(out.allowedPaths).toEqual(
+        expect.arrayContaining([
+          "/metadata/film/scope/scenes/0/shots/0/sfx",
+          "/metadata/film/scope/scenes/1/shots/0/sfx",
+        ]),
+      );
+      const film = (await repos.projects.getVersion(ctx, out.versionId!))?.ir.metadata?.film as {
+        scope: typeof scope;
+      };
+      expect(film.scope.scenes.map((sc) => sc.shots[0]?.sfx)).toEqual([
+        ["fireworks bursting overhead"],
+        ["soft wind over a rooftop"],
+      ]);
+    });
+
+    it("refuses another shot's cues, and offers no cue path on a video without a film scope", async () => {
+      const { studio, ctx, projectId } = await filmSetup();
+      await expect(
+        studio.submitFeedback(ctx, {
+          projectId,
+          shotId: "feature-1",
+          comment: "x",
+          patch: replaceText("/metadata/film/scope/scenes/1/shots/0/sfx/0", "soft wind"),
+        }),
+      ).rejects.toMatchObject({ code: "VALIDATION" });
+      const plain = await setup();
+      const note = await plain.studio.submitFeedback(plain.ctx, {
+        projectId: plain.projectId,
+        shotId: "feature-1",
+        comment: "x",
+      });
+      expect(note.allowedPaths).toHaveLength(1);
+    });
+  });
+
   it("a person approves the storyboard; the approval survives an unrelated patch only where nothing changed", async () => {
     const { studio, ctx, projectId, repos } = await setup();
     for (const id of ["hook-title", "feature-1"]) {

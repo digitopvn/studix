@@ -163,6 +163,11 @@ export interface MediaProvider {
     request: Omit<MediaGenerationRequest, "workDir" | "signal" | "idempotencyKey">,
   ): Promise<number>;
   generate(ctx: TenantContext, request: MediaGenerationRequest): Promise<MediaGenerationResult>;
+  /**
+   * The "<vendor>:<model>" id a request would run on, the same id its result reports. Providers that route
+   * a request without a model to a configured default expose this, so reused outputs follow that default.
+   */
+  resolveModel?(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string;
   /** Providers with async upstream jobs expose this so a lost worker can collect a paid job. */
   resume?(ctx: TenantContext, request: MediaResumeRequest): Promise<MediaGenerationResult>;
 }

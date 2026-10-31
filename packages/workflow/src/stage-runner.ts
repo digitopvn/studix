@@ -15,12 +15,13 @@ import type {
   TenantContext,
 } from "@studix/core";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
-import { contentDigest, type StoryboardReviewStatus } from "@studix/video-ir";
+import { AssetRef, contentDigest, type StoryboardReviewStatus } from "@studix/video-ir";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
 import { StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
 import type { WorkerJobQueue } from "./worker-job-queue.ts";
 import type {
   AgentStageServices,
+  MediaOutputCache,
   StageContext,
   StageDefinition,
   StageOutput,
@@ -214,6 +215,31 @@ export function stageCacheKey(stage: string, version: string | number, input: un
   return `${stage}@${version}:${contentDigest(input)}`;
 }
 
+/** Stage-cache namespace of paid media outputs; no pack stage may take this name. */
+export const MEDIA_OUTPUT_CACHE_STAGE = "media-output";
+
+/**
+ * The tenant's paid media outputs, kept in the stage cache under their own namespace. An entry is written
+ * only after its output is stored; an entry whose asset no longer parses is treated as absent.
+ */
+export function mediaOutputCache(
+  cache: StageCacheRepository,
+  ctx: TenantContext,
+  jobId: string,
+): MediaOutputCache {
+  return {
+    async get(key) {
+      const hit = await cache.get(ctx, MEDIA_OUTPUT_CACHE_STAGE, key);
+      const asset = AssetRef.safeParse(hit?.output.asset);
+      if (!hit || !asset.success) return undefined;
+      return { asset: asset.data, ...(hit.jobId ? { jobId: hit.jobId } : {}) };
+    },
+    async put(key, asset) {
+      await cache.put(ctx, { stage: MEDIA_OUTPUT_CACHE_STAGE, cacheKey: key, output: { asset }, jobId });
+    },
+  };
+}
+
 /** Parse the stage input, or fail the stage before it runs. */
 function parseInput(stage: StageDefinition, job: Job, outputs: Record<string, StageOutput>): unknown {
   if (!stage.inputSchema) return undefined;
@@ -383,6 +409,7 @@ export async function runStages(
           });
       },
       mediaJournal,
+      ...(deps.stageCache ? { mediaOutputs: mediaOutputCache(deps.stageCache, ctx, job.id) } : {}),
       services,
     };
 

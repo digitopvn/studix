@@ -97,7 +97,10 @@ function memoryStorage(): StorageAdapter {
       await writeFile(filePath, bytes);
       return { sha256: sha(bytes), bytes: bytes.length };
     },
-    head: async () => undefined,
+    async head(_ctx, key) {
+      const bytes = objects.get(key);
+      return bytes ? { key, bytes: bytes.length, sha256: sha(bytes), contentType: "" } : undefined;
+    },
     signedUrl: async (_ctx, key) => `https://storage.test/${key}`,
     delete: async () => {},
   };
@@ -294,12 +297,12 @@ async function currentIr(ctx: TenantContext, projectId: string) {
 }
 
 /** What a person does on the dashboard: approve the storyboard of the current version. */
-async function approveStoryboard(ctx: TenantContext, projectId: string) {
+async function approveStoryboard(ctx: TenantContext, projectId: string, revision = 1) {
   const { version, ir } = await currentIr(ctx, projectId);
   const storyboard = storyboardFromVideoIR(ir);
   await db.current.repos.storyboards.append(ctx, {
     projectId,
-    revision: 1,
+    revision,
     versionId: version.id,
     storyboard: { ...storyboard, approval: { status: "approved", reviewer: reviewer.id } },
     createdBy: reviewer,
@@ -683,6 +686,64 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(await world.runOnce(third.id)).toBe("failed");
     expect(await world.repos.jobs.get(ctx, third.id)).toMatchObject({ error: { code: "VALIDATION" } });
     expect(world.requests).toHaveLength(before);
+  });
+
+  it("pays again only for the effect whose cue changed: the lines, clips, lip-sync and music are reused", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-${pack}-reuse`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G1");
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+    const board = await currentIr(ctx, project.id);
+    await approveStoryboard(ctx, project.id);
+    const first = await enqueue(ctx, project.id, pack, { versionId: board.version.id });
+    expect(await world.runOnce(first.id)).toBe("succeeded");
+    const paid = world.requests.filter((r) => r.kind !== "image").length;
+    expect(paid).toBe(13);
+
+    // One SFX cue of s4 changes in a new version; nothing else in the film does.
+    const ir = structuredClone(board.ir);
+    const film = (
+      ir.metadata as { film: { scope: { scenes: { shots: { id: string; sfx: string[] }[] }[] } } }
+    ).film;
+    const s4 = film.scope.scenes.flatMap((sc) => sc.shots).find((sh) => sh.id === "s4");
+    expect(s4?.sfx).toEqual(["distant fireworks launching"]);
+    s4!.sfx = ["distant fireworks whistling upward"];
+    const patched = await db.current.repos.projects.createVersion(ctx, {
+      projectId: project.id,
+      ir,
+      source: "patch",
+      parentVersionId: board.version.id,
+      advanceFrom: board.version.id,
+      createdBy: actor,
+    });
+    await approveStoryboard(ctx, project.id, 2);
+    world.requests.length = 0;
+    world.rendered.length = 0;
+    const second = await enqueue(ctx, project.id, pack, { versionId: patched.id });
+    expect(await world.runOnce(second.id)).toBe("succeeded");
+
+    // The only provider call is the changed effect; every other output is the one the first job paid for.
+    expect(world.requests.map((r) => [r.kind, r.prompt])).toEqual([
+      ["sfx", "Sound effect only, no voice, speech, words or singing: distant fireworks whistling upward"],
+    ]);
+    const usage = (await world.repos.usage.list(ctx, { jobId: second.id, limit: 200 })).items.filter(
+      (u) => u.kind === USAGE_KINDS.mediaGeneration,
+    );
+    const reused = usage.filter((u) => u.metadata?.reused === true);
+    expect(reused).toHaveLength(paid - 1);
+    expect(reused.every((u) => u.costCents === 0 && u.metadata?.reusedFromJob === first.id)).toBe(true);
+    expect(usage.filter((u) => u.costCents > 0).map((u) => u.metadata?.assetId)).toEqual(["s4-fx1"]);
+    const cut = world.rendered[0]!;
+    const keyOf = (id: string) => cut.assets.find((a) => a.id === id)?.storageKey ?? "";
+    for (const id of ["s2-l1-vo", "s2-clip", "s2-sync", "s4-sync", "scene-1-score", "s1-fx1"].filter((id) =>
+      cut.assets.some((a) => a.id === id),
+    ))
+      expect(keyOf(id), id).toContain(`generated/${first.id}/`);
+    expect(keyOf("s4-fx1")).toContain(`generated/${second.id}/`);
   });
 
   it("fails the job and spends nothing on designs when the reviewer rejects G0", async () => {

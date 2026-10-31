@@ -126,7 +126,9 @@ const Ms = z.number().int().min(0).max(600_000).optional();
  */
 const FeedbackToolInput = z.object({
   projectId: Id,
-  shotId: Id.optional(),
+  shotId: Id.optional().describe(
+    "Shot; in a film, a shot, scene or time-range patch may also rewrite its SFX cues.",
+  ),
   sceneId: Id.optional(),
   assetId: Id.optional(),
   characterId: Id.optional().describe("Film character; a patch may only change its voice."),

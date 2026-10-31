@@ -45,6 +45,7 @@ import {
   billedOnFailure,
   estimateMediaCents,
   generateStoredMedia,
+  reuseOnAssets,
   type StoredMediaRequest,
 } from "../stored-media.ts";
 import {
@@ -971,6 +972,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           },
           keyPrefix: `generated/${s.job.id}/dialogue/${cue.id}`,
           maxCostCents: 0,
+          reuse: {},
         } satisfies StoredMediaRequest,
       };
     });
@@ -1084,6 +1086,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             },
             keyPrefix: `generated/${s.job.id}/clips/${shot.id}`,
             maxCostCents: 0,
+            ...reuseOnAssets(ir, { image: still.assetId }),
           } satisfies StoredMediaRequest,
         };
       });
@@ -1215,6 +1218,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             params: { audio: "pending", video: "pending", durationMs: clipMs(shot.durationMs) },
             keyPrefix: `generated/${s.job.id}/lipsync/${plan.shotId}`,
             maxCostCents: 0,
+            ...reuseOnAssets(ir, { video: shot.assetId, audio: cue.audioAssetId }),
           } satisfies StoredMediaRequest,
         };
       });
@@ -1286,6 +1290,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           params: { durationMs: Math.min(MAX_SCORE_CUE_MS, length) },
           keyPrefix: `generated/${s.job.id}/sound/${scene.id}-score`,
           maxCostCents: 0,
+          reuse: {},
         } satisfies StoredMediaRequest,
       };
     });
@@ -1314,6 +1319,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             params: { durationMs: Math.max(500, Math.min(3_000, span.durationMs)) },
             keyPrefix: `generated/${s.job.id}/sound/${shot.id}-fx${i + 1}`,
             maxCostCents: 0,
+            reuse: {},
           } satisfies StoredMediaRequest,
         };
       }),
