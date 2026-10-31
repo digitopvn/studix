@@ -11,6 +11,7 @@ import type {
 import { type Clock, newId, StudixError } from "@studix/shared";
 import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
+import { providerConnections } from "../schema/provider-connections.ts";
 import { apiKeys, members, organizations, workspaces } from "../schema/tenancy.ts";
 import { actorFrom, first, isUniqueViolation, opt, scoped, tenantValues } from "./helpers.ts";
 
@@ -181,11 +182,26 @@ export function createWorkspaceRepository(db: StudixDb, clock: Clock): Workspace
       return toMember(first(rows, "member"));
     },
     async removeMember(ctx, userId) {
-      const rows = await db
-        .delete(members)
-        .where(scoped(members, ctx, eq(members.userId, userId)))
-        .returning({ id: members.id });
-      return rows.length > 0;
+      return db.transaction(async (tx) => {
+        const rows = await tx
+          .delete(members)
+          .where(scoped(members, ctx, eq(members.userId, userId)))
+          .returning({ id: members.id });
+        if (rows.length === 0) return false;
+        // A former member's personal provider keys must stop working and must not linger encrypted.
+        const now = clock.now();
+        await tx
+          .update(providerConnections)
+          .set({ status: "revoked", secretCiphertext: null, revokedAt: now, updatedAt: now })
+          .where(
+            scoped(
+              providerConnections,
+              ctx,
+              and(eq(providerConnections.ownerUserId, userId), isNull(providerConnections.revokedAt)),
+            ),
+          );
+        return true;
+      });
     },
   };
 }

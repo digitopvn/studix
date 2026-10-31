@@ -8,6 +8,7 @@ import { JobDetailPage } from "./pages/job-detail-page.tsx";
 import { JobsPage } from "./pages/jobs-page.tsx";
 import { ProjectDetailPage } from "./pages/project-detail-page.tsx";
 import { ProjectsPage } from "./pages/projects-page.tsx";
+import { ProvidersPage } from "./pages/providers-page.tsx";
 import { ErrorBanner, Link } from "./ui.tsx";
 import { navigate, useHashRoute } from "./use-hash-route.ts";
 
@@ -17,6 +18,7 @@ const NAV = [
   { to: "/create", label: "New video" },
   { to: "/api-keys", label: "API keys" },
   { to: "/connectors", label: "Connectors" },
+  { to: "/providers", label: "AI & Providers" },
 ] as const;
 
 type SessionState = { status: "loading" } | { status: "anonymous" } | { status: "ready"; me: Me };
@@ -35,6 +37,8 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
       return <ApiKeysPage mcpUrl={me.mcpUrl} />;
     case "connectors":
       return <ConnectorsPage />;
+    case "providers":
+      return <ProvidersPage />;
     default:
       return <p className="muted">Page not found.</p>;
   }

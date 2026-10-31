@@ -56,6 +56,11 @@ export const ConfigSchema = z
       .regex(/^[a-z0-9]{2,8}$/, "2-8 lowercase alphanumerics")
       .default("dev"),
     BETTER_AUTH_SECRET: z.string().min(32).optional(),
+    /** 32 random bytes (base64) sealing stored provider credentials; without it none can be saved. */
+    STUDIX_SECRETS_KEY: optionalString,
+    /** Earlier STUDIX_SECRETS_KEY values that may still open stored credentials during a rotation. */
+    STUDIX_SECRETS_KEYS_PREVIOUS: csv.default([]),
+    ANTHROPIC_BASE_URL: origin.default("https://api.anthropic.com"),
 
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(1),
     JOB_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),

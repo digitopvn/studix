@@ -45,6 +45,12 @@ secret; artifact signing / presign lifetime; credential encryption key for
 `secretRef`; dashboard auth secret; decision provider credentials and model
 ids (OpenRouter, TypeSafeAI; live use opt-in); log level.
 
+`STUDIX_SECRETS_KEY` (32 random bytes, base64) encrypts workspace provider
+credentials such as Anthropic API keys. Without it the app still starts, but
+saving keys is disabled. Losing it makes every stored key unreadable, so back
+it up with the database secrets. To rotate it, move the old value to
+`STUDIX_SECRETS_KEYS_PREVIOUS` and set a new one.
+
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
 

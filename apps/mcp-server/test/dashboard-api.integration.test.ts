@@ -154,4 +154,48 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     });
     expect(bad.status).toBe(400);
   });
+  it("stores Anthropic keys without echoing them and keeps personal keys private", async () => {
+    const apiKey = "sk-ant-api03-dashboardtestkeyvalue-WXYZ";
+    const overview = await (await app.api("GET", "/api/providers/anthropic", { cookie: alice })).json();
+    expect(overview.methods.map((m: { authMethod: string; availability: string }) => m)).toEqual([
+      expect.objectContaining({ authMethod: "api_key", availability: "available" }),
+      expect.objectContaining({ authMethod: "oauth_subscription", availability: "restricted" }),
+    ]);
+
+    const created = await app.api("POST", "/api/providers/anthropic/api-keys", {
+      cookie: alice,
+      body: { owner: "user", apiKey, label: "mine" },
+    });
+    expect(created.status).toBe(201);
+    expect(created.headers.get("cache-control")).toBe("no-store");
+    const text = await created.text();
+    expect(text).not.toContain(apiKey);
+    const view = JSON.parse(text);
+    expect(view).toMatchObject({ owner: "user", ownedByMe: true, keyHint: "sk-ant-…WXYZ" });
+
+    const rejected = await app.api("POST", "/api/providers/anthropic/api-keys", {
+      cookie: alice,
+      body: { owner: "workspace", apiKey: "sk-ant-api03-rejectedrejectedrejected" },
+    });
+    // A refused Anthropic key is a 400, never a 401 that the dashboard could read as "signed out".
+    expect(rejected.status).toBe(400);
+    expect(await rejected.text()).not.toContain("rejectedrejected");
+
+    // Bob is another tenant: neither listed nor reachable.
+    const bobList = await (await app.api("GET", "/api/providers/anthropic", { cookie: bob })).json();
+    expect(bobList.connections).toEqual([]);
+    expect(
+      (await app.api("POST", `/api/providers/anthropic/api-keys/${view.id}/test`, { cookie: bob })).status,
+    ).toBe(404);
+
+    const tested = await app.api("POST", `/api/providers/anthropic/api-keys/${view.id}/test`, {
+      cookie: alice,
+    });
+    expect((await tested.json()).lastTest).toMatchObject({ ok: true });
+    expect(
+      (await app.api("DELETE", `/api/providers/anthropic/api-keys/${view.id}`, { cookie: alice })).status,
+    ).toBe(200);
+    const after = await (await app.api("GET", "/api/providers/anthropic", { cookie: alice })).json();
+    expect(after.connections).toEqual([]);
+  });
 });

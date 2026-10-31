@@ -181,6 +181,61 @@ export interface Connector {
   lastError?: string;
 }
 
+export type ProviderConnectionStatus = "available" | "invalid" | "unverified";
+
+/** Pay-as-you-go access through an Anthropic Console API key, billed to the key's organization. */
+export interface ApiKeyMethodInfo {
+  authMethod: "api_key";
+  title: string;
+  billing: "usage_based";
+  availability: "available" | "unavailable";
+  reason?: string;
+  canAddWorkspaceKey: boolean;
+  canAddPersonalKey: boolean;
+}
+
+/** Claude subscription OAuth: informational only, Studix cannot connect it. */
+export interface SubscriptionMethodInfo {
+  authMethod: "oauth_subscription";
+  title: string;
+  billing: "subscription";
+  availability: "restricted";
+  reason: string;
+  alternative: string;
+  references: string[];
+}
+
+export interface ProviderConnectionTest {
+  ok: boolean;
+  at: string;
+  latencyMs: number;
+  httpStatus?: number;
+  error?: StudixErrorPayload & { retryable: boolean };
+}
+
+/** A stored Anthropic API key binding; the secret itself never leaves the server, only `keyHint`. */
+export interface ProviderConnection {
+  id: string;
+  provider: string;
+  authMethod: "api_key";
+  billing: "usage_based";
+  owner: "workspace" | "user";
+  ownedByMe: boolean;
+  label: string;
+  status: ProviderConnectionStatus;
+  keyHint?: string;
+  lastTest?: ProviderConnectionTest;
+  canManage: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnthropicProvider {
+  provider: "anthropic";
+  methods: [ApiKeyMethodInfo, SubscriptionMethodInfo];
+  connections: ProviderConnection[];
+}
+
 export interface CreateVideoRequest {
   prompt: string;
   title?: string;
@@ -223,4 +278,13 @@ export const api = {
       {},
     ),
   disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
+  anthropicProvider: () => request<AnthropicProvider>("GET", "/api/providers/anthropic"),
+  addAnthropicKey: (input: { owner: "workspace" | "user"; apiKey: string; label?: string }) =>
+    request<ProviderConnection>("POST", "/api/providers/anthropic/api-keys", input),
+  replaceAnthropicKey: (id: string, apiKey: string) =>
+    request<ProviderConnection>("PUT", `/api/providers/anthropic/api-keys/${enc(id)}`, { apiKey }),
+  testAnthropicKey: (id: string) =>
+    request<ProviderConnection>("POST", `/api/providers/anthropic/api-keys/${enc(id)}/test`, {}),
+  removeAnthropicKey: (id: string) =>
+    request<ProviderConnection>("DELETE", `/api/providers/anthropic/api-keys/${enc(id)}`),
 };
