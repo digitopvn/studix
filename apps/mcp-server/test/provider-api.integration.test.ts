@@ -37,7 +37,7 @@ describe("provider and model API (Better Auth session, Postgres)", () => {
   });
 
   it("connects a non-Anthropic key, opts runtimes in and out, and never echoes the key", async () => {
-    const apiKey = "sk-proj-providerapitestkey-0042";
+    const apiKey = "sk-proj-test-key-not-real-0042";
     const created = await app.api("POST", "/api/providers/connections", {
       cookie: alice,
       body: { provider: "openai", owner: "workspace", apiKey, label: "OpenAI" },
@@ -72,7 +72,7 @@ describe("provider and model API (Better Auth session, Postgres)", () => {
   it("keeps the Anthropic route on Anthropic even if the body names another provider", async () => {
     const res = await app.api("POST", "/api/providers/anthropic/api-keys", {
       cookie: bob,
-      body: { provider: "openai", owner: "workspace", apiKey: "sk-proj-notananthropickey-0001" },
+      body: { provider: "openai", owner: "workspace", apiKey: "sk-proj-test-key-not-real-0001" },
     });
     expect(res.status).toBe(400);
   });
@@ -80,7 +80,7 @@ describe("provider and model API (Better Auth session, Postgres)", () => {
   it("saves per-stage models, previews the effective one and deletes it", async () => {
     const key = await app.api("POST", "/api/providers/connections", {
       cookie: bob,
-      body: { provider: "openrouter", owner: "workspace", apiKey: "sk-or-v1-previewtestkey-0007" },
+      body: { provider: "openrouter", owner: "workspace", apiKey: "sk-or-v1-test-key-not-real-0007" },
     });
     const connection = await key.json();
     const modelId = await catalogModel(app, bob, "openrouter");
