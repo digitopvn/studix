@@ -1,5 +1,5 @@
 import { agentSpendOf, type ClaudeAgentTransport, createClaudeAgentRuntime } from "@studix/agent-runtime";
-import type { ProviderConnectionService } from "@studix/auth";
+import type { ProviderConnectionService, ResolvedProviderCredential } from "@studix/auth";
 import { USAGE_KINDS, usageDedupeKey } from "@studix/billing";
 import type {
   AgentRunResult,
@@ -102,6 +102,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
         retryable: false,
       });
     }
+    let resolvedKey: ResolvedProviderCredential | undefined;
     const runtime = createClaudeAgentRuntime({
       transport: deps.transport,
       model: deps.model,
@@ -112,6 +113,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
             connectionId: selection.providerConnectionId,
             requestedBy: ctx.requestedBy,
           });
+          resolvedKey = resolved;
           return resolved.apiKey;
         },
       },
@@ -149,6 +151,12 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
       });
     } catch (err) {
       const error = isStudixError(err) ? err : new StudixError("INTERNAL", String(err));
+      // Anthropic refused this key mid-run: later jobs must not be accepted with it.
+      if (error.code === "UNAUTHENTICATED" && resolvedKey) {
+        await resolvedKey.markRejected(error.toJSON()).catch((e: unknown) => {
+          log.warn("rejected key not marked invalid", { jobId: ctx.jobId, error: String(e) });
+        });
+      }
       // A failed run still paid for what the agent did before it stopped; the stage reports no usage.
       const spent = agentSpendOf(error);
       const model = spent?.model ?? deps.model;

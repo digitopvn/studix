@@ -9,7 +9,7 @@ import type {
   UsageEvent,
 } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
-import { createLogger, StudixError } from "@studix/shared";
+import { createLogger, StudixError, type StudixErrorPayload } from "@studix/shared";
 import type { Planner, PlannerContext } from "@studix/workflow";
 import { describe, expect, it } from "vitest";
 import { createClaudePlanner, createPlannerRouter } from "../src/planner/claude-planner.ts";
@@ -45,13 +45,19 @@ const success = (output: unknown = ir): ClaudeAgentEvent[] => [
 function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>), resolveError?: StudixError) {
   const transport = createFakeClaudeTransport(() => (typeof events === "function" ? events() : events));
   const resolved: { connectionId: string; requestedBy: ActorRef }[] = [];
+  const rejected: StudixErrorPayload[] = [];
   const planner = createClaudePlanner({
     transport,
     credentials: {
       async resolveForExecution(_tenant, input) {
         resolved.push(input);
         if (resolveError) throw resolveError;
-        return { apiKey: FAKE_KEY } as ResolvedProviderCredential;
+        return {
+          apiKey: FAKE_KEY,
+          async markRejected(error) {
+            rejected.push(error);
+          },
+        } as ResolvedProviderCredential;
       },
     },
     model: "claude-test",
@@ -60,7 +66,7 @@ function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>),
     timeoutMs: 60_000,
     logger,
   });
-  return { planner, transport, resolved };
+  return { planner, transport, resolved, rejected };
 }
 
 describe("Claude planner", () => {
@@ -115,6 +121,47 @@ describe("Claude planner", () => {
       none.planner(brief, ctx({ maxCostCents: 0 }), new AbortController().signal),
     ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
     expect(none.resolved).toEqual([]);
+  });
+
+  it("marks the connection invalid when Anthropic rejects the key during the run", async () => {
+    const { planner, rejected } = setup([{ type: "error", status: 401, message: "invalid x-api-key" }]);
+    await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
+      code: "UNAUTHENTICATED",
+    });
+    expect(rejected).toEqual([expect.objectContaining({ code: "UNAUTHENTICATED" })]);
+  });
+
+  it("leaves the connection alone for failures that are not a rejected key", async () => {
+    const { planner, rejected } = setup([{ type: "error", status: 429, message: "rate limited" }]);
+    await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+    });
+    expect(rejected).toEqual([]);
+  });
+
+  it("still fails the job with UNAUTHENTICATED when marking the key invalid throws", async () => {
+    const transport = createFakeClaudeTransport(() => [{ type: "error", status: 401, message: "bad key" }]);
+    const planner = createClaudePlanner({
+      transport,
+      credentials: {
+        async resolveForExecution() {
+          return {
+            apiKey: FAKE_KEY,
+            async markRejected() {
+              throw new Error("database down");
+            },
+          } as unknown as ResolvedProviderCredential;
+        },
+      },
+      model: "claude-test",
+      maxTurns: 4,
+      maxCostCents: 200,
+      timeoutMs: 60_000,
+      logger,
+    });
+    await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
+      code: "UNAUTHENTICATED",
+    });
   });
 
   it("stops the agent when its reported cost passes the cap", async () => {
@@ -203,7 +250,10 @@ describe("Claude planner execution records", () => {
     const ledger: NewUsageEvent[] = [];
     const planner = createClaudePlanner({
       transport: createFakeClaudeTransport(() => events),
-      credentials: { resolveForExecution: async () => ({ apiKey: FAKE_KEY }) as ResolvedProviderCredential },
+      credentials: {
+        resolveForExecution: async () =>
+          ({ apiKey: FAKE_KEY, markRejected: async () => {} }) as unknown as ResolvedProviderCredential,
+      },
       executions: {
         async recordProviderExecution(_ctx, input) {
           rows.push(input);

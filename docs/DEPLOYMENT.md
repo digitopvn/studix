@@ -54,7 +54,10 @@ it up with the database secrets. To rotate it, move the old value to
 The Claude planner is off unless `STUDIX_CLAUDE_PLANNER=true`. Set it on both
 the app (so job creation accepts a `planner` selection) and the worker. The
 worker then also needs the same `STUDIX_SECRETS_KEY` to open the selected key,
-and refuses to start without it. Tuning, all optional:
+and refuses to start without it. At startup the worker also runs the Claude
+binary with `--version` (no model call, no key) and refuses to start when it
+cannot run on the host, for example an image platform the SDK ships no binary
+for; unset the flag to run without the planner. Tuning, all optional:
 `STUDIX_CLAUDE_PLANNER_MODEL`, `STUDIX_CLAUDE_PLANNER_MAX_TURNS` (default 4),
 `STUDIX_CLAUDE_PLANNER_MAX_COST_CENTS` (default 200, lowered further by the
 job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
@@ -63,6 +66,13 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
 when the run ends; the worker creates that directory at startup and removes
 sandboxes left by a crashed worker once they are older than the run timeout.
+When Anthropic answers a run with 401, the worker marks that key's connection
+`invalid` (only if it was not rotated meanwhile), so job creation stops
+accepting it until the key is replaced.
+
+A paid smoke test of the planner lives in the `live` test project:
+`STUDIX_LIVE=1 ANTHROPIC_API_KEY=sk-ant-… pnpm test:live` (spend is capped by
+`STUDIX_CLAUDE_LIVE_MAX_COST_CENTS`, default 100).
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.

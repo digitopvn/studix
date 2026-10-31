@@ -98,6 +98,11 @@ export type RotateApiKeyInput = z.input<typeof RotateApiKeyInput>;
 export interface ResolvedProviderCredential {
   apiKey: string;
   connection: ProviderConnectionView;
+  /**
+   * Record that Anthropic rejected exactly this key during a run (HTTP 401): the connection becomes
+   * `invalid`, so the API pre-check stops accepting it. A key rotated in the meantime is left alone.
+   */
+  markRejected(error: StudixErrorPayload): Promise<void>;
 }
 
 export interface ProviderConnectionService {
@@ -427,7 +432,23 @@ export function createProviderConnectionService(
     async resolveForExecution(ctx, input) {
       const row = await usableRow(ctx, input.connectionId, input.requestedBy);
       const apiKey = openKey(ctx, row, row.secretCiphertext as string);
-      return { apiKey, connection: toView(ctx, row) };
+      const ciphertext = row.secretCiphertext as string;
+      return {
+        apiKey,
+        connection: toView(ctx, row),
+        async markRejected(error) {
+          const updated = await deps.connections.recordTest(ctx, row.id, ciphertext, {
+            status: "invalid",
+            lastTest: { ok: false, at: new Date(), latencyMs: 0, httpStatus: 401, error },
+          });
+          if (!updated) return;
+          await audit(ctx, "rejected", updated);
+          deps.logger?.warn("provider connection marked invalid after Anthropic rejected the key", {
+            connectionId: row.id,
+            workspaceId: ctx.workspaceId,
+          });
+        },
+      };
     },
 
     async assertUsable(ctx, connectionId) {

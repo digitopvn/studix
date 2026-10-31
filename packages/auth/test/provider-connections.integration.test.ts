@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { TenantContext } from "@studix/core";
 import { schema } from "@studix/database";
 import { insertTestUser, withTestDatabase } from "@studix/database/testing";
-import { StudixError } from "@studix/shared";
+import { StudixError, type StudixErrorPayload } from "@studix/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { ProviderKeyTester, ProviderKeyTestResult } from "../src/anthropic-key-tester.ts";
@@ -231,6 +231,32 @@ describe("provider connections over Postgres", () => {
         svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy: { type: "user", id: "x" } }),
       ),
     ).toBe("UNAUTHENTICATED");
+  });
+
+  it("marks only the rejected key invalid, so a key rotated meanwhile stays usable", async () => {
+    const { svc } = service();
+    const t = await workspace("pc-rejected");
+    const view = await svc.saveApiKey(t.admin, { owner: "workspace", apiKey: KEY_A });
+    const requestedBy = { type: "user", id: "x" } as const;
+    const resolved = await svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy });
+    const rejection: StudixErrorPayload = {
+      code: "UNAUTHENTICATED",
+      message: "Anthropic rejected the API key",
+      retryable: false,
+    };
+
+    await svc.rotateApiKey(t.admin, view.id, { apiKey: KEY_B });
+    await resolved.markRejected(rejection);
+    expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
+
+    const current = await svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy });
+    await current.markRejected(rejection);
+    expect(await codeOf(svc.assertUsable(t.admin, view.id))).toBe("UNAUTHENTICATED");
+    const overview = await svc.overview(t.admin);
+    expect(overview.connections[0]).toMatchObject({
+      status: "invalid",
+      lastTest: { ok: false, httpStatus: 401, error: { code: "UNAUTHENTICATED" } },
+    });
   });
 
   it("never lets a slow test of a replaced key overwrite the new key's status", async () => {
