@@ -13,7 +13,7 @@ export interface BoundedAgentRuntimeOptions {
   clock?: Clock;
 }
 
-function assertTask(task: AgentTask, now: Date): void {
+export function assertAgentTask(task: AgentTask, now: Date): void {
   const problems: string[] = [];
   if (!task.skill?.trim()) problems.push("skill is required");
   if (!Number.isInteger(task.maxTurns) || task.maxTurns < 1)
@@ -30,7 +30,7 @@ function assertTask(task: AgentTask, now: Date): void {
   }
 }
 
-function abortError(signal: AbortSignal): StudixError {
+export function agentAbortError(signal: AbortSignal): StudixError {
   const reason: unknown = signal.reason;
   return reason instanceof StudixError ? reason : new StudixError("CANCELLED", "agent task was cancelled");
 }
@@ -45,9 +45,9 @@ export function createBoundedAgentRuntime(options: BoundedAgentRuntimeOptions): 
   return {
     id: options.id,
     async run(ctx, task) {
-      assertTask(task, clock.now());
+      assertAgentTask(task, clock.now());
       const controller = new AbortController();
-      const onCallerAbort = () => controller.abort(abortError(task.signal!));
+      const onCallerAbort = () => controller.abort(agentAbortError(task.signal!));
       if (task.signal?.aborted) onCallerAbort();
       task.signal?.addEventListener("abort", onCallerAbort, { once: true });
       const deadline = task.deadlineAt;
@@ -62,7 +62,7 @@ export function createBoundedAgentRuntime(options: BoundedAgentRuntimeOptions): 
         : undefined;
       let rejectOnAbort: (() => void) | undefined;
       const aborted = new Promise<never>((_, reject) => {
-        rejectOnAbort = () => reject(abortError(controller.signal));
+        rejectOnAbort = () => reject(agentAbortError(controller.signal));
         if (controller.signal.aborted) rejectOnAbort();
         else controller.signal.addEventListener("abort", rejectOnAbort, { once: true });
       });
