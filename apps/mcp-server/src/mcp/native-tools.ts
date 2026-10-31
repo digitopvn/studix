@@ -22,6 +22,7 @@ import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts
 export const NATIVE_TOOL_NAMES = {
   ...STUDIX_TOOLS,
   cancelJob: "studix_cancel_job",
+  retryJob: "studix_retry_job",
 } as const;
 
 export interface ToolContext {
@@ -249,6 +250,19 @@ export const NATIVE_TOOLS = [
     audited: true,
     async run(ctx, input) {
       const job = await ctx.deps.studio.cancelJob(ctx.tenant, input.jobId, input.reason);
+      return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
+    },
+  }),
+  tool({
+    name: NATIVE_TOOL_NAMES.retryJob,
+    title: "Retry failed job",
+    description:
+      "Requeue a failed job after its cause is fixed. Same job: finished stages and paid media calls are reused, decided gates are not asked again.",
+    input: z.object({ jobId: Id }),
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      const job = await ctx.deps.studio.retryJob(ctx.tenant, input.jobId);
       return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
     },
   }),

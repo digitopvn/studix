@@ -387,6 +387,7 @@ export const api = {
     request<{ project: Project; job: Job; replayed: boolean }>("POST", "/api/projects", input),
   jobs: () => request<Page<Job>>("GET", "/api/jobs?limit=50"),
   job: (id: string) => request<{ job: Job; activity: ActivityEvent[] }>("GET", `/api/jobs/${enc(id)}`),
+  retryJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/retry`, {}),
   cancelJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/cancel`, {}),
   decideApproval: (id: string, decision: "approved" | "rejected") =>
     request("POST", `/api/approvals/${enc(id)}/decision`, { decision }),

@@ -180,6 +180,40 @@ describe("jobs, lists and audit", () => {
     });
   });
 
+  it("retries a failed job as the same job, audits it and refuses other states and roles", async () => {
+    const { studio, repos, ctx } = await setup();
+    const { job } = await studio.createVideoProject(ctx, { brief });
+    await expect(studio.retryJob(ctx, job.id)).rejects.toMatchObject({ code: "CONFLICT" });
+
+    await repos.jobs.update(ctx, job.id, {
+      status: "failed",
+      attempts: 3,
+      error: { code: "UNAVAILABLE", message: "bucket missing", retryable: false },
+      finishedAt: new Date(),
+    });
+    const failed = await studio.getJob(ctx, job.id);
+    expect(failed.next.map((n) => n.tool)).toContain("studix_retry_job");
+
+    const viewer = { ...ctx, actor: { type: "user" as const, id: "usr_v", role: "viewer" as const } };
+    await expect(studio.retryJob(viewer, job.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const retried = await studio.retryJob(ctx, job.id);
+    expect(retried).toMatchObject({ id: job.id, status: "queued", attempts: 3 });
+    expect(retried.error).toBeUndefined();
+    expect(retried.maxAttempts).toBeGreaterThan(3);
+    const audit = await repos.audit.list(ctx, { subjectType: "job", subjectId: job.id });
+    expect(audit.items[0]).toMatchObject({ action: "job.retried", data: { error: "UNAVAILABLE" } });
+  });
+
+  it("does not retry a failed publish job", async () => {
+    const { studio, repos, ctx } = await setup();
+    const { queue } = repos;
+    const { job } = await queue.enqueue(ctx, { kind: "video.publish", payload: {}, createdBy: ctx.actor });
+    await repos.jobs.update(ctx, job.id, { status: "failed" });
+    await expect(studio.retryJob(ctx, job.id)).rejects.toMatchObject({ code: "VALIDATION" });
+    expect((await studio.getJob(ctx, job.id)).next.map((n) => n.tool)).not.toContain("studix_retry_job");
+  });
+
   it("asks running jobs to stop instead of killing them", async () => {
     const { studio, repos, ctx } = await setup();
     const { job } = await studio.createVideoProject(ctx, { brief });

@@ -1,6 +1,14 @@
-import type { Job, JobPatch, JobQueue, JobRepository, Stage, TenantContext } from "@studix/core";
+import {
+  JOB_RESUME_ATTEMPTS,
+  type Job,
+  type JobPatch,
+  type JobQueue,
+  type JobRepository,
+  type Stage,
+  type TenantContext,
+} from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -255,6 +263,30 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
       const row = await getRow(ctx, jobId);
       if (!row) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
       return toJob(row);
+    },
+
+    async retry(ctx, jobId) {
+      const now = clock.now();
+      const rows = await db
+        .update(jobs)
+        .set({
+          status: "queued",
+          runAfter: now,
+          maxAttempts: sql`${jobs.attempts} + ${JOB_RESUME_ATTEMPTS}`,
+          cancelRequested: false,
+          error: null,
+          result: null,
+          finishedAt: null,
+          lockedBy: null,
+          leaseExpiresAt: null,
+          // The window the job was created with starts again; the failed attempt may have used it up.
+          deadlineAt: sql`case when ${jobs.deadlineAt} is null then null else ${now.toISOString()}::timestamptz + (${jobs.deadlineAt} - ${jobs.createdAt}) end`,
+          updatedAt: now,
+        })
+        .where(scoped(jobs, ctx, eq(jobs.id, jobId), eq(jobs.status, "failed")))
+        .returning();
+      if (!rows[0]) return conflictOrMissing(ctx, jobId, ["failed"]);
+      return toJob(rows[0]);
     },
 
     async resume(ctx, jobId) {

@@ -28,6 +28,7 @@ export const STUDIX_TOOLS = {
   inspect: "studix_inspect",
   createVideo: "studix_create_video",
   getJob: "studix_get_job",
+  retryJob: "studix_retry_job",
   getProject: "studix_get_project",
   approve: "studix_approve",
   feedback: "studix_feedback",

@@ -1,6 +1,6 @@
 import { StudixError } from "@studix/shared";
 import type { Asset, AssetKind } from "../entities/asset.ts";
-import type { Render } from "../entities/job.ts";
+import { JOB_KINDS, type Render } from "../entities/job.ts";
 import type { ProjectVersion, VideoProject } from "../entities/project.ts";
 import type { Approval } from "../entities/review.ts";
 import type { AuditEvent } from "../entities/telemetry.ts";
@@ -95,6 +95,32 @@ export class StudioService {
       data: { reason },
     });
     return loadJobView(this.deps, ctx, cancelled);
+  }
+
+  /**
+   * Requeue a failed job as the same job, after its cause was fixed. Succeeded stages keep their outputs and
+   * the stage's media job journal is reused, so upstream calls that already completed are collected rather
+   * than paid again; gates already decided are not asked again. Publish jobs are not resumable: a publish
+   * is not idempotent and must be started again on purpose.
+   */
+  async retryJob(ctx: TenantContext, jobId: string): Promise<JobView> {
+    assertPermission(ctx, "job:retry");
+    const job = await this.deps.jobs.get(ctx, jobId);
+    if (!job) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
+    if (job.kind === JOB_KINDS.publish) {
+      throw new StudixError("VALIDATION", "publish jobs cannot be retried", {
+        retryable: false,
+        suggestedAction: "Start a new publish once the cause is fixed.",
+      });
+    }
+    const requeued = await this.deps.queue.retry(ctx, jobId);
+    await this.recordAudit(ctx, {
+      action: "job.retried",
+      subjectType: "job",
+      subjectId: jobId,
+      data: { attempts: job.attempts, error: job.error?.code },
+    });
+    return loadJobView(this.deps, ctx, requeued);
   }
 
   async getProject(ctx: TenantContext, projectId: string): Promise<ProjectDetails> {
