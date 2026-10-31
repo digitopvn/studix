@@ -216,7 +216,7 @@ describe("marketing-video IR and variants", () => {
     expect(one.scenes[0]?.shots.every((s) => s.style?.background === undefined)).toBe(true);
   });
 
-  it("moves the CTA off the centred subject to the top band only over footage", () => {
+  it("moves the CTA off the centred subject to the lower band only over footage", () => {
     const plain = marketingVideoTemplate(brief);
     const first = (ir: typeof plain) =>
       variantIr(ir, irVariants(ir)[0] as ReturnType<typeof irVariants>[number]);
@@ -241,12 +241,28 @@ describe("marketing-video IR and variants", () => {
       fit: "cover",
       alt: "Tea on a windowsill",
     });
+    const cta = scene.shots.find((s) => s.type === "cta");
+    if (!cta || !footage.captions) throw new Error("fixture has no CTA or captions");
+    const withCta = (c: { startMs: number; endMs: number }) =>
+      c.startMs < cta.startMs + cta.durationMs && c.endMs > cta.startMs;
+    // No caption shows with the CTA: it takes the lower band, clear of the subject's face.
+    footage.captions.cues = footage.captions.cues.filter((c) => !withCta(c));
     const one = first(footage);
     expect(validateVideoIR(one).ok).toBe(true);
-    expect(ctaOf(one)?.style?.region).toBe("top");
+    expect(ctaOf(one)?.style?.region).toBe("bottom");
+    expect(one.scenes[0]?.shots.find((s) => s.type === "logo")?.style?.region).toBe("top");
     // Nothing else the copy shows sits in the middle of the frame either.
     const copy = one.scenes[0]?.shots.filter((s) => s.type !== "image" && s.type !== "video") ?? [];
     expect(copy.every((s) => s.style?.region !== "middle")).toBe(true);
+    // A burned caption at the bottom while the CTA shows: the CTA goes to the top band instead of onto it.
+    footage.captions.cues.push({
+      startMs: cta.startMs + 1000,
+      endMs: cta.startMs + 3000,
+      text: "Một câu nói khác hẳn",
+    });
+    const captioned = first(footage);
+    expect(captioned.captions?.cues.map((c) => c.text)).toContain("Một câu nói khác hẳn");
+    expect(ctaOf(captioned)?.style?.region).toBe("top");
   });
 
   it("drops burned captions that only repeat the line on screen and keeps the rest", () => {

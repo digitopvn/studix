@@ -482,14 +482,12 @@ describe("marketing-video pipeline (fake providers)", () => {
     );
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     const kinds = h.generate.mock.calls.map(([, r]) => r.kind);
-    expect(kinds.filter((k) => k === "voice")).toHaveLength(3);
-    // Every voice-over is asked for in the IR's language with direction for its beats.
-    for (const [, r] of h.generate.mock.calls.filter(([, r]) => r.kind === "voice")) {
-      expect(r.params).toMatchObject({
-        language: "vi",
-        instructions: expect.stringContaining("call to action"),
-      });
-    }
+    // One line per beat of each ad, in the IR's language, each with direction for its own beat.
+    const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    expect(voices).toHaveLength(9);
+    for (const r of voices) expect(r.params).toMatchObject({ language: "vi" });
+    const ctaLines = voices.filter((r) => String(r.params?.instructions).includes("call to action"));
+    expect(ctaLines).toHaveLength(3);
     expect(kinds.filter((k) => k === "music")).toHaveLength(3);
     expect(kinds.filter((k) => k === "sfx")).toHaveLength(3);
     expect(kinds.filter((k) => k === "video").length).toBeGreaterThanOrEqual(6);
@@ -497,8 +495,21 @@ describe("marketing-video pipeline (fake providers)", () => {
     for (const one of h.renderer.rendered) {
       expect(one.format.durationMs).toBe(20_000);
       expect(one.scenes[0]?.shots.some((s) => s.type === "video")).toBe(true);
-      expect(one.audio?.map((t) => t.kind).sort()).toEqual(["music", "sfx", "voiceover"]);
+      expect(one.audio?.map((t) => t.kind).sort()).toEqual([
+        "music",
+        "sfx",
+        "voiceover",
+        "voiceover",
+        "voiceover",
+      ]);
       expect(one.audio?.every((t) => t.startMs + (t.durationMs ?? 0) <= 20_000)).toBe(true);
+      // Each line is heard with its beat: the hook after the lead-in, the message and the call to action
+      // on their cuts, none running into the next beat.
+      const voice = (one.audio ?? []).filter((t) => t.kind === "voiceover");
+      expect(voice.map((t) => t.startMs)).toEqual([300, 3000, 11_500]);
+      voice.forEach((t, i) => {
+        expect(t.startMs + (t.durationMs ?? 0)).toBeLessThanOrEqual([3000, 11_500, 19_700][i] as number);
+      });
     }
     expect(h.qaCalls).toHaveLength(3);
     expect(h.qaCalls.every((q) => q.requireAudio && q.durationMs === 20_000)).toBe(true);
@@ -520,14 +531,20 @@ describe("marketing-video pipeline (fake providers)", () => {
     uncached = [MV_STAGES.voiceover];
     const { job, outcome } = await h.run({ workflowTemplate: "marketing-video", versionId }, projectId);
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
-    expect(h.generate.mock.calls.map(([, r]) => r.kind)).toEqual(["voice", "voice", "voice"]);
+    expect(h.generate.mock.calls.map(([, r]) => r.kind)).toEqual(Array(9).fill("voice"));
     expect(h.renderer.rendered).toHaveLength(3);
     for (const one of h.renderer.rendered) {
       const voice = one.audio?.filter((t) => t.kind === "voiceover") ?? [];
-      expect(voice).toHaveLength(1);
-      const asset = one.assets.find((a) => a.id === voice[0]?.assetId);
-      expect(asset?.storageKey).toContain(job.id);
-      expect(one.audio?.map((t) => t.kind).sort()).toEqual(["music", "sfx", "voiceover"]);
+      expect(voice.map((t) => t.startMs)).toEqual([300, 3000, 11_500]);
+      for (const t of voice) {
+        expect(one.assets.find((a) => a.id === t.assetId)?.storageKey).toContain(job.id);
+      }
+      expect(
+        one.audio
+          ?.filter((t) => t.kind !== "voiceover")
+          .map((t) => t.kind)
+          .sort(),
+      ).toEqual(["music", "sfx"]);
     }
   });
 
@@ -581,7 +598,14 @@ describe("motion-graphic pipeline (fake providers)", () => {
     });
     const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
-    expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual(["sfx", "voice"]);
+    // Hook, two messages and the call to action: one line per card.
+    expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual([
+      "sfx",
+      "voice",
+      "voice",
+      "voice",
+      "voice",
+    ]);
     expect(h.renderer.rendered).toHaveLength(1);
     const ir = h.renderer.rendered[0] as VideoIR;
     const ctaAt = ir.scenes
@@ -591,11 +615,26 @@ describe("motion-graphic pipeline (fake providers)", () => {
       )
       .reduce((ms, sc) => ms + sc.durationMs, 0);
     expect(ctaAt).toBeGreaterThan(0);
-    expect(ir.audio).toEqual([
-      expect.objectContaining({ kind: "voiceover", assetId: "voiceover" }),
+    // Every line starts where its card does (the first after the lead-in), so the call to action is heard
+    // with the CTA card, and none runs into the next card.
+    let at = 0;
+    const cards = ir.scenes.map((sc) => {
+      const span = { startMs: at, endMs: at + sc.durationMs };
+      at = span.endMs;
+      return span;
+    });
+    const voice = (ir.audio ?? []).filter((t) => t.kind === "voiceover");
+    expect(voice.map((t) => t.assetId)).toEqual(["voiceover-1", "voiceover-2", "voiceover-3", "voiceover-4"]);
+    expect(voice.slice(1).map((t) => t.startMs)).toEqual(cards.slice(1).map((c) => c.startMs));
+    expect(voice[3]?.startMs).toBe(ctaAt);
+    expect(voice[0]?.startMs).toBeGreaterThan(0);
+    voice.forEach((t, i) => {
+      expect(t.startMs + (t.durationMs ?? 0)).toBeLessThanOrEqual(cards[i]?.endMs as number);
+    });
+    expect(ir.audio?.at(-1)).toEqual(
       expect.objectContaining({ kind: "sfx", assetId: "sfx-accent", startMs: ctaAt }),
-    ]);
-    expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(2);
+    );
+    expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(5);
     expect(ir.captions?.cues.length).toBeGreaterThan(0);
     expect(ir.metadata?.styleProfile).toEqual(expect.any(String));
     expect(h.qaCalls).toEqual([expect.objectContaining({ requireAudio: true, durationMs: 12_000 })]);
@@ -615,11 +654,13 @@ describe("motion-graphic pipeline (fake providers)", () => {
       callToAction: "Đặt trà ngay",
     };
     await h.run({ workflowTemplate: "motion-graphic" }, await newProject(h, "motion-graphic", graphic));
-    const voice = h.generate.mock.calls.find(([, r]) => r.kind === "voice")?.[1];
-    expect(voice?.params).toMatchObject({
+    const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    expect(voices.map((r) => r.prompt)).toEqual([expect.any(String), "Trà hái tay mỗi sớm", "Đặt trà ngay"]);
+    expect(voices[0]?.params).toMatchObject({
       language: "vi",
-      instructions: expect.stringMatching(/Vietnamese.*lean in.*call to action/),
+      instructions: expect.stringMatching(/Vietnamese.*lean in/),
     });
+    expect(voices[2]?.params?.instructions).toContain("call to action");
     h.generate.mockClear();
     h.renderer.rendered.length = 0;
     uncached = [MG_STAGES.voice];
@@ -628,8 +669,13 @@ describe("motion-graphic pipeline (fake providers)", () => {
       await newProject(h, "motion-graphic", graphic),
     );
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
-    expect(h.generate.mock.calls.map(([, r]) => r.kind)).toEqual(["voice"]);
-    expect(h.renderer.rendered[0]?.audio?.map((t) => t.kind)).toEqual(["voiceover", "sfx"]);
+    expect(h.generate.mock.calls.map(([, r]) => r.kind)).toEqual(["voice", "voice", "voice"]);
+    expect(h.renderer.rendered[0]?.audio?.map((t) => t.kind)).toEqual([
+      "voiceover",
+      "voiceover",
+      "voiceover",
+      "sfx",
+    ]);
   });
 
   it("re-renders a stored version through render -> QA -> upload", async () => {

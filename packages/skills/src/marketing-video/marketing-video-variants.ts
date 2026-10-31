@@ -45,13 +45,13 @@ const COPY_TYPES = new Set<Shot["type"]>(["title", "text", "logo", "cta"]);
 
 /**
  * Copy over footage sits on a brand-background card so it stays legible whatever the clip shows. A CTA in
- * the middle would cover the clip's subject, which the frame centres, so it joins the logo at the top, the
- * band the storyboard prompt keeps clear for text.
+ * the middle would cover the clip's subject, which the frame centres, and a clip that pushes in brings the
+ * subject's face up into the top band, so the CTA takes the lower band, under the subject.
  */
 function onFootage(shot: Shot): Shot {
   if (!COPY_TYPES.has(shot.type)) return shot;
   const region =
-    shot.type === "cta" && (shot.style?.region ?? "middle") === "middle" ? "top" : shot.style?.region;
+    shot.type === "cta" && (shot.style?.region ?? "middle") === "middle" ? "bottom" : shot.style?.region;
   return {
     ...shot,
     style: {
@@ -89,11 +89,27 @@ function repeatsCopy(cue: CaptionCue, shots: readonly Shot[]): boolean {
   );
 }
 
+const overlaps = (shot: Shot, cue: CaptionCue) =>
+  shot.startMs < cue.endMs && shot.startMs + shot.durationMs > cue.startMs;
+
+/**
+ * Bottom-band copy that would show with a burned caption at the bottom: it goes to the top band instead,
+ * so the copy and the caption never sit on each other.
+ */
+function clearOfCaptions(shots: Shot[], cues: readonly CaptionCue[], position: string | undefined): Shot[] {
+  if ((position ?? "bottom") !== "bottom") return shots;
+  return shots.map((s) =>
+    COPY_TYPES.has(s.type) && s.style?.region === "bottom" && cues.some((c) => overlaps(s, c))
+      ? { ...s, style: { ...s.style, region: "top" } }
+      : s,
+  );
+}
+
 /**
  * The standalone IR of one ad: its scene alone, with the audio tracks and caption cues that fall inside
  * the ad moved to start at zero (minus captions that only repeat on-screen copy), its pictures full-bleed
- * under carded copy, and only the assets it uses. Each ad renders and
- * ships as its own file.
+ * under carded copy (the CTA in the lower band unless a caption shows there with it), and only the assets
+ * it uses. Each ad renders and ships as its own file.
  */
 export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
   const scene = ir.scenes.find((s) => s.id === variant.sceneId);
@@ -113,11 +129,12 @@ export function variantIr(ir: VideoIR, variant: VariantSpan): VideoIR {
   if (ir.brand?.logoAssetId) used.add(ir.brand.logoAssetId);
   for (const track of audio) used.add(track.assetId);
   const pictures = scene.shots.map(fullBleed);
-  const shots = pictures.some((s) => s.style?.region === "full") ? pictures.map(onFootage) : pictures;
+  const carded = pictures.some((s) => s.style?.region === "full") ? pictures.map(onFootage) : pictures;
   const cues = (ir.captions?.cues ?? [])
     .filter((c) => c.startMs >= from && c.endMs <= to)
     .map((c) => ({ ...c, startMs: c.startMs - from, endMs: c.endMs - from }))
-    .filter((c) => !repeatsCopy(c, shots));
+    .filter((c) => !repeatsCopy(c, carded));
+  const shots = clearOfCaptions(carded, cues, ir.captions?.position);
   const { captions: _captions, audio: _audio, ...rest } = ir;
   return {
     ...rest,

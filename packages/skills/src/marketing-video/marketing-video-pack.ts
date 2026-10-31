@@ -41,15 +41,15 @@ import {
   type StoredMedia,
   type StoredMediaRequest,
 } from "../stored-media.ts";
-import { voiceDirection } from "../voice-direction.ts";
-import { MARKETING_SCRIPT_VERSION, MarketingScript, marketingScript, VO_PAD_MS } from "./marketing-script.ts";
+import { voiceLines, voiceLineTrack, withVoiceover } from "../voice-lines.ts";
+import { MARKETING_SCRIPT_VERSION, MarketingScript, marketingScript } from "./marketing-script.ts";
 import {
   beatKey,
   MARKETING_TEMPLATE_VERSION,
   marketingVideoIr,
   marketingVideoTemplate,
 } from "./marketing-video-template.ts";
-import { irVariants, type VariantSpan, variantIr } from "./marketing-video-variants.ts";
+import { irVariants, variantIr } from "./marketing-video-variants.ts";
 
 export const MARKETING_VIDEO_PACK = "marketing-video";
 export const MV_STAGES = {
@@ -454,39 +454,26 @@ export const marketingI2vStage: StageDefinition = {
   },
 };
 
-function spokenText(ir: z.infer<typeof VideoIR>, v: VariantSpan): string {
-  return (ir.captions?.cues ?? [])
-    .filter((c) => c.startMs >= v.startMs && c.endMs <= v.startMs + v.durationMs)
-    .map((c) => c.text)
-    .join(" ");
-}
-
 /**
- * One voice-over per ad that has captioned lines: the lines in the IR's language, with delivery direction
- * from the ad's beats (hook, message, call to action) and the brand's tone of voice. The worker's media
+ * One voice-over line per beat of every ad, from its captions, in the IR's language, with delivery
+ * direction from the beat (hook, message, call to action) and the brand's tone of voice. The worker's media
  * provider picks the speech model for the language; speech models that take direction read it.
  */
 function voiceRequests(s: StageContext) {
   const ir = irOf(s);
-  return irVariants(ir).flatMap((v) => {
-    const spoken = spokenText(ir, v);
-    if (!spoken) return [];
-    const instructions = voiceDirection(ir, v.startMs, v.startMs + v.durationMs);
-    return [
-      {
-        variant: v,
-        at: v.startMs + VO_PAD_MS,
-        request: {
-          assetId: `${v.id}-vo`.slice(0, 64),
-          kind: "voice" as const,
-          prompt: spoken,
-          params: { language: ir.language, ...(instructions ? { instructions } : {}) },
-          keyPrefix: `generated/${s.job.id}/audio/${v.id}-vo`,
-          maxCostCents: 0,
-        } satisfies StoredMediaRequest,
-      },
-    ];
-  });
+  return irVariants(ir).flatMap((v) =>
+    voiceLines(ir, v.startMs, v.startMs + v.durationMs).map((line, i) => ({
+      line,
+      request: {
+        assetId: `${v.id}-vo-${i + 1}`.slice(0, 64),
+        kind: "voice" as const,
+        prompt: line.text,
+        params: { language: ir.language, instructions: line.instructions },
+        keyPrefix: `generated/${s.job.id}/audio/${v.id}-vo-${i + 1}`,
+        maxCostCents: 0,
+      } satisfies StoredMediaRequest,
+    })),
+  );
 }
 
 function audioRequests(s: StageContext) {
@@ -532,7 +519,7 @@ function audioRequests(s: StageContext) {
  * the accent on the end card. The voice-over stage that follows adds the voice.
  *
  * The cache key is the one this stage had when it also voiced the ads, so a re-render keeps the paid music
- * and SFX. Such a cached output still holds that older voice-over; the voice-over stage replaces it by id.
+ * and SFX. Such a cached output still holds that older voice-over; the voice-over stage replaces it.
  */
 export const marketingAudioStage: StageDefinition = {
   name: MV_STAGES.audio,
@@ -594,9 +581,10 @@ export const marketingAudioStage: StageDefinition = {
 };
 
 /**
- * The voice-over of every ad, read with the direction of its beats and laid at full level from the first
- * line. Its own stage, so a new voice (another speech model, new direction) costs only the voice: the
- * clips, music and SFX before it stay cached.
+ * The voice-over of every ad, one line per beat, each read with its beat's direction and laid at full level
+ * where that beat starts, so the call to action is heard with the CTA card. Its own stage, so a new voice
+ * (another speech model, new direction) costs only the voice: the clips, music and SFX before it stay
+ * cached.
  */
 export const marketingVoiceoverStage: StageDefinition = {
   name: MV_STAGES.voiceover,
@@ -604,7 +592,7 @@ export const marketingVoiceoverStage: StageDefinition = {
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
   cacheKey: (s) =>
-    stageCacheKey(MV_STAGES.voiceover, 1, { ir: irOf(s), media: s.services.media?.id ?? null }),
+    stageCacheKey(MV_STAGES.voiceover, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -633,26 +621,18 @@ export const marketingVoiceoverStage: StageDefinition = {
       },
       (r) => [r.usage],
     );
-    const tracks: AudioTrack[] = generated.map((g) => {
-      const room = g.variant.startMs + g.variant.durationMs - g.at;
-      return {
-        id: `${g.asset.id}-track`.slice(0, 64),
-        kind: "voiceover",
-        assetId: g.asset.id,
-        startMs: g.at,
-        durationMs: Math.max(1, Math.min(room, g.asset.durationMs ?? room)),
-        volume: 1,
-      };
-    });
-    const assets: AssetRef[] = generated.map((g) => g.asset);
-    const next = {
-      ...ir,
-      assets: [...ir.assets.filter((a) => !assets.some((b) => b.id === a.id)), ...assets],
-      audio: [...(ir.audio ?? []).filter((t) => !tracks.some((n) => n.id === t.id)), ...tracks],
-    };
     await rm(workDir, { recursive: true, force: true });
     const usage = generated.map((g) => g.usage);
-    return { output: { ir: await billedOnFailure(usage, () => VideoIR.parse(next)) }, usage };
+    const next = await billedOnFailure(usage, () =>
+      VideoIR.parse(
+        withVoiceover(
+          ir,
+          generated.map((g) => voiceLineTrack(g.line, g.asset, `${g.asset.id}-track`.slice(0, 64))),
+          generated.map((g) => g.asset),
+        ),
+      ),
+    );
+    return { output: { ir: next }, usage };
   },
 };
 

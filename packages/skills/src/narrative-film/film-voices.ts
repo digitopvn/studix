@@ -1,6 +1,6 @@
 import { StudixError } from "@studix/shared";
 import type { FilmProduction } from "@studix/video-ir";
-import { MAX_VOICE_DIRECTION_CHARS } from "../voice-direction.ts";
+import { MAX_VOICE_DIRECTION_CHARS } from "../voice-lines.ts";
 import { type FilmScope, lineId, scopeShots, VOICE_REF } from "./film-scope.ts";
 
 /**
