@@ -4,6 +4,7 @@ export * from "./creative-gate-stage.ts";
 export * from "./file-digest.ts";
 export * from "./ir-asset-download.ts";
 export * from "./job-executor.ts";
+export * from "./project-status.ts";
 export * from "./retry-backoff.ts";
 export * from "./stage-runner.ts";
 export * from "./stage-services.ts";

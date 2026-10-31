@@ -17,6 +17,7 @@ import {
   irOf,
   jobScopedId,
   mapBounded,
+  markInReviewIfHead,
   type PackPipeline,
   payloadOf,
   RenderOutput,
@@ -329,7 +330,7 @@ export const marketingReframeStage: StageDefinition = {
           advanceFrom: versionId,
         });
       }
-      await repos.projects.update(ctx, projectId, { status: "in_review" });
+      await markInReviewIfHead(repos, ctx, projectId, resultVersionId);
     });
     return {
       output: {
@@ -721,7 +722,7 @@ export const marketingPublishStage: StageDefinition = {
           completedAt: new Date(),
         });
       }
-      await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+      await markInReviewIfHead(repos, ctx, payload.projectId, versionId);
     });
     const root = requireService(s, "workRoot");
     await rm(join(root, s.job.id), { recursive: true, force: true });

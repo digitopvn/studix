@@ -12,6 +12,7 @@ import { type Clock, StudixError, systemClock } from "@studix/shared";
 import { resolveRenderSpec } from "@studix/video-ir";
 import { fileExists, jobScopedId, sha256File } from "./file-digest.ts";
 import { downloadIrAssets } from "./ir-asset-download.ts";
+import { markInReviewIfHead } from "./project-status.ts";
 import {
   irOf,
   PlanOutput,
@@ -40,7 +41,7 @@ export interface VideoCreateWorkflowDeps {
   /** Read side only: every write goes through `StageContext.commit` so it is fenced by job ownership. */
   projects: Pick<ProjectRepository, "get" | "getVersion">;
   renders: Pick<RenderRepository, "get">;
-  /** Local scratch root; each job attempt renders into `<workRoot>/<jobId>/attempt-<n>`. */
+  /** Local scratch root; the core render stage renders into `<workRoot>/<jobId>/attempt-<n>`. */
   workRoot: string;
   /** COGS per rendered output second (compute cost). Defaults to 0 until measured. */
   renderCentsPerSecond?: number;
@@ -61,17 +62,6 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
   if (!Number.isFinite(rate) || rate < 0) throw new RangeError("renderCentsPerSecond must be >= 0");
   const clock = deps.clock ?? systemClock;
   const jobDir = (jobId: string) => join(deps.workRoot, jobId);
-  /** A job that finishes a version which is no longer the project's head (a retried old job) leaves the status alone. */
-  const markInReviewIfHead = async (
-    repos: { projects: ProjectRepository },
-    ctx: Parameters<ProjectRepository["get"]>[0],
-    projectId: string,
-    versionId: string,
-  ) => {
-    const project = await repos.projects.get(ctx, projectId);
-    if (project?.currentVersionId === versionId)
-      await repos.projects.update(ctx, projectId, { status: "in_review" });
-  };
 
   const brief: StageDefinition = {
     name: "brief",

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -31,5 +31,6 @@ describe("stageWorkDir", () => {
     expect(readFileSync(join(second, "voice.mp3"), "utf8")).toBe("paid bytes");
     expect(await stageWorkDir(at(2, "job_b"), "audio")).not.toBe(first);
     expect(await stageWorkDir(at(2), "other stage")).not.toBe(first);
+    rmSync(workRoot, { recursive: true, force: true });
   });
 });
