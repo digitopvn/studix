@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   captionCues,
   chunkCaption,
+  framePrompt,
   HOOK_MAX_MS,
   irVariants,
   MAX_CAPTION_WORDS,
@@ -96,6 +97,45 @@ describe("marketing script", () => {
       directions: [{ ...brief.directions[0], beats: [{ visual: "a", voiceover: long }, { visual: "b" }] }],
     };
     expect(codeOf(() => marketingScript(over))).toBe("VALIDATION");
+  });
+
+  it("derives visuals that describe the scene, never the words the overlay sets", () => {
+    const script = marketingScript(brief);
+    for (const ad of script.ads) {
+      const visuals = ad.beats.map((b) => b.visual);
+      expect(new Set(visuals).size).toBe(visuals.length);
+      for (const beat of ad.beats) {
+        expect(beat.visual).not.toContain("Lá Mây");
+        if (beat.onScreen) expect(beat.visual).not.toContain(beat.onScreen);
+      }
+    }
+  });
+});
+
+describe("storyboard frame prompt", () => {
+  const prompt = (visual: string, aspectRatio = "9:16") =>
+    framePrompt(
+      visual,
+      "warm film grain",
+      { ...brief, brand: { ...brief.brand, tagline: "Trà ngon mỗi sớm" } },
+      aspectRatio,
+    );
+
+  it("keeps brand words and poster framing out of the image prompt", () => {
+    const text = prompt("A cup of Lá Mây tea on a windowsill, LÁ MÂY steam rising. Trà ngon mỗi sớm");
+    expect(text).not.toMatch(/lá mây/i);
+    expect(text).not.toContain("Trà ngon mỗi sớm");
+    expect(text).toContain("A cup of tea on a windowsill, steam rising.");
+    expect(text).not.toMatch(/advertis|poster|frame/i);
+    expect(text).toContain("tall portrait composition");
+    expect(text).toContain("no text or lettering anywhere");
+    expect(text).toContain("#2f6b4f");
+  });
+
+  it("only removes whole brand words and frames other ratios as a full-bleed scene", () => {
+    expect(prompt("Lá Mâyer leaves")).toContain("Lá Mâyer leaves");
+    expect(prompt("A tea field", "16:9")).toContain("wide landscape composition, full-bleed photograph");
+    expect(prompt("A tea field", "3:2")).toContain("3:2 composition, full-bleed photograph");
   });
 });
 

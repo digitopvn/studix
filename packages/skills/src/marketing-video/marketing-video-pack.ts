@@ -104,22 +104,56 @@ const StoryboardInput = z.object({
 });
 type StoryboardInput = z.infer<typeof StoryboardInput>;
 
-/** The still each beat's frame is generated from: the beat, the ad's look, the brand palette, no type. */
+/**
+ * Scene framing per aspect ratio. It describes the shot only: words like "advertising frame" or "poster"
+ * make the model paint a framed poster or a sign inside the image.
+ */
+const COMPOSITION: Readonly<Record<string, string>> = {
+  "9:16":
+    "tall portrait composition, full-bleed photograph, subject in the middle with open space above and below",
+  "16:9": "wide landscape composition, full-bleed photograph",
+  "1:1": "square composition, full-bleed photograph",
+  "4:5": "portrait composition, full-bleed photograph",
+};
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** `text` without any of `words` (whole words, any case), with the spacing tidied up. */
+function withoutWords(text: string, words: readonly string[]): string {
+  let out = text;
+  for (const word of words) {
+    const w = word.trim();
+    if (w.length < 2) continue;
+    out = out.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(w)}(?![\\p{L}\\p{N}])`, "giu"), "");
+  }
+  return out
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * The still each beat's frame is generated from: the scene, the ad's look, the brand palette and the
+ * framing for the aspect ratio. No brand words reach the image model, even when a direction's concept
+ * names the brand: the logo, wordmark and on-screen text are the HyperFrames overlay's job.
+ */
 export function framePrompt(
   visual: string,
   visualStyle: string | undefined,
   brief: z.infer<typeof CreativeBrief>,
   aspectRatio: string,
 ): string {
-  const palette = brief.brand
-    ? `colour palette ${brief.brand.palette.primary}, ${brief.brand.palette.background}${brief.brand.palette.accent ? `, ${brief.brand.palette.accent}` : ""}`
+  const brand = brief.brand;
+  const brandWords = brand ? [brand.name, ...(brand.tagline ? [brand.tagline] : [])] : [];
+  const palette = brand
+    ? `colour palette ${brand.palette.primary}, ${brand.palette.background}${brand.palette.accent ? `, ${brand.palette.accent}` : ""}`
     : "";
   return [
-    visual,
-    visualStyle,
-    `${aspectRatio === "9:16" ? "vertical" : aspectRatio} advertising frame, cinematic lighting`,
+    withoutWords(visual, brandWords),
+    visualStyle ? withoutWords(visualStyle, brandWords) : undefined,
+    `${COMPOSITION[aspectRatio] ?? `${aspectRatio} composition, full-bleed photograph`}, cinematic lighting`,
     palette,
-    "no text, no letters, no logos, no watermark",
+    "no text or lettering anywhere, no logos, no signage, no watermark",
   ]
     .filter(Boolean)
     .join(". ");
