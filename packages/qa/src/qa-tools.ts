@@ -142,7 +142,9 @@ export const PrescanInput = z.discriminatedUnion("mode", [
     ranges: z
       .record(
         MediaRef,
-        z.array(z.strictObject({ shot: z.string().min(1).max(64), inS: z.number().min(0), outS: z.number() })),
+        z.array(
+          z.strictObject({ shot: z.string().min(1).max(64), inS: z.number().min(0), outS: z.number() }),
+        ),
       )
       .optional(),
   }),
@@ -296,7 +298,8 @@ export const QA_TOOLS = {
   }),
   prescan: tool({
     name: "prescan",
-    description: "Cheap defect detectors (wedges, holds, black, internal cuts, clicks, dropouts, mix events).",
+    description:
+      "Cheap defect detectors (wedges, holds, black, internal cuts, clicks, dropouts, mix events).",
     input: PrescanInput,
     output: PrescanOutput,
     mediaRefs: (input) => (input.mode === "events" ? input.events.map((e) => e.file) : input.media),
@@ -351,9 +354,13 @@ export async function runQaTool<I extends z.ZodType, O extends z.ZodType>(
     const path = granted[ref];
     if (path !== undefined) media[ref] = path;
     else if (qaTool.strictMedia)
-      throw new StudixError("VALIDATION", `QA tool ${qaTool.name} references media "${ref}" without a grant`, {
-        retryable: false,
-      });
+      throw new StudixError(
+        "VALIDATION",
+        `QA tool ${qaTool.name} references media "${ref}" without a grant`,
+        {
+          retryable: false,
+        },
+      );
   }
   const run = await runPythonTool(qaTool.name, parsed.data, {
     ...options,

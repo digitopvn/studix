@@ -1,4 +1,5 @@
 export * from "./human-review.ts";
+export * from "./knowledge-checks.ts";
 export * from "./python-tool-runner.ts";
 export * from "./qa-checks.ts";
 export * from "./qa-gates.ts";

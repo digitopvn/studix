@@ -100,7 +100,8 @@ function sandboxEnv(work: string, out: string, options: PythonToolRunOptions): N
     if (process.env[key] !== undefined) env[key] = process.env[key];
   }
   for (const [key, value] of Object.entries(options.extraEnv ?? {})) {
-    if (!EXTRA_ENV_KEY.test(key)) throw new StudixError("VALIDATION", `extra env "${key}" must match STUDIX_QA_*`);
+    if (!EXTRA_ENV_KEY.test(key))
+      throw new StudixError("VALIDATION", `extra env "${key}" must match STUDIX_QA_*`);
     env[key] = value;
   }
   Object.assign(env, {
@@ -129,7 +130,10 @@ function sandboxEnv(work: string, out: string, options: PythonToolRunOptions): N
 function killTree(pid: number | undefined): void {
   if (pid === undefined) return;
   if (process.platform === "win32") {
-    const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
     killer.on("error", () => {
       try {
         process.kill(pid, "SIGKILL");

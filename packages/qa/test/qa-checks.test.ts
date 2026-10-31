@@ -60,8 +60,15 @@ describe("default hard checks", () => {
       "loudness",
       "true-peak",
     ]);
-    const [result] = evaluateChecks(defaultHardChecks().filter((c) => c.id === "true-peak"), {});
-    expect(result).toMatchObject({ pass: false, value: null, message: "loudness.truePeakDbtp was not measured" });
+    const [result] = evaluateChecks(
+      defaultHardChecks().filter((c) => c.id === "true-peak"),
+      {},
+    );
+    expect(result).toMatchObject({
+      pass: false,
+      value: null,
+      message: "loudness.truePeakDbtp was not measured",
+    });
   });
 
   it("block black, sync, duration and fps defects", () => {
@@ -85,7 +92,9 @@ describe("default hard checks", () => {
 
 describe("check contract", () => {
   it("parses pack-declared checks and rejects malformed ones", () => {
-    expect(parseChecks([{ id: "tp", layer: "hard", metric: "loudness.truePeakDbtp", max: -1 }])).toHaveLength(1);
+    expect(parseChecks([{ id: "tp", layer: "hard", metric: "loudness.truePeakDbtp", max: -1 }])).toHaveLength(
+      1,
+    );
     expect(() => parseChecks([{ id: "tp", layer: "hard", metric: "loudness.truePeakDbtp" }])).toThrow();
     expect(() => parseChecks([{ id: "x", layer: "hard", metric: "probe.fps", min: 30, max: 24 }])).toThrow();
     expect(() => parseChecks([{ id: "x", layer: "hard", metric: "made.up", max: 1 }])).toThrow();

@@ -2,7 +2,13 @@ import type { ApprovalAction } from "@studix/core";
 import type { StageContext, StageDefinition } from "@studix/workflow";
 import { assertHumanReview, humanReviewVerdict, QA_REVIEW_ACTION } from "./human-review.ts";
 import { defaultHardChecks, type QaMetricCheck } from "./qa-checks.ts";
-import { assertHardGate, collectEvidence, type EvidenceRequest, type QaGateRunOptions, runHardGate } from "./qa-gates.ts";
+import {
+  assertHardGate,
+  collectEvidence,
+  type EvidenceRequest,
+  type QaGateRunOptions,
+  runHardGate,
+} from "./qa-gates.ts";
 
 export interface QaStagesOptions {
   /** Stage name prefix: `<prefix>_check` and `<prefix>_review`. Defaults to "qa". */
@@ -60,7 +66,11 @@ export function createQaStages(options: QaStagesOptions): StageDefinition[] {
         humanReviewVerdict(s.approval, { action, subject: { type: "job", id: s.job.id } }),
       );
       return {
-        output: { approvalId: approval.id, approvedBy: approval.decidedBy?.id ?? null, comment: approval.comment ?? null },
+        output: {
+          approvalId: approval.id,
+          approvedBy: approval.decidedBy?.id ?? null,
+          comment: approval.comment ?? null,
+        },
       };
     },
   };

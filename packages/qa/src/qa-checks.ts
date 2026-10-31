@@ -1,3 +1,4 @@
+import { meetsThreshold, Threshold } from "@studix/skills";
 import { z } from "zod";
 
 /**
@@ -20,6 +21,7 @@ export const QA_METRICS = [
   "probe.fps",
   "probe.width",
   "probe.height",
+  "probe.sizeMib",
   "loudness.integratedLufs",
   "loudness.truePeakDbtp",
   "loudness.lraLu",
@@ -37,20 +39,26 @@ export const QA_METRICS = [
 export type QaMetric = (typeof QA_METRICS)[number];
 
 /**
- * A metric check: the metric must lie in [min, max] (either bound may be open). This is the QA side of the check
- * contract a workflow or knowledge pack declares; a pack check maps onto it one to one.
+ * A metric check: the metric must lie in [min, max] (either bound may be open), or meet a knowledge-pack
+ * `threshold` (knowledge-checks.ts binds pack hard checks onto this shape). Ids are kebab-case; a check bound from
+ * a pack keeps its `<pack-id>.<name>` id.
  */
 export const QaMetricCheck = z
   .strictObject({
-    id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+    id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}(\.[a-z0-9][a-z0-9-]{0,63})?$/),
     layer: z.enum(["hard", "evidence"]),
     metric: z.enum(QA_METRICS),
-    min: z.number().optional(),
-    max: z.number().optional(),
+    min: z.number().finite().optional(),
+    max: z.number().finite().optional(),
+    threshold: Threshold.optional(),
     description: z.string().max(300).optional(),
   })
-  .refine((c) => c.min !== undefined || c.max !== undefined, { message: "a check needs min or max" })
-  .refine((c) => c.min === undefined || c.max === undefined || c.min <= c.max, { message: "min must be <= max" });
+  .refine((c) => (c.threshold === undefined) !== (c.min === undefined && c.max === undefined), {
+    message: "a check needs min/max or a threshold, not both",
+  })
+  .refine((c) => c.min === undefined || c.max === undefined || c.min <= c.max, {
+    message: "min must be <= max",
+  });
 export type QaMetricCheck = z.infer<typeof QaMetricCheck>;
 
 export interface QaCheckResult {
@@ -61,6 +69,7 @@ export interface QaCheckResult {
   value: number | null;
   min?: number;
   max?: number;
+  threshold?: Threshold;
   pass: boolean;
   message: string;
 }
@@ -141,7 +150,13 @@ export function defaultHardChecks(options: DefaultHardCheckOptions = {}): QaMetr
   }
   if (options.fps !== undefined) {
     if (!(options.fps > 0)) throw new RangeError("fps must be > 0");
-    checks.push({ id: "fps", layer: "hard", metric: "probe.fps", min: options.fps - 0.01, max: options.fps + 0.01 });
+    checks.push({
+      id: "fps",
+      layer: "hard",
+      metric: "probe.fps",
+      min: options.fps - 0.01,
+      max: options.fps + 0.01,
+    });
   }
   return checks;
 }
@@ -152,15 +167,31 @@ export function parseChecks(raw: unknown): QaMetricCheck[] {
 }
 
 const fmt = (n: number) => String(Math.round(n * 100) / 100);
+const describeThreshold = (t: Threshold) =>
+  t.op === "between" ? `${fmt(t.min)}..${fmt(t.max)}` : `${t.op} ${fmt(t.value)}`;
 
 /** Evaluate checks against measurements. A metric that was not measured fails its check (fail closed). */
 export function evaluateChecks(checks: readonly QaMetricCheck[], measured: QaMeasurements): QaCheckResult[] {
   return checks.map((c) => {
     const value = measured[c.metric];
-    const bounds = { ...(c.min !== undefined && { min: c.min }), ...(c.max !== undefined && { max: c.max }) };
+    const bounds = {
+      ...(c.min !== undefined && { min: c.min }),
+      ...(c.max !== undefined && { max: c.max }),
+      ...(c.threshold && { threshold: c.threshold }),
+    };
     const base = { id: c.id, layer: c.layer, metric: c.metric, ...bounds };
     if (value === undefined || value === null || !Number.isFinite(value)) {
       return { ...base, value: null, pass: false, message: `${c.metric} was not measured` };
+    }
+    if (c.threshold) {
+      const pass = meetsThreshold(c.threshold, value);
+      const rule = describeThreshold(c.threshold);
+      return {
+        ...base,
+        value,
+        pass,
+        message: `${c.metric} ${fmt(value)} ${pass ? "meets" : "fails"} ${rule}`,
+      };
     }
     const low = c.min !== undefined && value < c.min;
     const high = c.max !== undefined && value > c.max;
@@ -169,7 +200,10 @@ export function evaluateChecks(checks: readonly QaMetricCheck[], measured: QaMea
       ...base,
       value,
       pass: !low && !high,
-      message: low || high ? `${c.metric} ${fmt(value)} outside ${range}` : `${c.metric} ${fmt(value)} within ${range}`,
+      message:
+        low || high
+          ? `${c.metric} ${fmt(value)} outside ${range}`
+          : `${c.metric} ${fmt(value)} within ${range}`,
     };
   });
 }

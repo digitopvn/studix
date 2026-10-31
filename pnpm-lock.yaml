@@ -404,6 +404,9 @@ importers:
       '@studix/shared':
         specifier: workspace:*
         version: link:../shared
+      '@studix/skills':
+        specifier: workspace:*
+        version: link:../skills
       '@studix/workflow':
         specifier: workspace:*
         version: link:../workflow

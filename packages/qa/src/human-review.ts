@@ -13,7 +13,10 @@ export interface QaApprovalPolicyOptions {
  * The human layer of QA as an ApprovalPolicy: the reviewed actions always require a human approval, regardless of
  * cost or of what the wrapped policy says; every other action is decided by `base`, failing closed.
  */
-export function createQaApprovalPolicy(base: ApprovalPolicy, options: QaApprovalPolicyOptions = {}): ApprovalPolicy {
+export function createQaApprovalPolicy(
+  base: ApprovalPolicy,
+  options: QaApprovalPolicyOptions = {},
+): ApprovalPolicy {
   const reviewed: ReadonlySet<ApprovalAction> = new Set(options.actions ?? [QA_REVIEW_ACTION]);
   if (reviewed.size === 0) throw new RangeError("a QA approval policy needs at least one reviewed action");
   return {

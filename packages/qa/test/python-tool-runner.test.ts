@@ -86,7 +86,9 @@ describe("runPythonTool sandbox", () => {
 
   it("validates grants: absolute, existing, regular files with safe ids", async () => {
     expect((await rejection(run("echo", { media: { clip: "clip.mp4" } }))).code).toBe("VALIDATION");
-    expect((await rejection(run("echo", { media: { clip: join(dir, "missing.mp4") } }))).code).toBe("NOT_FOUND");
+    expect((await rejection(run("echo", { media: { clip: join(dir, "missing.mp4") } }))).code).toBe(
+      "NOT_FOUND",
+    );
     expect((await rejection(run("echo", { media: { clip: dir } }))).code).toBe("VALIDATION");
     expect((await rejection(run("echo", { media: { "../x": media } }))).code).toBe("VALIDATION");
   });
@@ -125,7 +127,11 @@ describe("runPythonTool sandbox", () => {
 
   it("reports a missing interpreter as UNAVAILABLE", async () => {
     const err = await rejection(
-      runPythonTool("probe", {}, { toolchain: { python: join(dir, "no-python"), args: [] }, timeoutMs: 1000 }),
+      runPythonTool(
+        "probe",
+        {},
+        { toolchain: { python: join(dir, "no-python"), args: [] }, timeoutMs: 1000 },
+      ),
     );
     expect(err.code).toBe("UNAVAILABLE");
   });
@@ -141,7 +147,9 @@ describe("runQaTool contracts", () => {
   });
 
   it("requires a grant for every referenced media id", async () => {
-    const err = await rejection(runQaTool(QA_TOOLS.probe, { media: "clip" }, { toolchain: fake, sandboxRoot }));
+    const err = await rejection(
+      runQaTool(QA_TOOLS.probe, { media: "clip" }, { toolchain: fake, sandboxRoot }),
+    );
     expect(err.code).toBe("VALIDATION");
     expect(err.message).toContain("without a grant");
   });

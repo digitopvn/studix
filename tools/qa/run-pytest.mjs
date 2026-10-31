@@ -11,18 +11,23 @@ const candidates = [
 ];
 
 const found = candidates.find(
-  ([bin, prefix]) => spawnSync(bin, [...prefix, "--version"], { stdio: "ignore", windowsHide: true }).status === 0,
+  ([bin, prefix]) =>
+    spawnSync(bin, [...prefix, "--version"], { stdio: "ignore", windowsHide: true }).status === 0,
 );
 if (!found) {
   console.error("uv is required for the QA tools: https://docs.astral.sh/uv/ (or `pip install uv`).");
   process.exit(1);
 }
 const [bin, prefix] = found;
-const result = spawnSync(bin, [...prefix, "run", "--locked", "--project", project, "pytest", ...process.argv.slice(2)], {
-  cwd: project,
-  stdio: "inherit",
-  windowsHide: true,
-});
+const result = spawnSync(
+  bin,
+  [...prefix, "run", "--locked", "--project", project, "pytest", ...process.argv.slice(2)],
+  {
+    cwd: project,
+    stdio: "inherit",
+    windowsHide: true,
+  },
+);
 if (result.error) {
   console.error(result.error.message);
   process.exit(1);

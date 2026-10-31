@@ -34,7 +34,8 @@ export interface HardGateReport {
   };
 }
 
-const uses = (checks: readonly QaMetricCheck[], tool: string) => checks.some((c) => c.metric.startsWith(`${tool}.`));
+const uses = (checks: readonly QaMetricCheck[], tool: string) =>
+  checks.some((c) => c.metric.startsWith(`${tool}.`));
 const bool = (v: boolean) => (v ? 1 : 0);
 
 /**
@@ -60,6 +61,7 @@ export async function runHardGate(
     "probe.fps": probe.video?.fps ?? null,
     "probe.width": probe.video?.width ?? null,
     "probe.height": probe.video?.height ?? null,
+    "probe.sizeMib": probe.sizeBytes === null ? null : probe.sizeBytes / (1024 * 1024),
   };
   if (probe.audio && uses(hard, "loudness")) {
     const { result } = await runQaTool(QA_TOOLS.loudness, { media: "media" }, options);
@@ -90,11 +92,15 @@ export async function runHardGate(
 /** Throw the error that blocks the stage when the hard gate failed; non-retryable, since a rerun measures the same file. */
 export function assertHardGate(report: HardGateReport): void {
   if (report.pass) return;
-  throw new StudixError("VALIDATION", `QA hard gate failed: ${report.failures.map((f) => f.message).join("; ")}`, {
-    retryable: false,
-    details: { failures: report.failures },
-    suggestedAction: "Fix the render (re-mix, re-finish or re-cut) and run the stage again.",
-  });
+  throw new StudixError(
+    "VALIDATION",
+    `QA hard gate failed: ${report.failures.map((f) => f.message).join("; ")}`,
+    {
+      retryable: false,
+      details: { failures: report.failures },
+      suggestedAction: "Fix the render (re-mix, re-finish or re-cut) and run the stage again.",
+    },
+  );
 }
 
 export interface EvidenceRequest {
@@ -183,7 +189,11 @@ export async function collectEvidence(
       refs[bus] = bus;
     }
     const item = await collect("mix-buses", async () => {
-      const { result } = await runQaTool(QA_TOOLS.mixBuses, { ...rest, stems: refs }, { ...run, media: grants });
+      const { result } = await runQaTool(
+        QA_TOOLS.mixBuses,
+        { ...rest, stems: refs },
+        { ...run, media: grants },
+      );
       return { findings: result.fails, data: result.shots };
     });
     if (item.ok) m["mixBuses.fails"] = item.findings.length;
@@ -194,7 +204,10 @@ export async function collectEvidence(
     const item = await collect("judge-reports", async () => {
       const { result } = await runQaTool(QA_TOOLS.judgeReports, reports, run);
       const failed = result.renders.filter((r) => !r.pass);
-      return { findings: failed.flatMap((r) => r.problems.map((p) => `${r.file}: ${p}`)), data: result.renders };
+      return {
+        findings: failed.flatMap((r) => r.problems.map((p) => `${r.file}: ${p}`)),
+        data: result.renders,
+      };
     });
     if (item.ok && Array.isArray(item.data)) {
       m["judge.failedRenders"] = (item.data as { pass: boolean }[]).filter((r) => !r.pass).length;

@@ -56,7 +56,8 @@ function gate(latest: Approval | undefined) {
   };
   return {
     deps,
-    result: () => checkApprovalGate(deps, ctx, job, "worker-1", { action: QA_REVIEW_ACTION, estimatedCostCents: 0 }),
+    result: () =>
+      checkApprovalGate(deps, ctx, job, "worker-1", { action: QA_REVIEW_ACTION, estimatedCostCents: 0 }),
   };
 }
 
@@ -117,12 +118,18 @@ describe("QA human review: no approval, no pass", () => {
   it("verdict names why an approval does not count", () => {
     const expected = { action: QA_REVIEW_ACTION, subject };
     expect(humanReviewVerdict(undefined, expected)).toEqual({ approved: false, reason: "missing" });
-    expect(humanReviewVerdict(approval({ status: "pending" }), expected)).toMatchObject({ reason: "pending" });
-    expect(humanReviewVerdict(approval({ status: "expired" }), expected)).toMatchObject({ reason: "expired" });
+    expect(humanReviewVerdict(approval({ status: "pending" }), expected)).toMatchObject({
+      reason: "pending",
+    });
+    expect(humanReviewVerdict(approval({ status: "expired" }), expected)).toMatchObject({
+      reason: "expired",
+    });
     expect(humanReviewVerdict(approval({ decidedBy: { type: "system", id: "x" } }), expected)).toMatchObject({
       reason: "not_human",
     });
-    expect(humanReviewVerdict(approval({ action: "publish" }), expected)).toMatchObject({ reason: "wrong_action" });
+    expect(humanReviewVerdict(approval({ action: "publish" }), expected)).toMatchObject({
+      reason: "wrong_action",
+    });
     expect(humanReviewVerdict(approval({ subject: { type: "job", id: "job_2" } }), expected)).toMatchObject({
       reason: "wrong_subject",
     });
@@ -142,7 +149,9 @@ describe("QA review stage", () => {
   it("refuses to run without a human approval even if a permissive policy let it through", async () => {
     await expect(review!.run(stage(undefined))).rejects.toBeInstanceOf(StudixError);
     await expect(review!.run(stage(undefined))).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(review!.run(stage(approval({ decidedBy: { type: "apiKey", id: "key_agent" } })))).rejects.toMatchObject({
+    await expect(
+      review!.run(stage(approval({ decidedBy: { type: "apiKey", id: "key_agent" } }))),
+    ).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
   });
@@ -156,7 +165,11 @@ describe("QA review stage", () => {
   });
 
   it("can be left out", () => {
-    const stages = createQaStages({ file: () => "/x", run: { toolchain: resolveQaToolchain() }, review: false });
+    const stages = createQaStages({
+      file: () => "/x",
+      run: { toolchain: resolveQaToolchain() },
+      review: false,
+    });
     expect(stages.map((s) => s.name)).toEqual(["qa_check"]);
   });
 });

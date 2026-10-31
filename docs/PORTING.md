@@ -162,6 +162,24 @@ chính nó ([KNOWLEDGE_PACKS.md](KNOWLEDGE_PACKS.md)).
 | `agentkit` `kits/engineer/skills/ak-threejs/` CSV API, category, use case, guide 00–18 (TJ-02)                                     | `packs/threejs-pack.ts`                  | Chắt lọc; nguồn không nêu phiên bản Three.js    |
 | `agentkit` `ak-creativity/scripts/core.py`, `ak-threejs/scripts/core.py` BM25 (CR-01, TJ-01)                                       | `knowledge-search.ts`                    | Viết lại bằng TypeScript, một engine dùng chung |
 
+### Port record: tool QA
+
+Path nguồn tương đối với `.agents/skills/anime-creator/scripts/` của `zuey-workspace` tại
+`10719856`; path Studix tương đối với `tools/qa/`. Contract và giới hạn ở [QA.md](QA.md).
+
+| Nguồn                                          | Studix file                                                                  | Cách port                                                                |
+| ---------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `qa-prescan.py` (AC-27)                        | `src/studix_qa/prescan.py`                                                   | Giữ thuật toán và ngưỡng; ffmpeg bằng argv, input qua grant, output JSON |
+| `qa-gate-check.py` (AC-27, AC-29)              | `src/studix_qa/judge_reports.py`                                             | Chỉ gộp report; kết quả là evidence, không chặn                          |
+| `audit-mix-buses.py` (AC-28)                   | `src/studix_qa/mix_buses.py`                                                 | Nhận stem có sẵn thay vì tự mix bus; key camelCase                       |
+| `studio/delivery_encodes.py` (AC-28)           | `src/studix_qa/loudness.py`                                                  | Chỉ phần đo `ebur128`                                                    |
+| `make-depth-maps.py` (AC-30)                   | `src/studix_qa/depth_maps.py`                                                | Model đọc local tại revision pin, extra `depth`                          |
+| `tests/test_delivery_and_mix_tools.py` (AC-31) | `tests/test_prescan_and_mix_golden.py`, `tests/test_judge_reports_golden.py` | Golden test, media sinh bằng `lavfi`                                     |
+
+Chưa port: `qa-shot-boundaries.py` (cần contract shot boundary của #47), `ai-shot-qa.py`
+(gọi model trả tiền; Studix nhận report của nó qua `judge-reports`), `estimate-plate-depth.py`.
+`probe`, `black-frames` và `sync` viết mới trên cùng khung sandbox.
+
 ### Quy trình sync có kiểm soát
 
 1. **Pin SHA.** Studix chỉ port từ commit ghi trong bảng trên. Không port từ nhánh đang
