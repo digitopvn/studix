@@ -335,9 +335,21 @@ function keyframeAssetId(shotId: string, version: number): string {
   return id;
 }
 
+/** The set's frame G1 signed: its highest `<setId>-set-v<n>` asset on the board, if any. */
+function signedSetFrame(ir: VideoIR, setId: string): AssetRef | undefined {
+  let best: { asset: AssetRef; version: number } | undefined;
+  for (const asset of ir.assets) {
+    const version = designVersion(asset.id, setId, "set");
+    if (version !== undefined && (!best || version > best.version)) best = { asset, version };
+  }
+  return best?.asset;
+}
+
 /**
  * The image request of one shot's keyframe at `version`. Identity comes from the lead character's sheet (a
- * model sheet conditions better than a prose prompt); `revision` is a reviewer's note on a redraw.
+ * model sheet conditions better than a prose prompt). A shot with no characters is an edit of its set's
+ * signed frame when that frame already has the film's frame: drawn from text alone, an empty set came back
+ * as a bordered layout plate. `revision` is a reviewer's note on a redraw.
  */
 function keyframeRequest(
   jobId: string,
@@ -355,10 +367,13 @@ function keyframeRequest(
         .find((c) => c.characterId === lead)
         ?.references.find((r) => r.status !== "retired")
     : undefined;
+  const setFrame = shot.characters.length === 0 ? signedSetFrame(ir, setId) : undefined;
+  const reference =
+    sheet?.assetId ?? (setFrame && hasFilmFrame(setFrame, film.scope) ? setFrame.id : undefined);
   const framed =
-    sheet !== undefined &&
+    reference !== undefined &&
     hasFilmFrame(
-      ir.assets.find((a) => a.id === sheet.assetId),
+      ir.assets.find((a) => a.id === reference),
       film.scope,
     );
   const assetId = keyframeAssetId(shot.id, version);
@@ -366,6 +381,8 @@ function keyframeRequest(
     shot,
     board,
     sheet,
+    /** Asset id of the image this keyframe is an edit of, if any. */
+    reference,
     request: {
       assetId,
       kind: "image" as const,
@@ -753,11 +770,11 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         })),
       };
       const planned = await withCaps(s, keyframeRequests(s));
-      const sheetIds = new Set(planned.flatMap((p) => (p.sheet ? [p.sheet.assetId] : [])));
-      const sheetFiles = await downloadMediaInputs(s, n.keyframes, ir, sheetIds);
+      const refIds = new Set(planned.flatMap((p) => (p.reference ? [p.reference] : [])));
+      const refFiles = await downloadMediaInputs(s, n.keyframes, ir, refIds);
       let done = 0;
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const image = p.sheet ? localFile(sheetFiles, p.sheet.assetId) : undefined;
+        const image = p.reference ? localFile(refFiles, p.reference) : undefined;
         const media = await generateStoredMedia(s, n.keyframes, {
           ...p.request,
           params: { ...p.request.params, ...(image ? { image } : {}) },
@@ -846,14 +863,14 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const ir = irOf(s);
       const film = filmOf(ir);
       const planned = await withCaps(s, redrawRequests(s));
-      const sheetIds = new Set(planned.flatMap((p) => (p.sheet ? [p.sheet.assetId] : [])));
-      const sheetFiles = await downloadMediaInputs(s, n.redraw, ir, sheetIds);
+      const refIds = new Set(planned.flatMap((p) => (p.reference ? [p.reference] : [])));
+      const refFiles = await downloadMediaInputs(s, n.redraw, ir, refIds);
       let done = 0;
       const made = await mapBounded(
         planned,
         MEDIA_CONCURRENCY,
         async (p) => {
-          const image = p.sheet ? localFile(sheetFiles, p.sheet.assetId) : undefined;
+          const image = p.reference ? localFile(refFiles, p.reference) : undefined;
           const media = await generateStoredMedia(s, n.redraw, {
             ...p.request,
             params: { ...p.request.params, ...(image ? { image } : {}) },
