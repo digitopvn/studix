@@ -64,6 +64,17 @@ export const DEFAULT_BANNED_TERMS: readonly string[] = [
   "Samsung",
   "IBM",
   "TikTok",
+  "FigJam",
+  "Creative Cloud",
+  "Material You",
+  "Redbull",
+  "Coca Cola",
+  "Next.js",
+  "Nextjs",
+  // Company-named typefaces and trademarks the source profiles used in their bodies.
+  "JetBrains",
+  "Polaroid",
+  "blurple",
 ];
 
 export const DEFAULT_KNOWLEDGE_LINT_CONFIG: KnowledgeLintConfig = {

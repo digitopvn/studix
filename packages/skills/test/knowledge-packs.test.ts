@@ -12,6 +12,7 @@ import {
   knowledgeCatalog,
   lintKnowledgePacks,
   loadStageKnowledge,
+  MOTION_STYLE_PROFILES,
   meetsThreshold,
   PINNED_SOURCES,
   parseSourceRef,
@@ -123,6 +124,148 @@ describe("built-in knowledge packs", () => {
     const checks = knowledgeCatalog.hardChecks();
     expect(new Set(checks.map((c) => c.id)).size).toBe(checks.length);
     for (const { pack: _pack, ...c } of checks) expect(HardCheck.parse(c)).toEqual(c);
+  });
+});
+
+describe("owner-approved knowledge ports", () => {
+  const section = (pack: string, id: string) => {
+    const found = knowledgeCatalog.pack(pack).sections.find((s) => s.id === id);
+    if (!found) throw new Error(`${pack} has no section ${id}`);
+    return found;
+  };
+  const styleIds = new Set(section("creative-direction", "visual-styles").entries.map((e) => e.id));
+  const idList = (value: string | undefined) => (value ?? "").split(",").map((s) => s.trim());
+  const sourcesOf = (pack: string, matrix: string) =>
+    knowledgeCatalog.pack(pack).sources.filter((s) => s.matrix === matrix);
+
+  it("give every campaign category a style pair from the visual style registry", () => {
+    const campaigns = section("creative-direction", "campaign-reasoning").entries.filter((e) =>
+      e.tags?.includes("campaign-reasoning"),
+    );
+    const rows = campaigns.filter((e) => e.id.startsWith("campaign-") && e.fields?.stylePriority);
+    expect(rows).toHaveLength(30);
+    for (const row of rows) {
+      const styles = idList(row.fields?.stylePriority);
+      expect(styles, row.id).toHaveLength(2);
+      for (const id of styles) expect(styleIds.has(id), `${row.id} -> ${id}`).toBe(true);
+      expect(row.fields?.severity).toMatch(/^(high|medium)$/);
+    }
+    expect(sourcesOf("creative-direction", "CR-05")).toHaveLength(1);
+  });
+
+  it("list only music sources whose licence route is stated", () => {
+    const music = section("creative-direction", "music-sources").entries.filter((e) =>
+      e.tags?.includes("music"),
+    );
+    const genres = music.filter((e) => e.id.startsWith("music-") && e.fields?.licence);
+    expect(genres.map((e) => e.id).sort()).toEqual(
+      [
+        "music-ambient-electronic",
+        "music-anthemic-rock",
+        "music-corporate-subtle",
+        "music-dark-electronic",
+        "music-indie-acoustic",
+        "music-nature-ambient",
+        "music-orchestral-cinematic",
+        "music-quirky-playful",
+        "music-synthwave",
+        "music-upbeat-pop",
+      ].sort(),
+    );
+    for (const genre of genres) {
+      expect(genre.fields?.licence, genre.id).toMatch(/licen[cs]e/i);
+      for (const id of idList(genre.fields?.styleMatch))
+        expect(styleIds.has(id), `${genre.id} -> ${id}`).toBe(true);
+    }
+    expect(sourcesOf("creative-direction", "CR-06").map((s) => s.ref)).toEqual([
+      expect.stringMatching(/data\/music\.csv$/),
+    ]);
+  });
+
+  it("carry the GLSL listings with the MIT notices of their third-party code", () => {
+    const listings = knowledgeCatalog
+      .pack("shader-gl")
+      .sections.filter((s) => s.id.endsWith("-glsl"))
+      .flatMap((s) => s.entries);
+    expect(listings.length).toBeGreaterThan(70);
+    for (const entry of listings) expect(entry.fields?.glsl?.trim(), entry.id).toBeTruthy();
+    const simplex = listings.find((e) => e.id === "glsl-simplex-noise-2d");
+    expect(simplex?.fields?.glsl).toContain("simplexNoise");
+    expect(simplex?.text).toMatch(/MIT/);
+    const notices = sourcesOf("shader-gl", "SH-03").filter((s) => s.notice);
+    expect(notices.map((s) => s.notice)).toEqual([
+      expect.stringMatching(/MIT/),
+      expect.stringMatching(/MIT/),
+    ]);
+    // The built-in function reference stays out (generic GLSL spec).
+    expect(sourcesOf("shader-gl", "SH-03").some((s) => s.ref.includes("builtin-functions"))).toBe(false);
+  });
+
+  it("index every upstream three.js example with its file and URL", () => {
+    const examples = knowledgeCatalog
+      .pack("threejs")
+      .sections.flatMap((s) => s.entries)
+      .filter((e) => e.tags?.includes("threejs-example"));
+    expect(examples).toHaveLength(556);
+    expect(new Set(examples.map((e) => e.fields?.file)).size).toBe(556);
+    for (const e of examples) {
+      expect(e.fields?.url).toBe(`https://threejs.org/examples/${e.fields?.file}`);
+      expect(e.fields?.complexity).toMatch(/^(low|medium|high)$/);
+    }
+    expect(sourcesOf("threejs", "TJ-03").map((s) => s.notice)).toEqual([expect.stringMatching(/MIT/)]);
+  });
+
+  it("name the forty signature motion styles by their look, never by a brand", () => {
+    const styles = section("signature-motion-styles", "styles").entries;
+    expect(styles).toHaveLength(40);
+    // Stricter than the pack lint: brand names that are also English words must not name a style either.
+    const brandWords = [
+      ...DEFAULT_KNOWLEDGE_LINT_CONFIG.bannedTerms,
+      "Notion",
+      "Linear",
+      "Slack",
+      "Stripe",
+      "Vox",
+      "Carbon",
+      "Fluent",
+      "Material",
+      "Android",
+      "Coke",
+    ];
+    const strict = { ...DEFAULT_KNOWLEDGE_LINT_CONFIG, bannedTerms: brandWords };
+    const naming = styles.map((s) => ({
+      id: s.id,
+      title: s.title,
+      aliases: s.fields?.aliases,
+      tags: s.tags,
+    }));
+    expect(
+      lintKnowledgePacks([samplePack("names", { useCases: [JSON.stringify(naming)] })], strict).map(
+        (i) => i.message,
+      ),
+    ).toEqual([]);
+    for (const style of styles)
+      expect(idList(style.fields?.aliases).length, style.id).toBeGreaterThanOrEqual(3);
+    // The whole pack, sources aside, passes the default lint, which bans the brands the source aliases used.
+    expect(lintKnowledgePacks([knowledgeCatalog.pack("signature-motion-styles")])).toEqual([]);
+    expect(sourcesOf("signature-motion-styles", "MV-14").length).toBe(42);
+  });
+
+  it("pair each signature style only with profiles Studix ships", () => {
+    const known = new Set([
+      ...section("signature-motion-styles", "styles").entries.map((e) => e.id),
+      ...MOTION_STYLE_PROFILES.map((p) => p.id),
+    ]);
+    for (const style of section("signature-motion-styles", "styles").entries) {
+      for (const id of idList(style.fields?.pairsWellWith).filter(Boolean)) {
+        expect(known.has(id), `${style.id} -> ${id}`).toBe(true);
+      }
+    }
+  });
+
+  it("find a signature style from a look description", () => {
+    const hits = knowledgeCatalog.search("premium product film centred hero", { phase: "design", limit: 5 });
+    expect(hits.some((h) => h.pack === "signature-motion-styles")).toBe(true);
   });
 });
 

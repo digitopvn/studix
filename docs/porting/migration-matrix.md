@@ -131,38 +131,38 @@ storyboard, lipsync (xem [phần cuối](#primitive-chung-character-continuity-s
 
 ## ak-creativity
 
-| ID    | Thành phần                                                 | Loại                 | Đích | Ghi chú                                 |
-| ----- | ---------------------------------------------------------- | -------------------- | ---- | --------------------------------------- |
-| CR-01 | `core.py` BM25 trên CSV và `search.py`                     | core                 | #48  | Một search engine dùng chung với TJ-01  |
-| CR-02 | `creative_brief.py`                                        | pack:marketing-video | #45  |                                         |
-| CR-03 | `platforms.csv`                                            | pack:marketing-video | #45  | Kiểm chứng sống                         |
-| CR-04 | `styles.csv`, `voiceover.csv`, `color-psychology.md`       | pack:knowledge       | #48  |                                         |
-| CR-05 | `creative-reasoning.csv`                                   | human review         | #48  | Luật quyết định cần chủ sở hữu duyệt    |
-| CR-06 | `music.csv`, `audio-music.md`                              | human review         | #48  | License nhạc                            |
-| CR-07 | `creative-styles-part1.md`, `part2.md`, `visual-trends.md` | loại bỏ              | #48  | Trùng `styles.csv`; số liệu không nguồn |
+| ID    | Thành phần                                                 | Loại                 | Đích | Ghi chú                                                                                                                                                                                                                                      |
+| ----- | ---------------------------------------------------------- | -------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CR-01 | `core.py` BM25 trên CSV và `search.py`                     | core                 | #48  | Một search engine dùng chung với TJ-01                                                                                                                                                                                                       |
+| CR-02 | `creative_brief.py`                                        | pack:marketing-video | #45  |                                                                                                                                                                                                                                              |
+| CR-03 | `platforms.csv`                                            | pack:marketing-video | #45  | Kiểm chứng sống                                                                                                                                                                                                                              |
+| CR-04 | `styles.csv`, `voiceover.csv`, `color-psychology.md`       | pack:knowledge       | #48  |                                                                                                                                                                                                                                              |
+| CR-05 | `creative-reasoning.csv`                                   | pack:knowledge       | #48  | Chủ sở hữu duyệt 2026-10-31; đã port vào `creative-direction` (30 nhóm chiến dịch); nền tảng ghi theo định dạng, không theo tên dịch vụ                                                                                                      |
+| CR-06 | `music.csv`, `audio-music.md`                              | pack:knowledge       | #48  | Chủ sở hữu duyệt 2026-10-31; port một phần vào `creative-direction`: chỉ 10 thể loại của `music.csv` có cách cấp license rõ. Bỏ lo-fi, electronic dance, classical, jazz, trending sounds, hip-hop, world fusion và toàn bộ `audio-music.md` |
+| CR-07 | `creative-styles-part1.md`, `part2.md`, `visual-trends.md` | loại bỏ              | #48  | Trùng `styles.csv`; số liệu không nguồn                                                                                                                                                                                                      |
 
 ## ak-motion-video
 
-| ID    | Thành phần                                                                   | Loại                 | Đích | Ghi chú                                                |
-| ----- | ---------------------------------------------------------------------------- | -------------------- | ---- | ------------------------------------------------------ |
-| MV-01 | `doctor.py` preflight                                                        | core                 | #42  |                                                        |
-| MV-02 | Composition contract, skeleton, `assemble.py`, `tl.py`, `scaffold-scenes.py` | adapter              | #42  | HyperFrames sau `RendererAdapter`                      |
-| MV-03 | `build-timeline.mjs` (TIMING, caption, envelope mix)                         | core                 | #42  |                                                        |
-| MV-04 | `align-voiceover.mjs`                                                        | core                 | #42  |                                                        |
-| MV-05 | `fit-beat-grid.py`, `arrange-music.mjs`, `verify-arrangement.py`             | core                 | #42  |                                                        |
-| MV-06 | `reframe.py`                                                                 | core                 | #42  | Chỉ sau khi master được duyệt                          |
-| MV-07 | `audit-ratio-scope.py`                                                       | loại bỏ              | #42  | Công cụ dev dựa trên git                               |
-| MV-08 | `generate-audio-assets.mjs`                                                  | adapter              | #41  | Không có dry-run hay trần chi; bỏ `shell: true`        |
-| MV-09 | Doc generated-art và route ảnh                                               | human review         | #41  | Quyền và chân dung                                     |
-| MV-10 | `measure-mix-balance.py`, `probe.py`                                         | core                 | #44  |                                                        |
-| MV-11 | `validate.py`, `contact-sheet.py`, `check-bounds.mjs`                        | core                 | #44  |                                                        |
-| MV-12 | Style index và `resolve-style.py`                                            | core                 | #45  | Engine chọn style                                      |
-| MV-13 | 28 profile thẩm mỹ và 2 profile nội bộ                                       | pack:motion-graphic  | #45  |                                                        |
-| MV-14 | 40 profile lấy cảm hứng từ thương hiệu và alias                              | human review         | #45  | Alias nêu tên thương hiệu thật và một thương hiệu phim |
-| MV-15 | Recording pipeline (`recording/*`)                                           | pack:marketing-video | #45  | Viết lại `transcribe.py` không dùng `shell=True`       |
-| MV-16 | Brief caption tiếng Việt                                                     | pack:marketing-video | #45  |                                                        |
-| MV-17 | Doc story/shot và motion craft                                               | pack:knowledge       | #48  |                                                        |
-| MV-18 | Doc orchestration (gắn với harness nguồn)                                    | loại bỏ              | #46  | Agent của Studix có contract riêng                     |
+| ID    | Thành phần                                                                   | Loại                 | Đích | Ghi chú                                                                                                                                                                                                                                                 |
+| ----- | ---------------------------------------------------------------------------- | -------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MV-01 | `doctor.py` preflight                                                        | core                 | #42  |                                                                                                                                                                                                                                                         |
+| MV-02 | Composition contract, skeleton, `assemble.py`, `tl.py`, `scaffold-scenes.py` | adapter              | #42  | HyperFrames sau `RendererAdapter`                                                                                                                                                                                                                       |
+| MV-03 | `build-timeline.mjs` (TIMING, caption, envelope mix)                         | core                 | #42  |                                                                                                                                                                                                                                                         |
+| MV-04 | `align-voiceover.mjs`                                                        | core                 | #42  |                                                                                                                                                                                                                                                         |
+| MV-05 | `fit-beat-grid.py`, `arrange-music.mjs`, `verify-arrangement.py`             | core                 | #42  |                                                                                                                                                                                                                                                         |
+| MV-06 | `reframe.py`                                                                 | core                 | #42  | Chỉ sau khi master được duyệt                                                                                                                                                                                                                           |
+| MV-07 | `audit-ratio-scope.py`                                                       | loại bỏ              | #42  | Công cụ dev dựa trên git                                                                                                                                                                                                                                |
+| MV-08 | `generate-audio-assets.mjs`                                                  | adapter              | #41  | Không có dry-run hay trần chi; bỏ `shell: true`                                                                                                                                                                                                         |
+| MV-09 | Doc generated-art và route ảnh                                               | human review         | #41  | Quyền và chân dung                                                                                                                                                                                                                                      |
+| MV-10 | `measure-mix-balance.py`, `probe.py`                                         | core                 | #44  |                                                                                                                                                                                                                                                         |
+| MV-11 | `validate.py`, `contact-sheet.py`, `check-bounds.mjs`                        | core                 | #44  |                                                                                                                                                                                                                                                         |
+| MV-12 | Style index và `resolve-style.py`                                            | core                 | #45  | Engine chọn style                                                                                                                                                                                                                                       |
+| MV-13 | 28 profile thẩm mỹ và 2 profile nội bộ                                       | pack:motion-graphic  | #45  |                                                                                                                                                                                                                                                         |
+| MV-14 | 40 profile lấy cảm hứng từ thương hiệu và alias                              | pack:knowledge       | #48  | Chủ sở hữu duyệt 2026-10-31; đã port vào `signature-motion-styles`. Alias thay bằng mô tả phong cách, font mang tên công ty thay bằng font mở, `expressive-material` và `fluent-productivity` đổi thành `expressive-tonal-ui` và `layered-productivity` |
+| MV-15 | Recording pipeline (`recording/*`)                                           | pack:marketing-video | #45  | Viết lại `transcribe.py` không dùng `shell=True`                                                                                                                                                                                                        |
+| MV-16 | Brief caption tiếng Việt                                                     | pack:marketing-video | #45  |                                                                                                                                                                                                                                                         |
+| MV-17 | Doc story/shot và motion craft                                               | pack:knowledge       | #48  |                                                                                                                                                                                                                                                         |
+| MV-18 | Doc orchestration (gắn với harness nguồn)                                    | loại bỏ              | #46  | Agent của Studix có contract riêng                                                                                                                                                                                                                      |
 
 ## ak-motion-design
 
@@ -216,20 +216,20 @@ storyboard, lipsync (xem [phần cuối](#primitive-chung-character-continuity-s
 
 ## ak-shader
 
-| ID    | Thành phần                                                   | Loại           | Đích | Ghi chú                 |
-| ----- | ------------------------------------------------------------ | -------------- | ---- | ----------------------- |
-| SH-01 | Fundamentals, shaping, màu, SDF, noise, fBm, texture thủ tục | pack:knowledge | #48  | Dùng bởi film-engine GL |
-| SH-02 | Tham chiếu hàm built-in                                      | loại bỏ        | #48  | Spec GLSL chung         |
-| SH-03 | License nội dung phái sinh                                   | human review   | #48  |                         |
+| ID    | Thành phần                                                   | Loại           | Đích | Ghi chú                                                                                                                 |
+| ----- | ------------------------------------------------------------ | -------------- | ---- | ----------------------------------------------------------------------------------------------------------------------- |
+| SH-01 | Fundamentals, shaping, màu, SDF, noise, fBm, texture thủ tục | pack:knowledge | #48  | Dùng bởi film-engine GL                                                                                                 |
+| SH-02 | Tham chiếu hàm built-in                                      | loại bỏ        | #48  | Spec GLSL chung                                                                                                         |
+| SH-03 | Code listing GLSL (nội dung phái sinh)                       | pack:knowledge | #48  | Chủ sở hữu duyệt 2026-10-31; đã port listing vào `shader-gl` (trừ SH-02), giữ notice MIT của simplex noise và `hsb2rgb` |
 
 ## ak-threejs
 
-| ID    | Thành phần                                 | Loại           | Đích | Ghi chú                   |
-| ----- | ------------------------------------------ | -------------- | ---- | ------------------------- |
-| TJ-01 | `search.py`, `core.py` BM25                | core           | #48  | Gộp với CR-01             |
-| TJ-02 | CSV API, category, use case và guide 00–18 | pack:knowledge | #48  | Theo phiên bản Three.js   |
-| TJ-03 | `examples-all.csv`                         | human review   | #48  | License dữ liệu phái sinh |
-| TJ-04 | Script trích dữ liệu                       | loại bỏ        | #48  |                           |
+| ID    | Thành phần                                 | Loại           | Đích | Ghi chú                                                                                   |
+| ----- | ------------------------------------------ | -------------- | ---- | ----------------------------------------------------------------------------------------- |
+| TJ-01 | `search.py`, `core.py` BM25                | core           | #48  | Gộp với CR-01                                                                             |
+| TJ-02 | CSV API, category, use case và guide 00–18 | pack:knowledge | #48  | Theo phiên bản Three.js                                                                   |
+| TJ-03 | `examples-all.csv`                         | pack:knowledge | #48  | Chủ sở hữu duyệt 2026-10-31; đã port 556 ví dụ vào `threejs`, kèm notice MIT của three.js |
+| TJ-04 | Script trích dữ liệu                       | loại bỏ        | #48  |                                                                                           |
 
 ## Primitive chung: character, continuity, storyboard, lipsync
 

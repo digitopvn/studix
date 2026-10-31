@@ -10,6 +10,7 @@ import { performancePack } from "./packs/performance-pack.ts";
 import { physicsLitePack } from "./packs/physics-lite-pack.ts";
 import { productionFailureModesPack } from "./packs/production-failure-modes-pack.ts";
 import { shaderGlPack } from "./packs/shader-gl-pack.ts";
+import { signatureMotionStylesPack } from "./packs/signature-motion-styles-pack.ts";
 import { soundPack } from "./packs/sound-pack.ts";
 import { threejsPack } from "./packs/threejs-pack.ts";
 import { voicePerformancePack } from "./packs/voice-performance-pack.ts";
@@ -32,4 +33,5 @@ export const BUILTIN_KNOWLEDGE_PACKS: readonly KnowledgePack[] = [
   compositionTimingPack,
   shaderGlPack,
   threejsPack,
+  signatureMotionStylesPack,
 ];
