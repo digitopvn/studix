@@ -180,8 +180,8 @@ function sumeKeptCents(metrics: Json): number | undefined {
 }
 
 /**
- * A charge the provider reported; a run that sent no request reports none. Sume's own captured amount
- * wins over multix's `cost_usd`, which has been seen to grow with every status poll of the same job.
+ * A charge the provider reported; a run that sent no request reports none. What Sume keeps (see
+ * `sumeKeptCents`) wins over multix's `cost_usd`, which has been seen to grow with every status poll of the same job.
  */
 function parseReceipt(envelope: Json): number | undefined {
   const kept = sumeKeptCents(obj(obj(envelope.usage).metrics));

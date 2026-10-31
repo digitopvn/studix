@@ -483,17 +483,17 @@ describe("MultixProvider async jobs", () => {
   });
 
   it("bills the reserved charge when Sume completed the job before it captured anything", async () => {
-    const settle =
-      (captured: number, refunded = 0) =>
-      (argv: readonly string[]) => {
-        const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
-        const envelope = realStatusEnvelope(out);
-        Object.assign(envelope.usage.metrics, {
-          "data.job.usage_summary.captured_usd_cents": captured,
-          "data.job.usage_summary.refunded_usd_cents": refunded,
-        });
-        return { files: { [out]: "png-bytes" }, envelope };
-      };
+    const settle = (metrics: Record<string, number | undefined>) => (argv: readonly string[]) => {
+      const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
+      const envelope = realStatusEnvelope(out);
+      const usage = envelope.usage.metrics as Record<string, number>;
+      for (const [name, value] of Object.entries(metrics)) {
+        const key = `data.job.usage_summary.${name}_usd_cents`;
+        if (value === undefined) delete usage[key];
+        else usage[key] = value;
+      }
+      return { files: { [out]: "png-bytes" }, envelope };
+    };
     const collect = async (script: ReturnType<typeof settle>) =>
       new MultixProvider({ bin: "multix", runner: scriptedCli(script).runner }).resume(ctx, {
         kind: "image",
@@ -502,9 +502,14 @@ describe("MultixProvider async jobs", () => {
         workDir,
       });
     // Completed, reserved 1¢, captured still 0: Sume will keep the 1¢.
-    expect(await collect(settle(0))).toMatchObject({ costCents: 1, costSource: "receipt" });
+    expect(await collect(settle({ captured: 0 }))).toMatchObject({ costCents: 1, costSource: "receipt" });
     // A refund of the whole reservation really is free.
-    expect(await collect(settle(0, 1))).toMatchObject({ costCents: 0, costSource: "receipt" });
+    expect(await collect(settle({ captured: 0, refunded: 1 }))).toMatchObject({ costCents: 0 });
+    // Released reservation is not billed; a partial capture keeps what was captured.
+    expect(await collect(settle({ reserved: 5, captured: 0, released: 5 }))).toMatchObject({ costCents: 0 });
+    expect(await collect(settle({ reserved: 5, captured: 3, released: 2 }))).toMatchObject({ costCents: 3 });
+    // No captured figure at all: the unsettled reservation is what Sume keeps.
+    expect(await collect(settle({ reserved: 4, captured: undefined }))).toMatchObject({ costCents: 4 });
   });
 
   it("collects an Atlas prediction from the real status envelope, which lists saved files only in text", async () => {
