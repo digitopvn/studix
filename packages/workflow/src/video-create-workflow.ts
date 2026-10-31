@@ -4,6 +4,7 @@ import { USAGE_KINDS } from "@studix/billing";
 import {
   JOB_KINDS,
   type ProjectRepository,
+  type ProjectStatus,
   type RendererAdapter,
   type RenderRepository,
   type StorageAdapter,
@@ -339,11 +340,17 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
 }
 
 /**
- * Hand the project to review when this job's render or storyboard is ready. Only a project that is still
- * `rendering` moves: a retried job that finishes after a newer render was approved or published (or after the
- * project was archived) must not put the project back into review.
+ * Hand the project to review when this job's render or storyboard is ready. Only a project in one of `from`
+ * (by default just `rendering`) moves: a retried job that finishes after a newer render was approved or
+ * published (or after the project was archived) must not put the project back into review.
  */
-async function markInReview(repos: FencedRepositories, ctx: TenantContext, projectId: string): Promise<void> {
+export async function markInReview(
+  repos: FencedRepositories,
+  ctx: TenantContext,
+  projectId: string,
+  from: readonly ProjectStatus[] = ["rendering"],
+): Promise<void> {
   const project = await repos.projects.get(ctx, projectId);
-  if (project?.status === "rendering") await repos.projects.update(ctx, projectId, { status: "in_review" });
+  if (project && from.includes(project.status))
+    await repos.projects.update(ctx, projectId, { status: "in_review" });
 }
