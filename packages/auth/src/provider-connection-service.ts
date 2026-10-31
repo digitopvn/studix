@@ -119,6 +119,17 @@ export interface ProviderConnectionService {
    * job is created so a bad selection fails fast; the worker checks again with resolveForExecution.
    */
   assertUsable(ctx: TenantContext, connectionId: string): Promise<ProviderConnectionView>;
+  /**
+   * Record that Anthropic rejected `apiKey` (a 401) during a run, so the connection reads `invalid` and
+   * `assertUsable` stops accepting it. A no-op when the stored key is no longer that key (rotated since the
+   * run started), so a fresh key is never marked dead by a stale failure.
+   */
+  reportKeyRejected(
+    ctx: TenantContext,
+    connectionId: string,
+    apiKey: string,
+    error: StudixErrorPayload,
+  ): Promise<void>;
 }
 
 export interface ProviderConnectionServiceDeps {
@@ -432,6 +443,20 @@ export function createProviderConnectionService(
 
     async assertUsable(ctx, connectionId) {
       return toView(ctx, await usableRow(ctx, connectionId, actorRef(ctx.actor)));
+    },
+
+    async reportKeyRejected(ctx, connectionId, apiKey, error) {
+      assertPermission(ctx, "project:write");
+      const row = await deps.connections.get(ctx, connectionId);
+      if (!row || row.revokedAt || !row.secretCiphertext || row.status === "invalid") return;
+      if (openKey(ctx, row, row.secretCiphertext) !== apiKey) return;
+      const updated = await deps.connections.recordTest(ctx, connectionId, row.secretCiphertext, {
+        status: "invalid",
+        lastTest: { ok: false, at: new Date(), latencyMs: 0, httpStatus: 401, error },
+      });
+      if (!updated) return;
+      await audit(ctx, "rejected", updated);
+      deps.logger?.warn("provider key rejected during a run", { connectionId, workspaceId: ctx.workspaceId });
     },
   };
 }

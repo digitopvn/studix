@@ -45,6 +45,7 @@ const success = (output: unknown = ir): ClaudeAgentEvent[] => [
 function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>), resolveError?: StudixError) {
   const transport = createFakeClaudeTransport(() => (typeof events === "function" ? events() : events));
   const resolved: { connectionId: string; requestedBy: ActorRef }[] = [];
+  const rejected: { connectionId: string; apiKey: string }[] = [];
   const planner = createClaudePlanner({
     transport,
     credentials: {
@@ -53,6 +54,9 @@ function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>),
         if (resolveError) throw resolveError;
         return { apiKey: FAKE_KEY } as ResolvedProviderCredential;
       },
+      async reportKeyRejected(_tenant, connectionId, apiKey) {
+        rejected.push({ connectionId, apiKey });
+      },
     },
     model: "claude-test",
     maxTurns: 4,
@@ -60,7 +64,7 @@ function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>),
     timeoutMs: 60_000,
     logger,
   });
-  return { planner, transport, resolved };
+  return { planner, transport, resolved, rejected };
 }
 
 describe("Claude planner", () => {
@@ -163,11 +167,20 @@ describe("Claude planner", () => {
     await running;
   });
 
-  it("maps a rejected key to UNAUTHENTICATED", async () => {
-    const { planner } = setup([{ type: "error", status: 401, message: "invalid x-api-key" }]);
+  it("maps a rejected key to UNAUTHENTICATED and marks that connection's key rejected", async () => {
+    const { planner, rejected } = setup([{ type: "error", status: 401, message: "invalid x-api-key" }]);
     await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
       code: "UNAUTHENTICATED",
     });
+    expect(rejected).toEqual([{ connectionId: "pcn_1", apiKey: FAKE_KEY }]);
+  });
+
+  it("does not mark the key rejected for other failures", async () => {
+    const { planner, rejected } = setup([{ type: "error", status: 429, message: "rate_limit_error" }]);
+    await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+    });
+    expect(rejected).toEqual([]);
   });
 });
 
@@ -203,7 +216,10 @@ describe("Claude planner execution records", () => {
     const ledger: NewUsageEvent[] = [];
     const planner = createClaudePlanner({
       transport: createFakeClaudeTransport(() => events),
-      credentials: { resolveForExecution: async () => ({ apiKey: FAKE_KEY }) as ResolvedProviderCredential },
+      credentials: {
+        resolveForExecution: async () => ({ apiKey: FAKE_KEY }) as ResolvedProviderCredential,
+        reportKeyRejected: async () => {},
+      },
       executions: {
         async recordProviderExecution(_ctx, input) {
           rows.push(input);

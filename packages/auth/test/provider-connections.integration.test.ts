@@ -233,6 +233,35 @@ describe("provider connections over Postgres", () => {
     ).toBe("UNAUTHENTICATED");
   });
 
+  it("marks a key rejected during a run invalid, but not a key that was rotated since", async () => {
+    const { svc } = service();
+    const t = await workspace("pc-rejected");
+    const error = {
+      code: "UNAUTHENTICATED",
+      message: "Anthropic rejected the API key",
+      retryable: false,
+    } as const;
+    const view = await svc.saveApiKey(t.admin, { owner: "workspace", apiKey: KEY_A });
+    const requestedBy = { type: "user", id: "x" } as const;
+
+    // A stale report for a key that has been replaced leaves the new key usable.
+    await svc.rotateApiKey(t.admin, view.id, { apiKey: KEY_B });
+    await svc.reportKeyRejected(t.worker, view.id, KEY_A, error);
+    expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
+
+    await svc.reportKeyRejected(t.worker, view.id, KEY_B, error);
+    expect(await codeOf(svc.assertUsable(t.admin, view.id))).toBe("UNAUTHENTICATED");
+    expect(await codeOf(svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy }))).toBe(
+      "UNAUTHENTICATED",
+    );
+    const row = await rowOf(view.id);
+    expect(row.status).toBe("invalid");
+    expect(row.lastTest).toMatchObject({ ok: false, httpStatus: 401 });
+    // Reporting again, or for a connection that no longer exists, is harmless.
+    await svc.reportKeyRejected(t.worker, view.id, KEY_B, error);
+    await svc.reportKeyRejected(t.worker, "pcon_missing", KEY_B, error);
+  });
+
   it("never lets a slow test of a replaced key overwrite the new key's status", async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => {

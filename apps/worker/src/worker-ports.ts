@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { createClaudeSdkTransport } from "@studix/agent-runtime";
+import { createClaudeSdkTransport, preflightClaudeRuntime } from "@studix/agent-runtime";
 import {
   createAnthropicKeyTester,
   createProviderConnectionService,
@@ -46,10 +46,18 @@ function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntim
 /**
  * Claude Agent SDK planner, built only when STUDIX_CLAUDE_PLANNER is on. It opens the job's selected
  * Anthropic key through the same service and master key as the app; nothing else is ever substituted.
+ * Startup fails when the Claude process the SDK would launch is missing or does not run on this host.
  */
-function claudePlanner(settings: WorkerSettings, runtime: WorkerPortsRuntime): ClaudePlanner | undefined {
+async function claudePlanner(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+): Promise<ClaudePlanner | undefined> {
   const claude = settings.claudePlanner;
   if (!claude) return undefined;
+  // The operator turned the planner on: a host that cannot run the Claude process fails startup here,
+  // rather than failing every Claude job later.
+  const preflight = await preflightClaudeRuntime();
+  runtime.logger.info("Claude runtime ready", { command: preflight.command, version: preflight.version });
   const { config } = settings;
   // loadWorkerSettings refuses the flag without STUDIX_SECRETS_KEY.
   const masterKey = config.STUDIX_SECRETS_KEY as string;
@@ -113,7 +121,7 @@ export async function loadWorkerPorts(
     brandLookup: settings.brandLookupTool ?? "off",
     claudePlanner: settings.claudePlanner ? settings.claudePlanner.model : "off",
   });
-  const claude = claudePlanner(settings, runtime);
+  const claude = await claudePlanner(settings, runtime);
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),

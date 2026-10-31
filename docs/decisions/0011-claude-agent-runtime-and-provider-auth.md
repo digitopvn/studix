@@ -85,7 +85,13 @@ credentials and are never forwarded.
   invalid output, process crash) carries that spend on its error. The planner
   records it on the provider execution and in the job's usage ledger, and the
   error is not retryable: each retry would spend on the tenant's key again. A
-  failure before any usage (credential lookup, SDK import) stays retryable.
+  failure before any usage (credential lookup, SDK import) stays retryable:
+  those faults are local and usually transient, and a retry costs nothing.
+  A host that can never run the Claude process is caught earlier: the worker
+  runs a startup preflight (`preflightClaudeRuntime`) and refuses to start.
+- A 401 from Anthropic during a run marks the connection `invalid`
+  (`reportKeyRejected`), so `assertUsable` stops accepting the key. The mark is
+  skipped when the key was rotated after the run began.
 - The OAuth flow is a separate, compliance-gated PR and is not part of "done" for
   the API-key path.
 

@@ -14,7 +14,7 @@ import type { Planner } from "@studix/workflow";
 export interface ClaudePlannerDeps {
   transport: ClaudeAgentTransport;
   /** Releases the job's selected Anthropic key; it never substitutes another one. */
-  credentials: Pick<ProviderConnectionService, "resolveForExecution">;
+  credentials: Pick<ProviderConnectionService, "resolveForExecution" | "reportKeyRejected">;
   model: string;
   maxTurns: number;
   /** Per-plan cost cap; the job's remaining budget lowers it further. */
@@ -102,6 +102,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
         retryable: false,
       });
     }
+    let usedKey: string | undefined;
     const runtime = createClaudeAgentRuntime({
       transport: deps.transport,
       model: deps.model,
@@ -112,6 +113,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
             connectionId: selection.providerConnectionId,
             requestedBy: ctx.requestedBy,
           });
+          usedKey = resolved.apiKey;
           return resolved.apiKey;
         },
       },
@@ -151,6 +153,14 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
       const error = isStudixError(err) ? err : new StudixError("INTERNAL", String(err));
       // A failed run still paid for what the agent did before it stopped; the stage reports no usage.
       const spent = agentSpendOf(error);
+      // Anthropic refused this key: flag the connection so the API pre-check stops accepting it.
+      if (error.code === "UNAUTHENTICATED" && usedKey) {
+        await deps.credentials
+          .reportKeyRejected(ctx.tenant, selection.providerConnectionId, usedKey, error.toJSON())
+          .catch((e: unknown) => {
+            log.warn("rejected key not recorded", { jobId: ctx.jobId, error: String(e) });
+          });
+      }
       const model = spent?.model ?? deps.model;
       const providerExecutionId = await record({
         model,

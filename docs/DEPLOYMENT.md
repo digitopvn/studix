@@ -63,6 +63,12 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
 when the run ends; the worker creates that directory at startup and removes
 sandboxes left by a crashed worker once they are older than the run timeout.
+At startup the worker also runs `claude --version` through the SDK's own
+executable lookup, without calling Anthropic, and refuses to start if that
+fails (for example an architecture the SDK ships no binary for). Fix the image
+or turn the planner off. When Anthropic answers a run with 401, the selected
+connection is marked invalid, so the app rejects new jobs with that key until
+someone replaces it in Settings → AI & Providers.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
