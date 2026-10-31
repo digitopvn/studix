@@ -29,14 +29,16 @@ export function createRateLimitRepository(db: StudixDb): RateLimitRepository {
   return {
     async take(key, { capacity, refillPerSecond }) {
       const cap = sql`${capacity}::float8`;
-      const refilled = sql`least(${cap}, ${rateLimitBuckets.tokens} + extract(epoch from (now() - ${rateLimitBuckets.updatedAt})) * ${refillPerSecond}::float8)`;
+      // now() is the transaction start, so a take that began before the last write can see a negative
+      // elapsed time; it refills nothing and leaves updated_at where the later write put it.
+      const refilled = sql`least(${cap}, ${rateLimitBuckets.tokens} + greatest(0, extract(epoch from (now() - ${rateLimitBuckets.updatedAt}))) * ${refillPerSecond}::float8)`;
       const rows = await db.execute<{ tokens: number; granted: boolean }>(sql`
         insert into ${rateLimitBuckets} (key, tokens, granted, updated_at)
         values (${key}, ${cap} - 1, true, now())
         on conflict (key) do update set
           tokens = case when ${refilled} >= 1 then ${refilled} - 1 else ${refilled} end,
           granted = ${refilled} >= 1,
-          updated_at = now()
+          updated_at = greatest(${rateLimitBuckets.updatedAt}, now())
         returning tokens, granted`);
       const row = rows[0];
       if (!row) throw new Error("rate limit upsert returned no row");

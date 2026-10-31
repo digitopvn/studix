@@ -1,6 +1,6 @@
 import { StudixError } from "@studix/shared";
 import type { Asset, AssetKind } from "../entities/asset.ts";
-import type { Render } from "../entities/job.ts";
+import { JOB_KINDS, type Render } from "../entities/job.ts";
 import type { ProjectVersion, VideoProject } from "../entities/project.ts";
 import type { Approval } from "../entities/review.ts";
 import type { AuditEvent } from "../entities/telemetry.ts";
@@ -13,13 +13,26 @@ import {
   openApproval,
 } from "./approval-operations.ts";
 import { type CreateVideoProjectResult, createVideoProject } from "./create-video-project.ts";
+import {
+  decideStoryboard,
+  type FeedbackResult,
+  getProjectReview,
+  type ProjectReview,
+  type RenderResult,
+  renderVersion,
+  type StoryboardDecisionResult,
+  submitFeedback,
+} from "./project-review.ts";
 import { loadJobView, parseInput, type ResolvedStudioDeps } from "./studio-input.ts";
 import {
   type CreateVideoProjectInput,
   DecideApprovalInput,
+  type FeedbackInput,
   type JobView,
   RecordAuditInput,
+  type RenderVersionInput,
   RequestApprovalInput,
+  type StoryboardDecisionInput,
   type StudioDefaults,
   type StudioServiceDeps,
 } from "./studio-types.ts";
@@ -84,6 +97,42 @@ export class StudioService {
     return loadJobView(this.deps, ctx, cancelled);
   }
 
+  /**
+   * Requeue a failed job as the same job, after its cause was fixed. Succeeded stages keep their outputs and
+   * the stage's media job journal is reused, so upstream calls that already completed are collected rather
+   * than paid again; gates already decided are not asked again. Publish jobs are not resumable: a publish
+   * is not idempotent and must be started again on purpose.
+   */
+  async retryJob(ctx: TenantContext, jobId: string): Promise<JobView> {
+    assertPermission(ctx, "job:retry");
+    const job = await this.deps.jobs.get(ctx, jobId);
+    if (!job) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
+    if (job.kind === JOB_KINDS.publish) {
+      throw new StudixError("VALIDATION", "publish jobs cannot be retried", {
+        retryable: false,
+        suggestedAction: "Start a new publish once the cause is fixed.",
+      });
+    }
+    // The worker never checks `job.start`; an expired or rejected request fails the job, and a retry must not
+    // start it without the person who gates it.
+    const start = await this.deps.approvals.findLatest(ctx, { type: "job", id: jobId }, "job.start");
+    if (start && !(start.status === "approved" && start.decidedBy?.type === "user")) {
+      throw new StudixError("APPROVAL_REQUIRED", `job ${jobId} was never approved to start`, {
+        retryable: false,
+        details: { approvalId: start.id, approvalStatus: start.status },
+        suggestedAction: "Create the job again and have a workspace member approve it in the dashboard.",
+      });
+    }
+    const requeued = await this.deps.queue.retry(ctx, jobId);
+    await this.recordAudit(ctx, {
+      action: "job.retried",
+      subjectType: "job",
+      subjectId: jobId,
+      data: { attempts: job.attempts, error: job.error?.code },
+    });
+    return loadJobView(this.deps, ctx, requeued);
+  }
+
   async getProject(ctx: TenantContext, projectId: string): Promise<ProjectDetails> {
     assertPermission(ctx, "project:read");
     const project = await this.deps.projects.get(ctx, projectId);
@@ -123,7 +172,7 @@ export class StudioService {
     });
   }
 
-  /** Approve or reject. Publish/delete approvals require a signed-in user; system actors never approve. */
+  /** Approve or reject. Every decision needs a signed-in user; API keys and system actors get FORBIDDEN. */
   approve(ctx: TenantContext, input: DecideApprovalInput): Promise<Approval> {
     return decideApproval(this.deps, ctx, parseInput(DecideApprovalInput, input, "approval decision"));
   }
@@ -138,6 +187,26 @@ export class StudioService {
       subject: { type: input.subjectType, id: input.subjectId },
       estimatedCostCents: input.estimatedCostCents,
     });
+  }
+
+  /** Script, storyboard with review state, shots, timeline, versions, renders, cost and comments. */
+  getProjectReview(ctx: TenantContext, projectId: string): Promise<ProjectReview> {
+    return getProjectReview(this.deps, ctx, projectId);
+  }
+
+  /** Approve or request changes on the storyboard, a scene or a shot (signed-in reviewers only). */
+  decideStoryboard(ctx: TenantContext, input: StoryboardDecisionInput): Promise<StoryboardDecisionResult> {
+    return decideStoryboard(this.deps, ctx, input);
+  }
+
+  /** Comment on a shot, scene, asset or time range; with a patch, store a new version and queue a render. */
+  submitFeedback(ctx: TenantContext, input: FeedbackInput): Promise<FeedbackResult> {
+    return submitFeedback(this.deps, ctx, input);
+  }
+
+  /** Queue a render of a stored version (the current one by default). */
+  renderVersion(ctx: TenantContext, input: RenderVersionInput): Promise<RenderResult> {
+    return renderVersion(this.deps, ctx, input);
   }
 
   async recordAudit(ctx: TenantContext, rawInput: RecordAuditInput): Promise<AuditEvent> {

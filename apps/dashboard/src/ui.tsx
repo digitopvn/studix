@@ -37,8 +37,12 @@ export function ErrorBanner({ error }: { error: unknown }) {
   );
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  return <span className={`badge badge-${status.replace(/[^a-z_]/g, "")}`}>{status.replace(/_/g, " ")}</span>;
+export function StatusBadge({ status, label }: { status: string; label?: string }) {
+  return (
+    <span className={`badge badge-${status.replace(/[^a-z_]/g, "")}`}>
+      {label ?? status.replace(/_/g, " ")}
+    </span>
+  );
 }
 
 export function formatDate(value?: string): string {

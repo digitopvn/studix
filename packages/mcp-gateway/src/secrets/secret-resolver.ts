@@ -10,6 +10,8 @@ export interface OutboundCredential {
 export interface SecretOwner {
   connectorId: string;
   connectorName: string;
+  /** Downstream URL the credential would be sent to, so resolvers can bind secrets to an origin. */
+  url: string;
 }
 
 /**
@@ -18,6 +20,8 @@ export interface SecretOwner {
  * return a partial credential.
  */
 export interface SecretResolver {
+  /** Throw unless this workspace may use `secretRef` for a connector at `url` (checked when it is registered). */
+  authorize(ctx: TenantContext, target: { url: string }, secretRef: string): void;
   resolve(ctx: TenantContext, owner: SecretOwner, secretRef: string): Promise<OutboundCredential>;
 }
 
@@ -49,23 +53,62 @@ export interface EnvSecretResolverOptions {
   prefix?: string;
 }
 
+const FORBIDDEN_REF = () =>
+  new StudixError("FORBIDDEN", "This workspace may not use that secret reference", {
+    suggestedAction: "Ask the operator to grant the secret to this workspace and connector origin.",
+  });
+
 /**
  * P0 resolver for operator-managed credentials: `secretRef = "env:STUDIX_CONNECTOR_SECRET_<NAME>"` maps
  * to a bearer token held in the server environment (injected from the deployment secret store).
- * Encrypted per-workspace secrets arrive with the connector dashboard in P1.
+ * Each secret is bound by two companion variables, both required (fail closed):
+ *   `<VAR>_WORKSPACES` comma-separated workspace ids that may reference it,
+ *   `<VAR>_ORIGIN`     the only origin (scheme://host[:port]) the token is ever sent to.
+ * Without the binding any self-registered workspace could point a connector at its own server and
+ * receive the operator's token. Encrypted per-workspace secrets arrive with the connector dashboard in P1.
  */
 export function createEnvSecretResolver(options: EnvSecretResolverOptions = {}): SecretResolver {
   const env = options.env ?? process.env;
   const prefix = options.prefix ?? "STUDIX_CONNECTOR_SECRET_";
+
+  const variableOf = (secretRef: string): string => {
+    const name = /^env:([A-Z0-9_]+)$/.exec(secretRef)?.[1];
+    if (!name?.startsWith(prefix) || name.endsWith("_WORKSPACES") || name.endsWith("_ORIGIN")) {
+      throw new StudixError("VALIDATION", "Unsupported secret reference", {
+        suggestedAction: `Use env:${prefix}<NAME>.`,
+      });
+    }
+    return name;
+  };
+
+  const originOf = (url: string): string | undefined => {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const authorize = (ctx: TenantContext, target: { url: string }, secretRef: string): string => {
+    const name = variableOf(secretRef);
+    const workspaces = (env[`${name}_WORKSPACES`] ?? "")
+      .split(",")
+      .map((w) => w.trim())
+      .filter(Boolean);
+    const allowedOrigin = originOf(env[`${name}_ORIGIN`] ?? "");
+    if (!workspaces.includes(ctx.workspaceId) || !allowedOrigin || originOf(target.url) !== allowedOrigin) {
+      throw FORBIDDEN_REF();
+    }
+    return name;
+  };
+
   return {
-    async resolve(_ctx, _owner, secretRef) {
-      const match = /^env:([A-Z0-9_]+)$/.exec(secretRef);
-      if (!match || !match[1]!.startsWith(prefix)) {
-        throw new StudixError("VALIDATION", "Unsupported secret reference", {
-          suggestedAction: `Use env:${prefix}<NAME>.`,
-        });
-      }
-      const value = env[match[1]!];
+    authorize(ctx, target, secretRef) {
+      authorize(ctx, target, secretRef);
+    },
+    async resolve(ctx, owner, secretRef) {
+      const name = authorize(ctx, owner, secretRef);
+      const value = env[name];
       if (!value) {
         throw new StudixError("UNAVAILABLE", "Connector credential is not configured", { retryable: false });
       }

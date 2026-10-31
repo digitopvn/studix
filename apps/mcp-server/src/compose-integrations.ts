@@ -1,9 +1,14 @@
-import type { ApprovalPolicy } from "@studix/core";
+import {
+  type AgentHandoffService,
+  type AgentOutputValidator,
+  type ApprovalPolicy,
+  createAgentHandoffService,
+} from "@studix/core";
 import type { createRepositories } from "@studix/database";
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import type { ActivityRecorder } from "@studix/observability";
-import type { Logger, StudixConfig } from "@studix/shared";
-import { listSkills } from "@studix/skills";
+import { type Logger, type StudixConfig, StudixError } from "@studix/shared";
+import { listSkills, type PackRegistry, packRegistry } from "@studix/skills";
 import { createS3StorageAdapterFromConfig, type S3StorageAdapter } from "@studix/storage";
 import { createConnectorAdminAdapter } from "./connector-admin-adapter.ts";
 import { createGatewayMetaTools } from "./mcp/gateway-meta-tools.ts";
@@ -15,6 +20,8 @@ export interface Integrations {
   connectors: ConnectorAdmin;
   metaTools: RegisterMetaTools;
   skills: SkillSummary[];
+  /** Host-agent handoff of agent stages (the studix_*_agent_task tools). */
+  agentHandoffs: AgentHandoffService;
 }
 
 /** Workflow templates from the skills registry, as advertised by `studix_inspect`. */
@@ -25,6 +32,27 @@ export function skillSummaries(): SkillSummary[] {
     description: s.description,
     version: s.version,
   }));
+}
+
+/**
+ * Checks a host agent's output against the output schema of the registered pack stage, the schema the
+ * worker applies too. A stage this server does not know is UNAVAILABLE (server and worker out of step).
+ */
+export function packStageOutputValidator(registry: PackRegistry = packRegistry): AgentOutputValidator {
+  return (stage, output) => {
+    const schema = registry.stage(stage)?.outputSchema;
+    if (!schema) {
+      throw new StudixError("UNAVAILABLE", `Stage ${stage} is not registered on this server`, {
+        details: { stage },
+      });
+    }
+    const parsed = schema.safeParse(output);
+    if (parsed.success) return { ok: true, output: parsed.data as Record<string, unknown> };
+    return {
+      ok: false,
+      issues: parsed.error.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })),
+    };
+  };
 }
 
 /** Media origins for the dashboard CSP: the client-facing S3 origin, plus subdomains for virtual-hosted buckets. */
@@ -66,5 +94,9 @@ export function composeIntegrations(input: {
     connectors: createConnectorAdminAdapter({ admin: gateway.connectors, connectors: repos.connectors }),
     metaTools: createGatewayMetaTools(gateway),
     skills: skillSummaries(),
+    agentHandoffs: createAgentHandoffService({
+      handoffs: repos.agentHandoffs,
+      validateOutput: packStageOutputValidator(),
+    }),
   };
 }

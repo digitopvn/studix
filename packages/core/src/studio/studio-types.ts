@@ -1,22 +1,38 @@
 import type { Clock, Logger, StudixErrorPayload } from "@studix/shared";
-import { CreativeBrief, RenderPreset } from "@studix/video-ir";
+import {
+  CreativeBrief,
+  IrId,
+  Milliseconds,
+  PositiveMilliseconds,
+  RenderPreset,
+  VideoIRPatch,
+} from "@studix/video-ir";
 import { z } from "zod";
 import type { Job, JobStatus, StageStatus } from "../entities/job.ts";
 import type { Approval, ApprovalAction, ApprovalStatus, ApprovalSubjectType } from "../entities/review.ts";
 import type { ApprovalPolicy } from "../ports/approval-policy.ts";
 import type { JobQueue } from "../ports/job-queue.ts";
 import type { AssetRepository } from "../repositories/asset-repository.ts";
-import type { ApprovalRepository, AuditRepository } from "../repositories/governance-repositories.ts";
+import type {
+  ApprovalRepository,
+  AuditRepository,
+  ReviewRepository,
+} from "../repositories/governance-repositories.ts";
 import type { JobRepository, RenderRepository } from "../repositories/job-repository.ts";
 import type { ProjectRepository } from "../repositories/project-repository.ts";
+import type { RevisionRepository } from "../repositories/revision-repositories.ts";
+import type { StoryboardRepository } from "../repositories/storyboard-repository.ts";
 
 /** MCP tool names that next-action hints point to (the MCP server registers tools with these names). */
 export const STUDIX_TOOLS = {
   inspect: "studix_inspect",
   createVideo: "studix_create_video",
   getJob: "studix_get_job",
+  retryJob: "studix_retry_job",
   getProject: "studix_get_project",
   approve: "studix_approve",
+  feedback: "studix_feedback",
+  render: "studix_render",
   listAssets: "studix_list_assets",
 } as const;
 
@@ -44,6 +60,9 @@ export interface StudioServiceDeps {
   assets: AssetRepository;
   approvals: ApprovalRepository;
   audit: AuditRepository;
+  reviews: ReviewRepository;
+  revisions: RevisionRepository;
+  storyboards: StoryboardRepository;
   queue: JobQueue;
   approvalPolicy: ApprovalPolicy;
   clock: Clock;
@@ -51,21 +70,114 @@ export interface StudioServiceDeps {
   defaults?: Partial<StudioDefaults>;
 }
 
+/** Workflow pack id from the pack registry; the MCP server and dashboard check it against the registry. */
+export const WorkflowTemplateId = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "a workflow pack id is lowercase kebab-case");
+
+/** Pack used when a request names none. */
+export const DEFAULT_WORKFLOW_TEMPLATE = "brand-intro";
+
 const IdempotencyKey = z
   .string()
   .regex(/^[A-Za-z0-9._:-]{1,200}$/, "1-200 chars of letters, digits, '.', '_', ':' or '-'");
+
+/**
+ * Opt-in planner choice. Omitted means the default planner. `claude` plans with the Claude Agent SDK
+ * using one Anthropic provider connection; the worker never falls back to another planner or key.
+ */
+export const PlannerSelection = z
+  .object({
+    runtime: z.literal("claude"),
+    providerConnectionId: z.string().min(1).max(100),
+  })
+  .strict();
+export type PlannerSelection = z.infer<typeof PlannerSelection>;
+
+/**
+ * Where a job's creative agent stages run: `harness` (default) inside the worker under hard caps, `host` on the
+ * MCP client's own agent through the handoff tools (no model spend for Studix).
+ */
+export const AgentMode = z.enum(["harness", "host"]);
+export type AgentMode = z.infer<typeof AgentMode>;
 
 /** Boundary schema for createVideoProject; `spec` is checked separately with validateVideoIR. */
 export const CreateVideoProjectInput = z.object({
   brief: CreativeBrief,
   spec: z.unknown().optional(),
+  planner: PlannerSelection.optional(),
+  workflowTemplate: WorkflowTemplateId.optional(),
   title: z.string().trim().min(1).max(200).optional(),
   idempotencyKey: IdempotencyKey.optional(),
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),
   deadlineAt: z.coerce.date().optional(),
   renderPreset: RenderPreset.optional(),
+  agentMode: AgentMode.optional(),
 });
 export type CreateVideoProjectInput = z.input<typeof CreateVideoProjectInput>;
+
+const Id = z.string().min(1).max(100);
+const BudgetCents = z.number().int().min(0).max(10_000_000);
+
+/** Options of a job that renders a stored version (render, and feedback with a patch). */
+const VersionJobOptions = {
+  renderPreset: RenderPreset.optional(),
+  idempotencyKey: IdempotencyKey.optional(),
+  budgetCents: BudgetCents.optional(),
+};
+
+/**
+ * Feedback on one target of the current version: a shot, a scene, an asset, or a time range of the video
+ * (`startMs` with `endMs`). `patch` ops are JSON pointers into the VideoIR and must stay inside the
+ * target (feedback without a patch answers with the `allowedPaths`); with a patch a new version is stored
+ * and a render job is queued.
+ */
+export const FeedbackInput = z
+  .object({
+    projectId: Id,
+    shotId: IrId.optional(),
+    sceneId: IrId.optional(),
+    assetId: IrId.optional(),
+    startMs: Milliseconds.optional(),
+    endMs: PositiveMilliseconds.optional(),
+    comment: z.string().trim().min(1).max(2000),
+    patch: VideoIRPatch.optional(),
+    /** The version the feedback was written against; CONFLICT when the project moved on. */
+    baseVersionId: Id.optional(),
+    ...VersionJobOptions,
+  })
+  .refine(
+    (v) =>
+      [v.shotId, v.sceneId, v.assetId, v.startMs ?? v.endMs].filter((t) => t !== undefined).length === 1 &&
+      (v.startMs === undefined) === (v.endMs === undefined),
+    { message: "Give exactly one target: shotId, sceneId, assetId, or startMs with endMs", path: ["shotId"] },
+  )
+  .refine((v) => v.startMs === undefined || v.endMs === undefined || v.endMs > v.startMs, {
+    message: "endMs must be after startMs",
+    path: ["endMs"],
+  });
+export type FeedbackInput = z.input<typeof FeedbackInput>;
+
+/** Render a stored version (the current one by default); the rendered version becomes current. */
+export const RenderVersionInput = z.object({ projectId: Id, versionId: Id.optional(), ...VersionJobOptions });
+export type RenderVersionInput = z.input<typeof RenderVersionInput>;
+
+/** A reviewer's decision on the storyboard, one scene or one shot. */
+export const StoryboardDecisionInput = z
+  .object({
+    projectId: Id,
+    target: z.enum(["storyboard", "scene", "shot"]),
+    targetId: IrId.optional(),
+    decision: z.enum(["approved", "changes_requested"]),
+    note: z.string().trim().min(1).max(1000).optional(),
+    /** Storyboard revision the reviewer saw (0 before the first decision); CONFLICT when it moved on. */
+    expectedRevision: z.number().int().min(0).optional(),
+  })
+  .refine((v) => (v.target === "storyboard") === (v.targetId === undefined), {
+    message: "targetId is required for a scene or shot and not allowed for the storyboard",
+    path: ["targetId"],
+  });
+export type StoryboardDecisionInput = z.input<typeof StoryboardDecisionInput>;
 
 export const RequestApprovalInput = z.object({
   action: z.enum(["job.start", "render.final", "publish", "provider.spend", "connector.execute", "delete"]),
@@ -123,6 +235,8 @@ export interface JobView {
   cancelRequested: boolean;
   budget: { limitCents?: number; spentCents: number };
   deadlineAt?: Date;
+  /** Budget left while the deadline is paused at a gate or host task; `deadlineAt` is unset then. */
+  deadlineRemainingMs?: number;
   createdAt: Date;
   updatedAt: Date;
   startedAt?: Date;

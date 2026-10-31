@@ -28,6 +28,16 @@ end to end in the reference.
 - Future GPU and self-hosted generation arrive as new `ExecutionBackend` or
   provider adapters.
 
+### Update 2026-10-31 (#41)
+
+The Multix shell is now a real adapter over the pinned multix CLI. Image,
+video, lip-sync and video upscale run on Sume; image upscale on Atlas Cloud;
+voice, music and SFX on ElevenLabs, Fish or MiniMax. Calls use a fixed argv
+without a shell and a scrubbed environment. Async jobs keep their provider job
+id so a retry resumes instead of paying again. A model without a measured
+price runs one probe job before a batch (`runMediaBatchWithProbe`). The fake
+provider covers the same kinds for CI.
+
 ## Consequences
 
 - The P0 demo is template motion graphics with no AI image or voice.

@@ -84,13 +84,13 @@ is in [ROADMAP.md](ROADMAP.md#p0-done-means).
 - Workspace API keys, tenant isolation, approval gate for publish.
 - MCP-in-MCP tool search, inspect and execute against a mock third-party server.
 - `DecisionRouter` with OpenRouter and TypeSafeAI adapters; live calls opt-in.
-- Marketing skeleton on Cloudflare; app and worker on TOSE staging; Docker
+- Marketing skeleton on Cloudflare; app and worker on TOSE (dev and production); Docker
   Compose for local and self-host.
 
 ## What P0 does not deliver
 
 - Marketing redesign or a full video editor.
-- Every provider and media modality; Multix is an adapter shell with a contract.
+- Every provider and media modality; P0 shipped Multix as an adapter shell with a contract (real media wiring followed in #41).
 - Pricing, checkout or credit conversion.
 - GPU execution or self-hosted generation models.
 - Full social publishing connectors.

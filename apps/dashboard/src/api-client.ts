@@ -181,6 +181,68 @@ export interface Connector {
   lastError?: string;
 }
 
+export type ProviderConnectionStatus = "available" | "invalid" | "unverified";
+
+/** Pay-as-you-go access through an Anthropic Console API key, billed to the key's organization. */
+export interface ApiKeyMethodInfo {
+  authMethod: "api_key";
+  title: string;
+  billing: "usage_based";
+  availability: "available" | "unavailable";
+  reason?: string;
+  canAddWorkspaceKey: boolean;
+  canAddPersonalKey: boolean;
+}
+
+/** Claude subscription OAuth: informational only, Studix cannot connect it. */
+export interface SubscriptionMethodInfo {
+  authMethod: "oauth_subscription";
+  title: string;
+  billing: "subscription";
+  availability: "restricted";
+  reason: string;
+  alternative: string;
+  references: string[];
+}
+
+export interface ProviderConnectionTest {
+  ok: boolean;
+  at: string;
+  latencyMs: number;
+  httpStatus?: number;
+  error?: StudixErrorPayload & { retryable: boolean };
+}
+
+/** A stored Anthropic API key binding; the secret itself never leaves the server, only `keyHint`. */
+export interface ProviderConnection {
+  id: string;
+  provider: string;
+  authMethod: "api_key";
+  billing: "usage_based";
+  owner: "workspace" | "user";
+  ownedByMe: boolean;
+  label: string;
+  status: ProviderConnectionStatus;
+  keyHint?: string;
+  lastTest?: ProviderConnectionTest;
+  canManage: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnthropicProvider {
+  provider: "anthropic";
+  methods: [ApiKeyMethodInfo, SubscriptionMethodInfo];
+  connections: ProviderConnection[];
+  /** Jobs may select the Claude planner on this server. */
+  claudePlanner: boolean;
+}
+
+export interface PlannerSelection {
+  runtime: "claude";
+  providerConnectionId: string;
+}
+
 export interface CreateVideoRequest {
   prompt: string;
   title?: string;
@@ -189,6 +251,118 @@ export interface CreateVideoRequest {
   language?: string;
   budgetCents?: number;
   idempotencyKey?: string;
+  planner?: PlannerSelection;
+}
+
+export type ReviewStatus = "draft" | "in_review" | "approved" | "changes_requested";
+
+export interface ReviewApproval {
+  status: ReviewStatus;
+  reviewer?: string;
+  decidedAt?: string;
+  note?: string;
+}
+
+/** Whether a finished render contains the shot's current content. Independent of approval. */
+export type ShotRenderState = "rendered" | "outdated" | "not_rendered";
+
+export interface ReviewShot {
+  id: string;
+  kind: string;
+  description: string;
+  script?: string;
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+  pointer: string;
+  approval: ReviewApproval;
+  render: ShotRenderState;
+  revision?: number;
+  changed: boolean;
+  comments: number;
+}
+
+export interface ReviewScene {
+  id: string;
+  title: string;
+  summary?: string;
+  startMs: number;
+  endMs: number;
+  approval: ReviewApproval;
+  revision?: number;
+  changed: boolean;
+  shots: ReviewShot[];
+}
+
+export interface ReviewVersion {
+  id: string;
+  version: number;
+  source: string;
+  parentVersionId?: string;
+  description?: string;
+  createdAt: string;
+}
+
+export interface ReviewComment {
+  id: string;
+  versionId?: string;
+  author: { type: string; id: string };
+  body: string;
+  targetId?: string;
+  atMs?: number;
+  endMs?: number;
+  createdAt: string;
+}
+
+export interface ProjectReview {
+  project: Project & { workflowTemplate?: string };
+  workflowTemplate?: string;
+  currentVersion?: ReviewVersion;
+  versions: ReviewVersion[];
+  script: {
+    prompt: string;
+    lines: Array<{ sceneId: string; shotId: string; startMs: number; endMs: number; text: string }>;
+  };
+  timeline?: { durationMs: number; fps: number; aspectRatio: string; width: number; height: number };
+  storyboard?: {
+    revision: number;
+    stored: boolean;
+    title: string;
+    approval: ReviewApproval;
+    scenes: ReviewScene[];
+    pendingShots: number;
+  };
+  renders: Array<RenderSummary & { versionId?: string; version?: number }>;
+  cost: {
+    spentCents: number;
+    jobs: Array<{
+      id: string;
+      kind: string;
+      status: string;
+      createdAt: string;
+      spentCents: number;
+      budgetCents?: number;
+    }>;
+  };
+  comments: ReviewComment[];
+  invalidated: string[];
+}
+
+export interface StoryboardDecisionRequest {
+  target: "storyboard" | "scene" | "shot";
+  targetId?: string;
+  decision: "approved" | "changes_requested";
+  note?: string;
+  expectedRevision?: number;
+}
+
+export interface FeedbackRequest {
+  shotId?: string;
+  sceneId?: string;
+  assetId?: string;
+  startMs?: number;
+  endMs?: number;
+  comment: string;
 }
 
 const enc = encodeURIComponent;
@@ -202,6 +376,13 @@ export const api = {
   me: () => request<Me>("GET", "/api/me"),
   projects: () => request<Page<Project>>("GET", "/api/projects?limit=50"),
   project: (id: string) => request<ProjectDetail>("GET", `/api/projects/${enc(id)}`),
+  projectReview: (id: string) => request<ProjectReview>("GET", `/api/projects/${enc(id)}/review`),
+  decideStoryboard: (id: string, input: StoryboardDecisionRequest) =>
+    request("POST", `/api/projects/${enc(id)}/storyboard/decision`, input),
+  sendFeedback: (id: string, input: FeedbackRequest) =>
+    request("POST", `/api/projects/${enc(id)}/feedback`, input),
+  renderProject: (id: string, input: { versionId?: string; renderPreset?: "preview" | "final" }) =>
+    request<{ job: Job }>("POST", `/api/projects/${enc(id)}/render`, input),
   createVideo: (input: CreateVideoRequest) =>
     request<{ project: Project; job: Job; replayed: boolean }>("POST", "/api/projects", input),
   jobs: () => request<Page<Job>>("GET", "/api/jobs?limit=50"),
@@ -223,4 +404,13 @@ export const api = {
       {},
     ),
   disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
+  anthropicProvider: () => request<AnthropicProvider>("GET", "/api/providers/anthropic"),
+  addAnthropicKey: (input: { owner: "workspace" | "user"; apiKey: string; label?: string }) =>
+    request<ProviderConnection>("POST", "/api/providers/anthropic/api-keys", input),
+  replaceAnthropicKey: (id: string, apiKey: string) =>
+    request<ProviderConnection>("PUT", `/api/providers/anthropic/api-keys/${enc(id)}`, { apiKey }),
+  testAnthropicKey: (id: string) =>
+    request<ProviderConnection>("POST", `/api/providers/anthropic/api-keys/${enc(id)}/test`, {}),
+  removeAnthropicKey: (id: string) =>
+    request<ProviderConnection>("DELETE", `/api/providers/anthropic/api-keys/${enc(id)}`),
 };

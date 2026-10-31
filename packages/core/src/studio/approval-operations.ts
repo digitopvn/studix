@@ -3,12 +3,8 @@ import type { Approval, ApprovalAction, ApprovalSubject } from "../entities/revi
 import { decideFailClosed } from "../ports/approval-policy.ts";
 import { actorRef, assertPermission, type Permission, type TenantContext } from "../tenant.ts";
 import type { ResolvedStudioDeps } from "./studio-input.ts";
-import { STUDIX_TOOLS } from "./studio-types.ts";
 
 type Deps = ResolvedStudioDeps;
-
-/** Actions whose approval must come from a signed-in human, never an API key. */
-const HUMAN_ONLY_ACTIONS: ReadonlySet<ApprovalAction> = new Set(["publish", "delete"]);
 
 /** Permission needed to perform (not approve) an action. */
 export function permissionForAction(action: ApprovalAction): Permission {
@@ -49,9 +45,7 @@ export async function openApproval(
   input: { action: ApprovalAction; subject: ApprovalSubject; reason: string; estimatedCostCents?: number },
 ): Promise<Approval> {
   const now = deps.clock.now();
-  const latest = await deps.approvals.findLatest(ctx, input.subject, input.action);
-  if (latest && isPendingAndLive(latest, now)) return latest;
-  const approval = await deps.approvals.create(ctx, {
+  const { approval, created } = await deps.approvals.open(ctx, {
     action: input.action,
     subject: input.subject,
     reason: input.reason,
@@ -59,6 +53,7 @@ export async function openApproval(
     requestedBy: actorRef(ctx.actor),
     expiresAt: new Date(now.getTime() + deps.defaults.approvalTtlMs),
   });
+  if (!created) return approval;
   await deps.audit.append(ctx, {
     actor: actorRef(ctx.actor),
     action: "approval.requested",
@@ -76,9 +71,8 @@ function approvalRequiredError(approval: Approval): StudixError {
       action: approval.action,
       subjectType: approval.subject.type,
       subjectId: approval.subject.id,
-      next: { tool: STUDIX_TOOLS.approve, arguments: { approvalId: approval.id, decision: "approved" } },
     },
-    suggestedAction: "Ask a workspace reviewer to approve the request in the dashboard, then retry.",
+    suggestedAction: "Ask a workspace member to approve the request in the Studix dashboard, then retry.",
   });
 }
 
@@ -97,7 +91,8 @@ export async function ensureActionApproved(
   if (!requirement.required) return { required: false };
 
   const latest = await deps.approvals.findLatest(ctx, input.subject, input.action);
-  if (latest?.status === "approved") return { required: true, approval: latest };
+  if (latest?.status === "approved" && latest.decidedBy?.type === "user")
+    return { required: true, approval: latest };
   if (latest?.status === "rejected") {
     throw new StudixError("FORBIDDEN", `${input.action} was rejected by a reviewer`, {
       details: { approvalId: latest.id, comment: latest.comment },
@@ -124,7 +119,8 @@ export async function decideApproval(
   assertPermission(ctx, "approval:decide");
   const approval = await deps.approvals.get(ctx, input.approvalId);
   if (!approval) throw new StudixError("NOT_FOUND", `approval ${input.approvalId} not found`);
-  if (HUMAN_ONLY_ACTIONS.has(approval.action) && ctx.actor.type !== "user") {
+  // Every approval is a human decision: an agent holding an API key must not clear its own gate.
+  if (ctx.actor.type !== "user") {
     throw new StudixError("FORBIDDEN", `${approval.action} approvals must be granted by a signed-in person`, {
       suggestedAction: "Approve this request in the Studix dashboard.",
     });
@@ -132,8 +128,18 @@ export async function decideApproval(
   const now = deps.clock.now();
   if (approval.status === "pending" && !isPendingAndLive(approval, now)) {
     await deps.approvals.decide(ctx, approval.id, { status: "expired", decidedAt: now });
+    await deps.audit.append(ctx, {
+      actor: actorRef(ctx.actor),
+      action: "approval.expired",
+      subjectType: approval.subject.type,
+      subjectId: approval.subject.id,
+      data: { approvalId: approval.id, action: approval.action },
+    });
     throw new StudixError("CONFLICT", "approval request expired", {
-      suggestedAction: "Request approval again.",
+      suggestedAction:
+        approval.subject.type === "job"
+          ? "Submit the job again and ask a reviewer to approve it before the request expires."
+          : "Request approval again.",
     });
   }
   const decided = await deps.approvals.decide(ctx, approval.id, {

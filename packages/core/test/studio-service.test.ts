@@ -17,6 +17,36 @@ async function rejects(promise: Promise<unknown>): Promise<StudixError> {
 }
 
 describe("StudioService.createVideoProject", () => {
+  it("stores an opt-in Claude planner selection on the job and refuses it together with a spec", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const planner = { runtime: "claude" as const, providerConnectionId: "pcn_1" };
+    const out = await studio.createVideoProject(ctx, { brief, planner });
+    const job = await repos.jobs.get(ctx, out.job.id);
+    expect(job?.payload).toMatchObject({ projectId: out.project.id, planner });
+
+    const withSpec = await rejects(studio.createVideoProject(ctx, { brief, spec: brandIntro, planner }));
+    expect(withSpec.code).toBe("VALIDATION");
+    const unknownRuntime = await rejects(
+      studio.createVideoProject(ctx, {
+        brief,
+        planner: { runtime: "gpt", providerConnectionId: "x" } as never,
+      }),
+    );
+    expect(unknownRuntime.code).toBe("VALIDATION");
+  });
+
+  it("carries the agent mode into the job payload and rejects unknown modes", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const host = await studio.createVideoProject(ctx, { brief, agentMode: "host" });
+    expect((await repos.jobs.get(ctx, host.job.id))?.payload).toMatchObject({ agentMode: "host" });
+    const plain = await studio.createVideoProject(ctx, { brief });
+    expect((await repos.jobs.get(ctx, plain.job.id))?.payload).not.toHaveProperty("agentMode");
+    const bogus = await rejects(studio.createVideoProject(ctx, { brief, agentMode: "cloud" as never }));
+    expect(bogus.code).toBe("VALIDATION");
+  });
+
   it("creates a draft project and a queued job with polling hints", async () => {
     const { studio, repos } = createInMemoryStudio();
     const ctx = testTenant();
@@ -109,15 +139,20 @@ describe("high-cost jobs wait for approval", () => {
       action: "job.start",
       subject: { type: "job", id: out.job.id },
     });
-    expect(out.next[0]).toMatchObject({
-      tool: STUDIX_TOOLS.approve,
-      arguments: { approvalId: out.approval?.id },
-    });
+    expect(out.next[0]).toMatchObject({ tool: STUDIX_TOOLS.getJob, arguments: { jobId: out.job.id } });
 
     const editorTry = await rejects(
       studio.approve(ctx, { approvalId: out.approval!.id, decision: "approved" }),
     );
     expect(editorTry.code).toBe("FORBIDDEN");
+
+    // An API key with the decide permission still cannot clear its own cost gate.
+    const agentKey = withActor(ctx, { type: "apiKey", id: "key_1", scopes: ["approval:decide"] });
+    const keyTry = await rejects(
+      studio.approve(agentKey, { approvalId: out.approval!.id, decision: "approved" }),
+    );
+    expect(keyTry.code).toBe("FORBIDDEN");
+    expect((await studio.getJob(ctx, out.job.id)).status).toBe("waiting_approval");
 
     const reviewer = withActor(ctx, { type: "user", id: "usr_reviewer", role: "reviewer" });
     const approved = await studio.approve(reviewer, { approvalId: out.approval!.id, decision: "approved" });

@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { api, type CreateVideoRequest } from "../api-client.ts";
-import { ErrorBanner, Section } from "../ui.tsx";
+import { ErrorBanner, Section, useAsync } from "../ui.tsx";
 import { navigate } from "../use-hash-route.ts";
 
 type AspectRatio = NonNullable<CreateVideoRequest["aspectRatio"]>;
@@ -11,7 +11,16 @@ export function CreateVideoPage() {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("9:16");
   const [seconds, setSeconds] = useState(8);
   const [language, setLanguage] = useState("en");
+  // "" = default planner; otherwise the id of the Anthropic key Claude plans with.
+  const [connectionId, setConnectionId] = useState("");
   const [error, setError] = useState<unknown>();
+  const providers = useAsync(() => api.anthropicProvider());
+  // Only keys this user may run jobs with: workspace keys and their own personal keys.
+  const usableKeys = providers.data?.claudePlanner
+    ? providers.data.connections.filter(
+        (c) => c.status !== "invalid" && (c.owner === "workspace" || c.ownedByMe),
+      )
+    : [];
   const [busy, setBusy] = useState(false);
   // One key per form instance: a double submit or a retry after a network error returns the same job.
   const [idempotencyKey] = useState(() => `dash-${crypto.randomUUID()}`);
@@ -28,6 +37,7 @@ export function CreateVideoPage() {
         durationMs: Math.round(seconds * 1000),
         language,
         idempotencyKey,
+        ...(connectionId ? { planner: { runtime: "claude", providerConnectionId: connectionId } } : {}),
       });
       navigate(`/jobs/${result.job.id}`);
     } catch (e) {
@@ -82,6 +92,19 @@ export function CreateVideoPage() {
             </select>
           </label>
         </div>
+        {usableKeys.length > 0 && (
+          <label>
+            Planner
+            <select value={connectionId} onChange={(e) => setConnectionId(e.target.value)}>
+              <option value="">Studix default planner</option>
+              {usableKeys.map((c) => (
+                <option key={c.id} value={c.id}>
+                  Claude, billed to {c.label} ({c.keyHint ?? "API key"})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <ErrorBanner error={error} />
         <button type="submit" disabled={busy || prompt.trim() === ""}>
           {busy ? "Starting..." : "Create video"}

@@ -60,7 +60,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Errors such as APPROVAL_REQUIRED carry a `details.next` hint `{tool, arguments}`; surface it in `next`. */
+/** An error may carry a `details.next` hint `{tool, arguments}`; surface it in `next`. */
 function nextFromError(error: StudixError): NextAction[] {
   const hint = error.details?.next;
   if (!isRecord(hint) || typeof hint.tool !== "string") return [];

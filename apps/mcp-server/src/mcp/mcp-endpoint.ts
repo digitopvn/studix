@@ -9,6 +9,7 @@ import type { z } from "zod";
 import { type AppDeps, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
+import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
 import { NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
 import { errorEnvelope, okEnvelope, ToolEnvelopeSchema } from "./tool-envelope.ts";
@@ -18,7 +19,8 @@ export const MCP_MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 const INSTRUCTIONS =
   "Studix produces videos. Call studix_inspect first. studix_create_video returns a jobId at once; " +
-  "poll studix_get_job (respect next[].pollAfterMs) until it succeeds, then use its signed MP4 URL.";
+  "poll studix_get_job (respect next[].pollAfterMs) until it succeeds, then use its signed MP4 URL. Revise with studix_feedback, re-render with " +
+  "studix_render; a person reviews and approves the storyboard at the returned reviewUrl.";
 
 /** `gatewayDepth`: inbound gateway hop count, so a call relayed through another gateway cannot execute tools. */
 type StudixAuthInfo = AuthInfo & { extra: { tenant: ToolContext["tenant"]; gatewayDepth: number } };
@@ -41,9 +43,10 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     { instructions: INSTRUCTIONS },
   );
   const requestTraceId = newTraceId();
-  const toolNames = NATIVE_TOOLS.map((t) => t.name as string);
+  const tools: readonly NativeTool[] = [...NATIVE_TOOLS, ...AGENT_HANDOFF_MCP_TOOLS] as readonly NativeTool[];
+  const toolNames = tools.map((t) => t.name);
 
-  for (const def of NATIVE_TOOLS as readonly NativeTool[]) {
+  for (const def of tools) {
     server.registerTool(
       def.name,
       {

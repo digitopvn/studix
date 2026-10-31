@@ -4,18 +4,24 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./film-scene": "./src/film-engine/film-scene.ts"
   },
   "dependencies": {
+    "@fontsource-variable/source-serif-4": "5.2.9",
     "@fontsource/be-vietnam-pro": "5.3.0",
     "@fontsource/inter": "5.3.0",
+    "@fontsource/share-tech-mono": "5.2.7",
     "@hyperframes/core": "0.8.78",
     "@hyperframes/lint": "0.8.78",
     "@hyperframes/producer": "0.8.78",
     "@studix/core": "workspace:*",
     "@studix/shared": "workspace:*",
     "@studix/video-ir": "workspace:*",
-    "gsap": "3.14.2"
+    "esbuild": "0.28.2",
+    "gsap": "3.14.2",
+    "three": "0.180.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "vitest": "5.0.5"

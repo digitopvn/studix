@@ -12,9 +12,12 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
         <Section
           title={data.project.title}
           actions={
-            <button type="button" className="secondary" onClick={reload} disabled={loading}>
-              Refresh
-            </button>
+            <div className="row">
+              <Link to={`/projects/${data.project.id}/review`}>Review storyboard</Link>
+              <button type="button" className="secondary" onClick={reload} disabled={loading}>
+                Refresh
+              </button>
+            </div>
           }
         >
           <dl className="facts">

@@ -115,6 +115,7 @@ describe("downstream limits", () => {
     expect(pending.code).toBe("APPROVAL_REQUIRED");
     await h.approvals.decide(h.tenantA, pending.details?.approvalId as string, {
       status: "approved",
+      decidedBy: { type: "user", id: "usr_reviewer" },
       decidedAt: h.clock.now(),
     });
     const before = mock.invocations("create_note");

@@ -13,6 +13,8 @@
       "!pnpm-lock.yaml",
       "!packages/database/migrations/meta",
       "!packages/video-ir/schemas",
+      "!apps/marketing/public",
+      "!packages/renderers/film-engine",
       "!**/*.html"
     ]
   },

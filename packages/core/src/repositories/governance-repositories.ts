@@ -21,13 +21,24 @@ export interface ApprovalDecision {
 }
 
 export interface ApprovalRepository {
+  /** Plain insert for seeding rows; production code requests approval through `open`. */
   create(ctx: TenantContext, input: NewApproval): Promise<Approval>;
+  /**
+   * The one way to request approval: returns the live pending approval for the same subject, action and
+   * scope key, or creates it. Pending requests whose expiry has passed are closed as `expired` first, so
+   * concurrent callers always converge on a single pending row. `created` is false when one already existed.
+   */
+  open(ctx: TenantContext, input: NewApproval): Promise<{ approval: Approval; created: boolean }>;
   get(ctx: TenantContext, id: string): Promise<Approval | undefined>;
-  /** Most recent approval for this subject and action, any status. */
+  /**
+   * Most recent approval for this subject and action, any status. With `scopeKey` only requests of that
+   * scope count (`""` is the unscoped workflow gate); without it every scope does.
+   */
   findLatest(
     ctx: TenantContext,
     subject: ApprovalSubject,
     action: ApprovalAction,
+    scopeKey?: string,
   ): Promise<Approval | undefined>;
   list(
     ctx: TenantContext,
@@ -35,12 +46,23 @@ export interface ApprovalRepository {
   ): Promise<Page<Approval>>;
   /** Transition a pending approval; throws CONFLICT if it is no longer pending. */
   decide(ctx: TenantContext, id: string, decision: ApprovalDecision): Promise<Approval>;
+  /**
+   * Atomically spend an approved single-use approval (approved -> consumed). Returns false when it was
+   * not in `approved` state, so of two concurrent callers exactly one gets true.
+   */
+  consume(ctx: TenantContext, id: string): Promise<boolean>;
 }
 
 export type NewReview = Omit<NewRecord<Review>, "status">;
 
 export interface ReviewRepository {
   create(ctx: TenantContext, input: NewReview): Promise<Review>;
+  get(ctx: TenantContext, id: string): Promise<Review | undefined>;
+  findByIdempotencyKey(
+    ctx: TenantContext,
+    projectId: string,
+    idempotencyKey: string,
+  ): Promise<Review | undefined>;
   list(
     ctx: TenantContext,
     query: PageRequest & { projectId: string; versionId?: string },

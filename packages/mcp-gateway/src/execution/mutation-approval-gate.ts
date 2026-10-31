@@ -68,10 +68,12 @@ export async function enforceMutationApproval(
   const match = page.items.find((a) => a.action === "connector.execute" && a.reason.endsWith(key));
   const now = deps.clock.now().getTime();
 
-  if (match?.status === "approved" && (!match.expiresAt || match.expiresAt.getTime() > now)) {
-    const used = await deps.audit.list(ctx, { subjectType: "approval", subjectId: match.id, limit: 1 });
-    if (used.items.length === 0) {
-      // Record consumption before calling downstream: an unknown outcome must not be replayable.
+  const live = !match?.expiresAt || match.expiresAt.getTime() > now;
+  // Only a signed-in person can clear the gate (decideApproval enforces it too; this guards old rows).
+  if (match?.status === "approved" && live && match.decidedBy?.type === "user") {
+    // Spend the approval before calling downstream, atomically: of two concurrent calls only one wins,
+    // and an unknown downstream outcome is never replayable.
+    if (await deps.approvals.consume(ctx, match.id)) {
       await deps.audit.append(ctx, {
         actor: actorRef(ctx.actor),
         action: CONSUMED_ACTION,
@@ -81,7 +83,7 @@ export async function enforceMutationApproval(
       });
       return match.id;
     }
-  } else if (match?.status === "pending") {
+  } else if (match?.status === "pending" && live) {
     throw approvalRequired(qualifiedTool, match.id, decision.reason);
   } else if (match?.status === "rejected") {
     throw new StudixError("FORBIDDEN", `A reviewer rejected running ${qualifiedTool} with these arguments`, {
@@ -90,13 +92,14 @@ export async function enforceMutationApproval(
     });
   }
 
-  const created = await deps.approvals.create(ctx, {
+  const { approval } = await deps.approvals.open(ctx, {
     action: "connector.execute",
     subject,
+    scopeKey: key,
     reason: `${decision.reason}; execute mutating connector tool ${key}`,
     requestedBy: actorRef(ctx.actor),
   });
-  throw approvalRequired(qualifiedTool, created.id, decision.reason);
+  throw approvalRequired(qualifiedTool, approval.id, decision.reason);
 }
 
 function approvalRequired(qualifiedTool: string, approvalId: string, reason: string): StudixError {

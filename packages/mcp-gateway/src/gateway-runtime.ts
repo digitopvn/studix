@@ -139,7 +139,7 @@ export async function downstreamTarget(
     ? sanitizeOutboundCredential(
         await rt.secrets.resolve(
           call.tenant,
-          { connectorId: connector.id, connectorName: connector.name },
+          { connectorId: connector.id, connectorName: connector.name, url: connector.url },
           connector.secretRef,
         ),
       )

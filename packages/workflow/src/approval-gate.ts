@@ -3,18 +3,18 @@ import {
   type ApprovalAction,
   type ApprovalPolicy,
   type ApprovalRepository,
-  type AuditRepository,
-  actorRef,
   decideFailClosed,
   type Job,
   type TenantContext,
 } from "@studix/core";
 import { type Clock, StudixError } from "@studix/shared";
+import type { WorkerJobQueue } from "./worker-job-queue.ts";
 
 export interface ApprovalGateDeps {
   approvalPolicy: ApprovalPolicy;
   approvals: ApprovalRepository;
-  audit: AuditRepository;
+  /** Opens approval requests; fenced by the job owner and attempt. */
+  queue: Pick<WorkerJobQueue, "requestApproval">;
   clock: Clock;
   /** Lifetime of an approval request opened by the worker. */
   approvalTtlMs: number;
@@ -22,18 +22,51 @@ export interface ApprovalGateDeps {
 
 export type ApprovalGateResult =
   | { status: "approved"; approval?: Approval }
-  | { status: "waiting"; approval: Approval };
+  | { status: "waiting"; approval: Approval }
+  | { status: "lease_lost" };
+
+/** The gate's answer when `latest` is already settled (granted, rejected, or still pending); else undefined. */
+function settle(
+  action: ApprovalAction,
+  latest: Approval | undefined,
+  now: Date,
+): ApprovalGateResult | undefined {
+  if (latest?.status === "approved" && latest.decidedBy?.type === "user") {
+    return { status: "approved", approval: latest };
+  }
+  if (latest?.status === "rejected") {
+    throw new StudixError("FORBIDDEN", `${action} was rejected by a reviewer`, {
+      retryable: false,
+      details: { approvalId: latest.id, comment: latest.comment },
+      suggestedAction: "Address the reviewer's comment and submit a new job.",
+    });
+  }
+  if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
+    return { status: "waiting", approval: latest };
+  }
+  return undefined;
+}
 
 /**
  * Check, at execution time, whether a job may perform a gated action. State is read from the database on
  * every check, so it survives worker restarts. Only an approval decided by a signed-in human counts;
  * a rejection fails the job; otherwise a pending request is opened (or reused) and the caller parks.
+ * The request and its audit entry are written through the fenced queue, so a worker that lost the job
+ * opens nothing and reports `lease_lost`.
  */
 export async function checkApprovalGate(
   deps: ApprovalGateDeps,
   ctx: TenantContext,
   job: Job,
-  gate: { action: ApprovalAction; estimatedCostCents?: number },
+  workerId: string,
+  gate: {
+    action: ApprovalAction;
+    estimatedCostCents?: number;
+    /** Scope of the gate (e.g. `gate:G1`); without it the latest request of the action, any scope, counts. */
+    scopeKey?: string;
+    /** What the reviewer is asked to sign off; prefixed to the policy's reason. */
+    reason?: string;
+  },
 ): Promise<ApprovalGateResult> {
   const subject = { type: "job" as const, id: job.id };
   const requirement = await decideFailClosed(deps.approvalPolicy, ctx, {
@@ -44,35 +77,18 @@ export async function checkApprovalGate(
   if (!requirement.required) return { status: "approved" };
 
   const now = deps.clock.now();
-  const latest = await deps.approvals.findLatest(ctx, subject, gate.action);
-  if (latest?.status === "approved" && latest.decidedBy?.type === "user") {
-    return { status: "approved", approval: latest };
-  }
-  if (latest?.status === "rejected") {
-    throw new StudixError("FORBIDDEN", `${gate.action} was rejected by a reviewer`, {
-      retryable: false,
-      details: { approvalId: latest.id, comment: latest.comment },
-      suggestedAction: "Address the reviewer's comment and submit a new job.",
-    });
-  }
-  if (latest?.status === "pending" && (latest.expiresAt === undefined || latest.expiresAt > now)) {
-    return { status: "waiting", approval: latest };
-  }
+  const latest = await deps.approvals.findLatest(ctx, subject, gate.action, gate.scopeKey);
+  const settled = settle(gate.action, latest, now);
+  if (settled) return settled;
 
-  const approval = await deps.approvals.create(ctx, {
+  const opened = await deps.queue.requestApproval(job, workerId, {
     action: gate.action,
-    subject,
-    reason: requirement.reason,
+    reason: gate.reason ? `${gate.reason} (${requirement.reason})` : requirement.reason,
     estimatedCostCents: gate.estimatedCostCents,
-    requestedBy: actorRef(ctx.actor),
-    expiresAt: new Date(now.getTime() + deps.approvalTtlMs),
+    ttlMs: deps.approvalTtlMs,
+    ...(gate.scopeKey ? { scopeKey: gate.scopeKey } : {}),
   });
-  await deps.audit.append(ctx, {
-    actor: actorRef(ctx.actor),
-    action: "approval.requested",
-    subjectType: "job",
-    subjectId: job.id,
-    data: { approvalId: approval.id, action: gate.action, reason: requirement.reason },
-  });
-  return { status: "waiting", approval };
+  if (opened.status === "lost") return { status: "lease_lost" };
+  if (opened.status === "decided") return settle(gate.action, opened.approval, now)!;
+  return { status: "waiting", approval: opened.approval };
 }

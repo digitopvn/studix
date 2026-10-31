@@ -9,7 +9,7 @@ import type {
 } from "@studix/core";
 import { type Clock, newId, redactDeep, StudixError } from "@studix/shared";
 import { and, desc, eq, gte, lt, type SQL, sum } from "drizzle-orm";
-import type { StudixDb } from "../client.ts";
+import type { DbExecutor, StudixDb } from "../client.ts";
 import { activityEvents, providerExecutions, usageEvents } from "../schema/telemetry.ts";
 import { beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
 
@@ -61,7 +61,7 @@ function usageRange(ctx: TenantContext, range: UsageRange): SQL {
   );
 }
 
-export function createUsageRepository(db: StudixDb, clock: Clock): UsageRepository {
+export function createUsageRepository(db: DbExecutor, clock: Clock): UsageRepository {
   return {
     async record(ctx, input) {
       const inserted = await db

@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { lintProject } from "@hyperframes/lint";
 import { StudixError } from "@studix/shared";
 import { RENDER_PRESETS, renderDimensions, type Shot, type VideoIR } from "@studix/video-ir";
@@ -116,12 +118,49 @@ describe("buildComposition escaping and assets", () => {
       height: 540,
       assetFiles: { logo: await writePng(dir, "logo.png"), hero: await writePng(dir, "hero.webp") },
     });
-    expect(build.copies.get("assets/media/logo.png")).toBe(`${dir}/logo.png`);
-    expect(build.copies.get("assets/media/hero.webp")).toBe(`${dir}/hero.webp`);
+    expect(build.copies.get("assets/media/logo.png")).toBe(join(dir, "logo.png"));
+    expect(build.copies.get("assets/media/hero.webp")).toBe(join(dir, "hero.webp"));
     expect(build.files.get("compositions/hero-scene.html")).toContain(
       '<img class="bg" src="assets/media/hero.webp"',
     );
     expect(build.files.get("compositions/end-card.html")).toContain('src="assets/media/logo.png"');
+  });
+
+  it("emits muted, scene-local video clips for video shots and backgrounds that lint clean", async () => {
+    const ir: VideoIR = structuredClone(loadIrFixture("product-promo-16x9-assets"));
+    ir.assets.push({ ...ir.assets[0]!, id: "clip", kind: "video", mime: "video/mp4" });
+    ir.scenes[1]!.background = { assetId: "clip" };
+    ir.scenes[1]!.shots.push({
+      id: "end-clip",
+      type: "video",
+      assetId: "clip",
+      startMs: 500,
+      durationMs: 1500,
+      trimStartMs: 250,
+      style: { region: "full" },
+    });
+    const { dir, cleanup } = await tempDir("compile-video");
+    cleanups.push(cleanup);
+    const clip = `${dir}/clip.mp4`;
+    await writeFile(clip, "not decoded at compile time");
+    const build = buildComposition(ir, {
+      width: 960,
+      height: 540,
+      assetFiles: { logo: await writePng(dir, "logo.png"), hero: await writePng(dir, "hero.webp"), clip },
+    });
+    expect(build.copies.get("assets/media/clip.mp4")).toBe(clip);
+    const endCard = build.files.get("compositions/end-card.html")!;
+    expect(endCard).toContain(
+      '<video id="s-end-card__bg-clip" class="bg" src="assets/media/clip.mp4" data-start="0" data-duration="3" data-media-start="0" data-hf-media-start-basis="local" data-track-index="0" muted playsinline preload="auto"></video>',
+    );
+    expect(endCard).toContain(
+      '<video id="s-end-card__shot-end-clip-clip" src="assets/media/clip.mp4" data-start="0.5" data-duration="1.5" data-media-start="0.25" data-hf-media-start-basis="local"',
+    );
+    await writeComposition(build, `${dir}/project`);
+    const result = await lintProject(`${dir}/project`);
+    const findings = result.results.flatMap((r) => r.result.findings);
+    expect(findings.filter((f) => f.severity === "error")).toEqual([]);
+    expect(findings.map((f) => f.code)).not.toContain("nested_media_start_basis_ambiguous");
   });
 
   it("substitutes Be Vietnam Pro for brand fonts that are not bundled", () => {
@@ -129,6 +168,23 @@ describe("buildComposition escaping and assets", () => {
     ir.brand!.fonts = { heading: "Comic Neue", body: "Be Vietnam Pro" };
     const build = buildComposition(ir, previewSize);
     expect(build.warnings[0]).toMatch(/Comic Neue.*substituted "Be Vietnam Pro"/);
+  });
+});
+
+describe("buildComposition without text shots", () => {
+  it("still bundles a face for the family the stage CSS names, so no font is fetched", () => {
+    const ir = structuredClone(brandIntro);
+    for (const scene of ir.scenes)
+      scene.shots = scene.shots.filter((s) => s.type === "image" || s.type === "video" || s.type === "logo");
+    delete ir.captions;
+    const build = buildComposition(ir, previewSize);
+    const copies = [...build.copies.keys()];
+    expect(copies).toContain("assets/fonts/inter-vietnamese-400-normal.woff2");
+    for (const scene of ir.scenes) {
+      const html = build.files.get(`compositions/${scene.id}.html`)!;
+      expect(html).toContain("@font-face");
+      expect(html).not.toMatch(/https?:\/\//);
+    }
   });
 });
 
@@ -152,10 +208,23 @@ describe("hyperframesSupport", () => {
     expect(hyperframesSupport(brandIntro, RENDER_PRESETS.preview)).toEqual({ supported: true, reasons: [] });
   });
 
-  it("reports video shots and audio tracks instead of dropping them", () => {
-    const promo = loadIrFixture("product-promo-16x9-assets");
-    const ir: VideoIR = structuredClone(promo);
+  it("supports video shots, video backgrounds and audio tracks", () => {
+    const ir: VideoIR = structuredClone(loadIrFixture("product-promo-16x9-assets"));
     ir.assets.push({ ...ir.assets[0]!, id: "clip", kind: "video", mime: "video/mp4" });
+    ir.scenes[1]!.background = { assetId: "clip" };
+    ir.scenes[1]!.shots.push({
+      id: "end-clip",
+      type: "video",
+      assetId: "clip",
+      startMs: 0,
+      durationMs: 1000,
+    });
+    expect(hyperframesSupport(ir, RENDER_PRESETS.preview)).toEqual({ supported: true, reasons: [] });
+  });
+
+  it("reports media types it cannot read instead of dropping them", () => {
+    const ir: VideoIR = structuredClone(loadIrFixture("product-promo-16x9-assets"));
+    ir.assets.push({ ...ir.assets[0]!, id: "clip", kind: "video", mime: "video/x-msvideo" });
     ir.scenes[1]!.shots.push({
       id: "end-clip",
       type: "video",
@@ -166,8 +235,7 @@ describe("hyperframesSupport", () => {
     const support = hyperframesSupport(ir, RENDER_PRESETS.preview);
     expect(support.supported).toBe(false);
     expect(support.reasons).toEqual([
-      'scene "end-card" shot "end-clip": video shots are not supported yet',
-      "audio tracks are not supported yet",
+      'scene "end-card" shot "end-clip": video type video/x-msvideo is not supported',
     ]);
   });
 

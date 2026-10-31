@@ -22,6 +22,7 @@ async function setup(options: HarnessOptions = {}) {
 const downstreamFailure = (code: ErrorCode, message: string) =>
   new DownstreamError(new StudixError(code, message, { retryable: true }), "call");
 
+const REVIEWER = { type: "user" as const, id: "usr_reviewer" };
 const NOTE = { tool: "brandkit.create_note", arguments: { title: "Launch plan" } };
 
 describe("mutating tools and approvals", () => {
@@ -35,7 +36,11 @@ describe("mutating tools and approvals", () => {
     // Still pending: the same request does not create a second approval.
     expect((await rejection(h.gateway.execute(job, NOTE))).details?.approvalId).toBe(approvalId);
 
-    await h.approvals.decide(h.tenantA, approvalId, { status: "approved", decidedAt: h.clock.now() });
+    await h.approvals.decide(h.tenantA, approvalId, {
+      status: "approved",
+      decidedBy: REVIEWER,
+      decidedAt: h.clock.now(),
+    });
     // Different arguments are not covered by the approval.
     const other = await rejection(h.gateway.execute(job, { ...NOTE, arguments: { title: "Other" } }));
     expect(other.code).toBe("APPROVAL_REQUIRED");
@@ -46,6 +51,47 @@ describe("mutating tools and approvals", () => {
     // Consumed: a replay needs a fresh approval.
     expect((await rejection(h.gateway.execute(job, NOTE))).code).toBe("APPROVAL_REQUIRED");
     expect(client.calls).toHaveLength(1);
+  });
+
+  it("opens one approval when the same call arrives concurrently", async () => {
+    const { h, client } = await setup();
+    const job = h.call(h.tenantA, { jobId: "job_open_race" });
+    const ids = await Promise.all(
+      Array.from(
+        { length: 5 },
+        async () => (await rejection(h.gateway.execute(job, NOTE))).details?.approvalId,
+      ),
+    );
+    expect(new Set(ids).size).toBe(1);
+    expect((await h.approvals.list(h.tenantA, { status: "pending" })).items).toHaveLength(1);
+    expect(client.calls).toHaveLength(0);
+  });
+
+  it("lets only one of two concurrent executes spend an approval", async () => {
+    const { h, client } = await setup();
+    const job = h.call(h.tenantA, { jobId: "job_race" });
+    const approvalId = (await rejection(h.gateway.execute(job, NOTE))).details?.approvalId as string;
+    await h.approvals.decide(h.tenantA, approvalId, {
+      status: "approved",
+      decidedBy: REVIEWER,
+      decidedAt: h.clock.now(),
+    });
+    const outcomes = await Promise.allSettled([h.gateway.execute(job, NOTE), h.gateway.execute(job, NOTE)]);
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    expect(client.calls.filter((c) => c.name === "create_note")).toHaveLength(1);
+  });
+
+  it("ignores an approval that was not decided by a person", async () => {
+    const { h, client } = await setup();
+    const job = h.call(h.tenantA, { jobId: "job_key" });
+    const approvalId = (await rejection(h.gateway.execute(job, NOTE))).details?.approvalId as string;
+    await h.approvals.decide(h.tenantA, approvalId, {
+      status: "approved",
+      decidedBy: { type: "apiKey", id: "key_1" },
+      decidedAt: h.clock.now(),
+    });
+    expect((await rejection(h.gateway.execute(job, NOTE))).code).toBe("APPROVAL_REQUIRED");
+    expect(client.calls.filter((c) => c.name === "create_note")).toHaveLength(0);
   });
 
   it("refuses mutating calls outside a job/project and after a rejection", async () => {
@@ -71,6 +117,7 @@ describe("mutating tools and approvals", () => {
     const pending = await rejection(h.gateway.execute(job, NOTE));
     await h.approvals.decide(h.tenantA, pending.details?.approvalId as string, {
       status: "approved",
+      decidedBy: REVIEWER,
       decidedAt: h.clock.now(),
     });
     client.setBehavior(async () => {

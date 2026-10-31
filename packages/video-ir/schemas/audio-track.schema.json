@@ -1,0 +1,70 @@
+{
+  "$id": "studix:audio-track",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "dialogue",
+        "voiceover",
+        "music",
+        "sfx"
+      ]
+    },
+    "assetId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "startMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3600000
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600000
+    },
+    "trimStartMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3600000
+    },
+    "volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "gainDb": {
+      "type": "number",
+      "minimum": -60,
+      "maximum": 12
+    },
+    "fadeInMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "fadeOutMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "assetId",
+    "startMs",
+    "volume"
+  ]
+}

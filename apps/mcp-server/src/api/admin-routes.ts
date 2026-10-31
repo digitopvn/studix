@@ -1,3 +1,4 @@
+import type { ProviderConnectionService } from "@studix/auth";
 import { assertPermission } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { Router } from "express";
@@ -88,6 +89,45 @@ export function connectorRoutes(deps: AppDeps): Router {
     const { ctx } = sessionOf(res);
     assertPermission(ctx, "member:manage");
     res.json(await requireConnectors(deps).disable(ctx, idParam(req, "connectorId")));
+  });
+  return router;
+}
+
+function requireProviders(deps: AppDeps): ProviderConnectionService {
+  if (!deps.providers) {
+    throw new StudixError("UNAVAILABLE", "AI provider connections are not enabled on this server", {
+      retryable: false,
+    });
+  }
+  return deps.providers;
+}
+
+/**
+ * Outbound AI provider credentials (Anthropic). Permission checks per owner live in the service;
+ * keys are accepted in request bodies only and every response is `no-store` and key-free.
+ */
+export function providerRoutes(deps: AppDeps): Router {
+  const router = Router();
+  router.use((_req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+  });
+  router.get("/anthropic", async (_req, res) => {
+    const overview = await requireProviders(deps).overview(sessionOf(res).ctx);
+    res.json({ ...overview, claudePlanner: deps.claudePlanner === true });
+  });
+  router.post("/anthropic/api-keys", async (req, res) => {
+    res.status(201).json(await requireProviders(deps).saveApiKey(sessionOf(res).ctx, req.body ?? {}));
+  });
+  router.put("/anthropic/api-keys/:connectionId", async (req, res) => {
+    const id = idParam(req, "connectionId");
+    res.json(await requireProviders(deps).rotateApiKey(sessionOf(res).ctx, id, req.body ?? {}));
+  });
+  router.post("/anthropic/api-keys/:connectionId/test", async (req, res) => {
+    res.json(await requireProviders(deps).test(sessionOf(res).ctx, idParam(req, "connectionId")));
+  });
+  router.delete("/anthropic/api-keys/:connectionId", async (req, res) => {
+    res.json(await requireProviders(deps).remove(sessionOf(res).ctx, idParam(req, "connectionId")));
   });
   return router;
 }
