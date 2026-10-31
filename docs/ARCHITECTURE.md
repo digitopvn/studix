@@ -138,6 +138,9 @@ stateDiagram-v2
   running --> waiting_approval: policy requires approval
   waiting_approval --> queued: approved
   waiting_approval --> failed: approval expired
+  running --> waiting_host: agent stage handed to the MCP host agent
+  waiting_host --> queued: valid host output submitted, or task expired
+  waiting_host --> cancelled: cancel
   running --> succeeded
   running --> failed: terminal error or retries exhausted
   queued --> cancelled: cancel
@@ -161,6 +164,34 @@ Invariants:
   from the cache through the fenced `writeStage` and is not run, gated, budget
   checked or charged again. Outputs enter the cache only after their fenced
   checkpoint ([ADR-0014](decisions/0014-storyboard-revisions-and-stage-cache.md)).
+- Parking in `waiting_approval` or `waiting_host` does not consume the attempt,
+  so the resumed claim runs at the same attempt number.
+
+## Agent stages
+
+A creative agent stage (`createAgentStage` in `packages/workflow`) has one
+contract in both modes: input schema, output schema and limits (turns, tokens,
+cost, time and a tool allowlist). `payload.agentMode` picks the mode
+([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)).
+
+- **Harness** (default): the worker's `AgentRuntime` (Claude Agent SDK) runs the
+  stage. Every limit is a hard cap. The runtime aborts the session when a cap is
+  crossed and settles only after the agent process has stopped; one that does not
+  stop within the grace period is killed by handle and reported `INTERNAL`.
+- **Host**: the stage opens an `agent_handoffs` task for this attempt and the job
+  parks in `waiting_host`. The MCP client's agent fetches the task and submits an
+  output. In one transaction, the submission is accepted only while the task is
+  pending and unexpired, names the task's attempt, and its job is parked by that
+  attempt; the job is then requeued. The worker sweep expires unanswered tasks and
+  requeues their jobs.
+
+A cap stop never fails silently. The stage records what the agent spent, writes
+its stage row as `pending` and parks the job for an `agent.overrun` approval
+(scope `agent:<stage>`). Each approval a person grants allows one more run with
+every limit doubled (2^n after n approvals); a rejection fails the stage with
+`FORBIDDEN`. Agent spend is the ledger kind `agent.run` (tokens as quantity,
+mode, runtime, round and cap in metadata), separate from media cost per stage
+and attempt (`splitJobUsage` in `packages/billing`).
 
 ## Revisions and invalidation
 

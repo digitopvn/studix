@@ -5,6 +5,11 @@ export {
   brandIntroSkill,
 } from "./brand-intro/brand-intro-pack.ts";
 export {
+  BRAND_INTRO_SCRIPT_STAGE,
+  BrandIntroScript,
+  brandIntroScriptStage,
+} from "./brand-intro/brand-intro-script-stage.ts";
+export {
   BRAND_INTRO_MAX_MS,
   BRAND_INTRO_MIN_MS,
   BRAND_INTRO_TEMPLATE_VERSION,

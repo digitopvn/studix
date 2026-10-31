@@ -32,6 +32,8 @@ export const APPROVAL_ACTIONS = [
   "provider.spend",
   "connector.execute",
   "delete",
+  /** An agent stage stopped at a cap; approving grants one more run with every cap doubled. */
+  "agent.overrun",
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 

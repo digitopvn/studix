@@ -9,6 +9,7 @@ import type { z } from "zod";
 import { type AppDeps, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
+import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
 import { NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
 import { errorEnvelope, okEnvelope, ToolEnvelopeSchema } from "./tool-envelope.ts";
@@ -42,9 +43,10 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     { instructions: INSTRUCTIONS },
   );
   const requestTraceId = newTraceId();
-  const toolNames = NATIVE_TOOLS.map((t) => t.name as string);
+  const tools: readonly NativeTool[] = [...NATIVE_TOOLS, ...AGENT_HANDOFF_MCP_TOOLS] as readonly NativeTool[];
+  const toolNames = tools.map((t) => t.name);
 
-  for (const def of NATIVE_TOOLS as readonly NativeTool[]) {
+  for (const def of tools) {
     server.registerTool(
       def.name,
       {

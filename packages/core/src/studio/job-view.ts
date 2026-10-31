@@ -1,5 +1,6 @@
 import type { Job, Stage } from "../entities/job.ts";
 import type { Approval } from "../entities/review.ts";
+import { AGENT_HANDOFF_TOOLS } from "./agent-handoff-service.ts";
 import { type ApprovalView, type JobView, type NextAction, STUDIX_TOOLS } from "./studio-types.ts";
 
 export const JOB_POLL_INTERVAL_MS = 3000;
@@ -44,6 +45,14 @@ export function nextActionsForJob(job: Job, approval?: Approval): NextAction[] {
             },
           ]
         : [];
+    case "waiting_host":
+      return [
+        {
+          tool: AGENT_HANDOFF_TOOLS.list,
+          arguments: { jobId: job.id },
+          reason: `Stage ${job.stage ?? "?"} waits for the host agent: fetch the task, do it and submit the output.`,
+        },
+      ];
     case "succeeded":
       return job.projectId
         ? [
