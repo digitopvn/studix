@@ -1,7 +1,9 @@
 import { rm } from "node:fs/promises";
+import { StudixError } from "@studix/shared";
 import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
 import {
   irOf,
+  mapBounded,
   type PackPipeline,
   RenderOutput,
   read,
@@ -35,7 +37,8 @@ export const motionGraphicSkill: Skill = {
   title: "Motion graphic",
   description:
     "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16): kinetic title, message and CTA cards in a " +
-    "style profile matched to the brief, a generated voice-over and burned captions. No image-to-video.",
+    "style profile matched to the brief, a generated voice-over with one SFX accent on the CTA card and " +
+    "burned captions. No image-to-video and no music.",
   version: 1,
   get inputSchema() {
     creativeBriefSchema ??= exportJsonSchemas()["creative-brief"];
@@ -87,6 +90,31 @@ function voiceRequest(s: StageContext): StoredMediaRequest | undefined {
   };
 }
 
+const SFX_MS = 1500;
+/** Where the accent lands when the IR has no CTA scene: this long before the end. */
+const SFX_TAIL_MS = 3000;
+
+/** One soft accent where the CTA card lands; the voice-over stays the lead. */
+function sfxRequest(s: StageContext): { at: number; request: StoredMediaRequest } {
+  const ir = irOf(s);
+  const ctaIndex = ir.scenes.findIndex((scene) => scene.id === "cta");
+  const at =
+    ctaIndex === -1
+      ? Math.max(0, ir.format.durationMs - SFX_TAIL_MS)
+      : ir.scenes.slice(0, ctaIndex).reduce((ms, scene) => ms + scene.durationMs, 0);
+  return {
+    at,
+    request: {
+      assetId: "sfx-accent",
+      kind: "sfx",
+      prompt: "Soft airy whoosh into a gentle chime, clean, short",
+      params: { durationMs: SFX_MS },
+      keyPrefix: `generated/${s.job.id}/sfx-accent`,
+      maxCostCents: 0,
+    },
+  };
+}
+
 async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMediaRequest> {
   const estimate = await requireService(s, "media").estimateCostCents({
     kind: r.kind,
@@ -97,44 +125,66 @@ async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMed
   return { ...r, maxCostCents: Math.max(5, Math.ceil(estimate * 2)) };
 }
 
-/** The voice-over of the script, generated with the worker's speech model and laid under the captions. */
+/** The voice-over and the SFX accent of a graphic that has a script; none for a graphic without one. */
+async function audioRequests(s: StageContext): Promise<StoredMediaRequest[]> {
+  const voice = voiceRequest(s);
+  if (!voice) return [];
+  return [await capped(s, voice), await capped(s, sfxRequest(s).request)];
+}
+
+/**
+ * The voice-over of the script, generated with the worker's speech model and laid under the captions, and
+ * one SFX accent where the CTA card lands. No music: the voice carries the graphic.
+ */
 export const motionGraphicVoiceoverStage: StageDefinition = {
   name: MG_STAGES.voiceover,
   knowledge: ["voice-performance", "sound"],
   outputSchema: IrOutput,
   cacheKey: (s) =>
-    stageCacheKey(MG_STAGES.voiceover, 1, { ir: irOf(s), media: s.services.media?.id ?? null }),
-  estimateCostCents: async (s) => {
-    const r = voiceRequest(s);
-    return r ? estimateMediaCents(s, [await capped(s, r)]) : 0;
-  },
+    stageCacheKey(MG_STAGES.voiceover, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  estimateCostCents: async (s) => estimateMediaCents(s, await audioRequests(s)),
   async run(s) {
     const ir = irOf(s);
-    const planned = voiceRequest(s);
-    if (!planned) return { output: { ir } };
+    const requests = await audioRequests(s);
+    if (requests.length === 0) return { output: { ir } };
     const workDir = await stageWorkDir(s, MG_STAGES.voiceover);
-    const media = await generateStoredMedia(s, MG_STAGES.voiceover, await capped(s, planned), workDir);
+    const [voice, sfx] = await mapBounded(
+      requests,
+      requests.length,
+      (r) => generateStoredMedia(s, MG_STAGES.voiceover, r, workDir),
+      (m) => [m.usage],
+    );
+    if (!voice || !sfx) throw new StudixError("INTERNAL", "motion-graphic audio returned too few results");
     const room = ir.format.durationMs - VO_PAD_MS;
+    const accentAt = sfxRequest(s).at;
+    const accentRoom = Math.max(1, ir.format.durationMs - accentAt);
+    const usage = [voice.usage, sfx.usage];
+    const ids = new Set([voice.asset.id, sfx.asset.id]);
     const next = {
       ...ir,
-      assets: [...ir.assets.filter((a) => a.id !== media.asset.id), media.asset],
+      assets: [...ir.assets.filter((a) => !ids.has(a.id)), voice.asset, sfx.asset],
       audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "voiceover-track"),
+        ...(ir.audio ?? []).filter((t) => t.id !== "voiceover-track" && t.id !== "sfx-accent-track"),
         {
           id: "voiceover-track",
           kind: "voiceover" as const,
-          assetId: media.asset.id,
+          assetId: voice.asset.id,
           startMs: VO_PAD_MS,
-          durationMs: Math.max(1, Math.min(room, media.asset.durationMs ?? room)),
+          durationMs: Math.max(1, Math.min(room, voice.asset.durationMs ?? room)),
           volume: 1,
+        },
+        {
+          id: "sfx-accent-track",
+          kind: "sfx" as const,
+          assetId: sfx.asset.id,
+          startMs: accentAt,
+          durationMs: Math.min(accentRoom, sfx.asset.durationMs ?? SFX_MS),
+          volume: 0.6,
         },
       ],
     };
     await rm(workDir, { recursive: true, force: true });
-    return {
-      output: { ir: await billedOnFailure([media.usage], () => VideoIR.parse(next)) },
-      usage: [media.usage],
-    };
+    return { output: { ir: await billedOnFailure(usage, () => VideoIR.parse(next)) }, usage };
   },
 };
 
