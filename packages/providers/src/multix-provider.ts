@@ -655,6 +655,9 @@ export class MultixProvider implements MediaProvider {
       costCents,
       costSource,
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
+      // One stable identity per request, so the usage line of a reused output dedupes against the line the
+      // generating attempt already billed instead of charging again under the new attempt.
+      job: { provider: "multix-sync", id: request.idempotencyKey },
     });
     if (existing?.state === "completed" && (await this.reuseSyncFile(file, outDir, request))) {
       return result(
@@ -708,7 +711,8 @@ export class MultixProvider implements MediaProvider {
     request: MediaGenerationRequest,
   ): Promise<boolean> {
     if ((await fileSize(file)) > 0) return true;
-    for (const dir of request.priorWorkDirs ?? []) {
+    // Newest first: the latest attempt that finished the call holds the complete file.
+    for (const dir of [...(request.priorWorkDirs ?? [])].reverse()) {
       const earlier = join(dir, basename(outDir), basename(file));
       if ((await fileSize(earlier)) > 0) {
         await mkdir(outDir, { recursive: true });

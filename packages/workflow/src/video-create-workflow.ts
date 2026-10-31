@@ -59,7 +59,7 @@ export interface VideoCreateWorkflowDeps {
  * Set the project status only while `versionId` is still what the project shows. A retried job of an older
  * version must not overwrite the status of the head version.
  */
-async function setStatusIfHead(
+export async function setStatusIfHead(
   repos: FencedRepositories,
   ctx: TenantContext,
   projectId: string,

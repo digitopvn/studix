@@ -913,6 +913,9 @@ describe("MultixProvider synchronous audio", () => {
       // No second paid call, and the file now lives in the new attempt's directory.
       expect(cli.calls).toHaveLength(2);
       expect(again.costCents).toBe(first.costCents);
+      // The same upstream identity as the generating attempt, so the usage ledger dedupes the line.
+      expect(again.job).toEqual(first.job);
+      expect(first.job).toEqual({ provider: "multix-sync", id: "stage-3:voice" });
       expect(again.outputs[0]!.filePath.startsWith(retryDir)).toBe(true);
       expect(await readFile(again.outputs[0]!.filePath, "utf8")).toBe("mp3");
 
@@ -920,7 +923,7 @@ describe("MultixProvider synchronous audio", () => {
       const other = await mkdtemp(join(tmpdir(), "multix-retry-"));
       try {
         await multix.generate(ctx, { ...voiceRequest(), workDir: other });
-        expect(cli.calls.length).toBeGreaterThan(2);
+        expect(cli.calls).toHaveLength(4);
       } finally {
         await rm(other, { recursive: true, force: true });
       }

@@ -25,6 +25,7 @@ import {
   type StageContext,
   type StageDefinition,
   type StageUsage,
+  setStatusIfHead,
   sha256File,
   stageCacheKey,
   stageWorkDir,
@@ -329,7 +330,7 @@ export const marketingReframeStage: StageDefinition = {
           advanceFrom: versionId,
         });
       }
-      await repos.projects.update(ctx, projectId, { status: "in_review" });
+      await setStatusIfHead(repos, ctx, projectId, resultVersionId, "in_review");
     });
     return {
       output: {
@@ -721,7 +722,7 @@ export const marketingPublishStage: StageDefinition = {
           completedAt: new Date(),
         });
       }
-      await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+      await setStatusIfHead(repos, ctx, payload.projectId, versionId, "in_review");
     });
     const root = requireService(s, "workRoot");
     await rm(join(root, s.job.id), { recursive: true, force: true });
