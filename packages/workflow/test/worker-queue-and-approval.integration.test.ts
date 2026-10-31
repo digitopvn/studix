@@ -127,6 +127,54 @@ describe("worker queue", () => {
   });
 });
 
+describe("fenced attempt writes", () => {
+  it("ignores stage, progress and spend writes from a worker that lost the job", async () => {
+    const ctx = await tenant(db.current, "fenced");
+    const { repos } = db.current;
+    const { job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    const stale = await queue.claim("stalled");
+    expect(stale?.id).toBe(job.id);
+    const usage = (dedupeKey: string) => ({
+      dedupeKey,
+      kind: "render",
+      quantity: 1,
+      unit: "s",
+      costCents: 7,
+      jobId: job.id,
+    });
+
+    // The stalled worker still owns the job: its writes land.
+    expect(await queue.updateProgress(stale!, "stalled", { stage: "plan", progress: 0.1 })).toBe(true);
+    expect(await queue.writeStage(stale!, "stalled", { name: "plan", status: "running" })).toBe(true);
+    expect(await queue.recordUsage(stale!, "stalled", usage("own"))).toBe(true);
+
+    // Its lease lapses and another worker reclaims the job at the next attempt.
+    await repos.jobs.update(ctx, job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    const fresh = await queue.claim("fresh");
+    expect(fresh).toMatchObject({ id: job.id, attempts: stale!.attempts + 1 });
+
+    expect(await queue.updateProgress(stale!, "stalled", { stage: "old", spentCents: 999 })).toBe(false);
+    expect(await queue.writeStage(stale!, "stalled", { name: "plan", status: "succeeded" })).toBe(false);
+    expect(await queue.recordUsage(stale!, "stalled", usage("late"))).toBe(false);
+    // Right worker id but the previous attempt number is fenced out as well.
+    expect(await queue.writeStage(stale!, "fresh", { name: "plan", status: "failed" })).toBe(false);
+
+    const after = await repos.jobs.get(ctx, job.id);
+    expect(after).toMatchObject({ stage: "plan", spentCents: 0, lockedBy: "fresh" });
+    const stages = await repos.jobs.listStages(ctx, job.id);
+    expect(stages.map((s) => [s.attempt, s.status])).toEqual([[stale!.attempts, "failed"]]);
+    expect((await db.current.repos.usage.list(ctx, { jobId: job.id })).items.map((u) => u.dedupeKey)).toEqual(
+      ["own"],
+    );
+
+    // The current owner writes normally.
+    expect(await queue.writeStage(fresh!, "fresh", { name: "plan", status: "succeeded" })).toBe(true);
+    expect(await queue.recordUsage(fresh!, "fresh", usage("current"))).toBe(true);
+    await repos.queue.cancel(ctx, job.id);
+  });
+});
+
 describe("publish approval gate", () => {
   it("blocks publishing until a human approves, across a worker restart", async () => {
     const ctx = await tenant(db.current, "publish");
