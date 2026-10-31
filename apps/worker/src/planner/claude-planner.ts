@@ -50,7 +50,10 @@ const INSTRUCTIONS = [
 
 let irSchema: Record<string, unknown> | undefined;
 function videoIrSchema(): Record<string, unknown> {
-  irSchema ??= exportJsonSchemas()["video-ir"];
+  // The Claude CLI validates --json-schema offline and rejects the draft 2020-12 `$schema` URI the export
+  // carries ("no schema with key or ref"), exiting before any request; the rest of the schema is accepted.
+  const { $schema: _draft, ...schema } = exportJsonSchemas()["video-ir"] as Record<string, unknown>;
+  irSchema ??= schema;
   return irSchema;
 }
 
@@ -151,9 +154,9 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
       });
     } catch (err) {
       const error = isStudixError(err) ? err : new StudixError("INTERNAL", String(err));
-      // Anthropic refused this key mid-run: later jobs must not be accepted with it.
+      // Anthropic refused this key mid-run; the service re-tests it before it stops accepting the key.
       if (error.code === "UNAUTHENTICATED" && resolvedKey) {
-        await resolvedKey.markRejected(error.toJSON()).catch((e: unknown) => {
+        await resolvedKey.markRejected().catch((e: unknown) => {
           log.warn("rejected key not marked invalid", { jobId: ctx.jobId, error: String(e) });
         });
       }

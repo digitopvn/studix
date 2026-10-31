@@ -99,10 +99,11 @@ export interface ResolvedProviderCredential {
   apiKey: string;
   connection: ProviderConnectionView;
   /**
-   * Record that Anthropic rejected exactly this key during a run (HTTP 401): the connection becomes
-   * `invalid`, so the API pre-check stops accepting it. A key rotated in the meantime is left alone.
+   * Called after a run got a 401 with this key. It re-tests the key directly and, only if Anthropic
+   * still rejects it, marks the connection `invalid` so the API pre-check stops accepting it. A key
+   * rotated in the meantime is left alone.
    */
-  markRejected(error: StudixErrorPayload): Promise<void>;
+  markRejected(): Promise<void>;
 }
 
 export interface ProviderConnectionService {
@@ -436,10 +437,13 @@ export function createProviderConnectionService(
       return {
         apiKey,
         connection: toView(ctx, row),
-        async markRejected(error) {
+        async markRejected() {
+          // A 401 can come from a gateway or a short provider incident; only a direct test of this key decides.
+          const result = await deps.tester.test(apiKey);
+          if (result.verdict !== "invalid") return;
           const updated = await deps.connections.recordTest(ctx, row.id, ciphertext, {
             status: "invalid",
-            lastTest: { ok: false, at: new Date(), latencyMs: 0, httpStatus: 401, error },
+            lastTest: toTestRecord(result),
           });
           if (!updated) return;
           await audit(ctx, "rejected", updated);

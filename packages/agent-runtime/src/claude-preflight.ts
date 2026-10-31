@@ -25,9 +25,10 @@ export type ClaudePreflightResult =
 function runningOnMusl(): boolean {
   if (process.platform !== "linux") return false;
   const report = typeof process.report?.getReport === "function" ? process.report.getReport() : undefined;
+  // Same rule as the SDK: without a report the host is treated as glibc.
   return (
-    (report as { header?: { glibcVersionRuntime?: string } } | undefined)?.header?.glibcVersionRuntime ===
-    undefined
+    report !== undefined &&
+    (report as { header?: { glibcVersionRuntime?: string } }).header?.glibcVersionRuntime === undefined
   );
 }
 

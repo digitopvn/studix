@@ -66,13 +66,16 @@ job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
 run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
 when the run ends; the worker creates that directory at startup and removes
 sandboxes left by a crashed worker once they are older than the run timeout.
-When Anthropic answers a run with 401, the worker marks that key's connection
-`invalid` (only if it was not rotated meanwhile), so job creation stops
-accepting it until the key is replaced.
+When Anthropic answers a run with 401, the worker re-tests that key directly
+and, only if it is still rejected and was not rotated meanwhile, marks its
+connection `invalid`, so job creation stops accepting it until the key is
+replaced. A 401 that the re-test does not repeat (a gateway token, a short
+Anthropic incident) leaves the key alone.
 
-A paid smoke test of the planner lives in the `live` test project:
-`STUDIX_LIVE=1 ANTHROPIC_API_KEY=sk-ant-… pnpm test:live` (spend is capped by
-`STUDIX_CLAUDE_LIVE_MAX_COST_CENTS`, default 100).
+Smoke tests of the planner live in the `live` test project (`STUDIX_LIVE=1
+pnpm test:live`). The plan test also needs `ANTHROPIC_API_KEY` and is capped by
+`STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the rejected-key test uses a
+made-up key and costs nothing.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.

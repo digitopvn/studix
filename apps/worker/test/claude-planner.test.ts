@@ -9,7 +9,7 @@ import type {
   UsageEvent,
 } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
-import { createLogger, StudixError, type StudixErrorPayload } from "@studix/shared";
+import { createLogger, StudixError } from "@studix/shared";
 import type { Planner, PlannerContext } from "@studix/workflow";
 import { describe, expect, it } from "vitest";
 import { createClaudePlanner, createPlannerRouter } from "../src/planner/claude-planner.ts";
@@ -45,7 +45,7 @@ const success = (output: unknown = ir): ClaudeAgentEvent[] => [
 function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>), resolveError?: StudixError) {
   const transport = createFakeClaudeTransport(() => (typeof events === "function" ? events() : events));
   const resolved: { connectionId: string; requestedBy: ActorRef }[] = [];
-  const rejected: StudixErrorPayload[] = [];
+  let rejected = 0;
   const planner = createClaudePlanner({
     transport,
     credentials: {
@@ -54,8 +54,8 @@ function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>),
         if (resolveError) throw resolveError;
         return {
           apiKey: FAKE_KEY,
-          async markRejected(error) {
-            rejected.push(error);
+          async markRejected() {
+            rejected++;
           },
         } as ResolvedProviderCredential;
       },
@@ -66,7 +66,14 @@ function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>),
     timeoutMs: 60_000,
     logger,
   });
-  return { planner, transport, resolved, rejected };
+  return {
+    planner,
+    transport,
+    resolved,
+    get rejected() {
+      return rejected;
+    },
+  };
 }
 
 describe("Claude planner", () => {
@@ -90,6 +97,8 @@ describe("Claude planner", () => {
     expect(request?.credential).toBe(FAKE_KEY);
     expect(request?.allowedTools).toEqual([]);
     expect(request?.outputSchema).toMatchObject({ type: "object" });
+    // The Claude CLI cannot resolve the draft 2020-12 meta-schema URI and refuses to start with it.
+    expect(request?.outputSchema).not.toHaveProperty("$schema");
     // The cap is the smaller of the planner cap (200¢) and the job's remaining budget (300¢).
     expect(request?.maxBudgetUsd).toBe(2);
   });
@@ -124,19 +133,19 @@ describe("Claude planner", () => {
   });
 
   it("marks the connection invalid when Anthropic rejects the key during the run", async () => {
-    const { planner, rejected } = setup([{ type: "error", status: 401, message: "invalid x-api-key" }]);
-    await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
+    const run = setup([{ type: "error", status: 401, message: "invalid x-api-key" }]);
+    await expect(run.planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
       code: "UNAUTHENTICATED",
     });
-    expect(rejected).toEqual([expect.objectContaining({ code: "UNAUTHENTICATED" })]);
+    expect(run.rejected).toBe(1);
   });
 
   it("leaves the connection alone for failures that are not a rejected key", async () => {
-    const { planner, rejected } = setup([{ type: "error", status: 429, message: "rate limited" }]);
-    await expect(planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
+    const run = setup([{ type: "error", status: 429, message: "rate limited" }]);
+    await expect(run.planner(brief, ctx(), new AbortController().signal)).rejects.toMatchObject({
       code: "RATE_LIMITED",
     });
-    expect(rejected).toEqual([]);
+    expect(run.rejected).toBe(0);
   });
 
   it("still fails the job with UNAUTHENTICATED when marking the key invalid throws", async () => {

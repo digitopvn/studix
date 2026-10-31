@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { TenantContext } from "@studix/core";
 import { schema } from "@studix/database";
 import { insertTestUser, withTestDatabase } from "@studix/database/testing";
-import { StudixError, type StudixErrorPayload } from "@studix/shared";
+import { StudixError } from "@studix/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { ProviderKeyTester, ProviderKeyTestResult } from "../src/anthropic-key-tester.ts";
@@ -15,15 +15,17 @@ const KEY_B = "sk-ant-api03-bbbbbbbbbbbbbbbbbbbbbbbb-BBBB";
 const BAD = "sk-ant-api03-rejectedrejectedrejected-XXXX";
 
 /** Accepts every key except BAD; records what was tested. */
-function fakeTester(): ProviderKeyTester & { tested: string[] } {
+function fakeTester(): ProviderKeyTester & { tested: string[]; revoked: Set<string> } {
   const tested: string[] = [];
+  const revoked = new Set<string>();
   return {
     tested,
+    revoked,
     async test(apiKey) {
       tested.push(apiKey);
       const base = { at: new Date(), latencyMs: 1 };
       return (
-        apiKey === BAD
+        apiKey === BAD || revoked.has(apiKey)
           ? {
               ...base,
               ok: false,
@@ -233,24 +235,26 @@ describe("provider connections over Postgres", () => {
     ).toBe("UNAUTHENTICATED");
   });
 
-  it("marks only the rejected key invalid, so a key rotated meanwhile stays usable", async () => {
-    const { svc } = service();
+  it("marks only a key that is still rejected on re-test, never a rotated one", async () => {
+    const { svc, tester } = service();
     const t = await workspace("pc-rejected");
     const view = await svc.saveApiKey(t.admin, { owner: "workspace", apiKey: KEY_A });
     const requestedBy = { type: "user", id: "x" } as const;
     const resolved = await svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy });
-    const rejection: StudixErrorPayload = {
-      code: "UNAUTHENTICATED",
-      message: "Anthropic rejected the API key",
-      retryable: false,
-    };
 
-    await svc.rotateApiKey(t.admin, view.id, { apiKey: KEY_B });
-    await resolved.markRejected(rejection);
+    // A 401 that Anthropic does not repeat (gateway or incident) leaves the key usable.
+    await resolved.markRejected();
     expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
 
+    // The key is rotated while a run holding the old one still reports a rejection.
+    tester.revoked.add(KEY_A);
+    await svc.rotateApiKey(t.admin, view.id, { apiKey: KEY_B });
+    await resolved.markRejected();
+    expect((await svc.assertUsable(t.admin, view.id)).status).toBe("available");
+
+    tester.revoked.add(KEY_B);
     const current = await svc.resolveForExecution(t.worker, { connectionId: view.id, requestedBy });
-    await current.markRejected(rejection);
+    await current.markRejected();
     expect(await codeOf(svc.assertUsable(t.admin, view.id))).toBe("UNAUTHENTICATED");
     const overview = await svc.overview(t.admin);
     expect(overview.connections[0]).toMatchObject({
