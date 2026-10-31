@@ -100,13 +100,15 @@ rejected-key test uses a made-up key and costs nothing.
 Paid media runs through the Multix provider (`packages/providers`), which is
 off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
 video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
-music and SFX on ElevenLabs, Fish or MiniMax. The worker passes only
-`SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`, `FISH_API_KEY` and
-`MINIMAX_API_KEY` (plus PATH, HOME, temp and proxy variables) to the CLI, and
+music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech.
+The worker passes only `SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
+`FISH_API_KEY`, `MINIMAX_API_KEY` and `OPENROUTER_API_KEY` (plus PATH, HOME, temp and proxy variables) to the CLI, and
 sets `MULTIX_DISABLE_HOME_ENV=1` so `~/.multix/.env` is never read on servers
 (`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A kind is
 advertised only when `multix check` reports its vendor key. Default models per
-role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`;
+role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`, and voice per language from
+`MULTIX_VOICE_LANGUAGE_MODELS` (`vi=openrouter:fish-audio/drama-3`, optionally
+`@<voice>`), which also carries the packs' delivery direction to models that take it;
 `MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
 job. Every paid call is estimated first and refused above the request's cap.
 A video request on `sume:seedance-2.5` runs at `480p` unless it passes

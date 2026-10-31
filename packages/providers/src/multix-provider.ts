@@ -44,8 +44,10 @@ import {
   type MultixPlan,
   type MultixRole,
   type MultixVendor,
+  parseVoiceLanguageRoutes,
   planMultixRequest,
   resolveMultixModel,
+  type VoiceLanguageRoutes,
 } from "./multix-routes.ts";
 
 export const MULTIX_PROVIDER_ID = "multix";
@@ -57,6 +59,12 @@ export interface MultixProviderOptions {
   runner?: MultixRunner;
   /** "<vendor>:<model>" overrides of the built-in defaults, per role. */
   models?: Partial<Record<MultixRole, string>>;
+  /**
+   * Speech model per language, `<language>=<vendor>:<model>[@<voice>]` comma-separated
+   * (config.MULTIX_VOICE_LANGUAGE_MODELS). A voice request in a routed language that names no model runs on
+   * the route instead of the voice default.
+   */
+  voiceLanguageModels?: string;
   /** Source of PATH, HOME and provider keys for the child; defaults to process.env. */
   env?: Readonly<Record<string, string | undefined>>;
   /** Let multix read ~/.multix/.env (local development only). */
@@ -175,7 +183,8 @@ interface CatalogModels {
 
 /**
  * MediaProvider over the multix CLI. Image, video, lip-sync and video upscale run as Sume jobs; image
- * upscale as an Atlas Cloud prediction; speech, music and SFX on ElevenLabs, Fish or MiniMax. Every call
+ * upscale as an Atlas Cloud prediction; speech, music and SFX on ElevenLabs, Fish or MiniMax, and speech
+ * also on OpenRouter. Every call
  * is a fixed argv (no shell) with a scrubbed environment, and every paid call is estimated and capped
  * first. Async jobs are journaled right after submission and collected with `status --wait --download`,
  * so a retry (or another worker) resumes the paid job instead of submitting a new one.
@@ -185,6 +194,7 @@ export class MultixProvider implements MediaProvider {
   private readonly bin: string | undefined;
   private readonly runner: MultixRunner | undefined;
   private readonly defaults: MultixModelDefaults;
+  private readonly voiceRoutes: VoiceLanguageRoutes;
   private readonly sourceEnv: Readonly<Record<string, string | undefined>>;
   private readonly allowHomeEnv: boolean;
   private readonly waitTimeoutMs: number;
@@ -205,6 +215,7 @@ export class MultixProvider implements MediaProvider {
         this.defaults,
       );
     }
+    this.voiceRoutes = parseVoiceLanguageRoutes(options.voiceLanguageModels, this.defaults);
     this.sourceEnv = options.env ?? process.env;
     this.allowHomeEnv = options.allowHomeEnv ?? false;
     this.waitTimeoutMs = options.waitTimeoutMs ?? DEFAULT_WAIT_MS;
@@ -237,7 +248,7 @@ export class MultixProvider implements MediaProvider {
 
   /** The "<vendor>:<model>" a request runs on; results report the same id. */
   resolveModel(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string {
-    return resolveMultixModel(request, this.defaults).model.id;
+    return resolveMultixModel(request, this.defaults, this.voiceRoutes).model.id;
   }
 
   /** Kinds whose vendor key `multix check --json` reports, with models from the live catalogs. */
@@ -375,7 +386,7 @@ export class MultixProvider implements MediaProvider {
   }
 
   private planContext() {
-    return { defaults: this.defaults, waitTimeoutMs: this.waitTimeoutMs };
+    return { defaults: this.defaults, voiceRoutes: this.voiceRoutes, waitTimeoutMs: this.waitTimeoutMs };
   }
 
   private childEnv(cacheDir: string): Record<string, string> {
@@ -451,10 +462,16 @@ export class MultixProvider implements MediaProvider {
     });
   }
 
-  /** `--max-cost` lets multix refuse too when it can prove the price itself. */
+  /**
+   * `--max-cost` lets multix refuse too when it can prove the price itself, or, for a plan priced by
+   * estimate, when its estimated high end is over the cap (Studix has already checked that estimate).
+   */
   private maxCostFlags(plan: MultixPlan, request: MediaGenerationRequest): string[] {
     return plan.priced
-      ? [`--max-cost=${(request.maxCostCents / 100).toFixed(2)}`, "--cost-policy=strict"]
+      ? [
+          `--max-cost=${(request.maxCostCents / 100).toFixed(2)}`,
+          `--cost-policy=${plan.costPolicy ?? "strict"}`,
+        ]
       : [];
   }
 
@@ -862,6 +879,9 @@ export class MultixProvider implements MediaProvider {
         role,
         live.filter((id) => ready[id.slice(0, id.indexOf(":")) as MultixVendor]),
       );
+    const routedVoices = Object.values(this.voiceRoutes)
+      .filter((r) => ready[r.model.vendor])
+      .map((r) => r.model.id);
     const capabilities: MediaCapability[] = [
       {
         kind: "image",
@@ -881,7 +901,11 @@ export class MultixProvider implements MediaProvider {
         ]),
         outputMimes: OUTPUT_MIMES.upscale,
       },
-      { kind: "voice", models: vendorModels(catalog.voice, "voice"), outputMimes: OUTPUT_MIMES.voice },
+      {
+        kind: "voice",
+        models: unique([...vendorModels(catalog.voice, "voice"), ...routedVoices]),
+        outputMimes: OUTPUT_MIMES.voice,
+      },
       { kind: "music", models: vendorModels(catalog.music, "music"), outputMimes: OUTPUT_MIMES.music },
       { kind: "sfx", models: ready.elevenlabs ? pick("sfx", []) : [], outputMimes: OUTPUT_MIMES.sfx },
     ];
@@ -918,12 +942,16 @@ export class MultixProvider implements MediaProvider {
       }
     }
     const audio = async (task: string, into: string[]) => {
-      if (!ready.elevenlabs && !ready.fish && !ready.minimax) return;
+      if (!ready.elevenlabs && !ready.fish && !ready.minimax && !ready.openrouter) return;
       const data = await read(["models", `--task=${task}`, "--json"]);
       for (const row of Array.isArray(data) ? data : []) {
-        if (!isObject(row) || !["elevenlabs", "fish", "minimax"].includes(String(row.provider))) continue;
+        const provider = String(isObject(row) ? row.provider : "");
+        if (!isObject(row) || !["elevenlabs", "fish", "minimax", "openrouter"].includes(provider)) continue;
         const command = String(row.command ?? "");
-        if (!/^(elevenlabs (tts|music)|fish tts|minimax generate-(speech|music))$/.test(command)) continue;
+        if (
+          !/^(elevenlabs (tts|music)|fish tts|minimax generate-(speech|music)|openrouter tts)$/.test(command)
+        )
+          continue;
         const ids = [row.default_model, ...(Array.isArray(row.models) ? row.models : [])];
         for (const m of ids) if (typeof m === "string" && m !== "") into.push(`${row.provider}:${m}`);
       }
@@ -975,6 +1003,7 @@ export function createMultixProviderFromConfig(
     | "MULTIX_VIDEO_MODEL"
     | "MULTIX_LIPSYNC_MODEL"
     | "MULTIX_VOICE_MODEL"
+    | "MULTIX_VOICE_LANGUAGE_MODELS"
     | "MULTIX_MUSIC_MODEL"
     | "MULTIX_SFX_MODEL"
     | "MULTIX_IMAGE_UPSCALE_MODEL"
@@ -982,7 +1011,10 @@ export function createMultixProviderFromConfig(
     | "MULTIX_ALLOW_HOME_ENV"
     | "MULTIX_WAIT_TIMEOUT_SECONDS"
   >,
-  options: Omit<MultixProviderOptions, "bin" | "models" | "allowHomeEnv" | "waitTimeoutMs"> = {},
+  options: Omit<
+    MultixProviderOptions,
+    "bin" | "models" | "voiceLanguageModels" | "allowHomeEnv" | "waitTimeoutMs"
+  > = {},
 ): MultixProvider {
   const models: Partial<Record<MultixRole, string>> = {};
   const set = (role: MultixRole, value: string | undefined) => {
@@ -1000,6 +1032,9 @@ export function createMultixProviderFromConfig(
     ...options,
     bin: config.MULTIX_BIN,
     models,
+    ...(config.MULTIX_VOICE_LANGUAGE_MODELS
+      ? { voiceLanguageModels: config.MULTIX_VOICE_LANGUAGE_MODELS }
+      : {}),
     allowHomeEnv: config.MULTIX_ALLOW_HOME_ENV,
     waitTimeoutMs: config.MULTIX_WAIT_TIMEOUT_SECONDS * 1000,
   });

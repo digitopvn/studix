@@ -286,6 +286,7 @@ describe("MultixProvider capabilities", () => {
       elevenlabs: true,
       fish: false,
       minimax: true,
+      openrouter: false,
     });
     // Probes are cached.
     await multix.capabilities();
@@ -1124,6 +1125,41 @@ describe("MultixProvider synchronous audio", () => {
     const again = await multix.generate(ctx, voiceRequest());
     expect(again.outputs).toEqual(result.outputs);
     expect(cli.calls).toHaveLength(2);
+  });
+
+  it("speaks a routed language on OpenRouter with its direction, capped by the estimate's high end", async () => {
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate"))
+        return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+      const out = flagValue(argv, "output")!;
+      return { files: { [out]: "RIFF" }, envelope: { outputs: [{ path: out }] } };
+    });
+    const multix = createMultixProviderFromConfig(
+      {
+        MULTIX_BIN: "multix",
+        MULTIX_VOICE_LANGUAGE_MODELS: "vi=openrouter:google/gemini-3.8-flash-tts@Sulafat",
+        MULTIX_ALLOW_HOME_ENV: false,
+        MULTIX_WAIT_TIMEOUT_SECONDS: 900,
+      },
+      { runner: cli.runner },
+    );
+    const request = { ...voiceRequest(), params: { language: "vi", instructions: "Warm and bright." } };
+    expect(multix.resolveModel(request)).toBe("openrouter:google/gemini-3.8-flash-tts");
+    const result = await multix.generate(ctx, request);
+    const tts = cli.calls[1]!.argv;
+    expect(tts.slice(0, 2)).toEqual(["openrouter", "tts"]);
+    expect(flagValue(tts, "voice")).toBe("Sulafat");
+    expect(flagValue(tts, "instructions")).toBe("Warm and bright.");
+    expect(flagValue(tts, "cost-policy")).toBe("estimate");
+    expect(flagValue(tts, "output")).toMatch(/voice\.wav$/);
+    expect(result.outputs[0]).toMatchObject({ mime: "audio/wav" });
+    expect(result.model).toBe("openrouter:google/gemini-3.8-flash-tts");
+  });
+
+  it("refuses a malformed voice language route when the provider is built", () => {
+    expect(
+      () => new MultixProvider({ bin: "multix", voiceLanguageModels: "vi=sume:seedance-2-mini" }),
+    ).toThrow(/not served/);
   });
 
   describe("execution id of reused synchronous output", () => {
