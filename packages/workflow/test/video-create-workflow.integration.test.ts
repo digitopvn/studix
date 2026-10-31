@@ -462,6 +462,15 @@ describe("video.create workflow on Postgres", () => {
     expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({ status: "approved" });
   });
 
+  it("lets a first-attempt job reopen an approved project for review", async () => {
+    const ctx = await tenant(db.current, "fresh-on-approved");
+    const { project } = await enqueueCreate(db.current, ctx);
+    await db.current.repos.projects.update(ctx, project.id, { status: "approved" });
+    const worker = createTestWorker(db.current, "w", { planner: fakePlanner().planner });
+    expect((await worker.runOnce())?.outcome).toBe("succeeded");
+    expect(await db.current.repos.projects.get(ctx, project.id)).toMatchObject({ status: "in_review" });
+  });
+
   it("still hands a retried job's project to review while it is the one rendering", async () => {
     const ctx = await tenant(db.current, "own-retry");
     const { project, job } = await enqueueCreate(db.current, ctx);

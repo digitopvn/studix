@@ -257,7 +257,7 @@ async function publishReviewVersion(s: StageContext, ir: VideoIR, board: string)
       throw new StudixError("CONFLICT", `Project is ${project.status}; this job is stale`, {
         retryable: false,
         details: { projectId, status: project.status },
-        suggestedAction: "Submit a new job to revise a finished project.",
+        suggestedAction: "This job is stale: the project was finished after it started.",
       });
     }
     if (project && !CLOSED_PROJECT_STATUSES.includes(project.status)) {

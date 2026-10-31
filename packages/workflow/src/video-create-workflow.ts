@@ -160,9 +160,11 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
         const movesHead = payload.makeCurrent && !payload.feedbackId;
         const project = await repos.projects.get(ctx, payload.projectId);
         const isHead = movesHead || project?.currentVersionId === versionId;
-        // Only the job of the head version owns the project's status: another job's render must not flag it,
-        // and a retried job must not reopen a project that was approved, published or archived meanwhile.
-        const reopens = isHead && !(project && FINISHED_PROJECT_STATUSES.includes(project.status));
+        // Only the job of the head version owns the project's status: another job's render must not flag it.
+        // A re-attempted job must not reopen a project that was approved, published or archived meanwhile;
+        // a first attempt is a fresh request (a new render or feedback) and reopens it as before.
+        const stale = s.job.attempts > 1 && project && FINISHED_PROJECT_STATUSES.includes(project.status);
+        const reopens = isHead && !stale;
         await repos.projects.update(ctx, payload.projectId, {
           ...(movesHead ? { currentVersionId: versionId } : {}),
           ...(reopens ? { status: "rendering" as const } : {}),
