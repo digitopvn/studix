@@ -206,21 +206,23 @@ describe("video.create workflow on Postgres", () => {
       heartbeatIntervalMs: 100,
     });
     let beats = 0;
-    // The first beat is still in flight when the job completes, then fails (database down): it must
-    // not start a retry loop for a finished job.
+    let failFirstBeat!: () => void;
+    // The first beat stays in flight until the test releases it, so it is guaranteed to be pending
+    // when the job completes however long the job takes. Releasing it as a failure (database down)
+    // must not start a retry loop for a finished job.
     a.queue.heartbeat = async () => {
       beats++;
-      await new Promise((r) => setTimeout(r, 400));
-      throw new Error("database unreachable");
+      await new Promise<void>((_, reject) => {
+        failFirstBeat = () => reject(new Error("database unreachable"));
+      });
     };
     const claimed = (await a.queue.claim("worker-settle"))!;
     expect(await a.executor.execute(claimed, "worker-settle", a.shutdown.signal)).toBe("succeeded");
-    // A slow job may legitimately start more beats while it is still live, so compare against the
-    // count at the moment the attempt settled instead of an absolute number.
-    const beatsAtSettle = beats;
-    expect(beatsAtSettle).toBeGreaterThanOrEqual(1);
-    await new Promise((r) => setTimeout(r, 800));
-    expect(beats).toBe(beatsAtSettle);
+    expect(beats).toBe(1);
+    failFirstBeat();
+    // The retry delay after a failed beat is a few tens of ms; wait several multiples of it.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(beats).toBe(1);
   });
 
   it("does not apply a stalled worker's project writes after another worker finished the job", async () => {
