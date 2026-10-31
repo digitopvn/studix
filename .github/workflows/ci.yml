@@ -58,7 +58,8 @@ jobs:
           # Same build id as the worker image: read it from the Dockerfile so they cannot diverge.
           chrome_version="$(sed -n 's/^ARG CHROME_HEADLESS_SHELL_VERSION=//p' Dockerfile)"
           test -n "$chrome_version"
-          npx --yes --package @puppeteer/browsers@3.2.6 -- browsers install "chrome-headless-shell@${chrome_version}" --path ~/.cache/puppeteer
+          # Outside the checkout, so npx fetches the package instead of reusing pnpm's bin-less copy.
+          (cd "$RUNNER_TEMP" && npx --yes --package @puppeteer/browsers@3.2.6 -- browsers install "chrome-headless-shell@${chrome_version}" --path ~/.cache/puppeteer)
 
       # uv runs the Python MCP SDK client test against /mcp and the QA tools' pytest (pnpm test).
       - uses: astral-sh/setup-uv@v6

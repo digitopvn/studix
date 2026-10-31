@@ -91,7 +91,9 @@ RUN set -eu; extras=""; for e in $STUDIX_QA_EXTRAS; do extras="$extras --extra $
 ARG CHROME_HEADLESS_SHELL_VERSION=156.0.8078.80
 ENV PRODUCER_HEADLESS_SHELL_PATH=/opt/studix-browser/chrome \
     HYPERFRAMES_BROWSER_PATH=/opt/studix-browser/chrome
-RUN set -eu; mkdir -p /opt/studix-browser; \
+# npx runs from / because /app already has this version as a transitive pnpm dependency without a
+# `browsers` bin on PATH; outside the project npx fetches the package and its bin.
+RUN set -eu; mkdir -p /opt/studix-browser; cd /; \
     npx --yes --package @puppeteer/browsers@3.2.6 -- browsers install "chrome-headless-shell@${CHROME_HEADLESS_SHELL_VERSION}" --path /opt/studix-browser/cache; \
     ln -s "$(find /opt/studix-browser/cache -type f -name chrome-headless-shell | head -n1)" /opt/studix-browser/chrome; \
     /opt/studix-browser/chrome --version; \
