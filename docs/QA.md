@@ -64,6 +64,15 @@ trả về check sẵn cho `runHardGate` và danh sách `unbound`; threshold c�
 - Metric chưa có tool (`no_tool`) không bị bỏ ngầm: caller quyết có chấp nhận hay không.
   Metric mức shot (mix bus theo shot, lipsync) cần contract shot boundary của #47.
 
+### Gate cho stage của pack
+
+`createHardQaGate` (`qa-hard-gate.ts`) là `QaGate` mà worker đưa cho stage QA của pack
+(`marketing-video.qa`, `motion-graphic.qa`). Mỗi render chạy hard gate mặc định theo độ dài,
+fps và việc có âm thanh hay không, cộng hard check đã gắn của các knowledge pack mà stage
+khai báo (`hardChecksFor`). Render im lặng bỏ check loudness và sync của pack. Check nào
+fail thì stage fail với `VALIDATION` không retry, nên không có file nào được upload. Các
+check `unbound` được ghi vào output của stage.
+
 ## Tool đo (Implemented)
 
 Mỗi tool là một module trong `tools/qa/src/studix_qa/`, bọc phía TS bằng một `QaTool` có

@@ -176,6 +176,12 @@ importers:
       '@studix/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@studix/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
+      '@studix/qa':
+        specifier: workspace:*
+        version: link:../../packages/qa
       '@studix/renderers':
         specifier: workspace:*
         version: link:../../packages/renderers

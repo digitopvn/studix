@@ -105,6 +105,20 @@ Behavior notes:
   `error.details.available` listing the registered ids. Adding a pack needs
   only `registerPack`; the server does not change. The Claude `planner` writes
   the IR itself, so it is refused together with a non-default pack.
+- `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
+  entry (1 to 6), all sharing the brief's brand, language, format and length
+  (default 20 s, 9:16). The create job writes the script, generates one
+  storyboard frame per beat and stops with the project `in_review`; it runs no
+  image-to-video, voice or music. Each ad's voice-over must fit about three
+  words a second of its length, or the job fails with `VALIDATION` before any
+  paid call. After a person approves the storyboard, `studix_render` animates
+  the frames, adds voice-over, music and SFX, then renders, QA-gates and
+  uploads one file per ad (`renders[]`). Any image-to-video or audio stage
+  without an approved storyboard fails with `APPROVAL_REQUIRED`.
+- `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
+  (6 to 60 s, default 15 s) in the style profile that best matches the brief,
+  with a generated voice-over and burned captions, then renders, QA-gates and
+  uploads it in one job. It has no image-to-video.
 - `planner: {runtime: "claude", providerConnectionId}` is opt-in. The worker
   then plans the VideoIR with the Claude Agent SDK, billed to that Anthropic API
   key ([ADR-0011](decisions/0011-claude-agent-runtime-and-provider-auth.md)).
