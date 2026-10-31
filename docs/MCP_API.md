@@ -177,7 +177,7 @@ Behavior notes:
 A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jobs/:jobId/retry` on the dashboard API) requeues it as the same job once the cause is fixed, for example a storage bucket that was missing after the provider had already charged for the media.
 
 - Stages that succeeded keep their outputs and are not run again.
-- The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) are looked up in the attempt's work directory, so a retry may generate and pay for them again.
+- The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) are looked up in the attempt's work directory, so a retry may generate and pay for them again. A call that fails after the upstream already charged for it (the job finished but its result could not be collected or used) still bills that charge, from the provider's receipt or else the estimate, so the failed stage's cost is not lost.
 - Usage events keep their `dedupeKey`, which is tied to the upstream job, so the resume bills no call twice.
 - Gates already decided on the job (approved, or consumed) are read from the database and are not asked again.
 - The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window it was created with. The budget is not reset: spend so far still counts against `budgetCents`.

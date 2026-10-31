@@ -1,6 +1,11 @@
 import { extname } from "node:path";
 import { USAGE_KINDS } from "@studix/billing";
-import type { MediaGenerationRequest, MediaGenerationResult, MediaKind } from "@studix/core";
+import {
+  MediaFailedAfterSpend,
+  type MediaGenerationRequest,
+  type MediaGenerationResult,
+  type MediaKind,
+} from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
 import type { AssetMediaKind, AssetRef } from "@studix/video-ir";
 import {
@@ -90,7 +95,10 @@ export async function estimateMediaCents(
 }
 
 /** The usage line of a finished provider call, tied to the upstream job so a resumed stage never bills it twice. */
-function mediaUsage(request: StoredMediaRequest, result: MediaGenerationResult): StageUsage {
+function mediaUsage(
+  request: StoredMediaRequest,
+  result: Pick<MediaGenerationResult, "costCents" | "provider" | "model" | "costSource" | "job">,
+): StageUsage {
   return {
     item: `media-${request.assetId}`,
     kind: USAGE_KINDS.mediaGeneration,
@@ -122,7 +130,16 @@ export async function generateStoredMedia(
 ): Promise<StoredMedia> {
   const media = requireService(s, "media");
   const storage = requireService(s, "storage");
-  const result = await media.generate(s.ctx, mediaRequest(s, stage, request, workDir));
+  let result: MediaGenerationResult;
+  try {
+    result = await media.generate(s.ctx, mediaRequest(s, stage, request, workDir));
+  } catch (err) {
+    // The provider failed after the upstream charged: bill what it reports instead of dropping the spend.
+    if (err instanceof MediaFailedAfterSpend) {
+      throw new StageFailedAfterSpend(toStudixError(err), [mediaUsage(request, err.charge)]);
+    }
+    throw err;
+  }
   // The provider call is paid from here on: whatever fails next still bills it.
   const usage = mediaUsage(request, result);
   try {

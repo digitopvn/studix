@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TenantContext } from "@studix/core";
+import { MediaFailedAfterSpend, type TenantContext } from "@studix/core";
 import { FakeMediaProvider } from "@studix/providers";
 import { StudixError } from "@studix/shared";
 import { mapBounded, type StageContext, StageFailedAfterSpend } from "@studix/workflow";
@@ -64,6 +64,49 @@ describe("media spend of a failed stage", () => {
     expect(failed.error.code).toBe("UNAVAILABLE");
     expect(failed.usage).toHaveLength(1);
     expect(failed.usage[0]).toMatchObject({ item: "media-a", costCents: 2, unit: "image" });
+  });
+
+  it("bills a generation the provider charged for but failed to deliver", async () => {
+    const { s } = stageWith(new Set());
+    // The upstream job finished and was charged, then collecting its result failed.
+    (s.services as { media: unknown }).media = {
+      generate: async () => {
+        throw new MediaFailedAfterSpend(
+          new StudixError("PROVIDER_ERROR", "download failed", { retryable: false }),
+          {
+            costCents: 7,
+            costSource: "receipt",
+            provider: "fake",
+            model: "fake-image",
+            job: { provider: "sume", id: "job_9" },
+          },
+        );
+      },
+    };
+    const err = await generateStoredMedia(s, "designs", request("a"), root).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StageFailedAfterSpend);
+    const failed = err as StageFailedAfterSpend;
+    expect(failed.error.code).toBe("PROVIDER_ERROR");
+    expect(failed.usage).toHaveLength(1);
+    expect(failed.usage[0]).toMatchObject({
+      item: "media-a",
+      costCents: 7,
+      unit: "image",
+      upstreamJob: "sume:job_9",
+      metadata: { costSource: "receipt", provider: "fake" },
+    });
+  });
+
+  it("keeps a provider failure without a charge plain", async () => {
+    const { s } = stageWith(new Set());
+    (s.services as { media: unknown }).media = {
+      generate: async () => {
+        throw new StudixError("UNAVAILABLE", "provider down");
+      },
+    };
+    const err = await generateStoredMedia(s, "designs", request("a"), root).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(StageFailedAfterSpend);
+    expect(err).toMatchObject({ code: "UNAVAILABLE" });
   });
 
   it("bills the finished and in-flight items of a batch where one item fails", async () => {

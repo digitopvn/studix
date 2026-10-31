@@ -1,3 +1,4 @@
+import { StudixError } from "@studix/shared";
 import type { TenantContext } from "../tenant.ts";
 
 /**
@@ -121,6 +122,36 @@ export interface MediaResumeRequest {
   /** Used as costCents when the provider reports no receipt for the job. */
   estimatedCostCents?: number;
   signal?: AbortSignal;
+}
+
+/** What the upstream already charged for a call that then failed. */
+export interface MediaCharge {
+  costCents: number;
+  costSource: MediaCostSource;
+  provider: string;
+  model: string;
+  /** The upstream job the charge belongs to, so billing counts it once across retries. */
+  job?: ProviderJobRef;
+}
+
+/**
+ * Thrown by a provider whose call failed after the upstream had already charged for it (the job finished
+ * but its result could not be collected or used). It keeps the original code and retry hint, and carries
+ * the `charge` so the caller records the spend instead of losing it with the error.
+ */
+export class MediaFailedAfterSpend extends StudixError {
+  constructor(
+    error: StudixError,
+    readonly charge: MediaCharge,
+  ) {
+    super(error.code, error.message, {
+      retryable: error.retryable,
+      suggestedAction: error.suggestedAction,
+      details: error.details,
+      cause: error,
+    });
+    this.name = "MediaFailedAfterSpend";
+  }
 }
 
 /** Image/video/audio generation backend (e.g. Multix). */

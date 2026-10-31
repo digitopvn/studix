@@ -2,21 +2,23 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
-import type {
-  GeneratedMedia,
-  MediaCapability,
-  MediaCostSource,
-  MediaGenerationRequest,
-  MediaGenerationResult,
-  MediaJobJournal,
-  MediaJobRecord,
-  MediaKind,
-  MediaProvider,
-  MediaResumeRequest,
-  ProviderJobRef,
-  TenantContext,
+import {
+  type GeneratedMedia,
+  type MediaCapability,
+  type MediaCharge,
+  type MediaCostSource,
+  MediaFailedAfterSpend,
+  type MediaGenerationRequest,
+  type MediaGenerationResult,
+  type MediaJobJournal,
+  type MediaJobRecord,
+  type MediaKind,
+  type MediaProvider,
+  type MediaResumeRequest,
+  type ProviderJobRef,
+  type TenantContext,
 } from "@studix/core";
-import { type Clock, type StudixConfig, StudixError, systemClock } from "@studix/shared";
+import { type Clock, type StudixConfig, StudixError, systemClock, toStudixError } from "@studix/shared";
 import { InMemoryMediaJobJournal } from "./media-job-journal.ts";
 import { mediaBillingQuantity } from "./media-price-book.ts";
 import {
@@ -561,7 +563,24 @@ export class MultixProvider implements MediaProvider {
             "--json",
           ];
     const record = "record" in tracking ? tracking.record : undefined;
-    let envelope: MultixEnvelope;
+    // The job finished upstream when its envelope arrived, so it is charged from there on: a failure after
+    // that still reports the spend (receipt, else the recorded or given estimate).
+    const chargeOf = (done: MultixEnvelope): MediaCharge => {
+      const receipt = done.receiptUsd === undefined ? undefined : toCents(done.receiptUsd);
+      const fallback =
+        record?.estimatedCostCents ??
+        ("estimatedCostCents" in tracking ? tracking.estimatedCostCents : undefined);
+      const [costCents, costSource]: [number, MediaCostSource] =
+        receipt !== undefined
+          ? [receipt, "receipt"]
+          : record?.receiptCents !== undefined
+            ? [record.receiptCents, "receipt"]
+            : fallback !== undefined
+              ? [fallback, "estimate"]
+              : [0, "unknown"];
+      return { costCents, costSource, provider: this.id, model, job };
+    };
+    let envelope: MultixEnvelope | undefined;
     try {
       envelope = await this.exec(
         `${job.provider} status`,
@@ -590,51 +609,46 @@ export class MultixProvider implements MediaProvider {
         });
       }
       if (err instanceof StudixError) {
-        throw new StudixError(err.code, err.message, {
+        const wrapped = new StudixError(err.code, err.message, {
           retryable: err.retryable,
           suggestedAction: err.suggestedAction,
           details: { ...err.details, job },
           cause: err,
         });
+        throw envelope ? new MediaFailedAfterSpend(wrapped, chargeOf(envelope)) : wrapped;
       }
       throw err;
     }
-    const outputs = await this.outputsIn(envelope, outDir, outDir);
-    if (outputs.length === 0) {
-      throw new StudixError("PROVIDER_ERROR", `${job.provider} job ${job.id} finished without outputs`, {
-        retryable: false,
-        details: { job },
-      });
+    const charge = chargeOf(envelope);
+    const { costCents, costSource } = charge;
+    try {
+      const outputs = await this.outputsIn(envelope, outDir, outDir);
+      if (outputs.length === 0) {
+        throw new StudixError("PROVIDER_ERROR", `${job.provider} job ${job.id} finished without outputs`, {
+          retryable: false,
+          details: { job },
+        });
+      }
+      if ("ctx" in tracking && record) {
+        await tracking.journal.put(tracking.ctx, {
+          ...record,
+          state: "completed",
+          ...(costSource === "receipt" ? { receiptCents: costCents } : {}),
+          updatedAt: this.clock.now().toISOString(),
+        });
+      }
+      return {
+        outputs,
+        provider: this.id,
+        model,
+        costCents,
+        costSource,
+        latencyMs: Math.max(0, this.clock.now().getTime() - started),
+        job,
+      };
+    } catch (err) {
+      throw new MediaFailedAfterSpend(toStudixError(err), charge);
     }
-    const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
-    const fallback =
-      record?.estimatedCostCents ??
-      ("estimatedCostCents" in tracking ? tracking.estimatedCostCents : undefined);
-    const [costCents, costSource]: [number, MediaCostSource] =
-      receipt !== undefined
-        ? [receipt, "receipt"]
-        : record?.receiptCents !== undefined
-          ? [record.receiptCents, "receipt"]
-          : fallback !== undefined
-            ? [fallback, "estimate"]
-            : [0, "unknown"];
-    if ("ctx" in tracking && record) {
-      await tracking.journal.put(tracking.ctx, {
-        ...record,
-        state: "completed",
-        ...(costSource === "receipt" ? { receiptCents: costCents } : {}),
-        updatedAt: this.clock.now().toISOString(),
-      });
-    }
-    return {
-      outputs,
-      provider: this.id,
-      model,
-      costCents,
-      costSource,
-      latencyMs: Math.max(0, this.clock.now().getTime() - started),
-      job,
-    };
   }
 
   /** Synchronous audio: no upstream job to resume, so a completed output is reused from its fixed path. */
@@ -674,12 +688,25 @@ export class MultixProvider implements MediaProvider {
       plan.waitTimeoutMs + RUN_MARGIN_MS,
       request.signal,
     );
-    this.assertTrustedOutputs(envelope);
-    const outputs = (await this.outputsIn(envelope, outDir, outDir)).filter((o) => o.filePath === file);
-    if (outputs.length === 0) {
-      throw new StudixError("PROVIDER_ERROR", `multix ${plan.argv.slice(0, 2).join(" ")} wrote no output`, {
-        retryable: false,
-      });
+    // The call returned, so it is charged (receipt, else the estimate) even if its output is unusable.
+    const paid = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
+    const charge: MediaCharge = {
+      costCents: paid ?? estimate,
+      costSource: paid !== undefined ? "receipt" : "estimate",
+      provider: this.id,
+      model: plan.model.id,
+    };
+    let outputs: GeneratedMedia[];
+    try {
+      this.assertTrustedOutputs(envelope);
+      outputs = (await this.outputsIn(envelope, outDir, outDir)).filter((o) => o.filePath === file);
+      if (outputs.length === 0) {
+        throw new StudixError("PROVIDER_ERROR", `multix ${plan.argv.slice(0, 2).join(" ")} wrote no output`, {
+          retryable: false,
+        });
+      }
+    } catch (err) {
+      throw new MediaFailedAfterSpend(toStudixError(err), charge);
     }
     const receipt = envelope.receiptUsd === undefined ? undefined : toCents(envelope.receiptUsd);
     const at = this.clock.now().toISOString();

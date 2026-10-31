@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { MediaGenerationRequest } from "@studix/core";
+import { MediaFailedAfterSpend, type MediaGenerationRequest } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
 import { createManualClock } from "@studix/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -669,6 +669,40 @@ describe("MultixProvider async jobs", () => {
       code: "PROVIDER_ERROR",
       details: { warnings: ["EMPTY_OUTPUT"] },
     });
+  });
+
+  it("reports the receipt when a finished Sume job has no usable output", async () => {
+    const cli = sumeImageCli(() => ({ envelope: { outputs: [], usage: { cost_usd: 0.07 } } }));
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaFailedAfterSpend);
+    expect(error).toMatchObject({
+      code: "PROVIDER_ERROR",
+      charge: { costCents: 7, costSource: "receipt", provider: "multix" },
+    });
+    expect((error as MediaFailedAfterSpend).charge.job).toBeDefined();
+  });
+
+  it("reports the estimate when output flagged as broken follows a charge without receipt", async () => {
+    const cli = sumeImageCli((argv) => {
+      const out = join(flagValue(argv, "output")!, "image-1.png");
+      return {
+        files: { [out]: "png" },
+        envelope: { outputs: [{ path: out }], warnings: [{ code: "EMPTY_OUTPUT" }] },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaFailedAfterSpend);
+    expect((error as MediaFailedAfterSpend).charge).toMatchObject({ costSource: "estimate" });
+    expect((error as MediaFailedAfterSpend).charge.costCents).toBeGreaterThan(0);
+  });
+
+  it("does not report spend when the upstream never completed the job", async () => {
+    const cli = sumeImageCli(() => ({ exitCode: 1, envelope: { ok: false, error: { code: "TIMEOUT" } } }));
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const error = await multix.generate(ctx, imageRequest()).catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(MediaFailedAfterSpend);
   });
 
   it("drops reported outputs outside the job directory", async () => {
