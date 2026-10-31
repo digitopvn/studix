@@ -46,6 +46,26 @@ without loudness.
 FFmpeg always runs with an argv array (no shell) and never overwrites silently.
 The behaviour is verified on both FFmpeg 8.0 and the worker image's FFmpeg 5.1.
 
+### HyperFrames version
+
+`@hyperframes/core`, `@hyperframes/lint` and `@hyperframes/producer` are pinned
+to exact `0.8.223` in `packages/renderers/package.json`.
+
+- **FFmpeg 7.1 and 8.0 at width 1080:** before upstream
+  [#5559](https://github.com/heygen-com/hyperframes/pull/5559), these versions
+  blacked out the 8 rightmost pixel columns of an SDR MP4 whose width is `16k+8`.
+  1080 is such a width, so 1080x1920 (9:16) and 1080x1080 deliveries showed a black
+  edge, and the master is stream-copied. The worker image (FFmpeg 5.1) was not
+  affected; a developer machine with FFmpeg 8 was. Versions before `0.8.223`
+  must not be used on FFmpeg 7.1 or 8.0.
+- **Encode changes to expect:** the keyframe interval changed
+  ([#6444](https://github.com/heygen-com/hyperframes/pull/6444)) and the `high`
+  quality preset now uses x264 `fast`
+  ([#6640](https://github.com/heygen-com/hyperframes/pull/6640)), so file sizes
+  and encode times differ from `0.8.78`.
+- **Not fixed by the bump:** the engine still does not let the host disable its
+  `SIGTERM` handler (#5).
+
 ### Pending IR fields
 
 The IR has no place yet for the finish choices, so they travel in the renderer's
