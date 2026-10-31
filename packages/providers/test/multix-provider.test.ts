@@ -57,13 +57,77 @@ function scriptedCli(handler: (argv: readonly string[], options: MultixRunOption
 const flagValue = (argv: readonly string[], name: string) =>
   argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 
+/**
+ * The "API Keys" block of a real `multix check --json` text (1.22.0-beta.3), with everything after "—"
+ * (the masked values) replaced by a placeholder.
+ */
 const CHECK_TEXT = [
-  "multix check",
-  "  ✓ SUME_API_KEY found (sk-…abcd)",
-  "  ✓ ELEVENLABS_API_KEY found (el-…wxyz)",
-  "  ✗ ATLASCLOUD_API_KEY missing",
-  "  ✗ FISH_API_KEY missing",
+  "============================================================",
+  "API Keys",
+  "============================================================",
+  "",
+  "✓ GEMINI_API_KEY found — <masked>",
+  "✓ MINIMAX_API_KEY found — <masked>",
+  "  BYTEPLUS_API_KEY (or ARK_API_KEY) not set (optional)",
+  "✓ ELEVENLABS_API_KEY found — <masked>",
+  "  FISH_API_KEY not set (optional)",
+  "  FAL_KEY not set (optional)",
+  "  ATLASCLOUD_API_KEY not set (optional)",
+  "✓ SUME_API_KEY found — <masked>",
+  "  Cloudflare media unavailable (optional): CLOUDFLARE_ACCOUNT_ID is required for Cloudflare media generation",
+  "",
+  "✓ GEMINI_API_KEY: Gemini API reachable",
+  "✓ multix is ready to use",
 ].join("\n");
+
+/** A real `sume status <id> --download --json` envelope; only the saved path is replaced per test. */
+const REAL_JOB_ID = "job_cd4c1c03-d0ec-442e-bee7-1bf386ea55e9";
+const realStatusEnvelope = (savedPath: string) => ({
+  command: "sume status",
+  provider: "sume",
+  model_requested: null,
+  model_resolved: null,
+  job: { provider: "sume", id: REAL_JOB_ID, attempt: 1 },
+  duration_ms: 1597,
+  outputs: [],
+  text: `Saved 1 file(s) from job ${REAL_JOB_ID}:\n  ${savedPath}`,
+  exit_code: 0,
+  usage: {
+    cost_usd: 0.03,
+    credits: 3,
+    sources: {
+      cost_usd: ["api.sume.com body.data.job.usage_summary.captured_usd_cents"],
+      credits: ["api.sume.com body.data.job.usage_summary.captured_credits"],
+    },
+    metrics: {
+      "data.queue.runtime.worker_heartbeat.stale_after_seconds": 120,
+      "data.job.usage_summary.reserved_credits": 1,
+      "data.job.usage_summary.captured_credits": 1,
+      "data.job.usage_summary.refunded_credits": 0,
+      "data.job.usage_summary.released_credits": 0,
+      "data.job.usage_summary.reserved_usd_cents": 1,
+      "data.job.usage_summary.captured_usd_cents": 1,
+      "data.job.usage_summary.refunded_usd_cents": 0,
+      "data.job.usage_summary.released_usd_cents": 0,
+    },
+  },
+  http: { requests: 4, errors: 0, ms: 1440 },
+  provider_ids: [REAL_JOB_ID, "a530d4d569ee7e2e"],
+  cost: {
+    schema: "multix.cost/v1",
+    operation_id: `sume:${REAL_JOB_ID}`,
+    role: "observation",
+    status: "settled",
+    currency: "USD",
+    provider_reported: { cost_usd: 0.03, credits: 3 },
+    actual_usd: 0.03,
+    actual_source: "provider_reported",
+    variance_usd: null,
+    at: "2026-10-31T07:08:56.686Z",
+  },
+  history_id: "h_mvw28hblxr6c",
+  next: [],
+});
 
 const SUME_CATALOG = {
   source: "live",
@@ -132,9 +196,19 @@ function sumeImageCli(statusReply?: (argv: readonly string[]) => Reply) {
 }
 
 describe("parseCheckKeys", () => {
-  it("reads key names only and ignores missing keys", () => {
-    expect([...parseCheckKeys(CHECK_TEXT)].sort()).toEqual(["ELEVENLABS_API_KEY", "SUME_API_KEY"]);
+  it("reads the found key names from real check text and ignores keys that are not set", () => {
+    expect([...parseCheckKeys(CHECK_TEXT)].sort()).toEqual([
+      "ELEVENLABS_API_KEY",
+      "GEMINI_API_KEY",
+      "MINIMAX_API_KEY",
+      "SUME_API_KEY",
+    ]);
     expect(parseCheckKeys(undefined).size).toBe(0);
+  });
+
+  it("never reads past the dash, so a masked value cannot pose as a key", () => {
+    expect([...parseCheckKeys("✓ SUME_API_KEY found — ✓ FAKE_KEY found")]).toEqual(["SUME_API_KEY"]);
+    expect(parseCheckKeys("  SUME_API_KEY not set (optional)").size).toBe(0);
   });
 });
 
@@ -178,7 +252,7 @@ describe("MultixProvider capabilities", () => {
       atlas: false,
       elevenlabs: true,
       fish: false,
-      minimax: false,
+      minimax: true,
     });
     // Probes are cached.
     await multix.capabilities();
@@ -192,6 +266,29 @@ describe("MultixProvider capabilities", () => {
     }));
     const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
     expect(await multix.capabilities()).toEqual([]);
+  });
+
+  it("trusts a complete success envelope when Node aborts at exit on Windows", async () => {
+    const line = (body: Record<string, unknown>) =>
+      `${JSON.stringify({ schema: "multix.result/v1", ...body })}\n`;
+    // 0xC0000409: Node 24 on Windows hits a libuv assertion at exit after multix printed its result.
+    const crashed = scriptedCli((argv) =>
+      argv[0] === "check"
+        ? { exitCode: 0xc0000409, stdout: line({ ok: true, exit_code: 0, text: CHECK_TEXT }) }
+        : { exitCode: 4, stdout: "" },
+    );
+    const multix = new MultixProvider({ bin: "multix", runner: crashed.runner });
+    expect((await multix.readiness()).sume).toBe(true);
+
+    // Any other exit code, or an envelope that is not a success, still fails the run.
+    for (const reply of [
+      { exitCode: 1, stdout: line({ ok: true, exit_code: 0, text: CHECK_TEXT }) },
+      { exitCode: 0xc0000409, stdout: line({ ok: true, exit_code: 3, text: CHECK_TEXT }) },
+      { exitCode: 0xc0000409, stdout: line({ ok: false, exit_code: 0, text: CHECK_TEXT }) },
+    ]) {
+      const other = new MultixProvider({ bin: "multix", runner: scriptedCli(() => reply).runner });
+      expect((await other.readiness()).sume).toBe(false);
+    }
   });
 
   it("is disabled without MULTIX_BIN", async () => {
@@ -331,6 +428,93 @@ describe("MultixProvider async jobs", () => {
     // Retrying a completed stage collects again and still never submits.
     await second.generate(ctx, imageRequest());
     expect(cli.commands().filter((c) => c === "sume image")).toHaveLength(2);
+  });
+
+  it("collects a finished Sume job from the real status envelope, which lists saved files only in text", async () => {
+    const cli = scriptedCli((argv) => {
+      expect(argv).toEqual(
+        expect.arrayContaining(["sume", "status", REAL_JOB_ID, "--wait", "--download", "--json"]),
+      );
+      const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
+      return { files: { [out]: "png-bytes" }, envelope: realStatusEnvelope(out) };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await multix.resume(ctx, {
+      kind: "image",
+      job: { provider: "sume", id: REAL_JOB_ID },
+      model: "sume:z-image",
+      workDir,
+    });
+    expect(cli.commands()).toEqual(["sume status"]);
+    expect(result.outputs).toEqual([
+      {
+        filePath: join(
+          workDir,
+          `multix-sume-${REAL_JOB_ID.replace(/[^A-Za-z0-9_-]/g, "_")}`,
+          "sume-cd4c1c03-01.png",
+        ),
+        mime: "image/png",
+      },
+    ]);
+    // Sume's captured amount (1¢), not multix's cost_usd (0.03), is the receipt.
+    expect(result).toMatchObject({ costCents: 1, costSource: "receipt", job: { id: REAL_JOB_ID } });
+  });
+
+  it("collects an Atlas prediction from the real status envelope, which lists saved files only in text", async () => {
+    const id = "56af498e15864121b423bd9dae28e516";
+    const cli = scriptedCli((argv) => {
+      const out = join(flagValue(argv, "output")!, `atlas-${id}-01.png`);
+      return {
+        files: { [out]: "png-bytes" },
+        envelope: {
+          command: "atlas status",
+          provider: "atlas",
+          model_requested: null,
+          model_resolved: "atlascloud/image-upscaler",
+          job: { provider: "atlas", id, attempt: 1 },
+          outputs: [],
+          text: `Cost: $0.01\n\nPrediction ${id}: saved 1 file(s)\n  ${out}`,
+          exit_code: 0,
+          usage: { metrics: { "data.timings.inference": 0, "data.latency_ms": 4812 } },
+          cost: {
+            schema: "multix.cost/v1",
+            operation_id: `atlas:${id}`,
+            role: "observation",
+            status: "unknown",
+            reason: "Status or download only; spend belongs to the operation's submit run.",
+            currency: "USD",
+            provider_reported: { cost_usd: null, credits: null },
+            actual_usd: null,
+            actual_source: null,
+            variance_usd: null,
+          },
+          history_id: "h_mvw2d9a44nxd",
+          next: [],
+        },
+      };
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    const result = await multix.resume(ctx, {
+      kind: "upscale",
+      job: { provider: "atlas", id },
+      model: "atlas:atlascloud/image-upscaler",
+      workDir,
+      estimatedCostCents: 1,
+    });
+    expect(result.outputs).toEqual([
+      { filePath: join(workDir, `multix-atlas-${id}`, `atlas-${id}-01.png`), mime: "image/png" },
+    ]);
+    // A status run carries no charge, so the estimate stands in.
+    expect(result).toMatchObject({ costCents: 1, costSource: "estimate" });
+  });
+
+  it("ignores saved paths in text that lie outside the job directory", async () => {
+    const outside = join(workDir, "stray.png");
+    const cli = scriptedCli(() => ({ files: { [outside]: "png" }, envelope: realStatusEnvelope(outside) }));
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    await expect(
+      multix.resume(ctx, { kind: "image", job: { provider: "sume", id: REAL_JOB_ID }, workDir }),
+    ).rejects.toMatchObject({ code: "PROVIDER_ERROR", message: expect.stringContaining("without outputs") });
   });
 
   it("resumes by provider job id alone", async () => {

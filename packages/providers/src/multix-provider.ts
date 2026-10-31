@@ -28,6 +28,7 @@ import {
   type MultixEnvelope,
   type MultixRunner,
   multixRunError,
+  multixRunSucceeded,
   parseMultixEnvelope,
   UNTRUSTED_OUTPUT_WARNINGS,
 } from "./multix-cli-runner.ts";
@@ -142,10 +143,18 @@ const toCents = (usd: number) => Math.ceil(usd * 100 - 1e-9);
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Key names `multix check` reports as found. Only names are read; the masked values are discarded. */
+/**
+ * Key names `multix check` reports as found. Its `--json` envelope has no structured key list, only text
+ * lines such as "✓ SUME_API_KEY found — <masked>" and "  FAL_KEY not set (optional)". Each line is cut at
+ * the first "—" before matching, so the masked value is never read, kept or logged.
+ */
 export function parseCheckKeys(text: string | undefined): Set<string> {
   const keys = new Set<string>();
-  for (const match of (text ?? "").matchAll(/✓\s+([A-Z][A-Z0-9_]*)\s+found/g)) keys.add(match[1]!);
+  for (const line of (text ?? "").split(/\r?\n/)) {
+    const head = line.split("—", 1)[0]!;
+    const match = /^\s*✓\s+([A-Z][A-Z0-9_]*)\s+found\b/.exec(head);
+    if (match) keys.add(match[1]!);
+  }
   return keys;
 }
 
@@ -382,7 +391,7 @@ export class MultixProvider implements MediaProvider {
       await rm(cacheDir, { recursive: true, force: true }).catch(() => undefined);
     }
     const envelope = parseMultixEnvelope(result.stdout);
-    if (result.stoppedBy || result.exitCode !== 0 || !envelope?.ok) {
+    if (!multixRunSucceeded(result, envelope)) {
       throw multixRunError(command, result, envelope);
     }
     return envelope;
