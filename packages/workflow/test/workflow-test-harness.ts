@@ -13,6 +13,7 @@ import {
   type StorageAdapter,
   type TenantContext,
 } from "@studix/core";
+import { releaseRenderingProjects } from "@studix/database";
 import type { TestDatabase } from "@studix/database/testing";
 import { createLogger, StudixError } from "@studix/shared";
 import { unwrapValidation, type VideoIR, validateVideoIR } from "@studix/video-ir";
@@ -209,7 +210,9 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
         storage: options.storage ?? fakeStorage().storage,
         projects: options.projects ?? repos.projects,
         renders: options.renders ?? repos.renders,
-        recovery: { projects: repos.projects, jobs: repos.jobs },
+        releaseProject: async (job) => {
+          await releaseRenderingProjects(db.db, [job.id]);
+        },
         workRoot: mkdtempSync(join(tmpdir(), "studix-worker-test-")),
         renderCentsPerSecond: options.renderCentsPerSecond,
       }),

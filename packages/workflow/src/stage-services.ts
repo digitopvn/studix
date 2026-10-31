@@ -29,6 +29,20 @@ export async function stageWorkDir(s: StageContext, stage: string): Promise<stri
 }
 
 /**
+ * Where a stage's media provider writes. Unlike `stageWorkDir` it belongs to the job, not the attempt
+ * (`<workRoot>/<jobId>/media/<stage>`), so a retried stage finds the synchronous output (some audio routes)
+ * it already paid for instead of generating and billing it again. Only the media provider writes here, and a
+ * stage never removes it: `finalize` removes the job's whole directory, and a failed job keeps it so a retry
+ * can reuse it.
+ */
+export async function stageMediaDir(s: StageContext, stage: string): Promise<string> {
+  const root = requireService(s, "workRoot");
+  const dir = join(root, s.job.id, "media", stage.replace(/[^A-Za-z0-9_-]/g, "_"));
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/**
  * Run `work` over `items` with at most `limit` in flight, keeping the input order in the result. After the
  * first failure no new item starts, but the items already running are awaited, so none of their paid calls
  * goes unseen.

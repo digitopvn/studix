@@ -3,11 +3,12 @@ import { join } from "node:path";
 import { USAGE_KINDS } from "@studix/billing";
 import {
   JOB_KINDS,
-  type JobRepository,
+  type Job,
   type ProjectRepository,
   type RendererAdapter,
   type RenderRepository,
   type StorageAdapter,
+  type TenantContext,
 } from "@studix/core";
 import { type Clock, StudixError, systemClock } from "@studix/shared";
 import { resolveRenderSpec } from "@studix/video-ir";
@@ -23,6 +24,7 @@ import {
   ValidateOutput,
   VideoCreatePayload,
 } from "./video-create-checkpoints.ts";
+import type { FencedRepositories } from "./worker-job-queue.ts";
 import type {
   EngineStages,
   PackPipeline,
@@ -42,13 +44,11 @@ export interface VideoCreateWorkflowDeps {
   projects: Pick<ProjectRepository, "get" | "getVersion">;
   renders: Pick<RenderRepository, "get">;
   /**
-   * Lets a failed or cancelled job hand its project back from `rendering` (see `onEnded`). Unfenced by
-   * design: the job no longer owns anything then. Without it the project keeps the status the job left.
+   * Hands the project of a failed or cancelled job back from `rendering` (see `onEnded`); it must be one
+   * conditional write that leaves a project alone that moved on or has another job coming. Without it the
+   * project keeps the status the job left.
    */
-  recovery?: {
-    projects: Pick<ProjectRepository, "get" | "update">;
-    jobs: Pick<JobRepository, "list">;
-  };
+  releaseProject?(job: Job): Promise<void>;
   /** Local scratch root; each job attempt renders into `<workRoot>/<jobId>/attempt-<n>`. */
   workRoot: string;
   /** COGS per rendered output second (compute cost). Defaults to 0 until measured. */
@@ -275,7 +275,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
             completedAt: clock.now(),
           });
         }
-        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+        await markInReview(repos, ctx, payload.projectId);
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return {
@@ -296,7 +296,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
       const payload = payloadOf(s);
       const { versionId } = read(ValidateOutput, s.outputs.validate_ir, "validate_ir checkpoint");
       await s.commit(async (repos, ctx) => {
-        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+        await markInReview(repos, ctx, payload.projectId);
       });
       await rm(jobDir(s.job.id), { recursive: true, force: true });
       return { output: { projectVersionId: versionId, storyboard: "in_review" } };
@@ -316,21 +316,8 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
     kind: JOB_KINDS.createVideo,
     result: defaultResult,
     stages: [engine.plan, engine.validateIr, engine.render, engine.upload, engine.finalize],
-    async onEnded(job, _outcome, ctx) {
-      const recovery = deps.recovery;
-      const parsed = VideoCreatePayload.safeParse(job.payload);
-      if (!recovery || !parsed.success) return;
-      const { projectId } = parsed.data;
-      const project = await recovery.projects.get(ctx, projectId);
-      if (project?.status !== "rendering") return;
-      // Another job of the project that is queued or running sets the status again when it gets there.
-      for (const status of ["queued", "running"] as const) {
-        const others = await recovery.jobs.list(ctx, { projectId, status, limit: 5 });
-        if (others.items.some((other) => other.id !== job.id)) return;
-      }
-      await recovery.projects.update(ctx, projectId, {
-        status: project.currentVersionId ? "in_review" : "draft",
-      });
+    async onEnded(job) {
+      await deps.releaseProject?.(job);
     },
     route(job) {
       if (!deps.pipelines) return undefined;
@@ -356,4 +343,14 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
       };
     },
   };
+}
+
+/**
+ * Hand the project to review when this job's render or storyboard is ready. Only a project that is still
+ * `rendering` moves: a retried job that finishes after a newer render was approved or published (or after the
+ * project was archived) must not put the project back into review.
+ */
+async function markInReview(repos: FencedRepositories, ctx: TenantContext, projectId: string): Promise<void> {
+  const project = await repos.projects.get(ctx, projectId);
+  if (project?.status === "rendering") await repos.projects.update(ctx, projectId, { status: "in_review" });
 }

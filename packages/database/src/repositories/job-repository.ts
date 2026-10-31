@@ -125,6 +125,40 @@ export async function findJobStates(
   return new Map(rows.map((r) => [r.id, { status: r.status, finishedAt: opt(r.finishedAt) }]));
 }
 
+/**
+ * Hand projects back from `rendering` after their render job ended `failed` or `cancelled`: to `in_review`
+ * when the project has a version, else `draft`. One conditional statement, so a project that moved on
+ * meanwhile (archived, approved, rendering again for a job that started since) is left alone, and so is
+ * one that another queued, running or parked job of the project is still going to render.
+ */
+export async function releaseRenderingProjects(
+  db: DbExecutor,
+  jobIds: readonly string[],
+  now: Date = new Date(),
+): Promise<number> {
+  if (jobIds.length === 0) return 0;
+  const ids = sql.join(
+    jobIds.map((id) => sql`${id}`),
+    sql`, `,
+  );
+  const rows = await db.execute(sql`
+    update video_projects p
+    set status = case when p.current_version_id is not null then 'in_review' else 'draft' end,
+        updated_at = ${now.toISOString()}::timestamptz
+    where p.status = 'rendering'
+      and exists (
+        select 1 from jobs j
+        where j.id in (${ids}) and j.kind = 'video.create' and j.project_id = p.id
+          and j.organization_id = p.organization_id and j.workspace_id = p.workspace_id
+      )
+      and not exists (
+        select 1 from jobs o
+        where o.project_id = p.id and o.status in ('queued', 'running', 'waiting_approval', 'waiting_host')
+      )
+    returning p.id`);
+  return rows.length;
+}
+
 export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepository; queue: JobQueue } {
   const getRow = async (ctx: TenantContext, id: string) =>
     (
@@ -279,7 +313,10 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           ),
         )
         .returning();
-      if (stopped[0]) return toJob(stopped[0]);
+      if (stopped[0]) {
+        await releaseRenderingProjects(db, [jobId], now);
+        return toJob(stopped[0]);
+      }
       const flagged = await db
         .update(jobs)
         .set({ cancelRequested: true, updatedAt: now })
@@ -306,7 +343,12 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           lockedBy: null,
           leaseExpiresAt: null,
           // The window the caller asked for starts again; the failed attempt may have used it up.
-          deadlineAt: sql`case when ${jobs.deadlineAt} is null then null else ${now.toISOString()}::timestamptz + coalesce(${jobs.deadlineWindowMs} * interval '1 millisecond', ${jobs.deadlineAt} - ${jobs.createdAt}) end`,
+          deadlineAt: sql`case
+            when ${jobs.deadlineWindowMs} is not null then ${now.toISOString()}::timestamptz + ${jobs.deadlineWindowMs} * interval '1 millisecond'
+            when ${jobs.deadlineAt} is not null then ${now.toISOString()}::timestamptz + (${jobs.deadlineAt} - ${jobs.createdAt})
+            else null end`,
+          // A job that failed parked at a gate still holds the paused leftover; a fresh window replaces it.
+          deadlineRemainingMs: null,
           updatedAt: now,
         })
         .where(scoped(jobs, ctx, eq(jobs.id, jobId), eq(jobs.status, "failed")))

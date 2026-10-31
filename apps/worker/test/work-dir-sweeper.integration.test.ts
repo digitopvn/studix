@@ -52,7 +52,7 @@ describe("work directory sweep", () => {
     const queued = await make("queued");
     const unknownOld = "job_00000000000000000000000000";
     mkdirSync(join(workDir, unknownOld));
-    const old = new Date(Date.now() - 30 * HOUR);
+    const old = new Date(Date.now() - 8 * 24 * HOUR);
     utimesSync(join(workDir, unknownOld), old, old);
     const unknownFresh = "job_00000000000000000000000001";
     mkdirSync(join(workDir, unknownFresh));

@@ -9,7 +9,7 @@ import {
   type StorageAdapter,
   storyboardStatus,
 } from "@studix/core";
-import { createRepositories, type StudixDb } from "@studix/database";
+import { createRepositories, releaseRenderingProjects, type StudixDb } from "@studix/database";
 import { type Clock, type Logger, systemClock } from "@studix/shared";
 import { packPipelines, packRegistry } from "@studix/skills";
 import {
@@ -112,7 +112,9 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
         storage: deps.storage,
         projects: repos.projects,
         renders: repos.renders,
-        recovery: { projects: repos.projects, jobs: repos.jobs },
+        releaseProject: async (job) => {
+          await releaseRenderingProjects(deps.db, [job.id], clock.now());
+        },
         workRoot: settings.workDir,
         renderCentsPerSecond: settings.renderCentsPerSecond,
         clock,

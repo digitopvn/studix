@@ -19,6 +19,7 @@ import {
   createRenderRepository,
   createUsageRepository,
   type DbExecutor,
+  releaseRenderingProjects,
   type StudixDb,
   schema,
   toJob,
@@ -545,6 +546,11 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           ),
         )
         .returning({ id: jobs.id });
+      await releaseRenderingProjects(
+        db,
+        rows.map((r) => r.id),
+        now,
+      );
       return rows.length;
     },
 
@@ -665,6 +671,11 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
             ),
           )
           .returning({ id: jobs.id });
+        await releaseRenderingProjects(
+          tx,
+          failed.map((r) => r.id),
+          now,
+        );
         return failed.length;
       });
     },
