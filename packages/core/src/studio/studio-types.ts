@@ -127,8 +127,8 @@ const VersionJobOptions = {
 };
 
 /**
- * Feedback on one target of the current version: a shot, a scene, an asset, or a time range of the video
- * (`startMs` with `endMs`). `patch` ops are JSON pointers into the VideoIR and must stay inside the
+ * Feedback on one target of the current version: a shot, a scene, an asset, a film character's voice
+ * (`characterId`), or a time range of the video (`startMs` with `endMs`). `patch` ops are JSON pointers into the VideoIR and must stay inside the
  * target (feedback without a patch answers with the `allowedPaths`); with a patch a new version is stored
  * and a render job is queued.
  */
@@ -138,6 +138,8 @@ export const FeedbackInput = z
     shotId: IrId.optional(),
     sceneId: IrId.optional(),
     assetId: IrId.optional(),
+    /** A film character: a patch may only change that character's voice in the production bible. */
+    characterId: IrId.optional(),
     startMs: Milliseconds.optional(),
     endMs: PositiveMilliseconds.optional(),
     comment: z.string().trim().min(1).max(2000),
@@ -148,9 +150,12 @@ export const FeedbackInput = z
   })
   .refine(
     (v) =>
-      [v.shotId, v.sceneId, v.assetId, v.startMs ?? v.endMs].filter((t) => t !== undefined).length === 1 &&
-      (v.startMs === undefined) === (v.endMs === undefined),
-    { message: "Give exactly one target: shotId, sceneId, assetId, or startMs with endMs", path: ["shotId"] },
+      [v.shotId, v.sceneId, v.assetId, v.characterId, v.startMs ?? v.endMs].filter((t) => t !== undefined)
+        .length === 1 && (v.startMs === undefined) === (v.endMs === undefined),
+    {
+      message: "Give exactly one target: shotId, sceneId, assetId, characterId, or startMs with endMs",
+      path: ["shotId"],
+    },
   )
   .refine((v) => v.startMs === undefined || v.endMs === undefined || v.endMs > v.startMs, {
     message: "endMs must be after startMs",
