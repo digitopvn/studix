@@ -340,7 +340,11 @@ export function createVideoCreateWorkflow(deps: VideoCreateWorkflowDeps): Workfl
  * `rendering` moves: a retried job that finishes after a newer render was approved or published (or after the
  * project was archived) must not put the project back into review.
  */
-async function markInReview(repos: FencedRepositories, ctx: TenantContext, projectId: string): Promise<void> {
+export async function markInReview(
+  repos: FencedRepositories,
+  ctx: TenantContext,
+  projectId: string,
+): Promise<void> {
   const project = await repos.projects.get(ctx, projectId);
   if (project?.status === "rendering") await repos.projects.update(ctx, projectId, { status: "in_review" });
 }
