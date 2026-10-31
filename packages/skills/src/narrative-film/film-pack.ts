@@ -290,6 +290,18 @@ async function downloadMediaInputs(
   return downloadIrAssets(requireService(s, "storage"), s.ctx, { ...ir, assets }, dir);
 }
 
+/**
+ * Whether an image already has the film's frame. An edit keeps its reference's frame, and some models
+ * (grok-image) refuse an aspect ratio next to a reference, so a matching reference is sent without one.
+ */
+function hasFilmFrame(asset: AssetRef | undefined, scope: Pick<FilmScope, "aspectRatio">): boolean {
+  if (!asset?.width || !asset.height) return false;
+  const frame = filmFrameSize(scope);
+  return (
+    Math.abs(asset.width * frame.height - asset.height * frame.width) <= 0.01 * asset.height * frame.width
+  );
+}
+
 /** Replace shots of an IR by id. */
 function replaceShots(ir: VideoIR, next: ReadonlyMap<string, Shot>, assets: readonly AssetRef[]): VideoIR {
   const copy = structuredClone(ir);
@@ -627,7 +639,8 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
   });
 
   const keyframeRequests = (s: StageContext) => {
-    const film = filmOf(irOf(s));
+    const ir = irOf(s);
+    const film = filmOf(ir);
     const { boards } = read(boardsOutput, s.outputs[n.storyboard], "storyboard checkpoint");
     const byShot = boardsFor(film.scope, boards);
     return scopeShots(film.scope).map(({ scene, shot }) => {
@@ -639,6 +652,12 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             .find((c) => c.characterId === lead)
             ?.references.find((r) => r.status !== "retired")
         : undefined;
+      const framed =
+        sheet !== undefined &&
+        hasFilmFrame(
+          ir.assets.find((a) => a.id === sheet.assetId),
+          film.scope,
+        );
       return {
         shot,
         board,
@@ -647,7 +666,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           assetId: `${shot.id}-key`.slice(0, 64),
           kind: "image" as const,
           prompt: keyframePrompt(film.scope, scene.setId, shot, board.frame),
-          params: { aspectRatio: film.scope.aspectRatio },
+          params: framed ? {} : { aspectRatio: film.scope.aspectRatio },
           keyPrefix: `generated/${s.job.id}/keyframes/${shot.id}`,
           maxCostCents: 0,
         } satisfies StoredMediaRequest,

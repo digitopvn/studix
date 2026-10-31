@@ -352,6 +352,14 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
       true,
       false,
     ]);
+    // A sheet already in the film's frame sets the edit's frame: no aspect ratio next to it (grok-image refuses one).
+    expect(keyframes.map((r) => r.params?.aspectRatio ?? null)).toEqual([
+      scope.aspectRatio,
+      null,
+      null,
+      null,
+      scope.aspectRatio,
+    ]);
     const board = await currentIr(ctx, project.id);
     expect(board.project.status).toBe("in_review");
     expect(board.ir.scenes[0]?.shots.map((s) => [s.id, s.type])).toEqual(shotIds.map((id) => [id, "image"]));
