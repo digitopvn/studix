@@ -104,13 +104,6 @@ it by job id. Only errors that prove Atlas never accepted the run (invalid
 request, missing key) release the key for a retry. Calls made outside a
 workflow stage fall back to an in-process journal, which a restart loses.
 
-A Sume job's cost is what Sume captured (`usage_summary.captured_usd_cents`),
-not multix's `cost_usd`. Sume can report a job completed before it captures the
-reserved charge. The adapter then reads the job's status again, up to 5 times
-2 s apart, until the reservation is captured, refunded or released. If it still
-has not settled, the usage line bills what Sume will capture (the reservation
-minus refunds and releases) with cost source `estimate`, never 0.
-
 Pack stages (`marketing-video`, `motion-graphic`) get the media provider, the
 storage, the renderer and the hard QA gate from the worker
 ([`pack-services.ts`](../apps/worker/src/pack-services.ts)). Without

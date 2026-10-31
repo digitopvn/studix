@@ -130,29 +130,6 @@ const realStatusEnvelope = (savedPath: string) => ({
   next: [],
 });
 
-/**
- * The same job read right at completion, before Sume captured the reserved charge: nothing captured,
- * refunded or released yet, so multix's cost derived from it is 0 too.
- */
-const unsettledStatusEnvelope = (savedPath?: string) => {
-  const real = realStatusEnvelope(savedPath ?? "unused");
-  return {
-    ...real,
-    ...(savedPath ? {} : { text: `Job ${REAL_JOB_ID}: completed` }),
-    usage: {
-      ...real.usage,
-      cost_usd: 0,
-      credits: 0,
-      metrics: {
-        ...real.usage.metrics,
-        "data.job.usage_summary.captured_credits": 0,
-        "data.job.usage_summary.captured_usd_cents": 0,
-      },
-    },
-    cost: { ...real.cost, provider_reported: { cost_usd: 0, credits: 0 }, actual_usd: 0 },
-  };
-};
-
 const SUME_CATALOG = {
   source: "live",
   currency: "USD",
@@ -233,6 +210,38 @@ describe("parseCheckKeys", () => {
   it("never reads past the dash, so a masked value cannot pose as a key", () => {
     expect([...parseCheckKeys("✓ SUME_API_KEY found — ✓ FAKE_KEY found")]).toEqual(["SUME_API_KEY"]);
     expect(parseCheckKeys("  SUME_API_KEY not set (optional)").size).toBe(0);
+  });
+});
+
+describe("parseMultixEnvelope receipt", () => {
+  const P = "data.job.usage_summary.";
+  const line = (metrics: Record<string, number>) =>
+    JSON.stringify({ schema: "multix.result/v1", ok: true, usage: { metrics } });
+  const usage = (captured: number, extra: Record<string, number> = {}) => ({
+    [`${P}reserved_usd_cents`]: 1,
+    [`${P}captured_usd_cents`]: captured,
+    [`${P}refunded_usd_cents`]: 0,
+    [`${P}released_usd_cents`]: 0,
+    ...extra,
+  });
+
+  it("bills what Sume will keep when the charge is not captured yet", () => {
+    expect(parseMultixEnvelope(line(usage(0)))?.receiptUsd).toBe(0.01);
+  });
+
+  it("keeps the captured amount once settled and never lowers it", () => {
+    expect(parseMultixEnvelope(line(usage(1)))?.receiptUsd).toBe(0.01);
+    expect(parseMultixEnvelope(line(usage(3)))?.receiptUsd).toBe(0.03);
+  });
+
+  it("subtracts refunded and released amounts and clamps at zero", () => {
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}refunded_usd_cents`]: 1 })))?.receiptUsd).toBe(0);
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}released_usd_cents`]: 1 })))?.receiptUsd).toBe(0);
+    expect(parseMultixEnvelope(line(usage(0, { [`${P}refunded_usd_cents`]: 5 })))?.receiptUsd).toBe(0);
+  });
+
+  it("falls back to the captured amount when no reservation is reported", () => {
+    expect(parseMultixEnvelope(line({ [`${P}captured_usd_cents`]: 2 }))?.receiptUsd).toBe(0.02);
   });
 });
 
@@ -506,91 +515,21 @@ describe("MultixProvider async jobs", () => {
     expect(result).toMatchObject({ costCents: 1, costSource: "receipt", job: { id: REAL_JOB_ID } });
   });
 
-  it("reads a completed Sume job again until its charge is captured, and records that amount", async () => {
+  it("bills the reserved charge when Sume reports the job completed before capturing it", async () => {
     const cli = scriptedCli((argv) => {
-      if (argv[1] !== "status") throw new Error(`unexpected argv ${argv.join(" ")}`);
-      if (argv.includes("--download")) {
-        const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
-        return { files: { [out]: "png-bytes" }, envelope: unsettledStatusEnvelope(out) };
-      }
-      // The first plain read still finds the charge reserved; the second finds it captured.
-      const reads = cli.calls.filter((c) => !c.argv.includes("--download")).length;
-      return { envelope: reads < 2 ? unsettledStatusEnvelope() : realStatusEnvelope("unused") };
+      const out = join(flagValue(argv, "output")!, "sume-cd4c1c03-01.png");
+      const envelope = realStatusEnvelope(out);
+      envelope.usage.metrics["data.job.usage_summary.captured_usd_cents"] = 0;
+      return { files: { [out]: "png-bytes" }, envelope };
     });
-    const journal = new InMemoryMediaJobJournal();
-    const record = {
-      idempotencyKey: "stage-1:image",
-      kind: "image" as const,
-      model: "sume:z-image",
-      job: { provider: "sume" as const, id: REAL_JOB_ID },
-      attempt: 1,
-      state: "submitted" as const,
-      estimatedCostCents: 1,
-      submittedAt: "2026-10-31T08:38:11.000Z",
-      updatedAt: "2026-10-31T08:38:11.000Z",
-    };
-    await journal.put(ctx, record);
-    const multix = new MultixProvider({
-      bin: "multix",
-      runner: cli.runner,
-      receiptChecks: { attempts: 5, intervalMs: 0 },
-    });
-    const result = await multix.generate(ctx, {
-      ...imageRequest({ journal, model: "sume:z-image" }),
-    });
-    expect(result).toMatchObject({ costCents: 1, costSource: "receipt", job: { id: REAL_JOB_ID } });
-    const statusReads = cli.calls.filter((c) => c.argv[1] === "status");
-    expect(statusReads).toHaveLength(3);
-    // Re-reads only ask for the status: no wait, no second download.
-    for (const read of statusReads.slice(1)) {
-      expect(read.argv).toEqual(["sume", "status", REAL_JOB_ID, "--json"]);
-    }
-    expect(await journal.get(ctx, "stage-1:image")).toMatchObject({ state: "completed", receiptCents: 1 });
-  });
-
-  it("bills what Sume will capture, as an estimate, when the charge never settles within the reads", async () => {
-    const cli = scriptedCli((argv) => {
-      const out = join(flagValue(argv, "output") ?? workDir, "sume-cd4c1c03-01.png");
-      return argv.includes("--download")
-        ? { files: { [out]: "png-bytes" }, envelope: unsettledStatusEnvelope(out) }
-        : { envelope: unsettledStatusEnvelope() };
-    });
-    const multix = new MultixProvider({
-      bin: "multix",
-      runner: cli.runner,
-      receiptChecks: { attempts: 2, intervalMs: 0 },
-    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
     const result = await multix.resume(ctx, {
       kind: "image",
       job: { provider: "sume", id: REAL_JOB_ID },
       model: "sume:z-image",
       workDir,
     });
-    expect(cli.commands()).toEqual(["sume status", "sume status", "sume status"]);
-    expect(result).toMatchObject({ costCents: 1, costSource: "estimate" });
-  });
-
-  it("never takes an unsettled Sume charge for a receipt", () => {
-    const parsed = parseMultixEnvelope(
-      JSON.stringify({ schema: "multix.result/v1", ok: true, ...unsettledStatusEnvelope() }),
-    );
-    expect(parsed?.receiptUsd).toBeUndefined();
-    expect(parsed?.pendingCharge).toEqual({ cents: 1 });
-    const settled = parseMultixEnvelope(
-      JSON.stringify({ schema: "multix.result/v1", ok: true, ...realStatusEnvelope("x") }),
-    );
-    expect(settled?.receiptUsd).toBe(0.01);
-    expect(settled?.pendingCharge).toBeUndefined();
-  });
-
-  it("takes a refunded Sume charge as a settled receipt of 0", () => {
-    const refunded = realStatusEnvelope("x");
-    const metrics = refunded.usage.metrics as Record<string, number>;
-    metrics["data.job.usage_summary.captured_usd_cents"] = 0;
-    metrics["data.job.usage_summary.refunded_usd_cents"] = 1;
-    const parsed = parseMultixEnvelope(JSON.stringify({ schema: "multix.result/v1", ok: true, ...refunded }));
-    expect(parsed?.receiptUsd).toBe(0);
-    expect(parsed?.pendingCharge).toBeUndefined();
+    expect(result).toMatchObject({ costCents: 1, costSource: "receipt" });
   });
 
   it("collects an Atlas prediction from the real status envelope, which lists saved files only in text", async () => {
