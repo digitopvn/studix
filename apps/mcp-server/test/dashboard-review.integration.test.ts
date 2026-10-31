@@ -184,7 +184,11 @@ describe("dashboard project review API (Postgres)", () => {
     });
     expect(badPack.status).toBe(400);
     expect(await badPack.json()).toMatchObject({
-      error: { details: { available: ["brand-intro", "marketing-video", "motion-graphic"] } },
+      error: {
+        details: {
+          available: ["brand-intro", "marketing-video", "motion-graphic", "anime", "long-form-film"],
+        },
+      },
     });
   });
 

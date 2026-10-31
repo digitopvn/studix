@@ -3,6 +3,7 @@ export * from "./audio-captions.ts";
 export * from "./brand-kit.ts";
 export * from "./creative-brief.ts";
 export * from "./dependency-graph.ts";
+export * from "./film-production.ts";
 export * from "./format.ts";
 export * from "./json-schema.ts";
 export * from "./migrations.ts";

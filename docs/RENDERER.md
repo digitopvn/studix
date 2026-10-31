@@ -8,16 +8,34 @@ records the contract and the measurements behind it.
 
 ## What renders (Implemented)
 
-| IR element                         | How                                                                                                                                                                  |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`)                                                                                |
-| Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them                     |
-| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `volume` x `gainDb`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`) |
-| Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                |
+| IR element                         | How                                                                                                                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`)                                                                                            |
+| Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them                                 |
+| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `volume` x `gainDb`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`)             |
+| Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                            |
+| Composition shot (film scene)      | Captured first by the ported film engine (`film-engine/film-composition-render.ts`), each scene as its own HyperFrames root composition, then spliced back as a muted video shot |
 
 Media types: images `png/jpeg/webp/gif/avif/svg`, video `mp4/webm/mov`, audio any
 `audio/*` FFmpeg decodes. `hyperframesSupport()` reports anything else instead of
 dropping it.
+
+### Film scenes
+
+A composition shot names a code asset of type `application/vnd.studix.film-scene+json`: a
+versioned package with an EDL and an ES module that exports `scene` (`film-scene-package.ts`).
+The package refers to IR media only as `asset:<id>`; the renderer resolves those tokens to project
+paths, and a malformed package is `VALIDATION`. The engine under `packages/renderers/film-engine/`
+is ported as-is from anime-creator ([PORTING.md](PORTING.md#port-record-film-engine-và-pack-phim)).
+Its page loads GSAP and fonts from the project, and a CSP keeps it off the network.
+
+Captures are keyed by the scene content, its media, params, duration, fps and quality, so a retry
+in the same work directory reuses them.
+
+Packs author scenes through `@studix/renderers/film-scene`, which has no browser dependency.
+`filmPlateScene` builds a one-shot scene that moves a still: a camera push towards a focus point
+and, optionally, particle weather (`petal`, `sakura`, `snow`, `ember`, `leaf`, `ash`). The
+narrative packs use it for T0/T1 shots instead of an image-to-video call.
 
 ## Finish and deliveries (Implemented)
 

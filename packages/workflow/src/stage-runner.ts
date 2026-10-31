@@ -348,6 +348,8 @@ export async function runStages(
       const gate = await checkApprovalGate(deps, ctx, job, workerId, {
         action: stage.approval.action,
         estimatedCostCents: stage.approval.estimateCostCents?.(job),
+        ...(stage.approval.scopeKey ? { scopeKey: stage.approval.scopeKey } : {}),
+        ...(stage.approval.reason ? { reason: stage.approval.reason } : {}),
       });
       if (gate.status === "lease_lost") throw new LeaseLostError();
       if (gate.status === "waiting")

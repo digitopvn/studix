@@ -83,7 +83,14 @@ describe("MCP workflow templates, feedback and render (Postgres)", () => {
       code: "VALIDATION",
       details: {
         workflowTemplate: "no-such-pack",
-        available: ["brand-intro", "marketing-video", "motion-graphic", "review-explainer"],
+        available: [
+          "brand-intro",
+          "marketing-video",
+          "motion-graphic",
+          "anime",
+          "long-form-film",
+          "review-explainer",
+        ],
       },
     });
     expect(bad.envelope.error?.suggestedAction).toContain("review-explainer");
