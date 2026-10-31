@@ -413,6 +413,9 @@ importers:
       '@studix/skills':
         specifier: workspace:*
         version: link:../skills
+      '@studix/video-ir':
+        specifier: workspace:*
+        version: link:../video-ir
       '@studix/workflow':
         specifier: workspace:*
         version: link:../workflow
@@ -487,6 +490,9 @@ importers:
       '@studix/core':
         specifier: workspace:*
         version: link:../core
+      '@studix/renderers':
+        specifier: workspace:*
+        version: link:../renderers
       '@studix/shared':
         specifier: workspace:*
         version: link:../shared

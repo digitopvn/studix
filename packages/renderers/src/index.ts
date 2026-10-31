@@ -39,6 +39,7 @@ export {
   hasCompositionShots,
   renderFilmCompositions,
 } from "./film-engine/film-composition-render.ts";
+export { FILM_WEATHER_PRESETS, FilmPlateOptions, filmPlateScene } from "./film-engine/film-plate-scene.ts";
 export {
   FILM_ENGINE_VERSION,
   FILM_SCENE_FORMAT,

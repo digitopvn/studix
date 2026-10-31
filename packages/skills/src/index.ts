@@ -67,6 +67,12 @@ export * from "./marketing-video/marketing-video-variants.ts";
 export * from "./motion-graphic/motion-graphic-pack.ts";
 export * from "./motion-graphic/motion-graphic-template.ts";
 export * from "./motion-graphic/motion-style-profiles.ts";
+export * from "./narrative-film/anime-pack.ts";
+export * from "./narrative-film/film-boards.ts";
+export * from "./narrative-film/film-pack.ts";
+export * from "./narrative-film/film-prompts.ts";
+export * from "./narrative-film/film-scope.ts";
+export * from "./narrative-film/long-form-film-pack.ts";
 export {
   createPackRegistry,
   type PackRegistry,

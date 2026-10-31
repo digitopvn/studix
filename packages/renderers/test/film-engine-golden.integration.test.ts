@@ -1,10 +1,16 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@studix/shared";
-import { resolveRenderSpec } from "@studix/video-ir";
+import { resolveRenderSpec, unwrapValidation, validateVideoIR } from "@studix/video-ir";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { HyperFramesRenderer, renderFilmCompositions } from "../src/index.ts";
+import {
+  FILM_SCENE_MIME,
+  filmPlateScene,
+  HyperFramesRenderer,
+  renderFilmCompositions,
+} from "../src/index.ts";
 import { filmSceneIr, writeFilmSceneAssets } from "./film-scene-fixture.ts";
 import { renderToolchain, tempDir } from "./render-test-helpers.ts";
 
@@ -106,6 +112,74 @@ describe.skipIf(!toolchain.ok)(`film engine golden render ${toolchain.reason}`, 
     for (const [i, value] of luma.entries()) {
       expect(Math.abs(value - golden.luma[i]!), `frame ${i}`).toBeLessThanOrEqual(LUMA_TOLERANCE);
     }
+  });
+
+  it("captures a plate scene (a still with a camera push and weather) deterministically and in motion", async () => {
+    const pkg = filmPlateScene({
+      imageAssetId: "cel-a",
+      durationMs: 2000,
+      fps: 12,
+      width: 320,
+      height: 180,
+      push: 1.12,
+      focus: [0.3, 0.4],
+      weather: "petal",
+    });
+    const file = join(dir, "plate.json");
+    writeFileSync(file, JSON.stringify(pkg));
+    const cel = fixture.assets.find((a) => a.id === "cel-a")!;
+    const ir = unwrapValidation(
+      validateVideoIR({
+        schemaVersion: 1,
+        title: "Plate scene",
+        language: "vi",
+        format: { aspectRatio: "16:9", width: 320, height: 180, fps: 12, durationMs: 2000 },
+        assets: [
+          cel,
+          {
+            id: "plate",
+            kind: "code",
+            storageKey: "test/plate.json",
+            sha256: createHash("sha256").update(readFileSync(file)).digest("hex"),
+            mime: FILM_SCENE_MIME,
+            assetVersionId: "asv_plate_1",
+            provenance: { source: "generated" },
+          },
+        ],
+        scenes: [
+          {
+            id: "scene-1",
+            role: "body",
+            durationMs: 2000,
+            shots: [
+              { id: "plate-shot", type: "composition", startMs: 0, durationMs: 2000, assetId: "plate" },
+            ],
+          },
+        ],
+        timeline: { entries: [{ sceneId: "scene-1", startMs: 0 }] },
+      }),
+      "plate IR",
+    );
+    const assetFiles = { "cel-a": fixture.assetFiles["cel-a"]!, plate: file };
+    const capturePlate = async (workDir: string) => {
+      const result = await renderFilmCompositions({
+        ir,
+        assetFiles,
+        workDir,
+        fps: 12,
+        quality: "draft",
+        crf: 18,
+        logger: log,
+      });
+      const shot = result.ir.scenes[0]!.shots[0]!;
+      expect(shot.type).toBe("video");
+      return result.assetFiles[shot.type === "video" ? shot.assetId : ""]!;
+    };
+    const hashes = frameHashes(await capturePlate(join(dir, "plate-a")));
+    expect(hashes).toHaveLength(24);
+    expect(frameHashes(await capturePlate(join(dir, "plate-b")))).toEqual(hashes);
+    // The push and the drifting petals move every frame.
+    expect(new Set(hashes).size).toBeGreaterThan(20);
   });
 
   it("renders an IR whose shot is a film scene through the HyperFrames renderer", async () => {

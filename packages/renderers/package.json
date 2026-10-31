@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./film-scene": "./src/film-engine/film-scene.ts"
   },
   "dependencies": {
     "@fontsource-variable/source-serif-4": "5.2.9",
