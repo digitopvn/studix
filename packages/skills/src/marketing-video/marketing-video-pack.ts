@@ -719,7 +719,11 @@ export const marketingPublishStage: StageDefinition = {
           completedAt: new Date(),
         });
       }
-      await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+      // Only the head version's job hands the project to review; a retried older job must not end the head's render.
+      const project = await repos.projects.get(ctx, payload.projectId);
+      if (project?.currentVersionId === versionId) {
+        await repos.projects.update(ctx, payload.projectId, { status: "in_review" });
+      }
     });
     const root = requireService(s, "workRoot");
     await rm(join(root, s.job.id), { recursive: true, force: true });
