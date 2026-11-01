@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me, selectedWorkspace, selectWorkspace } from "./api-client.ts";
 import { AccountPage } from "./pages/account-page.tsx";
 import { ApiKeysPage } from "./pages/api-keys-page.tsx";
@@ -55,8 +55,13 @@ export function App() {
   const segments = useHashRoute();
   const [session, setSession] = useState<SessionState>({ status: "loading" });
   const [error, setError] = useState<unknown>();
-  // A failed GitHub/Google redirect comes back as /?error=<code>; read it once on load.
-  const [ssoError] = useState(takeSsoError);
+  // A failed GitHub/Google redirect comes back as /?error=<code>; read it once on load, drop it on navigation.
+  const [ssoError, setSsoError] = useState(takeSsoError);
+  const route = segments.join("/");
+  const landingRoute = useRef(route);
+  useEffect(() => {
+    if (route !== landingRoute.current) setSsoError(undefined);
+  }, [route]);
 
   const loadSession = useCallback(async () => {
     setError(undefined);

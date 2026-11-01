@@ -92,7 +92,10 @@ function buildBetterAuth(options: DashboardAuthOptions) {
     },
     socialProviders: {
       ...(sso.github ? { github: { ...sso.github } } : {}),
-      ...(sso.google ? { google: { ...sso.google, prompt: "select_account" as const } } : {}),
+      // Only the redirect flow (state + PKCE); Google's direct id-token sign-in stays off.
+      ...(sso.google
+        ? { google: { ...sso.google, prompt: "select_account" as const, disableIdTokenSignIn: true } }
+        : {}),
     },
     // SSO links to an existing user only when the provider reports the email as verified (neither provider
     // is trusted blindly) and the Studix user's own email is verified too, so a password account someone
@@ -100,6 +103,14 @@ function buildBetterAuth(options: DashboardAuthOptions) {
     // sign-in. Password users link GitHub or Google from their signed-in session instead (/link-social).
     account: {
       accountLinking: { enabled: true, requireLocalEmailVerified: true, allowDifferentEmails: false },
+    },
+    user: {
+      // No account is created from an SSO identity whose email the provider has not verified: it would hold
+      // that address without proof and block its owner from signing up. Covers every OAuth entry point.
+      validateUserInfo: ({ user, source }) =>
+        source.method === "oauth" && source.action === "create-user" && !user.emailVerified
+          ? { error: "email_not_verified", errorDescription: "The provider has not verified this email" }
+          : undefined,
     },
     // OAuth errors land on the dashboard sign-in page with ?error=<code>.
     onAPIError: { errorURL: options.baseUrl },
@@ -122,15 +133,6 @@ function buildBetterAuth(options: DashboardAuthOptions) {
     databaseHooks: {
       user: {
         create: {
-          // No account is created from an SSO identity whose email the provider has not verified: it would
-          // hold that address without proof and block its owner from signing up.
-          before: async (user, ctx) => {
-            if (ctx?.path?.startsWith("/callback/") && !user.emailVerified) {
-              logger?.warn("SSO sign-up refused: provider email is not verified");
-              return false;
-            }
-            return { data: user };
-          },
           // Signup provisions a personal org + workspace + owner membership so the user can work at once.
           // A failure here is logged, not fatal: session resolution re-runs the same idempotent step.
           after: async (user) => {

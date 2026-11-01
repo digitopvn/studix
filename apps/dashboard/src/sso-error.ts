@@ -1,8 +1,9 @@
 /** Messages for the `?error=` codes Better Auth appends when an OAuth sign-in or link fails. */
 const MESSAGES: Record<string, string> = {
   account_not_linked:
-    "An account with this email already exists. Sign in with your password, then link GitHub or Google from Account.",
-  unable_to_create_user: "Your provider has not verified this email address, so no account was created.",
+    "A Studix account with this email already exists and was not linked automatically. If it is yours, sign in to it and link GitHub or Google from Account; otherwise contact support.",
+  email_not_verified: "Your provider has not verified this email address, so no account was created.",
+  unable_to_create_user: "The account could not be created. Try again.",
   unable_to_link_account: "The provider has not verified this email address, so it was not linked.",
   email_does_not_match: "The provider account uses a different email than your Studix account.",
   account_already_linked_to_different_user: "This provider account is already linked to another Studix user.",

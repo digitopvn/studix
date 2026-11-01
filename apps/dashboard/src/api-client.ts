@@ -451,12 +451,15 @@ export interface LinkedAccount {
   accountId: string;
 }
 
-/** Start an OAuth redirect (sign-in or linking). Better Auth returns the provider URL; errors come back as `/?error=`. */
-async function redirectToProvider(path: string, provider: SsoProvider, callbackURL: string): Promise<void> {
+/**
+ * Start an OAuth redirect (sign-in or linking). Better Auth returns the provider URL; success returns to
+ * `returnTo`, and a failure to the same place with `?error=<code>` before the hash.
+ */
+async function redirectToProvider(path: string, provider: SsoProvider, returnTo: string): Promise<void> {
   const { url } = await request<{ url: string }>("POST", path, {
     provider,
-    callbackURL,
-    errorCallbackURL: "/",
+    callbackURL: returnTo,
+    errorCallbackURL: returnTo,
   });
   window.location.assign(url);
 }

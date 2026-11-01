@@ -30,14 +30,20 @@ Owner: `packages/auth`.
 - Scoped to one workspace and a set of permissions.
 - Dashboard users authenticate with sessions (Better Auth email/password, or
   GitHub / Google SSO when configured) that resolve to a membership and then a
-  workspace. SSO uses Better Auth's `state` check bound to a browser cookie,
-  plus PKCE for Google.
+  workspace. SSO runs only the redirect flow: Better Auth's `state` check bound
+  to a browser cookie, plus PKCE for both providers (Google's direct id-token
+  sign-in is disabled).
 - SSO links to an existing user only when the provider reports the email as
   verified and the Studix user's own email is verified (a user created through
   SSO). Password accounts are never linked implicitly, since sign-up does not
   verify email: their owners link GitHub or Google from the dashboard Account
   page while signed in, with the same verified email. An SSO identity whose
   email the provider has not verified never creates an account.
+- Because sign-up does not verify email, anyone can register a password
+  account with someone else's address, and the owner's SSO sign-in then stops
+  at `account_not_linked`. An operator recovers the address by deleting that
+  unverified password user (after checking it holds no work of the owner), so
+  the owner's next SSO sign-in creates a fresh account.
 - Inbound OAuth for AI clients: [ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md).
 
 ## Rate limiting

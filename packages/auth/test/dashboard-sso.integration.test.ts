@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { schema } from "@studix/database";
 import { withTestDatabase } from "@studix/database/testing";
 import { eq } from "drizzle-orm";
@@ -66,8 +67,12 @@ class FakeProviders {
     }
     if (url.href === "https://api.github.com/user/emails") {
       if (!identity) return json({ message: "Bad credentials" }, 401);
-      return json([{ email: identity.email, primary: true, verified: identity.verified }]);
+      // A GitHub user may hide every email address from the app.
+      return json(
+        identity.email ? [{ email: identity.email, primary: true, verified: identity.verified }] : [],
+      );
     }
+    if (url.href === "https://www.googleapis.com/oauth2/v3/certs") return json(GOOGLE_JWKS);
     throw new Error(`unexpected outbound request in test: ${request.method} ${url.href}`);
   };
 
@@ -96,11 +101,18 @@ class FakeProviders {
   }
 }
 
-/** An id token as the token endpoint returns it; Better Auth trusts it from that TLS channel and only decodes it. */
+/** Google's signing key, served from the fake JWKS endpoint, so id tokens verify like real ones. */
+const googleKey = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const GOOGLE_JWKS = {
+  keys: [{ ...googleKey.publicKey.export({ format: "jwk" }), kid: "fake", alg: "RS256", use: "sig" }],
+};
+
+/** A Google id token signed with the fake key. */
 function fakeIdToken(claims: Record<string, unknown>): string {
   const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
   const now = Math.floor(Date.now() / 1000);
-  return `${part({ alg: "RS256", kid: "fake", typ: "JWT" })}.${part({ iat: now, exp: now + 3600, ...claims })}.c2ln`;
+  const unsigned = `${part({ alg: "RS256", kid: "fake", typ: "JWT" })}.${part({ iat: now, exp: now + 3600, ...claims })}`;
+  return `${unsigned}.${sign("sha256", Buffer.from(unsigned), googleKey.privateKey).toString("base64url")}`;
 }
 
 /** A browser on the dashboard origin: keeps cookies between calls to the Better Auth handler. */
@@ -134,9 +146,14 @@ class Browser {
     return response;
   }
 
-  /** POST sign-in/social (or link-social) and return the provider authorize URL. */
+  /** POST sign-in/social (or link-social) with the dashboard's return URL; returns the provider authorize URL. */
   async start(provider: SsoProvider, path = "/sign-in/social"): Promise<URL> {
-    const response = await this.request(path, { provider, callbackURL: "/", errorCallbackURL: "/" });
+    const returnTo = path === "/link-social" ? "/#/account" : "/";
+    const response = await this.request(path, {
+      provider,
+      callbackURL: returnTo,
+      errorCallbackURL: returnTo,
+    });
     expect(response.status).toBe(200);
     const { url } = (await response.json()) as { url: string };
     return new URL(url);
@@ -235,7 +252,10 @@ describe("dashboard SSO (GitHub and Google through Better Auth)", () => {
     fake.codes.set("g-code", identity);
     await first.callback("google", { code: "g-code", state: authorize.searchParams.get("state")! });
     expect(first.hasSession()).toBe(true);
-    expect(fake.tokenRequests[0]!.body.get("code_verifier")).toBeTruthy();
+    const verifier = fake.tokenRequests[0]!.body.get("code_verifier")!;
+    expect(createHash("sha256").update(verifier).digest("base64url")).toBe(
+      authorize.searchParams.get("code_challenge"),
+    );
 
     const second = new Browser(dashboard);
     await signInWith(second, "google", identity);
@@ -347,6 +367,7 @@ describe("dashboard SSO (GitHub and Google through Better Auth)", () => {
       "/link-social",
     );
     expect(wrongEmail.searchParams.get("error")).toBe("email_does_not_match");
+    expect(wrongEmail.hash).toBe("#/account");
     const unverified = await signInWith(
       browser,
       "github",
@@ -363,6 +384,7 @@ describe("dashboard SSO (GitHub and Google through Better Auth)", () => {
       "/link-social",
     );
     expect(linked.searchParams.get("error")).toBeNull();
+    expect(`${linked.pathname}${linked.hash}`).toBe("/#/account");
     expect((await accountsOf(user!.id)).map((a) => a.providerId).sort()).toEqual(["credential", "github"]);
 
     // From now on GitHub signs in to the same user.
@@ -379,8 +401,37 @@ describe("dashboard SSO (GitHub and Google through Better Auth)", () => {
       email: "khoa@example.test",
       verified: false,
     });
-    expect(next.searchParams.get("error")).toBeTruthy();
+    expect(next.searchParams.get("error")).toBe("email_not_verified");
     expect(browser.hasSession()).toBe(false);
     expect(await usersByEmail("khoa@example.test")).toHaveLength(0);
+  });
+
+  it("refuses Google's direct id-token sign-in, which would skip state and PKCE", async () => {
+    const dashboard = setup();
+    const browser = new Browser(dashboard);
+    const response = await browser.request("/sign-in/social", {
+      provider: "google",
+      callbackURL: "/",
+      idToken: {
+        token: fakeIdToken({
+          iss: "https://accounts.google.com",
+          aud: SSO.google.clientId,
+          sub: "g-direct",
+          email: "lan@example.test",
+          email_verified: true,
+        }),
+      },
+    });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(browser.hasSession()).toBe(false);
+    expect(await usersByEmail("lan@example.test")).toHaveLength(0);
+  });
+
+  it("refuses a GitHub identity without an email", async () => {
+    const dashboard = setup();
+    const browser = new Browser(dashboard);
+    const next = await signInWith(browser, "github", { subject: "99", email: "", verified: false });
+    expect(next.searchParams.get("error")).toBe("email_not_found");
+    expect(browser.hasSession()).toBe(false);
   });
 });

@@ -69,7 +69,8 @@ export function createApp(deps: AppDeps): Express {
     next();
   });
   // Public: the sign-in page asks which SSO buttons to show before anyone has a session.
-  app.get("/api/sso-providers", rateLimit(authLimiter, "auth"), (_req, res) => {
+  // Uses the general /api bucket so loading the page does not spend the strict sign-in budget.
+  app.get("/api/sso-providers", rateLimit(apiLimiter, "api"), (_req, res) => {
     res.json({ providers: deps.dashboardAuth.ssoProviders });
   });
   app.all("/api/auth/*splat", rateLimit(authLimiter, "auth"), (req, res) => {
