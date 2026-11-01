@@ -197,6 +197,8 @@ async function withCaps<T extends StoredMediaRequest>(s: StageContext, requests:
     requests.map(async (r) => {
       const estimate = await media.estimateCostCents({
         kind: r.kind,
+        // The cap is per call, so it is estimated on the model the call names (a cast voice can cost more).
+        ...(r.model ? { model: r.model } : {}),
         prompt: r.prompt,
         maxCostCents: 1_000_000,
         ...(r.params ? { params: r.params } : {}),
@@ -311,11 +313,16 @@ export const marketingReframeStage: StageDefinition = {
     if (requests.length > 0) {
       const workDir = await stageWorkDir(s, MV_STAGES.reframe);
       let done = 0;
-      generated = await mapBounded(requests, MEDIA_CONCURRENCY, async (r) => {
-        const media = await generateStoredMedia(s, MV_STAGES.reframe, r);
-        s.reportProgress(++done / requests.length);
-        return { shotId: r.shotId, ...media };
-      });
+      generated = await mapBounded(
+        requests,
+        MEDIA_CONCURRENCY,
+        async (r) => {
+          const media = await generateStoredMedia(s, MV_STAGES.reframe, r);
+          s.reportProgress(++done / requests.length);
+          return { shotId: r.shotId, ...media };
+        },
+        (m) => [m.usage],
+      );
       await rm(workDir, { recursive: true, force: true });
     }
     const fresh = new Map(generated.map((g) => [g.asset.id, g.asset]));

@@ -1156,6 +1156,26 @@ describe("MultixProvider synchronous audio", () => {
     expect(result.model).toBe("openrouter:google/gemini-3.8-flash-tts");
   });
 
+  it("names the voice a request is spoken in: its own, else its language route's", () => {
+    const routed = (voice: string) =>
+      createMultixProviderFromConfig({
+        MULTIX_BIN: "multix",
+        MULTIX_VOICE_LANGUAGE_MODELS: `vi=openrouter:google/gemini-3.8-flash-tts@${voice}`,
+        MULTIX_ALLOW_HOME_ENV: false,
+        MULTIX_WAIT_TIMEOUT_SECONDS: 900,
+      });
+    const vi = { kind: "voice" as const, params: { language: "vi" } };
+    expect(routed("Sulafat").resolveVoice(vi)).toBe("Sulafat");
+    expect(routed("Kore").resolveVoice(vi)).toBe("Kore");
+    expect(routed("Kore").resolveVoice({ ...vi, params: { language: "vi", voice: "Puck" } })).toBe("Puck");
+    // Another language, a named model or another kind takes no route voice.
+    expect(routed("Kore").resolveVoice({ kind: "voice", params: { language: "en" } })).toBeUndefined();
+    expect(routed("Kore").resolveVoice({ ...vi, model: "openrouter:google/gemini-3.8-flash-tts" })).toBe(
+      undefined,
+    );
+    expect(routed("Kore").resolveVoice({ kind: "image" })).toBeUndefined();
+  });
+
   it("refuses a malformed voice language route when the provider is built", () => {
     expect(
       () => new MultixProvider({ bin: "multix", voiceLanguageModels: "vi=sume:seedance-2-mini" }),

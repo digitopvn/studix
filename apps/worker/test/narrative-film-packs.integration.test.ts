@@ -107,7 +107,15 @@ function memoryStorage(): StorageAdapter {
 }
 
 /** `setFrame` gives set designs that size instead of the film's frame. */
-function createWorld(opts: { setFrame?: { width: number; height: number } } = {}) {
+function createWorld(
+  opts: {
+    setFrame?: { width: number; height: number };
+    /** Requests the provider refuses with a plain, uncharged error. */
+    refuse?: (request: MediaGenerationRequest) => boolean;
+    /** Estimates of the models a request can name, in cents; other requests cost the fake's price. */
+    modelCents?: Record<string, number>;
+  } = {},
+) {
   const { repos } = db.current;
   const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
   const workRoot = mkdtempSync(join(tmpdir(), "studix-film-packs-"));
@@ -146,9 +154,13 @@ function createWorld(opts: { setFrame?: { width: number; height: number } } = {}
   const estimate = media.estimateCostCents.bind(media);
   // The fake runs one model; a model a request names (a cast voice) is recorded, then run on the fake.
   const onFake = <R extends { model?: string }>({ model: _, ...rest }: R) => rest;
-  media.estimateCostCents = (request) => estimate(onFake(request));
+  media.estimateCostCents = async (request) =>
+    (request.model ? opts.modelCents?.[request.model] : undefined) ?? estimate(onFake(request));
   media.generate = async (ctx, original) => {
     requests.push(original);
+    if (opts.refuse?.(original)) {
+      throw new StudixError("PROVIDER_ERROR", "the provider refused this request", { retryable: false });
+    }
     const request = onFake(original);
     // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
     for (const name of ["image", "video", "audio"]) {
@@ -307,6 +319,21 @@ async function approveStoryboard(ctx: TenantContext, projectId: string, revision
     storyboard: { ...storyboard, approval: { status: "approved", reviewer: reviewer.id } },
     createdBy: reviewer,
   });
+}
+
+/** A new film taken through G0, G1 and the storyboard, then approved, with its render job queued. */
+async function renderJobOnApprovedBoard(world: ReturnType<typeof createWorld>, slug: string, pack: string) {
+  const { ctx, project } = await newFilm(slug, pack);
+  const job = await enqueue(ctx, project.id, pack);
+  expect(await world.runOnce(job.id)).toBe("waiting_approval");
+  await signGate(world, ctx, job.id, "G0");
+  expect(await world.runOnce(job.id)).toBe("waiting_approval");
+  await signGate(world, ctx, job.id, "G1");
+  expect(await world.runOnce(job.id)).toBe("succeeded");
+  const board = await currentIr(ctx, project.id);
+  await approveStoryboard(ctx, project.id);
+  const render = await enqueue(ctx, project.id, pack, { versionId: board.version.id });
+  return { ctx, project, board, render };
 }
 
 describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake providers)", (pack) => {
@@ -745,6 +772,48 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
       expect(keyOf(id), id).toContain(`generated/${first.id}/`);
     expect(keyOf("s4-fx1")).toContain(`generated/${second.id}/`);
   });
+
+  it("caps each line at the price of the voice model it names, not of the default model", async () => {
+    const voiceModel = "openrouter:google/gemini-3.8-flash-tts";
+    const world = createWorld({ modelCents: { [voiceModel]: 30 } });
+    const { render } = await renderJobOnApprovedBoard(world, `film-${pack}-voice-cap`, pack);
+    expect(await world.runOnce(render.id)).toBe("succeeded");
+    const lines = world.requests.filter((r) => r.kind === "voice");
+    expect(lines).toHaveLength(3);
+    // Twice the named model's estimate; the default model's 5 cents would have capped every line at 10.
+    expect(lines.map((r) => [r.model, r.maxCostCents])).toEqual(lines.map(() => [voiceModel, 60]));
+  });
+
+  it.each([
+    {
+      stage: "dialogue",
+      refuse: (r: MediaGenerationRequest) => r.kind === "voice" && r.prompt === "Vừa kịp lúc.",
+      paid: ["s2-l1-vo", "s3-l1-vo"],
+    },
+    {
+      stage: "motion",
+      refuse: (r: MediaGenerationRequest) => r.idempotencyKey.endsWith(":s4-clip"),
+      paid: ["s2-clip", "s3-clip"],
+    },
+  ])(
+    "bills the $stage items already paid for when another item of the batch fails",
+    async ({ stage, refuse, paid }) => {
+      const world = createWorld({ refuse });
+      const { ctx, render } = await renderJobOnApprovedBoard(world, `film-${pack}-${stage}-partial`, pack);
+      expect(await world.runOnce(render.id)).toBe("failed");
+      expect(await world.repos.jobs.get(ctx, render.id)).toMatchObject({ error: { code: "PROVIDER_ERROR" } });
+
+      const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
+      const billed = usage
+        .filter((u) => u.metadata?.stage === n[stage as keyof typeof n] && u.costCents > 0)
+        .map((u) => u.metadata?.assetId)
+        .sort();
+      expect(billed).toEqual(paid);
+      const spent = usage.reduce((sum, u) => sum + u.costCents, 0);
+      expect(spent).toBeGreaterThan(0);
+      expect(await world.repos.jobs.get(ctx, render.id)).toMatchObject({ spentCents: spent });
+    },
+  );
 
   it("fails the job and spends nothing on designs when the reviewer rejects G0", async () => {
     const world = createWorld();
