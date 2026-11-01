@@ -1,14 +1,19 @@
 import { type FormEvent, useState } from "react";
-import { api } from "../api-client.ts";
-import { ErrorBanner } from "../ui.tsx";
+import { api, SSO_LABELS, type SsoProvider } from "../api-client.ts";
+import { ErrorBanner, useAsync } from "../ui.tsx";
 
-/** Email/password sign-in and sign-up (Better Auth). Sign-up provisions a personal workspace server-side. */
-export function AuthPage({ onSignedIn }: { onSignedIn: () => void }) {
+/**
+ * Email/password sign-in and sign-up plus GitHub/Google SSO (Better Auth). Either way a new user gets a
+ * personal workspace server-side. `ssoError` is the message of a failed SSO redirect.
+ */
+export function AuthPage({ onSignedIn, ssoError }: { onSignedIn: () => void; ssoError?: string }) {
+  // Without the list (older server, network) the page still offers email/password.
+  const sso = useAsync(() => api.ssoProviders());
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<unknown>();
+  const [error, setError] = useState<unknown>(ssoError ? new Error(ssoError) : undefined);
   const [busy, setBusy] = useState(false);
 
   async function submit(event: FormEvent) {
@@ -26,6 +31,19 @@ export function AuthPage({ onSignedIn }: { onSignedIn: () => void }) {
       setBusy(false);
     }
   }
+
+  async function signInWith(provider: SsoProvider) {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.signInWith(provider);
+    } catch (e) {
+      setError(e);
+      setBusy(false);
+    }
+  }
+
+  const providers = sso.data?.providers ?? [];
 
   return (
     <main className="auth">
@@ -70,6 +88,17 @@ export function AuthPage({ onSignedIn }: { onSignedIn: () => void }) {
         <button type="submit" disabled={busy}>
           {busy ? "Please wait..." : mode === "signin" ? "Sign in" : "Create account"}
         </button>
+        {providers.map((provider) => (
+          <button
+            key={provider}
+            type="button"
+            className="secondary"
+            disabled={busy}
+            onClick={() => void signInWith(provider)}
+          >
+            Continue with {SSO_LABELS[provider]}
+          </button>
+        ))}
         <button
           type="button"
           className="link-button"

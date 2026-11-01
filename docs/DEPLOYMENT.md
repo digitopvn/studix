@@ -63,6 +63,17 @@ saving keys is disabled. Losing it makes every stored key unreadable, so back
 it up with the database secrets. To rotate it, move the old value to
 `STUDIX_SECRETS_KEYS_PREVIOUS` and set a new one.
 
+Dashboard sign-in with GitHub and Google is off until a provider's client id
+and secret are both set (`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`,
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`); setting only one of a pair fails
+config validation. Set them on the app only. Each environment needs its own
+OAuth client whose callback URL is `<STUDIX_APP_URL>/api/auth/callback/github`
+(GitHub OAuth App, "Authorization callback URL") or
+`<STUDIX_APP_URL>/api/auth/callback/google` (Google OAuth client of type "Web
+application", "Authorized redirect URIs"; the consent screen needs the
+`openid`, `email` and `profile` scopes). Linking rules are in
+[SECURITY.md](SECURITY.md#api-keys-inbound).
+
 Keys for the Pi runtime and the per-stage model preferences need no extra
 setting: they use the same `STUDIX_SECRETS_KEY`, which the worker also needs to
 run a stage on a workspace key. Without it the worker keeps the operator's

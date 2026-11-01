@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedHosts, loadConfig, StudixError } from "../src/index.ts";
+import { allowedHosts, loadConfig, StudixError, ssoClients } from "../src/index.ts";
 
 describe("loadConfig", () => {
   it("applies development defaults without hardcoded public hostnames", () => {
@@ -25,6 +25,30 @@ describe("loadConfig", () => {
     expect(cfg.DECISION_PROVIDERS).toEqual(["typesafe", "openrouter", "rules"]);
     expect(cfg.OPENROUTER_API_KEY).toBeUndefined();
     expect(allowedHosts(cfg).sort()).toEqual(["a.test", "api.example.test", "app.example.test", "b.test"]);
+  });
+
+  it("enables an SSO provider only with both OAuth client keys and rejects a half-set pair", () => {
+    expect(ssoClients(loadConfig({}))).toEqual({ github: undefined, google: undefined });
+    expect(
+      ssoClients(
+        loadConfig({
+          GOOGLE_CLIENT_ID: "google-id",
+          GOOGLE_CLIENT_SECRET: "google-secret",
+          GITHUB_CLIENT_ID: "",
+        }),
+      ),
+    ).toEqual({ github: undefined, google: { clientId: "google-id", clientSecret: "google-secret" } });
+    let error: unknown;
+    try {
+      loadConfig({ GITHUB_CLIENT_ID: "gh-id", GOOGLE_CLIENT_SECRET: "google-secret-value" });
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(StudixError);
+    const message = (error as StudixError).message;
+    expect(message).toContain("GITHUB_CLIENT_SECRET");
+    expect(message).toContain("GOOGLE_CLIENT_ID");
+    expect(message).not.toContain("google-secret-value");
   });
 
   it("requires public URLs and secrets in production and never echoes values", () => {
