@@ -84,6 +84,11 @@ RUN set -eu; extras=""; for e in $STUDIX_QA_EXTRAS; do extras="$extras --extra $
     tools/qa/.venv/bin/python -I -m studix_qa --list; \
     chown -R node:node /app
 
+# Job scratch directories (WORKER_WORK_DIR). Created here and owned by node so a named volume or a PVC
+# mounted over it starts writable by the unprivileged user. See docs/DEPLOYMENT.md.
+ENV WORKER_WORK_DIR=/var/lib/studix/work
+RUN mkdir -p /var/lib/studix/work && chown -R node:node /var/lib/studix
+
 # Pin the browser path so the renderer never depends on the runtime user's cache layout.
 # Chrome for Testing ships chrome-headless-shell for linux64 and, from build 153, linux-arm64, so amd64
 # and arm64 (local Apple Silicon) images install the same pinned build. @puppeteer/browsers resolves
