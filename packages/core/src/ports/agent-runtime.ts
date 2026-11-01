@@ -1,4 +1,5 @@
 import type { ResolvedModelSnapshot } from "../entities/model-preference.ts";
+import type { FundingSource } from "../entities/telemetry.ts";
 import type { TenantContext } from "../tenant.ts";
 
 export interface AgentToolDefinition {
@@ -40,6 +41,8 @@ export interface AgentRunResult {
   };
   /** The provider execution recorded for this run, so its usage line is billed against that record. */
   providerExecutionId?: string;
+  /** Who paid the provider for this run (the connection's owner); `operator` when omitted. */
+  funding?: FundingSource;
 }
 
 /** The limit an agent run stopped at; carried as `details.cap` on the run's error. */

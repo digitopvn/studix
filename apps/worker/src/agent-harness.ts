@@ -15,6 +15,8 @@ import {
   type AgentRuntime,
   type AgentRuntimeName,
   type AgentTask,
+  connectionFunding,
+  type FundingSource,
   type ModelSelectionSource,
   PlannerSelection,
   type ProviderExecutionStatus,
@@ -176,7 +178,12 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     stage: StageContext,
     name: string,
     choice: Extract<Choice, { runtime: "claude" }>,
-  ): Promise<{ runtime: AgentRuntime; model: string; markRejected(): Promise<void> }> {
+  ): Promise<{
+    runtime: AgentRuntime;
+    model: string;
+    funding: FundingSource;
+    markRejected(): Promise<void>;
+  }> {
     const claude = deps.claude;
     if (!claude) throw claudeOff(name);
     const credential = await deps.credentials.resolveForExecution(stage.ctx, {
@@ -212,7 +219,12 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       clock,
       credentials: { resolve: async () => credential.apiKey },
     });
-    return { runtime, model: choice.model, markRejected: () => credential.markRejected() };
+    return {
+      runtime,
+      model: choice.model,
+      funding: connectionFunding(credential.connection.owner),
+      markRejected: () => credential.markRejected(),
+    };
   }
 
   async function record(
@@ -221,6 +233,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     runtime: AgentRuntimeName,
     execution: {
       model?: string;
+      funding: FundingSource;
       status: ProviderExecutionStatus;
       latencyMs: number;
       spent?: AgentSpend;
@@ -234,6 +247,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         operation: task.skill,
         attempt: stage.attempt,
         status: execution.status,
+        funding: execution.funding,
         latencyMs: execution.latencyMs,
         costCents: execution.spent?.costCents ?? 0,
         ...(execution.model ? { model: execution.model } : {}),
@@ -257,18 +271,23 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       let runtime: AgentRuntime;
       let model: string | undefined;
       let markRejected: (() => Promise<void>) | undefined;
+      // Who pays the provider: the owner of the connection the run is on (ADR 0016: recorded, not charged).
+      let funding: FundingSource;
       if (choice.runtime === "claude") {
-        ({ runtime, model, markRejected } = await claudeRuntime(stage, task.skill, choice));
+        ({ runtime, model, funding, markRejected } = await claudeRuntime(stage, task.skill, choice));
         id = CLAUDE_AGENT_RUNTIME_ID;
       } else {
         runtime = piRuntimeFor(choice.resolved);
         id = runtime.id;
+        funding = choice.resolved.bindings[0]?.funding ?? "operator";
       }
       const started = clock.now().getTime();
       try {
         const result = await runtime.run(ctx, task);
+        funding = result.funding ?? funding;
         const providerExecutionId = await record(stage, task, choice.runtime, {
           model: result.model ?? model,
+          funding,
           status: "succeeded",
           latencyMs: clock.now().getTime() - started,
           spent: result,
@@ -281,7 +300,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
           turns: result.turns,
           costCents: result.costCents,
         });
-        return { ...result, ...(providerExecutionId ? { providerExecutionId } : {}) };
+        return { ...result, funding, ...(providerExecutionId ? { providerExecutionId } : {}) };
       } catch (err) {
         const error = toStudixError(err);
         // The Pi loop reports rejected keys itself; the Claude runtime leaves it to its caller.
@@ -293,6 +312,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         const spent = agentSpendOf(error);
         const providerExecutionId = await record(stage, task, choice.runtime, {
           model: spent?.model ?? model,
+          funding,
           status: EXECUTION_STATUS[error.code] ?? "failed",
           latencyMs: clock.now().getTime() - started,
           ...(spent ? { spent } : {}),
@@ -302,7 +322,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         throw new StudixError(error.code, error.message, {
           retryable: error.retryable,
           suggestedAction: error.suggestedAction,
-          details: { ...error.details, spent: { ...spent, providerExecutionId } },
+          details: { ...error.details, spent: { ...spent, providerExecutionId, funding } },
           cause: error,
         });
       }

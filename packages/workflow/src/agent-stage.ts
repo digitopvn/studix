@@ -6,7 +6,9 @@ import type {
   AgentStageLimits,
   AgentToolDefinition,
   Approval,
+  FundingSource,
 } from "@studix/core";
+import { FUNDING_SOURCES } from "@studix/core";
 import { newId, redactDeep, StudixError, toStudixError } from "@studix/shared";
 import { z } from "zod";
 import { stageCacheKey } from "./stage-runner.ts";
@@ -73,6 +75,7 @@ interface Spend {
   turns: number;
   model?: string;
   providerExecutionId?: string;
+  funding?: FundingSource;
 }
 
 function spendOf(err: unknown): Spend | undefined {
@@ -87,6 +90,7 @@ function spendOf(err: unknown): Spend | undefined {
     turns: n(s.turns),
     model: typeof s.model === "string" ? s.model : undefined,
     providerExecutionId: typeof s.providerExecutionId === "string" ? s.providerExecutionId : undefined,
+    funding: FUNDING_SOURCES.find((f) => f === s.funding),
   };
 }
 
@@ -145,6 +149,8 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
     ...(mode === "harness" && spend.providerExecutionId
       ? { providerExecutionId: spend.providerExecutionId }
       : {}),
+    // A host run is paid by the MCP client's own agent; a harness run by whoever owns the key it ran on.
+    ...(mode === "host" ? { funding: "host" as const } : spend.funding ? { funding: spend.funding } : {}),
     metadata: {
       mode,
       runtime,

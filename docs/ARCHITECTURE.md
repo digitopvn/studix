@@ -199,7 +199,8 @@ its stage row as `pending` and parks the job for an `agent.overrun` approval
 every limit doubled (2^n after n approvals); a rejection fails the stage with
 `FORBIDDEN`. Agent spend is the ledger kind `agent.run` (tokens as quantity,
 mode, runtime, round and cap in metadata; a harness run also links its
-provider execution), separate from media cost per stage
+provider execution, and `funding` says whose key paid, per
+[ADR-0016](decisions/0016-provider-connections-runtimes-and-model-preferences.md)), separate from media cost per stage
 and attempt (`splitJobUsage` in `packages/billing`).
 
 ## Revisions and invalidation

@@ -88,6 +88,7 @@ export async function decideBriefDraft(
       latencyMs: result.latencyMs,
       operation: VIDEO_BRIEF_DECISION,
       ...(result.providerExecutionId ? { providerExecutionId: result.providerExecutionId } : {}),
+      ...(result.funding ? { funding: result.funding } : {}),
     },
     ...(result.fallbackReason ? { fallbackReason: result.fallbackReason } : {}),
   };

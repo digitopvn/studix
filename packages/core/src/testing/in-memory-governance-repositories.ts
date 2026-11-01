@@ -154,7 +154,7 @@ export function createInMemoryUsageRepository(clock: Clock): UsageRepository {
         }
         return { event: existing, created: false };
       }
-      return { event: usage.insert(ctx, input), created: true };
+      return { event: usage.insert(ctx, { funding: "operator", ...input }), created: true };
     },
     async list(ctx, query = {}) {
       return usage.page(ctx, query, (u) => inRange(u, query));
@@ -163,7 +163,7 @@ export function createInMemoryUsageRepository(clock: Clock): UsageRepository {
       return usage.filter(ctx, (u) => inRange(u, range)).reduce((sum, u) => sum + u.costCents, 0);
     },
     async recordProviderExecution(ctx, input) {
-      return executions.insert(ctx, input);
+      return executions.insert(ctx, { funding: "operator", ...input });
     },
     async listProviderExecutions(ctx, query) {
       return executions.page(ctx, query, (e) => e.jobId === query.jobId);

@@ -291,7 +291,13 @@ function credentialsFor(conns: FakeConnection[]) {
       released.push(conn.id);
       return {
         apiKey: `secret-for-${conn.id}-0123456789`,
-        connection: { id: conn.id, provider: conn.provider, version: 3, billing: "usage_based" },
+        connection: {
+          id: conn.id,
+          provider: conn.provider,
+          version: 3,
+          billing: "usage_based",
+          owner: conn.ownerUserId ? "user" : "workspace",
+        },
         async markRejected() {},
       };
     },

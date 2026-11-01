@@ -117,7 +117,9 @@ Không có lựa chọn nào thì stage fail `UNAVAILABLE`, không dùng key c�
 worker bật `STUDIX_CLAUDE_PLANNER`. Cap của stage (turns, tokens, cost, time) được runtime ép như
 [ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md). Mỗi lần chạy, thành công hay không, ghi
 một `provider_executions` (provider `anthropic` hoặc `pi`, `operation` là tên stage) với token và chi phí
-thật. Usage line `agent.run` của stage trỏ tới bản ghi đó.
+thật. Usage line `agent.run` của stage trỏ tới bản ghi đó. Cả hai mang `funding` (`workspace` hoặc `member`
+theo chủ connection): chi phí BYOK được ghi nhưng không tính cho workspace, và vẫn bị ngân sách job giới hạn
+([ADR-0016](decisions/0016-provider-connections-runtimes-and-model-preferences.md)).
 
 ### Gate
 

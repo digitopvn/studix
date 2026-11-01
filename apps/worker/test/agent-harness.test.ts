@@ -69,9 +69,13 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
-const connections: Record<string, { provider: string; key: string; runtimes: string[] }> = {
-  pcon_claude: { provider: "anthropic", key: ANTHROPIC_KEY, runtimes: ["claude"] },
-  pcon_openai: { provider: "openai", key: PI_KEY, runtimes: ["pi"] },
+const connections: Record<
+  string,
+  { provider: string; key: string; runtimes: string[]; owner: "workspace" | "user" }
+> = {
+  pcon_claude: { provider: "anthropic", key: ANTHROPIC_KEY, runtimes: ["claude"], owner: "workspace" },
+  pcon_openai: { provider: "openai", key: PI_KEY, runtimes: ["pi"], owner: "workspace" },
+  pcon_mine: { provider: "openai", key: PI_KEY, runtimes: ["pi"], owner: "user" },
 };
 
 const preference = (over: Partial<ModelPreference>): ModelPreference =>
@@ -98,6 +102,7 @@ function createWorld(
     claude?: boolean;
     transcript?: ClaudeAgentEvent[];
     payload?: Record<string, unknown>;
+    spentCents?: number;
   } = {},
 ) {
   const ctx: TenantContext = testTenant();
@@ -133,6 +138,7 @@ function createWorld(
           provider: connection.provider,
           version: 1,
           billing: "usage_based",
+          owner: connection.owner,
         },
         markRejected: async () => {
           rejected.push(input.connectionId);
@@ -191,7 +197,7 @@ function createWorld(
     payload: options.payload ?? {},
     createdBy: requester,
     attempts: 1,
-    spentCents: 0,
+    spentCents: options.spentCents ?? 0,
     budgetCents: 500,
   } as unknown as Job;
 
@@ -264,6 +270,9 @@ describe("worker agent harness", () => {
       outputTokens: 300,
     });
     expect(execution!.costCents).toBeCloseTo(3.4);
+    // The workspace's own key paid: recorded as workspace-funded, never as operator spend.
+    expect(line.funding).toBe("workspace");
+    expect(execution!.funding).toBe("workspace");
     expect(world.pinned.get(`job_harness:claude:${STAGE}`)).toMatchObject({
       connectionId: "pcon_claude",
       modelId: "claude-sonnet-test",
@@ -289,6 +298,30 @@ describe("worker agent harness", () => {
     expect(execution).toMatchObject({ provider: "pi", status: "succeeded", inputTokens: 100_000 });
     expect(execution!.costCents).toBeCloseTo(20);
     expect(world.pinned.get(`job_harness:pi:${STAGE}`)).toMatchObject({ connectionId: "pcon_openai" });
+    expect(line.funding).toBe("workspace");
+    expect(execution!.funding).toBe("workspace");
+  });
+
+  it("tags a run on the requester's personal key as member-funded", async () => {
+    const world = createWorld({
+      preferences: [preference({ connectionId: "pcon_mine", scope: { type: "user", userId: requester.id } })],
+    });
+    const line = agentLine((await world.run()).usage);
+    const [execution] = await world.executions();
+    expect(line.funding).toBe("member");
+    expect(execution).toMatchObject({ funding: "member" });
+    expect(line.costCents).toBeCloseTo(20);
+  });
+
+  it("still caps a BYOK run at what is left of the job budget", async () => {
+    const world = createWorld({
+      preferences: [preference({ runtime: "claude", connectionId: "pcon_claude", provider: "anthropic" })],
+      // 500 budget, 470 already spent: the 80-cent stage cap drops to 30 cents.
+      spentCents: 470,
+      transcript: claudeTurn(0.01),
+    });
+    await world.run();
+    expect(world.transport.requests[0]).toMatchObject({ maxBudgetUsd: 0.3 });
   });
 
   it("prefers the more specific choice across runtimes and Pi on a tie", async () => {
@@ -377,6 +410,8 @@ describe("worker agent harness", () => {
     expect(execution).toMatchObject({ status: "failed", provider: "anthropic" });
     expect(line.providerExecutionId).toBe(execution!.id);
     expect(line.metadata).toMatchObject({ cap: "cost" });
+    expect(line.funding).toBe("workspace");
+    expect(execution!.funding).toBe("workspace");
   });
 
   it("marks a Claude key the provider rejects", async () => {

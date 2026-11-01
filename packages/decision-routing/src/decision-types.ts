@@ -1,4 +1,4 @@
-import type { TenantContext } from "@studix/core";
+import type { FundingSource, TenantContext } from "@studix/core";
 import type { z } from "zod";
 
 /**
@@ -90,6 +90,8 @@ export interface DecisionResult<T> {
   traceId: string;
   /** Provider execution recorded for the winning attempt, for linking usage events to it. */
   providerExecutionId?: string;
+  /** Who paid for the billed call (`providerExecutionId`); `operator` when omitted. */
+  funding?: FundingSource;
   /** True when served from the idempotency cache: no new provider call; cost and execution id are the original call's. */
   replayed?: true;
 }

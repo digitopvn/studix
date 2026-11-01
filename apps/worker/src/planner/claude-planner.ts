@@ -1,11 +1,12 @@
 import { agentSpendOf, type ClaudeAgentTransport, createClaudeAgentRuntime } from "@studix/agent-runtime";
 import type { ProviderConnectionService, ResolvedProviderCredential } from "@studix/auth";
 import { USAGE_KINDS, usageDedupeKey } from "@studix/billing";
-import type {
-  AgentRunResult,
-  NewProviderExecution,
-  ProviderExecutionStatus,
-  UsageRepository,
+import {
+  type AgentRunResult,
+  connectionFunding,
+  type NewProviderExecution,
+  type ProviderExecutionStatus,
+  type UsageRepository,
 } from "@studix/core";
 import { type Clock, isStudixError, type Logger, StudixError, systemClock } from "@studix/shared";
 import { exportJsonSchemas, unwrapValidation, type VideoIR, validateVideoIR } from "@studix/video-ir";
@@ -127,10 +128,13 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
         unwrapValidation(validateVideoIR(output), "Claude-planned VideoIR (validateVideoIR)"),
     });
     const started = clock.now().getTime();
+    // The selected connection's owner pays Anthropic (ADR 0016: BYOK spend is recorded, not charged).
+    const funding = () => (resolvedKey ? connectionFunding(resolvedKey.connection.owner) : undefined);
     const record = async (execution: Omit<NewProviderExecution, "provider" | "operation" | "attempt">) => {
       try {
         const row = await deps.executions?.recordProviderExecution(ctx.tenant, {
           ...execution,
+          ...(funding() ? { funding: funding() } : {}),
           jobId: ctx.jobId,
           provider: "anthropic",
           operation: CLAUDE_PLAN_SKILL,
@@ -190,6 +194,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
             costCents: spent.costCents,
             jobId: ctx.jobId,
             providerExecutionId,
+            ...(funding() ? { funding: funding() } : {}),
             metadata: {
               stage: "plan",
               attempt: ctx.attempt,
@@ -238,6 +243,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
           latencyMs,
           operation: CLAUDE_PLAN_SKILL,
           providerExecutionId,
+          ...(funding() ? { funding: funding() } : {}),
         },
       ],
     };

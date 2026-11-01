@@ -10,6 +10,7 @@ import {
 } from "@studix/agent-runtime";
 import {
   type AgentRuntime,
+  type FundingSource,
   type JobRepository,
   type ResolvedModelSnapshot,
   sameModelRoute,
@@ -116,6 +117,8 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
       let spent = NO_SPEND;
       let model: string | undefined;
       let failure: StudixError;
+      // The chosen connection's owner pays for the run (ADR 0016: BYOK spend is recorded, not charged).
+      let funding = resolved.bindings[0]?.funding ?? "operator";
       try {
         // Checked after resolving so a job without a chosen model keeps the operator router's own budget rules.
         if (request.budgetCents <= 0) {
@@ -141,6 +144,7 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
         });
         spent = run;
         model = run.model;
+        funding = run.funding ?? funding;
         const parsed = request.schema.safeParse(run.output);
         if (!parsed.success) {
           throw new StudixError("PROVIDER_ERROR", "The chosen model returned an invalid decision", {
@@ -160,6 +164,7 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
             latencyMs,
             costCents: run.costCents,
             usage,
+            funding,
           },
         );
         return {
@@ -173,7 +178,7 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
           fallbackChain: [],
           schemaValid: true,
           traceId: request.idempotencyKey,
-          ...(providerExecutionId ? { providerExecutionId } : {}),
+          ...(providerExecutionId ? { providerExecutionId, funding } : {}),
         };
       } catch (error) {
         failure = toStudixError(error);
@@ -188,8 +193,9 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
         costCents: spent.costCents,
         usage: { inputTokens: spent.inputTokens, outputTokens: spent.outputTokens },
         error: failure,
+        funding,
       });
-      return fallBack(request, failure, started, spent, executionId);
+      return fallBack(request, failure, started, spent, executionId, funding);
     },
   };
 
@@ -199,6 +205,7 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
     started: number,
     spent: AgentSpend,
     failedExecutionId?: string,
+    funding?: FundingSource,
   ): Promise<DecisionResult<T>> {
     if (error.code === "CANCELLED" || request.signal?.aborted) throw error;
     log.warn("chosen model failed; using the rules fallback", {
@@ -218,7 +225,7 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
       },
       latencyMs: clock.now().getTime() - started,
       fallbackReason: reasonOf(error),
-      ...(billed ? { providerExecutionId: failedExecutionId } : {}),
+      ...(billed ? { providerExecutionId: failedExecutionId, ...(funding ? { funding } : {}) } : {}),
     };
   }
 }

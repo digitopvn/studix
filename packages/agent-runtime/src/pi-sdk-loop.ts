@@ -113,6 +113,7 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
           output,
           ...total,
           model,
+          funding: binding.funding,
           resolved: {
             connectionId: binding.connectionId,
             ...(resolved.snapshot ? { snapshot: resolved.snapshot } : {}),
