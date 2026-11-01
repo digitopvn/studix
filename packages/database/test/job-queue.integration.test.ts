@@ -175,3 +175,120 @@ describe("Postgres job queue", () => {
     expect(await usage.totalCostCents(ctx, { jobId: job.id })).toBeCloseTo(2.6234, 4);
   });
 });
+
+describe("Postgres attachMediaJob", () => {
+  const record = (key: string, over: Record<string, unknown> = {}) => ({
+    idempotencyKey: key,
+    kind: "video" as const,
+    model: "atlas:wan",
+    attempt: 1,
+    state: "submitting" as const,
+    estimatedCostCents: 40,
+    submittedAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...over,
+  });
+
+  async function failedJobWithRecord(slug: string) {
+    const { queue, jobs } = db.current.repos;
+    const ctx = await tenant(slug);
+    const { job } = await queue.enqueue(ctx, enqueueInput());
+    await jobs.upsertStage(ctx, {
+      jobId: job.id,
+      name: "motion",
+      attempt: 1,
+      status: "failed",
+      mediaJobs: [record("k1"), record("k2", { state: "completed" })],
+    });
+    await jobs.update(ctx, job.id, { status: "failed" });
+    return { ctx, job };
+  }
+
+  it("promotes only the named record, in the stage row, and leaves the others", async () => {
+    const { queue, jobs } = db.current.repos;
+    const { ctx, job } = await failedJobWithRecord("attach-ok");
+    const recovered = await queue.attachMediaJob(ctx, job.id, {
+      stage: "motion",
+      idempotencyKey: "k1",
+      predictionId: "pred_9",
+      actor: { type: "system", id: "operator:test" },
+    });
+    expect(recovered).toMatchObject({ state: "submitted", job: { provider: "atlas", id: "pred_9" } });
+    const stored = (await jobs.listStages(ctx, job.id))[0]?.mediaJobs ?? [];
+    expect(stored.map((r) => [r.idempotencyKey, r.state])).toEqual([
+      ["k1", "submitted"],
+      ["k2", "completed"],
+    ]);
+  });
+
+  it("refuses a job that is not failed and writes nothing", async () => {
+    const { queue, jobs } = db.current.repos;
+    const { ctx, job } = await failedJobWithRecord("attach-running");
+    await jobs.update(ctx, job.id, { status: "running" });
+    await expect(
+      queue.attachMediaJob(ctx, job.id, {
+        stage: "motion",
+        idempotencyKey: "k1",
+        predictionId: "pred_9",
+        actor: { type: "system", id: "operator:test" },
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect((await jobs.listStages(ctx, job.id))[0]?.mediaJobs?.[0]?.state).toBe("submitting");
+  });
+
+  it("does not reach a job of another workspace", async () => {
+    const { queue } = db.current.repos;
+    const { job } = await failedJobWithRecord("attach-owner");
+    const other = await tenant("attach-other");
+    await expect(
+      queue.attachMediaJob(other, job.id, {
+        stage: "motion",
+        idempotencyKey: "k1",
+        predictionId: "pred_9",
+        actor: { type: "system", id: "operator:test" },
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("audits the attach in the same transaction and lets a never-collected id be corrected once", async () => {
+    const { queue, audit } = db.current.repos;
+    const { ctx, job } = await failedJobWithRecord("attach-correct");
+    const attach = (predictionId: string) =>
+      queue.attachMediaJob(ctx, job.id, {
+        stage: "motion",
+        idempotencyKey: "k1",
+        predictionId,
+        actor: { type: "system", id: "operator:test" },
+      });
+    const first = await attach("pred_wrong");
+    const second = await attach("pred_right");
+    expect(second.job?.id).toBe("pred_right");
+    expect(second.updatedAt > first.updatedAt).toBe(true);
+    const events = (await audit.list(ctx, { subjectId: job.id })).items.filter(
+      (e) => e.action === "job.media_job_attached",
+    );
+    expect(events).toHaveLength(2);
+    expect(events[0]?.actor).toEqual({ type: "system", id: "operator:test" });
+  });
+
+  it("refuses a completed record, a duplicate prediction and an id that would be read as a flag", async () => {
+    const { queue } = db.current.repos;
+    const { ctx, job } = await failedJobWithRecord("attach-refuse");
+    const actor = { type: "system" as const, id: "operator:test" };
+    const attach = (idempotencyKey: string, predictionId: string) =>
+      queue.attachMediaJob(ctx, job.id, { stage: "motion", idempotencyKey, predictionId, actor });
+    await expect(attach("k2", "pred_1")).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(attach("k1", "--help")).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(attach("k1", "has space")).rejects.toMatchObject({ code: "VALIDATION" });
+    await attach("k1", "pred_1");
+    const { jobs } = db.current.repos;
+    await jobs.upsertStage(ctx, {
+      jobId: job.id,
+      name: "motion",
+      attempt: 2,
+      status: "failed",
+      mediaJobs: [record("k3")],
+    });
+    await expect(attach("k3", "pred_1")).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+});

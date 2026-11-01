@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   type GeneratedMedia,
+  MEDIA_JOB_ID_PATTERN,
   type MediaCapability,
   type MediaCharge,
   MediaChargedError,
@@ -96,7 +97,7 @@ const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 /** Time the CLI gets beyond its own wait timeout to download outputs and print the envelope. */
 const RUN_MARGIN_MS = 120_000;
-const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const JOB_ID = MEDIA_JOB_ID_PATTERN;
 const CACHE_DIR = ".multix-cache";
 
 /** Variables the child may see besides provider keys. Everything else in the worker env stays out. */
@@ -317,7 +318,7 @@ export class MultixProvider implements MediaProvider {
           retryable: false,
           details: { provider: plan.model.vendor, model: existing.model, submittedAt: existing.submittedAt },
           suggestedAction:
-            "Find the prediction in `multix history` or the provider console, then resume it by job id.",
+            "Find the prediction in `multix history` or the provider console, ask a platform operator to attach its id to the stuck record (`pnpm --filter @studix/worker attach-media-job`), then retry the job.",
         },
       );
     }
@@ -577,6 +578,12 @@ export class MultixProvider implements MediaProvider {
       | { ctx: TenantContext; journal: MediaJobJournal; record: MediaJobRecord }
       | { estimatedCostCents?: number },
   ): Promise<MediaGenerationResult> {
+    // The id becomes a CLI argument: a record written outside the provider must not smuggle in a flag.
+    if (!JOB_ID.test(job.id)) {
+      throw new StudixError("VALIDATION", `invalid ${job.provider} job id in the media journal`, {
+        retryable: false,
+      });
+    }
     const outDir = join(
       workDir,
       `multix-${job.provider}-${job.id.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64)}`,

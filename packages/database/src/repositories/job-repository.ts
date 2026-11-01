@@ -4,6 +4,7 @@ import {
   type JobPatch,
   type JobQueue,
   type JobRepository,
+  promoteSubmittingRecord,
   type Stage,
   type TenantContext,
 } from "@studix/core";
@@ -11,6 +12,7 @@ import { type Clock, newId, StudixError } from "@studix/shared";
 import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
+import { createAuditRepository } from "./governance-repositories.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
 
 type JobRow = typeof jobs.$inferSelect;
@@ -311,6 +313,46 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
         { status: "queued", runAfter: clock.now() },
         { expectStatus: ["waiting_approval"] },
       );
+    },
+
+    async attachMediaJob(ctx, jobId, input) {
+      return db.transaction(async (tx) => {
+        // The row lock excludes `claim` (skip locked) and the fenced stage writes, so no worker can take the
+        // job or rewrite its journal while the record is promoted.
+        const locked = await tx
+          .select({ status: jobs.status })
+          .from(jobs)
+          .where(scoped(jobs, ctx, eq(jobs.id, jobId)))
+          .for("update");
+        if (!locked[0]) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
+        if (locked[0].status !== "failed") {
+          throw new StudixError("CONFLICT", `job ${jobId} is ${locked[0].status}`, {
+            details: { status: locked[0].status, expected: ["failed"] },
+          });
+        }
+        const rows = await tx
+          .select()
+          .from(stages)
+          .where(scoped(stages, ctx, eq(stages.jobId, jobId)));
+        const recovery = promoteSubmittingRecord(rows.map(toStage), input, clock.now());
+        await tx
+          .update(stages)
+          .set({ mediaJobs: recovery.records })
+          .where(scoped(stages, ctx, eq(stages.id, recovery.stage.id)));
+        await createAuditRepository(tx, clock).append(ctx, {
+          actor: input.actor,
+          action: "job.media_job_attached",
+          subjectType: "job",
+          subjectId: jobId,
+          data: {
+            stage: input.stage,
+            idempotencyKey: input.idempotencyKey,
+            predictionId: input.predictionId,
+            model: recovery.recovered.model,
+          },
+        });
+        return recovery.recovered;
+      });
     },
   };
 

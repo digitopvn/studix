@@ -955,6 +955,60 @@ describe("MultixProvider async jobs", () => {
       expect(runs).toBe(1);
     });
 
+    it("collects the prediction an operator attached to a stuck submitting record instead of resubmitting", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const statuses: (readonly string[])[] = [];
+      const cli = scriptedCli((argv) => {
+        if (argv[1] === "upload") return { envelope: { text: "https://cdn.atlascloud.ai/u/frame.png" } };
+        if (argv[1] === "run") {
+          runs += 1;
+          throw new Error("worker crashed");
+        }
+        statuses.push(argv);
+        const out = join(flagValue(argv, "output")!, "output-1.png");
+        return { files: { [out]: "big-png" }, envelope: { outputs: [{ path: out, mime: "image/png" }] } };
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toThrow("worker crashed");
+      const stuck = await journal.get(ctx, "stage-2:upscale");
+      expect(stuck?.state).toBe("submitting");
+
+      // What the operator recovery writes: the same record, pointed at the prediction, newer.
+      await journal.put(ctx, {
+        ...stuck!,
+        state: "submitted",
+        job: { provider: "atlas", id: "pred_found" },
+        updatedAt: new Date(Date.parse(stuck!.updatedAt) + 1).toISOString(),
+      });
+      await multix.generate(ctx, upscaleRequest(input));
+      expect(runs).toBe(1);
+      expect(statuses[0]?.slice(0, 3)).toEqual(["atlas", "status", "pred_found"]);
+      await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ state: "completed" });
+    });
+
+    it("never passes a journaled job id that looks like a flag to the CLI", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      const cli = atlasCli(() => {
+        throw new Error("worker crashed");
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      await expect(multix.generate(ctx, upscaleRequest(input))).rejects.toThrow("worker crashed");
+      const stuck = await journal.get(ctx, "stage-2:upscale");
+      await journal.put(ctx, {
+        ...stuck!,
+        state: "submitted",
+        job: { provider: "atlas", id: "--no-download" },
+      });
+      const error = await multix.generate(ctx, upscaleRequest(input)).catch((err: unknown) => err);
+      expect(error).toMatchObject({ code: "VALIDATION" });
+      expect(cli.commands().some((c) => c.includes("status"))).toBe(false);
+    });
+
     it("keeps a paid Atlas job resumable when collecting it fails permanently", async () => {
       const input = join(workDir, "frame.png");
       await writeFile(input, "png");
