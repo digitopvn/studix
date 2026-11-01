@@ -4,6 +4,19 @@ import type { ActorRef, TenantOwned } from "./common.ts";
 export const PROVIDER_EXECUTION_STATUSES = ["succeeded", "failed", "cancelled", "timeout"] as const;
 export type ProviderExecutionStatus = (typeof PROVIDER_EXECUTION_STATUSES)[number];
 
+/**
+ * Who paid the provider for a call: the operator's own keys, a workspace's provider connection, a member's
+ * personal connection, or the MCP client's own agent (host mode). Spend on a workspace's or member's own key
+ * (BYOK) is recorded but never charged to the workspace (ADR 0016); job budget caps still count it.
+ */
+export const FUNDING_SOURCES = ["operator", "workspace", "member", "host"] as const;
+export type FundingSource = (typeof FUNDING_SOURCES)[number];
+
+/** The funding of spend on a stored provider connection, from the connection's owner. */
+export function connectionFunding(owner: "workspace" | "user"): FundingSource {
+  return owner === "user" ? "member" : "workspace";
+}
+
 /** One call to an external provider (model, media API, downstream MCP tool). */
 export interface ProviderExecution extends TenantOwned {
   jobId?: string;
@@ -19,6 +32,8 @@ export interface ProviderExecution extends TenantOwned {
   costCents: number;
   attempt: number;
   error?: StudixErrorPayload;
+  /** Who paid for the call; `operator` when omitted. */
+  funding?: FundingSource;
 }
 
 /**
@@ -33,6 +48,8 @@ export interface UsageEvent extends TenantOwned {
   costCents: number;
   jobId?: string;
   providerExecutionId?: string;
+  /** Who paid for this spend; `operator` when omitted. */
+  funding?: FundingSource;
   metadata?: Record<string, unknown>;
 }
 

@@ -1,0 +1,368 @@
+import {
+  type AgentSpend,
+  agentSpendOf,
+  CLAUDE_AGENT_RUNTIME_ID,
+  type ClaudeAgentTransport,
+  createClaudeAgentRuntime,
+  createPiSdkAgentRuntime,
+  createProviderBindingResolver,
+  type PiCredentialSource,
+  type PiResolvedRun,
+} from "@studix/agent-runtime";
+import type { ProviderConnectionService } from "@studix/auth";
+import {
+  type AgentRunResult,
+  type AgentRuntime,
+  type AgentRuntimeName,
+  type AgentTask,
+  connectionFunding,
+  FUNDING_SOURCES,
+  type FundingSource,
+  type ModelSelectionSource,
+  PlannerSelection,
+  type ProviderExecutionStatus,
+  type ResolvedModelSnapshot,
+  resolveModelSelection,
+  sameModelRoute,
+  type TenantContext,
+  type UsageRepository,
+} from "@studix/core";
+import type { ModelPreferenceRepository, ModelSnapshotRepository } from "@studix/database";
+import { type Clock, type Logger, StudixError, systemClock, toStudixError } from "@studix/shared";
+import type { StageContext } from "@studix/workflow";
+
+/** Provider ids recorded on the provider executions of harness runs (same as the planner and decisions). */
+export const HARNESS_PROVIDER: Readonly<Record<AgentRuntimeName, string>> = {
+  claude: "anthropic",
+  pi: "pi",
+};
+
+export interface WorkerAgentHarnessDeps {
+  /** Opens the selected connection's key for one run; never substitutes another connection. */
+  credentials: Pick<ProviderConnectionService, "resolveForExecution">;
+  preferences: Pick<ModelPreferenceRepository, "list">;
+  snapshots: ModelSnapshotRepository;
+  /** Records one provider execution per run, succeeded or not. */
+  executions: Pick<UsageRepository, "recordProviderExecution">;
+  /** The worker's Claude runtime (STUDIX_CLAUDE_PLANNER). Without it a stage that resolves to Claude fails. */
+  claude?: {
+    transport: ClaudeAgentTransport;
+    /** Model of jobs that selected the Claude planner; a model preference brings its own model. */
+    plannerModel: string;
+  };
+  logger: Logger;
+  clock?: Clock;
+  /** Test seam; production runs the real Pi SDK. */
+  piRuntimeFor?: (resolved: PiResolvedRun) => AgentRuntime;
+}
+
+export interface WorkerAgentHarness {
+  /** The in-worker runtime of one agent stage run (`WorkerPorts.agentRuntimeFor`). */
+  runtimeFor(stage: StageContext): AgentRuntime;
+  /** Resolves true once every run has settled (its agent process exited), false if `timeoutMs` passed first. */
+  idle(timeoutMs: number): Promise<boolean>;
+}
+
+/** `source` marks a Claude choice taken from a preference, pinned once its connection is opened. */
+type Choice =
+  | { runtime: "claude"; connectionId: string; model: string; source?: ModelSelectionSource }
+  | { runtime: "pi"; resolved: PiResolvedRun };
+
+/** Most specific first, as in `resolveModelSelection`. */
+const SOURCE_RANK: Readonly<Record<ModelSelectionSource, number>> = {
+  "user-stage": 0,
+  "workspace-stage": 1,
+  "user-default": 2,
+  "workspace-default": 3,
+};
+
+const EXECUTION_STATUS: Partial<Record<string, ProviderExecutionStatus>> = {
+  CANCELLED: "cancelled",
+  TIMEOUT: "timeout",
+};
+
+function noAgentModel(stage: string): StudixError {
+  return new StudixError("UNAVAILABLE", `No model is configured for agent stage "${stage}"`, {
+    retryable: false,
+    suggestedAction:
+      "Connect a provider and choose a default model in Settings → AI & Providers, or submit the job with payload.agentMode 'host'.",
+  });
+}
+
+function claudeOff(stage: string): StudixError {
+  return new StudixError(
+    "UNAVAILABLE",
+    `Agent stage "${stage}" resolved to Claude, which this worker does not run`,
+    {
+      retryable: false,
+      suggestedAction:
+        "Choose a Pi model in Settings → AI & Providers, or ask the operator to enable STUDIX_CLAUDE_PLANNER.",
+    },
+  );
+}
+
+/**
+ * Runs harness-mode agent stages inside the worker, on the job's own provider connection (ADR 0016). The
+ * runtime is chosen per job and stage: a job that selected the Claude planner runs its agent stages on that
+ * Anthropic connection; otherwise the stage's pinned snapshot, otherwise the most specific model preference
+ * of either runtime (Pi on a tie). Nothing is chosen means the stage fails UNAVAILABLE; no operator key is
+ * ever substituted. The bounded runtimes enforce the stage caps (ADR 0015). Every run is recorded as a
+ * provider execution, and its id rides on the result (or on the error's spend) so the stage bills the
+ * run's real tokens and cost against it.
+ */
+export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAgentHarness {
+  const clock = deps.clock ?? systemClock;
+  const log = deps.logger.child({ component: "agent-harness" });
+  const piRuntimeFor =
+    deps.piRuntimeFor ??
+    ((resolved: PiResolvedRun) => createPiSdkAgentRuntime({ resolver: { resolve: async () => resolved } }));
+  const inFlight = new Set<Promise<unknown>>();
+
+  async function pin(ctx: TenantContext, jobId: string, snapshot: ResolvedModelSnapshot) {
+    const stored = await deps.snapshots.pin(ctx, jobId, snapshot);
+    return sameModelRoute(stored, snapshot) ? undefined : stored;
+  }
+
+  async function resolvePi(
+    stage: StageContext,
+    name: string,
+    snapshot?: ResolvedModelSnapshot,
+  ): Promise<Choice> {
+    const resolved = await createProviderBindingResolver({
+      credentials: deps.credentials as PiCredentialSource,
+      preferences: deps.preferences,
+      requestedBy: stage.job.createdBy,
+      ...(snapshot ? { snapshot } : {}),
+    }).resolve(stage.ctx, { stage: name });
+    if (snapshot || !resolved.snapshot) return { runtime: "pi", resolved };
+    // A concurrent attempt pinned first: run what it stored so every attempt of the job uses one route.
+    const stored = await pin(stage.ctx, stage.job.id, resolved.snapshot);
+    return stored ? resolvePi(stage, name, stored) : { runtime: "pi", resolved };
+  }
+
+  async function choose(stage: StageContext, name: string): Promise<Choice> {
+    const { ctx, job } = stage;
+    const planner = PlannerSelection.safeParse(job.payload.planner);
+    if (planner.success) {
+      if (!deps.claude) throw claudeOff(name);
+      return {
+        runtime: "claude",
+        connectionId: planner.data.providerConnectionId,
+        model: deps.claude.plannerModel,
+      };
+    }
+    const [pinnedPi, pinnedClaude] = await Promise.all([
+      deps.snapshots.get(ctx, job.id, { runtime: "pi", stage: name }),
+      deps.snapshots.get(ctx, job.id, { runtime: "claude", stage: name }),
+    ]);
+    if (pinnedPi) return resolvePi(stage, name, pinnedPi);
+    if (pinnedClaude) {
+      return { runtime: "claude", connectionId: pinnedClaude.connectionId, model: pinnedClaude.modelId };
+    }
+
+    const userId = job.createdBy.type === "user" ? job.createdBy.id : undefined;
+    const preferences = await deps.preferences.list(ctx, userId ? { userId } : {});
+    const query = { stage: name, ...(userId ? { userId } : {}) };
+    const pi = resolveModelSelection(preferences, { ...query, runtime: "pi" });
+    const claude = resolveModelSelection(preferences, { ...query, runtime: "claude" });
+    if (pi && (!claude || SOURCE_RANK[pi.source] <= SOURCE_RANK[claude.source])) {
+      return resolvePi(stage, name);
+    }
+    if (!claude) throw noAgentModel(name);
+    if (!deps.claude) throw claudeOff(name);
+    const { preference, source } = claude;
+    return { runtime: "claude", connectionId: preference.connectionId, model: preference.modelId, source };
+  }
+
+  /** Claude on the chosen Anthropic connection; a preference choice is pinned to the job first. */
+  async function claudeRuntime(
+    stage: StageContext,
+    name: string,
+    choice: Extract<Choice, { runtime: "claude" }>,
+  ): Promise<{
+    runtime: AgentRuntime;
+    model: string;
+    funding: FundingSource;
+    markRejected(): Promise<void>;
+  }> {
+    const claude = deps.claude;
+    if (!claude) throw claudeOff(name);
+    const credential = await deps.credentials.resolveForExecution(stage.ctx, {
+      connectionId: choice.connectionId,
+      requestedBy: stage.job.createdBy,
+      runtime: "claude",
+    });
+    if (choice.source) {
+      const stored = await pin(stage.ctx, stage.job.id, {
+        runtime: "claude",
+        stage: name,
+        source: choice.source,
+        connectionId: credential.connection.id,
+        connectionVersion: credential.connection.version,
+        provider: credential.connection.provider,
+        modelId: choice.model,
+        billingSource: credential.connection.billing,
+        allowFallback: false,
+        fallbacks: [],
+      });
+      // A concurrent attempt pinned first: run what it stored so every attempt of the job uses one route.
+      if (stored) {
+        return claudeRuntime(stage, name, {
+          runtime: "claude",
+          connectionId: stored.connectionId,
+          model: stored.modelId,
+        });
+      }
+    }
+    const runtime = createClaudeAgentRuntime({
+      transport: claude.transport,
+      model: choice.model,
+      clock,
+      credentials: { resolve: async () => credential.apiKey },
+    });
+    return {
+      runtime,
+      model: choice.model,
+      funding: connectionFunding(credential.connection.owner),
+      markRejected: () => credential.markRejected(),
+    };
+  }
+
+  async function record(
+    stage: StageContext,
+    task: AgentTask,
+    runtime: AgentRuntimeName,
+    execution: {
+      model?: string;
+      funding: FundingSource;
+      status: ProviderExecutionStatus;
+      latencyMs: number;
+      spent?: AgentSpend;
+      error?: StudixError;
+    },
+  ): Promise<string | undefined> {
+    try {
+      const row = await deps.executions.recordProviderExecution(stage.ctx, {
+        jobId: stage.job.id,
+        provider: HARNESS_PROVIDER[runtime],
+        operation: task.skill,
+        attempt: stage.attempt,
+        status: execution.status,
+        funding: execution.funding,
+        latencyMs: execution.latencyMs,
+        costCents: execution.spent?.costCents ?? 0,
+        ...(execution.model ? { model: execution.model } : {}),
+        ...(execution.spent
+          ? { inputTokens: execution.spent.inputTokens, outputTokens: execution.spent.outputTokens }
+          : {}),
+        ...(execution.error ? { error: execution.error.toJSON() } : {}),
+      });
+      return row.id;
+    } catch (err) {
+      log.warn("provider execution not recorded", { jobId: stage.job.id, error: String(err) });
+      return undefined;
+    }
+  }
+
+  function runtimeFor(stage: StageContext): AgentRuntime {
+    // Reported on the stage's usage line; it names the runtime that actually ran once a run has started.
+    let id = "worker-harness";
+    const run = async (ctx: TenantContext, task: AgentTask): Promise<AgentRunResult> => {
+      const choice = await choose(stage, task.skill);
+      let runtime: AgentRuntime;
+      let model: string | undefined;
+      let markRejected: (() => Promise<void>) | undefined;
+      // Who pays the provider: the owner of the connection the run is on (ADR 0016: recorded, not charged).
+      let funding: FundingSource;
+      if (choice.runtime === "claude") {
+        ({ runtime, model, funding, markRejected } = await claudeRuntime(stage, task.skill, choice));
+        id = CLAUDE_AGENT_RUNTIME_ID;
+      } else {
+        runtime = piRuntimeFor(choice.resolved);
+        id = runtime.id;
+        funding = choice.resolved.bindings[0]?.funding ?? "operator";
+      }
+      const started = clock.now().getTime();
+      try {
+        const result = await runtime.run(ctx, task);
+        funding = result.funding ?? funding;
+        const providerExecutionId = await record(stage, task, choice.runtime, {
+          model: result.model ?? model,
+          funding,
+          status: "succeeded",
+          latencyMs: clock.now().getTime() - started,
+          spent: result,
+        });
+        log.info("agent stage ran", {
+          jobId: stage.job.id,
+          stage: task.skill,
+          runtime: choice.runtime,
+          model: result.model ?? model,
+          turns: result.turns,
+          costCents: result.costCents,
+        });
+        return { ...result, funding, ...(providerExecutionId ? { providerExecutionId } : {}) };
+      } catch (err) {
+        const error = toStudixError(err);
+        // The Pi loop reports rejected keys itself; the Claude runtime leaves it to its caller.
+        if (error.code === "UNAUTHENTICATED" && markRejected) {
+          await markRejected().catch((e: unknown) => {
+            log.warn("rejected key not marked invalid", { jobId: stage.job.id, error: String(e) });
+          });
+        }
+        const spent = agentSpendOf(error);
+        // The Pi loop names the connection that spent when a fallback ran.
+        const paidBy = FUNDING_SOURCES.find((f) => f === error.details?.funding);
+        if (paidBy) funding = paidBy;
+        const providerExecutionId = await record(stage, task, choice.runtime, {
+          model: spent?.model ?? model,
+          funding,
+          status: EXECUTION_STATUS[error.code] ?? "failed",
+          latencyMs: clock.now().getTime() - started,
+          ...(spent ? { spent } : {}),
+          error,
+        });
+        if (!spent) throw error;
+        // Funding rides on the spend even when the execution was not recorded, so it is never billed as operator.
+        throw new StudixError(error.code, error.message, {
+          retryable: error.retryable,
+          suggestedAction: error.suggestedAction,
+          details: {
+            ...error.details,
+            spent: { ...spent, funding, ...(providerExecutionId ? { providerExecutionId } : {}) },
+          },
+          cause: error,
+        });
+      }
+    };
+    return {
+      get id() {
+        return id;
+      },
+      run(ctx, task) {
+        const pending = run(ctx, task);
+        const settled = pending.then(
+          () => undefined,
+          () => undefined,
+        );
+        inFlight.add(settled);
+        void settled.then(() => inFlight.delete(settled));
+        return pending;
+      },
+    };
+  }
+
+  async function idle(timeoutMs: number): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    });
+    try {
+      return await Promise.race([Promise.all([...inFlight]).then(() => true as const), timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { runtimeFor, idle };
+}

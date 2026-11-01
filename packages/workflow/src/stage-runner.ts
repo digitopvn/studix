@@ -511,6 +511,7 @@ export async function runStages(
             costCents: usage.costCents,
             jobId: job.id,
             providerExecutionId: usage.providerExecutionId,
+            ...(usage.funding ? { funding: usage.funding } : {}),
             metadata: { ...usage.metadata, stage: stage.name, attempt: job.attempts },
           }),
         );

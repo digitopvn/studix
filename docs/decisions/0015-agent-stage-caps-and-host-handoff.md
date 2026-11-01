@@ -80,7 +80,10 @@ cho chạy tiếp hay không.
 - Ở host mode Studix không ép được turns, tokens hay cost. Studix không trả các
   chi phí đó; host tự chịu.
 - Worker chỉ chạy harness khi được wire `agentRuntimeFor`. Không có runtime thì
-  stage ở mode harness fail `UNAVAILABLE` và gợi ý chuyển sang host mode.
+  stage ở mode harness fail `UNAVAILABLE` và gợi ý chuyển sang host mode. Worker
+  production wire harness khi có `STUDIX_SECRETS_KEY`, chạy Pi hoặc Claude trên
+  connection và model của workspace (ADR-0016); xem
+  [WORKFLOW_PACKS.md](../WORKFLOW_PACKS.md#agent-stage-trong-worker).
 
 ## Alternatives considered
 

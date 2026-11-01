@@ -1,4 +1,4 @@
-import type { TenantContext, UsageEvent } from "@studix/core";
+import type { FundingSource, TenantContext, UsageEvent } from "@studix/core";
 import { StudixError } from "@studix/shared";
 
 /** Well-known usage kinds. Kinds are open strings; these are the ones the worker records in P0. */
@@ -29,6 +29,8 @@ export interface UsageInput {
   costCents: number;
   jobId?: string;
   providerExecutionId?: string;
+  /** Who paid for this spend; `operator` when omitted. BYOK spend is recorded, never charged (ADR 0016). */
+  funding?: FundingSource;
   metadata?: Record<string, unknown>;
 }
 

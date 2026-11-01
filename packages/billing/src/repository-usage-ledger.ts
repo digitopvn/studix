@@ -21,6 +21,7 @@ export function createUsageLedger(usage: UsageRepository): UsageLedger {
         costCents: input.costCents,
         jobId: input.jobId,
         providerExecutionId: input.providerExecutionId,
+        ...(input.funding ? { funding: input.funding } : {}),
         metadata: input.metadata,
       });
     },

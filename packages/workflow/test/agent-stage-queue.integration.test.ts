@@ -145,6 +145,7 @@ describe("agent stage on the Postgres queue", () => {
       expect.objectContaining({
         kind: USAGE_KINDS.agentRun,
         costCents: 0,
+        funding: "host",
         metadata: expect.objectContaining({ mode: "host" }),
       }),
     ]);

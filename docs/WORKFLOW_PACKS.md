@@ -101,6 +101,26 @@ usage rồi mới fail), `StageSuspended` (park job sau khi ghi phần đã tiê
 `usageOf` và `billedOnFailure`. Usage line có `upstreamJob` hoặc `providerExecutionId` được dedupe theo
 job upstream, nên một job được thu lại ở attempt sau không bị tính hai lần.
 
+### Agent stage trong worker
+
+Worker có `STUDIX_SECRETS_KEY` thì chạy agent stage mode `harness` ngay trong worker
+([`agent-harness.ts`](../apps/worker/src/agent-harness.ts)), trên connection của chính workspace
+([ADR-0016](decisions/0016-provider-connections-runtimes-and-model-preferences.md)). Runtime được chọn
+theo thứ tự:
+
+1. Job chọn Claude planner (`planner.runtime: "claude"`): Claude trên connection đó, model của planner.
+2. Snapshot đã pin cho job và stage (`job_model_snapshots`): retry luôn chạy lại đúng model đó.
+3. Model preference cụ thể nhất của runtime `pi` hoặc `claude` cho tên stage (thực tế là entry `default`
+   của người tạo job, rồi của workspace). Hai runtime ngang hạng thì chọn Pi. Lựa chọn được pin lần đầu.
+
+Không có lựa chọn nào thì stage fail `UNAVAILABLE`, không dùng key của operator. Claude chỉ chạy khi
+worker bật `STUDIX_CLAUDE_PLANNER`. Cap của stage (turns, tokens, cost, time) được runtime ép như
+[ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md). Mỗi lần chạy, thành công hay không, ghi
+một `provider_executions` (provider `anthropic` hoặc `pi`, `operation` là tên stage) với token và chi phí
+thật. Usage line `agent.run` của stage trỏ tới bản ghi đó. Cả hai mang `funding` (`workspace` hoặc `member`
+theo chủ connection): chi phí BYOK được ghi nhưng không tính cho workspace, và vẫn bị ngân sách job giới hạn
+([ADR-0016](decisions/0016-provider-connections-runtimes-and-model-preferences.md)).
+
 ### Gate
 
 | Gate            | Khai báo                                           | Ai mở                                                                            | Bị từ chối               |
@@ -302,10 +322,11 @@ dòng voice-over (hook, tối đa bốn message, CTA) phải vừa ngân sách t
 ### anime
 
 Brief chỉ là đầu vào cho agent viết scope (series bible và beat sheet); luật tier và độ dài shot áp lên
-scope đó trước G0 ([`anime-pack.ts`](../packages/skills/src/narrative-film/anime-pack.ts)). Worker
-production chưa nối agent runtime trong worker, nên `agentMode: "host"` là cách chạy được: agent của MCP
-client nhận task qua các tool handoff ([MCP_API.md](MCP_API.md#agent-stage-handoff-tools)). Job dừng ở G0
-và G1 chờ người ký trên dashboard.
+scope đó trước G0 ([`anime-pack.ts`](../packages/skills/src/narrative-film/anime-pack.ts)). Ở mode
+`harness` (mặc định) worker tự chạy agent bằng key và model của workspace (xem
+[Agent stage trong worker](#agent-stage-trong-worker)). Với `agentMode: "host"`, agent của MCP client nhận
+task qua các tool handoff ([MCP_API.md](MCP_API.md#agent-stage-handoff-tools)). Job dừng ở G0 và G1 chờ
+người ký trên dashboard.
 
 ```json
 {
@@ -350,7 +371,9 @@ còn lại. Bảng chung cho client: [MCP_API.md](MCP_API.md#troubleshooting).
 | `FORBIDDEN` "... was rejected by a reviewer"                                                                      | Người duyệt từ chối gate; `details.comment`                                                                                   | Xử lý góp ý, tạo job mới                                                                                                             |
 | `UNAVAILABLE` "Stage needs the ... service, which this worker lacks"                                              | `requireService`: worker không nối service đó                                                                                 | Nối service trong worker ([DEPLOYMENT.md](DEPLOYMENT.md#configuration))                                                              |
 | `UNAVAILABLE` "The Multix provider is not configured"                                                             | Stage trả tiền chạy trên worker chưa bật multix                                                                               | Bật multix cho worker theo [DEPLOYMENT.md](DEPLOYMENT.md#configuration)                                                              |
-| `UNAVAILABLE` "This worker runs no agent harness"                                                                 | Agent stage chạy mode `harness` trên worker không có agent runtime                                                            | Tạo job với `agentMode: "host"` và hoàn tất task từ MCP client                                                                       |
+| `UNAVAILABLE` "This worker runs no agent harness"                                                                 | Agent stage chạy mode `harness` trên worker không có `STUDIX_SECRETS_KEY` (không có harness)                                  | Tạo job với `agentMode: "host"` và hoàn tất task từ MCP client                                                                       |
+| `UNAVAILABLE` "No model is configured for agent stage ..."                                                        | Workspace và người tạo job chưa chọn model mặc định cho runtime `pi` hay `claude`                                             | Chọn model mặc định trong Settings → AI & Providers, hoặc dùng `agentMode: "host"`                                                   |
+| `UNAVAILABLE` "Agent stage ... resolved to Claude, which this worker does not run"                                | Lựa chọn của job là Claude nhưng worker không bật `STUDIX_CLAUDE_PLANNER`                                                     | Chọn model Pi, hoặc bật Claude runtime trên worker                                                                                   |
 | `UNAVAILABLE` "Workflow ... renders with ...; this worker has ..."                                                | `PackPipeline.renderer` khác renderer của worker                                                                              | Chạy pack trên worker có đúng renderer                                                                                               |
 | `VALIDATION` "Renderer ... cannot render this video"                                                              | `supports()` của renderer từ chối IR; `details.reasons`                                                                       | Sửa IR theo lý do, xem [RENDERER.md](RENDERER.md)                                                                                    |
 | `VALIDATION` "Stage ... returned an output that fails its schema"                                                 | Output của `run` không khớp `outputSchema`                                                                                    | Lỗi code của stage; sửa stage                                                                                                        |
