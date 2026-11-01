@@ -72,6 +72,7 @@ interface Spend {
   outputTokens: number;
   turns: number;
   model?: string;
+  providerExecutionId?: string;
 }
 
 function spendOf(err: unknown): Spend | undefined {
@@ -85,6 +86,7 @@ function spendOf(err: unknown): Spend | undefined {
     outputTokens: n(s.outputTokens),
     turns: n(s.turns),
     model: typeof s.model === "string" ? s.model : undefined,
+    providerExecutionId: typeof s.providerExecutionId === "string" ? s.providerExecutionId : undefined,
   };
 }
 
@@ -140,6 +142,9 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
     quantity: spend.inputTokens + spend.outputTokens,
     unit: "token",
     costCents: mode === "harness" ? spend.costCents : 0,
+    ...(mode === "harness" && spend.providerExecutionId
+      ? { providerExecutionId: spend.providerExecutionId }
+      : {}),
     metadata: {
       mode,
       runtime,

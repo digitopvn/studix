@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  type ClaudeAgentTransport,
   createClaudeSdkTransport,
   createPiKeyTester,
   isRuntimeKeyProvider,
@@ -26,6 +27,7 @@ import { createActivityRecorder } from "@studix/observability";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { StudixError } from "@studix/shared";
 import { createS3StorageAdapterFromConfig } from "@studix/storage";
+import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
 import { registerBriefRule } from "./planner/brief-decision.ts";
 import { type ClaudePlanner, createClaudePlanner, createPlannerRouter } from "./planner/claude-planner.ts";
@@ -39,6 +41,11 @@ import type { WorkerSettings } from "./worker-settings.ts";
 
 /** Covers the runtime's interrupt-then-kill sequence for runs aborted by shutdown. */
 const CLAUDE_SHUTDOWN_GRACE_MS = 15_000;
+/**
+ * Longest a Claude session may live before a worker starting on the same host removes its sandbox. Agent
+ * stages double their timeout with every approved overrun, so this is well above any single stage run.
+ */
+const CLAUDE_SANDBOX_MAX_SESSION_MS = 6 * 3_600_000;
 
 /** Brand lookup through the workspace's MCP connectors, built only when STUDIX_BRAND_LOOKUP_TOOL is set. */
 function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntime): BrandLookup | undefined {
@@ -112,6 +119,27 @@ function withWorkspaceModels(
 }
 
 /**
+ * The Claude Agent SDK transport shared by the Claude planner and the agent harness, built only when
+ * STUDIX_CLAUDE_PLANNER is on (the flag means this host can run the Claude process).
+ */
+function claudeTransport(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+): ClaudeAgentTransport | undefined {
+  const claude = settings.claudePlanner;
+  if (!claude) return undefined;
+  return createClaudeSdkTransport({
+    baseUrl: settings.config.ANTHROPIC_BASE_URL,
+    // A session never outlives its deadline plus the runtime's interrupt-then-kill grace.
+    sandboxRoot: prepareClaudeSandboxRoot(
+      join(settings.workDir, "claude"),
+      Math.max(claude.timeoutMs, CLAUDE_SANDBOX_MAX_SESSION_MS) + 60_000,
+      runtime.logger,
+    ),
+  });
+}
+
+/**
  * Claude Agent SDK planner, built only when STUDIX_CLAUDE_PLANNER is on. It opens the job's selected
  * Anthropic key through the same service and master key as the app; nothing else is ever substituted.
  */
@@ -119,26 +147,43 @@ function claudePlanner(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
   providers: ProviderConnectionService | undefined,
+  transport: ClaudeAgentTransport | undefined,
 ): ClaudePlanner | undefined {
   const claude = settings.claudePlanner;
-  if (!claude) return undefined;
-  const { config } = settings;
+  if (!claude || !transport) return undefined;
   // loadWorkerSettings refuses the flag without STUDIX_SECRETS_KEY.
   if (!providers) throw new StudixError("INTERNAL", "STUDIX_CLAUDE_PLANNER needs STUDIX_SECRETS_KEY");
   const repos = createRepositories(runtime.db);
   return createClaudePlanner({
-    transport: createClaudeSdkTransport({
-      baseUrl: config.ANTHROPIC_BASE_URL,
-      // A session never outlives its deadline plus the runtime's interrupt-then-kill grace.
-      sandboxRoot: prepareClaudeSandboxRoot(
-        join(settings.workDir, "claude"),
-        claude.timeoutMs + 60_000,
-        runtime.logger,
-      ),
-    }),
+    transport,
     credentials: providers,
     executions: repos.usage,
     ...claude,
+    logger: runtime.logger,
+  });
+}
+
+/**
+ * The in-worker harness for agent stages in `harness` mode, on each job's own provider connection: the Pi
+ * runtime, or Claude when the worker runs it. Without STUDIX_SECRETS_KEY no workspace can have a key, so
+ * there is no harness and those stages fail UNAVAILABLE with a pointer to host mode.
+ */
+function agentHarness(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+  providers: ProviderConnectionService | undefined,
+  transport: ClaudeAgentTransport | undefined,
+): WorkerAgentHarness | undefined {
+  if (!providers) return undefined;
+  const repos = createRepositories(runtime.db);
+  return createWorkerAgentHarness({
+    credentials: providers,
+    preferences: repos.modelPreferences,
+    snapshots: repos.modelSnapshots,
+    executions: repos.usage,
+    ...(transport && settings.claudePlanner
+      ? { claude: { transport, plannerModel: settings.claudePlanner.model } }
+      : {}),
     logger: runtime.logger,
   });
 }
@@ -202,8 +247,11 @@ export async function loadWorkerPorts(
     brandLookup: settings.brandLookupTool ?? "off",
     claudePlanner: settings.claudePlanner ? settings.claudePlanner.model : "off",
     workspaceModels: providers ? "on" : "off",
+    agentHarness: providers ? (settings.claudePlanner ? "pi+claude" : "pi") : "off",
   });
-  const claude = claudePlanner(settings, runtime, providers);
+  const transport = claudeTransport(settings, runtime);
+  const claude = claudePlanner(settings, runtime, providers, transport);
+  const harness = agentHarness(settings, runtime, providers, transport);
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),
@@ -211,10 +259,15 @@ export async function loadWorkerPorts(
     }),
     renderer,
     storage,
+    ...(harness ? { agentRuntimeFor: (stage) => harness.runtimeFor(stage) } : {}),
     close: async () => {
-      // Shutdown stops waiting on stages at once; let aborted Claude runs finish killing their process.
-      if (claude && !(await claude.idle(CLAUDE_SHUTDOWN_GRACE_MS))) {
-        logger.warn("Claude runs still closing at shutdown", { graceMs: CLAUDE_SHUTDOWN_GRACE_MS });
+      // Shutdown stops waiting on stages at once; let aborted agent runs finish killing their process.
+      const idle = await Promise.all([
+        claude ? claude.idle(CLAUDE_SHUTDOWN_GRACE_MS) : true,
+        harness ? harness.idle(CLAUDE_SHUTDOWN_GRACE_MS) : true,
+      ]);
+      if (idle.includes(false)) {
+        logger.warn("agent runs still closing at shutdown", { graceMs: CLAUDE_SHUTDOWN_GRACE_MS });
       }
       await storage.destroy();
     },

@@ -180,8 +180,10 @@ contract in both modes: input schema, output schema and limits (turns, tokens,
 cost, time and a tool allowlist). `payload.agentMode` picks the mode
 ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)).
 
-- **Harness** (default): the worker's `AgentRuntime` (Claude Agent SDK) runs the
-  stage. Every limit is a hard cap. The runtime aborts the session when a cap is
+- **Harness** (default): the worker's `AgentRuntime` runs the stage, on the Pi
+  SDK or the Claude Agent SDK with the workspace's own connection and model
+  ([ADR-0016](decisions/0016-provider-connections-runtimes-and-model-preferences.md),
+  `apps/worker/src/agent-harness.ts`). Every limit is a hard cap. The runtime aborts the session when a cap is
   crossed and settles only after the agent process has stopped; one that does not
   stop within the grace period is killed by handle and reported `INTERNAL`.
 - **Host**: the stage opens an `agent_handoffs` task for this attempt and the job
@@ -196,7 +198,8 @@ its stage row as `pending` and parks the job for an `agent.overrun` approval
 (scope `agent:<stage>`). Each approval a person grants allows one more run with
 every limit doubled (2^n after n approvals); a rejection fails the stage with
 `FORBIDDEN`. Agent spend is the ledger kind `agent.run` (tokens as quantity,
-mode, runtime, round and cap in metadata), separate from media cost per stage
+mode, runtime, round and cap in metadata; a harness run also links its
+provider execution), separate from media cost per stage
 and attempt (`splitJobUsage` in `packages/billing`).
 
 ## Revisions and invalidation

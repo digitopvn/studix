@@ -122,6 +122,8 @@ export interface AgentSpend {
   outputTokens: number;
   turns: number;
   model?: string;
+  /** Set by a caller that recorded the failed run as a provider execution. */
+  providerExecutionId?: string;
 }
 
 /** The spend carried by an error from an agent runtime's `run`, if the agent reported any. */

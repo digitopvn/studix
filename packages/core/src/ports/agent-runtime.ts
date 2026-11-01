@@ -38,6 +38,8 @@ export interface AgentRunResult {
     /** True when a consented fallback ran instead of the primary choice. */
     usedFallback: boolean;
   };
+  /** The provider execution recorded for this run, so its usage line is billed against that record. */
+  providerExecutionId?: string;
 }
 
 /** The limit an agent run stopped at; carried as `details.cap` on the run's error. */

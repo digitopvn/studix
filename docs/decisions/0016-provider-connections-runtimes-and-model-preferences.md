@@ -52,6 +52,13 @@ workspace model, and what happens to a running job when the choice changes.
   discovered extensions or context files, and SDK retries and compaction off.
   Usage is reported to the bounded runtime on every assistant message, so the
   turn, cost and deadline caps of ADR-0015 stop the session while it runs.
+- **Agent stages on the same choice.** Harness-mode agent stages (ADR-0015) run
+  in the worker on this resolution too, keyed by the stage name, so they use
+  the `default` entries unless a stage entry exists. A job that selected the
+  Claude planner runs them on that connection. Otherwise the most specific
+  entry of either runtime wins, Pi on a tie, and the choice is pinned per job
+  and stage like the planner's. Each run records a provider execution with its
+  real tokens and cost, which the stage's `agent.run` usage line links to.
 - **Fallbacks.** A consented fallback is tried only for a failure at the
   provider (`PROVIDER_ERROR`, `RATE_LIMITED`, `UNAUTHENTICATED`). Caps,
   cancellation and invalid output never move to another key. A key the provider
