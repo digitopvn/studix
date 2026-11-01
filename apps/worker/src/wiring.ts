@@ -21,6 +21,7 @@ import {
   type JobOutcome,
   type Planner,
   type QaGate,
+  type SpeechProbe,
   type StageContext,
   type WorkerPool,
   type WorkerPoolStatus,
@@ -37,6 +38,8 @@ export interface WorkerPorts {
   media?: MediaProvider;
   /** Optional: the hard QA gate pack stages run on a render. Without it those stages fail UNAVAILABLE. */
   qa?: QaGate;
+  /** Optional: rejects generated film sound effects that carry speech. Without it they are kept as generated. */
+  speech?: SpeechProbe;
   /**
    * Optional: the in-worker agent harness for an agent stage of a job. Without it agent stages run only in
    * host mode (the MCP client's agent completes them).
@@ -100,6 +103,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
       storage: deps.storage,
       renderer: deps.renderer,
       qa: deps.qa,
+      speech: deps.speech,
       workRoot: settings.workDir,
     },
     clock,

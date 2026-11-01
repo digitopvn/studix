@@ -9,6 +9,9 @@ dependencies = ["numpy>=2.2,<3"]
 # Only the optional worker image installs this (docker build --build-arg STUDIX_QA_EXTRAS=depth).
 depth = ["torch>=2.5", "transformers>=4.46", "pillow>=11"]
 
+# Optional worker image that rejects sound effects a model read aloud (STUDIX_QA_EXTRAS=vad at image creation).
+vad = ["torch>=2.5", "silero-vad>=6,<7"]
+
 [dependency-groups]
 dev = ["pytest>=8.3"]
 

@@ -94,6 +94,7 @@ schema zod cho input và output (`qa-tools.ts`).
 | `judge-reports`   | evidence | Gộp report của AI reviewer (`qa-gate-check`)                                      | 60 s    | 4 GiB  |
 | `shot-boundaries` | evidence | Pop luma, histogram, diff ở từng cut theo chế độ biên shot (`qa-shot-boundaries`) | 10 min  | 4 GiB  |
 | `depth-maps`      | evidence | Depth map PNG bằng Depth Anything V2 Small; chỉ image `depth`                     | 15 min  | 8 GiB  |
+| `speech`          | probe    | Tỉ lệ tiếng nói trong một file audio bằng Silero VAD; chỉ image `vad`             | 2 min   | 8 GiB  |
 
 Nguồn port và golden test ghi ở [PORTING.md](PORTING.md#port-record-tool-qa).
 
@@ -157,6 +158,27 @@ nghĩa là file đủ chuẩn kỹ thuật để giao, không phải là video t
   `ARG DEPTH_MODEL_REVISION` vào `/opt/studix-qa/models/`. Lúc chạy model chỉ đọc local
   (`local_files_only`); đổi path bằng `STUDIX_QA_DEPTH_MODEL`. Trên image mặc định,
   `depth-maps` trả `UNAVAILABLE`.
+- **Image `vad` (tùy chọn).** `docker build --build-arg STUDIX_QA_EXTRAS=vad .` cài extra `vad`
+  (torch CPU, `silero-vad`). Model Silero nằm trong wheel nên không có bước tải model và lúc chạy
+  không dùng mạng. Có thể gộp: `STUDIX_QA_EXTRAS="depth vad"`. Tool `speech` không phải check của
+  hard gate: nó là probe cho stage score của pack phim (xem dưới). Trên image mặc định, `speech`
+  trả `UNAVAILABLE`.
+
+### Kiểm tiếng nói của SFX phim
+
+ElevenLabs có thể đọc to cue SFX thành lời (cue tiếng Việt, hoặc cue có từ phủ định như
+`no human sounds`). Whisper một mình không đủ tin cậy (bịa lời trên tiếng gió sạch, bỏ sót lời
+tiếng Việt), nên cổng dùng VAD.
+
+- Bật bằng `SFX_SPEECH_CHECK=true` trên worker chạy image `vad`. Mặc định tắt: SFX được giữ như
+  provider trả về. Khi bật mà image thiếu extra, stage score fail `UNAVAILABLE`; file chưa đo
+  không bao giờ được coi là sạch.
+- Mỗi asset SFX được đo trước khi lưu và trước khi vào cache dùng lại. Có tiếng nói (bất kỳ đoạn
+  nào VAD đánh dấu, tối thiểu 100 ms) thì stage tạo lại **một** lần dưới idempotency key `:retry`.
+  Vẫn còn tiếng nói thì job fail `VALIDATION` (không retry), nêu shot và cue; cả hai lần gọi đều
+  được tính tiền. Output bị loại không vào mix và không được cache.
+- Prompt SFX là chính cue (tiếng Anh mô tả âm thanh, do `isSoundCue` kiểm), không còn câu bọc
+  phủ định.
 - **Local.** `pnpm test:qa` sync `tools/qa/.venv` bằng uv (`uv` trên PATH, hoặc
   `python -m uv`) rồi chạy pytest. Venv đó là interpreter `packages/qa` dùng mặc định;
   `STUDIX_QA_PYTHON` trỏ sang interpreter khác.

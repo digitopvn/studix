@@ -67,7 +67,8 @@ RUN pnpm install --frozen-lockfile --prod=false \
 # QA measurement tools: a venv at tools/qa/.venv (where packages/qa looks by default) on Debian's python3,
 # pinned by tools/qa/uv.lock. uv is used at build time only. The default image has no torch; build the
 # optional image with `--build-arg STUDIX_QA_EXTRAS=depth`, which also bakes the depth model in at a pinned
-# revision (tools never download anything at run time). See docs/QA.md.
+# revision (tools never download anything at run time). `STUDIX_QA_EXTRAS=vad` adds silero-vad, whose model ships in
+# its wheel (set SFX_SPEECH_CHECK=true to use it). See docs/QA.md.
 ARG STUDIX_QA_EXTRAS=""
 ARG DEPTH_MODEL_REVISION=5426e4f0f36572d16453bbda7a8389317b1bef99
 COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv

@@ -31,6 +31,7 @@ import {
   createWorkerJobQueue,
   type QaExpectation,
   type QaGate,
+  type SpeechProbe,
 } from "@studix/workflow";
 import { describe, expect, it } from "vitest";
 
@@ -107,7 +108,7 @@ function memoryStorage(): StorageAdapter {
 }
 
 /** `setFrame` gives set designs that size instead of the film's frame. */
-function createWorld(opts: { setFrame?: { width: number; height: number } } = {}) {
+function createWorld(opts: { setFrame?: { width: number; height: number }; speech?: SpeechProbe } = {}) {
   const { repos } = db.current;
   const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
   const workRoot = mkdtempSync(join(tmpdir(), "studix-film-packs-"));
@@ -194,7 +195,7 @@ function createWorld(opts: { setFrame?: { width: number; height: number } } = {}
     clock: { now: () => new Date() },
     logger,
     heartbeatIntervalMs: 50,
-    services: { media, storage, renderer, qa, workRoot },
+    services: { media, storage, renderer, qa, speech: opts.speech, workRoot },
     workflows: [
       createVideoCreateWorkflow({
         planner: async () => {
@@ -437,13 +438,13 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(kinds.indexOf("voice")).toBeLessThan(kinds.indexOf("video"));
     expect(kinds.filter((k) => k === "music")).toHaveLength(1);
     expect(kinds.filter((k) => k === "sfx")).toHaveLength(4);
-    // Effects are asked for as sounds only, so nothing in the cue is read out.
+    // Effects are asked for as the sound heard, with no negation the effect model could read aloud.
     const effects = world.requests.filter((r) => r.kind === "sfx").map((r) => r.prompt);
     expect(effects.sort()).toEqual([
-      "Sound effect only, no voice, speech, words or singing: distant fireworks launching",
-      "Sound effect only, no voice, speech, words or singing: fireworks bursting overhead",
-      "Sound effect only, no voice, speech, words or singing: heavy panting after a run",
-      "Sound effect only, no voice, speech, words or singing: soft wind over a rooftop",
+      "distant fireworks launching",
+      "fireworks bursting overhead",
+      "heavy panting after a run",
+      "soft wind over a rooftop",
     ]);
 
     expect(world.rendered).toHaveLength(1);
@@ -728,7 +729,7 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
 
     // The only provider call is the changed effect; every other output is the one the first job paid for.
     expect(world.requests.map((r) => [r.kind, r.prompt])).toEqual([
-      ["sfx", "Sound effect only, no voice, speech, words or singing: distant fireworks whistling upward"],
+      ["sfx", "distant fireworks whistling upward"],
     ]);
     const usage = (await world.repos.usage.list(ctx, { jobId: second.id, limit: 200 })).items.filter(
       (u) => u.kind === USAGE_KINDS.mediaGeneration,
@@ -744,6 +745,70 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     ))
       expect(keyOf(id), id).toContain(`generated/${first.id}/`);
     expect(keyOf("s4-fx1")).toContain(`generated/${second.id}/`);
+  });
+
+  /** A film signed through G0 and G1, its storyboard approved, ready for the paid render job. */
+  async function readyToRender(world: ReturnType<typeof createWorld>, slug: string) {
+    const { ctx, project } = await newFilm(slug, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G1");
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+    const board = await currentIr(ctx, project.id);
+    await approveStoryboard(ctx, project.id);
+    const render = await enqueue(ctx, project.id, pack, { versionId: board.version.id });
+    return { ctx, render };
+  }
+
+  it("makes a sound effect again once when it comes back with speech, and keeps the clean one", async () => {
+    const heard: string[] = [];
+    // The first effect measured has a word in it; every later one is clean.
+    const speech: SpeechProbe = {
+      async measure(filePath) {
+        heard.push(filePath);
+        return { speechMs: heard.length === 1 ? 420 : 0, durationMs: 2000 };
+      },
+    };
+    const world = createWorld({ speech });
+    const { render } = await readyToRender(world, `film-${pack}-sfx-retry`);
+    expect(await world.runOnce(render.id)).toBe("succeeded");
+
+    const effects = world.requests.filter((r) => r.kind === "sfx");
+    expect(effects).toHaveLength(5);
+    expect(heard).toHaveLength(5);
+    const retried = effects.filter((r) => r.idempotencyKey.endsWith(":retry"));
+    expect(retried).toHaveLength(1);
+    const asked = retried[0]!;
+    expect(
+      effects.filter((r) => r.idempotencyKey === asked.idempotencyKey.replace(/:retry$/, "")),
+    ).toHaveLength(1);
+    expect(effects.filter((r) => r.prompt === asked.prompt)).toHaveLength(2);
+
+    // The mix gets one asset per cue: the rejected output is not among them.
+    const cut = world.rendered[0]!;
+    expect((cut.audio ?? []).filter((t) => t.kind === "sfx")).toHaveLength(4);
+  });
+
+  it("fails with VALIDATION naming the shot and cue when the effect still has speech, and keeps it out of the mix", async () => {
+    const speech: SpeechProbe = { measure: async () => ({ speechMs: 300, durationMs: 2000 }) };
+    const world = createWorld({ speech });
+    const { ctx, render } = await readyToRender(world, `film-${pack}-sfx-speech`);
+    expect(await world.runOnce(render.id)).toBe("failed");
+
+    const job = await world.repos.jobs.get(ctx, render.id);
+    expect(job?.error).toMatchObject({ code: "VALIDATION", retryable: false });
+    expect(job?.error?.message).toMatch(
+      /SFX cue "(distant fireworks launching|fireworks bursting overhead|heavy panting after a run|soft wind over a rooftop)" of shot s[0-9] came back with speech twice/,
+    );
+    expect(world.rendered).toHaveLength(0);
+    // What the stage paid before it failed is billed.
+    const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items.filter(
+      (u) => u.kind === USAGE_KINDS.mediaGeneration && u.unit === "sfx",
+    );
+    expect(usage.length).toBeGreaterThanOrEqual(1);
+    expect(usage.every((u) => u.costCents > 0)).toBe(true);
   });
 
   it("fails the job and spends nothing on designs when the reviewer rejects G0", async () => {

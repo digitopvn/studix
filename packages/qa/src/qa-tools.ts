@@ -21,8 +21,8 @@ export interface QaTool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z
   strictMedia: boolean;
   timeoutMs: number;
   memoryMb: number;
-  /** Image that carries the tool's dependencies; `depth` is the optional torch image. */
-  image: "default" | "depth";
+  /** Image that carries the tool's dependencies; `depth` and `vad` are the optional torch images. */
+  image: "default" | "depth" | "vad";
 }
 
 export type QaRunOptions = Omit<PythonToolRunOptions, "timeoutMs" | "memoryMb"> & {
@@ -252,6 +252,18 @@ export const DepthMapsOutput = z.object({
 });
 export type DepthMapsResult = z.infer<typeof DepthMapsOutput>;
 
+// ---------------------------------------------------------------- speech (optional image)
+
+export const SpeechInput = z.strictObject({ media: MediaRef });
+export const SpeechOutput = z.object({
+  speechMs: z.number().min(0),
+  durationMs: z.number().min(0),
+  /** Share of the audio the voice activity detector marks as speech, 0 to 1. */
+  speechRatio: z.number().min(0).max(1),
+  segments: z.number().int().min(0),
+});
+export type SpeechResult = z.infer<typeof SpeechOutput>;
+
 // ---------------------------------------------------------------- shot-boundaries
 
 /** How a shot joins the previous one (the film production `boundary`); thresholds apply to the first two. */
@@ -380,6 +392,17 @@ export const QA_TOOLS = {
     timeoutMs: 15 * 60_000,
     memoryMb: 8192,
     image: "depth",
+  }),
+  speech: tool({
+    name: "speech",
+    description: "Share of one audio file that is human speech (Silero VAD, CPU). Optional vad image only.",
+    input: SpeechInput,
+    output: SpeechOutput,
+    mediaRefs: one,
+    timeoutMs: 2 * 60_000,
+    // Address space, not resident memory: torch maps far more than it uses (same cap as depth-maps).
+    memoryMb: 8192,
+    image: "vad",
   }),
   shotBoundaries: tool({
     name: "shot-boundaries",

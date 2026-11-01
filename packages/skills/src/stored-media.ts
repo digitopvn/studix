@@ -54,6 +54,24 @@ export interface StoredMedia {
   filePath?: string;
   /** Set when an earlier job's stored output was reused: nothing was generated or charged. */
   reusedFrom?: { jobId?: string };
+  /** Usage lines of outputs a check rejected before this one was kept; they were paid for all the same. */
+  rejected?: StageUsage[];
+}
+
+/**
+ * Looks at a generated file before it is stored. Resolves with the reason to reject it, or undefined to keep
+ * it; rejects when the file could not be examined, which fails the stage rather than keep an unchecked file.
+ */
+export type MediaCheck = (filePath: string, signal: AbortSignal) => Promise<string | undefined>;
+
+/** A generated output the check rejected: nothing was stored or cached, but the call is billed. */
+class MediaRejected extends Error {
+  constructor(
+    readonly reason: string,
+    readonly usage: StageUsage,
+  ) {
+    super(reason);
+  }
 }
 
 /**
@@ -97,6 +115,7 @@ export function mediaRequest(
   stage: string,
   request: StoredMediaRequest,
   workDir: string,
+  retry = false,
 ): MediaGenerationRequest {
   return {
     kind: request.kind,
@@ -104,7 +123,8 @@ export function mediaRequest(
     prompt: request.prompt,
     ...(request.params ? { params: request.params } : {}),
     // Stable across attempts and workers: the stage journal resumes the upstream job under this key.
-    idempotencyKey: `${s.job.id}:${stage}:${request.assetId}`,
+    // A request made again after a rejected output is a new upstream job under its own key.
+    idempotencyKey: `${s.job.id}:${stage}:${request.assetId}${retry ? ":retry" : ""}`,
     maxCostCents: request.maxCostCents,
     workDir,
     signal: s.signal,
@@ -179,10 +199,10 @@ export async function estimateMediaCents(
 }
 
 /** The usage line of a provider call that charged, whether it then returned or failed. */
-function mediaUsage(request: StoredMediaRequest, charge: MediaCharge): StageUsage {
+function mediaUsage(request: StoredMediaRequest, charge: MediaCharge, retry = false): StageUsage {
   const upstreamJob = charge.job ? `${charge.job.provider}:${charge.job.id}` : undefined;
   return {
-    item: `media-${request.assetId}`,
+    item: `media-${request.assetId}${retry ? "-retry" : ""}`,
     kind: USAGE_KINDS.mediaGeneration,
     quantity: 1,
     unit: request.kind,
@@ -233,7 +253,9 @@ export async function generateStoredMedia(
   s: StageContext,
   stage: string,
   request: StoredMediaRequest,
+  options: { check?: MediaCheck; retry?: boolean } = {},
 ): Promise<StoredMedia> {
+  const { check, retry = false } = options;
   const media = requireService(s, "media");
   const storage = requireService(s, "storage");
   const reused = await findReusableMedia(s, request);
@@ -243,22 +265,26 @@ export async function generateStoredMedia(
   const mediaDir = await stageMediaDir(s, stage);
   let result: MediaGenerationResult;
   try {
-    result = await media.generate(s.ctx, mediaRequest(s, stage, request, mediaDir));
+    result = await media.generate(s.ctx, mediaRequest(s, stage, request, mediaDir, retry));
   } catch (err) {
     // The provider charged before it failed (e.g. the finished job's result could not be collected).
     if (err instanceof MediaChargedError) {
-      throw new StageFailedAfterSpend(err, [mediaUsage(request, err.charge)]);
+      throw new StageFailedAfterSpend(err, [mediaUsage(request, err.charge, retry)]);
     }
     throw err;
   }
   // The provider call is paid from here on: whatever fails next still bills it.
-  const usage = mediaUsage(request, {
-    provider: result.provider,
-    model: result.model,
-    costCents: result.costCents,
-    costSource: result.costSource ?? "unknown",
-    ...(result.job ? { job: result.job } : {}),
-  });
+  const usage = mediaUsage(
+    request,
+    {
+      provider: result.provider,
+      model: result.model,
+      costCents: result.costCents,
+      costSource: result.costSource ?? "unknown",
+      ...(result.job ? { job: result.job } : {}),
+    },
+    retry,
+  );
   try {
     const output = result.outputs[0];
     if (!output) {
@@ -266,6 +292,9 @@ export async function generateStoredMedia(
         details: { assetId: request.assetId, model: result.model },
       });
     }
+    // Before anything is stored or cached, so a rejected output is never reused by a later job.
+    const rejection = check ? await check(output.filePath, s.signal) : undefined;
+    if (rejection !== undefined) throw new MediaRejected(rejection, usage);
     const ext = EXT_BY_MIME[output.mime] ?? extname(output.filePath);
     const { sha256, bytes } = await sha256File(output.filePath);
     const stored = await storage.put(
@@ -294,7 +323,41 @@ export async function generateStoredMedia(
     if (reuseKey !== undefined) await s.mediaOutputs?.put(reuseKey, asset);
     return { asset, filePath: output.filePath, usage };
   } catch (err) {
+    if (err instanceof MediaRejected) throw err;
     throw new StageFailedAfterSpend(toStudixError(err), [usage]);
+  }
+}
+
+/**
+ * Generate one asset and keep it only when `check` accepts it. A rejected output is generated again once under
+ * a new upstream job; when that one is rejected too, the stage fails with the error `rejected` builds from the
+ * last reason, and both calls are billed.
+ */
+export async function generateCheckedMedia(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+  check: MediaCheck,
+  rejected: (reason: string) => StudixError,
+): Promise<StoredMedia> {
+  let first: MediaRejected;
+  try {
+    return await generateStoredMedia(s, stage, request, { check });
+  } catch (err) {
+    if (!(err instanceof MediaRejected)) throw err;
+    first = err;
+  }
+  try {
+    const again = await generateStoredMedia(s, stage, request, { check, retry: true });
+    return { ...again, rejected: [first.usage] };
+  } catch (err) {
+    if (err instanceof MediaRejected) {
+      throw new StageFailedAfterSpend(rejected(err.reason), [first.usage, err.usage]);
+    }
+    if (err instanceof StageFailedAfterSpend) {
+      throw new StageFailedAfterSpend(err.error, [first.usage, ...err.usage]);
+    }
+    throw err;
   }
 }
 

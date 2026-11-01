@@ -64,6 +64,15 @@ export interface QaGate {
   ): Promise<Record<string, unknown>>;
 }
 
+/** Speech detection on a generated sound, as a port, so a pack stage can reject a sound without depending on `@studix/qa`. */
+export interface SpeechProbe {
+  /**
+   * Measure how much of `filePath` is human speech. Rejects when the file could not be measured: a sound that
+   * was not checked is never reported as clean.
+   */
+  measure(filePath: string, signal: AbortSignal): Promise<{ speechMs: number; durationMs: number }>;
+}
+
 /**
  * Ports a pack stage may use, wired once by the worker (`JobExecutorDeps.services`). Pack stages are
  * static, registry-friendly objects; whatever they need at run time comes from here. A stage that needs a
@@ -74,6 +83,8 @@ export interface StageServices {
   storage?: StorageAdapter;
   renderer?: RendererAdapter;
   qa?: QaGate;
+  /** Optional: rejects generated sound effects that carry speech. Without it the stage keeps them as generated. */
+  speech?: SpeechProbe;
   /** Local scratch root; a stage writes under `<workRoot>/<jobId>/attempt-<n>/<stage>`. */
   workRoot?: string;
 }

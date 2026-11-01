@@ -32,6 +32,7 @@ import {
   RenderOutput,
   read,
   requireService,
+  type SpeechProbe,
   type StageContext,
   type StageDefinition,
   sha256File,
@@ -44,7 +45,9 @@ import type { Skill, WorkflowPack } from "../pack-registry.ts";
 import {
   billedOnFailure,
   estimateMediaCents,
+  generateCheckedMedia,
   generateStoredMedia,
+  type MediaCheck,
   reuseOnAssets,
   type StoredMediaRequest,
 } from "../stored-media.ts";
@@ -421,8 +424,32 @@ function fullFrameCut(ir: VideoIR): VideoIR {
   return VideoIRSchema.parse(copy);
 }
 
-/** An effect request: the cue as a sound, with nothing spoken, sung or read out. */
-const sfxPrompt = (cue: string): string => `Sound effect only, no voice, speech, words or singing: ${cue}`;
+/**
+ * An effect request: the cue as the sound heard. It carries no negations ("no voice", "no human sounds"): the
+ * effect model has read such words aloud, so keeping speech out is the job of the cue being a sound description
+ * (`isSoundCue`) and of the speech check on the generated file.
+ */
+const sfxPrompt = (cue: string): string => cue;
+
+/** Rejects a generated effect that carries speech; a file the probe could not measure fails the stage. */
+const sfxSpeechCheck =
+  (probe: SpeechProbe): MediaCheck =>
+  async (filePath, signal) => {
+    const { speechMs } = await probe.measure(filePath, signal);
+    return speechMs > 0 ? `${Math.round(speechMs)} ms of speech` : undefined;
+  };
+
+function sfxSpokenError(shotId: string, cue: string, reason: string): StudixError {
+  return new StudixError(
+    "VALIDATION",
+    `SFX cue "${cue}" of shot ${shotId} came back with speech twice (${reason}); it was not put in the mix`,
+    {
+      retryable: false,
+      suggestedAction: `Reword the cue of shot ${shotId} as a plain description of the sound heard, or remove it, then render again.`,
+      details: { shotId, cue },
+    },
+  );
+}
 
 function irShot(ir: VideoIR, id: string): Shot {
   for (const scene of ir.scenes) {
@@ -1310,6 +1337,8 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         const span = starts.get(shot.id) ?? { startMs: 0, durationMs: shot.durationMs };
         return {
           role: "sfx" as const,
+          shotId: shot.id,
+          cue,
           at: span.startMs + Math.floor((span.durationMs * i) / Math.max(1, shot.sfx.length)),
           length: span.durationMs,
           request: {
@@ -1340,8 +1369,14 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const workDir = await stageWorkDir(s, n.score);
       const planned = await withCaps(s, scoreRequests(s));
       let done = 0;
+      const speech = s.services.speech;
       const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const media = await generateStoredMedia(s, n.score, p.request);
+        const media =
+          speech && p.role === "sfx"
+            ? await generateCheckedMedia(s, n.score, p.request, sfxSpeechCheck(speech), (reason) =>
+                sfxSpokenError(p.shotId, p.cue, reason),
+              )
+            : await generateStoredMedia(s, n.score, p.request);
         s.reportProgress(++done / planned.length);
         return { ...p, ...media };
       });
@@ -1360,7 +1395,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         };
       });
       const assets = made.map((m) => m.asset);
-      const usage = made.map((m) => m.usage);
+      const usage = made.flatMap((m) => [...(m.rejected ?? []), m.usage]);
       const next = await billedOnFailure(usage, () =>
         VideoIRSchema.parse({
           ...ir,

@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform != 'darwin'",
@@ -896,6 +896,20 @@ wheels = [
 ]
 
 [[package]]
+name = "silero-vad"
+version = "6.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "torch", version = "2.15.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/32/17/df6bfc8f659fc5c1e082c18275be67c5a581bd2d07734a65b141fc983ccf/silero_vad-6.2.3.tar.gz", hash = "sha256:d7a23b09202be4953915cb9173089bb307eed0418a9bd4794d9ec5af07fa1996", size = 29276676, upload-time = "2026-09-23T11:37:22.208Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/ef/9099037ed6f180ea33220178df4107112c0ce2bf5fb4d6f6ab19db2844ed/silero_vad-6.2.3-py3-none-any.whl", hash = "sha256:7b7f5436cfcb02fae583a05b512ea96467fd449fe54cb49a5e4f06c51a1e43b8", size = 11317527, upload-time = "2026-09-23T11:37:20.002Z" },
+]
+
+[[package]]
 name = "studix-qa"
 version = "0.1.0"
 source = { editable = "." }
@@ -911,6 +925,11 @@ depth = [
     { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
 ]
+vad = [
+    { name = "silero-vad" },
+    { name = "torch", version = "2.15.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -921,10 +940,12 @@ dev = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.2,<3" },
     { name = "pillow", marker = "extra == 'depth'", specifier = ">=11" },
+    { name = "silero-vad", marker = "extra == 'vad'", specifier = ">=6,<7" },
     { name = "torch", marker = "extra == 'depth'", specifier = ">=2.5", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", marker = "extra == 'vad'", specifier = ">=2.5", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", marker = "extra == 'depth'", specifier = ">=4.46" },
 ]
-provides-extras = ["depth"]
+provides-extras = ["depth", "vad"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.3" }]

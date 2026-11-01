@@ -82,6 +82,11 @@ export const ConfigSchema = z
     HYPERFRAMES_BIN: optionalString,
     FFMPEG_PATH: z.string().min(1).default("ffmpeg"),
     FFPROBE_PATH: z.string().min(1).default("ffprobe"),
+    /**
+     * Reject generated film sound effects that carry speech (regenerate once, then fail). Needs the optional
+     * worker image with the `vad` extra; on the default image every film score stage would fail UNAVAILABLE.
+     */
+    SFX_SPEECH_CHECK: bool.default(false),
     MULTIX_BIN: optionalString,
     /** Default "<vendor>:<model>" per media role; unset means the provider's built-in default. */
     MULTIX_IMAGE_MODEL: optionalString,

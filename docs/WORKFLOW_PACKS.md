@@ -205,7 +205,8 @@ Lý do của các ràng buộc:
   retry tìm lại file đã trả tiền thay vì sinh lại. Thư mục bị xóa ở `finalize`; job fail giữ nó cho lần
   retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
 - Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (voice và một SFX),
-  `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
+  `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx). Với `SFX_SPEECH_CHECK=true`, score loại
+  SFX có tiếng nói, tạo lại một lần rồi fail `VALIDATION`: [QA.md](QA.md#kiểm-tiếng-nói-của-sfx-phim).
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).
 
 ### Atlas

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { createMultixProviderFromConfig } from "@studix/providers";
-import { createHardQaGate, qaToolchainStatus, resolveQaToolchain } from "@studix/qa";
+import { createHardQaGate, createSpeechProbe, qaToolchainStatus, resolveQaToolchain } from "@studix/qa";
 import { knowledgeCatalog } from "@studix/skills";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
@@ -17,7 +17,7 @@ const QA_TOOL_TIMEOUT_MS = 120_000;
 export function loadPackServices(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
-): Pick<WorkerPorts, "media" | "qa"> {
+): Pick<WorkerPorts, "media" | "qa" | "speech"> {
   const { config } = settings;
   const media = createMultixProviderFromConfig(config, { env: runtime.env });
   const toolchain = resolveQaToolchain(runtime.env);
@@ -31,18 +31,20 @@ export function loadPackServices(
   runtime.logger.info("pack services ready", {
     media: status.enabled ? media.id : `off (${status.reason})`,
     qa: qaStatus.ok ? "ready" : "toolchain missing",
+    sfxSpeechCheck: config.SFX_SPEECH_CHECK ? "on" : "off",
   });
+  const run = {
+    toolchain,
+    sandboxRoot: join(settings.workDir, "qa"),
+    ffmpegPath: config.FFMPEG_PATH,
+    ffprobePath: config.FFPROBE_PATH,
+  };
   return {
     media,
     qa: createHardQaGate({
-      run: {
-        toolchain,
-        timeoutMs: QA_TOOL_TIMEOUT_MS,
-        sandboxRoot: join(settings.workDir, "qa"),
-        ffmpegPath: config.FFMPEG_PATH,
-        ffprobePath: config.FFPROBE_PATH,
-      },
+      run: { ...run, timeoutMs: QA_TOOL_TIMEOUT_MS },
       hardChecks: () => knowledgeCatalog.hardChecks(),
     }),
+    ...(config.SFX_SPEECH_CHECK ? { speech: createSpeechProbe(run) } : {}),
   };
 }
