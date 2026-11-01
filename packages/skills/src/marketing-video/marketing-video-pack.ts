@@ -241,11 +241,14 @@ export const marketingStoryboardStage: StageDefinition = {
       },
       (r) => [r.usage],
     );
-    const frames = Object.fromEntries(generated.map((g) => [g.key, g.asset]));
-    const title = brief.title ?? brief.brand?.name ?? "Marketing video";
-    const ir = marketingVideoIr(script, brief.brand, title, { frames });
-    await rm(workDir, { recursive: true, force: true });
-    return { output: { ir, frames }, usage: generated.map((g) => g.usage) };
+    const usage = generated.map((g) => g.usage);
+    return billedOnFailure(usage, async () => {
+      const frames = Object.fromEntries(generated.map((g) => [g.key, g.asset]));
+      const title = brief.title ?? brief.brand?.name ?? "Marketing video";
+      const ir = marketingVideoIr(script, brief.brand, title, { frames });
+      await rm(workDir, { recursive: true, force: true });
+      return { output: { ir, frames }, usage };
+    });
   },
 };
 
@@ -310,8 +313,8 @@ export const marketingReframeStage: StageDefinition = {
     const requests = await withCaps(s, await reframeRequests(s));
     const nextVersionId = jobScopedId("pver", s.job.id);
     let generated: Array<StoredMedia & { shotId: string }> = [];
+    const workDir = requests.length > 0 ? await stageWorkDir(s, MV_STAGES.reframe) : "";
     if (requests.length > 0) {
-      const workDir = await stageWorkDir(s, MV_STAGES.reframe);
       let done = 0;
       generated = await mapBounded(
         requests,
@@ -323,36 +326,39 @@ export const marketingReframeStage: StageDefinition = {
         },
         (m) => [m.usage],
       );
-      await rm(workDir, { recursive: true, force: true });
     }
-    const fresh = new Map(generated.map((g) => [g.asset.id, g.asset]));
-    const next = VideoIR.parse({ ...ir, assets: ir.assets.map((a) => fresh.get(a.id) ?? a) });
-    const resultVersionId = generated.length > 0 ? nextVersionId : versionId;
-    await s.commit(async (repos, ctx) => {
-      if (generated.length > 0 && !(await repos.projects.getVersion(ctx, nextVersionId))) {
-        await repos.projects.createVersion(ctx, {
-          id: nextVersionId,
-          projectId,
-          ir: next,
-          source: "planner",
-          parentVersionId: versionId,
-          createdBy: { type: "system", id: ctx.actor.id },
-          // Only on top of the patched version: a newer version means someone moved on, so stop here.
-          advanceFrom: versionId,
-        });
-      }
-      // A feedback patch is reframed while the storyboard is in review, or while an earlier job left the project
-      // in rendering; a job that outlives an approve, publish or archive must not reopen review.
-      await markInReview(repos, ctx, projectId, resultVersionId, ["rendering", "in_review"]);
+    const usage = generated.map((g) => g.usage);
+    return billedOnFailure(usage, async () => {
+      if (requests.length > 0) await rm(workDir, { recursive: true, force: true });
+      const fresh = new Map(generated.map((g) => [g.asset.id, g.asset]));
+      const next = VideoIR.parse({ ...ir, assets: ir.assets.map((a) => fresh.get(a.id) ?? a) });
+      const resultVersionId = generated.length > 0 ? nextVersionId : versionId;
+      await s.commit(async (repos, ctx) => {
+        if (generated.length > 0 && !(await repos.projects.getVersion(ctx, nextVersionId))) {
+          await repos.projects.createVersion(ctx, {
+            id: nextVersionId,
+            projectId,
+            ir: next,
+            source: "planner",
+            parentVersionId: versionId,
+            createdBy: { type: "system", id: ctx.actor.id },
+            // Only on top of the patched version: a newer version means someone moved on, so stop here.
+            advanceFrom: versionId,
+          });
+        }
+        // A feedback patch is reframed while the storyboard is in review, or while an earlier job left the project
+        // in rendering; a job that outlives an approve, publish or archive must not reopen review.
+        await markInReview(repos, ctx, projectId, resultVersionId, ["rendering", "in_review"]);
+      });
+      return {
+        output: {
+          projectVersionId: resultVersionId,
+          storyboard: "in_review",
+          reframed: generated.map((g) => g.shotId),
+        },
+        usage,
+      };
     });
-    return {
-      output: {
-        projectVersionId: resultVersionId,
-        storyboard: "in_review",
-        reframed: generated.map((g) => g.shotId),
-      },
-      usage: generated.map((g) => g.usage),
-    };
   },
 };
 
