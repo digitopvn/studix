@@ -70,6 +70,8 @@ describe("film stage spend when the work after the paid batch fails", () => {
       (err: unknown) => err,
     );
     expect(failure).toBeInstanceOf(StageFailedAfterSpend);
-    expect((failure as StageFailedAfterSpend).usage.length).toBeGreaterThan(0);
+    const spent = failure as StageFailedAfterSpend;
+    expect(spent.usage.length).toBeGreaterThan(0);
+    expect(spent.error.code).toBe("UNAVAILABLE");
   });
 });
