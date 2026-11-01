@@ -1,7 +1,7 @@
 import { type Clock, StudixError } from "@studix/shared";
 import type { Job, Render, Stage, WorkflowRun } from "../entities/job.ts";
 import { isTerminalJobStatus } from "../entities/job.ts";
-import { JOB_RESUME_ATTEMPTS, type JobQueue } from "../ports/job-queue.ts";
+import { JOB_RESUME_ATTEMPTS, type JobQueue, promoteSubmittingRecord } from "../ports/job-queue.ts";
 import type {
   JobRepository,
   RenderRepository,
@@ -125,6 +125,27 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
               : undefined,
       };
       return jobs.update(ctx, jobId, next);
+    },
+    async attachMediaJob(ctx, jobId, input) {
+      const job = jobs.require(ctx, jobId);
+      if (job.status !== "failed") {
+        throw new StudixError("CONFLICT", `job ${jobId} is ${job.status}`, {
+          details: { status: job.status, expected: ["failed"] },
+        });
+      }
+      const rows = stages.filter(ctx, (s) => s.jobId === jobId && s.name === input.stage);
+      const { rowIndex, record } = promoteSubmittingRecord(
+        rows.map((row) => row.mediaJobs),
+        input,
+        clock.now(),
+      );
+      const row = rows[rowIndex]!;
+      stages.update(ctx, row.id, {
+        mediaJobs: (row.mediaJobs ?? []).map((r) =>
+          r.idempotencyKey === record.idempotencyKey ? record : r,
+        ),
+      });
+      return jobs.require(ctx, jobId);
     },
     async resume(ctx, jobId) {
       return repo.update(

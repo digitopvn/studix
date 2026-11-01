@@ -19,6 +19,12 @@ import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
 
+const AttachMediaJobBody = z.object({
+  stage: z.string().trim().min(1).max(100),
+  idempotencyKey: z.string().trim().min(1).max(300),
+  predictionId: z.string().trim().min(1).max(128),
+});
+
 const PageQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   cursor: z
@@ -209,6 +215,18 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
   router.post("/jobs/:jobId/retry", async (req, res) => {
     const { ctx } = sessionOf(res);
     res.json(await deps.studio.retryJob(ctx, idParam(req, "jobId")));
+  });
+
+  router.post("/jobs/:jobId/media-jobs/attach", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    const body = parseBody(AttachMediaJobBody, req.body, "attach media job request");
+    res.json(
+      await deps.studio.attachMediaJob(ctx, idParam(req, "jobId"), {
+        stage: body.stage,
+        idempotencyKey: body.idempotencyKey,
+        job: { provider: "atlas", id: body.predictionId },
+      }),
+    );
   });
 
   router.get("/renders/:renderId/playback", async (req, res) => {

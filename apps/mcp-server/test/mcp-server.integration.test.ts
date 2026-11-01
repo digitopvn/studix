@@ -74,6 +74,7 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "studix_approve",
+      "studix_attach_media_job",
       "studix_cancel_job",
       "studix_create_video",
       "studix_feedback",
@@ -175,6 +176,54 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
 
     // Only a failed job is retryable.
     expect((await call(clientA, "studix_retry_job", { jobId })).envelope.error?.code).toBe("CONFLICT");
+  });
+
+  it("recovers a stuck Atlas submission through studix_attach_media_job, owner/admin only", async () => {
+    const clientA = await app.connect(keyA);
+    const created = await call(clientA, "studix_create_video", { prompt: "Attach me" });
+    const jobId = created.envelope.data?.jobId as string;
+    const stuck = {
+      idempotencyKey: "stage-2:upscale",
+      kind: "image",
+      model: "atlas:atlascloud/image-upscaler",
+      attempt: 1,
+      state: "submitting",
+      estimatedCostCents: 3,
+      submittedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    await app.deps.repos.jobs.upsertStage(tenantA, {
+      jobId,
+      name: "upscale",
+      attempt: 1,
+      status: "failed",
+      mediaJobs: [stuck as never],
+    });
+    await app.db.client`update jobs set status = 'failed', finished_at = now() where id = ${jobId}`;
+    const args = { jobId, stage: "upscale", idempotencyKey: stuck.idempotencyKey, predictionId: "pred_42" };
+
+    // job:retry alone is not enough: the attachment chooses which paid job a stage will use.
+    const limited = await call(clientA, "studix_attach_media_job", args);
+    expect(limited.envelope.error?.code).toBe("FORBIDDEN");
+    const adminA = await app.connect(await app.createKey(tenantA, "admin"));
+    const foreign = await call(
+      await app.connect(await app.createKey(tenantB, "admin")),
+      "studix_attach_media_job",
+      args,
+    );
+    expect(foreign.envelope.error?.code).toBe("NOT_FOUND");
+
+    const attached = await call(adminA, "studix_attach_media_job", args);
+    expect(attached.envelope.status).toBe("ok");
+    const [stage] = await app.deps.repos.jobs.listStages(tenantA, jobId);
+    expect(stage?.mediaJobs?.[0]).toMatchObject({
+      state: "submitted",
+      job: { provider: "atlas", id: "pred_42" },
+    });
+    expect((await call(adminA, "studix_attach_media_job", args)).envelope.error?.code).toBe("CONFLICT");
+    expect((await call(clientA, "studix_retry_job", { jobId })).envelope.data).toMatchObject({
+      status: "queued",
+    });
   });
 
   it("returns validation errors as tool envelopes", async () => {

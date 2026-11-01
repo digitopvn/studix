@@ -69,17 +69,18 @@ guide, the per-error value is authoritative.
 
 ## P0 native tools
 
-| Tool                  | Purpose                                                                                                                                                                                                                                                |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `studix_inspect`      | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first.                                                                                    |
-| `studix_create_video` | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly.                     |
-| `studix_get_job`      | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                                                |
-| `studix_get_project`  | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                                            |
-| `studix_cancel_job`   | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                                               |
-| `studix_retry_job`    | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                                                 |
-| `studix_approve`      | Record a decision on a pending approval (for example `video.publish`). Only a human user may approve; an API key gets `FORBIDDEN`.                                                                                                                     |
-| `studix_feedback`     | Feedback on one target of the current version: `shotId`, `sceneId`, `assetId`, `characterId` (a film character's voice), or `startMs` with `endMs`. Always stored as a comment. With a `patch`, it makes a new version and queues a render job. Async. |
-| `studix_render`       | Queue a render of the current version, or of a given `versionId`, at a `renderPreset`. Returns `jobId`; poll `studix_get_job` for the MP4 URL. Async.                                                                                                  |
+| Tool                      | Purpose                                                                                                                                                                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `studix_inspect`          | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first.                                                                                    |
+| `studix_create_video`     | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly.                     |
+| `studix_get_job`          | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                                                |
+| `studix_get_project`      | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                                            |
+| `studix_cancel_job`       | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                                               |
+| `studix_retry_job`        | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                                                 |
+| `studix_attach_media_job` | Owner/admin recovery of a failed job's Atlas call stuck in `submitting` (see [Recovering a stuck Atlas call](#recovering-a-stuck-atlas-call)).                                                                                                         |
+| `studix_approve`          | Record a decision on a pending approval (for example `video.publish`). Only a human user may approve; an API key gets `FORBIDDEN`.                                                                                                                     |
+| `studix_feedback`         | Feedback on one target of the current version: `shotId`, `sceneId`, `assetId`, `characterId` (a film character's voice), or `startMs` with `endMs`. Always stored as a comment. With a `patch`, it makes a new version and queues a render job. Async. |
+| `studix_render`           | Queue a render of the current version, or of a given `versionId`, at a `renderPreset`. Returns `jobId`; poll `studix_get_job` for the MP4 URL. Async.                                                                                                  |
 
 Every tool that touches a project returns its ids, `next[]` and `reviewUrl`
 (`${STUDIX_APP_URL}/#/projects/<projectId>/review`), the dashboard page where a
@@ -225,10 +226,19 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
 - Only a `failed` job can be retried (any other status returns `CONFLICT`). `video.publish` jobs cannot (`VALIDATION`: a publish is not idempotent, so start a new one), and neither can a job whose `job.start` approval was expired, rejected or never granted by a person (`APPROVAL_REQUIRED`). Agent stages are not retried automatically, but a manual retry re-runs a failed agent stage and its spend is billed again.
 - The caller needs the `job:retry` permission (owner, admin and editor roles; API keys need the scope). Migration `0012` adds the scope to keys issued before it existed whose scopes were exactly the editor, admin or owner set, so they keep their role label; a key with any other scope set is `custom` and needs a new key that includes `job:retry`.
 - A retried render job only moves its project to `in_review` while the project is still `rendering`, so a later status set by anything else (a newer review decision, an archive) is not overwritten.
-- A job whose Atlas call is stuck in `submitting` after a partial batch failure cannot be recovered by retry; this is existing behaviour tracked in #67 and #69.
+- A job whose Atlas call is stuck in `submitting` is not collected by a plain retry: it needs the operator step in [Recovering a stuck Atlas call](#recovering-a-stuck-atlas-call) first.
 - The dashboard job page shows a **Retry job** button for a `failed` job that is not a publish.
 - A failed job keeps its attempt work directories so the retry can reuse synced media; the worker removes a job's directory once nothing has written to it for `WORKER_WORK_DIR_RETENTION_HOURS` (default 168, checked at startup and hourly; activity is the newest write under the job directory). Past that, a retry regenerates that media.
 - The action is audited as `job.retried`. A failed job's `next` list suggests the tool.
+
+### Recovering a stuck Atlas call
+
+Atlas cannot deduplicate a request, so the stage journals a `submitting` intent before `atlas run`. If the worker dies or times out before Atlas reports a prediction id, the record stays `submitting` and every retry refuses to submit again (the first call may already have been charged). An operator who finds the prediction in `multix history` or the Atlas console attaches it:
+
+- `studix_attach_media_job` (`POST /api/jobs/:jobId/media-jobs/attach` on the dashboard API) with `jobId`, `stage`, `idempotencyKey` (the media call's key, shown in the refusal's journal record) and `predictionId`. Then call `studix_retry_job`, which collects that prediction.
+- It runs in one transaction that locks the job row. The job must be `failed` (so no worker holds it, `CONFLICT` otherwise), and the newest record of that key in that stage must be an Atlas record still in `submitting` (`NOT_FOUND` without one, `CONFLICT` once it left `submitting`). Only Atlas ids are accepted (`VALIDATION`).
+- It chooses which paid prediction a stage will use as output, so it needs `job:retry` and `apikey:manage` (owner and admin roles; an editor or a key with only `job:retry` gets `FORBIDDEN`).
+- The action is audited as `job.media_attached` with the stage, key and prediction id. The job stays `failed` until it is retried.
 
 ### Feedback, render and storyboard approval
 

@@ -44,6 +44,55 @@ describe("Postgres job queue", () => {
     expect(window).toBeGreaterThan(requested - 10_000);
   });
 
+  it("attachMediaJob promotes a stuck submitting record only while the job is failed, in its own tenant", async () => {
+    const { queue, jobs } = db.current.repos;
+    const ctx = await tenant("attach-media");
+    const other = await tenant("attach-media-other");
+    const { job } = await queue.enqueue(ctx, enqueueInput());
+    const stuck = {
+      idempotencyKey: "stage-2:upscale",
+      kind: "image" as const,
+      model: "atlas:atlascloud/image-upscaler",
+      attempt: 1,
+      state: "submitting" as const,
+      estimatedCostCents: 3,
+      submittedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    await jobs.upsertStage(ctx, {
+      jobId: job.id,
+      name: "upscale",
+      attempt: 1,
+      status: "failed",
+      mediaJobs: [stuck],
+    });
+    const input = {
+      stage: "upscale",
+      idempotencyKey: stuck.idempotencyKey,
+      job: { provider: "atlas", id: "pred_1" },
+    };
+
+    // A queued job may be claimed at any moment, so only a failed one can be recovered.
+    await expect(queue.attachMediaJob(ctx, job.id, input)).rejects.toMatchObject({ code: "CONFLICT" });
+    await jobs.update(ctx, job.id, { status: "failed" });
+    await expect(queue.attachMediaJob(other, job.id, input)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      queue.attachMediaJob(ctx, job.id, { ...input, idempotencyKey: "missing" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    await queue.attachMediaJob(ctx, job.id, input);
+    const [stage] = await jobs.listStages(ctx, job.id);
+    expect(stage?.mediaJobs).toEqual([
+      { ...stuck, state: "submitted", job: input.job, updatedAt: expect.any(String) },
+    ]);
+    expect(stage!.mediaJobs![0]!.updatedAt > stuck.updatedAt).toBe(true);
+    await expect(queue.attachMediaJob(ctx, job.id, input)).rejects.toMatchObject({ code: "CONFLICT" });
+
+    // The retry keeps the promoted record, so the next attempt collects instead of being blocked.
+    await queue.retry(ctx, job.id);
+    expect((await jobs.listStages(ctx, job.id))[0]?.mediaJobs?.[0]).toMatchObject({ state: "submitted" });
+  });
+
   it("enqueue is idempotent per workspace, including under concurrency", async () => {
     const { queue, jobs } = db.current.repos;
     const a = await tenant("idem-a");

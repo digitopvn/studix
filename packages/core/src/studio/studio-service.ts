@@ -4,6 +4,7 @@ import { JOB_KINDS, type Render } from "../entities/job.ts";
 import type { ProjectVersion, VideoProject } from "../entities/project.ts";
 import type { Approval } from "../entities/review.ts";
 import type { AuditEvent } from "../entities/telemetry.ts";
+import type { AttachMediaJobInput } from "../ports/job-queue.ts";
 import type { Page, PageRequest } from "../repositories/pagination.ts";
 import { actorRef, assertPermission, type TenantContext } from "../tenant.ts";
 import {
@@ -131,6 +132,30 @@ export class StudioService {
       data: { attempts: job.attempts, error: job.error?.code },
     });
     return loadJobView(this.deps, ctx, requeued);
+  }
+
+  /**
+   * Operator recovery of a media call stuck in `submitting`: attach the Atlas prediction found in the
+   * provider's history to the failed job's journal, then {@link StudioService.retryJob} collects it
+   * instead of refusing to submit again. It decides which paid upstream job a stage will use as its
+   * output, so it is limited to owners and admins (the `apikey:manage` holders) on top of `job:retry`.
+   */
+  async attachMediaJob(ctx: TenantContext, jobId: string, input: AttachMediaJobInput): Promise<JobView> {
+    assertPermission(ctx, "job:retry");
+    assertPermission(ctx, "apikey:manage");
+    const job = await this.deps.queue.attachMediaJob(ctx, jobId, input);
+    await this.recordAudit(ctx, {
+      action: "job.media_attached",
+      subjectType: "job",
+      subjectId: jobId,
+      data: {
+        stage: input.stage,
+        idempotencyKey: input.idempotencyKey,
+        provider: input.job.provider,
+        providerJobId: input.job.id,
+      },
+    });
+    return loadJobView(this.deps, ctx, job);
   }
 
   async getProject(ctx: TenantContext, projectId: string): Promise<ProjectDetails> {

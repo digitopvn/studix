@@ -4,6 +4,7 @@ import {
   type JobPatch,
   type JobQueue,
   type JobRepository,
+  promoteSubmittingRecord,
   type Stage,
   type TenantContext,
 } from "@studix/core";
@@ -302,6 +303,44 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
         .returning();
       if (!rows[0]) return conflictOrMissing(ctx, jobId, ["failed"]);
       return toJob(rows[0]);
+    },
+
+    async attachMediaJob(ctx, jobId, input) {
+      return db.transaction(async (tx) => {
+        // The row lock orders this against a claim: a worker that took the job first makes it non-failed.
+        const locked = await tx
+          .select()
+          .from(jobs)
+          .where(scoped(jobs, ctx, eq(jobs.id, jobId)))
+          .for("update");
+        const row = locked[0];
+        if (!row) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
+        if (row.status !== "failed") {
+          throw new StudixError("CONFLICT", `job ${jobId} is ${row.status}`, {
+            details: { status: row.status, expected: ["failed"] },
+          });
+        }
+        const stageRows = await tx
+          .select()
+          .from(stages)
+          .where(scoped(stages, ctx, eq(stages.jobId, jobId), eq(stages.name, input.stage)))
+          .orderBy(asc(stages.id));
+        const { rowIndex, record } = promoteSubmittingRecord(
+          stageRows.map((s) => s.mediaJobs ?? undefined),
+          input,
+          clock.now(),
+        );
+        const target = stageRows[rowIndex]!;
+        await tx
+          .update(stages)
+          .set({
+            mediaJobs: (target.mediaJobs ?? []).map((r) =>
+              r.idempotencyKey === record.idempotencyKey ? record : r,
+            ),
+          })
+          .where(scoped(stages, ctx, eq(stages.id, target.id)));
+        return toJob(row);
+      });
     },
 
     async resume(ctx, jobId) {

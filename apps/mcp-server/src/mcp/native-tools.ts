@@ -23,6 +23,7 @@ export const NATIVE_TOOL_NAMES = {
   ...STUDIX_TOOLS,
   cancelJob: "studix_cancel_job",
   retryJob: "studix_retry_job",
+  attachMediaJob: "studix_attach_media_job",
 } as const;
 
 export interface ToolContext {
@@ -72,6 +73,12 @@ async function latestPreview(ctx: ToolContext, projectId: string): Promise<strin
 }
 
 const Id = z.string().trim().min(1).max(100);
+const AttachMediaJobInput = z.object({
+  jobId: Id,
+  stage: Id,
+  idempotencyKey: z.string().trim().min(1).max(300),
+  predictionId: z.string().trim().min(1).max(128),
+});
 
 const CreateVideoInput = z
   .object({
@@ -270,6 +277,23 @@ export const NATIVE_TOOLS = [
     audited: true,
     async run(ctx, input) {
       const job = await ctx.deps.studio.retryJob(ctx.tenant, input.jobId);
+      return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
+    },
+  }),
+  tool({
+    name: NATIVE_TOOL_NAMES.attachMediaJob,
+    title: "Attach an Atlas job to a stuck media call",
+    description:
+      "Owner/admin: link the Atlas prediction id (from provider history) to a failed job's media call stuck in `submitting`, by stage and idempotencyKey. Then studix_retry_job collects it.",
+    input: AttachMediaJobInput,
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      const job = await ctx.deps.studio.attachMediaJob(ctx.tenant, input.jobId, {
+        stage: input.stage,
+        idempotencyKey: input.idempotencyKey,
+        job: { provider: "atlas", id: input.predictionId },
+      });
       return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
     },
   }),

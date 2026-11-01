@@ -317,7 +317,7 @@ export class MultixProvider implements MediaProvider {
           retryable: false,
           details: { provider: plan.model.vendor, model: existing.model, submittedAt: existing.submittedAt },
           suggestedAction:
-            "Find the prediction in `multix history` or the provider console, then resume it by job id.",
+            "Find the prediction in `multix history` or the provider console, attach its id with studix_attach_media_job (owner or admin), then retry the job.",
         },
       );
     }
