@@ -70,6 +70,11 @@ export const ScopeShot = ShotPlan.pick({
   lines: z.array(ScopeLine).max(4),
   /** Sound effect cues, in order: the sound heard, in English (see `isSoundCue`). */
   sfx: z.array(z.string().min(1).max(200)).max(3),
+  /**
+   * Cues from `sfx` whose human voice is intended (a crowd, laughter). Only these skip the speech check on
+   * generated effects; every other cue that comes back voiced is rejected.
+   */
+  voicedSfx: z.array(z.string().min(1).max(200)).max(3).optional(),
 });
 export type ScopeShot = z.input<typeof ScopeShot>;
 
@@ -289,6 +294,14 @@ export function scopeIssues(scope: FilmScope, options: ScopeCheckOptions = {}): 
             path: `${path}/sfx/${j}`,
             code: "schema",
             message: `SFX cue "${cue}" must describe the sound in English; the effect model reads other languages aloud`,
+          });
+      });
+      (shot.voicedSfx ?? []).forEach((cue, j) => {
+        if (!shot.sfx.includes(cue))
+          issues.push({
+            path: `${path}/voicedSfx/${j}`,
+            code: "unknown_reference",
+            message: `voiced SFX cue "${cue}" is not one of the shot's sfx cues`,
           });
       });
       if (shot.lipsync === "native")

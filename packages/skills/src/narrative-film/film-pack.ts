@@ -177,7 +177,7 @@ const SCOPE_CONTRACT =
   "lip-synced shot is T2 or T3 and carries exactly one line of its one visible speaker; elsewhere keep " +
   "speakers off screen or in reaction shots. About three spoken words per second at most. Keep the brief's " +
   "language with correct diacritics, except SFX cues: write each as the sound heard, in English (for " +
-  'example "distant fireworks bursting"), never words for someone to say. Characters, designs and names are original: never a real person, ' +
+  'example "distant fireworks bursting"), never words for someone to say. List in voicedSfx only the SFX cues whose human voice is intended (a cheering crowd, laughter); any other effect that comes back with a voice is rejected. Characters, designs and names are original: never a real person, ' +
   "brand or existing title. Write each line's delivery (how it is read: emotion, pace, volume). Set a " +
   "character's voice.voiceRef only when the brief names that character's voice; never invent one. Return " +
   "only JSON matching the output schema.";
@@ -1392,6 +1392,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const length = scene.shots.reduce((t, shot) => t + shot.durationMs, 0);
       return {
         role: "music" as const,
+        checked: false,
         at: sceneStart.get(scene.id) ?? 0,
         length,
         request: {
@@ -1419,8 +1420,11 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             },
           );
         const span = starts.get(shot.id) ?? { startMs: 0, durationMs: shot.durationMs };
+        // A cue marked as voiced is kept as generated: the human voice in it is the point.
+        const checked = s.services.speech !== undefined && !(shot.voicedSfx ?? []).includes(cue);
         return {
           role: "sfx" as const,
+          checked,
           at: span.startMs + Math.floor((span.durationMs * i) / Math.max(1, shot.sfx.length)),
           length: span.durationMs,
           request: {
@@ -1430,7 +1434,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             params: { durationMs: Math.max(500, Math.min(3_000, span.durationMs)) },
             keyPrefix: `generated/${s.job.id}/sound/${shot.id}-fx${i + 1}`,
             maxCostCents: 0,
-            reuse: s.services.speech ? { scope: SPEECH_FREE_SCOPE } : {},
+            reuse: checked ? { scope: SPEECH_FREE_SCOPE } : {},
           } satisfies StoredMediaRequest,
           cue,
           shotId: shot.id,
@@ -1451,11 +1455,12 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         media: s.services.media?.id ?? null,
         // An output cached without the speech check must not answer a job that has it on.
         speechGate: s.services.speech ? SPEECH_FREE_SCOPE : null,
+        voicedSfx: scopeShots(filmOf(irOf(s)).scope).map(({ shot }) => shot.voicedSfx ?? []),
       }),
     estimateCostCents: (s) => {
       const planned = scoreRequests(s);
       // With the speech check on, a voiced effect is generated once more: budget for the worst case.
-      const retakes = s.services.speech ? planned.filter((p) => p.role === "sfx") : [];
+      const retakes = planned.filter((p) => p.role === "sfx" && p.checked);
       return estimateOf(s, [...planned, ...retakes]);
     },
     async run(s) {
@@ -1468,7 +1473,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         MEDIA_CONCURRENCY,
         async (p) => {
           const media =
-            p.role === "sfx" && s.services.speech
+            p.role === "sfx" && p.checked && s.services.speech
               ? await generateSpeechFreeSfx(s, n.score, p.request, s.services.speech, p.shotId, p.cue)
               : await generateStoredMedia(s, n.score, p.request).then((m) => ({ ...m, spent: [m.usage] }));
           s.reportProgress(++done / planned.length);
