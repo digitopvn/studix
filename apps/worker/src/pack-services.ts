@@ -1,6 +1,13 @@
 import { join } from "node:path";
 import { createMultixProviderFromConfig } from "@studix/providers";
-import { createHardQaGate, createSpeechProbe, qaToolchainStatus, resolveQaToolchain } from "@studix/qa";
+import {
+  createHardQaGate,
+  createSpeechProbe,
+  qaToolchainStatus,
+  resolveQaToolchain,
+  speechToolAvailable,
+} from "@studix/qa";
+import { StudixError } from "@studix/shared";
 import { knowledgeCatalog } from "@studix/skills";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
@@ -25,6 +32,13 @@ export function loadPackServices(
   if (!qaStatus.ok) {
     runtime.logger.warn("QA toolchain incomplete; pack QA stages will fail until it is installed", {
       reason: qaStatus.reason,
+    });
+  }
+  // Refuse to start rather than pay for every sound effect and then fail the stage on a missing detector.
+  if (config.SFX_SPEECH_CHECK && !speechToolAvailable(toolchain)) {
+    throw new StudixError("UNAVAILABLE", "SFX_SPEECH_CHECK is on but the QA interpreter has no silero-vad", {
+      retryable: false,
+      suggestedAction: "Use the worker image built with STUDIX_QA_EXTRAS=vad, or set SFX_SPEECH_CHECK=false.",
     });
   }
   const status = media.status();

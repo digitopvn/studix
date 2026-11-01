@@ -6,7 +6,7 @@ import { FakeMediaProvider } from "@studix/providers";
 import { StudixError } from "@studix/shared";
 import { mapBounded, type StageContext, StageFailedAfterSpend } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { generateStoredMedia, type StoredMedia } from "../src/stored-media.ts";
+import { generateCheckedMedia, generateStoredMedia, type StoredMedia } from "../src/stored-media.ts";
 
 const ctx: TenantContext = {
   organizationId: "org_1",
@@ -157,5 +157,73 @@ describe("media spend of a failed stage", () => {
     ).catch((e: unknown) => e);
     expect(started).toEqual([0, 1]);
     expect(err).toBeInstanceOf(StudixError);
+  });
+});
+
+describe("checked media", () => {
+  const sfx = (assetId: string) => ({
+    assetId,
+    kind: "sfx" as const,
+    prompt: `sound ${assetId}`,
+    keyPrefix: `generated/job_1/${assetId}`,
+    maxCostCents: 10,
+  });
+  const rejected = (reason: string) =>
+    new StudixError("VALIDATION", `spoken: ${reason}`, { retryable: false });
+
+  it("keeps the second output when the first is rejected, and bills both calls", async () => {
+    const { s, stored } = stageWith(new Set());
+    const seen: string[] = [];
+    const check = async (file: string) => (seen.push(file) === 1 ? "word" : undefined);
+    const media = await generateCheckedMedia(s, "score", sfx("fx"), check, rejected);
+    expect(seen).toHaveLength(2);
+    expect(media.rejected).toHaveLength(1);
+    expect(media.usage.item).toBe("media-fx-retry");
+    expect(media.rejected?.[0]?.item).toBe("media-fx");
+    expect(stored).toHaveLength(1);
+  });
+
+  it("fails with the stage's error when both outputs are rejected, stores nothing, and bills both", async () => {
+    const { s, stored } = stageWith(new Set());
+    const err = await generateCheckedMedia(s, "score", sfx("fx"), async () => "word", rejected).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(StageFailedAfterSpend);
+    expect((err as StageFailedAfterSpend).error.message).toBe("spoken: word");
+    expect((err as StageFailedAfterSpend).usage.map((u) => u.item)).toEqual(["media-fx", "media-fx-retry"]);
+    expect(stored).toHaveLength(0);
+  });
+
+  it("bills the rejected first call when the second call fails without a charge", async () => {
+    const { s } = stageWith(new Set());
+    const real = (s as unknown as { services: { media: MediaProvider } }).services.media;
+    let calls = 0;
+    (s as unknown as { services: { media: MediaProvider } }).services.media = {
+      ...real,
+      id: real.id,
+      capabilities: real.capabilities.bind(real),
+      estimateCostCents: real.estimateCostCents.bind(real),
+      generate: async (c, r) => {
+        if (++calls === 2) throw new StudixError("UNAVAILABLE", "cli failed", { retryable: true });
+        return real.generate(c, r);
+      },
+    };
+    const err = await generateCheckedMedia(s, "score", sfx("fx"), async () => "word", rejected).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(StageFailedAfterSpend);
+    expect((err as StageFailedAfterSpend).error.code).toBe("UNAVAILABLE");
+    expect((err as StageFailedAfterSpend).usage.map((u) => u.item)).toEqual(["media-fx"]);
+  });
+
+  it("fails the stage, billed, when the check itself cannot run", async () => {
+    const { s } = stageWith(new Set());
+    const check = async () => {
+      throw new StudixError("UNAVAILABLE", "no detector", { retryable: false });
+    };
+    const err = await generateCheckedMedia(s, "score", sfx("fx"), check, rejected).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StageFailedAfterSpend);
+    expect((err as StageFailedAfterSpend).error.code).toBe("UNAVAILABLE");
+    expect((err as StageFailedAfterSpend).usage).toHaveLength(1);
   });
 });

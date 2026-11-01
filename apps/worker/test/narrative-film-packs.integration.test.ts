@@ -807,7 +807,7 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items.filter(
       (u) => u.kind === USAGE_KINDS.mediaGeneration && u.unit === "sfx",
     );
-    expect(usage.length).toBeGreaterThanOrEqual(1);
+    expect(usage.length).toBeGreaterThanOrEqual(2);
     expect(usage.every((u) => u.costCents > 0)).toBe(true);
   });
 

@@ -41,3 +41,8 @@ export function qaToolchainStatus(
   if (!runs(env.FFPROBE_PATH || "ffprobe", ["-version"])) missing.push("ffprobe");
   return { ok: missing.length === 0, reason: missing.length ? `missing ${missing.join(", ")}` : "" };
 }
+
+/** Whether the QA interpreter has the `vad` extra (silero-vad) the `speech` tool needs. */
+export function speechToolAvailable(toolchain: QaToolchain = resolveQaToolchain()): boolean {
+  return existsSync(toolchain.python) && runs(toolchain.python, ["-I", "-c", "import silero_vad"]);
+}

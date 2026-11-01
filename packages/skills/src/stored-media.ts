@@ -39,6 +39,11 @@ export interface StoredMediaRequest {
    */
   reuse?: {
     /**
+     * Names the check every output of this request passed before it was stored. It is part of the key, so an
+     * output stored without that check (or by another check) is never served to a request that requires it.
+     */
+    checkedBy?: string;
+    /**
      * Parameters that carry a local input file, with the sha256 of that file's content: the key holds the
      * digest, never the path, so a file parameter left out here (its path differs per job) never matches.
      */
@@ -150,7 +155,15 @@ export function mediaOutputKey(s: StageContext, request: ReuseRequest): string |
     }) ??
     request.model ??
     null;
-  const work = { provider: media.id, kind: request.kind, model, prompt: request.prompt, params, inputs };
+  const work = {
+    provider: media.id,
+    kind: request.kind,
+    model,
+    prompt: request.prompt,
+    params,
+    inputs,
+    ...(request.reuse.checkedBy ? { checkedBy: request.reuse.checkedBy } : {}),
+  };
   return `media@1:${contentDigest(work)}`;
 }
 
@@ -357,7 +370,8 @@ export async function generateCheckedMedia(
     if (err instanceof StageFailedAfterSpend) {
       throw new StageFailedAfterSpend(err.error, [first.usage, ...err.usage]);
     }
-    throw err;
+    // The first call was paid for whatever stops the second (an abort, a budget refusal, a CLI failure).
+    throw new StageFailedAfterSpend(toStudixError(err), [first.usage]);
   }
 }
 

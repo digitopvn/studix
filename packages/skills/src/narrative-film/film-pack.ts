@@ -1348,7 +1348,8 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             params: { durationMs: Math.max(500, Math.min(3_000, span.durationMs)) },
             keyPrefix: `generated/${s.job.id}/sound/${shot.id}-fx${i + 1}`,
             maxCostCents: 0,
-            reuse: {},
+            // Stored outputs are served only to a run that checks for speech when this one does.
+            reuse: s.services.speech ? { checkedBy: "speech-vad" } : {},
           } satisfies StoredMediaRequest,
         };
       }),
@@ -1362,24 +1363,42 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
     requiresApprovedStoryboard: true,
     knowledge: config.knowledge.sound,
     cacheKey: (s) =>
-      stageCacheKey(n.score, config.version, { ir: irOf(s), media: s.services.media?.id ?? null }),
-    estimateCostCents: (s) => estimateOf(s, scoreRequests(s)),
+      stageCacheKey(n.score, config.version, {
+        ir: irOf(s),
+        media: s.services.media?.id ?? null,
+        // Effects are asked for as bare cues, and are checked for speech only when the probe is wired.
+        sfx: { prompt: "bare-cue", speechCheck: Boolean(s.services.speech) },
+      }),
+    // An effect that comes back with speech is made once more, so each one can cost two calls.
+    estimateCostCents: (s) => {
+      const planned = scoreRequests(s);
+      return estimateOf(
+        s,
+        s.services.speech ? [...planned, ...planned.filter((p) => p.role === "sfx")] : planned,
+      );
+    },
     async run(s) {
       const ir = irOf(s);
       const workDir = await stageWorkDir(s, n.score);
       const planned = await withCaps(s, scoreRequests(s));
       let done = 0;
       const speech = s.services.speech;
-      const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const media =
-          speech && p.role === "sfx"
-            ? await generateCheckedMedia(s, n.score, p.request, sfxSpeechCheck(speech), (reason) =>
-                sfxSpokenError(p.shotId, p.cue, reason),
-              )
-            : await generateStoredMedia(s, n.score, p.request);
-        s.reportProgress(++done / planned.length);
-        return { ...p, ...media };
-      });
+      const made = await mapBounded(
+        planned,
+        MEDIA_CONCURRENCY,
+        async (p) => {
+          const media =
+            speech && p.role === "sfx"
+              ? await generateCheckedMedia(s, n.score, p.request, sfxSpeechCheck(speech), (reason) =>
+                  sfxSpokenError(p.shotId, p.cue, reason),
+                )
+              : await generateStoredMedia(s, n.score, p.request);
+          s.reportProgress(++done / planned.length);
+          return { ...p, ...media };
+        },
+        // A failed cue still bills the calls its siblings already paid for.
+        (m) => [...(m.rejected ?? []), m.usage],
+      );
       const total = ir.format.durationMs;
       const tracks: AudioTrack[] = made.map((m) => {
         const room = Math.min(total - m.at, m.length);
