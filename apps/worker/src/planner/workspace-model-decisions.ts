@@ -10,6 +10,7 @@ import {
 } from "@studix/agent-runtime";
 import {
   type AgentRuntime,
+  FUNDING_SOURCES,
   type FundingSource,
   type JobRepository,
   type ResolvedModelSnapshot,
@@ -178,12 +179,15 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
           fallbackChain: [],
           schemaValid: true,
           traceId: request.idempotencyKey,
-          ...(providerExecutionId ? { providerExecutionId, funding } : {}),
+          funding,
+          ...(providerExecutionId ? { providerExecutionId } : {}),
         };
       } catch (error) {
         failure = toStudixError(error);
         spent = agentSpendOf(error) ?? spent;
         model = spent.model ?? model;
+        // The Pi loop names the connection that spent when a fallback ran.
+        funding = FUNDING_SOURCES.find((f) => f === failure.details?.funding) ?? funding;
       }
       const executionId = await recordExecution(deps.sink, log, request as DecisionRequest<unknown>, {
         providerId: PI_DECISION_PROVIDER,
@@ -225,7 +229,9 @@ export function createWorkspaceModelDecisions(deps: WorkspaceModelDecisionDeps):
       },
       latencyMs: clock.now().getTime() - started,
       fallbackReason: reasonOf(error),
-      ...(billed ? { providerExecutionId: failedExecutionId, ...(funding ? { funding } : {}) } : {}),
+      ...(billed ? { providerExecutionId: failedExecutionId } : {}),
+      // The failed run's spend is in costCents even without an execution id; it stays tagged with who paid.
+      ...(spent.costCents > 0 && funding ? { funding } : {}),
     };
   }
 }

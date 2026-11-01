@@ -146,8 +146,8 @@ describe("Pi SDK runtime", () => {
           return {
             snapshot,
             bindings: [
-              binding({ apiKey: "bad-key-0123456789" }),
-              binding({ connectionId: "pcon_2", apiKey: "good-key-0123456789" }),
+              binding({ apiKey: "bad-key-0123456789", funding: "member" }),
+              binding({ connectionId: "pcon_2", apiKey: "good-key-0123456789", funding: "workspace" }),
             ],
           };
         },
@@ -157,6 +157,7 @@ describe("Pi SDK runtime", () => {
     expect(result.output).toEqual({ ok: 1 });
     expect(seen.map((s) => s.auth)).toContain("Bearer good-key-0123456789");
     expect(result.resolved).toEqual({ connectionId: "pcon_2", snapshot, usedFallback: true });
+    expect(result.funding).toBe("workspace");
   });
 
   it("never sends an empty tenant key and never reads the server environment", async () => {
@@ -178,8 +179,8 @@ describe("Pi SDK runtime", () => {
     respond = () => ({ status: 200, text: "not json at all" });
     const runtime = createPiSdkAgentRuntime({
       resolver: staticResolver(
-        binding(),
-        binding({ connectionId: "pcon_2", apiKey: "second-key-0123456789" }),
+        binding({ funding: "member" }),
+        binding({ connectionId: "pcon_2", apiKey: "second-key-0123456789", funding: "workspace" }),
       ),
     });
     const error = await runtime
@@ -187,6 +188,8 @@ describe("Pi SDK runtime", () => {
       .catch((e: unknown) => e);
     expect(error).toMatchObject({ code: "VALIDATION" });
     expect(agentSpendOf(error)?.costCents).toBeCloseTo(100, 0);
+    // The spend is tagged with the connection that paid it.
+    expect(error).toMatchObject({ details: { funding: "member" } });
     expect(seen).toHaveLength(1);
   });
 

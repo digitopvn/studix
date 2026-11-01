@@ -16,6 +16,7 @@ import {
   type AgentRuntimeName,
   type AgentTask,
   connectionFunding,
+  FUNDING_SOURCES,
   type FundingSource,
   type ModelSelectionSource,
   PlannerSelection,
@@ -310,6 +311,9 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
           });
         }
         const spent = agentSpendOf(error);
+        // The Pi loop names the connection that spent when a fallback ran.
+        const paidBy = FUNDING_SOURCES.find((f) => f === error.details?.funding);
+        if (paidBy) funding = paidBy;
         const providerExecutionId = await record(stage, task, choice.runtime, {
           model: spent?.model ?? model,
           funding,
@@ -318,11 +322,15 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
           ...(spent ? { spent } : {}),
           error,
         });
-        if (!spent || !providerExecutionId) throw error;
+        if (!spent) throw error;
+        // Funding rides on the spend even when the execution was not recorded, so it is never billed as operator.
         throw new StudixError(error.code, error.message, {
           retryable: error.retryable,
           suggestedAction: error.suggestedAction,
-          details: { ...error.details, spent: { ...spent, providerExecutionId, funding } },
+          details: {
+            ...error.details,
+            spent: { ...spent, funding, ...(providerExecutionId ? { providerExecutionId } : {}) },
+          },
           cause: error,
         });
       }

@@ -104,7 +104,10 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
 
     const total: Usage = { turns: 0, costCents: 0, inputTokens: 0, outputTokens: 0 };
     let lastError: unknown;
+    // Owner of the last connection that spent anything, so a failed run's spend is tagged with who paid.
+    let paidBy: PiRunBinding["funding"];
     for (const [index, binding] of resolved.bindings.entries()) {
+      const spentBefore = total.costCents + total.inputTokens + total.outputTokens;
       registerSecret(binding.apiKey);
       const model = `${binding.provider}/${binding.modelId}`;
       try {
@@ -123,6 +126,7 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
         return result;
       } catch (error) {
         lastError = error;
+        if (total.costCents + total.inputTokens + total.outputTokens > spentBefore) paidBy = binding.funding;
         if (error instanceof StudixError && error.code === "UNAUTHENTICATED" && binding.markRejected) {
           // Best effort: the run fails either way, and the next pre-check re-tests the key.
           await binding.markRejected().catch(() => undefined);
@@ -130,6 +134,14 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
         const fallbackAllowed = error instanceof StudixError && FALLBACK_CODES.has(error.code);
         if (!fallbackAllowed || task.signal.aborted) break;
       }
+    }
+    if (paidBy && lastError instanceof StudixError) {
+      throw new StudixError(lastError.code, lastError.message, {
+        retryable: lastError.retryable,
+        suggestedAction: lastError.suggestedAction,
+        details: { ...lastError.details, funding: paidBy },
+        cause: lastError,
+      });
     }
     throw lastError;
   };

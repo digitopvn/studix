@@ -103,6 +103,7 @@ function createWorld(
     transcript?: ClaudeAgentEvent[];
     payload?: Record<string, unknown>;
     spentCents?: number;
+    executionsDown?: boolean;
   } = {},
 ) {
   const ctx: TenantContext = testTenant();
@@ -159,7 +160,13 @@ function createWorld(
       },
     },
     snapshots,
-    executions: usage,
+    executions: options.executionsDown
+      ? {
+          async recordProviderExecution() {
+            throw new Error("database unavailable");
+          },
+        }
+      : usage,
     ...(options.claude === false ? {} : { claude: { transport, plannerModel: "claude-planner-model" } }),
     logger,
     // The real Pi SDK runtime, pointed at the fake endpoint with a declared price ($1/M in, $2/M out).
@@ -412,6 +419,20 @@ describe("worker agent harness", () => {
     expect(line.metadata).toMatchObject({ cap: "cost" });
     expect(line.funding).toBe("workspace");
     expect(execution!.funding).toBe("workspace");
+  });
+
+  it("keeps a capped BYOK run's funding when its execution cannot be recorded", async () => {
+    const world = createWorld({
+      preferences: [preference({ runtime: "claude", connectionId: "pcon_claude", provider: "anthropic" })],
+      transcript: claudeTurn(0.95),
+      executionsDown: true,
+    });
+    const parked = await world.run().catch((e: unknown) => e);
+    expect(parked).toBeInstanceOf(StageSuspended);
+    const line = agentLine((parked as StageSuspended).usage);
+    expect(line.costCents).toBeGreaterThan(0);
+    expect(line.providerExecutionId).toBeUndefined();
+    expect(line.funding).toBe("workspace");
   });
 
   it("marks a Claude key the provider rejects", async () => {
