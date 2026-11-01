@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MediaGenerationRequest, MediaProvider, TenantContext } from "@studix/core";
-import { FakeMediaProvider } from "@studix/providers";
+import { FakeMediaProvider, InMemoryMediaJobJournal } from "@studix/providers";
 import type { AssetRef } from "@studix/video-ir";
 import type { MediaOutputCache, ReusableMedia, StageContext } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -69,7 +69,7 @@ function tenant(opts: { model?: () => string } = {}) {
       job: { id: jobId },
       attempt: 1,
       signal: new AbortController().signal,
-      mediaJournal: undefined,
+      mediaJournal: new InMemoryMediaJobJournal(),
       mediaOutputs,
       services: { media, storage, workRoot: root },
     } as unknown as StageContext;

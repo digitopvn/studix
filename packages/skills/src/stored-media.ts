@@ -5,6 +5,7 @@ import {
   MediaChargedError,
   type MediaGenerationRequest,
   type MediaGenerationResult,
+  type MediaJobRecord,
   type MediaKind,
 } from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
@@ -104,7 +105,7 @@ export function mediaRequest(
     prompt: request.prompt,
     ...(request.params ? { params: request.params } : {}),
     // Stable across attempts and workers: the stage journal resumes the upstream job under this key.
-    idempotencyKey: `${s.job.id}:${stage}:${request.assetId}`,
+    idempotencyKey: mediaIdempotencyKey(s, stage, request),
     maxCostCents: request.maxCostCents,
     workDir,
     signal: s.signal,
@@ -150,6 +151,48 @@ export async function findReusableMedia(
   const stored = await requireService(s, "storage").head(s.ctx, hit.asset.storageKey);
   if (!stored || stored.sha256 !== hit.asset.sha256) return undefined;
   return hit;
+}
+
+/** Kinds the provider runs synchronously: no upstream job exists to collect, so a lost output means a second paid call. */
+const SYNC_KINDS: ReadonlySet<MediaKind> = new Set<MediaKind>(["voice", "music", "sfx"]);
+
+/** What a synchronous call was asked for; ties a stored output to the request that paid for it. */
+function requestFingerprint(s: StageContext, request: StoredMediaRequest): string {
+  const media = requireService(s, "media");
+  const model =
+    media.resolveModel?.({
+      kind: request.kind,
+      ...(request.model ? { model: request.model } : {}),
+      ...(request.params ? { params: request.params } : {}),
+    }) ??
+    request.model ??
+    null;
+  return contentDigest({ kind: request.kind, model, prompt: request.prompt, params: request.params ?? {} });
+}
+
+/**
+ * The output an earlier attempt of this same call already paid for and uploaded, found through the stage
+ * journal. It survives the loss of the worker's scratch directory (a restarted pod), which the provider's
+ * own on-disk reuse does not. Undefined unless the journaled call completed, the request is unchanged and
+ * the object is still in storage with the recorded digest.
+ */
+async function findJournaledOutput(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+): Promise<{ record: MediaJobRecord; stored: NonNullable<MediaJobRecord["storedOutput"]> } | undefined> {
+  if (!SYNC_KINDS.has(request.kind)) return undefined;
+  const record = await s.mediaJournal.get(s.ctx, mediaIdempotencyKey(s, stage, request));
+  const stored = record?.storedOutput;
+  if (!record || !stored || record.state !== "completed") return undefined;
+  if (stored.fingerprint !== requestFingerprint(s, request)) return undefined;
+  const head = await requireService(s, "storage").head(s.ctx, stored.storageKey);
+  if (!head || head.sha256 !== stored.sha256) return undefined;
+  return { record, stored };
+}
+
+function mediaIdempotencyKey(s: StageContext, stage: string, request: StoredMediaRequest): string {
+  return `${s.job.id}:${stage}:${request.assetId}`;
 }
 
 /**
@@ -223,6 +266,40 @@ function reusedMedia(request: StoredMediaRequest, hit: ReusableMedia): StoredMed
   };
 }
 
+/** The asset and usage line of a call an earlier attempt of this stage already paid for and uploaded. */
+function journaledMedia(
+  providerId: string,
+  request: StoredMediaRequest,
+  record: MediaJobRecord,
+  stored: NonNullable<MediaJobRecord["storedOutput"]>,
+): StoredMedia {
+  const usage = mediaUsage(request, {
+    provider: providerId,
+    model: record.model,
+    costCents: record.receiptCents ?? record.estimatedCostCents,
+    costSource: record.receiptCents !== undefined ? "receipt" : "estimate",
+    ...(record.job ? { job: record.job } : {}),
+  });
+  return {
+    asset: {
+      id: request.assetId,
+      kind: assetKind(request.kind),
+      storageKey: stored.storageKey,
+      sha256: stored.sha256,
+      mime: stored.mime,
+      bytes: stored.bytes,
+      ...(stored.durationMs ? { durationMs: stored.durationMs } : {}),
+      provenance: {
+        source: "generated",
+        provider: providerId,
+        model: record.model,
+        prompt: request.prompt.slice(0, 4000),
+      },
+    },
+    usage,
+  };
+}
+
 /**
  * Generate one asset with the worker's media provider, then store it in tenant storage and describe it as
  * an IR asset with provenance. The request carries the stage's durable journal, so a retry on any worker
@@ -238,6 +315,8 @@ export async function generateStoredMedia(
   const storage = requireService(s, "storage");
   const reused = await findReusableMedia(s, request);
   if (reused) return reusedMedia(request, reused);
+  const journaled = await findJournaledOutput(s, stage, request);
+  if (journaled) return journaledMedia(media.id, request, journaled.record, journaled.stored);
   const reuseKey = mediaOutputKey(s, request);
   // The provider writes to the job-scoped media directory, not the attempt scratch directory.
   const mediaDir = await stageMediaDir(s, stage);
@@ -291,6 +370,26 @@ export async function generateStoredMedia(
         prompt: request.prompt.slice(0, 4000),
       },
     };
+    if (SYNC_KINDS.has(request.kind)) {
+      // Remember the uploaded object next to the provider's record, so a retry after the scratch directory is
+      // gone reuses it instead of calling (and paying) again.
+      const key = mediaIdempotencyKey(s, stage, request);
+      const record = await s.mediaJournal.get(s.ctx, key);
+      if (record?.state === "completed") {
+        await s.mediaJournal.put(s.ctx, {
+          ...record,
+          storedOutput: {
+            fingerprint: requestFingerprint(s, request),
+            storageKey: stored.key,
+            sha256: stored.sha256,
+            mime: output.mime,
+            bytes,
+            ...(output.durationMs ? { durationMs: Math.round(output.durationMs) } : {}),
+          },
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
     if (reuseKey !== undefined) await s.mediaOutputs?.put(reuseKey, asset);
     return { asset, filePath: output.filePath, usage };
   } catch (err) {

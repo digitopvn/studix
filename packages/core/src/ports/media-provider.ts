@@ -127,8 +127,26 @@ export interface MediaJobRecord {
   estimatedCostCents: number;
   /** Charge reported when the job completed. */
   receiptCents?: number;
+  /**
+   * The output as kept in tenant storage, written by the stored-media layer once the upload finished. A
+   * provider whose calls have no upstream job to resume (synchronous audio) cannot find its output again
+   * after the worker's scratch directory is gone; this lets a retry reuse the stored object instead of
+   * paying for the same call twice.
+   */
+  storedOutput?: MediaJobStoredOutput;
   submittedAt: string;
   updatedAt: string;
+}
+
+/** An output already uploaded to tenant storage, bound to the request that produced it. */
+export interface MediaJobStoredOutput {
+  /** Digest of what the request asked for; a retry with a different request never matches. */
+  fingerprint: string;
+  storageKey: string;
+  sha256: string;
+  mime: string;
+  bytes: number;
+  durationMs?: number;
 }
 
 /**
