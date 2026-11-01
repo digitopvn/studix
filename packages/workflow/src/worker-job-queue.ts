@@ -557,7 +557,18 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         .where(
           and(
             eq(jobs.status, "waiting_approval"),
-            // Outer columns are spelled out with the table name: unqualified names would bind to `a`.
+            // A job still waiting on a gating request (workflow gate, agent overrun, creative gate) stays
+            // parked: running it again would only reach the same open request, after paying for the work
+            // in front of it. Outer columns are spelled out with the table name: unqualified names would
+            // bind to the inner alias.
+            sql`not exists (
+              select 1 from ${approvals} p
+              where p.workspace_id = "jobs"."workspace_id" and p.subject_type = 'job'
+                and p.subject_id = "jobs"."id" and p.status = 'pending'
+                and (p.scope_key = '' or p.scope_key like 'agent:%' or p.scope_key like 'gate:%')
+            )`,
+            // A decision only resumes the job while it is the latest answer for its own request, that is
+            // for the same action and scope key.
             sql`exists (
               select 1 from ${approvals} a
               where a.workspace_id = "jobs"."workspace_id"
@@ -569,7 +580,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
                 and a.id = (
                   select max(b.id) from ${approvals} b
                   where b.workspace_id = a.workspace_id and b.subject_type = 'job'
-                    and b.subject_id = a.subject_id and b.action = a.action
+                    and b.subject_id = a.subject_id and b.action = a.action and b.scope_key = a.scope_key
                 )
             )`,
           ),

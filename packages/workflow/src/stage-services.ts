@@ -47,15 +47,16 @@ export async function stageMediaDir(s: StageContext, stage: string): Promise<str
  * first failure no new item starts, but the items already running are awaited, so none of their paid calls
  * goes unseen.
  *
- * With `usageOf`, the usage of every item that completed (and of every failure that carries its own, see
- * `StageFailedAfterSpend`) is billed even when the batch fails: the first failure is rethrown as a
- * `StageFailedAfterSpend` holding all of it, so the stage runner records the spend before failing the stage.
+ * `usageOf` is required so no batch of paid calls can forget it: the usage of every item that completed (and
+ * of every failure that carries its own, see `StageFailedAfterSpend`) is billed even when the batch fails. The
+ * first failure is rethrown as a `StageFailedAfterSpend` holding all of it, so the stage runner records the
+ * spend before failing the stage. Work that costs nothing passes `() => []`.
  */
 export async function mapBounded<T, R>(
   items: readonly T[],
   limit: number,
   work: (item: T, index: number) => Promise<R>,
-  usageOf?: (result: R) => readonly StageUsage[],
+  usageOf: (result: R) => readonly StageUsage[],
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   const completed = new Array<boolean>(items.length).fill(false);
@@ -75,7 +76,6 @@ export async function mapBounded<T, R>(
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
   const [first] = errors;
   if (errors.length === 0) return results;
-  if (!usageOf) throw first;
   const usage: StageUsage[] = [];
   for (const err of errors) {
     if (err instanceof StageFailedAfterSpend || err instanceof StageSuspended) usage.push(...err.usage);

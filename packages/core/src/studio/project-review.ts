@@ -640,12 +640,43 @@ function within(pointer: string, allowed: string[]): boolean {
   return allowed.some((prefix) => pointer === prefix || pointer.startsWith(`${prefix}/`));
 }
 
+/** True for a pointer that names an element of an array (its last token is an index or `-`). */
+function namesArrayElement(pointer: string): boolean {
+  return /\/(?:0|[1-9][0-9]*|-)$/.test(pointer);
+}
+
+/**
+ * Ops apply one after another, so an op that inserts or removes the targeted array element itself shifts its
+ * siblings into the target's index, and a later op on the same pointer would edit a neighbour. Only `replace`
+ * and `test` may name a targeted element exactly; `copy` may read from it. Ops below the target are fine: the
+ * arrays they change sit inside the target and cannot move it.
+ */
+function shiftsTarget(op: VideoIRPatch["ops"][number], allowedPaths: string[]): string[] {
+  const exact = (p: string) => allowedPaths.includes(p) && namesArrayElement(p);
+  const shifted: string[] = [];
+  if (op.op !== "replace" && op.op !== "test" && exact(op.path)) shifted.push(op.path);
+  if (op.op === "move" && exact(op.from)) shifted.push(op.from);
+  return shifted;
+}
+
 function assertPatchScope(patch: VideoIRPatch, allowedPaths: string[]): void {
   const outside = patch.ops.flatMap((op) =>
     [op.path, "from" in op ? op.from : undefined].filter(
       (p): p is string => p !== undefined && !within(p, allowedPaths),
     ),
   );
+  const shifting = patch.ops.flatMap((op) => shiftsTarget(op, allowedPaths));
+  if (shifting.length > 0) {
+    throw new StudixError(
+      "VALIDATION",
+      `patch adds, removes or moves the feedback target itself: ${shifting.join(", ")}`,
+      {
+        details: { shifting, allowedPaths },
+        suggestedAction:
+          "Change the target with 'replace' or with ops below it; removing or inserting it would shift its neighbours into its place.",
+      },
+    );
+  }
   if (outside.length > 0) {
     throw new StudixError(
       "VALIDATION",
