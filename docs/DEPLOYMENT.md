@@ -160,7 +160,9 @@ find the prediction in `multix history` or the Atlas Cloud console, attach it
 with `studix_attach_media_job`, then retry the job
 ([docs/MCP_API.md](MCP_API.md#retrying-a-failed-job)). The intent is an
 insert-if-absent, so two concurrent calls with the same idempotency key submit
-once; the other fails `CONFLICT` (retryable) and its retry collects the job.
+once; the other fails `CONFLICT` (retryable). Its retry collects the job once
+the winner journaled it, or reports the request as possibly charged if the
+winner died first.
 Only errors that prove Atlas never accepted the run (invalid
 request, missing key) release the key for a retry. Calls made outside a
 workflow stage fall back to an in-process journal, which a restart loses.

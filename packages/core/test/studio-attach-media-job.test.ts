@@ -51,8 +51,14 @@ describe("attaching a found Atlas prediction to a submitting record", () => {
     });
 
     const [first, second] = (await repos.jobs.listStages(ctx, job.id)).sort((a, b) => a.attempt - b.attempt);
-    expect(first?.mediaJobs?.map((r) => r.state)).toEqual(["failed", "submitting"]);
+    // Every copy of the key is replaced, so no stale copy can win on retry; other keys are untouched.
+    expect(first?.mediaJobs).toEqual([mediaJob, expect.objectContaining({ idempotencyKey: "other" })]);
+    expect(first?.mediaJobs?.[1]?.state).toBe("submitting");
     expect(second?.mediaJobs).toEqual([mediaJob]);
+    // An upstream job is attached once.
+    await expect(studio.attachMediaJob(ctx, { ...input, idempotencyKey: "other" })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
     const audit = await repos.audit.list(ctx, { subjectType: "job", subjectId: job.id });
     expect(audit.items[0]).toMatchObject({
       action: "job.media_job_attached",
@@ -69,6 +75,10 @@ describe("attaching a found Atlas prediction to a submitting record", () => {
     const stuck = await stuckJob([[intent(1, "2026-01-01T00:00:00.000Z")]]);
     const viewer = { ...stuck.ctx, actor: { type: "user" as const, id: "usr_v", role: "viewer" as const } };
     await expect(stuck.studio.attachMediaJob(viewer, stuck.input)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    const editor = { ...stuck.ctx, actor: { type: "user" as const, id: "usr_e", role: "editor" as const } };
+    await expect(stuck.studio.attachMediaJob(editor, stuck.input)).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
     await expect(

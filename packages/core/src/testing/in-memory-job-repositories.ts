@@ -1,7 +1,12 @@
 import { type Clock, StudixError } from "@studix/shared";
 import type { Job, Render, Stage, WorkflowRun } from "../entities/job.ts";
 import { isTerminalJobStatus } from "../entities/job.ts";
-import { attachToSubmittingRecord, JOB_RESUME_ATTEMPTS, type JobQueue } from "../ports/job-queue.ts";
+import {
+  attachToSubmittingRecord,
+  JOB_RESUME_ATTEMPTS,
+  type JobQueue,
+  refersToProviderJob,
+} from "../ports/job-queue.ts";
 import type {
   JobRepository,
   RenderRepository,
@@ -141,9 +146,15 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
           details: { status: job.status, expected: ["failed"] },
         });
       }
+      // The fake only sees this workspace; the database checks every workspace.
+      if (stages.filter(ctx, (s) => refersToProviderJob(s.mediaJobs, input.job)).length > 0) {
+        throw new StudixError("CONFLICT", "that upstream job is already attached to a media job");
+      }
       const rows = stages.filter(ctx, (s) => s.jobId === input.jobId && s.name === input.stage);
       const attached = attachToSubmittingRecord(rows, input, clock.now());
-      stages.update(ctx, attached.stageId, { mediaJobs: attached.mediaJobs });
+      for (const update of attached.updates) {
+        stages.update(ctx, update.stageId, { mediaJobs: update.mediaJobs });
+      }
       return attached.record;
     },
   };

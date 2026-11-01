@@ -46,7 +46,9 @@ export interface JobQueue {
    * to "submitted" with the upstream job an operator found, so a {@link retry} collects that paid job
    * instead of being blocked. Only a `failed` job qualifies, so no worker holds it, and the job row stays
    * locked while the record is rewritten. NOT_FOUND when the job or the record is missing; CONFLICT when
-   * the job is not failed or the record is not "submitting".
+   * the job is not failed, the record is not "submitting", or a media job record of any workspace already
+   * refers to that upstream job (collecting it twice would bill one execution twice, or hand one tenant
+   * another's output).
    */
   attachMediaJob(ctx: TenantContext, input: AttachMediaJobInput): Promise<MediaJobRecord>;
 }
@@ -61,38 +63,50 @@ export interface AttachMediaJobInput {
 }
 
 /**
- * The stage row and journal that `attachMediaJob` writes: the newest record of the key across the stage's
- * attempts (the record a resumed stage reads) becomes "submitted" with `input.job`.
+ * The stage rows and journals that `attachMediaJob` writes. The newest record of the key across the stage's
+ * attempts (the record a resumed stage reads) must be "submitting"; it becomes "submitted" with `input.job`,
+ * and every copy of the key on the stage's rows is replaced by it. A later attempt persists its whole
+ * journal, so stale copies exist, and one stamped by a worker clock ahead of this one would otherwise
+ * still win on retry.
  */
 export function attachToSubmittingRecord(
   rows: readonly Stage[],
   input: AttachMediaJobInput,
   at: Date,
-): { stageId: string; mediaJobs: MediaJobRecord[]; record: MediaJobRecord } {
-  let found: { row: Stage; record: MediaJobRecord } | undefined;
-  for (const row of [...rows].sort((a, b) => a.attempt - b.attempt)) {
-    if (row.jobId !== input.jobId || row.name !== input.stage) continue;
+): { updates: Array<{ stageId: string; mediaJobs: MediaJobRecord[] }>; record: MediaJobRecord } {
+  const stageRows = rows.filter((row) => row.jobId === input.jobId && row.name === input.stage);
+  let current: MediaJobRecord | undefined;
+  for (const row of [...stageRows].sort((a, b) => a.attempt - b.attempt)) {
     for (const record of row.mediaJobs ?? []) {
       if (record.idempotencyKey !== input.idempotencyKey) continue;
-      if (!found || record.updatedAt >= found.record.updatedAt) found = { row, record };
+      if (!current || record.updatedAt >= current.updatedAt) current = record;
     }
   }
-  if (!found) {
+  if (!current) {
     throw new StudixError("NOT_FOUND", `stage ${input.stage} has no media job ${input.idempotencyKey}`);
   }
-  if (found.record.state !== "submitting") {
-    throw new StudixError("CONFLICT", `media job ${input.idempotencyKey} is ${found.record.state}`, {
+  if (current.state !== "submitting") {
+    throw new StudixError("CONFLICT", `media job ${input.idempotencyKey} is ${current.state}`, {
       retryable: false,
-      details: { state: found.record.state, expected: ["submitting"] },
+      details: { state: current.state, expected: ["submitting"] },
     });
   }
-  const { row, record: current } = found;
   const record: MediaJobRecord = {
     ...current,
     job: { provider: input.job.provider, id: input.job.id },
     state: "submitted",
     updatedAt: at.toISOString(),
   };
-  const mediaJobs = (row.mediaJobs ?? []).map((r) => (r === current ? record : r));
-  return { stageId: row.id, mediaJobs, record };
+  const updates = stageRows
+    .filter((row) => row.mediaJobs?.some((r) => r.idempotencyKey === input.idempotencyKey))
+    .map((row) => ({
+      stageId: row.id,
+      mediaJobs: (row.mediaJobs ?? []).map((r) => (r.idempotencyKey === input.idempotencyKey ? record : r)),
+    }));
+  return { updates, record };
+}
+
+/** Whether a media job record refers to `job` (used to refuse attaching one upstream job twice). */
+export function refersToProviderJob(records: readonly MediaJobRecord[] | undefined, job: ProviderJobRef) {
+  return (records ?? []).some((r) => r.job?.provider === job.provider && r.job.id === job.id);
 }

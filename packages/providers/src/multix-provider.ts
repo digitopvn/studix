@@ -354,10 +354,11 @@ export class MultixProvider implements MediaProvider {
             intent: async () => {
               if (await journal.claim(ctx, { ...base, state: "submitting", updatedAt: at })) return;
               // A concurrent call with the same key claimed it first; it submits, this one must not.
-              throw new StudixError("CONFLICT", "Another submission of this media request is in progress", {
+              throw new StudixError("CONFLICT", "Another call already claimed this media request", {
                 retryable: true,
-                details: { model: plan.model.id, attempt },
-                suggestedAction: "Retry once the other submission finished; it will collect that job.",
+                details: { model: plan.model.id, attempt, idempotencyKey: request.idempotencyKey },
+                suggestedAction:
+                  "Retry later: once the other call journaled its upstream job the retry collects it; if that call died first, the retry reports the request as possibly charged.",
               });
             },
             // Only errors proving the request never reached Atlas may release the key for a retry.

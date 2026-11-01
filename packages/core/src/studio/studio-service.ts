@@ -138,14 +138,15 @@ export class StudioService {
   /**
    * Operator recovery of an Atlas call stuck at "submitting" (Atlas accepted or may have accepted the run,
    * but its prediction id never reached the journal): record the prediction found in `multix history` or
-   * the Atlas Cloud console, so {@link retryJob} collects that paid job instead of being blocked. Needs the
-   * same permission as a retry, and the job must be failed so no worker holds it.
+   * the Atlas Cloud console, so {@link retryJob} collects that paid job instead of being blocked. Needs
+   * `job:recover` (owners and admins: the prediction is fetched with the platform's provider key and
+   * billed to this job), and the job must be failed so no worker holds it.
    */
   async attachMediaJob(
     ctx: TenantContext,
     rawInput: AttachMediaJobRequest,
   ): Promise<{ job: JobView; mediaJob: MediaJobRecord }> {
-    assertPermission(ctx, "job:retry");
+    assertPermission(ctx, "job:recover");
     const input = parseInput(AttachMediaJobRequest, rawInput, "media job attachment");
     const job = await this.deps.jobs.get(ctx, input.jobId);
     if (!job) throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
