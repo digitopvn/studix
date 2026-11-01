@@ -79,7 +79,10 @@ function agentTranscript(request: ClaudeSessionRequest): ClaudeAgentEvent[] {
   return [usage, { type: "result", output: { boards } }];
 }
 
-function memoryStorage(refuse?: (key: string) => boolean): StorageAdapter {
+function memoryStorage(
+  refuse?: (key: string) => boolean,
+  malformedDigest?: (key: string) => boolean,
+): StorageAdapter {
   const objects = new Map<string, Buffer>();
   const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
   return {
@@ -88,7 +91,9 @@ function memoryStorage(refuse?: (key: string) => boolean): StorageAdapter {
       if (refuse?.(key)) throw new StudixError("UNAVAILABLE", `storage refused ${key}`, { retryable: false });
       const bytes = await readFile(body.filePath);
       objects.set(key, bytes);
-      return { key, bytes: bytes.length, sha256: sha(bytes), contentType: opts.contentType };
+      // A store that answers with a digest that is not a sha256: the object is kept, but no asset can name it.
+      const digest = malformedDigest?.(key) ? "not-a-sha256" : sha(bytes);
+      return { key, bytes: bytes.length, sha256: digest, contentType: opts.contentType };
     },
     get: async () => {
       throw new Error("not used");
@@ -120,12 +125,14 @@ function createWorld(
     modelCents?: Record<string, number>;
     /** Object keys the storage refuses to write. */
     refusePut?: (key: string) => boolean;
+    /** Object keys the storage stores but reports with a malformed digest. */
+    malformedDigestPut?: (key: string) => boolean;
   } = {},
 ) {
   const { repos } = db.current;
   const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
   const workRoot = mkdtempSync(join(tmpdir(), "studix-film-packs-"));
-  const storage = memoryStorage(opts.refusePut);
+  const storage = memoryStorage(opts.refusePut, opts.malformedDigestPut);
   const rendered: VideoIR[] = [];
   const renderer: RendererAdapter = {
     id: "hyperframes",
@@ -951,6 +958,29 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
       const spent = usage.reduce((sum, u) => sum + u.costCents, 0);
       expect(spent).toBeGreaterThan(0);
       expect(await world.repos.jobs.get(ctx, render.id)).toMatchObject({ spentCents: spent });
+    },
+  );
+
+  it.each([
+    { stage: "dialogue", keyPart: "/dialogue/" },
+    { stage: "lipsync", keyPart: "/lipsync/" },
+  ] as const)(
+    "bills the $stage calls it paid for when building its result fails afterwards",
+    async ({ stage, keyPart }) => {
+      const world = createWorld({ malformedDigestPut: (key) => key.includes(keyPart) });
+      const { ctx, render } = await renderJobOnApprovedBoard(world, `film-${pack}-${stage}-after`, pack);
+
+      expect(await world.runOnce(render.id)).toBe("failed");
+      const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
+      const billed = usage.filter(
+        (u) => u.metadata?.stage === n[stage] && u.kind === USAGE_KINDS.mediaGeneration && u.costCents > 0,
+      );
+      // Every call of the stage was paid before the failure, so each one has its line in the ledger.
+      expect(billed.length).toBeGreaterThan(0);
+      const calls = world.requests.filter((r) =>
+        r.idempotencyKey.includes(stage === "dialogue" ? "-vo" : "-sync"),
+      );
+      expect(billed).toHaveLength(calls.length);
     },
   );
 
