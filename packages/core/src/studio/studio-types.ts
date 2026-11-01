@@ -211,6 +211,21 @@ export const DecideApprovalInput = z
   });
 export type DecideApprovalInput = z.input<typeof DecideApprovalInput>;
 
+/**
+ * An Atlas prediction an operator found for a media call stuck at "submitting". Only Atlas calls journal
+ * that intent (Sume deduplicates by idempotency key), so the provider is implied.
+ */
+export const AttachMediaJobRequest = z.object({
+  jobId: Id,
+  stage: z.string().trim().min(1).max(100),
+  idempotencyKey: z.string().trim().min(1).max(500),
+  predictionId: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/, "an Atlas Cloud prediction id"),
+});
+export type AttachMediaJobRequest = z.input<typeof AttachMediaJobRequest>;
+
 export const RecordAuditInput = z.object({
   action: z.string().regex(/^[a-z][a-z0-9_.-]{1,99}$/, "dotted lowercase action name"),
   subjectType: z.string().min(1).max(60),

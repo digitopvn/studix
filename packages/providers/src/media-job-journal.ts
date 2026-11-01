@@ -1,4 +1,9 @@
-import type { MediaJobJournal, MediaJobRecord, TenantContext } from "@studix/core";
+import {
+  canClaimMediaJob,
+  type MediaJobJournal,
+  type MediaJobRecord,
+  type TenantContext,
+} from "@studix/core";
 
 /** The journal contract lives in `@studix/core` so workflow stages can hand providers a durable one. */
 export type { MediaJobJournal, MediaJobRecord, MediaJobState } from "@studix/core";
@@ -18,6 +23,13 @@ export class InMemoryMediaJobJournal implements MediaJobJournal {
 
   async put(ctx: TenantContext, record: MediaJobRecord): Promise<void> {
     this.records.set(this.key(ctx, record.idempotencyKey), structuredClone(record));
+  }
+
+  async claim(ctx: TenantContext, record: MediaJobRecord): Promise<boolean> {
+    const key = this.key(ctx, record.idempotencyKey);
+    if (!canClaimMediaJob(this.records.get(key), record)) return false;
+    this.records.set(key, structuredClone(record));
+    return true;
   }
 
   private key(ctx: TenantContext, idempotencyKey: string): string {
