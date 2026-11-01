@@ -28,8 +28,16 @@ Owner: `packages/auth`.
   hash. Lookup is by hash.
 - Revocable; revocation takes effect on the next request.
 - Scoped to one workspace and a set of permissions.
-- Dashboard users authenticate with sessions (Better Auth email/password) that
-  resolve to a membership and then a workspace.
+- Dashboard users authenticate with sessions (Better Auth email/password, or
+  GitHub / Google SSO when configured) that resolve to a membership and then a
+  workspace. SSO uses Better Auth's `state` check bound to a browser cookie,
+  plus PKCE for Google.
+- SSO links to an existing user only when the provider reports the email as
+  verified and the Studix user's own email is verified (a user created through
+  SSO). Password accounts are never linked implicitly, since sign-up does not
+  verify email: their owners link GitHub or Google from the dashboard Account
+  page while signed in, with the same verified email. An SSO identity whose
+  email the provider has not verified never creates an account.
 - Inbound OAuth for AI clients: [ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md).
 
 ## Rate limiting

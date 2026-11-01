@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me, selectedWorkspace, selectWorkspace } from "./api-client.ts";
+import { AccountPage } from "./pages/account-page.tsx";
 import { ApiKeysPage } from "./pages/api-keys-page.tsx";
 import { AuthPage } from "./pages/auth-page.tsx";
 import { ConnectorsPage } from "./pages/connectors-page.tsx";
@@ -10,6 +11,7 @@ import { ProjectDetailPage } from "./pages/project-detail-page.tsx";
 import { ProjectReviewPage } from "./pages/project-review-page.tsx";
 import { ProjectsPage } from "./pages/projects-page.tsx";
 import { ProvidersPage } from "./pages/providers-page.tsx";
+import { takeSsoError } from "./sso-error.ts";
 import { ErrorBanner, Link } from "./ui.tsx";
 import { navigate, useHashRoute } from "./use-hash-route.ts";
 
@@ -20,6 +22,7 @@ const NAV = [
   { to: "/api-keys", label: "API keys" },
   { to: "/connectors", label: "Connectors" },
   { to: "/providers", label: "AI & Providers" },
+  { to: "/account", label: "Account" },
 ] as const;
 
 type SessionState = { status: "loading" } | { status: "anonymous" } | { status: "ready"; me: Me };
@@ -41,6 +44,8 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
       return <ConnectorsPage />;
     case "providers":
       return <ProvidersPage />;
+    case "account":
+      return <AccountPage email={me.user.email} />;
     default:
       return <p className="muted">Page not found.</p>;
   }
@@ -50,6 +55,8 @@ export function App() {
   const segments = useHashRoute();
   const [session, setSession] = useState<SessionState>({ status: "loading" });
   const [error, setError] = useState<unknown>();
+  // A failed GitHub/Google redirect comes back as /?error=<code>; read it once on load.
+  const [ssoError] = useState(takeSsoError);
 
   const loadSession = useCallback(async () => {
     setError(undefined);
@@ -88,7 +95,7 @@ export function App() {
     return (
       <>
         <ErrorBanner error={error} />
-        <AuthPage onSignedIn={() => void loadSession()} />
+        <AuthPage onSignedIn={() => void loadSession()} ssoError={ssoError} />
       </>
     );
   }
@@ -130,6 +137,11 @@ export function App() {
         </div>
       </header>
       <main className="content" key={me.workspace?.id}>
+        {ssoError && (
+          <p className="banner banner-error" role="alert">
+            {ssoError}
+          </p>
+        )}
         <Route segments={segments} me={me} />
       </main>
     </div>

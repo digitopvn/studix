@@ -27,7 +27,8 @@ const API_BODY_LIMIT = "256kb";
  * 1. Host allow-list (DNS rebinding) and security headers on everything.
  * 2. Health probes (no auth, no body).
  * 3. CORS/Origin guard for /mcp and /api.
- * 4. Better Auth at /api/auth/* before any body parser (it reads its own body).
+ * 4. Better Auth at /api/auth/* before any body parser (it reads its own body), and the public list of
+ *    enabled SSO providers at /api/sso-providers.
  * 5. /mcp (API key) and /api (session), each rate limited. /mcp is limited per client IP before the key is
  *    checked and per workspace after; /api/auth per IP. Buckets live in Postgres when a store is wired.
  * 6. Dashboard static files with SPA fallback.
@@ -66,6 +67,10 @@ export function createApp(deps: AppDeps): Express {
   app.use("/api", originGuard, (_req, res, next) => {
     res.set("Cache-Control", "no-store");
     next();
+  });
+  // Public: the sign-in page asks which SSO buttons to show before anyone has a session.
+  app.get("/api/sso-providers", rateLimit(authLimiter, "auth"), (_req, res) => {
+    res.json({ providers: deps.dashboardAuth.ssoProviders });
   });
   app.all("/api/auth/*splat", rateLimit(authLimiter, "auth"), (req, res) => {
     void deps.dashboardAuth.nodeHandler(req, res);
