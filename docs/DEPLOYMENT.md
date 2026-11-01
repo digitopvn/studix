@@ -6,7 +6,8 @@ The marketing site deploys separately to Cloudflare.
 
 Executable owners (read these, not this page, for exact steps): the root
 `Dockerfile`, `docker-compose.yml`, `.env.example`, `apps/marketing` Wrangler
-config, `infra/` and the GitHub Actions workflows under `.github/workflows/`.
+config, `deploy/` (TOSE deploy script, Kubernetes manifests, dev proxy Worker) and
+the GitHub Actions workflows under `.github/workflows/`.
 
 | Surface                  | Production (branch `main`)                             | Dev (branch `dev`)                                                                  |
 | ------------------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
@@ -26,9 +27,10 @@ generation. The app role does not invoke them; shipping one image keeps build,
 pinning and rollback to a single artifact.
 
 multix is built in a separate stage from a pinned commit of
-`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `7922a274`, the commit tagged
-v1.26.0). The stage fails if the fetched HEAD is not that commit. 1.26.0 is the
-first stable release with the Sume commands and counts Sume cost once per job.
+`mrgoonie/multix-cli` (`MULTIX_COMMIT` in the `Dockerfile` owns the value). The
+stage fails if the fetched HEAD is not that commit. The pin must be v1.26.0 or
+later: the first stable release with the Sume commands that counts Sume cost
+once per job.
 The image keeps the git build instead of `npm install -g @mrgoonie/multix`,
 because a commit pin is checked and an npm install here has no lockfile
 integrity hash. To upgrade, set `MULTIX_COMMIT` to the new release tag's commit
@@ -184,7 +186,7 @@ providers, so no AI cost is incurred.
 Run the same image twice (once per role) against your own PostgreSQL 16 and any
 S3-compatible storage. Set the `STUDIX_*_URL` values to your hostnames. Apply
 migrations before starting the new app version (see `packages/database`).
-Helm/K8s manifests, when present, live under `infra/`.
+Kubernetes manifests (Kustomize) live under `deploy/k8s`.
 
 ## Cloudflare marketing
 
@@ -219,6 +221,31 @@ resources prefixed `studix-`.
   `STUDIX_ALLOWED_HOSTS` (the project's TOSE default host),
   `STUDIX_API_KEY_ENV` (`live` in production, `staging` in dev) and
   `STUDIX_TRUST_PROXY`.
+
+### TOSE access
+
+- When to use: any TOSE API or CLI call outside CI (runbook, backup, rollback).
+- Scope: workspace `wearetopgroup`, `studix-` resources only.
+- Credential: CI reads `TOSE_API_KEY` from the GitHub environment (below).
+  Locally, the maintainers keep the `wearetopgroup` key in `.env` as
+  `TOSE_API_KEY_WEARETOPGROUP`; a plain `TOSE_API_KEY` in that file belongs to
+  another workspace. Pass the workspace key explicitly
+  (`TOSE_API_KEY="$TOSE_API_KEY_WEARETOPGROUP"`) to `deploy/tose/deploy.ts` or a
+  direct API call; never rely on whichever key the shell happens to hold.
+- Verify: before any write, make a read-only call (for example
+  `tose db list --json` or `tose status studix-app --json`) and confirm it
+  returns `studix-` resources. An auth error or no `studix-` resource means the key belongs to
+  another workspace.
+
+### Database backup
+
+- When to use: before a production release that applies migrations, and before
+  any manual data repair.
+- How: TOSE API, same base as `deploy/tose/deploy.ts`: `POST` on the database's
+  `backups` resource (`.../databases/<id>/backups`), with the database id from
+  `tose db list --json` and the key from [TOSE access](#tose-access).
+- Limits: a restore through this route has not been verified; treat the
+  backup as a safety net, not a rollback path (see [Rollback](#rollback)).
 
 ### CI deploy
 
@@ -257,8 +284,8 @@ branch). Env-only changes need no build: `tose redeploy <project> -y`.
 record to the SGP1 ingress, the address the project's default domain
 (`wearetopgroup-studix-prod-app.tose.sh`) resolves to, **DNS-only** (not
 proxied), which is why production trusts one proxy hop. The `target_ip` the
-TOSE domains API reports was not reachable on 2026-10-27; trust the default
-domain's address instead.
+TOSE domains API reports was not reachable when the record was created; trust
+the default domain's address instead.
 
 ### Dev hostname through a Cloudflare Worker
 
@@ -320,7 +347,10 @@ is running; the job must still end `succeeded`.
   Roll both projects back to the same commit, app first.
 - Migrations are forward-only. Write them expand-then-contract so the previous
   image still runs against the new schema; that is what makes a code rollback
-  safe without a database restore.
+  safe without a database restore. TOSE has no API to scale a project, so the
+  deploy script cannot pause the worker while the app migrates; it only orders
+  app before worker, and the previous worker keeps running against the new
+  schema until its own rollout.
 - Proxy Worker and marketing: `npx wrangler@4 rollback` in the Worker's
   directory, or pick the previous version in the Cloudflare dashboard.
 - Configuration: `tose env push` the previous file, then `tose redeploy <project> -y`
