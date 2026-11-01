@@ -315,9 +315,14 @@ export class MultixProvider implements MediaProvider {
         "A previous submission of this request may already have been charged and cannot be deduplicated",
         {
           retryable: false,
-          details: { provider: plan.model.vendor, model: existing.model, submittedAt: existing.submittedAt },
+          details: {
+            provider: plan.model.vendor,
+            model: existing.model,
+            idempotencyKey: request.idempotencyKey,
+            submittedAt: existing.submittedAt,
+          },
           suggestedAction:
-            "Find the prediction in `multix history` or the provider console, then resume it by job id.",
+            "Find the prediction in `multix history` or the Atlas Cloud console, attach it to the failed job with `studix_attach_media_job`, then retry the job.",
         },
       );
     }
@@ -346,7 +351,16 @@ export class MultixProvider implements MediaProvider {
       plan.mode === "sume-job"
         ? await this.submitSume(ctx, plan, request, attempt)
         : await this.submitAtlas(plan, request, {
-            intent: () => journal.put(ctx, { ...base, state: "submitting", updatedAt: at }),
+            intent: async () => {
+              if (await journal.claim(ctx, { ...base, state: "submitting", updatedAt: at })) return;
+              // A concurrent call with the same key claimed it first; it submits, this one must not.
+              throw new StudixError("CONFLICT", "Another call already claimed this media request", {
+                retryable: true,
+                details: { model: plan.model.id, attempt, idempotencyKey: request.idempotencyKey },
+                suggestedAction:
+                  "Retry later: once the other call journaled its upstream job the retry collects it; if that call died first, the retry reports the request as possibly charged.",
+              });
+            },
             // Only errors proving the request never reached Atlas may release the key for a retry.
             release: () => journal.put(ctx, { ...base, state: "failed", updatedAt: at }),
           });
@@ -733,7 +747,12 @@ export class MultixProvider implements MediaProvider {
     existing: MediaJobRecord | undefined,
     started: number,
   ): Promise<MediaGenerationResult> {
-    const outDir = join(request.workDir, `multix-${sha([ctx.workspaceId, request.idempotencyKey])}`);
+    // The directory is bound to what the request asks for, so a file left by an earlier request under the same
+    // key (a prompt that changed since) is never taken for this request's completed output.
+    const outDir = join(
+      request.workDir,
+      `multix-${sha([ctx.workspaceId, request.idempotencyKey, plan.model.id, request.prompt, request.params ?? null])}`,
+    );
     const file = join(outDir, `${plan.role}${plan.outputExt ?? ".bin"}`);
     // One execution id per paid run: the upstream history id when it is a valid id, else one derived from
     // the idempotency key and the run's ordinal. The ordinal keeps a second paid run of the same key (the

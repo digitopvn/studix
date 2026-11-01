@@ -58,6 +58,8 @@ function setup(
     runtimeOutput?: unknown;
     runtimeError?: Error;
     credentialError?: Error;
+    owner?: "workspace" | "user";
+    sinkDown?: boolean;
   } = {},
 ) {
   const prefs = options.prefs ?? [];
@@ -71,7 +73,13 @@ function setup(
       if (options.credentialError) throw options.credentialError;
       return {
         apiKey: "tenant-key-0123456789",
-        connection: { id: input.connectionId, provider: "openrouter", version: 1, billing: "usage_based" },
+        connection: {
+          id: input.connectionId,
+          provider: "openrouter",
+          version: 1,
+          billing: "usage_based",
+          owner: options.owner ?? "workspace",
+        },
         async markRejected() {},
       };
     },
@@ -93,6 +101,7 @@ function setup(
     snapshots,
     sink: {
       record(_ctx, execution) {
+        if (options.sinkDown) throw new Error("database unavailable");
         executions.push(execution);
       },
     },
@@ -155,8 +164,35 @@ describe("workspace model decisions", () => {
       status: "succeeded",
       costCents: 2,
       jobId: "job_1",
+      funding: "workspace",
     });
     expect(result.providerExecutionId).toBe(executions[0]!.id);
+    expect(result.funding).toBe("workspace");
+  });
+
+  it("keeps a failed run's funding when its execution cannot be recorded", async () => {
+    const { provider } = setup({
+      prefs: [preference("model/a")],
+      owner: "user",
+      sinkDown: true,
+      runtimeError: withSpend(new StudixError("PROVIDER_ERROR", "outage"), {
+        costCents: 3,
+        inputTokens: 7,
+        outputTokens: 1,
+        turns: 1,
+      }),
+    });
+    const result = await provider.decide(request());
+    expect(result.costCents).toBe(3);
+    expect(result.providerExecutionId).toBeUndefined();
+    expect(result.funding).toBe("member");
+  });
+
+  it("tags a decision on a member's personal key as member-funded", async () => {
+    const { provider, executions } = setup({ prefs: [preference("model/a")], owner: "user" });
+    const result = await provider.decide(request());
+    expect(executions[0]).toMatchObject({ status: "succeeded", funding: "member" });
+    expect(result.funding).toBe("member");
   });
 
   it("keeps the pinned model on a retry after the preference changed", async () => {
@@ -220,7 +256,8 @@ describe("workspace model decisions", () => {
       costCents: 3,
       usage: { inputTokens: 7, outputTokens: 1 },
     });
-    expect(executions[0]).toMatchObject({ status: "failed", costCents: 3 });
+    expect(executions[0]).toMatchObject({ status: "failed", costCents: 3, funding: "workspace" });
+    expect(result).toMatchObject({ providerExecutionId: executions[0]!.id, funding: "workspace" });
   });
 
   it("runs the route another attempt pinned first", async () => {

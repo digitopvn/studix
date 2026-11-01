@@ -120,6 +120,20 @@
       "when": 1793446854203,
       "tag": "0016_provider_runtimes_models",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793511603640,
+      "tag": "0017_api_key_job_recover",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793512218734,
+      "tag": "0018_spend_funding",
+      "breakpoints": true
     }
   ]
 }

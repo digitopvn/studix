@@ -90,6 +90,21 @@ describe("film scope", () => {
     ]);
   });
 
+  it("accepts a voiced cue only when it is one of the shot's own sfx cues", () => {
+    const marked = withShots((s) => {
+      s[4]!.sfx = ["cheering crowd far away"];
+      s[4]!.voicedSfx = ["cheering crowd far away"];
+    });
+    expect(scopeIssues(marked, { durationMs: 15_000 })).toEqual([]);
+    const stray = withShots((s) => {
+      s[4]!.sfx = ["fireworks bursting overhead"];
+      s[4]!.voicedSfx = ["laughing crowd"];
+    });
+    expect(scopeIssues(stray, { durationMs: 15_000 })).toEqual([
+      expect.objectContaining({ code: "unknown_reference", path: "/scenes/0/shots/4/voicedSfx/0" }),
+    ]);
+  });
+
   it("keeps lines within three words a second, the brief's length and the audio track bound", () => {
     const wordy = withShots((s) => {
       s[3]!.lines = [{ characterId: "mai", text: "một hai ba bốn năm sáu bảy tám chín mười" }];

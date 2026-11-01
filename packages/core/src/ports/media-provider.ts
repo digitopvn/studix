@@ -153,12 +153,23 @@ export interface MediaJobStoredOutput {
  * Durable memory of upstream jobs, keyed by workspace and idempotency key. The record is written right
  * after submission, so a worker that dies while waiting leaves enough behind for the next attempt to
  * resume the same paid job. Implementations must scope reads and writes by `ctx.workspaceId`. `put` is an
- * unconditional overwrite: callers must serialize `generate` per idempotency key (the stage fencing does),
- * because the "submitting" intent is not a compare-and-set.
+ * unconditional overwrite; the "submitting" intent goes through `claim`, so two submissions of one request
+ * cannot both reach an upstream that cannot deduplicate them.
  */
 export interface MediaJobJournal {
   get(ctx: TenantContext, idempotencyKey: string): Promise<MediaJobRecord | undefined>;
   put(ctx: TenantContext, record: MediaJobRecord): Promise<void>;
+  /**
+   * Insert-if-absent for a "submitting" intent: stores `record` and resolves true only when the key has no
+   * record yet, or its record is a failed attempt older than `record.attempt`. False means another
+   * submission of the same request claimed the key first and this one must not submit.
+   */
+  claim(ctx: TenantContext, record: MediaJobRecord): Promise<boolean>;
+}
+
+/** Whether a "submitting" intent for `next` may replace `current` (see {@link MediaJobJournal.claim}). */
+export function canClaimMediaJob(current: MediaJobRecord | undefined, next: MediaJobRecord): boolean {
+  return current === undefined || (current.state === "failed" && current.attempt < next.attempt);
 }
 
 /** Resume an upstream job by id (e.g. after the worker that submitted it died). Never submits new work. */

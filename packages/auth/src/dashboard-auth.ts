@@ -16,6 +16,15 @@ const ID_PREFIX: Record<string, string> = {
   verification: "ver",
 };
 
+/** Dashboard SSO providers Studix supports. */
+export const SSO_PROVIDERS = ["github", "google"] as const;
+export type SsoProvider = (typeof SSO_PROVIDERS)[number];
+
+export interface OAuthClientCredentials {
+  clientId: string;
+  clientSecret: string;
+}
+
 /** Header a dashboard client may send to pick one of the user's workspaces (default: the first). */
 export const WORKSPACE_HEADER = "x-studix-workspace";
 
@@ -30,6 +39,8 @@ export interface DashboardAuthOptions {
   trustedOrigins?: string[];
   /** Path the handler is mounted at. */
   basePath?: string;
+  /** OAuth clients per SSO provider; a provider without one is disabled. */
+  sso?: Partial<Record<SsoProvider, OAuthClientCredentials>>;
   /** Minimum password length (default 10). */
   minPasswordLength?: number;
   /** Header carrying the client IP behind a proxy, used for Better Auth's own rate limiting. */
@@ -57,6 +68,7 @@ export interface DashboardSession {
 
 function buildBetterAuth(options: DashboardAuthOptions) {
   const { logger } = options;
+  const sso = options.sso ?? {};
   return betterAuth({
     appName: "Studix",
     baseURL: options.baseUrl,
@@ -78,6 +90,30 @@ function buildBetterAuth(options: DashboardAuthOptions) {
       minPasswordLength: options.minPasswordLength ?? 10,
       maxPasswordLength: 256,
     },
+    socialProviders: {
+      ...(sso.github ? { github: { ...sso.github } } : {}),
+      // Only the redirect flow (state + PKCE); Google's direct id-token sign-in stays off.
+      ...(sso.google
+        ? { google: { ...sso.google, prompt: "select_account" as const, disableIdTokenSignIn: true } }
+        : {}),
+    },
+    // SSO links to an existing user only when the provider reports the email as verified (neither provider
+    // is trusted blindly) and the Studix user's own email is verified too, so a password account someone
+    // registered with another person's address cannot be taken over through, or used to capture, their SSO
+    // sign-in. Password users link GitHub or Google from their signed-in session instead (/link-social).
+    account: {
+      accountLinking: { enabled: true, requireLocalEmailVerified: true, allowDifferentEmails: false },
+    },
+    user: {
+      // No account is created from an SSO identity whose email the provider has not verified: it would hold
+      // that address without proof and block its owner from signing up. Covers every OAuth entry point.
+      validateUserInfo: ({ user, source }) =>
+        source.method === "oauth" && source.action === "create-user" && !user.emailVerified
+          ? { error: "email_not_verified", errorDescription: "The provider has not verified this email" }
+          : undefined,
+    },
+    // OAuth errors land on the dashboard sign-in page with ?error=<code>.
+    onAPIError: { errorURL: options.baseUrl },
     session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
     rateLimit: { enabled: options.rateLimit ?? true, window: 60, max: 60 },
     telemetry: { enabled: false },
@@ -122,6 +158,8 @@ export interface DashboardAuth {
   auth: BetterAuthInstance;
   /** Node handler for `${basePath}/*`; mount it before any body parser. */
   nodeHandler: ReturnType<typeof toNodeHandler>;
+  /** SSO providers that have an OAuth client configured, for the sign-in page. */
+  ssoProviders: SsoProvider[];
   /**
    * Resolve request headers (session cookie) to a session and TenantContext. Returns undefined when there is
    * no valid session. Throws FORBIDDEN when the requested workspace is not one of the user's memberships.
@@ -141,6 +179,7 @@ export function createDashboardAuth(options: DashboardAuthOptions): DashboardAut
   return {
     auth,
     nodeHandler: toNodeHandler(auth),
+    ssoProviders: SSO_PROVIDERS.filter((id) => options.sso?.[id]),
     async resolveSession(rawHeaders) {
       const headers = toHeaders(rawHeaders);
       const result = await auth.api.getSession({ headers });

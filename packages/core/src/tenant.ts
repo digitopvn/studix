@@ -9,6 +9,8 @@ export const PERMISSIONS = [
   "project:write",
   "job:cancel",
   "job:retry",
+  /** Operator recovery of a job's media calls, e.g. attaching an upstream job found by hand (admins only). */
+  "job:recover",
   "asset:read",
   "asset:write",
   "approval:request",

@@ -186,6 +186,13 @@ gió sạch và bỏ sót lời thật. VAD là tín hiệu quyết định.
   storage và cache tái dùng. Thấy tiếng nói thì tạo lại đúng 1 lần (một job upstream và một
   dòng usage riêng, tính tiền cả hai). Lần hai vẫn có tiếng nói thì job fail `VALIDATION`,
   `details` có `shotId`, `cue`, `assetId`. Không có SFX nào có tiếng nói đi vào mix.
+- Cue mà giọng người là chủ ý (đám đông reo, tiếng cười) được liệt kê trong `voicedSfx` của shot
+  (mỗi mục phải trùng đúng một cue trong `sfx` của shot đó, nếu không scope fail `VALIDATION`
+  trước G0; một patch feedback sau G0 không chạy lại kiểm này, nên entry không còn trùng cue thì cue đó bị đo lại). Cue này không bị đo và không bị tạo lại; mọi cue khác vẫn bị kiểm. Sửa bằng patch
+  `/metadata/film/scope/scenes/<i>/shots/<j>/voicedSfx`.
+- CI chạy VAD thật ở bước "QA speech tests (speech image)": venv riêng cài extra `speech`,
+  `espeak-ng` tạo giọng nói để test dương tính (phải ra tiếng nói), tiếng ồn và âm đơn phải ra
+  0 ms. `STUDIX_QA_REQUIRE_SPEECH=1` làm job fail thay vì skip khi thiếu Silero hay espeak-ng.
 - Ngưỡng: từ 300 ms tiếng nói tích lũy trở lên là có tiếng nói (`SPEECH_MIN_MS` trong
   `packages/qa/src/speech-probe.ts`). Tiếng click hay hơi thở ngắn không vượt ngưỡng.
 - SFX đã lưu khi cổng đang tắt không được tái dùng cho job có cổng bật: khóa tái dùng có

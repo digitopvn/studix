@@ -119,6 +119,7 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
           unit: "call",
           costCents: u.costCents,
           providerExecutionId: u.providerExecutionId,
+          ...(u.funding ? { funding: u.funding } : {}),
           metadata: {
             provider: u.provider,
             model: u.model,

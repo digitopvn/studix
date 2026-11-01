@@ -25,6 +25,7 @@ function toUsage(row: typeof usageEvents.$inferSelect): UsageEvent {
     costCents: row.costCents,
     jobId: opt(row.jobId),
     providerExecutionId: opt(row.providerExecutionId),
+    funding: row.funding,
     metadata: opt(row.metadata),
     createdAt: row.createdAt,
   };
@@ -47,6 +48,7 @@ function toExecution(row: typeof providerExecutions.$inferSelect): ProviderExecu
     costCents: row.costCents,
     attempt: row.attempt,
     error: opt(row.error),
+    funding: row.funding,
     createdAt: row.createdAt,
   };
 }
@@ -80,6 +82,7 @@ export function createUsageRepository(db: DbExecutor, clock: Clock): UsageReposi
           costCents: input.costCents,
           jobId: input.jobId ?? null,
           providerExecutionId: input.providerExecutionId ?? null,
+          funding: input.funding ?? "operator",
           metadata: input.metadata ?? null,
           createdAt: clock.now(),
         })
@@ -153,6 +156,7 @@ export function createUsageRepository(db: DbExecutor, clock: Clock): UsageReposi
           costCents: input.costCents,
           attempt: input.attempt,
           error: input.error ? redactDeep(input.error) : null,
+          funding: input.funding ?? "operator",
           createdAt: clock.now(),
         })
         .returning();

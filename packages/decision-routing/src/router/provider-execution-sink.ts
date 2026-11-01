@@ -1,4 +1,10 @@
-import type { NewRecord, ProviderExecution, ProviderExecutionStatus, TenantContext } from "@studix/core";
+import type {
+  FundingSource,
+  NewRecord,
+  ProviderExecution,
+  ProviderExecutionStatus,
+  TenantContext,
+} from "@studix/core";
 import { type Logger, newId, type StudixError } from "@studix/shared";
 import type { DecisionRequest, TokenUsage } from "../decision-types.ts";
 
@@ -21,6 +27,8 @@ export interface ExecutionOutcome {
   costCents: number;
   usage?: TokenUsage;
   error?: StudixError;
+  /** Who paid the provider; `operator` when omitted. */
+  funding?: FundingSource;
 }
 
 function statusOf(error: StudixError | undefined): ProviderExecutionStatus {
@@ -48,6 +56,7 @@ export function buildExecutionRecord(
       ? { inputTokens: outcome.usage.inputTokens, outputTokens: outcome.usage.outputTokens }
       : {}),
     costCents: outcome.costCents,
+    ...(outcome.funding ? { funding: outcome.funding } : {}),
     attempt: outcome.attempt,
     ...(outcome.error ? { error: outcome.error.toJSON() } : {}),
   };

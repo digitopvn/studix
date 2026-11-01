@@ -23,6 +23,7 @@ export const NATIVE_TOOL_NAMES = {
   ...STUDIX_TOOLS,
   cancelJob: "studix_cancel_job",
   retryJob: "studix_retry_job",
+  attachMediaJob: "studix_attach_media_job",
 } as const;
 
 export interface ToolContext {
@@ -271,6 +272,28 @@ export const NATIVE_TOOLS = [
     async run(ctx, input) {
       const job = await ctx.deps.studio.retryJob(ctx.tenant, input.jobId);
       return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
+    },
+  }),
+  tool({
+    name: NATIVE_TOOL_NAMES.attachMediaJob,
+    title: "Attach Atlas prediction",
+    description:
+      "Failed job whose Atlas call 'may already have been charged': attach the prediction id from `multix history`, then retry the job to collect it unpaid.",
+    input: z.object({
+      jobId: Id,
+      stage: z.string().trim().min(1).max(100),
+      idempotencyKey: z.string().trim().min(1).max(500).describe("From the error details."),
+      predictionId: z.string().trim().min(1).max(128),
+    }),
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      const { job, mediaJob } = await ctx.deps.studio.attachMediaJob(ctx.tenant, input);
+      return {
+        data: { job, mediaJob },
+        next: job.next,
+        scope: { jobId: job.id, projectId: job.projectId },
+      };
     },
   }),
   tool({

@@ -74,6 +74,17 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      # The real Silero VAD on a synthesized voice and on voiceless sound, in its own venv so the main one
+      # stays the default image (no torch). Fails, not skips, when the detector or espeak-ng is missing.
+      - name: QA speech tests (speech image)
+        timeout-minutes: 15
+        env:
+          STUDIX_QA_REQUIRE_SPEECH: "1"
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/qa-speech-venv
+        run: |
+          sudo apt-get install -y -qq --no-install-recommends espeak-ng
+          uv run --locked --extra speech --project tools/qa pytest tools/qa/tests/test_speech_activity.py -v
+
       - name: Migrations match schema
         run: |
           pnpm db:generate

@@ -6,7 +6,8 @@ The marketing site deploys separately to Cloudflare.
 
 Executable owners (read these, not this page, for exact steps): the root
 `Dockerfile`, `docker-compose.yml`, `.env.example`, `apps/marketing` Wrangler
-config, `infra/` and the GitHub Actions workflows under `.github/workflows/`.
+config, `deploy/` (TOSE deploy script, Kubernetes manifests, dev proxy Worker) and
+the GitHub Actions workflows under `.github/workflows/`.
 
 | Surface                  | Production (branch `main`)                             | Dev (branch `dev`)                                                                  |
 | ------------------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
@@ -26,9 +27,10 @@ generation. The app role does not invoke them; shipping one image keeps build,
 pinning and rollback to a single artifact.
 
 multix is built in a separate stage from a pinned commit of
-`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `7922a274`, the commit tagged
-v1.26.0). The stage fails if the fetched HEAD is not that commit. 1.26.0 is the
-first stable release with the Sume commands and counts Sume cost once per job.
+`mrgoonie/multix-cli` (`MULTIX_COMMIT` in the `Dockerfile` owns the value). The
+stage fails if the fetched HEAD is not that commit. The pin must be v1.26.0 or
+later: the first stable release with the Sume commands that counts Sume cost
+once per job.
 The image keeps the git build instead of `npm install -g @mrgoonie/multix`,
 because a commit pin is checked and an npm install here has no lockfile
 integrity hash. To upgrade, set `MULTIX_COMMIT` to the new release tag's commit
@@ -60,6 +62,17 @@ credentials such as Anthropic API keys. Without it the app still starts, but
 saving keys is disabled. Losing it makes every stored key unreadable, so back
 it up with the database secrets. To rotate it, move the old value to
 `STUDIX_SECRETS_KEYS_PREVIOUS` and set a new one.
+
+Dashboard sign-in with GitHub and Google is off until a provider's client id
+and secret are both set (`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`,
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`); setting only one of a pair fails
+config validation. Set them on the app only. Each environment needs its own
+OAuth client whose callback URL is `<STUDIX_APP_URL>/api/auth/callback/github`
+(GitHub OAuth App, "Authorization callback URL") or
+`<STUDIX_APP_URL>/api/auth/callback/google` (Google OAuth client of type "Web
+application", "Authorized redirect URIs"; the consent screen needs the
+`openid`, `email` and `profile` scopes). Linking rules are in
+[SECURITY.md](SECURITY.md#api-keys-inbound).
 
 Keys for the Pi runtime and the per-stage model preferences need no extra
 setting: they use the same `STUDIX_SECRETS_KEY`, which the worker also needs to
@@ -143,8 +156,14 @@ instead of submitting again. Atlas Cloud has no idempotency key, so the adapter
 journals a `submitting` record right before `atlas run`. If the worker dies
 before the job id is journaled, a retry with the same idempotency key is
 refused (non-retryable) instead of paying twice for one upscale (about $0.01):
-find the prediction in `multix history` or the Atlas Cloud console and resume
-it by job id. Only errors that prove Atlas never accepted the run (invalid
+find the prediction in `multix history` or the Atlas Cloud console, attach it
+with `studix_attach_media_job`, then retry the job
+([docs/MCP_API.md](MCP_API.md#retrying-a-failed-job)). The intent is an
+insert-if-absent, so two concurrent calls with the same idempotency key submit
+once; the other fails `CONFLICT` (retryable). Its retry collects the job once
+the winner journaled it, or reports the request as possibly charged if the
+winner died first.
+Only errors that prove Atlas never accepted the run (invalid
 request, missing key) release the key for a retry. Calls made outside a
 workflow stage fall back to an in-process journal, which a restart loses.
 
@@ -163,6 +182,9 @@ The worker checks generated sound effects for a human voice when
 `--build-arg STUDIX_QA_EXTRAS=speech`; with the flag on and the default image,
 the worker refuses to start (`UNAVAILABLE`) instead of paying for effects it cannot check.
 See [QA.md](QA.md#chặn-tiếng-nói-trong-sfx).
+TOSE builds the image without build arguments, so production runs the default
+image and keeps `STUDIX_SPEECH_GATE` unset until a build with the `speech` extra
+exists for it.
 
 ## Local
 
@@ -181,7 +203,7 @@ providers, so no AI cost is incurred.
 Run the same image twice (once per role) against your own PostgreSQL 16 and any
 S3-compatible storage. Set the `STUDIX_*_URL` values to your hostnames. Apply
 migrations before starting the new app version (see `packages/database`).
-Helm/K8s manifests, when present, live under `infra/`.
+Kubernetes manifests (Kustomize) live under `deploy/k8s`.
 
 ## Cloudflare marketing
 
@@ -216,6 +238,31 @@ resources prefixed `studix-`.
   `STUDIX_ALLOWED_HOSTS` (the project's TOSE default host),
   `STUDIX_API_KEY_ENV` (`live` in production, `staging` in dev) and
   `STUDIX_TRUST_PROXY`.
+
+### TOSE access
+
+- When to use: any TOSE API or CLI call outside CI (runbook, backup, rollback).
+- Scope: workspace `wearetopgroup`, `studix-` resources only.
+- Credential: CI reads `TOSE_API_KEY` from the GitHub environment (below).
+  Locally, the maintainers keep the `wearetopgroup` key in `.env` as
+  `TOSE_API_KEY_WEARETOPGROUP`; a plain `TOSE_API_KEY` in that file belongs to
+  another workspace. Pass the workspace key explicitly
+  (`TOSE_API_KEY="$TOSE_API_KEY_WEARETOPGROUP"`) to `deploy/tose/deploy.ts` or a
+  direct API call; never rely on whichever key the shell happens to hold.
+- Verify: before any write, make a read-only call (for example
+  `tose db list --json` or `tose status studix-app --json`) and confirm it
+  returns `studix-` resources. An auth error or no `studix-` resource means the key belongs to
+  another workspace.
+
+### Database backup
+
+- When to use: before a production release that applies migrations, and before
+  any manual data repair.
+- How: TOSE API, same base as `deploy/tose/deploy.ts`: `POST` on the database's
+  `backups` resource (`.../databases/<id>/backups`), with the database id from
+  `tose db list --json` and the key from [TOSE access](#tose-access).
+- Limits: a restore through this route has not been verified; treat the
+  backup as a safety net, not a rollback path (see [Rollback](#rollback)).
 
 ### CI deploy
 
@@ -254,8 +301,8 @@ branch). Env-only changes need no build: `tose redeploy <project> -y`.
 record to the SGP1 ingress, the address the project's default domain
 (`wearetopgroup-studix-prod-app.tose.sh`) resolves to, **DNS-only** (not
 proxied), which is why production trusts one proxy hop. The `target_ip` the
-TOSE domains API reports was not reachable on 2026-10-27; trust the default
-domain's address instead.
+TOSE domains API reports was not reachable when the record was created; trust
+the default domain's address instead.
 
 ### Dev hostname through a Cloudflare Worker
 
@@ -282,12 +329,6 @@ released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.
-
-## Approvals migration
-
-Migration `0003` adds a unique index on pending approvals. Roll it out with the old app instances stopped
-or drained first: an old instance still inserts approvals without conflict handling and would hit a unique
-violation on a duplicate request (or make the index build fail if it commits a duplicate mid-migration).
 
 ## Smoke test
 
@@ -317,7 +358,10 @@ is running; the job must still end `succeeded`.
   Roll both projects back to the same commit, app first.
 - Migrations are forward-only. Write them expand-then-contract so the previous
   image still runs against the new schema; that is what makes a code rollback
-  safe without a database restore.
+  safe without a database restore. TOSE has no API to scale a project, so the
+  deploy script cannot pause the worker while the app migrates; it only orders
+  app before worker, and the previous worker keeps running against the new
+  schema until its own rollout.
 - Proxy Worker and marketing: `npx wrangler@4 rollback` in the Worker's
   directory, or pick the previous version in the Cloudflare dashboard.
 - Configuration: `tose env push` the previous file, then `tose redeploy <project> -y`

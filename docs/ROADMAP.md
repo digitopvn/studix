@@ -53,9 +53,6 @@ execution, professional multi-tenant operations.
 
 ## Separate tracks
 
-- **anime-creator port**: turning `anime-creator` into a reusable Studix
-  workflow and skills is tracked in
-  [issue #2](https://github.com/digitopvn/studix/issues/2).
 - **GPU droplets / self-hosted generation**: future `ExecutionBackend` or
   provider adapter; verify deployment rights and hardware before committing.
 - **Domain cutover** to `studix.io`: config-only by design

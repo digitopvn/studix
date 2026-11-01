@@ -1,4 +1,11 @@
-import type { AgentCap, AgentRunResult, AgentRuntime, AgentTask, TenantContext } from "@studix/core";
+import type {
+  AgentCap,
+  AgentRunResult,
+  AgentRuntime,
+  AgentTask,
+  FundingSource,
+  TenantContext,
+} from "@studix/core";
 import {
   type Clock,
   type ErrorCode,
@@ -122,6 +129,10 @@ export interface AgentSpend {
   outputTokens: number;
   turns: number;
   model?: string;
+  /** Set by a caller that recorded the failed run as a provider execution. */
+  providerExecutionId?: string;
+  /** Who paid the provider for the failed run; set alongside `providerExecutionId`. */
+  funding?: FundingSource;
 }
 
 /** The spend carried by an error from an agent runtime's `run`, if the agent reported any. */

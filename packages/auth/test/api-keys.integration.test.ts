@@ -125,9 +125,10 @@ describe("api key scopes after job:retry joined the role matrix", () => {
       "project:read",
       "workspace:read",
     ]);
+    // `job:recover` came later still; 0017 adds it below.
     const admin = await issue(
       "old-admin",
-      PERMISSIONS.filter((p) => p !== "job:retry"),
+      PERMISSIONS.filter((p) => p !== "job:retry" && p !== "job:recover"),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
     const already = await issue("already", ["project:read", "job:retry"]);
@@ -141,6 +142,9 @@ describe("api key scopes after job:retry joined the role matrix", () => {
 
     const sql = readFileSync(join(MIGRATIONS_FOLDER, "0012_api_key_job_retry.sql"), "utf8");
     await db.current.client.unsafe(sql);
+    await db.current.client.unsafe(
+      readFileSync(join(MIGRATIONS_FOLDER, "0017_api_key_job_recover.sql"), "utf8"),
+    );
 
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
     expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
@@ -157,5 +161,41 @@ describe("api key scopes after job:retry joined the role matrix", () => {
     expect(
       (await keys.list(ctx)).find((k) => k.id === editor.id)?.scopes.filter((s) => s === "job:retry"),
     ).toHaveLength(1);
+  });
+});
+
+describe("api key scopes after job:recover joined the admin roles", () => {
+  it("gives the scope to owner and admin keys only", async () => {
+    const { keys, repos } = services();
+    const ctx = await tenant("pg-recover-scope");
+    const createdBy = { type: "user" as const, id: ctx.actor.id };
+    const issue = (name: string, scopes: Permission[]) =>
+      repos.apiKeys.create(ctx, {
+        name,
+        hash: hashApiKey(`stx_test_recover_${name}`),
+        prefix: name,
+        scopes,
+        createdBy,
+      });
+    const admin = await issue("old-admin", [...PERMISSIONS.filter((p) => p !== "job:recover")].reverse());
+    const editor = await issue("editor", [
+      "workspace:read",
+      "project:read",
+      "asset:read",
+      "project:write",
+      "job:cancel",
+      "job:retry",
+      "asset:write",
+      "approval:request",
+    ]);
+    const sql = readFileSync(join(MIGRATIONS_FOLDER, "0017_api_key_job_recover.sql"), "utf8");
+    await db.current.client.unsafe(sql);
+    await db.current.client.unsafe(sql);
+
+    const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
+    expect(byId.get(admin.id)).toMatchObject({ role: "owner" });
+    expect(byId.get(admin.id)?.scopes.filter((s) => s === "job:recover")).toHaveLength(1);
+    expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
+    expect(byId.get(editor.id)?.scopes).not.toContain("job:recover");
   });
 });

@@ -54,6 +54,7 @@ function setup(events: ClaudeAgentEvent[] | (() => Promise<ClaudeAgentEvent[]>),
         if (resolveError) throw resolveError;
         return {
           apiKey: FAKE_KEY,
+          connection: { owner: "workspace" },
           async markRejected() {
             rejected++;
           },
@@ -254,14 +255,18 @@ describe("planner router", () => {
 });
 
 describe("Claude planner execution records", () => {
-  function recorded(events: ClaudeAgentEvent[]) {
+  function recorded(events: ClaudeAgentEvent[], owner: "workspace" | "user" = "workspace") {
     const rows: NewProviderExecution[] = [];
     const ledger: NewUsageEvent[] = [];
     const planner = createClaudePlanner({
       transport: createFakeClaudeTransport(() => events),
       credentials: {
         resolveForExecution: async () =>
-          ({ apiKey: FAKE_KEY, markRejected: async () => {} }) as unknown as ResolvedProviderCredential,
+          ({
+            apiKey: FAKE_KEY,
+            connection: { owner },
+            markRejected: async () => {},
+          }) as unknown as ResolvedProviderCredential,
       },
       executions: {
         async recordProviderExecution(_ctx, input) {
@@ -294,9 +299,17 @@ describe("Claude planner execution records", () => {
         attempt: 1,
         costCents: 4.25,
         inputTokens: 1200,
+        funding: "workspace",
       }),
     ]);
-    expect(result.usage[0]?.providerExecutionId).toBe("pex_1");
+    expect(result.usage[0]).toMatchObject({ providerExecutionId: "pex_1", funding: "workspace" });
+  });
+
+  it("tags a plan on the requester's personal Anthropic key as member-funded", async () => {
+    const { planner, rows } = recorded(success(), "user");
+    const result = await planner(brief, ctx(), new AbortController().signal);
+    expect(rows).toEqual([expect.objectContaining({ status: "succeeded", funding: "member" })]);
+    expect(result.usage[0]?.funding).toBe("member");
   });
 
   it("records a failed execution with the normalized error and no key", async () => {
@@ -329,6 +342,7 @@ describe("Claude planner execution records", () => {
         costCents: 37,
         jobId: "job_1",
         providerExecutionId: "pex_1",
+        funding: "workspace",
         dedupeKey: expect.stringContaining("claude-failed"),
       }),
     ]);
