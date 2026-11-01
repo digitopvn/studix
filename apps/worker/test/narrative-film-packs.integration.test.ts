@@ -79,11 +79,13 @@ function agentTranscript(request: ClaudeSessionRequest): ClaudeAgentEvent[] {
   return [usage, { type: "result", output: { boards } }];
 }
 
-function memoryStorage(): StorageAdapter {
+function memoryStorage(failPut?: (key: string) => boolean): StorageAdapter {
   const objects = new Map<string, Buffer>();
   const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
   return {
     async put(_ctx, key, body, opts) {
+      if (failPut?.(key))
+        throw new StudixError("UNAVAILABLE", `storage refused ${key}`, { retryable: false });
       if (!("filePath" in body)) throw new Error("memory storage takes files only");
       const bytes = await readFile(body.filePath);
       objects.set(key, bytes);
@@ -117,12 +119,14 @@ function createWorld(
     refuse?: (request: MediaGenerationRequest) => boolean;
     /** Estimates of the models a request can name, in cents; other requests cost the fake's price. */
     modelCents?: Record<string, number>;
+    /** Storage keys whose upload throws. */
+    failPut?: (key: string) => boolean;
   } = {},
 ) {
   const { repos } = db.current;
   const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
   const workRoot = mkdtempSync(join(tmpdir(), "studix-film-packs-"));
-  const storage = memoryStorage();
+  const storage = memoryStorage(opts.failPut);
   const rendered: VideoIR[] = [];
   const renderer: RendererAdapter = {
     id: "hyperframes",
@@ -869,6 +873,19 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const paid = usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration);
     // Every call the provider answered is in the ledger; the refused second take cost nothing and has no line.
     expect(paid).toHaveLength(world.requests.length - 1);
+  });
+
+  it("bills the paid clips when a scene upload fails after the clip batch", async () => {
+    const world = createWorld({ failPut: (key) => key.includes("/scenes/") });
+    const { ctx, render } = await renderJobOnApprovedBoard(world, `film-${pack}-scene-upload-fails`, pack);
+
+    expect(await world.runOnce(render.id)).toBe("failed");
+    const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
+    const clips = usage
+      .filter((u) => u.metadata?.stage === n.motion && u.costCents > 0)
+      .map((u) => u.metadata?.assetId)
+      .sort();
+    expect(clips).toEqual(["s2-clip", "s3-clip", "s4-clip"]);
   });
 
   it("does not probe effects when the worker has no speech probe", async () => {
