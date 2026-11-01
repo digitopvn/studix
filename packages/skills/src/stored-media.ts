@@ -167,7 +167,13 @@ function requestFingerprint(s: StageContext, request: StoredMediaRequest): strin
     }) ??
     request.model ??
     null;
-  return contentDigest({ kind: request.kind, model, prompt: request.prompt, params: request.params ?? {} });
+  return contentDigest({
+    provider: media.id,
+    kind: request.kind,
+    model,
+    prompt: request.prompt,
+    params: request.params ?? {},
+  });
 }
 
 /**
@@ -313,10 +319,12 @@ export async function generateStoredMedia(
 ): Promise<StoredMedia> {
   const media = requireService(s, "media");
   const storage = requireService(s, "storage");
-  const reused = await findReusableMedia(s, request);
-  if (reused) return reusedMedia(request, reused);
+  // This call's own earlier attempt comes first: it carries the upstream job and charge, so the usage line
+  // still dedupes against the original. The cross-job cache would answer the same retry with a free line.
   const journaled = await findJournaledOutput(s, stage, request);
   if (journaled) return journaledMedia(media.id, request, journaled.record, journaled.stored);
+  const reused = await findReusableMedia(s, request);
+  if (reused) return reusedMedia(request, reused);
   const reuseKey = mediaOutputKey(s, request);
   // The provider writes to the job-scoped media directory, not the attempt scratch directory.
   const mediaDir = await stageMediaDir(s, stage);

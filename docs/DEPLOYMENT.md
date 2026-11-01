@@ -99,7 +99,12 @@ journal records that object, and a retry of the same unchanged request reuses it
 without calling the upstream even if the directory is gone. The remaining window
 is a crash between the upstream call and that upload. Size the volume for
 in-flight jobs only (20Gi in the manifest); finished jobs remove their
-directories and the sweep above bounds the rest.
+directories and the sweep above bounds the rest. The manifest pins
+`WORKER_WORK_DIR` in the container `env`, so a value in the `studix-env` secret
+cannot move it off the volume. The ReadWriteOnce claim means one worker pod; to
+scale the worker out, give each replica its own volume (a StatefulSet with
+`volumeClaimTemplates`), and note that a retry that lands on another replica
+then relies on the journal fallback alone.
 When Anthropic answers a run with 401, the worker re-tests that key directly
 and, only if it is still rejected and was not rotated meanwhile, marks its
 connection `invalid`, so job creation stops accepting it until the key is

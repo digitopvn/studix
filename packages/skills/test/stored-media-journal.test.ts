@@ -110,3 +110,28 @@ describe("synchronous audio after the scratch directory is lost", () => {
     expect(w.execs).toHaveLength(2);
   });
 });
+
+describe("with the cross-job output cache enabled", () => {
+  it("bills the retry through the journal, not as a free cache hit", async () => {
+    const w = worker();
+    const entries = new Map<string, { asset: unknown; jobId: string }>();
+    const stage = (): StageContext => {
+      const s = w.stage() as unknown as Record<string, unknown>;
+      return {
+        ...s,
+        mediaOutputs: {
+          get: async (k: string) => entries.get(k),
+          put: async (k: string, asset: unknown) => {
+            entries.set(k, { asset, jobId: "job_1" });
+          },
+        },
+      } as unknown as StageContext;
+    };
+    const first = await generateStoredMedia(stage(), "dialogue", voice({ reuse: {} }));
+    await rm(root, { recursive: true, force: true });
+    const again = await generateStoredMedia(stage(), "dialogue", voice({ reuse: {} }));
+    expect(w.execs).toHaveLength(1);
+    expect(again.usage).toEqual(first.usage);
+    expect(again.usage.costCents).toBeGreaterThan(0);
+  });
+});

@@ -7,7 +7,7 @@ metadata:
   labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
 spec:
   replicas: 1
-  # The work volume is ReadWriteOnce: the old pod must release it before the new one starts.
+  # One worker pod: the work volume is ReadWriteOnce, so the old pod must release it before the new one starts.
   strategy: { type: Recreate }
   selector:
     matchLabels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
@@ -16,13 +16,16 @@ spec:
       labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
     spec:
       terminationGracePeriodSeconds: 60
-      securityContext: { fsGroup: 1000 }
+      securityContext: { fsGroup: 1000, fsGroupChangePolicy: OnRootMismatch }
       containers:
         - name: worker
           image: studix
           env:
             - { name: STUDIX_ROLE, value: worker }
             - { name: STUDIX_MIGRATE_ON_START, value: "false" }
+            # Explicit env wins over envFrom, so an empty or stale WORKER_WORK_DIR in the secret cannot
+            # point the worker away from the persistent volume mounted below.
+            - { name: WORKER_WORK_DIR, value: /var/lib/studix/work }
           envFrom:
             - secretRef: { name: studix-env }
           volumeMounts:
