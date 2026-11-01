@@ -8,3 +8,4 @@ export * from "./qa-hard-gate.ts";
 export * from "./qa-stages.ts";
 export * from "./qa-toolchain.ts";
 export * from "./qa-tools.ts";
+export * from "./speech-probe.ts";

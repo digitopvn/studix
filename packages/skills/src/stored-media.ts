@@ -43,7 +43,24 @@ export interface StoredMediaRequest {
      * digest, never the path, so a file parameter left out here (its path differs per job) never matches.
      */
     inputs?: Record<string, string>;
+    /**
+     * Names a check the stored output passed, folded into the key: outputs stored without that check (by an
+     * earlier job or worker) are never served to a request that requires it.
+     */
+    scope?: string;
   };
+  /**
+   * Which regeneration of the asset this is (omitted for the first). It gives the provider call its own
+   * idempotency key and usage line, so a second call is made and billed instead of resuming the first.
+   */
+  retry?: number;
+}
+
+/** A generated file the caller's check turned down: paid for, but neither stored nor cached. */
+export interface RejectedMedia {
+  rejected: true;
+  usage: StageUsage;
+  filePath: string;
 }
 
 export interface StoredMedia {
@@ -85,6 +102,9 @@ const EXT_BY_MIME: Record<string, string> = {
   "audio/ogg": ".ogg",
 };
 
+const retrySuffix = (request: Pick<StoredMediaRequest, "retry">, sep: string): string =>
+  request.retry ? `${sep}${request.retry}` : "";
+
 function assetKind(kind: MediaKind): AssetMediaKind {
   if (kind === "image") return "image";
   if (kind === "video") return "video";
@@ -104,7 +124,7 @@ export function mediaRequest(
     prompt: request.prompt,
     ...(request.params ? { params: request.params } : {}),
     // Stable across attempts and workers: the stage journal resumes the upstream job under this key.
-    idempotencyKey: `${s.job.id}:${stage}:${request.assetId}`,
+    idempotencyKey: `${s.job.id}:${stage}:${request.assetId}${retrySuffix(request, ":r")}`,
     maxCostCents: request.maxCostCents,
     workDir,
     signal: s.signal,
@@ -130,7 +150,15 @@ export function mediaOutputKey(s: StageContext, request: ReuseRequest): string |
     }) ??
     request.model ??
     null;
-  const work = { provider: media.id, kind: request.kind, model, prompt: request.prompt, params, inputs };
+  const work = {
+    provider: media.id,
+    kind: request.kind,
+    model,
+    prompt: request.prompt,
+    params,
+    inputs,
+    ...(request.reuse.scope ? { scope: request.reuse.scope } : {}),
+  };
   return `media@1:${contentDigest(work)}`;
 }
 
@@ -182,7 +210,7 @@ export async function estimateMediaCents(
 function mediaUsage(request: StoredMediaRequest, charge: MediaCharge): StageUsage {
   const upstreamJob = charge.job ? `${charge.job.provider}:${charge.job.id}` : undefined;
   return {
-    item: `media-${request.assetId}`,
+    item: `media-${request.assetId}${retrySuffix(request, "-r")}`,
     kind: USAGE_KINDS.mediaGeneration,
     quantity: 1,
     unit: request.kind,
@@ -229,11 +257,28 @@ function reusedMedia(request: StoredMediaRequest, hit: ReusableMedia): StoredMed
  * collects the job it already paid for. A request that opts into reuse is first looked up among the stored
  * outputs of identical earlier requests, and records its own output for the next one.
  */
+export function generateStoredMedia(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+): Promise<StoredMedia>;
+/**
+ * With `accept`, the generated file is checked before it is stored or cached: a file it turns down comes back
+ * as `RejectedMedia` (still billed), so a bad output never reaches storage or the tenant's reuse cache. A
+ * reused output was accepted when it was stored, so it is not checked again.
+ */
+export function generateStoredMedia(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+  accept: (filePath: string) => Promise<boolean>,
+): Promise<StoredMedia | RejectedMedia>;
 export async function generateStoredMedia(
   s: StageContext,
   stage: string,
   request: StoredMediaRequest,
-): Promise<StoredMedia> {
+  accept?: (filePath: string) => Promise<boolean>,
+): Promise<StoredMedia | RejectedMedia> {
   const media = requireService(s, "media");
   const storage = requireService(s, "storage");
   const reused = await findReusableMedia(s, request);
@@ -266,6 +311,8 @@ export async function generateStoredMedia(
         details: { assetId: request.assetId, model: result.model },
       });
     }
+    if (accept && !(await accept(output.filePath)))
+      return { rejected: true, usage, filePath: output.filePath };
     const ext = EXT_BY_MIME[output.mime] ?? extname(output.filePath);
     const { sha256, bytes } = await sha256File(output.filePath);
     const stored = await storage.put(

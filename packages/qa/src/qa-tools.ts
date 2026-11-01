@@ -21,8 +21,8 @@ export interface QaTool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z
   strictMedia: boolean;
   timeoutMs: number;
   memoryMb: number;
-  /** Image that carries the tool's dependencies; `depth` is the optional torch image. */
-  image: "default" | "depth";
+  /** Image that carries the tool's dependencies; `depth` and `speech` are optional images (torch). */
+  image: "default" | "depth" | "speech";
 }
 
 export type QaRunOptions = Omit<PythonToolRunOptions, "timeoutMs" | "memoryMb"> & {
@@ -252,6 +252,17 @@ export const DepthMapsOutput = z.object({
 });
 export type DepthMapsResult = z.infer<typeof DepthMapsOutput>;
 
+// ---------------------------------------------------------------- speech-activity (optional image)
+
+export const SpeechActivityInput = z.strictObject({ media: MediaRef });
+export const SpeechActivityOutput = z.object({
+  durationMs: z.number().int().min(0),
+  /** Summed length of the stretches the voice activity detector marked as speech. */
+  speechMs: z.number().int().min(0),
+  segments: z.array(z.object({ startS: z.number(), endS: z.number() })),
+});
+export type SpeechActivityResult = z.infer<typeof SpeechActivityOutput>;
+
 // ---------------------------------------------------------------- shot-boundaries
 
 /** How a shot joins the previous one (the film production `boundary`); thresholds apply to the first two. */
@@ -380,6 +391,16 @@ export const QA_TOOLS = {
     timeoutMs: 15 * 60_000,
     memoryMb: 8192,
     image: "depth",
+  }),
+  speechActivity: tool({
+    name: "speech-activity",
+    description: "Length of human speech in an audio file (Silero VAD, CPU). Optional speech image only.",
+    input: SpeechActivityInput,
+    output: SpeechActivityOutput,
+    mediaRefs: one,
+    timeoutMs: 2 * 60_000,
+    memoryMb: 4096,
+    image: "speech",
   }),
   shotBoundaries: tool({
     name: "shot-boundaries",

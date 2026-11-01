@@ -32,8 +32,11 @@ import {
   RenderOutput,
   read,
   requireService,
+  type SpeechProbe,
   type StageContext,
   type StageDefinition,
+  StageFailedAfterSpend,
+  type StageUsage,
   sha256File,
   stageCacheKey,
   stageMediaDir,
@@ -46,6 +49,7 @@ import {
   estimateMediaCents,
   generateStoredMedia,
   reuseOnAssets,
+  type StoredMedia,
   type StoredMediaRequest,
 } from "../stored-media.ts";
 import {
@@ -213,6 +217,51 @@ function designRequests(s: StageContext, scope: FilmScope, stage: string) {
       } satisfies StoredMediaRequest,
     })),
   ].map((d) => ({ ...d, stage }));
+}
+
+/** Names the speech check in the reuse key, so an effect stored without it is never reused as checked. */
+const SPEECH_FREE_SCOPE = "speech-free@1";
+
+/**
+ * One effect with nothing spoken in it. The generated file goes to the speech probe before it is stored; a
+ * voiced file is generated once more, and a second voiced file fails the stage naming the shot and the cue.
+ * Every call made is returned in `spent`, so a rejected file is still billed.
+ */
+async function generateSpeechFreeSfx(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+  probe: SpeechProbe,
+  shotId: string,
+  cue: string,
+): Promise<StoredMedia & { spent: StageUsage[] }> {
+  const clean = async (filePath: string) => !(await probe.measure(filePath, s.signal)).speech;
+  const spent: StageUsage[] = [];
+  for (const retry of [0, 1]) {
+    let made: Awaited<ReturnType<typeof generateStoredMedia>>;
+    try {
+      made = await generateStoredMedia(s, stage, retry > 0 ? { ...request, retry } : request, clean);
+    } catch (err) {
+      if (err instanceof StageFailedAfterSpend && spent.length > 0)
+        throw new StageFailedAfterSpend(err.error, [...spent, ...err.usage]);
+      throw err;
+    }
+    spent.push(made.usage);
+    if (!("rejected" in made)) return { ...made, spent };
+  }
+  throw new StageFailedAfterSpend(
+    new StudixError(
+      "VALIDATION",
+      `SFX cue "${cue}" of shot ${shotId} came back with a human voice twice; it was not put in the mix`,
+      {
+        retryable: false,
+        details: { shotId, cue, assetId: request.assetId },
+        suggestedAction:
+          "Rewrite the cue as a plain description of the sound with nothing that sounds like a voice, then render again.",
+      },
+    ),
+    spent,
+  );
 }
 
 async function withCaps<T extends { request: StoredMediaRequest }>(
@@ -422,7 +471,11 @@ function fullFrameCut(ir: VideoIR): VideoIR {
 }
 
 /** An effect request: the cue as a sound, with nothing spoken, sung or read out. */
-const sfxPrompt = (cue: string): string => `Sound effect only, no voice, speech, words or singing: ${cue}`;
+/**
+ * The effect model is asked for the sound alone. A cue is never wrapped in a "no voice" instruction: the
+ * negation itself has been seen to make the model speak ("No. No."), and the speech check catches the rest.
+ */
+const sfxPrompt = (cue: string): string => cue;
 
 function irShot(ir: VideoIR, id: string): Shot {
   for (const scene of ir.scenes) {
@@ -1319,8 +1372,10 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
             params: { durationMs: Math.max(500, Math.min(3_000, span.durationMs)) },
             keyPrefix: `generated/${s.job.id}/sound/${shot.id}-fx${i + 1}`,
             maxCostCents: 0,
-            reuse: {},
+            reuse: s.services.speech ? { scope: SPEECH_FREE_SCOPE } : {},
           } satisfies StoredMediaRequest,
+          cue,
+          shotId: shot.id,
         };
       }),
     );
@@ -1340,11 +1395,19 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const workDir = await stageWorkDir(s, n.score);
       const planned = await withCaps(s, scoreRequests(s));
       let done = 0;
-      const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const media = await generateStoredMedia(s, n.score, p.request);
-        s.reportProgress(++done / planned.length);
-        return { ...p, ...media };
-      });
+      const made = await mapBounded(
+        planned,
+        MEDIA_CONCURRENCY,
+        async (p) => {
+          const media =
+            p.role === "sfx" && s.services.speech
+              ? await generateSpeechFreeSfx(s, n.score, p.request, s.services.speech, p.shotId, p.cue)
+              : await generateStoredMedia(s, n.score, p.request).then((m) => ({ ...m, spent: [m.usage] }));
+          s.reportProgress(++done / planned.length);
+          return { ...p, ...media };
+        },
+        (m) => m.spent,
+      );
       const total = ir.format.durationMs;
       const tracks: AudioTrack[] = made.map((m) => {
         const room = Math.min(total - m.at, m.length);
@@ -1360,7 +1423,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         };
       });
       const assets = made.map((m) => m.asset);
-      const usage = made.map((m) => m.usage);
+      const usage = made.flatMap((m) => m.spent);
       const next = await billedOnFailure(usage, () =>
         VideoIRSchema.parse({
           ...ir,

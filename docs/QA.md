@@ -94,6 +94,7 @@ schema zod cho input và output (`qa-tools.ts`).
 | `judge-reports`   | evidence | Gộp report của AI reviewer (`qa-gate-check`)                                      | 60 s    | 4 GiB  |
 | `shot-boundaries` | evidence | Pop luma, histogram, diff ở từng cut theo chế độ biên shot (`qa-shot-boundaries`) | 10 min  | 4 GiB  |
 | `depth-maps`      | evidence | Depth map PNG bằng Depth Anything V2 Small; chỉ image `depth`                     | 15 min  | 8 GiB  |
+| `speech-activity` | gate SFX | Thời lượng tiếng nói trong một file audio (Silero VAD); chỉ image `speech`        | 2 min   | 4 GiB  |
 
 Nguồn port và golden test ghi ở [PORTING.md](PORTING.md#port-record-tool-qa).
 
@@ -157,12 +158,36 @@ nghĩa là file đủ chuẩn kỹ thuật để giao, không phải là video t
   `ARG DEPTH_MODEL_REVISION` vào `/opt/studix-qa/models/`. Lúc chạy model chỉ đọc local
   (`local_files_only`); đổi path bằng `STUDIX_QA_DEPTH_MODEL`. Trên image mặc định,
   `depth-maps` trả `UNAVAILABLE`.
+- **Image `speech` (tùy chọn).** `docker build --build-arg STUDIX_QA_EXTRAS=speech .` cài
+  extra `speech` (`silero-vad`, kéo theo torch CPU và torchaudio). Model Silero nằm trong
+  wheel nên không tải gì lúc build hay lúc chạy. Có thể gộp với `depth`:
+  `STUDIX_QA_EXTRAS="depth speech"`. Trên image mặc định, `speech-activity` trả
+  `UNAVAILABLE`.
 - **Local.** `pnpm test:qa` sync `tools/qa/.venv` bằng uv (`uv` trên PATH, hoặc
   `python -m uv`) rồi chạy pytest. Venv đó là interpreter `packages/qa` dùng mặc định;
   `STUDIX_QA_PYTHON` trỏ sang interpreter khác.
 - **Test.** `pnpm test` chạy `test:qa` trước vitest. Media test sinh bằng ffmpeg `lavfi`.
   Thiếu ffmpeg hay venv thì test e2e skip kèm lý do; CI đặt `STUDIX_QA_REQUIRE_TOOLCHAIN=1`
   để thiếu toolchain là fail.
+
+## Chặn tiếng nói trong SFX
+
+Effect model của ElevenLabs có thể nói thành lời (đọc cue to lên, hoặc chính cụm "no voice"
+trong cue gợi ra tiếng nói). Whisper không đủ tin cậy để bắt việc này: nó bịa chữ trên tiếng
+gió sạch và bỏ sót lời thật. VAD là tín hiệu quyết định.
+
+- Bật bằng `STUDIX_SPEECH_GATE=true` trên worker, cần image `speech`. Mặc định tắt. Khi bật
+  mà image thiếu Silero, stage score fail `UNAVAILABLE` thay vì cho SFX chưa kiểm vào mix.
+- Stage score của film pack (anime, long-form-film) đo từng SFX **trước khi lưu** vào
+  storage và cache tái dùng. Thấy tiếng nói thì tạo lại đúng 1 lần (một job upstream và một
+  dòng usage riêng, tính tiền cả hai). Lần hai vẫn có tiếng nói thì job fail `VALIDATION`,
+  `details` có `shotId`, `cue`, `assetId`. Không có SFX nào có tiếng nói đi vào mix.
+- Ngưỡng: từ 300 ms tiếng nói tích lũy trở lên là có tiếng nói (`SPEECH_MIN_MS` trong
+  `packages/qa/src/speech-probe.ts`). Tiếng click hay hơi thở ngắn không vượt ngưỡng.
+- SFX đã lưu khi cổng đang tắt không được tái dùng cho job có cổng bật: khóa tái dùng có
+  thêm `scope` `speech-free@1`.
+- Prompt gửi effect model là chính cue, không bọc "no voice…": cụm phủ định đã được thấy là
+  gợi ra tiếng nói ("No. No."). Cue vẫn phải là mô tả âm thanh bằng tiếng Anh.
 
 ## Thêm tool đo mới
 

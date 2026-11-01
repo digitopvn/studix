@@ -64,6 +64,25 @@ export interface QaGate {
   ): Promise<Record<string, unknown>>;
 }
 
+/** How much of an audio file a speech probe heard as a human voice. */
+export interface SpeechMeasurement {
+  /** Total length of the voiced stretches, in milliseconds. */
+  speechMs: number;
+  /** Length of the audio, in milliseconds. */
+  durationMs: number;
+  /** True when the voiced stretches are long enough that the file counts as containing speech. */
+  speech: boolean;
+}
+
+/**
+ * Detects human speech in a generated audio file (voice activity detection). A stage that needs sound
+ * with no voice in it (an effect the model may have read aloud) asks it before the file joins the mix.
+ */
+export interface SpeechProbe {
+  /** Measure `filePath`. A file that could not be measured throws; it never counts as clean. */
+  measure(filePath: string, signal: AbortSignal): Promise<SpeechMeasurement>;
+}
+
 /**
  * Ports a pack stage may use, wired once by the worker (`JobExecutorDeps.services`). Pack stages are
  * static, registry-friendly objects; whatever they need at run time comes from here. A stage that needs a
@@ -74,6 +93,8 @@ export interface StageServices {
   storage?: StorageAdapter;
   renderer?: RendererAdapter;
   qa?: QaGate;
+  /** Speech detector for generated sound effects; stages that need it skip the check when it is not wired. */
+  speech?: SpeechProbe;
   /** Local scratch root; a stage writes under `<workRoot>/<jobId>/attempt-<n>/<stage>`. */
   workRoot?: string;
 }
