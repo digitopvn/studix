@@ -5,8 +5,9 @@ import type {
   AgentRunResult,
   AgentStageLimits,
   AgentToolDefinition,
+  Approval,
 } from "@studix/core";
-import { redactDeep, StudixError, toStudixError } from "@studix/shared";
+import { newId, redactDeep, StudixError, toStudixError } from "@studix/shared";
 import { z } from "zod";
 import { stageCacheKey } from "./stage-runner.ts";
 import { StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
@@ -113,6 +114,20 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
       usage,
     );
 
+  /** Park again on the overrun request that is still open, without running (and paying for) the agent. */
+  const stillWaiting = (pending: Approval) =>
+    new StageSuspended({
+      kind: "approval",
+      action: "agent.overrun",
+      scopeKey: `agent:${spec.name}`,
+      reason: pending.reason,
+      ...(pending.estimatedCostCents !== undefined ? { estimatedCostCents: pending.estimatedCostCents } : {}),
+    });
+
+  /**
+   * Each harness run is billed on its own line: the run id keeps a second paid run of the same round and
+   * attempt (a parked job resumes at the same attempt) from being dropped as a duplicate by the ledger.
+   */
   const usageLine = (
     mode: AgentStageMode,
     round: number,
@@ -120,7 +135,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
     spend: Spend,
     cap?: AgentCap,
   ): StageUsage => ({
-    item: mode === "harness" ? `agent-r${round}` : `agent-host-r${round}`,
+    item: mode === "harness" ? `agent-r${round}-${newId("run")}` : `agent-host-r${round}`,
     kind: USAGE_KINDS.agentRun,
     quantity: spend.inputTokens + spend.outputTokens,
     unit: "token",
@@ -178,6 +193,8 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
           details: { approvalId: latest.id },
         });
       }
+      // Still undecided: running again would pay for the same capped run and reach the same open request.
+      if (latest?.status === "pending") throw stillWaiting(latest);
       if (latest?.status === "approved" && latest.decidedBy?.type === "user") {
         await agents.consumeOverrun(latest.id);
       }

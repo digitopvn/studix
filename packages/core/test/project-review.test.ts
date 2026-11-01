@@ -312,6 +312,49 @@ describe("project review", () => {
     expect(review.versions).toHaveLength(1);
   });
 
+  it("refuses a patch that removes the targeted shot so a later op lands on its neighbour", async () => {
+    const { studio, ctx, projectId } = await setup();
+    const neighbour = (brandIntro as VideoIR).scenes[2]!.shots[1]!;
+    expect(neighbour.id).toBe("feature-2");
+    await expect(
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "làm lại cảnh này",
+        patch: {
+          ops: [
+            { op: "remove", path: "/scenes/2/shots/0" },
+            { op: "replace", path: "/scenes/2/shots/0", value: { ...neighbour, text: "Đã bị sửa" } },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION", details: { shifting: ["/scenes/2/shots/0"] } });
+    // Inserting before the target shifts it as well.
+    await expect(
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "chèn thêm",
+        patch: { ops: [{ op: "add", path: "/scenes/2/shots/0", value: { ...neighbour, id: "feature-0" } }] },
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION", details: { shifting: ["/scenes/2/shots/0"] } });
+    const review = await studio.getProjectReview(ctx, projectId);
+    expect(review.versions).toHaveLength(1);
+    expect(review.comments).toHaveLength(0);
+    expect(review.storyboard?.scenes[2]?.shots.map((s) => s.id)).toEqual(["feature-1", "feature-2"]);
+
+    // Replacing the whole targeted shot keeps every neighbour in place and stays allowed.
+    const target = (brandIntro as VideoIR).scenes[2]!.shots[0]!;
+    await expect(
+      studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "viết lại",
+        patch: { ops: [{ op: "replace", path: "/scenes/2/shots/0", value: { ...target, text: "Mới" } }] },
+      }),
+    ).resolves.toMatchObject({ version: 2 });
+  });
+
   it("feedback on a time range is a comment about the overlapping shots with the paths a patch may touch", async () => {
     const { studio, ctx, projectId } = await setup();
     const out = await studio.submitFeedback(ctx, {

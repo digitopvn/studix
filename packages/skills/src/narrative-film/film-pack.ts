@@ -274,6 +274,8 @@ async function withCaps<T extends { request: StoredMediaRequest }>(
       const r = item.request;
       const estimate = await media.estimateCostCents({
         kind: r.kind,
+        // The cap is per call, so it is estimated on the model the call names (a cast voice can cost more).
+        ...(r.model ? { model: r.model } : {}),
         prompt: r.prompt,
         maxCostCents: 1_000_000,
         ...(r.params ? { params: r.params } : {}),
@@ -659,10 +661,15 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const film = filmOf(base);
       const { scope } = film;
       const planned = await withCaps(s, redesignRequests(s, scope, change, n.g1, base));
-      const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (d) => ({
-        ...d,
-        ...(await generateStoredMedia(s, n.g1, d.request)),
-      }));
+      const made = await mapBounded(
+        planned,
+        MEDIA_CONCURRENCY,
+        async (d) => ({
+          ...d,
+          ...(await generateStoredMedia(s, n.g1, d.request)),
+        }),
+        (m) => [m.usage],
+      );
       const usage = made.map((m) => m.usage);
       return billedOnFailure(usage, async () => {
         const { sheets, sets } = boardDesigns(scope, base);
@@ -737,11 +744,16 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const workDir = await stageWorkDir(s, n.designs);
       const planned = await withCaps(s, designRequests(s, scope, n.designs));
       let done = 0;
-      const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (d) => {
-        const media = await generateStoredMedia(s, n.designs, d.request);
-        s.reportProgress(++done / planned.length);
-        return { ...d, ...media };
-      });
+      const made = await mapBounded(
+        planned,
+        MEDIA_CONCURRENCY,
+        async (d) => {
+          const media = await generateStoredMedia(s, n.designs, d.request);
+          s.reportProgress(++done / planned.length);
+          return { ...d, ...media };
+        },
+        (m) => [m.usage],
+      );
       const sheets = new Map(
         made.filter((m) => m.target.type === "character").map((m) => [m.target.id, m.asset]),
       );
@@ -847,15 +859,20 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const refIds = new Set(planned.flatMap((p) => (p.reference ? [p.reference] : [])));
       const refFiles = await downloadMediaInputs(s, n.keyframes, ir, refIds);
       let done = 0;
-      const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const image = p.reference ? localFile(refFiles, p.reference) : undefined;
-        const media = await generateStoredMedia(s, n.keyframes, {
-          ...p.request,
-          params: { ...p.request.params, ...(image ? { image } : {}) },
-        });
-        s.reportProgress(++done / planned.length);
-        return { ...p, ...media };
-      });
+      const made = await mapBounded(
+        planned,
+        MEDIA_CONCURRENCY,
+        async (p) => {
+          const image = p.reference ? localFile(refFiles, p.reference) : undefined;
+          const media = await generateStoredMedia(s, n.keyframes, {
+            ...p.request,
+            params: { ...p.request.params, ...(image ? { image } : {}) },
+          });
+          s.reportProgress(++done / planned.length);
+          return { ...p, ...media };
+        },
+        (m) => [m.usage],
+      );
       const production: FilmProduction = {
         ...promoted,
         shots: promoted.shots.map((plan) => {
@@ -1046,11 +1063,16 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const workDir = await stageWorkDir(s, n.dialogue);
       const planned = await withCaps(s, dialogueRequests(s));
       let done = 0;
-      const made = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const media = await generateStoredMedia(s, n.dialogue, p.request);
-        s.reportProgress(++done / planned.length);
-        return { ...p, ...media };
-      });
+      const made = await mapBounded(
+        planned,
+        MEDIA_CONCURRENCY,
+        async (p) => {
+          const media = await generateStoredMedia(s, n.dialogue, p.request);
+          s.reportProgress(++done / planned.length);
+          return { ...p, ...media };
+        },
+        (m) => [m.usage],
+      );
       const tracks: AudioTrack[] = [];
       const cues: Captions["cues"] = [];
       const cursor = new Map<string, number>();
@@ -1166,14 +1188,19 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const keyFiles = await downloadMediaInputs(s, n.motion, ir, keyIds);
       let done = 0;
       const total = scopeShots(film.scope).length;
-      const clips = await mapBounded(planned, MEDIA_CONCURRENCY, async (p) => {
-        const media = await generateStoredMedia(s, n.motion, {
-          ...p.request,
-          params: { ...p.request.params, image: localFile(keyFiles, (p.still as ImageShot).assetId) },
-        });
-        s.reportProgress(++done / total);
-        return { ...p, ...media };
-      });
+      const clips = await mapBounded(
+        planned,
+        MEDIA_CONCURRENCY,
+        async (p) => {
+          const media = await generateStoredMedia(s, n.motion, {
+            ...p.request,
+            params: { ...p.request.params, image: localFile(keyFiles, (p.still as ImageShot).assetId) },
+          });
+          s.reportProgress(++done / total);
+          return { ...p, ...media };
+        },
+        (m) => [m.usage],
+      );
       const next = new Map<string, Shot>();
       const assets: AssetRef[] = [];
       for (const c of clips) {
@@ -1295,16 +1322,21 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       const files = await downloadMediaInputs(s, n.lipsync, ir, inputs);
       const capped = await withCaps(s, planned);
       let done = 0;
-      const made = await mapBounded(capped, MEDIA_CONCURRENCY, async (p) => {
-        const clip = localFile(files, (p.shot as Extract<Shot, { type: "video" }>).assetId);
-        const audio = localFile(files, p.cue.audioAssetId as string);
-        const media = await generateStoredMedia(s, n.lipsync, {
-          ...p.request,
-          params: { ...p.request.params, video: clip, audio },
-        });
-        s.reportProgress(++done / capped.length);
-        return { ...p, ...media };
-      });
+      const made = await mapBounded(
+        capped,
+        MEDIA_CONCURRENCY,
+        async (p) => {
+          const clip = localFile(files, (p.shot as Extract<Shot, { type: "video" }>).assetId);
+          const audio = localFile(files, p.cue.audioAssetId as string);
+          const media = await generateStoredMedia(s, n.lipsync, {
+            ...p.request,
+            params: { ...p.request.params, video: clip, audio },
+          });
+          s.reportProgress(++done / capped.length);
+          return { ...p, ...media };
+        },
+        (m) => [m.usage],
+      );
       const next = new Map<string, Shot>(
         made.map((m) => [
           m.shot.id,

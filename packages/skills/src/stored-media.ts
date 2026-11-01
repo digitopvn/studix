@@ -134,26 +134,28 @@ export function mediaRequest(
 
 /**
  * Content key of a reusable request: what produces the output and nothing that names the job, stage or
- * asset. The model is the one the provider would run (its default when the request names none), and input
- * files count by their digest. Undefined when the request does not opt into reuse.
+ * asset. The model is the one the provider would run (its default when the request names none), so is the
+ * voice a speech route adds, and input files count by their digest. Undefined when the request does not opt
+ * into reuse.
  */
 export function mediaOutputKey(s: StageContext, request: ReuseRequest): string | undefined {
   if (!request.reuse) return undefined;
   const media = requireService(s, "media");
   const inputs = request.reuse.inputs ?? {};
   const params = Object.fromEntries(Object.entries(request.params ?? {}).filter(([k]) => !(k in inputs)));
-  const model =
-    media.resolveModel?.({
-      kind: request.kind,
-      ...(request.model ? { model: request.model } : {}),
-      ...(request.params ? { params: request.params } : {}),
-    }) ??
-    request.model ??
-    null;
+  const routed = {
+    kind: request.kind,
+    ...(request.model ? { model: request.model } : {}),
+    ...(request.params ? { params: request.params } : {}),
+  };
+  const model = media.resolveModel?.(routed) ?? request.model ?? null;
+  // A voice the provider's routing adds is part of the output; one the request names is already in params.
+  const voice = media.resolveVoice?.(routed);
   const work = {
     provider: media.id,
     kind: request.kind,
     model,
+    ...(voice !== undefined && voice !== request.params?.voice ? { voice } : {}),
     prompt: request.prompt,
     params,
     inputs,

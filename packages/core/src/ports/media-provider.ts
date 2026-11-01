@@ -168,6 +168,12 @@ export interface MediaProvider {
    * a request without a model to a configured default expose this, so reused outputs follow that default.
    */
   resolveModel?(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string;
+  /**
+   * The voice a speech request would be spoken in: the one it names, else the one a configured route adds
+   * (undefined when neither applies). Providers that route speech to a voice expose this, so reused outputs
+   * follow a change of that voice.
+   */
+  resolveVoice?(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string | undefined;
   /** Providers with async upstream jobs expose this so a lost worker can collect a paid job. */
   resume?(ctx: TenantContext, request: MediaResumeRequest): Promise<MediaGenerationResult>;
 }

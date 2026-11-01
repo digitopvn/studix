@@ -251,6 +251,14 @@ export class MultixProvider implements MediaProvider {
     return resolveMultixModel(request, this.defaults, this.voiceRoutes).model.id;
   }
 
+  /** The voice a speech request is spoken in: `params.voice`, else its language route's voice. */
+  resolveVoice(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string | undefined {
+    const resolved = resolveMultixModel(request, this.defaults, this.voiceRoutes);
+    if (resolved.role !== "voice") return undefined;
+    const named = request.params?.voice;
+    return typeof named === "string" ? named : resolved.voice;
+  }
+
   /** Kinds whose vendor key `multix check --json` reports, with models from the live catalogs. */
   async capabilities(): Promise<MediaCapability[]> {
     if (!this.enabled) return [];

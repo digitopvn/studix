@@ -9,6 +9,7 @@ import {
 import { withTestDatabase } from "@studix/database/testing";
 import { StudixError } from "@studix/shared";
 import { contentDigest } from "@studix/video-ir";
+import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createAgentStage, createJobExecutor, createWorkerJobQueue } from "../src/index.ts";
@@ -249,6 +250,73 @@ describe("agent stage on the Postgres queue", () => {
     expect(split.agent).toMatchObject({ costCents: 3, inputTokens: 150, outputTokens: 25 });
     expect(split.agent.stages).toEqual([expect.objectContaining({ stage: STAGE, attempt: 1, runs: 2 })]);
     expect(events.map((e) => e.metadata?.cap ?? null)).toEqual(["turns", null]);
+  });
+
+  it("keeps a job parked on an open overrun even after an earlier creative gate was approved", async () => {
+    const ctx = await tenant(db.current, "agent-overrun-gated");
+    const { repos } = db.current;
+    const world = createWorld({ steps: [turnsCap(), ok("never")] });
+    const job = await world.enqueue(ctx);
+    const subject = { type: "job" as const, id: job.id };
+    // A reviewer already approved a creative gate of this job before the agent stage ran.
+    const gate = await repos.approvals.open(ctx, {
+      action: "creative.gate",
+      subject,
+      scopeKey: "gate:g1",
+      reason: "review the designs",
+      requestedBy: { type: "system", id: "worker" },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await repos.approvals.decide(ctx, gate.approval.id, {
+      status: "approved",
+      decidedBy: reviewer,
+      decidedAt: new Date(),
+    });
+
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    const overrun = (await repos.approvals.findLatest(ctx, subject, "agent.overrun", `agent:${STAGE}`))!;
+    expect(overrun.status).toBe("pending");
+
+    // The sweeper must not take the old gate decision as an answer to the open overrun request.
+    await world.queue.resumeDecidedApprovals();
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "waiting_approval" });
+
+    // Even when the job is run again while the request is open, the agent is not called a second time.
+    await db.current.db.execute(
+      sql`update jobs set status = 'queued', run_after = now() where id = ${job.id}`,
+    );
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    expect(world.tasks).toHaveLength(1);
+    expect((await repos.approvals.findLatest(ctx, subject, "agent.overrun", `agent:${STAGE}`))?.id).toBe(
+      overrun.id,
+    );
+    const events = await createUsageLedger(repos.usage).listForJob(ctx, job.id);
+    expect(events).toHaveLength(1);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ spentCents: 1 });
+  });
+
+  it("bills every paid run of the same round and attempt on its own line", async () => {
+    const ctx = await tenant(db.current, "agent-overrun-rerun");
+    const { repos } = db.current;
+    const world = createWorld({ steps: [turnsCap(), turnsCap()] });
+    const job = await world.enqueue(ctx);
+    const subject = { type: "job" as const, id: job.id };
+
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    const first = (await repos.approvals.findLatest(ctx, subject, "agent.overrun", `agent:${STAGE}`))!;
+    // The request is closed without a grant (e.g. a reviewer answering after it expired) and the job runs
+    // again at the same attempt and round: the agent really runs and pays a second time.
+    await repos.approvals.decide(ctx, first.id, { status: "expired", decidedAt: new Date() });
+    await db.current.db.execute(
+      sql`update jobs set status = 'queued', run_after = now() where id = ${job.id}`,
+    );
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+
+    expect(world.tasks).toHaveLength(2);
+    const events = await createUsageLedger(repos.usage).listForJob(ctx, job.id);
+    expect(events).toHaveLength(2);
+    expect(events.map((e) => e.metadata?.attempt)).toEqual([1, 1]);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ spentCents: 2 });
   });
 
   it("fails the job when the overrun request expires undecided", async () => {

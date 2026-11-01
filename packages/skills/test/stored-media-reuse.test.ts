@@ -29,7 +29,7 @@ afterEach(async () => {
 });
 
 /** One tenant's storage, paid-output cache and media provider, shared by the stage contexts of its jobs. */
-function tenant(opts: { model?: () => string } = {}) {
+function tenant(opts: { model?: () => string; voice?: () => string | undefined } = {}) {
   const objects = new Map<string, string>();
   const entries = new Map<string, ReusableMedia>();
   const calls: MediaGenerationRequest[] = [];
@@ -43,6 +43,7 @@ function tenant(opts: { model?: () => string } = {}) {
       return fake.generate(c, r);
     },
     ...(opts.model ? { resolveModel: opts.model } : {}),
+    ...(opts.voice ? { resolveVoice: opts.voice } : {}),
   };
   const storage = {
     put: async (_c: TenantContext, key: string, body: { filePath: string }) => {
@@ -163,6 +164,21 @@ describe("reuse of paid media outputs", () => {
     model = "vendor:voice-2";
     await generateStoredMedia(t.stage("job_3"), "dialogue", line("job_3"));
     expect(t.calls).toHaveLength(2);
+  });
+
+  it("follows the voice a speech route adds: changing the route's voice pays again", async () => {
+    let voice: string | undefined = "Sulafat";
+    const t = tenant({ model: () => "openrouter:google/gemini-3.8-flash-tts", voice: () => voice });
+    await generateStoredMedia(t.stage("job_1"), "dialogue", line("job_1"));
+    await generateStoredMedia(t.stage("job_2"), "dialogue", line("job_2"));
+    expect(t.calls).toHaveLength(1);
+    voice = "Kore";
+    await generateStoredMedia(t.stage("job_3"), "dialogue", line("job_3"));
+    expect(t.calls).toHaveLength(2);
+    // A voice the request names is already part of its parameters: the key is the same as without routing.
+    const named = line("job_4", { params: { language: "vi", instructions: "whisper", voice: "Kore" } });
+    const unrouted = tenant({ model: () => "openrouter:google/gemini-3.8-flash-tts" });
+    expect(mediaOutputKey(t.stage("job_4"), named)).toBe(mediaOutputKey(unrouted.stage("job_4"), named));
   });
 
   it("neither looks up nor records a request that does not opt in", async () => {
