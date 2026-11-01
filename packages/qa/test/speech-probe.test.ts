@@ -1,9 +1,15 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StudixError } from "@studix/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSpeechProbe, QA_TOOLS, type QaToolchain, SPEECH_MIN_MS } from "../src/index.ts";
+import {
+  assertSpeechProbeReady,
+  createSpeechProbe,
+  QA_TOOLS,
+  type QaToolchain,
+  SPEECH_MIN_MS,
+} from "../src/index.ts";
 
 const fake: QaToolchain = {
   python: process.execPath,
@@ -67,5 +73,29 @@ describe("speech probe", () => {
 
   it("runs on the optional speech image", () => {
     expect(QA_TOOLS.speechActivity).toMatchObject({ name: "speech-activity", image: "speech" });
+  });
+});
+
+describe("speech probe readiness", () => {
+  it("passes when the detector runs, and leaves no clip behind", async () => {
+    const root = join(dir, "ready-ok");
+    await assertSpeechProbeReady(probe(), root);
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it("fails with UNAVAILABLE on the default image, before any file is generated", async () => {
+    const root = join(dir, "ready-missing");
+    const bare = createSpeechProbe({
+      run: {
+        toolchain: {
+          python: process.execPath,
+          args: [join(import.meta.dirname, "fixtures", "no-speech-image-tool.mjs")],
+        },
+        sandboxRoot: join(root, "sandboxes"),
+        timeoutMs: 10_000,
+      },
+    });
+    await expect(assertSpeechProbeReady(bare, root)).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    expect((await readdir(root)).filter((name) => name.startsWith("speech-ready-"))).toEqual([]);
   });
 });

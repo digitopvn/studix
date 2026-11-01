@@ -9,7 +9,7 @@ const logger = createLogger({ service: "studix-worker" });
 runWorkerProcess({
   resolvePorts: async (settings, runtime) => ({
     ...(await loadWorkerPorts(settings, runtime)),
-    ...loadPackServices(settings, runtime),
+    ...(await loadPackServices(settings, runtime)),
   }),
   logger,
 }).catch((err: unknown) => {

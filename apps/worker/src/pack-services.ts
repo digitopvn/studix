@@ -1,6 +1,13 @@
 import { join } from "node:path";
 import { createMultixProviderFromConfig } from "@studix/providers";
-import { createHardQaGate, createSpeechProbe, qaToolchainStatus, resolveQaToolchain } from "@studix/qa";
+import {
+  assertSpeechProbeReady,
+  createHardQaGate,
+  createSpeechProbe,
+  qaToolchainStatus,
+  resolveQaToolchain,
+} from "@studix/qa";
+import { StudixError } from "@studix/shared";
 import { knowledgeCatalog } from "@studix/skills";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
@@ -16,10 +23,10 @@ const SPEECH_TOOL_TIMEOUT_MS = 60_000;
  * UNAVAILABLE) until MULTIX_BIN is set; a missing QA toolchain is logged at startup and fails the QA stage
  * rather than letting an unmeasured render ship.
  */
-export function loadPackServices(
+export async function loadPackServices(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
-): Pick<WorkerPorts, "media" | "qa" | "speech"> {
+): Promise<Pick<WorkerPorts, "media" | "qa" | "speech">> {
   const { config } = settings;
   const media = createMultixProviderFromConfig(config, { env: runtime.env });
   const toolchain = resolveQaToolchain(runtime.env);
@@ -35,21 +42,37 @@ export function loadPackServices(
     qa: qaStatus.ok ? "ready" : "toolchain missing",
     speechGate: config.STUDIX_SPEECH_GATE ? "on" : "off",
   });
+  const sandboxRoot = join(settings.workDir, "qa");
+  const speech = config.STUDIX_SPEECH_GATE
+    ? createSpeechProbe({
+        run: {
+          toolchain,
+          timeoutMs: SPEECH_TOOL_TIMEOUT_MS,
+          sandboxRoot,
+          ffmpegPath: config.FFMPEG_PATH,
+          ffprobePath: config.FFPROBE_PATH,
+        },
+      })
+    : undefined;
+  if (speech) {
+    // Every sound effect is paid for before it is measured, so a probe that cannot run must stop the worker now.
+    try {
+      await assertSpeechProbeReady(speech, sandboxRoot);
+    } catch (err) {
+      throw new StudixError(
+        "UNAVAILABLE",
+        `STUDIX_SPEECH_GATE is on but the speech-activity tool cannot run: ${err instanceof Error ? err.message : String(err)}`,
+        {
+          retryable: false,
+          suggestedAction:
+            "Run the worker on the QA image built with STUDIX_QA_EXTRAS=speech, or unset STUDIX_SPEECH_GATE.",
+        },
+      );
+    }
+  }
   return {
     media,
-    ...(config.STUDIX_SPEECH_GATE
-      ? {
-          speech: createSpeechProbe({
-            run: {
-              toolchain,
-              timeoutMs: SPEECH_TOOL_TIMEOUT_MS,
-              sandboxRoot: join(settings.workDir, "qa"),
-              ffmpegPath: config.FFMPEG_PATH,
-              ffprobePath: config.FFPROBE_PATH,
-            },
-          }),
-        }
-      : {}),
+    ...(speech ? { speech } : {}),
     qa: createHardQaGate({
       run: {
         toolchain,

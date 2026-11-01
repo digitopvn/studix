@@ -177,7 +177,11 @@ trong cue gợi ra tiếng nói). Whisper không đủ tin cậy để bắt vi�
 gió sạch và bỏ sót lời thật. VAD là tín hiệu quyết định.
 
 - Bật bằng `STUDIX_SPEECH_GATE=true` trên worker, cần image `speech`. Mặc định tắt. Khi bật
-  mà image thiếu Silero, stage score fail `UNAVAILABLE` thay vì cho SFX chưa kiểm vào mix.
+  mà image thiếu Silero, worker **không khởi động**: lúc start nó chạy `speech-activity` một lần
+  trên clip im lặng 1 giây, qua đúng sandbox và giới hạn bộ nhớ 4 GB của lần đo thật
+  (`assertSpeechProbeReady`), và thoát với `UNAVAILABLE` nếu probe không chạy được. Nhờ vậy
+  không SFX nào bị tạo và tính tiền trước khi biết probe dùng được. Đã chạy thật với torch CPU
+  và `silero-vad` dưới giới hạn 4 GB: import và đo xong bình thường.
 - Stage score của film pack (anime, long-form-film) đo từng SFX **trước khi lưu** vào
   storage và cache tái dùng. Thấy tiếng nói thì tạo lại đúng 1 lần (một job upstream và một
   dòng usage riêng, tính tiền cả hai). Lần hai vẫn có tiếng nói thì job fail `VALIDATION`,
