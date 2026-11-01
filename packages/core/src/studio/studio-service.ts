@@ -139,8 +139,9 @@ export class StudioService {
    * Operator recovery of an Atlas call stuck at "submitting" (Atlas accepted or may have accepted the run,
    * but its prediction id never reached the journal): record the prediction found in `multix history` or
    * the Atlas Cloud console, so {@link retryJob} collects that paid job instead of being blocked. Needs
-   * `job:recover` (owners and admins: the prediction is fetched with the platform's provider key and
-   * billed to this job), and the job must be failed so no worker holds it.
+   * `job:recover`, which only system actors hold (the operator CLI): the prediction id is trusted as given
+   * and fetched with the platform's provider key, so it must not be a tenant's call. The job must be failed
+   * so no worker holds it.
    */
   async attachMediaJob(
     ctx: TenantContext,

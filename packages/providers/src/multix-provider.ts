@@ -322,7 +322,7 @@ export class MultixProvider implements MediaProvider {
             submittedAt: existing.submittedAt,
           },
           suggestedAction:
-            "Find the prediction in `multix history` or the Atlas Cloud console, attach it to the failed job with `studix_attach_media_job`, then retry the job.",
+            "Do not retry blindly: ask the Studix operator to find the prediction in `multix history` or the Atlas Cloud console and attach it to this job, which then retries it.",
         },
       );
     }

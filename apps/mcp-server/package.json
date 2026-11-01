@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "node --import tsx src/main.ts",
-    "smoke": "node --import tsx scripts/smoke-video.ts"
+    "smoke": "node --import tsx scripts/smoke-video.ts",
+    "recover:attach": "node --import tsx scripts/attach-media-job.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.2",

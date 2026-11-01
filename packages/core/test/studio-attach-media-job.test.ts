@@ -17,7 +17,8 @@ const intent = (attempt: number, updatedAt: string, state: MediaJobRecord["state
 
 async function stuckJob(records: MediaJobRecord[][]) {
   const env = createInMemoryStudio();
-  const ctx = testTenant();
+  // Only the operator CLI, a system actor, may attach: no workspace role or key holds `job:recover`.
+  const ctx = testTenant({ actor: { type: "system", id: "operator:test" } });
   const { job } = await env.studio.createVideoProject(ctx, { brief: { prompt: "Brand intro" } });
   await env.repos.jobs.update(ctx, job.id, { status: "failed", attempts: records.length });
   for (const [index, mediaJobs] of records.entries()) {
@@ -66,19 +67,26 @@ describe("attaching a found Atlas prediction to a submitting record", () => {
     });
   });
 
-  it("refuses a record that is not submitting, a job that is not failed, and readers", async () => {
+  it("refuses a record that is not submitting, a job that is not failed, and every workspace actor", async () => {
     const done = await stuckJob([[intent(1, "2026-01-01T00:00:00.000Z", "completed")]]);
     await expect(done.studio.attachMediaJob(done.ctx, done.input)).rejects.toMatchObject({
       code: "CONFLICT",
     });
 
     const stuck = await stuckJob([[intent(1, "2026-01-01T00:00:00.000Z")]]);
-    const viewer = { ...stuck.ctx, actor: { type: "user" as const, id: "usr_v", role: "viewer" as const } };
-    await expect(stuck.studio.attachMediaJob(viewer, stuck.input)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-    const editor = { ...stuck.ctx, actor: { type: "user" as const, id: "usr_e", role: "editor" as const } };
-    await expect(stuck.studio.attachMediaJob(editor, stuck.input)).rejects.toMatchObject({
+    // The prediction id is trusted as given and every workspace shares the platform's Atlas account.
+    for (const role of ["owner", "admin", "editor", "viewer"] as const) {
+      const member = { ...stuck.ctx, actor: { type: "user" as const, id: `usr_${role}`, role } };
+      await expect(stuck.studio.attachMediaJob(member, stuck.input)).rejects.toMatchObject({
+        code: "FORBIDDEN",
+      });
+    }
+    // A key issued while admins could grant the scope still lists it, but it no longer counts.
+    const staleKey = {
+      ...stuck.ctx,
+      actor: { type: "apiKey" as const, id: "key_old", scopes: ["job:recover" as const] },
+    };
+    await expect(stuck.studio.attachMediaJob(staleKey, stuck.input)).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
     await expect(
