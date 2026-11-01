@@ -1,18 +1,19 @@
 import { executionUsageDedupeKey, toBudgetCents, type UsageLedger, usageDedupeKey } from "@studix/billing";
-import type {
-  AgentHandoff,
-  AgentHandoffRepository,
-  AgentRuntime,
-  Approval,
-  ApprovalAction,
-  BillingPolicy,
-  Job,
-  JobRepository,
-  MediaJobJournal,
-  MediaJobRecord,
-  Stage,
-  StageCacheRepository,
-  TenantContext,
+import {
+  type AgentHandoff,
+  type AgentHandoffRepository,
+  type AgentRuntime,
+  type Approval,
+  type ApprovalAction,
+  type BillingPolicy,
+  canClaimMediaJob,
+  type Job,
+  type JobRepository,
+  type MediaJobJournal,
+  type MediaJobRecord,
+  type Stage,
+  type StageCacheRepository,
+  type TenantContext,
 } from "@studix/core";
 import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { AssetRef, contentDigest, type StoryboardReviewStatus } from "@studix/video-ir";
@@ -70,7 +71,8 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
  * The media job journal of one stage run. It starts from the records every earlier attempt of the stage
  * stored (the newest record per idempotency key wins) and persists each `put` through `persist`, which
  * writes the stage row fenced by job ownership. Writes are serialized so the stored list never goes
- * backwards; a refused write rejects the `put`, so a provider never reports a job it could not journal.
+ * backwards; a refused write rejects the `put` (or `claim`), so a provider never reports a job it could not
+ * journal.
  */
 function stageMediaJournal(
   ctx: TenantContext,
@@ -87,6 +89,16 @@ function stageMediaJournal(
   const sameTenant = (c: TenantContext) =>
     c.workspaceId === ctx.workspaceId && c.organizationId === ctx.organizationId;
   let queue: Promise<void> = Promise.resolve();
+  const foreign = () =>
+    Promise.reject(
+      new StudixError("FORBIDDEN", "media job journal belongs to another workspace", { retryable: false }),
+    );
+  const store = (record: MediaJobRecord): Promise<void> => {
+    records.set(record.idempotencyKey, structuredClone(record));
+    const write = queue.then(() => persist([...records.values()].map((r) => structuredClone(r))));
+    queue = write.catch(() => undefined);
+    return write;
+  };
   return {
     async get(c, key) {
       if (!sameTenant(c)) return undefined;
@@ -94,17 +106,13 @@ function stageMediaJournal(
       return record ? structuredClone(record) : undefined;
     },
     put(c, record) {
-      if (!sameTenant(c)) {
-        return Promise.reject(
-          new StudixError("FORBIDDEN", "media job journal belongs to another workspace", {
-            retryable: false,
-          }),
-        );
-      }
-      records.set(record.idempotencyKey, structuredClone(record));
-      const write = queue.then(() => persist([...records.values()].map((r) => structuredClone(r))));
-      queue = write.catch(() => undefined);
-      return write;
+      return sameTenant(c) ? store(record) : foreign();
+    },
+    claim(c, record) {
+      if (!sameTenant(c)) return foreign();
+      // Checked and set in one synchronous step; other workers are fenced out by the job lease.
+      if (!canClaimMediaJob(records.get(record.idempotencyKey), record)) return Promise.resolve(false);
+      return store(record).then(() => true);
     },
   };
 }

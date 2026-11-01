@@ -1,4 +1,5 @@
 import {
+  attachToSubmittingRecord,
   JOB_RESUME_ATTEMPTS,
   type Job,
   type JobPatch,
@@ -312,6 +313,46 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
         { expectStatus: ["waiting_approval"] },
       );
     },
+
+    attachMediaJob: (ctx, input) =>
+      db.transaction(async (tx) => {
+        // The lock keeps retry and claim out until the record is rewritten; a failed job has no worker.
+        const locked = await tx
+          .select({ status: jobs.status })
+          .from(jobs)
+          .where(scoped(jobs, ctx, eq(jobs.id, input.jobId)))
+          .for("update");
+        if (!locked[0]) throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
+        if (locked[0].status !== "failed") {
+          throw new StudixError("CONFLICT", `job ${input.jobId} is ${locked[0].status}`, {
+            details: { status: locked[0].status, expected: ["failed"] },
+          });
+        }
+        // Deliberately not tenant-scoped: an upstream job is collected with the platform's provider key, so
+        // one already journaled anywhere must not be attached again. The error does not say where.
+        const reference = JSON.stringify([{ job: { provider: input.job.provider, id: input.job.id } }]);
+        // Two attaches of one upstream job to different jobs lock different job rows; serialize them here.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`media-job:${reference}`}))`);
+        const taken = await tx
+          .select({ id: stages.id })
+          .from(stages)
+          .where(sql`${stages.mediaJobs} @> ${reference}::jsonb`)
+          .limit(1);
+        if (taken[0])
+          throw new StudixError("CONFLICT", "that upstream job is already attached to a media job");
+        const rows = await tx
+          .select()
+          .from(stages)
+          .where(scoped(stages, ctx, eq(stages.jobId, input.jobId), eq(stages.name, input.stage)));
+        const attached = attachToSubmittingRecord(rows.map(toStage), input, clock.now());
+        for (const update of attached.updates) {
+          await tx
+            .update(stages)
+            .set({ mediaJobs: update.mediaJobs })
+            .where(scoped(stages, ctx, eq(stages.id, update.stageId)));
+        }
+        return attached.record;
+      }),
   };
 
   return { jobs: repo, queue };

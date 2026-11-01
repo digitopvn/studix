@@ -172,4 +172,100 @@ describe("retrying a failed job", () => {
     expect(await usageCount(ctx, job.id)).toBe(1);
     expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "succeeded", spentCents: 2 });
   });
+
+  it("collects an Atlas call stuck at submitting once an operator attaches its prediction", async () => {
+    const ctx = await tenant(db.current, "attach");
+    const { repos } = db.current;
+    const state = { submitted: 0, blocked: 0, collected: 0 };
+    // The shape of the Atlas path in the media provider: claim the intent, then the worker dies before the
+    // prediction id is journaled; a record stuck at "submitting" blocks every later attempt.
+    const workflow: WorkflowDefinition = {
+      kind: "test.atlas",
+      stages: [
+        {
+          name: "upscale",
+          async run(s: StageContext) {
+            const key = KEY(s.job.id);
+            const known = await s.mediaJournal.get(s.ctx, key);
+            if (known?.state === "submitting") {
+              state.blocked++;
+              // A later attempt persists its whole journal, stale "submitting" copy included.
+              await s.mediaJournal.put(s.ctx, { ...known, idempotencyKey: `${key}:other`, state: "failed" });
+              throw new StudixError("PROVIDER_ERROR", "may already have been charged", { retryable: false });
+            }
+            if (known?.state === "submitted" && known.job) {
+              state.collected++;
+              const upstreamJob = `${known.job.provider}:${known.job.id}`;
+              return {
+                output: { upstreamJob },
+                usage: [
+                  {
+                    item: "upscale",
+                    kind: "media.generation",
+                    quantity: 1,
+                    unit: "image",
+                    costCents: 1,
+                    upstreamJob,
+                  },
+                ],
+              };
+            }
+            const at = new Date().toISOString();
+            const intent: MediaJobRecord = {
+              idempotencyKey: key,
+              kind: "image",
+              model: "atlas/upscaler",
+              attempt: 1,
+              state: "submitting",
+              estimatedCostCents: 1,
+              submittedAt: at,
+              updatedAt: at,
+            };
+            expect(await s.mediaJournal.claim(s.ctx, intent)).toBe(true);
+            state.submitted++;
+            throw new StudixError("UNAVAILABLE", "worker lost after atlas run", { retryable: false });
+          },
+        },
+      ],
+      result: (outputs) => ({ outputs }),
+    };
+    const w = worker(workflow, "w-atlas");
+    const { job } = await repos.queue.enqueue(ctx, {
+      kind: "test.atlas",
+      payload: {},
+      createdBy: human,
+      maxAttempts: 1,
+    });
+    const attach = {
+      jobId: job.id,
+      stage: "upscale",
+      idempotencyKey: KEY(job.id),
+      job: { provider: "atlas", id: "pred_9" },
+    };
+
+    expect((await w.runOnce())?.outcome).toBe("failed");
+    await repos.queue.retry(ctx, job.id);
+    // Not attachable while the job is queued for another attempt.
+    await expect(repos.queue.attachMediaJob(ctx, attach)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect((await w.runOnce())?.outcome).toBe("failed");
+    expect(state).toMatchObject({ submitted: 1, blocked: 1, collected: 0 });
+
+    await expect(
+      repos.queue.attachMediaJob(await tenant(db.current, "attach-intruder"), attach),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(repos.queue.attachMediaJob(ctx, attach)).resolves.toMatchObject({
+      state: "submitted",
+      job: { provider: "atlas", id: "pred_9" },
+    });
+    const rows = await repos.jobs.listStages(ctx, job.id);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.mediaJobs?.find((r) => r.idempotencyKey === KEY(job.id))?.state).toBe("submitted");
+    }
+
+    await repos.queue.retry(ctx, job.id);
+    expect((await w.runOnce())?.outcome).toBe("succeeded");
+    expect(state).toMatchObject({ submitted: 1, blocked: 1, collected: 1 });
+    expect(await usageCount(ctx, job.id)).toBe(1);
+  });
 });
