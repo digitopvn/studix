@@ -7,6 +7,8 @@ metadata:
   labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
 spec:
   replicas: 1
+  # The work volume is ReadWriteOnce: stop the old pod before the new one mounts it.
+  strategy: { type: Recreate }
   selector:
     matchLabels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
   template:
@@ -14,14 +16,22 @@ spec:
       labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
     spec:
       terminationGracePeriodSeconds: 60
+      volumes:
+        - name: work
+          persistentVolumeClaim: { claimName: studix-worker-work }
       containers:
         - name: worker
           image: studix
           env:
             - { name: STUDIX_ROLE, value: worker }
             - { name: STUDIX_MIGRATE_ON_START, value: "false" }
+            # Durable scratch space: synchronous Multix audio outputs found here after a restart are
+            # reused instead of paid for again. Stale job directories are swept by the worker.
+            - { name: WORKER_WORK_DIR, value: /var/lib/studix/work }
           envFrom:
             - secretRef: { name: studix-env }
+          volumeMounts:
+            - { name: work, mountPath: /var/lib/studix/work }
           ports:
             - { name: health, containerPort: 8081 }
           readinessProbe:
@@ -34,3 +44,13 @@ spec:
           resources:
             requests: { cpu: "1", memory: 1536Mi }
             limits: { cpu: "2", memory: 3Gi }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: studix-worker-work
+  labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 10Gi }

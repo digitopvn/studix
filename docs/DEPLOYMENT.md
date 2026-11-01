@@ -86,6 +86,13 @@ sandboxes left by a crashed worker once they are older than the run timeout.
 Job scratch directories (`WORKER_WORK_DIR/<jobId>`) are removed when the job
 finishes; those of failed jobs are kept for retries and swept after
 `WORKER_WORK_DIR_RETENTION_HOURS` (default 168, minimum 24) without writes.
+Mount a persistent volume at `WORKER_WORK_DIR`: synchronous Multix audio
+(voice, music, sound effects) has no upstream idempotency, so after a worker
+restart the retry reuses the output file kept there instead of paying for the
+call again. `deploy/k8s/worker.yaml` (a `ReadWriteOnce` claim, hence the
+`Recreate` strategy) and the self-host `docker-compose.yml` already do this; on
+TOSE, attach a volume to the worker at the same path. A crash between the
+upstream call and the journal write can still cause one repeat charge.
 When Anthropic answers a run with 401, the worker re-tests that key directly
 and, only if it is still rejected and was not rotated meanwhile, marks its
 connection `invalid`, so job creation stops accepting it until the key is
