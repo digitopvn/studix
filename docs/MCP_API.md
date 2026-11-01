@@ -185,7 +185,7 @@ Behavior notes:
   cue (see [QA.md](QA.md#chặn-tiếng-nói-trong-sfx)). A cue whose human voice is intended (a
   crowd, laughter) is also listed in the shot's `voicedSfx` and skips that check. To rewrite cues, send
   `studix_feedback` on the shot, its scene or a time range over it, with a
-  patch under `/metadata/film/scope/scenes/<i>/shots/<j>/sfx`.
+  patch under `/metadata/film/scope/scenes/<i>/shots/<j>/sfx` (or `.../voicedSfx` to mark a cue as intentionally voiced).
 - A film render pays only for the media whose request changed. Each line, clip,
   lip-sync pass, score cue and effect is keyed by what produces it: provider,
   kind, model (the provider's default when none is named), prompt, parameters
@@ -236,7 +236,7 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
   `allowedPaths`: the JSON pointers a patch for that target may touch (the
   shot, the scene with `/timeline`, the asset, the shots overlapping the time
   range, or a film character's `voice` in the production bible). In a film, the
-  SFX cues of the targeted shots in the scope are allowed too. `next[]` suggests the call with a
+  SFX cues of the targeted shots in the scope are allowed too, with their `voicedSfx` list. `next[]` suggests the call with a
   patch.
 - A `characterId` target is a character of the film's production bible
   (`NOT_FOUND` for any other id, or for a video without one). Its `shots` are

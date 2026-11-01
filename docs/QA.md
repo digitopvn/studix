@@ -188,7 +188,7 @@ gió sạch và bỏ sót lời thật. VAD là tín hiệu quyết định.
   `details` có `shotId`, `cue`, `assetId`. Không có SFX nào có tiếng nói đi vào mix.
 - Cue mà giọng người là chủ ý (đám đông reo, tiếng cười) được liệt kê trong `voicedSfx` của shot
   (mỗi mục phải trùng đúng một cue trong `sfx` của shot đó, nếu không scope fail `VALIDATION`
-  trước G0). Cue này không bị đo và không bị tạo lại; mọi cue khác vẫn bị kiểm. Sửa bằng patch
+  trước G0; một patch feedback sau G0 không chạy lại kiểm này, nên entry không còn trùng cue thì cue đó bị đo lại). Cue này không bị đo và không bị tạo lại; mọi cue khác vẫn bị kiểm. Sửa bằng patch
   `/metadata/film/scope/scenes/<i>/shots/<j>/voicedSfx`.
 - CI chạy VAD thật ở bước "QA speech tests (speech image)": venv riêng cài extra `speech`,
   `espeak-ng` tạo giọng nói để test dương tính (phải ra tiếng nói), tiếng ồn và âm đơn phải ra
