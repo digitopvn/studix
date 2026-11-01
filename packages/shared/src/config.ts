@@ -83,6 +83,12 @@ export const ConfigSchema = z
     FFMPEG_PATH: z.string().min(1).default("ffmpeg"),
     FFPROBE_PATH: z.string().min(1).default("ffprobe"),
     MULTIX_BIN: optionalString,
+    /**
+     * Check every generated sound effect for a human voice (Silero VAD in the optional `speech` QA image) before
+     * it joins the mix. A voiced effect is generated once more, then fails the job. Needs that image: on the
+     * default one the check fails UNAVAILABLE rather than letting an unchecked effect through.
+     */
+    STUDIX_SPEECH_GATE: bool.default(false),
     /** Default "<vendor>:<model>" per media role; unset means the provider's built-in default. */
     MULTIX_IMAGE_MODEL: optionalString,
     MULTIX_VIDEO_MODEL: optionalString,

@@ -4,7 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from . import black_frames, depth_maps, judge_reports, loudness, mix_buses, prescan, probe, shot_boundaries, sync
+from . import (
+    black_frames,
+    depth_maps,
+    judge_reports,
+    loudness,
+    mix_buses,
+    prescan,
+    probe,
+    shot_boundaries,
+    speech_activity,
+    sync,
+)
 
 #: tool name -> run(input, media, deadline, outputs) -> result
 TOOLS: dict[str, Callable] = {
@@ -17,4 +28,5 @@ TOOLS: dict[str, Callable] = {
     "judge-reports": judge_reports.run,
     "depth-maps": depth_maps.run,
     "shot-boundaries": shot_boundaries.run,
+    "speech-activity": speech_activity.run,
 }

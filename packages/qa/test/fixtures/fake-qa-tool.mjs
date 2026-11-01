@@ -39,6 +39,28 @@ switch (tool) {
     // A wrong shape for the probe contract.
     answer({ ok: true, result: { durationS: "three" } });
     break;
+  case "speech-activity": {
+    // The grant named in the request is read back, so a test can see which file the probe measured.
+    const file = Object.values(request.media)[0] ?? "";
+    const voiced = file.includes("voiced");
+    if (file.includes("no-model"))
+      answer(
+        {
+          ok: false,
+          error: { code: "UNAVAILABLE", message: "needs silero-vad", details: { extra: "speech" } },
+        },
+        1,
+      );
+    answer({
+      ok: true,
+      result: {
+        durationMs: 3000,
+        speechMs: file.includes("breath") ? 200 : voiced ? 1400 : 0,
+        segments: voiced ? [{ startS: 0.2, endS: 1.6 }] : [],
+      },
+    });
+    break;
+  }
   default:
     answer({ ok: false, error: { code: "VALIDATION", message: `unknown tool ${tool}` } }, 1);
 }

@@ -8,6 +8,8 @@ dependencies = ["numpy>=2.2,<3"]
 [project.optional-dependencies]
 # Only the optional worker image installs this (docker build --build-arg STUDIX_QA_EXTRAS=depth).
 depth = ["torch>=2.5", "transformers>=4.46", "pillow>=11"]
+# silero-vad ships its model in the wheel and pulls torch (the CPU index below applies) and torchaudio.
+speech = ["silero-vad>=5.1,<7"]
 
 [dependency-groups]
 dev = ["pytest>=8.3"]

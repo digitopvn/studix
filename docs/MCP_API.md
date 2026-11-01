@@ -178,7 +178,11 @@ Behavior notes:
   in English) fails with `VALIDATION` before G0 is requested. SFX cues describe
   the sound heard, in English, because the effect model reads a cue in another
   language aloud. A scope stored before this rule fails at the score stage,
-  before any music or SFX is paid for. To rewrite cues, send
+  before any music or SFX is paid for. When the worker runs with
+  `STUDIX_SPEECH_GATE=true` (QA image `speech`), every effect is also checked for
+  a human voice before it joins the mix: a voiced effect is generated once more,
+  and a second voiced take fails the job with `VALIDATION` naming the shot and the
+  cue (see [QA.md](QA.md#chặn-tiếng-nói-trong-sfx)). To rewrite cues, send
   `studix_feedback` on the shot, its scene or a time range over it, with a
   patch under `/metadata/film/scope/scenes/<i>/shots/<j>/sfx`.
 - A film render pays only for the media whose request changed. Each line, clip,
