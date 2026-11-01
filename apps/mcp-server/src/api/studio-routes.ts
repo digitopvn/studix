@@ -211,20 +211,6 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     res.json(await deps.studio.retryJob(ctx, idParam(req, "jobId")));
   });
 
-  router.post("/jobs/:jobId/media-jobs/attach", async (req, res) => {
-    const { ctx } = sessionOf(res);
-    const body = parseBody(
-      z.object({
-        stage: z.string(),
-        idempotencyKey: z.string(),
-        predictionId: z.string(),
-      }),
-      req.body,
-      "media job attachment",
-    );
-    res.json(await deps.studio.attachMediaJob(ctx, { jobId: idParam(req, "jobId"), ...body }));
-  });
-
   router.get("/renders/:renderId/playback", async (req, res) => {
     const { ctx } = sessionOf(res);
     assertPermission(ctx, "asset:read");

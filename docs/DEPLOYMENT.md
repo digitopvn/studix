@@ -156,8 +156,13 @@ instead of submitting again. Atlas Cloud has no idempotency key, so the adapter
 journals a `submitting` record right before `atlas run`. If the worker dies
 before the job id is journaled, a retry with the same idempotency key is
 refused (non-retryable) instead of paying twice for one upscale (about $0.01):
-find the prediction in `multix history` or the Atlas Cloud console, attach it
-with `studix_attach_media_job`, then retry the job
+an operator finds the prediction in `multix history` or the Atlas Cloud
+console, checks that its model, inputs and time match the stage, and attaches
+it with `pnpm --filter @studix/mcp-server recover:attach --job <jobId> --stage
+<stage> --key <idempotencyKey> --prediction <predictionId> --operator <name>`,
+run with the app's environment (for example in the app container). The script
+attaches as a system actor and requeues the job. Workspaces cannot attach: they
+share the platform's Atlas account, so no role or API key holds `job:recover`
 ([docs/MCP_API.md](MCP_API.md#retrying-a-failed-job)). The intent is an
 insert-if-absent, so two concurrent calls with the same idempotency key submit
 once; the other fails `CONFLICT` (retryable). Its retry collects the job once

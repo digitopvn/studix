@@ -9,7 +9,7 @@ export const PERMISSIONS = [
   "project:write",
   "job:cancel",
   "job:retry",
-  /** Operator recovery of a job's media calls, e.g. attaching an upstream job found by hand (admins only). */
+  /** Platform operator recovery of a job's media calls, e.g. attaching an upstream job found by hand. */
   "job:recover",
   "asset:read",
   "asset:write",
@@ -21,6 +21,14 @@ export const PERMISSIONS = [
   "member:manage",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
+
+/**
+ * Held only by system actors (the operator CLI), never by a workspace role or API key: attaching an upstream
+ * job trusts its id without checking it against the provider, and every workspace shares the platform's
+ * provider account, so a tenant could otherwise collect another workspace's media.
+ */
+const OPERATOR_PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>(["job:recover"]);
+const WORKSPACE_PERMISSIONS = PERMISSIONS.filter((p) => !OPERATOR_PERMISSIONS.has(p));
 
 const READ: Permission[] = ["workspace:read", "project:read", "asset:read"];
 const EDIT: Permission[] = [
@@ -34,8 +42,8 @@ const EDIT: Permission[] = [
 
 /** Role -> permission matrix. Reviewers may decide approvals but not edit; viewers only read. */
 export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> = {
-  owner: new Set(PERMISSIONS),
-  admin: new Set(PERMISSIONS),
+  owner: new Set(WORKSPACE_PERMISSIONS),
+  admin: new Set(WORKSPACE_PERMISSIONS),
   editor: new Set(EDIT),
   reviewer: new Set([...READ, "approval:decide"]),
   viewer: new Set(READ),
@@ -81,7 +89,8 @@ export function can(actor: Actor, permission: Permission): boolean {
     case "user":
       return ROLE_PERMISSIONS[actor.role]?.has(permission) ?? false;
     case "apiKey":
-      return actor.scopes.includes(permission);
+      // A key issued before a permission became operator-only may still list it.
+      return !OPERATOR_PERMISSIONS.has(permission) && actor.scopes.includes(permission);
     case "system":
       return SYSTEM_PERMISSIONS.has(permission);
     default:
@@ -94,8 +103,9 @@ export function assertPermission(ctx: TenantContext, permission: Permission): vo
   if (!can(ctx.actor, permission)) {
     throw new StudixError("FORBIDDEN", `Missing permission ${permission}`, {
       details: { permission, actorType: ctx.actor.type },
-      suggestedAction:
-        ctx.actor.type === "apiKey"
+      suggestedAction: OPERATOR_PERMISSIONS.has(permission)
+        ? "Only the Studix platform operator can do this; contact them."
+        : ctx.actor.type === "apiKey"
           ? `Use an API key with the "${permission}" scope.`
           : "Ask a workspace admin for a role that grants this action.",
     });
