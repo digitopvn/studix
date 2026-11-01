@@ -79,12 +79,13 @@ function agentTranscript(request: ClaudeSessionRequest): ClaudeAgentEvent[] {
   return [usage, { type: "result", output: { boards } }];
 }
 
-function memoryStorage(): StorageAdapter {
+function memoryStorage(refuse?: (key: string) => boolean): StorageAdapter {
   const objects = new Map<string, Buffer>();
   const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
   return {
     async put(_ctx, key, body, opts) {
       if (!("filePath" in body)) throw new Error("memory storage takes files only");
+      if (refuse?.(key)) throw new StudixError("UNAVAILABLE", `storage refused ${key}`, { retryable: false });
       const bytes = await readFile(body.filePath);
       objects.set(key, bytes);
       return { key, bytes: bytes.length, sha256: sha(bytes), contentType: opts.contentType };
@@ -117,12 +118,14 @@ function createWorld(
     refuse?: (request: MediaGenerationRequest) => boolean;
     /** Estimates of the models a request can name, in cents; other requests cost the fake's price. */
     modelCents?: Record<string, number>;
+    /** Object keys the storage refuses to write. */
+    refusePut?: (key: string) => boolean;
   } = {},
 ) {
   const { repos } = db.current;
   const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
   const workRoot = mkdtempSync(join(tmpdir(), "studix-film-packs-"));
-  const storage = memoryStorage();
+  const storage = memoryStorage(opts.refusePut);
   const rendered: VideoIR[] = [];
   const renderer: RendererAdapter = {
     id: "hyperframes",
@@ -383,6 +386,25 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const after = await db.current.repos.projects.get(ctx, project.id);
     expect(after?.status).toBe("published");
     expect(after?.currentVersionId).toBe(project.currentVersionId);
+  });
+
+  it("bills the designs it paid for when publishing the G1 board fails afterwards", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-designs-fail-${pack}`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    // The project is finished while the designs are being drawn, so publishing their board is refused.
+    await db.current.repos.projects.update(ctx, project.id, { status: "published" });
+
+    expect(await world.runOnce(job.id)).toBe("failed");
+    expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({
+      status: "failed",
+      error: { code: "CONFLICT" },
+    });
+    expect(world.requests).toHaveLength(3);
+    const usage = (await world.repos.usage.list(ctx, { jobId: job.id, limit: 200 })).items;
+    expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(3);
   });
 
   it("stops at G0 and G1 for a person, then storyboards on the approved sheets, then renders on an approved storyboard", async () => {
@@ -869,6 +891,18 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const paid = usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration);
     // Every call the provider answered is in the ledger; the refused second take cost nothing and has no line.
     expect(paid).toHaveLength(world.requests.length - 1);
+  });
+
+  it("bills the clips it paid for when storing a scene fails afterwards", async () => {
+    const world = createWorld({ refusePut: (key) => key.includes("/scenes/") });
+    const { ctx, render } = await queueRender(world, `film-${pack}-scene-put-fails`);
+
+    const before = world.requests.length;
+    expect(await world.runOnce(render.id)).toBe("failed");
+    const paidRequests = world.requests.slice(before);
+    expect(paidRequests.some((r) => r.kind === "video")).toBe(true);
+    const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
+    expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(paidRequests.length);
   });
 
   it("does not probe effects when the worker has no speech probe", async () => {
