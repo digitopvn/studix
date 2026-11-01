@@ -1,7 +1,7 @@
 import { type Clock, StudixError } from "@studix/shared";
 import type { Job, Render, Stage, WorkflowRun } from "../entities/job.ts";
 import { isTerminalJobStatus } from "../entities/job.ts";
-import { JOB_RESUME_ATTEMPTS, type JobQueue } from "../ports/job-queue.ts";
+import { attachToSubmittingRecord, JOB_RESUME_ATTEMPTS, type JobQueue } from "../ports/job-queue.ts";
 import type {
   JobRepository,
   RenderRepository,
@@ -133,6 +133,18 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         { status: "queued", runAfter: clock.now() },
         { expectStatus: ["waiting_approval"] },
       );
+    },
+    async attachMediaJob(ctx, input) {
+      const job = jobs.require(ctx, input.jobId);
+      if (job.status !== "failed") {
+        throw new StudixError("CONFLICT", `job ${input.jobId} is ${job.status}`, {
+          details: { status: job.status, expected: ["failed"] },
+        });
+      }
+      const rows = stages.filter(ctx, (s) => s.jobId === input.jobId && s.name === input.stage);
+      const attached = attachToSubmittingRecord(rows, input, clock.now());
+      stages.update(ctx, attached.stageId, { mediaJobs: attached.mediaJobs });
+      return attached.record;
     },
   };
   return { jobs: repo, queue };

@@ -1,4 +1,5 @@
 import {
+  attachToSubmittingRecord,
   JOB_RESUME_ATTEMPTS,
   type Job,
   type JobPatch,
@@ -312,6 +313,32 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
         { expectStatus: ["waiting_approval"] },
       );
     },
+
+    attachMediaJob: (ctx, input) =>
+      db.transaction(async (tx) => {
+        // The lock keeps retry and claim out until the record is rewritten; a failed job has no worker.
+        const locked = await tx
+          .select({ status: jobs.status })
+          .from(jobs)
+          .where(scoped(jobs, ctx, eq(jobs.id, input.jobId)))
+          .for("update");
+        if (!locked[0]) throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
+        if (locked[0].status !== "failed") {
+          throw new StudixError("CONFLICT", `job ${input.jobId} is ${locked[0].status}`, {
+            details: { status: locked[0].status, expected: ["failed"] },
+          });
+        }
+        const rows = await tx
+          .select()
+          .from(stages)
+          .where(scoped(stages, ctx, eq(stages.jobId, input.jobId), eq(stages.name, input.stage)));
+        const attached = attachToSubmittingRecord(rows.map(toStage), input, clock.now());
+        await tx
+          .update(stages)
+          .set({ mediaJobs: attached.mediaJobs })
+          .where(scoped(stages, ctx, eq(stages.id, attached.stageId)));
+        return attached.record;
+      }),
   };
 
   return { jobs: repo, queue };

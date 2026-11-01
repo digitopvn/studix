@@ -315,9 +315,14 @@ export class MultixProvider implements MediaProvider {
         "A previous submission of this request may already have been charged and cannot be deduplicated",
         {
           retryable: false,
-          details: { provider: plan.model.vendor, model: existing.model, submittedAt: existing.submittedAt },
+          details: {
+            provider: plan.model.vendor,
+            model: existing.model,
+            idempotencyKey: request.idempotencyKey,
+            submittedAt: existing.submittedAt,
+          },
           suggestedAction:
-            "Find the prediction in `multix history` or the provider console, then resume it by job id.",
+            "Find the prediction in `multix history` or the Atlas Cloud console, attach it to the failed job with `studix_attach_media_job`, then retry the job.",
         },
       );
     }
@@ -346,7 +351,15 @@ export class MultixProvider implements MediaProvider {
       plan.mode === "sume-job"
         ? await this.submitSume(ctx, plan, request, attempt)
         : await this.submitAtlas(plan, request, {
-            intent: () => journal.put(ctx, { ...base, state: "submitting", updatedAt: at }),
+            intent: async () => {
+              if (await journal.claim(ctx, { ...base, state: "submitting", updatedAt: at })) return;
+              // A concurrent call with the same key claimed it first; it submits, this one must not.
+              throw new StudixError("CONFLICT", "Another submission of this media request is in progress", {
+                retryable: true,
+                details: { model: plan.model.id, attempt },
+                suggestedAction: "Retry once the other submission finished; it will collect that job.",
+              });
+            },
             // Only errors proving the request never reached Atlas may release the key for a retry.
             release: () => journal.put(ctx, { ...base, state: "failed", updatedAt: at }),
           });

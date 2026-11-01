@@ -4,6 +4,7 @@ import { JOB_KINDS, type Render } from "../entities/job.ts";
 import type { ProjectVersion, VideoProject } from "../entities/project.ts";
 import type { Approval } from "../entities/review.ts";
 import type { AuditEvent } from "../entities/telemetry.ts";
+import type { MediaJobRecord } from "../ports/media-provider.ts";
 import type { Page, PageRequest } from "../repositories/pagination.ts";
 import { actorRef, assertPermission, type TenantContext } from "../tenant.ts";
 import {
@@ -25,6 +26,7 @@ import {
 } from "./project-review.ts";
 import { loadJobView, parseInput, type ResolvedStudioDeps } from "./studio-input.ts";
 import {
+  AttachMediaJobRequest,
   type CreateVideoProjectInput,
   DecideApprovalInput,
   type FeedbackInput,
@@ -131,6 +133,42 @@ export class StudioService {
       data: { attempts: job.attempts, error: job.error?.code },
     });
     return loadJobView(this.deps, ctx, requeued);
+  }
+
+  /**
+   * Operator recovery of an Atlas call stuck at "submitting" (Atlas accepted or may have accepted the run,
+   * but its prediction id never reached the journal): record the prediction found in `multix history` or
+   * the Atlas Cloud console, so {@link retryJob} collects that paid job instead of being blocked. Needs the
+   * same permission as a retry, and the job must be failed so no worker holds it.
+   */
+  async attachMediaJob(
+    ctx: TenantContext,
+    rawInput: AttachMediaJobRequest,
+  ): Promise<{ job: JobView; mediaJob: MediaJobRecord }> {
+    assertPermission(ctx, "job:retry");
+    const input = parseInput(AttachMediaJobRequest, rawInput, "media job attachment");
+    const job = await this.deps.jobs.get(ctx, input.jobId);
+    if (!job) throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
+    const mediaJob = await this.deps.queue.attachMediaJob(ctx, {
+      jobId: job.id,
+      stage: input.stage,
+      idempotencyKey: input.idempotencyKey,
+      job: { provider: "atlas", id: input.predictionId },
+    });
+    await this.recordAudit(ctx, {
+      action: "job.media_job_attached",
+      subjectType: "job",
+      subjectId: job.id,
+      data: {
+        stage: input.stage,
+        idempotencyKey: input.idempotencyKey,
+        provider: "atlas",
+        predictionId: input.predictionId,
+        attempt: mediaJob.attempt,
+      },
+    });
+    // The job itself is unchanged and still failed: its view offers the retry that collects the job.
+    return { job: await loadJobView(this.deps, ctx, job), mediaJob };
   }
 
   async getProject(ctx: TenantContext, projectId: string): Promise<ProjectDetails> {
