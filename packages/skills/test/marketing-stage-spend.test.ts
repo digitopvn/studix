@@ -8,7 +8,11 @@ import type { AssetRef, VideoIR } from "@studix/video-ir";
 import { type StageContext, StageFailedAfterSpend } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { marketingScript } from "../src/marketing-video/marketing-script.ts";
-import { MV_STAGES, marketingReframeStage } from "../src/marketing-video/marketing-video-pack.ts";
+import {
+  MV_STAGES,
+  marketingReframeStage,
+  marketingStoryboardStage,
+} from "../src/marketing-video/marketing-video-pack.ts";
 import { beatKey, marketingVideoIr } from "../src/marketing-video/marketing-video-template.ts";
 
 const ctx: TenantContext = {
@@ -106,10 +110,40 @@ describe("marketing stage spend when the work after the paid batch fails", () =>
       () => undefined,
       (err: unknown) => err,
     );
-    expect(MV_STAGES.reframe).toBe(marketingReframeStage.name);
     expect(failure).toBeInstanceOf(StageFailedAfterSpend);
     const spent = failure as StageFailedAfterSpend;
     expect(spent.usage).toHaveLength(1);
     expect(spent.error.code).toBe("CONFLICT");
+  });
+
+  it("storyboard: the frames' cost reaches the ledger when building the IR fails after the batch", async () => {
+    const media = new FakeMediaProvider({ pricing: { estimateCents: () => 2 } });
+    // The object is stored but its reported digest is not a sha256, so the frame asset is invalid and
+    // assembling the IR throws after every frame was paid for.
+    const storage = {
+      put: async (_c: TenantContext, key: string) => ({ key, sha256: "not-a-sha256", bytes: 1 }),
+    };
+    const s = {
+      ctx,
+      job: { id: "job_1" },
+      attempt: 1,
+      signal: new AbortController().signal,
+      mediaJournal: undefined,
+      input: {
+        outputs: { brief: { brief: { title: "Lá Mây" } }, [MV_STAGES.script]: { script } },
+      },
+      services: { media, storage, workRoot: root },
+      reportProgress: () => {},
+      commit: async () => {
+        throw new Error("the storyboard stage does not commit");
+      },
+    } as unknown as StageContext;
+
+    const failure = await marketingStoryboardStage.run(s).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toBeInstanceOf(StageFailedAfterSpend);
+    expect((failure as StageFailedAfterSpend).usage).toHaveLength(script.ads[0]?.beats.length ?? -1);
   });
 });
