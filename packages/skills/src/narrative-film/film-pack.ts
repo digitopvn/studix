@@ -76,6 +76,7 @@ import {
   filmFrameSize,
   isSoundCue,
   isVideoTier,
+  parseSoundCue,
   productionFromScope,
   type ScopeRule,
   scopeDurationMs,
@@ -1403,12 +1404,14 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           maxCostCents: 0,
           reuse: {},
         } satisfies StoredMediaRequest,
+        voiced: false,
       };
     });
     const sfx = scopeShots(film.scope).flatMap(({ shot }) =>
       shot.sfx.map((cue, i) => {
         // Checked before any media is paid for: a scope locked before the English rule could carry one.
-        if (!isSoundCue(cue))
+        const { text, voiced } = parseSoundCue(cue);
+        if (text.length === 0 || !isSoundCue(text))
           throw new StudixError(
             "VALIDATION",
             `SFX cue "${cue}" of shot ${shot.id} is not an English sound description; the effect model would read it aloud`,
@@ -1426,13 +1429,14 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
           request: {
             assetId: `${shot.id}-fx${i + 1}`.slice(0, 64),
             kind: "sfx" as const,
-            prompt: sfxPrompt(cue),
+            prompt: sfxPrompt(text),
             params: { durationMs: Math.max(500, Math.min(3_000, span.durationMs)) },
             keyPrefix: `generated/${s.job.id}/sound/${shot.id}-fx${i + 1}`,
             maxCostCents: 0,
-            reuse: s.services.speech ? { scope: SPEECH_FREE_SCOPE } : {},
+            reuse: s.services.speech && !voiced ? { scope: SPEECH_FREE_SCOPE } : {},
           } satisfies StoredMediaRequest,
           cue,
+          voiced,
           shotId: shot.id,
         };
       }),
@@ -1455,7 +1459,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
     estimateCostCents: (s) => {
       const planned = scoreRequests(s);
       // With the speech check on, a voiced effect is generated once more: budget for the worst case.
-      const retakes = s.services.speech ? planned.filter((p) => p.role === "sfx") : [];
+      const retakes = s.services.speech ? planned.filter((p) => p.role === "sfx" && !p.voiced) : [];
       return estimateOf(s, [...planned, ...retakes]);
     },
     async run(s) {
@@ -1468,7 +1472,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         MEDIA_CONCURRENCY,
         async (p) => {
           const media =
-            p.role === "sfx" && s.services.speech
+            p.role === "sfx" && s.services.speech && !p.voiced
               ? await generateSpeechFreeSfx(s, n.score, p.request, s.services.speech, p.shotId, p.cue)
               : await generateStoredMedia(s, n.score, p.request).then((m) => ({ ...m, spent: [m.usage] }));
           s.reportProgress(++done / planned.length);

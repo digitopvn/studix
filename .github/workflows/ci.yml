@@ -74,6 +74,14 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      # The real Silero detector, in its own environment so the speech extra (torch) stays out of the venv the
+      # other QA tests use. STUDIX_QA_REQUIRE_SPEECH makes a missing detector fail instead of skip.
+      - name: Speech detector tests
+        env:
+          STUDIX_QA_REQUIRE_SPEECH: "1"
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/qa-speech-venv
+        run: uv run --locked --extra speech --project tools/qa pytest tools/qa/tests/test_speech_activity.py
+
       - name: Migrations match schema
         run: |
           pnpm db:generate

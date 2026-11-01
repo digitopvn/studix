@@ -190,6 +190,12 @@ gió sạch và bỏ sót lời thật. VAD là tín hiệu quyết định.
   `packages/qa/src/speech-probe.ts`). Tiếng click hay hơi thở ngắn không vượt ngưỡng.
 - SFX đã lưu khi cổng đang tắt không được tái dùng cho job có cổng bật: khóa tái dùng có
   thêm `scope` `speech-free@1`.
+- Cue mà tiếng người là chủ ý (đám đông, tiếng cười, tiếng thở hổn hển) bắt đầu bằng `voice:`
+  (không phân biệt hoa thường), ví dụ `voice: a crowd laughing in a hall`. Cue đó không bị
+  đo, không bị tạo lại, không có `scope` `speech-free@1`, và phần `voice:` không được gửi cho
+  effect model. Phần sau `voice:` vẫn phải là mô tả bằng tiếng Anh.
+- CI chạy `tools/qa/tests/test_speech_activity.py` với extra `speech` trong một venv riêng
+  (`STUDIX_QA_REQUIRE_SPEECH=1`, thiếu Silero là fail), gồm test dương tính trên giọng tổng hợp.
 - Prompt gửi effect model là chính cue, không bọc "no voice…": cụm phủ định đã được thấy là
   gợi ra tiếng nói ("No. No."). Cue vẫn phải là mô tả âm thanh bằng tiếng Anh.
 

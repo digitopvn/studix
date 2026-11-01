@@ -16,6 +16,7 @@ import {
   motionPrompt,
   packPipelines,
   packRegistry,
+  parseSoundCue,
   productionFromScope,
   scopeDurationMs,
   scopeIssues,
@@ -88,6 +89,19 @@ describe("film scope", () => {
       expect.objectContaining({ code: "schema", path: "/scenes/0/shots/2/sfx/0" }),
       expect.objectContaining({ code: "schema", path: "/scenes/0/shots/4/sfx/1" }),
     ]);
+  });
+
+  it("accepts a `voice:` cue when the human sound is intended, and strips the marker from the sound text", () => {
+    const crowd = withShots((s) => {
+      s[2]!.sfx = ["voice: a crowd laughing in a hall"];
+      s[4]!.sfx = ["Voice:fireworks bursting overhead", "voice: tiếng cười"];
+    });
+    expect(scopeIssues(crowd, { durationMs: 15_000 })).toEqual([
+      expect.objectContaining({ code: "schema", path: "/scenes/0/shots/4/sfx/1" }),
+    ]);
+    expect(parseSoundCue("voice: a crowd laughing")).toEqual({ text: "a crowd laughing", voiced: true });
+    expect(parseSoundCue("a crowd laughing")).toEqual({ text: "a crowd laughing", voiced: false });
+    expect(parseSoundCue("voice:")).toEqual({ text: "", voiced: true });
   });
 
   it("keeps lines within three words a second, the brief's length and the audio track bound", () => {

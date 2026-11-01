@@ -68,7 +68,10 @@ export const ScopeShot = ShotPlan.pick({
   characters: z.array(IrId).max(6),
   /** Spoken lines, in order; a lip-synced shot carries one line of its visible speaker. */
   lines: z.array(ScopeLine).max(4),
-  /** Sound effect cues, in order: the sound heard, in English (see `isSoundCue`). */
+  /**
+   * Sound effect cues, in order: the sound heard, in English (see `isSoundCue`). Prefix a cue with `voice:`
+   * when a human voice in it is intended (see `parseSoundCue`); otherwise a voiced take is rejected.
+   */
   sfx: z.array(z.string().min(1).max(200)).max(3),
 });
 export type ScopeShot = z.input<typeof ScopeShot>;
@@ -241,6 +244,17 @@ export function productionFromScope(scope: FilmScope): FilmProduction {
  */
 export const isSoundCue = (cue: string): boolean => /^[\x20-\x7E]+$/.test(cue);
 
+/**
+ * A cue that opens with `voice:` is meant to carry human sound (a crowd, laughter, a gasp). The speech check
+ * skips it, and the marker itself is not sent to the effect model.
+ */
+export const VOICED_CUE_PREFIX = /^voice:\s*/i;
+
+export const parseSoundCue = (cue: string): { text: string; voiced: boolean } => {
+  const voiced = VOICED_CUE_PREFIX.test(cue);
+  return { text: voiced ? cue.replace(VOICED_CUE_PREFIX, "") : cue, voiced };
+};
+
 /** Dialogue cue id of a shot's i-th line (also the stem of its audio asset ids). */
 export const lineId = (shotId: string, index: number) => `${shotId}-l${index + 1}`.slice(0, 64);
 
@@ -284,7 +298,8 @@ export function scopeIssues(scope: FilmScope, options: ScopeCheckOptions = {}): 
           message: `${words} spoken words do not fit a ${shot.durationMs / 1000}s shot (at most ${budget})`,
         });
       shot.sfx.forEach((cue, j) => {
-        if (!isSoundCue(cue))
+        const { text } = parseSoundCue(cue);
+        if (text.length === 0 || !isSoundCue(text))
           issues.push({
             path: `${path}/sfx/${j}`,
             code: "schema",
