@@ -135,3 +135,48 @@ describe("with the cross-job output cache enabled", () => {
     expect(again.usage.costCents).toBeGreaterThan(0);
   });
 });
+
+describe("a call whose own job already cached an output", () => {
+  const cachedStage = (
+    w: ReturnType<typeof worker>,
+    entries: Map<string, { asset: unknown; jobId: string }>,
+  ) =>
+    ({
+      ...(w.stage() as unknown as Record<string, unknown>),
+      mediaOutputs: {
+        get: async (k: string) => entries.get(k),
+        put: async (k: string, asset: unknown) => {
+          entries.set(k, { asset, jobId: "job_1" });
+        },
+      },
+    }) as unknown as StageContext;
+
+  it("pays the first attempt instead of serving it the regeneration's output as a free hit", async () => {
+    const w = worker();
+    const entries = new Map<string, { asset: unknown; jobId: string }>();
+    // The regeneration is stored under the same content key; the first attempt's own record is gone.
+    const regenerated = await generateStoredMedia(
+      cachedStage(w, entries),
+      "dialogue",
+      voice({ reuse: {}, retry: 1 }),
+    );
+    expect(regenerated.usage.item).toBe("media-l1-vo-r1");
+
+    const first = await generateStoredMedia(cachedStage(w, entries), "dialogue", voice({ reuse: {} }));
+
+    expect(w.execs).toHaveLength(2);
+    expect(first.reusedFrom).toBeUndefined();
+    expect(first.usage.item).toBe("media-l1-vo");
+    expect(first.usage.costCents).toBeGreaterThan(0);
+  });
+});
+
+describe("a file left on disk by an earlier request under the same key", () => {
+  it("is not returned for a request whose prompt changed", async () => {
+    const w = worker();
+    const old = await generateStoredMedia(w.stage(), "dialogue", voice());
+    const changed = await generateStoredMedia(w.stage(), "dialogue", voice({ prompt: "Một câu khác" }));
+    expect(w.execs).toHaveLength(2);
+    expect(changed.filePath).not.toBe(old.filePath);
+  });
+});

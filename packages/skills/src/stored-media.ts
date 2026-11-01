@@ -177,6 +177,10 @@ export async function findReusableMedia(
   const key = mediaOutputKey(s, request);
   if (key === undefined || !s.mediaOutputs) return undefined;
   const hit = await s.mediaOutputs.get(key);
+  // This job's own earlier call is answered through its journal, which keeps the upstream job and the
+  // charge. Served from here it would come back as a free line, and a regeneration's output (stored under
+  // the same key) could stand in for the first attempt, so the ledger would lose both paid calls.
+  if (hit?.jobId === s.job.id) return undefined;
   if (!hit?.asset.storageKey || hit.asset.kind !== assetKind(request.kind)) return undefined;
   const stored = await requireService(s, "storage").head(s.ctx, hit.asset.storageKey);
   if (!stored || stored.sha256 !== hit.asset.sha256) return undefined;

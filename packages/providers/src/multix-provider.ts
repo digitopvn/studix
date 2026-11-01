@@ -733,7 +733,12 @@ export class MultixProvider implements MediaProvider {
     existing: MediaJobRecord | undefined,
     started: number,
   ): Promise<MediaGenerationResult> {
-    const outDir = join(request.workDir, `multix-${sha([ctx.workspaceId, request.idempotencyKey])}`);
+    // The directory is bound to what the request asks for, so a file left by an earlier request under the same
+    // key (a prompt that changed since) is never taken for this request's completed output.
+    const outDir = join(
+      request.workDir,
+      `multix-${sha([ctx.workspaceId, request.idempotencyKey, plan.model.id, request.prompt, request.params ?? null])}`,
+    );
     const file = join(outDir, `${plan.role}${plan.outputExt ?? ".bin"}`);
     // One execution id per paid run: the upstream history id when it is a valid id, else one derived from
     // the idempotency key and the run's ordinal. The ordinal keeps a second paid run of the same key (the
