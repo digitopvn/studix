@@ -102,7 +102,7 @@ describe("opening approvals", () => {
 });
 
 describe("expired approvals on parked jobs", () => {
-  async function parkedJob(slug: string) {
+  async function parkedJob(slug: string, waitingOn?: { action: "publish"; scopeKey: string }) {
     const ctx = await tenant(db.current, slug);
     const { repos } = db.current;
     const { job } = await enqueueCreate(db.current, ctx);
@@ -115,7 +115,7 @@ describe("expired approvals on parked jobs", () => {
     }
     const subject = { type: "job" as const, id: job.id };
     const first = await queue.requestApproval(owned, "w", { action: "publish", reason: "r", ttlMs: 60_000 });
-    expect(await queue.park(owned, "w")).toBe(true);
+    expect(await queue.park(owned, "w", waitingOn)).toBe(true);
     if (first.status !== "created") throw new Error("expected a created approval");
     return { ctx, repos, queue, job, subject, approval: first.approval };
   }
@@ -199,5 +199,92 @@ describe("expired approvals on parked jobs", () => {
     expect(await queue.failExpiredApprovals()).toBe(0);
     expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "waiting_approval" });
     expect(await queue.resumeDecidedApprovals()).toBe(1);
+  });
+
+  it("is not held by an unrelated pending request on a job the worker parked on another request", async () => {
+    const { ctx, repos, queue, job, subject, approval } = await parkedJob("expiry-recorded-unrelated", {
+      action: "publish",
+      scopeKey: "",
+    });
+    await repos.approvals.open(ctx, {
+      action: "render.final",
+      subject,
+      reason: "opened by the studio",
+      requestedBy: human,
+      expiresAt: future(),
+    });
+    await db.current.db.execute(
+      sql`update approvals set expires_at = now() - interval '1 minute' where id = ${approval.id}`,
+    );
+    expect(await queue.failExpiredApprovals()).toBe(1);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({
+      status: "failed",
+      error: { details: { reason: "approval_expired" } },
+    });
+  });
+
+  it("resumes a job parked on an overrun once it is approved, whatever else is pending", async () => {
+    const ctx = await tenant(db.current, "resume-recorded-unrelated");
+    const { repos } = db.current;
+    const { job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    let owned = (await queue.claim("w"))!;
+    while (owned.id !== job.id) {
+      await queue.complete(owned, "w", {});
+      owned = (await queue.claim("w"))!;
+    }
+    const subject = { type: "job" as const, id: job.id };
+    const overrun = await queue.requestApproval(owned, "w", {
+      action: "agent.overrun",
+      scopeKey: "agent:draft",
+      reason: "overrun",
+      ttlMs: 60_000,
+    });
+    if (overrun.status !== "created") throw new Error("expected a created approval");
+    expect(await queue.park(owned, "w", { action: "agent.overrun", scopeKey: "agent:draft" })).toBe(true);
+    await repos.approvals.open(ctx, {
+      action: "render.final",
+      subject,
+      reason: "opened by the studio",
+      requestedBy: human,
+      expiresAt: future(),
+    });
+    await repos.approvals.decide(ctx, overrun.approval.id, {
+      status: "approved",
+      decidedBy: human,
+      decidedAt: new Date(),
+    });
+    expect(await queue.resumeDecidedApprovals()).toBe(1);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "queued" });
+  });
+
+  it("keeps a job parked on its own pending request even when a different request was decided", async () => {
+    const ctx = await tenant(db.current, "resume-recorded-own-pending");
+    const { repos } = db.current;
+    const { job } = await enqueueCreate(db.current, ctx);
+    const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
+    let owned = (await queue.claim("w"))!;
+    while (owned.id !== job.id) {
+      await queue.complete(owned, "w", {});
+      owned = (await queue.claim("w"))!;
+    }
+    const subject = { type: "job" as const, id: job.id };
+    const decided = await repos.approvals.open(ctx, {
+      action: "publish",
+      subject,
+      reason: "decided",
+      requestedBy: human,
+      expiresAt: future(),
+    });
+    await repos.approvals.decide(ctx, decided.approval.id, {
+      status: "approved",
+      decidedBy: human,
+      decidedAt: new Date(),
+    });
+    // The review gate waits on a render.final request of its own.
+    await queue.requestApproval(owned, "w", { action: "render.final", reason: "review", ttlMs: 60_000 });
+    expect(await queue.park(owned, "w", { action: "render.final", scopeKey: "" })).toBe(true);
+    expect(await queue.resumeDecidedApprovals()).toBe(0);
+    expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "waiting_approval" });
   });
 });
