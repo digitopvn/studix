@@ -1497,15 +1497,15 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       });
       const assets = made.map((m) => m.asset);
       const usage = made.flatMap((m) => m.spent);
-      const next = await billedOnFailure(usage, () =>
-        VideoIRSchema.parse({
+      return billedOnFailure(usage, async () => {
+        const next = VideoIRSchema.parse({
           ...ir,
           assets: [...ir.assets.filter((a) => !assets.some((b) => b.id === a.id)), ...assets],
           audio: [...(ir.audio ?? []).filter((t) => t.kind !== "music" && t.kind !== "sfx"), ...tracks],
-        }),
-      );
-      await rm(workDir, { recursive: true, force: true });
-      return { output: { ir: next }, usage };
+        });
+        await rm(workDir, { recursive: true, force: true });
+        return { output: { ir: next }, usage };
+      });
     },
   };
 
