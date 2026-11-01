@@ -880,12 +880,16 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const { ctx, render } = await renderJobOnApprovedBoard(world, `film-${pack}-scene-upload-fails`, pack);
 
     expect(await world.runOnce(render.id)).toBe("failed");
+    expect(await world.repos.jobs.get(ctx, render.id)).toMatchObject({ error: { code: "UNAVAILABLE" } });
     const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
     const clips = usage
       .filter((u) => u.metadata?.stage === n.motion && u.costCents > 0)
       .map((u) => u.metadata?.assetId)
       .sort();
     expect(clips).toEqual(["s2-clip", "s3-clip", "s4-clip"]);
+    const spent = usage.reduce((sum, u) => sum + u.costCents, 0);
+    expect(spent).toBeGreaterThan(0);
+    expect(await world.repos.jobs.get(ctx, render.id)).toMatchObject({ spentCents: spent });
   });
 
   it("does not probe effects when the worker has no speech probe", async () => {
