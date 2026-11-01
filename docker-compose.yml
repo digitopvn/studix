@@ -103,6 +103,8 @@ services:
       <<: *studix-env
       STUDIX_ROLE: worker
       STUDIX_MIGRATE_ON_START: "false"
+    volumes:
+      - worker-work:/var/lib/studix/work
     depends_on:
       app:
         condition: service_healthy
@@ -110,3 +112,4 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  worker-work:

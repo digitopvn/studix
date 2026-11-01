@@ -86,6 +86,25 @@ sandboxes left by a crashed worker once they are older than the run timeout.
 Job scratch directories (`WORKER_WORK_DIR/<jobId>`) are removed when the job
 finishes; those of failed jobs are kept for retries and swept after
 `WORKER_WORK_DIR_RETENTION_HOURS` (default 168, minimum 24) without writes.
+
+Keep `WORKER_WORK_DIR` on a persistent volume. The image sets it to
+`/var/lib/studix/work`; `deploy/k8s/worker.yaml` mounts a PVC there (the worker
+Deployment uses `Recreate` because the volume is ReadWriteOnce) and the
+`selfhost` compose profile mounts a named volume. Synchronous Multix audio
+(voice, music, sound effects) has no upstream idempotency key, so a call counts
+as finished only while its output file is on this directory. On a scratch disk
+that a pod restart wipes, a retry would call the upstream again and be charged a
+second time. As a second line of defence, once an output is uploaded the stage
+journal records that object, and a retry of the same unchanged request reuses it
+without calling the upstream even if the directory is gone. The remaining window
+is a crash between the upstream call and that upload. Size the volume for
+in-flight jobs only (20Gi in the manifest); finished jobs remove their
+directories and the sweep above bounds the rest. The manifest pins
+`WORKER_WORK_DIR` in the container `env`, so a value in the `studix-env` secret
+cannot move it off the volume. The ReadWriteOnce claim means one worker pod; to
+scale the worker out, give each replica its own volume (a StatefulSet with
+`volumeClaimTemplates`), and note that a retry that lands on another replica
+then relies on the journal fallback alone.
 When Anthropic answers a run with 401, the worker re-tests that key directly
 and, only if it is still rejected and was not rotated meanwhile, marks its
 connection `invalid`, so job creation stops accepting it until the key is
