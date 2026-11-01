@@ -98,4 +98,11 @@ describe("speech probe readiness", () => {
     await expect(assertSpeechProbeReady(bare, root)).rejects.toMatchObject({ code: "UNAVAILABLE" });
     expect((await readdir(root)).filter((name) => name.startsWith("speech-ready-"))).toEqual([]);
   });
+
+  it("fails when the detector hears speech in silence", async () => {
+    const hears = { measure: async () => ({ speechMs: 900, durationMs: 1000, speech: true }) };
+    await expect(assertSpeechProbeReady(hears, join(dir, "ready-hears"))).rejects.toMatchObject({
+      code: "INTERNAL",
+    });
+  });
 });

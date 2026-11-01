@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { StudixError } from "@studix/shared";
 import type { SpeechMeasurement, SpeechProbe } from "@studix/workflow";
 import { QA_TOOLS, type QaRunOptions, runQaTool } from "./qa-tools.ts";
 
@@ -70,7 +71,13 @@ export async function assertSpeechProbeReady(
   try {
     const clip = join(dir, "silence.wav");
     await writeFile(clip, silentWav());
-    await probe.measure(clip, signal);
+    const heard = await probe.measure(clip, signal);
+    // A detector that hears speech in silence would make every effect fail after it was paid for.
+    if (heard.speech)
+      throw new StudixError("INTERNAL", "speech probe heard speech in a silent clip", {
+        retryable: false,
+        details: { speechMs: heard.speechMs },
+      });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

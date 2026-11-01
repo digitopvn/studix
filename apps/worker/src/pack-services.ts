@@ -7,7 +7,7 @@ import {
   qaToolchainStatus,
   resolveQaToolchain,
 } from "@studix/qa";
-import { StudixError } from "@studix/shared";
+import { StudixError, toStudixError } from "@studix/shared";
 import { knowledgeCatalog } from "@studix/skills";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
@@ -57,15 +57,21 @@ export async function loadPackServices(
   if (speech) {
     // Every sound effect is paid for before it is measured, so a probe that cannot run must stop the worker now.
     try {
-      await assertSpeechProbeReady(speech, sandboxRoot);
+      await assertSpeechProbeReady(speech, sandboxRoot, runtime.signal);
     } catch (err) {
+      const cause = toStudixError(err);
+      // Only a missing tool means "wrong image"; a timeout or out-of-memory needs a different fix.
       throw new StudixError(
-        "UNAVAILABLE",
-        `STUDIX_SPEECH_GATE is on but the speech-activity tool cannot run: ${err instanceof Error ? err.message : String(err)}`,
+        cause.code,
+        `STUDIX_SPEECH_GATE is on but the speech-activity tool cannot run: ${cause.message}`,
         {
           retryable: false,
+          cause: err,
+          details: { probeCode: cause.code },
           suggestedAction:
-            "Run the worker on the QA image built with STUDIX_QA_EXTRAS=speech, or unset STUDIX_SPEECH_GATE.",
+            cause.code === "UNAVAILABLE"
+              ? "Run the worker on the QA image built with STUDIX_QA_EXTRAS=speech, or unset STUDIX_SPEECH_GATE."
+              : "Check the speech image (memory limit, ffmpeg, timeout) with `speech-activity` on a short clip, or unset STUDIX_SPEECH_GATE.",
         },
       );
     }
