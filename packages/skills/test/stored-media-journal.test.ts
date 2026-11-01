@@ -180,3 +180,24 @@ describe("a file left on disk by an earlier request under the same key", () => {
     expect(changed.filePath).not.toBe(old.filePath);
   });
 });
+
+describe("two assets of one job with identical content", () => {
+  it("still share one paid call", async () => {
+    const w = worker();
+    const entries = new Map<string, { asset: unknown; jobId: string }>();
+    const stage = () =>
+      ({
+        ...(w.stage() as unknown as Record<string, unknown>),
+        mediaOutputs: {
+          get: async (k: string) => entries.get(k),
+          put: async (k: string, asset: unknown) => {
+            entries.set(k, { asset, jobId: "job_1" });
+          },
+        },
+      }) as unknown as StageContext;
+    await generateStoredMedia(stage(), "dialogue", voice({ reuse: {}, assetId: "a" }));
+    const second = await generateStoredMedia(stage(), "dialogue", voice({ reuse: {}, assetId: "b" }));
+    expect(w.execs).toHaveLength(1);
+    expect(second.reusedFrom).toEqual({ jobId: "job_1" });
+  });
+});
