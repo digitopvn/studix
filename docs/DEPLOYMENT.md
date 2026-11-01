@@ -163,6 +163,9 @@ The worker checks generated sound effects for a human voice when
 `--build-arg STUDIX_QA_EXTRAS=speech`; with the flag on and the default image,
 the worker refuses to start (`UNAVAILABLE`) instead of paying for effects it cannot check.
 See [QA.md](QA.md#chặn-tiếng-nói-trong-sfx).
+TOSE builds the image without build arguments, so production runs the default
+image and keeps `STUDIX_SPEECH_GATE` unset until a build with the `speech` extra
+exists for it.
 
 ## Local
 

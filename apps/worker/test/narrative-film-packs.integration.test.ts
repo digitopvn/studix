@@ -876,6 +876,47 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(paid).toHaveLength(world.requests.length);
   });
 
+  it("keeps a cue marked as voiced without checking it, while the other effects are still checked", async () => {
+    const burst = "fireworks bursting overhead";
+    const world = createWorld({ voiced: (prompt) => prompt === burst });
+    const { ctx, project } = await newFilm(`film-${pack}-voiced-on-purpose`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G1");
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+    const board = await currentIr(ctx, project.id);
+    await approveStoryboard(ctx, project.id);
+    const ir = structuredClone(board.ir);
+    const film = (
+      ir.metadata as {
+        film: { scope: { scenes: { shots: { id: string; sfx: string[]; voicedSfx?: string[] }[] }[] } };
+      }
+    ).film;
+    const s5 = film.scope.scenes.flatMap((sc) => sc.shots).find((sh) => sh.id === "s5");
+    expect(s5?.sfx).toContain(burst);
+    s5!.voicedSfx = [burst];
+    const patched = await db.current.repos.projects.createVersion(ctx, {
+      projectId: project.id,
+      ir,
+      source: "patch",
+      parentVersionId: board.version.id,
+      advanceFrom: board.version.id,
+      createdBy: actor,
+    });
+    await approveStoryboard(ctx, project.id, 2);
+    world.requests.length = 0;
+    const render = await enqueue(ctx, project.id, pack, { versionId: patched.id });
+
+    expect(await world.runOnce(render.id)).toBe("succeeded");
+    // Generated once, never probed; the other three effects were probed.
+    expect(world.requests.filter((r) => r.prompt === burst)).toHaveLength(1);
+    expect(world.heard.map((h) => h.prompt)).not.toContain(burst);
+    expect(world.heard).toHaveLength(3);
+    expect((world.rendered[0]?.audio ?? []).filter((t) => t.kind === "sfx")).toHaveLength(4);
+  });
+
   it("still bills the first take when the second take fails with a plain error", async () => {
     const wind = "soft wind over a rooftop";
     const world = createWorld({

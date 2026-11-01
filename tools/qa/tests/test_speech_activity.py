@@ -3,6 +3,9 @@ and, where the optional `speech` extra is installed, the real detector on sound 
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
+import subprocess
 
 import pytest
 
@@ -10,6 +13,16 @@ from conftest import ffmpeg, run_tool
 from studix_qa import speech_activity as sa
 
 HAS_SILERO = importlib.util.find_spec("silero_vad") is not None
+HAS_ESPEAK = shutil.which("espeak-ng") is not None
+# CI sets this on the job that installs the `speech` extra and espeak-ng, so a missing detector or voice
+# fails the run instead of silently skipping the two tests that run the real detector.
+REQUIRE_SPEECH = os.environ.get("STUDIX_QA_REQUIRE_SPEECH") == "1"
+
+
+def test_required_speech_environment_is_present():
+    if REQUIRE_SPEECH:
+        assert HAS_SILERO, "STUDIX_QA_REQUIRE_SPEECH=1 but silero-vad is not installed (uv --extra speech)"
+        assert HAS_ESPEAK, "STUDIX_QA_REQUIRE_SPEECH=1 but espeak-ng is not on PATH"
 
 
 def test_summarize_sums_the_voiced_segments_in_milliseconds():
@@ -54,3 +67,15 @@ def test_sound_without_a_voice_has_no_speech(ffmpeg_available, tmp_path, source)
     assert response["result"]["speechMs"] == 0
     assert response["result"]["segments"] == []
     assert response["result"]["durationMs"] > 1500
+
+
+@pytest.mark.skipif(not HAS_SILERO or not HAS_ESPEAK, reason="needs the speech extra (silero-vad) and espeak-ng")
+def test_a_spoken_voice_is_speech(ffmpeg_available, tmp_path):
+    clip = tmp_path / "voice.wav"
+    subprocess.run(["espeak-ng", "-v", "en", "-s", "140", "-w", str(clip), "Hello there. Please come over here."],
+                   check=True)
+    response = run_tool("speech-activity", {"media": "fx"}, {"fx": clip}, out_dir=tmp_path / "out")
+    assert response["ok"] is True, response
+    # Whole phrases of voice, not a stray blip: the effect gate must be able to tell this from wind.
+    assert response["result"]["speechMs"] > 800
+    assert response["result"]["segments"]
