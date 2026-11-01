@@ -80,8 +80,8 @@ describe("StudioService.attachMediaJob", () => {
     expect(stage?.mediaJobs?.[0]?.state).toBe("submitting");
   });
 
-  it("refuses a record that already left submitting, a missing key and a non-Atlas job", async () => {
-    const submitted = await failedJob([record({ state: "submitted", job: { provider: "atlas", id: "p0" } })]);
+  it("refuses a collected or released record, a missing key and a non-Atlas job", async () => {
+    const submitted = await failedJob([record({ state: "completed", job: { provider: "atlas", id: "p0" } })]);
     expect(await code(submitted.studio.attachMediaJob(submitted.ctx, submitted.jobId, attach))).toBe(
       "CONFLICT",
     );
@@ -118,8 +118,30 @@ describe("StudioService.attachMediaJob", () => {
     const byAttempt = new Map(stages.map((s) => [s.attempt, s.mediaJobs?.[0]?.state]));
     expect(byAttempt.get(1)).toBe("failed");
     expect(byAttempt.get(2)).toBe("submitted");
-    // Attaching again is refused: the record is no longer submitting.
-    expect(await code(env.studio.attachMediaJob(env.ctx, env.jobId, attach))).toBe("CONFLICT");
+  });
+
+  it("lets the operator correct a mistyped id while the job is failed, but never reuse an id", async () => {
+    const env = await failedJob();
+    await env.studio.attachMediaJob(env.ctx, env.jobId, {
+      ...attach,
+      job: { provider: "atlas", id: "pred_typo" },
+    });
+    // Same id again changes nothing and is refused.
+    expect(
+      await code(
+        env.studio.attachMediaJob(env.ctx, env.jobId, {
+          ...attach,
+          job: { provider: "atlas", id: "pred_typo" },
+        }),
+      ),
+    ).toBe("CONFLICT");
+    await env.studio.attachMediaJob(env.ctx, env.jobId, attach);
+    const [stage] = await env.repos.jobs.listStages(env.ctx, env.jobId);
+    expect(stage?.mediaJobs?.[0]).toMatchObject({ state: "submitted", job: { id: "pred_123" } });
+
+    // Collected or released records are never reopened.
+    const done = await failedJob([record({ state: "completed", job: { provider: "atlas", id: "p9" } })]);
+    expect(await code(done.studio.attachMediaJob(done.ctx, done.jobId, attach))).toBe("CONFLICT");
   });
 
   it("is limited to owners and admins and to the job's own tenant", async () => {

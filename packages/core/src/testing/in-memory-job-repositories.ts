@@ -138,6 +138,9 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         rows.map((row) => row.mediaJobs),
         input,
         clock.now(),
+        stages
+          .filter(ctx, () => true)
+          .some((s) => s.mediaJobs?.some((r) => r.job?.id === input.job.id) ?? false),
       );
       const row = rows[rowIndex]!;
       stages.update(ctx, row.id, {

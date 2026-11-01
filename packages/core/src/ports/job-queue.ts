@@ -42,16 +42,19 @@ export interface AttachMediaJobInput {
 export const PROVIDER_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 /**
- * Promote the newest `submitting` record of `idempotencyKey` to `submitted` with the operator's job id.
+ * Promote the newest `submitting` (or mistakenly `submitted`) record of `idempotencyKey` to `submitted`
+ * with the operator's job id.
  * `rows` holds the media job records of every stored attempt of the stage; the record that wins is the one
  * the stage journal would read (newest `updatedAt`). Returns the row index and the replacement record.
- * Anything else (no record, a record that already moved on, a non-Atlas job) is refused, so a mistaken
- * call can never turn a collected or released record back into a live one.
+ * Anything else (no record, a collected or released record, a non-Atlas job, an id another record
+ * already holds, which would bill one upstream charge twice) is refused.
  */
 export function promoteSubmittingRecord(
   rows: readonly (readonly MediaJobRecord[] | undefined)[],
   input: AttachMediaJobInput,
   now: Date,
+  /** True when another record of the workspace already holds `input.job.id`. */
+  idInUse: boolean,
 ): { rowIndex: number; record: MediaJobRecord } {
   if (input.job.provider !== "atlas") {
     throw new StudixError("VALIDATION", "only an Atlas job can be attached to a submitting record", {
@@ -74,8 +77,15 @@ export function promoteSubmittingRecord(
     });
   }
   const { record } = found;
-  if (record.state !== "submitting" || !record.model.startsWith("atlas:")) {
-    throw new StudixError("CONFLICT", "the media job is not an Atlas submission waiting for a job id", {
+  if (idInUse) {
+    throw new StudixError("CONFLICT", "that job id is already attached to a media job in this workspace", {
+      retryable: false,
+    });
+  }
+  // A `submitted` record is accepted too: a mistyped id leaves it failing to collect, and the job is failed
+  // (no worker holds it), so the operator must be able to correct it instead of paying for a new job.
+  if ((record.state !== "submitting" && record.state !== "submitted") || !record.model.startsWith("atlas:")) {
+    throw new StudixError("CONFLICT", "the media job is not an Atlas submission that can take a job id", {
       retryable: false,
       details: { state: record.state, model: record.model },
     });
@@ -107,7 +117,7 @@ export interface JobQueue {
    * job row, only while the job is `failed` (no worker holds it), it moves that record to `submitted` with
    * the id the operator found, so a {@link JobQueue.retry} collects the paid prediction instead of
    * refusing to submit. NOT_FOUND without such a record, CONFLICT when the job is not `failed` or the
-   * record already left `submitting`.
+   * record is collected or released, or the id is already attached elsewhere.
    */
   attachMediaJob(ctx: TenantContext, jobId: string, input: AttachMediaJobInput): Promise<Job>;
 }

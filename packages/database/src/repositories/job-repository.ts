@@ -329,6 +329,19 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           stageRows.map((s) => s.mediaJobs ?? undefined),
           input,
           clock.now(),
+          (
+            await tx
+              .select({ id: stages.id })
+              .from(stages)
+              .where(
+                scoped(
+                  stages,
+                  ctx,
+                  sql`${stages.mediaJobs} @> ${JSON.stringify([{ job: { id: input.job.id } }])}::jsonb`,
+                ),
+              )
+              .limit(1)
+          ).length > 0,
         );
         const target = stageRows[rowIndex]!;
         await tx

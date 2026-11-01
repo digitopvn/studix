@@ -86,7 +86,20 @@ describe("Postgres job queue", () => {
       { ...stuck, state: "submitted", job: input.job, updatedAt: expect.any(String) },
     ]);
     expect(stage!.mediaJobs![0]!.updatedAt > stuck.updatedAt).toBe(true);
-    await expect(queue.attachMediaJob(ctx, job.id, input)).rejects.toMatchObject({ code: "CONFLICT" });
+    // One upstream charge, one use: another job of the workspace cannot take the same prediction.
+    const second = await queue.enqueue(ctx, enqueueInput());
+    await jobs.upsertStage(ctx, {
+      jobId: second.job.id,
+      name: "upscale",
+      attempt: 1,
+      status: "failed",
+      mediaJobs: [{ ...stuck }],
+    });
+    await jobs.update(ctx, second.job.id, { status: "failed" });
+    await expect(queue.attachMediaJob(ctx, second.job.id, input)).rejects.toMatchObject({ code: "CONFLICT" });
+    // A mistyped id can still be corrected on the first job while it is failed.
+    await queue.attachMediaJob(ctx, job.id, { ...input, job: { provider: "atlas", id: "pred_2" } });
+    expect((await jobs.listStages(ctx, job.id))[0]?.mediaJobs?.[0]?.job?.id).toBe("pred_2");
 
     // The retry keeps the promoted record, so the next attempt collects instead of being blocked.
     await queue.retry(ctx, job.id);

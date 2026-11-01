@@ -15,6 +15,7 @@ import {
   type MediaKind,
   type MediaProvider,
   type MediaResumeRequest,
+  PROVIDER_JOB_ID,
   type ProviderJobRef,
   type TenantContext,
 } from "@studix/core";
@@ -96,7 +97,7 @@ const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 /** Time the CLI gets beyond its own wait timeout to download outputs and print the envelope. */
 const RUN_MARGIN_MS = 120_000;
-const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const JOB_ID = PROVIDER_JOB_ID;
 const CACHE_DIR = ".multix-cache";
 
 /** Variables the child may see besides provider keys. Everything else in the worker env stays out. */
