@@ -122,6 +122,29 @@ describe("stage media journal", () => {
     expect(h.queue.complete).toHaveBeenCalledOnce();
   });
 
+  it("lets only one of two racing intents claim a key, and a later attempt claim a failed one", async () => {
+    const outcomes: boolean[] = [];
+    const intent = (attempt: number, at: string): MediaJobRecord => {
+      const { job: _job, ...rest } = record("submitting", at);
+      return { ...rest, attempt };
+    };
+    const h = harness(async (s) => {
+      outcomes.push(
+        ...(await Promise.all([
+          s.mediaJournal.claim(ctx, intent(1, "2026-01-01T00:00:01.000Z")),
+          s.mediaJournal.claim(ctx, intent(1, "2026-01-01T00:00:01.000Z")),
+        ])),
+      );
+      await s.mediaJournal.put(ctx, { ...record("failed", "2026-01-01T00:00:02.000Z"), attempt: 1 });
+      outcomes.push(await s.mediaJournal.claim(ctx, intent(1, "2026-01-01T00:00:03.000Z")));
+      outcomes.push(await s.mediaJournal.claim(ctx, intent(2, "2026-01-01T00:00:03.000Z")));
+    });
+    await h.run(1);
+    expect(outcomes).toEqual([true, false, false, true]);
+    const stored = await h.jobs.listStages(ctx, "job_1");
+    expect(stored[0]?.mediaJobs?.[0]).toMatchObject({ state: "submitting", attempt: 2 });
+  });
+
   it("keeps another workspace out of the journal", async () => {
     const other: TenantContext = { ...ctx, workspaceId: "ws_2" };
     const outcomes: unknown[] = [];
@@ -131,8 +154,13 @@ describe("stage media journal", () => {
       outcomes.push(
         await s.mediaJournal.put(other, record("completed", "2026-01-01T00:00:02.000Z")).catch((e) => e.code),
       );
+      outcomes.push(
+        await s.mediaJournal
+          .claim(other, { ...record("submitting", "2026-01-01T00:00:03.000Z"), idempotencyKey: "k2" })
+          .catch((e) => e.code),
+      );
     });
     await h.run(1);
-    expect(outcomes).toEqual([undefined, "FORBIDDEN"]);
+    expect(outcomes).toEqual([undefined, "FORBIDDEN", "FORBIDDEN"]);
   });
 });
