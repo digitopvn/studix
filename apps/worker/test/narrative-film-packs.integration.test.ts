@@ -385,6 +385,25 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(after?.currentVersionId).toBe(project.currentVersionId);
   });
 
+  it("bills the designs it paid for when publishing the G1 board fails afterwards", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-designs-fail-${pack}`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    // The project is finished while the designs are being drawn, so publishing their board is refused.
+    await db.current.repos.projects.update(ctx, project.id, { status: "published" });
+
+    expect(await world.runOnce(job.id)).toBe("failed");
+    expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({
+      status: "failed",
+      error: { code: "CONFLICT" },
+    });
+    expect(world.requests).toHaveLength(3);
+    const usage = (await world.repos.usage.list(ctx, { jobId: job.id, limit: 200 })).items;
+    expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(3);
+  });
+
   it("stops at G0 and G1 for a person, then storyboards on the approved sheets, then renders on an approved storyboard", async () => {
     const world = createWorld();
     const { ctx, project } = await newFilm(`film-${pack}`, pack);
