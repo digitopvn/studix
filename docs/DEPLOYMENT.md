@@ -161,7 +161,7 @@ Cloudflare secrets, local `.env`), never baked into the image.
 The worker checks generated sound effects for a human voice when
 `STUDIX_SPEECH_GATE=true`. That needs the optional QA image built with
 `--build-arg STUDIX_QA_EXTRAS=speech`; with the flag on and the default image,
-the film score stage fails `UNAVAILABLE` instead of mixing unchecked effects.
+the worker refuses to start (`UNAVAILABLE`) instead of paying for effects it cannot check.
 See [QA.md](QA.md#chặn-tiếng-nói-trong-sfx).
 
 ## Local
