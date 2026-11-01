@@ -1205,73 +1205,76 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         },
         (m) => [m.usage],
       );
-      const next = new Map<string, Shot>();
-      const assets: AssetRef[] = [];
-      for (const c of clips) {
-        next.set(c.shot.id, {
-          id: c.shot.id,
-          type: "video",
-          startMs: c.still.startMs,
-          durationMs: c.still.durationMs,
-          assetId: c.asset.id,
-          muted: true,
-          fit: "cover",
-        });
-        assets.push(c.asset);
-      }
-      const boards = new Map((film.boards ?? []).map((b) => [b.shotId, b]));
-      const size = filmFrameSize(film.scope);
-      for (const { shot } of scopeShots(film.scope).filter(({ shot }) => !isVideoTier(shot.tier))) {
-        const still = irShot(ir, shot.id);
-        if (still.type !== "image")
-          throw new StudixError("VALIDATION", `Shot ${shot.id} has no keyframe to animate`, {
-            retryable: false,
-          });
-        const weather = (FILM_WEATHER_PRESETS as readonly string[]).includes(shot.state.weather ?? "")
-          ? (shot.state.weather as (typeof FILM_WEATHER_PRESETS)[number])
-          : undefined;
-        const pkg = filmPlateScene({
-          imageAssetId: still.assetId,
-          durationMs: shot.durationMs,
-          fps: FILM_FPS,
-          ...size,
-          push: shot.tier === "T0" ? 1.1 : 1.05,
-          ...(boards.get(shot.id)?.focus ? { focus: boards.get(shot.id)?.focus } : {}),
-          ...(weather ? { weather } : {}),
-          lang: film.scope.language,
-        });
-        const file = join(workDir, `${shot.id}.scene.json`);
-        await writeFile(file, JSON.stringify(pkg));
-        const { sha256 } = await sha256File(file);
-        const stored = await storage.put(
-          s.ctx,
-          `generated/${s.job.id}/scenes/${shot.id}.json`,
-          { filePath: file },
-          { contentType: FILM_SCENE_MIME, sha256 },
-        );
-        const asset: AssetRef = {
-          id: `${shot.id}-scene`.slice(0, 64),
-          kind: "code",
-          storageKey: stored.key,
-          sha256: stored.sha256,
-          mime: FILM_SCENE_MIME,
-          bytes: stored.bytes,
-          assetVersionId: `asv_${stored.sha256.slice(0, 24)}`,
-          provenance: { source: "generated", provider: "studix-film-engine" },
-        };
-        assets.push(asset);
-        next.set(shot.id, {
-          id: shot.id,
-          type: "composition",
-          startMs: still.startMs,
-          durationMs: still.durationMs,
-          assetId: asset.id,
-        });
-        s.reportProgress(++done / total);
-      }
-      await rm(workDir, { recursive: true, force: true });
       const usage = clips.map((c) => c.usage);
-      return { output: { ir: await billedOnFailure(usage, () => replaceShots(ir, next, assets)) }, usage };
+      const nextIr = await billedOnFailure(usage, async () => {
+        const next = new Map<string, Shot>();
+        const assets: AssetRef[] = [];
+        for (const c of clips) {
+          next.set(c.shot.id, {
+            id: c.shot.id,
+            type: "video",
+            startMs: c.still.startMs,
+            durationMs: c.still.durationMs,
+            assetId: c.asset.id,
+            muted: true,
+            fit: "cover",
+          });
+          assets.push(c.asset);
+        }
+        const boards = new Map((film.boards ?? []).map((b) => [b.shotId, b]));
+        const size = filmFrameSize(film.scope);
+        for (const { shot } of scopeShots(film.scope).filter(({ shot }) => !isVideoTier(shot.tier))) {
+          const still = irShot(ir, shot.id);
+          if (still.type !== "image")
+            throw new StudixError("VALIDATION", `Shot ${shot.id} has no keyframe to animate`, {
+              retryable: false,
+            });
+          const weather = (FILM_WEATHER_PRESETS as readonly string[]).includes(shot.state.weather ?? "")
+            ? (shot.state.weather as (typeof FILM_WEATHER_PRESETS)[number])
+            : undefined;
+          const pkg = filmPlateScene({
+            imageAssetId: still.assetId,
+            durationMs: shot.durationMs,
+            fps: FILM_FPS,
+            ...size,
+            push: shot.tier === "T0" ? 1.1 : 1.05,
+            ...(boards.get(shot.id)?.focus ? { focus: boards.get(shot.id)?.focus } : {}),
+            ...(weather ? { weather } : {}),
+            lang: film.scope.language,
+          });
+          const file = join(workDir, `${shot.id}.scene.json`);
+          await writeFile(file, JSON.stringify(pkg));
+          const { sha256 } = await sha256File(file);
+          const stored = await storage.put(
+            s.ctx,
+            `generated/${s.job.id}/scenes/${shot.id}.json`,
+            { filePath: file },
+            { contentType: FILM_SCENE_MIME, sha256 },
+          );
+          const asset: AssetRef = {
+            id: `${shot.id}-scene`.slice(0, 64),
+            kind: "code",
+            storageKey: stored.key,
+            sha256: stored.sha256,
+            mime: FILM_SCENE_MIME,
+            bytes: stored.bytes,
+            assetVersionId: `asv_${stored.sha256.slice(0, 24)}`,
+            provenance: { source: "generated", provider: "studix-film-engine" },
+          };
+          assets.push(asset);
+          next.set(shot.id, {
+            id: shot.id,
+            type: "composition",
+            startMs: still.startMs,
+            durationMs: still.durationMs,
+            assetId: asset.id,
+          });
+          s.reportProgress(++done / total);
+        }
+        await rm(workDir, { recursive: true, force: true });
+        return replaceShots(ir, next, assets);
+      });
+      return { output: { ir: nextIr }, usage };
     },
   };
 
