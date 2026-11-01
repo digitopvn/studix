@@ -2,7 +2,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProjectStatus } from "@studix/core";
 import { FILM_SCENE_MIME, FILM_WEATHER_PRESETS, filmPlateScene } from "@studix/renderers/film-scene";
-import { StudixError } from "@studix/shared";
+import { StudixError, toStudixError } from "@studix/shared";
 import {
   type AssetRef,
   type AudioTrack,
@@ -242,9 +242,13 @@ async function generateSpeechFreeSfx(
     try {
       made = await generateStoredMedia(s, stage, retry > 0 ? { ...request, retry } : request, clean);
     } catch (err) {
-      if (err instanceof StageFailedAfterSpend && spent.length > 0)
-        throw new StageFailedAfterSpend(err.error, [...spent, ...err.usage]);
-      throw err;
+      if (spent.length === 0) throw err;
+      // Whatever stopped this take (cancel, deadline, provider error), the first take was already paid.
+      const failed = err instanceof StageFailedAfterSpend;
+      throw new StageFailedAfterSpend(failed ? err.error : toStudixError(err), [
+        ...spent,
+        ...(failed ? err.usage : []),
+      ]);
     }
     spent.push(made.usage);
     if (!("rejected" in made)) return { ...made, spent };
@@ -1420,8 +1424,18 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
     requiresApprovedStoryboard: true,
     knowledge: config.knowledge.sound,
     cacheKey: (s) =>
-      stageCacheKey(n.score, config.version, { ir: irOf(s), media: s.services.media?.id ?? null }),
-    estimateCostCents: (s) => estimateOf(s, scoreRequests(s)),
+      stageCacheKey(n.score, config.version, {
+        ir: irOf(s),
+        media: s.services.media?.id ?? null,
+        // An output cached without the speech check must not answer a job that has it on.
+        speechGate: s.services.speech ? SPEECH_FREE_SCOPE : null,
+      }),
+    estimateCostCents: (s) => {
+      const planned = scoreRequests(s);
+      // With the speech check on, a voiced effect is generated once more: budget for the worst case.
+      const retakes = s.services.speech ? planned.filter((p) => p.role === "sfx") : [];
+      return estimateOf(s, [...planned, ...retakes]);
+    },
     async run(s) {
       const ir = irOf(s);
       const workDir = await stageWorkDir(s, n.score);

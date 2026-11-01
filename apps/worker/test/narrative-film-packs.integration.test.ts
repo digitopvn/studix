@@ -854,6 +854,23 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(paid).toHaveLength(world.requests.length);
   });
 
+  it("still bills the first take when the second take fails with a plain error", async () => {
+    const wind = "soft wind over a rooftop";
+    const world = createWorld({
+      voiced: (prompt, take) => prompt === wind && take === 1,
+      refuse: (r) => r.prompt === wind && r.idempotencyKey.endsWith(":r1"),
+    });
+    const { ctx, render } = await queueRender(world, `film-${pack}-second-take-fails`);
+
+    expect(await world.runOnce(render.id)).toBe("failed");
+    const firstTake = world.requests.find((r) => r.prompt === wind && !r.idempotencyKey.endsWith(":r1"));
+    expect(firstTake).toBeDefined();
+    const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
+    const paid = usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration);
+    // Every call the provider answered is in the ledger; the refused second take cost nothing and has no line.
+    expect(paid).toHaveLength(world.requests.length - 1);
+  });
+
   it("does not probe effects when the worker has no speech probe", async () => {
     const world = createWorld();
     const { render } = await queueRender(world, `film-${pack}-no-probe`);
