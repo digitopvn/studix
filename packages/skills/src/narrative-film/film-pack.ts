@@ -758,36 +758,39 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         },
         (m) => [m.usage],
       );
-      const sheets = new Map(
-        made.filter((m) => m.target.type === "character").map((m) => [m.target.id, m.asset]),
-      );
-      const sets = new Map(made.filter((m) => m.target.type === "set").map((m) => [m.target.id, m.asset]));
-      // Sheets are candidates until a person signs G1; the keyframe stage promotes them.
-      const production: FilmProduction = {
-        ...film.production,
-        characters: film.production.characters.map((bible) => {
-          const sheet = sheets.get(bible.characterId);
-          return sheet
-            ? {
-                ...bible,
-                references: [
-                  ...bible.references.filter((r) => r.id !== sheet.id),
-                  {
-                    id: sheet.id,
-                    assetId: sheet.id,
-                    view: "turnaround" as const,
-                    status: "candidate" as const,
-                    version: bible.identityVersion,
-                  },
-                ],
-              }
-            : bible;
-        }),
-      };
-      const ir = designBoardIr(scope, sheets, sets, { film: { ...film, production } });
-      const reviewVersionId = await publishReviewVersion(s, ir, "g1");
-      await rm(workDir, { recursive: true, force: true });
-      return { output: { ir, reviewVersionId }, usage: made.map((m) => m.usage) };
+      const usage = made.map((m) => m.usage);
+      return billedOnFailure(usage, async () => {
+        const sheets = new Map(
+          made.filter((m) => m.target.type === "character").map((m) => [m.target.id, m.asset]),
+        );
+        const sets = new Map(made.filter((m) => m.target.type === "set").map((m) => [m.target.id, m.asset]));
+        // Sheets are candidates until a person signs G1; the keyframe stage promotes them.
+        const production: FilmProduction = {
+          ...film.production,
+          characters: film.production.characters.map((bible) => {
+            const sheet = sheets.get(bible.characterId);
+            return sheet
+              ? {
+                  ...bible,
+                  references: [
+                    ...bible.references.filter((r) => r.id !== sheet.id),
+                    {
+                      id: sheet.id,
+                      assetId: sheet.id,
+                      view: "turnaround" as const,
+                      status: "candidate" as const,
+                      version: bible.identityVersion,
+                    },
+                  ],
+                }
+              : bible;
+          }),
+        };
+        const ir = designBoardIr(scope, sheets, sets, { film: { ...film, production } });
+        const reviewVersionId = await publishReviewVersion(s, ir, "g1");
+        await rm(workDir, { recursive: true, force: true });
+        return { output: { ir, reviewVersionId }, usage };
+      });
     },
   };
 
@@ -877,25 +880,36 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         },
         (m) => [m.usage],
       );
-      const production: FilmProduction = {
-        ...promoted,
-        shots: promoted.shots.map((plan) => {
-          const sheet = made.find((m) => m.shot.id === plan.shotId)?.sheet;
-          return sheet ? { ...plan, conditioningRefs: [sheet.id] } : plan;
-        }),
-      };
-      const designs = ir.assets.filter((a) => a.kind === "image");
-      const metadata: FilmMetadata = { ...film, production, boards: made.map((m) => m.board) };
-      const next = storyboardIr(
-        film.scope,
-        new Map(made.map((m) => [m.shot.id, m.asset])),
-        designs,
-        metadata,
-      );
-      const issues = filmProductionIssues(production, storyboardFromScope(film.scope, next.assets), "design");
-      if (issues.length > 0)
-        failIssues("The storyboard breaks continuity", issues, "Submit a new job to redraw the storyboard.");
-      return { output: { ir: next }, usage: made.map((m) => m.usage) };
+      const usage = made.map((m) => m.usage);
+      return billedOnFailure(usage, async () => {
+        const production: FilmProduction = {
+          ...promoted,
+          shots: promoted.shots.map((plan) => {
+            const sheet = made.find((m) => m.shot.id === plan.shotId)?.sheet;
+            return sheet ? { ...plan, conditioningRefs: [sheet.id] } : plan;
+          }),
+        };
+        const designs = ir.assets.filter((a) => a.kind === "image");
+        const metadata: FilmMetadata = { ...film, production, boards: made.map((m) => m.board) };
+        const next = storyboardIr(
+          film.scope,
+          new Map(made.map((m) => [m.shot.id, m.asset])),
+          designs,
+          metadata,
+        );
+        const issues = filmProductionIssues(
+          production,
+          storyboardFromScope(film.scope, next.assets),
+          "design",
+        );
+        if (issues.length > 0)
+          failIssues(
+            "The storyboard breaks continuity",
+            issues,
+            "Submit a new job to redraw the storyboard.",
+          );
+        return { output: { ir: next }, usage };
+      });
     },
   };
 
@@ -1077,64 +1091,67 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         },
         (m) => [m.usage],
       );
-      const tracks: AudioTrack[] = [];
-      const cues: Captions["cues"] = [];
-      const cursor = new Map<string, number>();
-      const syncedShots = new Set(
-        film.production.shots.filter((p) => p.lipsync === "dedicated").map((p) => p.shotId),
-      );
-      const master = new Map<string, FilmProduction["dialogue"][number]>();
-      for (const m of made) {
-        const span = starts.get(m.cue.shotId);
-        if (!span) throw new StudixError("VALIDATION", `No shot "${m.cue.shotId}" for line ${m.cue.id}`);
-        const shotEnd = span.startMs + span.durationMs;
-        // A lip-synced line starts with its shot: the sync pass drives the mouth from the clip's first frame.
-        const synced = syncedShots.has(m.cue.shotId);
-        const at = cursor.get(m.cue.shotId) ?? span.startMs + (synced ? 0 : LINE_LEAD_MS);
-        const recorded = m.asset.durationMs ?? Math.ceil((m.cue.text.split(/\s+/).length / 3) * 1000);
-        const length = Math.max(1, Math.min(recorded, shotEnd - at));
-        cursor.set(m.cue.shotId, at + length + LINE_GAP_MS);
-        tracks.push({
-          id: `${m.cue.id}-dx`.slice(0, 64),
-          kind: "dialogue",
-          assetId: m.asset.id,
-          startMs: at,
-          durationMs: length,
-          volume: 1,
-        });
-        cues.push({ startMs: at, endMs: at + length, text: m.cue.text.slice(0, 300) });
-        master.set(m.cue.id, {
-          ...m.cue,
-          status: "master",
-          audioAssetId: m.asset.id,
-          alignment: { words: alignWords(m.cue.text, recorded) },
-        });
-      }
-      const production: FilmProduction = {
-        ...film.production,
-        dialogue: film.production.dialogue.map((c) => master.get(c.id) ?? c),
-      };
-      const assets = made.map((m) => m.asset);
-      const next = withFilm(
-        {
-          ...ir,
-          assets: [...ir.assets.filter((a) => !assets.some((b) => b.id === a.id)), ...assets],
-          audio: [...(ir.audio ?? []).filter((t) => t.kind !== "dialogue"), ...tracks],
-          ...(cues.length > 0
-            ? {
-                captions: {
-                  language: film.scope.language,
-                  mode: "burned" as const,
-                  position: "bottom" as const,
-                  cues,
-                },
-              }
-            : {}),
-        },
-        { ...film, production },
-      );
-      await rm(workDir, { recursive: true, force: true });
-      return { output: { ir: next }, usage: made.map((m) => m.usage) };
+      const usage = made.map((m) => m.usage);
+      return billedOnFailure(usage, async () => {
+        const tracks: AudioTrack[] = [];
+        const cues: Captions["cues"] = [];
+        const cursor = new Map<string, number>();
+        const syncedShots = new Set(
+          film.production.shots.filter((p) => p.lipsync === "dedicated").map((p) => p.shotId),
+        );
+        const master = new Map<string, FilmProduction["dialogue"][number]>();
+        for (const m of made) {
+          const span = starts.get(m.cue.shotId);
+          if (!span) throw new StudixError("VALIDATION", `No shot "${m.cue.shotId}" for line ${m.cue.id}`);
+          const shotEnd = span.startMs + span.durationMs;
+          // A lip-synced line starts with its shot: the sync pass drives the mouth from the clip's first frame.
+          const synced = syncedShots.has(m.cue.shotId);
+          const at = cursor.get(m.cue.shotId) ?? span.startMs + (synced ? 0 : LINE_LEAD_MS);
+          const recorded = m.asset.durationMs ?? Math.ceil((m.cue.text.split(/\s+/).length / 3) * 1000);
+          const length = Math.max(1, Math.min(recorded, shotEnd - at));
+          cursor.set(m.cue.shotId, at + length + LINE_GAP_MS);
+          tracks.push({
+            id: `${m.cue.id}-dx`.slice(0, 64),
+            kind: "dialogue",
+            assetId: m.asset.id,
+            startMs: at,
+            durationMs: length,
+            volume: 1,
+          });
+          cues.push({ startMs: at, endMs: at + length, text: m.cue.text.slice(0, 300) });
+          master.set(m.cue.id, {
+            ...m.cue,
+            status: "master",
+            audioAssetId: m.asset.id,
+            alignment: { words: alignWords(m.cue.text, recorded) },
+          });
+        }
+        const production: FilmProduction = {
+          ...film.production,
+          dialogue: film.production.dialogue.map((c) => master.get(c.id) ?? c),
+        };
+        const assets = made.map((m) => m.asset);
+        const next = withFilm(
+          {
+            ...ir,
+            assets: [...ir.assets.filter((a) => !assets.some((b) => b.id === a.id)), ...assets],
+            audio: [...(ir.audio ?? []).filter((t) => t.kind !== "dialogue"), ...tracks],
+            ...(cues.length > 0
+              ? {
+                  captions: {
+                    language: film.scope.language,
+                    mode: "burned" as const,
+                    position: "bottom" as const,
+                    cues,
+                  },
+                }
+              : {}),
+          },
+          { ...film, production },
+        );
+        await rm(workDir, { recursive: true, force: true });
+        return { output: { ir: next }, usage };
+      });
     },
   };
 
@@ -1205,73 +1222,75 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         },
         (m) => [m.usage],
       );
-      const next = new Map<string, Shot>();
-      const assets: AssetRef[] = [];
-      for (const c of clips) {
-        next.set(c.shot.id, {
-          id: c.shot.id,
-          type: "video",
-          startMs: c.still.startMs,
-          durationMs: c.still.durationMs,
-          assetId: c.asset.id,
-          muted: true,
-          fit: "cover",
-        });
-        assets.push(c.asset);
-      }
-      const boards = new Map((film.boards ?? []).map((b) => [b.shotId, b]));
-      const size = filmFrameSize(film.scope);
-      for (const { shot } of scopeShots(film.scope).filter(({ shot }) => !isVideoTier(shot.tier))) {
-        const still = irShot(ir, shot.id);
-        if (still.type !== "image")
-          throw new StudixError("VALIDATION", `Shot ${shot.id} has no keyframe to animate`, {
-            retryable: false,
-          });
-        const weather = (FILM_WEATHER_PRESETS as readonly string[]).includes(shot.state.weather ?? "")
-          ? (shot.state.weather as (typeof FILM_WEATHER_PRESETS)[number])
-          : undefined;
-        const pkg = filmPlateScene({
-          imageAssetId: still.assetId,
-          durationMs: shot.durationMs,
-          fps: FILM_FPS,
-          ...size,
-          push: shot.tier === "T0" ? 1.1 : 1.05,
-          ...(boards.get(shot.id)?.focus ? { focus: boards.get(shot.id)?.focus } : {}),
-          ...(weather ? { weather } : {}),
-          lang: film.scope.language,
-        });
-        const file = join(workDir, `${shot.id}.scene.json`);
-        await writeFile(file, JSON.stringify(pkg));
-        const { sha256 } = await sha256File(file);
-        const stored = await storage.put(
-          s.ctx,
-          `generated/${s.job.id}/scenes/${shot.id}.json`,
-          { filePath: file },
-          { contentType: FILM_SCENE_MIME, sha256 },
-        );
-        const asset: AssetRef = {
-          id: `${shot.id}-scene`.slice(0, 64),
-          kind: "code",
-          storageKey: stored.key,
-          sha256: stored.sha256,
-          mime: FILM_SCENE_MIME,
-          bytes: stored.bytes,
-          assetVersionId: `asv_${stored.sha256.slice(0, 24)}`,
-          provenance: { source: "generated", provider: "studix-film-engine" },
-        };
-        assets.push(asset);
-        next.set(shot.id, {
-          id: shot.id,
-          type: "composition",
-          startMs: still.startMs,
-          durationMs: still.durationMs,
-          assetId: asset.id,
-        });
-        s.reportProgress(++done / total);
-      }
-      await rm(workDir, { recursive: true, force: true });
       const usage = clips.map((c) => c.usage);
-      return { output: { ir: await billedOnFailure(usage, () => replaceShots(ir, next, assets)) }, usage };
+      return billedOnFailure(usage, async () => {
+        const next = new Map<string, Shot>();
+        const assets: AssetRef[] = [];
+        for (const c of clips) {
+          next.set(c.shot.id, {
+            id: c.shot.id,
+            type: "video",
+            startMs: c.still.startMs,
+            durationMs: c.still.durationMs,
+            assetId: c.asset.id,
+            muted: true,
+            fit: "cover",
+          });
+          assets.push(c.asset);
+        }
+        const boards = new Map((film.boards ?? []).map((b) => [b.shotId, b]));
+        const size = filmFrameSize(film.scope);
+        for (const { shot } of scopeShots(film.scope).filter(({ shot }) => !isVideoTier(shot.tier))) {
+          const still = irShot(ir, shot.id);
+          if (still.type !== "image")
+            throw new StudixError("VALIDATION", `Shot ${shot.id} has no keyframe to animate`, {
+              retryable: false,
+            });
+          const weather = (FILM_WEATHER_PRESETS as readonly string[]).includes(shot.state.weather ?? "")
+            ? (shot.state.weather as (typeof FILM_WEATHER_PRESETS)[number])
+            : undefined;
+          const pkg = filmPlateScene({
+            imageAssetId: still.assetId,
+            durationMs: shot.durationMs,
+            fps: FILM_FPS,
+            ...size,
+            push: shot.tier === "T0" ? 1.1 : 1.05,
+            ...(boards.get(shot.id)?.focus ? { focus: boards.get(shot.id)?.focus } : {}),
+            ...(weather ? { weather } : {}),
+            lang: film.scope.language,
+          });
+          const file = join(workDir, `${shot.id}.scene.json`);
+          await writeFile(file, JSON.stringify(pkg));
+          const { sha256 } = await sha256File(file);
+          const stored = await storage.put(
+            s.ctx,
+            `generated/${s.job.id}/scenes/${shot.id}.json`,
+            { filePath: file },
+            { contentType: FILM_SCENE_MIME, sha256 },
+          );
+          const asset: AssetRef = {
+            id: `${shot.id}-scene`.slice(0, 64),
+            kind: "code",
+            storageKey: stored.key,
+            sha256: stored.sha256,
+            mime: FILM_SCENE_MIME,
+            bytes: stored.bytes,
+            assetVersionId: `asv_${stored.sha256.slice(0, 24)}`,
+            provenance: { source: "generated", provider: "studix-film-engine" },
+          };
+          assets.push(asset);
+          next.set(shot.id, {
+            id: shot.id,
+            type: "composition",
+            startMs: still.startMs,
+            durationMs: still.durationMs,
+            assetId: asset.id,
+          });
+          s.reportProgress(++done / total);
+        }
+        await rm(workDir, { recursive: true, force: true });
+        return { output: { ir: replaceShots(ir, next, assets) }, usage };
+      });
     },
   };
 
@@ -1341,23 +1360,26 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
         },
         (m) => [m.usage],
       );
-      const next = new Map<string, Shot>(
-        made.map((m) => [
-          m.shot.id,
-          { ...(m.shot as Extract<Shot, { type: "video" }>), assetId: m.asset.id, muted: true },
-        ]),
-      );
-      return {
-        output: {
-          ir: replaceShots(
-            ir,
-            next,
-            made.map((m) => m.asset),
-          ),
-          lipsynced: made.length,
-        },
-        usage: made.map((m) => m.usage),
-      };
+      const usage = made.map((m) => m.usage);
+      return billedOnFailure(usage, async () => {
+        const next = new Map<string, Shot>(
+          made.map((m) => [
+            m.shot.id,
+            { ...(m.shot as Extract<Shot, { type: "video" }>), assetId: m.asset.id, muted: true },
+          ]),
+        );
+        return {
+          output: {
+            ir: replaceShots(
+              ir,
+              next,
+              made.map((m) => m.asset),
+            ),
+            lipsynced: made.length,
+          },
+          usage,
+        };
+      });
     },
   };
 
