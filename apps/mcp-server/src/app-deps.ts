@@ -1,11 +1,13 @@
-import type { ApiKeyService } from "@studix/auth";
+import type { ApiKeyService, ModelPreferenceService, ProviderConnectionService } from "@studix/auth";
 import type {
   ActivityRepository,
+  AgentHandoffService,
   JobRepository,
   RenderRepository,
   StudioService,
   WorkspaceRepository,
 } from "@studix/core";
+import type { RateLimitRepository } from "@studix/database";
 import type { ActivityRecorder } from "@studix/observability";
 import type { Logger } from "@studix/shared";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
@@ -51,6 +53,12 @@ export interface AppDeps {
   storage?: ArtifactUrlSigner;
   /** Workspace connectors (MCP-in-MCP); without it the connector API answers UNAVAILABLE. */
   connectors?: ConnectorAdmin;
+  /** Outbound AI provider credentials; without it the provider API answers UNAVAILABLE. */
+  providers?: ProviderConnectionService;
+  /** Per-stage model choices for the Pi runtime; without it the model API answers UNAVAILABLE. */
+  modelPreferences?: ModelPreferenceService;
+  /** STUDIX_CLAUDE_PLANNER: jobs may select the Claude planner. */
+  claudePlanner?: boolean;
   /** Meta-tool registration hook from the gateway; without it the meta-tools are not listed. */
   metaTools?: RegisterMetaTools;
   /** Activity/trace recorder for MCP and API mutations (best effort). */
@@ -59,6 +67,8 @@ export interface AppDeps {
   readiness?: ReadinessCheck[];
   /** Workflow templates listed by `studix_inspect`. */
   skills?: SkillSummary[];
+  /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
+  agentHandoffs?: AgentHandoffService;
 
   /** Built dashboard directory; when missing, browser navigations get a 503 page. */
   dashboardDist?: string;
@@ -66,7 +76,14 @@ export interface AppDeps {
   mediaOrigins?: string[];
   /** Express `trust proxy` setting (hop count) so rate limits see the client IP behind an ingress. */
   trustProxy?: number | boolean;
-  rateLimits?: { auth?: TokenBucketOptions; mcp?: TokenBucketOptions; api?: TokenBucketOptions };
+  /** Shared token-bucket store so limits hold across replicas; without it each process keeps its own buckets. */
+  rateLimitStore?: RateLimitRepository;
+  rateLimits?: {
+    auth?: TokenBucketOptions;
+    mcpIp?: TokenBucketOptions;
+    mcp?: TokenBucketOptions;
+    api?: TokenBucketOptions;
+  };
 }
 
 export const SERVER_NAME = "studix";

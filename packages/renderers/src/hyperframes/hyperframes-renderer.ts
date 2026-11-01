@@ -1,10 +1,20 @@
 import { mkdir, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import type { RendererAdapter, RendererSupport, RenderOptions, RenderOutput } from "@studix/core";
+import type {
+  RenderDelivery,
+  RendererAdapter,
+  RendererSupport,
+  RenderOptions,
+  RenderOutput,
+} from "@studix/core";
 import { createLogger, type Logger, StudixError, toStudixError } from "@studix/shared";
 import { type RenderSpec, renderDimensions, type VideoIR } from "@studix/video-ir";
-import { finishMp4 } from "../ffmpeg/ffmpeg-finish.ts";
+import { type AudioSourceInfo, mixAudio, planAudioClips } from "../ffmpeg/audio-mix.ts";
+import { type ExtraDelivery, type FinishedFile, finishDeliveries } from "../ffmpeg/ffmpeg-finish.ts";
 import { FfmpegProbe, probeMismatches } from "../ffmpeg/ffmpeg-probe.ts";
+import type { GradeLook } from "../ffmpeg/grade.ts";
+import { normalizeLoudness } from "../ffmpeg/loudness.ts";
+import { hasCompositionShots, renderFilmCompositions } from "../film-engine/film-composition-render.ts";
 import { buildComposition, writeComposition } from "./compile-composition.ts";
 import { hyperframesSupport } from "./hyperframes-support.ts";
 import { renderWithProducer } from "./producer-render.ts";
@@ -17,10 +27,32 @@ export interface HyperFramesRendererOptions {
   /** Parallel capture workers; defaults to the producer's automatic sizing. */
   workers?: number;
   logger?: Logger;
+  /** Finish defaults; a render may override them with HyperFramesRenderOptions.finish. */
+  finish?: FinishSpec;
+}
+
+/**
+ * Finish choices the IR and RenderSpec do not carry yet (local adapter type until the contract grows
+ * `grade` and `deliveries`).
+ */
+export interface FinishSpec {
+  /** Colour look applied to the master; omitted means the captured picture is stream-copied. */
+  grade?: GradeLook;
+  /**
+   * Extra deliveries besides the master. Defaults to preview + phone for the `final` preset and none for
+   * `preview`; the phone copy is only made for 9:16 IR.
+   */
+  deliveries?: readonly ExtraDelivery[];
+}
+
+export interface HyperFramesRenderOptions extends RenderOptions {
+  finish?: FinishSpec;
 }
 
 /** Progress budget per phase; capture dominates wall time. */
-const PHASES = { compile: 0.05, capture: 0.9, finish: 0.97 } as const;
+const PHASES = { compile: 0.05, capture: 0.85, mix: 0.88, finish: 0.97 } as const;
+/** Share of the progress before the main capture spent capturing film scenes, when the IR has any. */
+const FILM_SHARE = 0.4;
 
 /**
  * RendererAdapter over HyperFrames: compiles the IR into an HTML/GSAP composition at the render size,
@@ -41,8 +73,8 @@ export class HyperFramesRenderer implements RendererAdapter {
     return hyperframesSupport(ir, spec);
   }
 
-  async render(ir: VideoIR, options: RenderOptions): Promise<RenderOutput> {
-    const { spec, workDir, signal } = options;
+  async render(ir: VideoIR, options: HyperFramesRenderOptions): Promise<RenderOutput> {
+    const { spec, workDir, signal, deadlineAt } = options;
     const support = this.supports(ir, spec);
     if (!support.supported) {
       throw new StudixError("VALIDATION", `IR cannot be rendered by HyperFrames: ${support.reasons[0]}`, {
@@ -63,72 +95,174 @@ export class HyperFramesRenderer implements RendererAdapter {
       }
     };
     const cancelled = () => new StudixError("CANCELLED", "Render cancelled");
+    const finish = { ...this.options.finish, ...options.finish };
 
     const { width, height } = renderDimensions(ir.format, spec);
     const fps = spec.fps ?? ir.format.fps;
     const projectDir = join(workDir, "composition");
     const rawPath = join(workDir, "capture.raw.mp4");
-    const outputPath = join(workDir, `render-${spec.preset}.mp4`);
+    const mixPath = join(workDir, "mix.raw.wav");
+    const normalizedMixPath = join(workDir, "mix.norm.wav");
 
     try {
       if (signal?.aborted) throw cancelled();
       report(0, "compile");
       await mkdir(workDir, { recursive: true });
       await rm(projectDir, { recursive: true, force: true });
-      const build = buildComposition(ir, { width, height, assetFiles: options.assetFiles });
+      const quality = spec.preset === "final" ? "high" : "draft";
+      // Composition shots (film scenes) are captured first, each as its own root composition, and come back
+      // as muted video shots; everything after this point renders the spliced IR.
+      let renderIr = ir;
+      let assetFiles = options.assetFiles;
+      let captureFrom: number = PHASES.compile;
+      if (hasCompositionShots(ir)) {
+        report(0, "film");
+        const film = await renderFilmCompositions({
+          ir,
+          assetFiles,
+          workDir,
+          fps,
+          quality,
+          crf: spec.crf,
+          workers: this.options.workers,
+          logger: this.log,
+          signal,
+          deadlineAt,
+          onProgress: (p) => report(p * FILM_SHARE, "film"),
+        });
+        renderIr = film.ir;
+        assetFiles = film.assetFiles;
+        captureFrom = FILM_SHARE;
+      }
+      const build = buildComposition(renderIr, { width, height, assetFiles });
       for (const warning of build.warnings) this.log.warn(warning);
       await writeComposition(build, projectDir);
-      report(PHASES.compile, "capture");
+      report(captureFrom, "capture");
 
       if (signal?.aborted) throw cancelled();
       const { warnings } = await renderWithProducer({
         projectDir,
         outputPath: rawPath,
         fps,
-        quality: spec.preset === "final" ? "high" : "draft",
+        quality,
         crf: spec.crf,
         workers: this.options.workers,
         logger: this.log,
         signal,
-        onProgress: (p, stage) => report(PHASES.compile + p * (PHASES.capture - PHASES.compile), stage),
+        deadlineAt,
+        onProgress: (p, stage) => report(captureFrom + p * (PHASES.capture - captureFrom), stage),
       });
       for (const warning of warnings) this.log.warn("hyperframes render warning", { warning });
 
       if (signal?.aborted) throw cancelled();
-      report(PHASES.capture, "finish");
-      await finishMp4(rawPath, outputPath, {
-        ffmpegPath: this.options.ffmpegPath,
-        addSilentAudio: true,
-        signal,
-      });
+      report(PHASES.capture, "mix");
+      const audio = await this.mix(renderIr, assetFiles, mixPath, normalizedMixPath, signal);
+
+      if (signal?.aborted) throw cancelled();
+      report(PHASES.mix, "finish");
+      const files = await finishDeliveries(
+        {
+          video: rawPath,
+          audio,
+          outDir: workDir,
+          name: `render-${spec.preset}`,
+          durationMs: ir.format.durationMs,
+          aspectRatio: ir.format.aspectRatio,
+          crf: spec.crf,
+          grade: finish.grade,
+          extras: finish.deliveries ?? (spec.preset === "final" ? ["preview", "phone"] : []),
+        },
+        { ffmpegPath: this.options.ffmpegPath, signal },
+      );
 
       report(PHASES.finish, "verify");
-      const probe = await this.probe.probe(outputPath, signal);
+      const deliveries = await this.verify(files, ir, spec, { width, height, fps }, signal);
+      const master = deliveries[0]!;
+      report(1, "complete");
+      return { filePath: master.filePath, mime: master.mime, probe: master.probe, deliveries };
+    } catch (err) {
+      if (signal?.aborted) throw err instanceof StudixError && err.code === "CANCELLED" ? err : cancelled();
+      throw toStudixError(err);
+    } finally {
+      await Promise.all(
+        [rawPath, mixPath, normalizedMixPath].map((p) => rm(p, { force: true }).catch(() => undefined)),
+      );
+    }
+  }
+
+  /**
+   * Mixes IR audio tracks and unmuted video-shot sound, then normalises it with two-pass loudnorm.
+   * Returns the normalised WAV, or undefined when the render has no sound.
+   */
+  private async mix(
+    ir: VideoIR,
+    assetFiles: Readonly<Record<string, string>>,
+    mixPath: string,
+    normalizedPath: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    const wanted = new Set<string>();
+    for (const track of ir.audio ?? []) wanted.add(track.assetId);
+    for (const scene of ir.scenes)
+      for (const shot of scene.shots) if (shot.type === "video" && !shot.muted) wanted.add(shot.assetId);
+    const sources = new Map<string, AudioSourceInfo>();
+    for (const assetId of wanted) {
+      const file = assetFiles[assetId];
+      if (!file) {
+        throw new StudixError("VALIDATION", `Audio source "${assetId}" has no local file`, {
+          details: { assetId },
+          suggestedAction: "Download the asset and pass it in RenderOptions.assetFiles.",
+        });
+      }
+      if (!sources.has(file)) sources.set(file, await this.probe.audioSource(file, signal));
+    }
+    const clips = planAudioClips(ir, assetFiles, sources);
+    if (clips.length === 0) return undefined;
+    const ffmpeg = { ffmpegPath: this.options.ffmpegPath, signal };
+    await mixAudio(clips, ir.format.durationMs, mixPath, ffmpeg);
+    const measured = await normalizeLoudness(mixPath, normalizedPath, ffmpeg);
+    if (!measured) {
+      this.log.warn("audio mix is silent; delivering without loudness normalisation");
+      return undefined;
+    }
+    this.log.debug("audio mix normalised", { clips: clips.length, measured });
+    return normalizedPath;
+  }
+
+  /** Probes every delivery; the master must match the render size, every copy the duration and codec. */
+  private async verify(
+    files: readonly FinishedFile[],
+    ir: VideoIR,
+    spec: RenderSpec,
+    frame: { width: number; height: number; fps: number },
+    signal?: AbortSignal,
+  ): Promise<RenderDelivery[]> {
+    const deliveries: RenderDelivery[] = [];
+    for (const file of files) {
+      const probe = await this.probe.probe(file.filePath, signal);
+      const master = file.kind === "master";
       const mismatches = probeMismatches(probe, {
-        width,
-        height,
+        width: master ? frame.width : probe.width,
+        height: master ? frame.height : probe.height,
         durationMs: ir.format.durationMs,
         videoCodec: spec.videoCodec,
-        durationToleranceMs: Math.ceil(1000 / fps) + 100,
+        durationToleranceMs: Math.ceil(1000 / frame.fps) + 100,
       });
       if (mismatches.length > 0) {
         throw new StudixError(
           "INTERNAL",
-          `Rendered MP4 does not match the request: ${mismatches.join("; ")}`,
-          {
-            details: { mismatches, probe },
-            retryable: false,
-          },
+          `Rendered ${file.kind} does not match the request: ${mismatches.join("; ")}`,
+          { details: { mismatches, probe, kind: file.kind }, retryable: false },
         );
       }
-      report(1, "complete");
-      return { filePath: outputPath, mime: "video/mp4", probe };
-    } catch (err) {
-      await rm(outputPath, { force: true }).catch(() => undefined);
-      if (signal?.aborted) throw err instanceof StudixError && err.code === "CANCELLED" ? err : cancelled();
-      throw toStudixError(err);
-    } finally {
-      await rm(rawPath, { force: true }).catch(() => undefined);
+      deliveries.push({
+        kind: file.kind,
+        filePath: file.filePath,
+        mime: "video/mp4",
+        probe,
+        ...(file.loudness ? { loudness: file.loudness } : {}),
+      });
     }
+    return deliveries;
   }
 }

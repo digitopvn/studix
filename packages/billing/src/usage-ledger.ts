@@ -7,13 +7,20 @@ export const USAGE_KINDS = {
   providerDecision: "provider.decision",
   /** Seconds of rendered output. */
   renderSeconds: "render.seconds",
+  /** One generated image, clip, voice line, music bed or sound effect (provider COGS). */
+  mediaGeneration: "media.generation",
   /** Bytes written to object storage. */
   storageBytes: "storage.bytes",
+  /** One run of an agent stage (harness or host): tokens in quantity, model spend in costCents. */
+  agentRun: "agent.run",
 } as const;
 
 /** One billable usage line as recorded by a stage. `costCents` is COGS (what Studix paid). */
 export interface UsageInput {
-  /** Unique per workspace; recording the same key twice is a no-op. Use usageDedupeKey(). */
+  /**
+   * Unique per workspace; recording the same key twice is a no-op, except that a stored
+   * `metadata.costSource: "estimate"` is replaced by a receipt for the same key. Use usageDedupeKey().
+   */
   dedupeKey: string;
   kind: string;
   quantity: number;
@@ -27,7 +34,7 @@ export interface UsageInput {
 
 export interface RecordUsageResult {
   event: UsageEvent;
-  /** False when an event with the same dedupe key already existed (a retry). */
+  /** False when an event with the same dedupe key already existed (a retry, or an estimate replaced by its receipt). */
   created: boolean;
 }
 
@@ -41,6 +48,26 @@ export interface UsageLedger {
 }
 
 const KEY_PART = /^[\w.:-]+$/;
+
+/**
+ * Attempt-independent key for usage tied to one provider execution: the same execution is one cost no
+ * matter how many stage attempts report it (e.g. a retry served from the decision idempotency cache).
+ */
+export function executionUsageDedupeKey(parts: {
+  jobId: string;
+  stage: string;
+  executionId: string;
+}): string {
+  for (const value of [parts.jobId, parts.stage, parts.executionId]) {
+    if (!KEY_PART.test(value)) {
+      throw new StudixError(
+        "VALIDATION",
+        "usage key parts may only contain letters, digits, '_', '.', ':', '-'",
+      );
+    }
+  }
+  return `${parts.jobId}:${parts.stage}:exec:${parts.executionId}`;
+}
 
 /**
  * Dedupe key derived from job, stage, attempt and the usage item (e.g. provider execution id or

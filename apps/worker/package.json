@@ -10,12 +10,16 @@
     "start": "tsx src/main.ts"
   },
   "dependencies": {
+    "@studix/agent-runtime": "workspace:*",
+    "@studix/auth": "workspace:*",
     "@studix/billing": "workspace:*",
     "@studix/core": "workspace:*",
     "@studix/database": "workspace:*",
     "@studix/decision-routing": "workspace:*",
     "@studix/mcp-gateway": "workspace:*",
     "@studix/observability": "workspace:*",
+    "@studix/providers": "workspace:*",
+    "@studix/qa": "workspace:*",
     "@studix/renderers": "workspace:*",
     "@studix/shared": "workspace:*",
     "@studix/skills": "workspace:*",

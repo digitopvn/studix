@@ -1,66 +1,49 @@
-import { StudixError } from "@studix/shared";
-import { exportJsonSchemas, type VideoIR } from "@studix/video-ir";
-import { type BrandIntroOptions, brandIntroTemplate } from "./brand-intro/brand-intro-template.ts";
+import { brandIntroPack } from "./brand-intro/brand-intro-pack.ts";
+import { BUILTIN_KNOWLEDGE_PACKS } from "./knowledge/builtin-knowledge-packs.ts";
+import { createKnowledgeCatalog, type KnowledgeConsumer } from "./knowledge/knowledge-catalog.ts";
+import type { KnowledgePack } from "./knowledge/knowledge-pack-schema.ts";
+import { marketingVideoPack } from "./marketing-video/marketing-video-pack.ts";
+import { motionGraphicPack } from "./motion-graphic/motion-graphic-pack.ts";
+import { animePack } from "./narrative-film/anime-pack.ts";
+import { longFormFilmPack } from "./narrative-film/long-form-film-pack.ts";
+import { createPackRegistry, type Skill, type SkillMetadata, type WorkflowPack } from "./pack-registry.ts";
 
-export interface SkillMetadata {
-  /** Stable id, lowercase kebab-case. */
-  id: string;
-  title: string;
-  description: string;
-  version: number;
-  /** JSON Schema (draft 2020-12) of the input the skill accepts. */
-  inputSchema: Record<string, unknown>;
-  /** What run() returns. */
-  output: "video-ir";
-}
+/** Process-wide knowledge catalog; built-in knowledge packs are linted and registered here. */
+export const knowledgeCatalog = createKnowledgeCatalog(BUILTIN_KNOWLEDGE_PACKS);
 
-export interface Skill extends SkillMetadata {
-  /** Validates `input` at the boundary; throws a VALIDATION StudixError when it does not match. */
-  run(input: unknown, options?: SkillRunOptions): VideoIR;
-}
-
-/** Inputs a skill may need beyond its JSON input, e.g. stored assets the brief references. */
-export type SkillRunOptions = BrandIntroOptions;
-
-let creativeBriefSchema: Record<string, unknown> | undefined;
-function briefSchema(): Record<string, unknown> {
-  creativeBriefSchema ??= exportJsonSchemas()["creative-brief"];
-  return creativeBriefSchema;
-}
-
-const SKILLS: readonly Skill[] = [
+/** Process-wide registry the MCP server and the worker read; built-in packs are registered here. */
+export const packRegistry = createPackRegistry(
+  [brandIntroPack, marketingVideoPack, motionGraphicPack, animePack, longFormFilmPack],
   {
-    id: "brand-intro",
-    title: "Brand intro",
-    description:
-      "Deterministic 6–15s brand introduction: title card, two or three key messages and a call-to-action " +
-      "outro in the brief's aspect ratio and brand colors. Vietnamese copy is kept intact.",
-    version: 1,
-    get inputSchema() {
-      // A copy per read so a caller mutating its schema cannot change what other callers see.
-      return structuredClone(briefSchema());
-    },
-    output: "video-ir",
-    run: brandIntroTemplate,
+    knowledge: knowledgeCatalog,
   },
-];
+);
 
-function metadata(skill: Skill): SkillMetadata {
-  const { id, title, description, version, inputSchema, output } = skill;
-  return { id, title, description, version, inputSchema, output };
+/** Add a pack to the process-wide registry; returns a function that removes it again. */
+export function registerPack(pack: WorkflowPack): () => void {
+  return packRegistry.register(pack);
 }
 
-/** Metadata of every registered skill, in a stable order. */
+/** Lint and add a knowledge pack to the process-wide catalog; returns a function that removes it again. */
+export function registerKnowledgePack(pack: unknown): () => void {
+  return knowledgeCatalog.register(pack);
+}
+
+/** The knowledge packs a stage declared in `knowledge`, and only those. */
+export function loadStageKnowledge(stage: KnowledgeConsumer): KnowledgePack[] {
+  return knowledgeCatalog.forStage(stage);
+}
+
+function metadata(skill: SkillMetadata): SkillMetadata {
+  const { id, pack, title, description, version, inputSchema, output } = skill;
+  return { id, pack, title, description, version, inputSchema, output };
+}
+
+/** Metadata of every registered template, in a stable order. */
 export function listSkills(): SkillMetadata[] {
-  return SKILLS.map(metadata);
+  return packRegistry.templates().map(metadata);
 }
 
-export function getSkill(id: string): Skill {
-  const skill = SKILLS.find((s) => s.id === id);
-  if (!skill) {
-    throw new StudixError("NOT_FOUND", `Unknown skill "${id}"`, {
-      details: { available: SKILLS.map((s) => s.id) },
-    });
-  }
-  return skill;
+export function getSkill(id: string): Skill & { pack: string } {
+  return packRegistry.template(id);
 }

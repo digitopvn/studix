@@ -1,4 +1,5 @@
-import { isAbsolute } from "node:path";
+import { realpath } from "node:fs/promises";
+import { isAbsolute, relative } from "node:path";
 import { MEDIA_KINDS, type MediaGenerationRequest, type MediaKind } from "@studix/core";
 import { StudixError } from "@studix/shared";
 
@@ -41,6 +42,93 @@ export function assertGenerationRequest(request: MediaGenerationRequest): void {
   if (typeof request.workDir !== "string" || !isAbsolute(request.workDir)) {
     throw new StudixError("VALIDATION", "workDir must be an absolute path");
   }
+}
+
+/** Input media for image-to-video, lip-sync and upscale: a file inside workDir or an https URL. */
+export type MediaInput = { kind: "file"; path: string } | { kind: "url"; url: string };
+
+const MAX_URL_LENGTH = 2048;
+
+/**
+ * Validate `params[name]`. Local files must resolve (symlinks included) inside workDir, so a request can
+ * never make a provider upload an arbitrary worker file.
+ */
+export async function resolveMediaInput(
+  params: Record<string, unknown>,
+  name: string,
+  workDir: string,
+): Promise<MediaInput | undefined> {
+  const value = params[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "" || /[\r\n\0]/.test(value)) {
+    throw new StudixError("VALIDATION", `params.${name} must be a file path or an https URL`);
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new StudixError("VALIDATION", `params.${name} is not a valid URL`);
+    }
+    if (url.protocol !== "https:" || url.username || url.password || value.length > MAX_URL_LENGTH) {
+      throw new StudixError("VALIDATION", `params.${name} must be an https URL without credentials`);
+    }
+    return { kind: "url", url: value };
+  }
+  if (!isAbsolute(value)) {
+    throw new StudixError("VALIDATION", `params.${name} must be an absolute path inside workDir`);
+  }
+  let real: string;
+  let root: string;
+  try {
+    [real, root] = await Promise.all([realpath(value), realpath(workDir)]);
+  } catch (err) {
+    throw new StudixError("VALIDATION", `params.${name} does not exist`, { cause: err });
+  }
+  const rel = relative(root, real);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new StudixError("VALIDATION", `params.${name} must be inside workDir`);
+  }
+  return { kind: "file", path: real };
+}
+
+/** An optional string param that must match `pattern` (keeps argv values to known shapes). */
+export function stringParam(
+  params: Record<string, unknown>,
+  name: string,
+  pattern: RegExp,
+): string | undefined {
+  const value = params[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw new StudixError("VALIDATION", `params.${name} has an unsupported value`);
+  }
+  return value;
+}
+
+/** An optional number param within min..max. */
+export function numberParam(
+  params: Record<string, unknown>,
+  name: string,
+  min: number,
+  max: number,
+  integer = false,
+): number | undefined {
+  const value = params[name];
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < min ||
+    value > max ||
+    (integer && !Number.isInteger(value))
+  ) {
+    throw new StudixError(
+      "VALIDATION",
+      `params.${name} must be ${integer ? "an integer" : "a number"} in ${min}..${max}`,
+    );
+  }
+  return value;
 }
 
 export function throwIfAborted(signal: AbortSignal | undefined): void {

@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "title": "Một buổi sáng ở quán",
+  "language": "vi",
+  "aspectRatio": "9:16",
+  "characters": [
+    {
+      "id": "lan",
+      "name": "Lan",
+      "description": "Chủ quán, tóc ngắn, tạp dề xanh",
+      "referenceAssetIds": ["lan-sheet"],
+      "voice": "vi-female-1"
+    }
+  ],
+  "assets": [
+    {
+      "id": "lan-sheet",
+      "kind": "image",
+      "storageKey": "assets/ast_lan/v1/sheet.png",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "mime": "image/png",
+      "provenance": { "source": "upload" }
+    },
+    {
+      "id": "steam-gl",
+      "kind": "code",
+      "storageKey": "assets/ast_steam/v3/steam.js",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "mime": "text/javascript",
+      "assetVersionId": "astv_steam_3",
+      "provenance": { "source": "upload" }
+    }
+  ],
+  "beats": [
+    { "id": "open", "summary": "Quán mở cửa lúc bình minh" },
+    {
+      "id": "greet",
+      "summary": "Lan chào khách quen",
+      "dialogue": [{ "characterId": "lan", "text": "Chào anh, vẫn như mọi khi chứ?" }]
+    },
+    { "id": "pour", "summary": "Rót cà phê, hơi nước bốc lên" }
+  ],
+  "scenes": [
+    {
+      "id": "morning",
+      "title": "Bình minh",
+      "shots": [
+        {
+          "id": "establish",
+          "kind": "image",
+          "description": "Toàn cảnh mặt tiền quán, ánh nắng sớm",
+          "durationMs": 3000,
+          "beatIds": ["open"],
+          "approval": { "status": "approved" }
+        },
+        {
+          "id": "greeting",
+          "kind": "video",
+          "description": "Trung cảnh Lan mỉm cười chào khách",
+          "durationMs": 4000,
+          "beatIds": ["greet"],
+          "characterIds": ["lan"],
+          "dependsOn": ["establish"],
+          "approval": { "status": "approved" }
+        }
+      ],
+      "approval": { "status": "approved" }
+    },
+    {
+      "id": "coffee",
+      "title": "Ly cà phê",
+      "shots": [
+        {
+          "id": "pour-close",
+          "kind": "video",
+          "description": "Cận cảnh tay Lan rót cà phê",
+          "durationMs": 3000,
+          "beatIds": ["pour"],
+          "characterIds": ["lan"],
+          "approval": { "status": "in_review" }
+        },
+        {
+          "id": "steam",
+          "kind": "composition",
+          "description": "Hơi nước dựng bằng scene GL",
+          "durationMs": 2000,
+          "assetIds": ["steam-gl"],
+          "dependsOn": ["pour-close"],
+          "approval": { "status": "draft" }
+        }
+      ],
+      "approval": { "status": "in_review" }
+    }
+  ],
+  "approval": { "status": "in_review" }
+}

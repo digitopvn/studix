@@ -2,6 +2,7 @@ import type { NewRecord } from "../entities/common.ts";
 import type {
   Approval,
   ApprovalAction,
+  ApprovalChanges,
   ApprovalStatus,
   ApprovalSubject,
   Review,
@@ -11,23 +12,39 @@ import type { AuditEvent } from "../entities/telemetry.ts";
 import type { ActorRef, TenantContext } from "../tenant.ts";
 import type { Page, PageRequest } from "./pagination.ts";
 
-export type NewApproval = Omit<NewRecord<Approval>, "status" | "decidedBy" | "decidedAt" | "comment">;
+export type NewApproval = Omit<
+  NewRecord<Approval>,
+  "status" | "decidedBy" | "decidedAt" | "comment" | "changes"
+>;
 
 export interface ApprovalDecision {
   status: Exclude<ApprovalStatus, "pending">;
   decidedBy?: ActorRef;
   decidedAt: Date;
   comment?: string;
+  /** Only with `changes_requested`. */
+  changes?: ApprovalChanges;
 }
 
 export interface ApprovalRepository {
+  /** Plain insert for seeding rows; production code requests approval through `open`. */
   create(ctx: TenantContext, input: NewApproval): Promise<Approval>;
+  /**
+   * The one way to request approval: returns the live pending approval for the same subject, action and
+   * scope key, or creates it. Pending requests whose expiry has passed are closed as `expired` first, so
+   * concurrent callers always converge on a single pending row. `created` is false when one already existed.
+   */
+  open(ctx: TenantContext, input: NewApproval): Promise<{ approval: Approval; created: boolean }>;
   get(ctx: TenantContext, id: string): Promise<Approval | undefined>;
-  /** Most recent approval for this subject and action, any status. */
+  /**
+   * Most recent approval for this subject and action, any status. With `scopeKey` only requests of that
+   * scope count (`""` is the unscoped workflow gate); without it every scope does.
+   */
   findLatest(
     ctx: TenantContext,
     subject: ApprovalSubject,
     action: ApprovalAction,
+    scopeKey?: string,
   ): Promise<Approval | undefined>;
   list(
     ctx: TenantContext,
@@ -46,6 +63,12 @@ export type NewReview = Omit<NewRecord<Review>, "status">;
 
 export interface ReviewRepository {
   create(ctx: TenantContext, input: NewReview): Promise<Review>;
+  get(ctx: TenantContext, id: string): Promise<Review | undefined>;
+  findByIdempotencyKey(
+    ctx: TenantContext,
+    projectId: string,
+    idempotencyKey: string,
+  ): Promise<Review | undefined>;
   list(
     ctx: TenantContext,
     query: PageRequest & { projectId: string; versionId?: string },

@@ -1,8 +1,9 @@
 import { createDb, type StudixDb } from "@studix/database";
-import { createLogger, type Logger } from "@studix/shared";
+import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } from "@studix/shared";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
 import { createWorkerRuntime, type WorkerPorts, type WorkerRuntime } from "./wiring.ts";
+import { sweepStaleJobDirs } from "./work-dir-sweep.ts";
 import { loadWorkerSettings, type WorkerSettings } from "./worker-settings.ts";
 
 /** Process resources handed to the port resolver (shared pool, environment, process logger). */
@@ -10,6 +11,8 @@ export interface WorkerPortsRuntime {
   db: StudixDb;
   env: NodeJS.ProcessEnv;
   logger: Logger;
+  /** Aborts when the worker is asked to stop while it is still starting. */
+  signal: AbortSignal;
 }
 
 export interface WorkerProcessOptions {
@@ -33,7 +36,11 @@ export interface WorkerProcess {
  * resolve adapters, start N claim loops, then drain gracefully on SIGTERM.
  */
 export async function runWorkerProcess(options: WorkerProcessOptions): Promise<WorkerProcess> {
-  const settings = loadWorkerSettings(options.env);
+  const env = options.env ?? process.env;
+  const settings = loadWorkerSettings(env);
+  // Env secrets (database URL, STUDIX_SECRETS_KEY, provider keys) are redacted from every log line.
+  registerSecretsFromEnv(env);
+  for (const key of settings.config.STUDIX_SECRETS_KEYS_PREVIOUS) registerSecret(key);
   const logger = (
     options.logger ?? createLogger({ service: "studix-worker" }, { level: settings.config.LOG_LEVEL })
   ).child({
@@ -47,6 +54,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   let ports: WorkerPorts | undefined;
   let stopping = false;
   const startup = new AbortController();
+  let sweepTimer: NodeJS.Timeout | undefined;
 
   const health: HealthServer = await startHealthServer({
     port: settings.healthPort,
@@ -67,6 +75,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     shutdownPromise ??= (async () => {
       stopping = true;
       startup.abort();
+      if (sweepTimer) clearInterval(sweepTimer);
       logger.info("shutting down worker");
       try {
         await runtime?.stop(settings.shutdownGraceMs);
@@ -105,12 +114,24 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     await waitForDatabase(handle, { logger, signal: startup.signal });
     ports = await options.resolvePorts(settings, {
       db: handle.db,
-      env: options.env ?? process.env,
+      env,
       logger,
+      signal: startup.signal,
     });
     if (stopping) throw new Error("worker stopped during startup");
     runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });
     runtime.start();
+    const sweep = () =>
+      sweepStaleJobDirs(settings.workDir, settings.workDirRetentionMs).then(
+        (removed) => {
+          if (removed.length > 0)
+            logger.info("removed stale job work directories", { count: removed.length });
+        },
+        (err) => logger.warn("work directory sweep failed", { error: String(err) }),
+      );
+    void sweep();
+    sweepTimer = setInterval(() => void sweep(), 3_600_000);
+    sweepTimer.unref();
   } catch (err) {
     await shutdown();
     throw err;

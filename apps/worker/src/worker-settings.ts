@@ -15,6 +15,8 @@ const WorkerEnv = z.object({
     .regex(/^[\w.-]{1,100}$/, "1-100 letters, digits, '_', '.', '-'")
     .optional(),
   WORKER_WORK_DIR: z.string().min(1).optional(),
+  /** Hours a job's scratch directory is kept after its last write; failed jobs keep theirs for retries. */
+  WORKER_WORK_DIR_RETENTION_HOURS: z.coerce.number().min(24).max(8760).default(168),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(10).max(60_000).default(1000),
   WORKER_SHUTDOWN_GRACE_MS: z.coerce.number().int().min(0).max(600_000).default(25_000),
   /** COGS per rendered second; 0 until compute cost is measured. */
@@ -31,7 +33,23 @@ const WorkerEnv = z.object({
       }
     }, "must look like connector.tool")
     .optional(),
+  /** Claude planner tuning; the planner itself is switched on by STUDIX_CLAUDE_PLANNER (shared config). */
+  STUDIX_CLAUDE_PLANNER_MODEL: z
+    .string()
+    .regex(/^[\w.:@-]{1,100}$/, "a model id")
+    .default("claude-sonnet-5-5"),
+  STUDIX_CLAUDE_PLANNER_MAX_TURNS: z.coerce.number().int().min(1).max(50).default(4),
+  /** Per-plan cost cap; the job's remaining budget lowers it further. */
+  STUDIX_CLAUDE_PLANNER_MAX_COST_CENTS: z.coerce.number().int().min(1).max(100_000).default(200),
+  STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS: z.coerce.number().int().min(10).max(3600).default(300),
 });
+
+export interface ClaudePlannerSettings {
+  model: string;
+  maxTurns: number;
+  maxCostCents: number;
+  timeoutMs: number;
+}
 
 export interface WorkerSettings {
   config: StudixConfig;
@@ -45,10 +63,13 @@ export interface WorkerSettings {
   healthPort: number;
   healthHost: string;
   workDir: string;
+  workDirRetentionMs: number;
   approvalCostThresholdCents: number;
   renderCentsPerSecond: number;
   /** Qualified connector tool for brand enrichment; unset disables the lookup. */
   brandLookupTool?: string;
+  /** Set when STUDIX_CLAUDE_PLANNER is on; unset means jobs that select Claude fail with UNAVAILABLE. */
+  claudePlanner?: ClaudePlannerSettings;
 }
 
 /** Parse worker settings; throws a VALIDATION StudixError naming bad variables (values never echoed). */
@@ -64,6 +85,11 @@ export function loadWorkerSettings(env: NodeJS.ProcessEnv = process.env): Worker
       details: {
         issues: parsed.error.issues.map((i) => ({ variable: i.path.join("."), message: i.message })),
       },
+    });
+  }
+  if (config.STUDIX_CLAUDE_PLANNER && !config.STUDIX_SECRETS_KEY) {
+    throw new StudixError("VALIDATION", "STUDIX_CLAUDE_PLANNER needs STUDIX_SECRETS_KEY", {
+      suggestedAction: "Give the worker the same STUDIX_SECRETS_KEY as the app so it can open stored keys.",
     });
   }
   if (!config.DATABASE_URL) {
@@ -86,8 +112,19 @@ export function loadWorkerSettings(env: NodeJS.ProcessEnv = process.env): Worker
     healthPort: w.WORKER_HEALTH_PORT,
     healthHost: w.WORKER_HEALTH_HOST,
     workDir: w.WORKER_WORK_DIR ?? join(tmpdir(), "studix-worker"),
+    workDirRetentionMs: w.WORKER_WORK_DIR_RETENTION_HOURS * 3_600_000,
     approvalCostThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
     renderCentsPerSecond: w.RENDER_COST_CENTS_PER_SECOND,
     ...(w.STUDIX_BRAND_LOOKUP_TOOL ? { brandLookupTool: w.STUDIX_BRAND_LOOKUP_TOOL } : {}),
+    ...(config.STUDIX_CLAUDE_PLANNER
+      ? {
+          claudePlanner: {
+            model: w.STUDIX_CLAUDE_PLANNER_MODEL,
+            maxTurns: w.STUDIX_CLAUDE_PLANNER_MAX_TURNS,
+            maxCostCents: w.STUDIX_CLAUDE_PLANNER_MAX_COST_CENTS,
+            timeoutMs: w.STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS * 1000,
+          },
+        }
+      : {}),
   };
 }

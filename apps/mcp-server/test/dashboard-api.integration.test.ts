@@ -126,6 +126,28 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     expect(cancelled.status).toBe(200);
   });
 
+  it("retries a failed job over POST /api/jobs/:id/retry; other tenants get 404, other states 409", async () => {
+    const body = { prompt: "Retry route", aspectRatio: "9:16", idempotencyKey: "dash-retry" };
+    const { job } = await (await app.api("POST", "/api/projects", { cookie: alice, body })).json();
+    expect((await app.api("POST", `/api/jobs/${job.id}/retry`, { cookie: alice, body: {} })).status).toBe(
+      409,
+    );
+
+    await app.db.client`update jobs set status = 'failed', finished_at = now(),
+      error = ${JSON.stringify({ code: "UNAVAILABLE", message: "bucket missing", retryable: false })}::jsonb
+      where id = ${job.id}`;
+    const failed = await (await app.api("GET", `/api/jobs/${job.id}`, { cookie: alice })).json();
+    expect(failed.job).toMatchObject({ status: "failed" });
+
+    expect((await app.api("POST", `/api/jobs/${job.id}/retry`, { cookie: bob, body: {} })).status).toBe(404);
+    const retried = await app.api("POST", `/api/jobs/${job.id}/retry`, { cookie: alice, body: {} });
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toMatchObject({ id: job.id, status: "queued" });
+    expect((await app.api("POST", `/api/jobs/${job.id}/retry`, { cookie: alice, body: {} })).status).toBe(
+      409,
+    );
+  });
+
   it("validates input at the boundary", async () => {
     const res = await app.api("POST", "/api/projects", { cookie: alice, body: { prompt: "" } });
     expect(res.status).toBe(400);
@@ -154,4 +176,97 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     });
     expect(bad.status).toBe(400);
   });
+  it("stores Anthropic keys without echoing them and keeps personal keys private", async () => {
+    const apiKey = "sk-ant-api03-dashboardtestkeyvalue-WXYZ";
+    const overview = await (await app.api("GET", "/api/providers/anthropic", { cookie: alice })).json();
+    expect(overview.methods.map((m: { authMethod: string; availability: string }) => m)).toEqual([
+      expect.objectContaining({ authMethod: "api_key", availability: "available" }),
+      expect.objectContaining({ authMethod: "oauth_subscription", availability: "restricted" }),
+    ]);
+
+    const created = await app.api("POST", "/api/providers/anthropic/api-keys", {
+      cookie: alice,
+      body: { owner: "user", apiKey, label: "mine" },
+    });
+    expect(created.status).toBe(201);
+    expect(created.headers.get("cache-control")).toBe("no-store");
+    const text = await created.text();
+    expect(text).not.toContain(apiKey);
+    const view = JSON.parse(text);
+    expect(view).toMatchObject({ owner: "user", ownedByMe: true, keyHint: "sk-ant-…WXYZ" });
+
+    const rejected = await app.api("POST", "/api/providers/anthropic/api-keys", {
+      cookie: alice,
+      body: { owner: "workspace", apiKey: "sk-ant-api03-rejectedrejectedrejected" },
+    });
+    // A refused Anthropic key is a 400, never a 401 that the dashboard could read as "signed out".
+    expect(rejected.status).toBe(400);
+    expect(await rejected.text()).not.toContain("rejectedrejected");
+
+    // Bob is another tenant: neither listed nor reachable.
+    const bobList = await (await app.api("GET", "/api/providers/anthropic", { cookie: bob })).json();
+    expect(bobList.connections).toEqual([]);
+    expect(
+      (await app.api("POST", `/api/providers/anthropic/api-keys/${view.id}/test`, { cookie: bob })).status,
+    ).toBe(404);
+
+    const tested = await app.api("POST", `/api/providers/anthropic/api-keys/${view.id}/test`, {
+      cookie: alice,
+    });
+    expect((await tested.json()).lastTest).toMatchObject({ ok: true });
+    expect(
+      (await app.api("DELETE", `/api/providers/anthropic/api-keys/${view.id}`, { cookie: alice })).status,
+    ).toBe(200);
+    const after = await (await app.api("GET", "/api/providers/anthropic", { cookie: alice })).json();
+    expect(after.connections).toEqual([]);
+  });
+
+  it("accepts an opt-in Claude planner only when enabled and usable by the caller", async () => {
+    const key = await app.api("POST", "/api/providers/anthropic/api-keys", {
+      cookie: alice,
+      body: { owner: "user", apiKey: "sk-ant-api03-plannerselectionkey-PLAN", label: "planner" },
+    });
+    const connection = await key.json();
+    const body = {
+      prompt: "Brand intro",
+      planner: { runtime: "claude", providerConnectionId: connection.id },
+    };
+    const errorCode = async (res: Response) => ((await res.json()) as { error: { code: string } }).error.code;
+
+    expect(
+      (await (await app.api("GET", "/api/providers/anthropic", { cookie: alice })).json()).claudePlanner,
+    ).toBe(false);
+    expect(await errorCode(await app.api("POST", "/api/projects", { cookie: alice, body }))).toBe(
+      "UNAVAILABLE",
+    );
+
+    app.deps.claudePlanner = true;
+    try {
+      const created = await app.api("POST", "/api/projects", { cookie: alice, body });
+      expect(created.status).toBe(201);
+      const { job } = await created.json();
+      const stored = await app.db.repos.jobs.get(
+        { ...(await sessionTenant(app, alice)), actor: { type: "system", id: "test" } },
+        job.id,
+      );
+      expect(stored?.payload).toMatchObject({ planner: body.planner });
+      // Bob's workspace cannot select Alice's connection.
+      expect(await errorCode(await app.api("POST", "/api/projects", { cookie: bob, body }))).toBe(
+        "UNAVAILABLE",
+      );
+      const unknown = await app.api("POST", "/api/projects", {
+        cookie: alice,
+        body: { ...body, planner: { runtime: "other", providerConnectionId: connection.id } },
+      });
+      expect(unknown.status).toBe(400);
+    } finally {
+      app.deps.claudePlanner = false;
+    }
+  });
 });
+
+/** Tenant ids of the session's current workspace, via /api/me. */
+async function sessionTenant(app: TestApp, cookie: string) {
+  const me = await (await app.api("GET", "/api/me", { cookie })).json();
+  return { organizationId: me.organization.id as string, workspaceId: me.workspace.id as string };
+}

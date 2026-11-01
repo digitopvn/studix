@@ -94,7 +94,8 @@ export function mountDashboardStatic(app: Express, options: { dist?: string; med
       return;
     }
     htmlHeaders(res);
-    res.sendFile(indexPath, (err) => {
+    // Rooted so the dotfiles check only sees the path below `dist`, not a dot directory above the build.
+    res.sendFile("index.html", { root: dist }, (err) => {
       if (err && !res.headersSent) res.status(404).end();
     });
   });

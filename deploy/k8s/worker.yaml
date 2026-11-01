@@ -7,6 +7,8 @@ metadata:
   labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
 spec:
   replicas: 1
+  # One worker pod: the work volume is ReadWriteOnce, so the old pod must release it before the new one starts.
+  strategy: { type: Recreate }
   selector:
     matchLabels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
   template:
@@ -14,14 +16,20 @@ spec:
       labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
     spec:
       terminationGracePeriodSeconds: 60
+      securityContext: { fsGroup: 1000, fsGroupChangePolicy: OnRootMismatch }
       containers:
         - name: worker
           image: studix
           env:
             - { name: STUDIX_ROLE, value: worker }
             - { name: STUDIX_MIGRATE_ON_START, value: "false" }
+            # Explicit env wins over envFrom, so an empty or stale WORKER_WORK_DIR in the secret cannot
+            # point the worker away from the persistent volume mounted below.
+            - { name: WORKER_WORK_DIR, value: /var/lib/studix/work }
           envFrom:
             - secretRef: { name: studix-env }
+          volumeMounts:
+            - { name: work, mountPath: /var/lib/studix/work }
           ports:
             - { name: health, containerPort: 8081 }
           readinessProbe:
@@ -34,3 +42,20 @@ spec:
           resources:
             requests: { cpu: "1", memory: 1536Mi }
             limits: { cpu: "2", memory: 3Gi }
+      volumes:
+        - name: work
+          persistentVolumeClaim: { claimName: studix-worker-work }
+---
+# Job scratch space. It must outlive a pod: a synchronous Multix call (voice, music, sfx) is only known to be
+# finished while its output file is still here, and the upstream has no idempotency key, so losing the file
+# means paying for the call again. Finished jobs delete their directories and the worker sweeps failed ones
+# after WORKER_WORK_DIR_RETENTION_HOURS, so the size bounds in-flight work, not history.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: studix-worker-work
+  labels: { app.kubernetes.io/name: studix, app.kubernetes.io/component: worker }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 20Gi }

@@ -21,8 +21,18 @@ Marketing runs on the Digitop Cloudflare account (`digitop.vn@gmail.com`).
 ## The image
 
 Root `Dockerfile`, one image for both roles. It contains Node, Chromium, FFmpeg
-and HyperFrames because the worker renders. The app role does not invoke them;
-shipping one image keeps build, pinning and rollback to a single artifact.
+and HyperFrames because the worker renders, and the multix CLI for paid media
+generation. The app role does not invoke them; shipping one image keeps build,
+pinning and rollback to a single artifact.
+
+multix is built in a separate stage from a pinned commit of
+`mrgoonie/multix-cli` (`MULTIX_COMMIT`, currently `7922a274`, the commit tagged
+v1.26.0). The stage fails if the fetched HEAD is not that commit. 1.26.0 is the
+first stable release with the Sume commands and counts Sume cost once per job.
+The image keeps the git build instead of `npm install -g @mrgoonie/multix`,
+because a commit pin is checked and an npm install here has no lockfile
+integrity hash. To upgrade, set `MULTIX_COMMIT` to the new release tag's commit
+and re-run the live smoke test.
 
 ## Configuration
 
@@ -45,8 +55,114 @@ secret; artifact signing / presign lifetime; credential encryption key for
 `secretRef`; dashboard auth secret; decision provider credentials and model
 ids (OpenRouter, TypeSafeAI; live use opt-in); log level.
 
+`STUDIX_SECRETS_KEY` (32 random bytes, base64) encrypts workspace provider
+credentials such as Anthropic API keys. Without it the app still starts, but
+saving keys is disabled. Losing it makes every stored key unreadable, so back
+it up with the database secrets. To rotate it, move the old value to
+`STUDIX_SECRETS_KEYS_PREVIOUS` and set a new one.
+
+Keys for the Pi runtime and the per-stage model preferences need no extra
+setting: they use the same `STUDIX_SECRETS_KEY`, which the worker also needs to
+run a stage on a workspace key. Without it the worker keeps the operator's
+default routing. The Pi SDK and its model catalog are pinned in
+`packages/agent-runtime/package.json`; upgrading it can change which models the
+dashboard offers.
+
+The Claude planner is off unless `STUDIX_CLAUDE_PLANNER=true`. Set it on both
+the app (so job creation accepts a `planner` selection) and the worker. The
+worker then also needs the same `STUDIX_SECRETS_KEY` to open the selected key,
+and refuses to start without it. At startup the worker also runs the Claude
+binary with `--version` (no model call, no key) and refuses to start when it
+cannot run on the host, for example an image platform the SDK ships no binary
+for; unset the flag to run without the planner. Tuning, all optional:
+`STUDIX_CLAUDE_PLANNER_MODEL`, `STUDIX_CLAUDE_PLANNER_MAX_TURNS` (default 4),
+`STUDIX_CLAUDE_PLANNER_MAX_COST_CENTS` (default 200, lowered further by the
+job's remaining budget) and `STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS` (default
+300). The worker image needs no extra install step: `pnpm install
+--frozen-lockfile` brings the pinned Agent SDK and its platform binary. Each
+run uses a temporary directory under `WORKER_WORK_DIR/claude` that is removed
+when the run ends; the worker creates that directory at startup and removes
+sandboxes left by a crashed worker once they are older than the run timeout.
+Job scratch directories (`WORKER_WORK_DIR/<jobId>`) are removed when the job
+finishes; those of failed jobs are kept for retries and swept after
+`WORKER_WORK_DIR_RETENTION_HOURS` (default 168, minimum 24) without writes.
+
+Keep `WORKER_WORK_DIR` on a persistent volume. The image sets it to
+`/var/lib/studix/work`; `deploy/k8s/worker.yaml` mounts a PVC there (the worker
+Deployment uses `Recreate` because the volume is ReadWriteOnce) and the
+`selfhost` compose profile mounts a named volume. Synchronous Multix audio
+(voice, music, sound effects) has no upstream idempotency key, so a call counts
+as finished only while its output file is on this directory. On a scratch disk
+that a pod restart wipes, a retry would call the upstream again and be charged a
+second time. As a second line of defence, once an output is uploaded the stage
+journal records that object, and a retry of the same unchanged request reuses it
+without calling the upstream even if the directory is gone. The remaining window
+is a crash between the upstream call and that upload. Size the volume for
+in-flight jobs only (20Gi in the manifest); finished jobs remove their
+directories and the sweep above bounds the rest. The manifest pins
+`WORKER_WORK_DIR` in the container `env`, so a value in the `studix-env` secret
+cannot move it off the volume. The ReadWriteOnce claim means one worker pod; to
+scale the worker out, give each replica its own volume (a StatefulSet with
+`volumeClaimTemplates`), and note that a retry that lands on another replica
+then relies on the journal fallback alone.
+When Anthropic answers a run with 401, the worker re-tests that key directly
+and, only if it is still rejected and was not rotated meanwhile, marks its
+connection `invalid`, so job creation stops accepting it until the key is
+replaced. A 401 that the re-test does not repeat (a gateway token, a short
+Anthropic incident) leaves the key alone.
+
+Smoke tests of the planner live in the `live` test project (`STUDIX_LIVE=1
+ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
+plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the
+rejected-key test uses a made-up key and costs nothing.
+
+Paid media runs through the Multix provider (`packages/providers`), which is
+off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
+video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
+music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech.
+The worker passes only `SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
+`FISH_API_KEY`, `MINIMAX_API_KEY` and `OPENROUTER_API_KEY` (plus PATH, HOME, temp and proxy variables) to the CLI, and
+sets `MULTIX_DISABLE_HOME_ENV=1` so `~/.multix/.env` is never read on servers
+(`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A kind is
+advertised only when `multix check` reports its vendor key. Default models per
+role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`, and voice per language from
+`MULTIX_VOICE_LANGUAGE_MODELS` (`vi=openrouter:fish-audio/drama-3`, optionally
+`@<voice>`), which also carries the packs' delivery direction to models that take it;
+`MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
+job. Every paid call is estimated first and refused above the request's cap.
+A video request on `sume:seedance-2.5` runs at `480p` unless it passes
+`params.resolution`; a higher resolution is an explicit, separately estimated
+choice
+([`DEFAULT_VIDEO_RESOLUTIONS`](../packages/providers/src/multix-routes.ts)).
+Sume jobs are submitted with an idempotency key and collected with `status
+--wait --download`, so a retry resumes the paid job by its id. Stages pass the
+provider a job journal stored on the stage row (`stages.media_jobs`), written
+right after each submission: a worker that dies mid-stage leaves the upstream
+job ids behind, and the next attempt, on any worker, collects those jobs
+instead of submitting again. Atlas Cloud has no idempotency key, so the adapter
+journals a `submitting` record right before `atlas run`. If the worker dies
+before the job id is journaled, a retry with the same idempotency key is
+refused (non-retryable) instead of paying twice for one upscale (about $0.01):
+find the prediction in `multix history` or the Atlas Cloud console and resume
+it by job id. Only errors that prove Atlas never accepted the run (invalid
+request, missing key) release the key for a retry. Calls made outside a
+workflow stage fall back to an in-process journal, which a restart loses.
+
+Pack stages (`marketing-video`, `motion-graphic`) get the media provider, the
+storage, the renderer and the hard QA gate from the worker
+([`pack-services.ts`](../apps/worker/src/pack-services.ts)). Without
+`MULTIX_BIN` their paid stages fail with `UNAVAILABLE`; without the QA
+toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
+is never published.
+
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
+
+The worker checks generated sound effects for a human voice when
+`STUDIX_SPEECH_GATE=true`. That needs the optional QA image built with
+`--build-arg STUDIX_QA_EXTRAS=speech`; with the flag on and the default image,
+the worker refuses to start (`UNAVAILABLE`) instead of paying for effects it cannot check.
+See [QA.md](QA.md#chặn-tiếng-nói-trong-sfx).
 
 ## Local
 
@@ -104,7 +220,9 @@ resources prefixed `studix-`.
 ### CI deploy
 
 `.github/workflows/deploy.yml`: a push to `dev` deploys dev, a push to `main`
-deploys production. It runs `ci.yml` first and deploys only if it passes, then
+deploys production. It runs `ci.yml` first and deploys only if it passes (during
+the bootstrap stage `dev` skips CI, on pushes and on pull requests into it, and
+deploys directly; `main` stays gated), then
 `deploy/tose/deploy.ts` triggers a TOSE build of the app project, waits until it
 is live (the app migrates on start), does the same for the worker, and checks
 `/healthz` and `/readyz` on the public hostname.
@@ -157,11 +275,19 @@ npx wrangler@4 deploy        # needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TO
 
 On SIGTERM the worker stops claiming, lets the running attempt finish within
 the grace period, then aborts and releases the lease so another pod reclaims
-the job. An attempt that fails while the pool is draining (for example because
-Puppeteer closes Chrome on SIGTERM) is released, not failed
+the job. Chrome keeps rendering through the grace period: the HyperFrames
+engine is patched so Puppeteer does not close it on SIGTERM (see
+`docs/RENDERER.md`). An attempt that fails while the pool is draining anyway is
+released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.
+
+## Approvals migration
+
+Migration `0003` adds a unique index on pending approvals. Roll it out with the old app instances stopped
+or drained first: an old instance still inserts approvals without conflict handling and would hit a unique
+violation on a duplicate request (or make the index build fail if it commits a duplicate mid-migration).
 
 ## Smoke test
 

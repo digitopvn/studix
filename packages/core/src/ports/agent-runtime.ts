@@ -1,3 +1,4 @@
+import type { ResolvedModelSnapshot } from "../entities/model-preference.ts";
 import type { TenantContext } from "../tenant.ts";
 
 export interface AgentToolDefinition {
@@ -17,6 +18,8 @@ export interface AgentTask {
   outputSchema?: Record<string, unknown>;
   maxCostCents: number;
   maxTurns: number;
+  /** Cap on input plus output tokens; omitted means only the cost cap bounds tokens. */
+  maxTokens?: number;
   deadlineAt?: Date;
   signal?: AbortSignal;
 }
@@ -28,9 +31,20 @@ export interface AgentRunResult {
   inputTokens: number;
   outputTokens: number;
   model?: string;
+  /** Which stored connection ran the task, so the job layer can record it and pin retries to it. */
+  resolved?: {
+    connectionId: string;
+    snapshot?: ResolvedModelSnapshot;
+    /** True when a consented fallback ran instead of the primary choice. */
+    usedFallback: boolean;
+  };
 }
 
-/** Bounded agent execution boundary (e.g. Pi). Must honour budget, turns, deadline and signal. */
+/** The limit an agent run stopped at; carried as `details.cap` on the run's error. */
+export const AGENT_CAPS = ["turns", "tokens", "cost", "time"] as const;
+export type AgentCap = (typeof AGENT_CAPS)[number];
+
+/** Bounded agent execution boundary (e.g. Pi). Must honour budget, turns, tokens, deadline and signal. */
 export interface AgentRuntime {
   readonly id: string;
   run(ctx: TenantContext, task: AgentTask): Promise<AgentRunResult>;

@@ -18,6 +18,7 @@ EXPECTED_TOOLS = {
     "studix_get_job",
     "studix_get_project",
     "studix_cancel_job",
+    "studix_retry_job",
     "studix_approve",
 }
 

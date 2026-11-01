@@ -70,9 +70,17 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
     lastSweep = Date.now();
     const failed = await queue.failExhaustedLeases();
     const resumed = await queue.resumeDecidedApprovals();
+    const expired = await queue.failExpiredApprovals();
+    const hostExpired = await queue.expireHostHandoffs();
     lastContact = new Date();
-    if (failed || resumed)
-      logger.info("queue sweep", { failedExhaustedLeases: failed, resumedApprovals: resumed });
+    if (failed || resumed || expired || hostExpired) {
+      logger.info("queue sweep", {
+        failedExhaustedLeases: failed,
+        resumedApprovals: resumed,
+        failedExpiredApprovals: expired,
+        expiredHostTasks: hostExpired,
+      });
+    }
   };
 
   const loop = async (index: number) => {
@@ -80,6 +88,7 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
     while (running) {
       try {
         if (index === 0) await sweep();
+        const claimRequestedAt = Date.now();
         const job = await queue.claim(workerId);
         lastContact = new Date();
         if (!job) {
@@ -88,7 +97,13 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
         }
         active++;
         try {
-          const outcome = await executor.execute(job, workerId, shutdown.signal, drain.signal);
+          const outcome = await executor.execute(
+            job,
+            workerId,
+            shutdown.signal,
+            drain.signal,
+            claimRequestedAt,
+          );
           options.onOutcome?.(job.id, outcome);
         } finally {
           active--;

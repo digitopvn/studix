@@ -1,6 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createApiKeyService, createDashboardAuth } from "@studix/auth";
+import { createPiKeyTester, findPiModel, isRuntimeKeyProvider } from "@studix/agent-runtime";
+import {
+  createAnthropicKeyTester,
+  createApiKeyService,
+  createDashboardAuth,
+  createModelPreferenceService,
+  createProviderConnectionService,
+  createSecretBox,
+  parseSecretKey,
+  routeKeyTester,
+} from "@studix/auth";
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
@@ -9,6 +19,7 @@ import {
   createLogger,
   type Logger,
   loadConfig,
+  registerSecret,
   registerSecretsFromEnv,
   type StudixConfig,
   StudixError,
@@ -93,6 +104,8 @@ export async function composeApp(
   const config = loadConfig(env);
   const appEnv = parseAppEnv(env);
   registerSecretsFromEnv(env);
+  // The env scan registers the comma-separated list as one value; each retired key is a secret on its own.
+  for (const key of config.STUDIX_SECRETS_KEYS_PREVIOUS) registerSecret(key);
   const logger = overrides.logger ?? createLogger({ service: "studix-app" }, { level: config.LOG_LEVEL });
   if (appEnv.STUDIX_ROLE && appEnv.STUDIX_ROLE !== "app") {
     throw new StudixError("VALIDATION", `This process serves STUDIX_ROLE=app, got ${appEnv.STUDIX_ROLE}`);
@@ -136,6 +149,31 @@ export async function composeApp(
     env: config.STUDIX_API_KEY_ENV,
     logger,
   });
+  const providers = createProviderConnectionService({
+    connections: repos.providerConnections,
+    audit: repos.audit,
+    // Anthropic keys keep the free /v1/models check; other providers get a one-cent Pi probe.
+    tester: routeKeyTester(
+      createAnthropicKeyTester({ baseUrl: config.ANTHROPIC_BASE_URL }),
+      createPiKeyTester(),
+    ),
+    isSupportedProvider: isRuntimeKeyProvider,
+    secrets: config.STUDIX_SECRETS_KEY
+      ? createSecretBox(
+          parseSecretKey(config.STUDIX_SECRETS_KEY),
+          config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+        )
+      : undefined,
+    logger,
+  });
+  if (!config.STUDIX_SECRETS_KEY)
+    logger.warn("STUDIX_SECRETS_KEY is not set; provider keys cannot be stored");
+  const modelPreferences = createModelPreferenceService({
+    preferences: repos.modelPreferences,
+    providers,
+    audit: repos.audit,
+    knownModel: (provider, modelId) => findPiModel(provider, modelId) !== undefined,
+  });
 
   const deps: AppDeps = {
     logger,
@@ -155,6 +193,9 @@ export async function composeApp(
     storage: overrides.storage ?? integrations.storage,
     connectors: overrides.connectors ?? integrations.connectors,
     metaTools: overrides.metaTools ?? integrations.metaTools,
+    providers,
+    modelPreferences,
+    claudePlanner: config.STUDIX_CLAUDE_PLANNER,
     activity,
     readiness: [
       {
@@ -166,9 +207,11 @@ export async function composeApp(
       ...(overrides.readiness ?? []),
     ],
     skills: overrides.skills ?? integrations.skills,
+    agentHandoffs: integrations.agentHandoffs,
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,
+    rateLimitStore: repos.rateLimits,
   };
   if (!deps.storage) logger.warn("S3_BUCKET is not set; playback URLs are unavailable");
 

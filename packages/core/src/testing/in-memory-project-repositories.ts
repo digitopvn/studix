@@ -27,13 +27,30 @@ export function createInMemoryProjectRepository(clock: Clock): ProjectRepository
       return projects.delete(ctx, id);
     },
     async createVersion(ctx, input) {
-      projects.require(ctx, input.projectId);
+      const project = projects.require(ctx, input.projectId);
+      const { advanceFrom, ...fields } = input;
+      if (advanceFrom !== undefined && project.currentVersionId !== advanceFrom) {
+        throw new StudixError("CONFLICT", `version ${advanceFrom} is no longer current`, {
+          details: { currentVersionId: project.currentVersionId },
+        });
+      }
       const existing = versions.filter(ctx, (v) => v.projectId === input.projectId);
+      if (
+        input.idempotencyKey !== undefined &&
+        existing.some((v) => v.idempotencyKey === input.idempotencyKey)
+      ) {
+        throw new StudixError("CONFLICT", `idempotency key ${input.idempotencyKey} is already used`);
+      }
       const version = Math.max(0, ...existing.map((v) => v.version)) + 1;
-      return versions.insert(ctx, { ...input, version });
+      const created = versions.insert(ctx, { ...fields, version });
+      if (advanceFrom !== undefined) projects.update(ctx, input.projectId, { currentVersionId: created.id });
+      return created;
     },
     async getVersion(ctx, versionId) {
       return versions.get(ctx, versionId);
+    },
+    async findVersionByIdempotencyKey(ctx, projectId, idempotencyKey) {
+      return versions.filter(ctx, (v) => v.projectId === projectId && v.idempotencyKey === idempotencyKey)[0];
     },
     async listVersions(ctx, projectId, query = {}) {
       return versions.page(ctx, query, (v) => v.projectId === projectId);

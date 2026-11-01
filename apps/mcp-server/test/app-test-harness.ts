@@ -1,12 +1,28 @@
+import { randomBytes } from "node:crypto";
 import type { Server } from "node:http";
 import { createServer } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { createApiKeyService, createDashboardAuth } from "@studix/auth";
-import { createDefaultApprovalPolicy, type Role, StudioService, type TenantContext } from "@studix/core";
+import { findPiModel, isRuntimeKeyProvider } from "@studix/agent-runtime";
+import {
+  createApiKeyService,
+  createDashboardAuth,
+  createModelPreferenceService,
+  createProviderConnectionService,
+  createSecretBox,
+  type ProviderKeyTester,
+} from "@studix/auth";
+import {
+  createAgentHandoffService,
+  createDefaultApprovalPolicy,
+  type Role,
+  StudioService,
+  type TenantContext,
+} from "@studix/core";
 import { createTestDatabase, insertTestUser, type TestDatabase } from "@studix/database/testing";
 import { createActivityRecorder } from "@studix/observability";
 import { createLogger, newId, systemClock } from "@studix/shared";
 import type { AppDeps } from "../src/app-deps.ts";
+import { packStageOutputValidator } from "../src/compose-integrations.ts";
 import { createApp } from "../src/create-app.ts";
 import type { ArtifactUrlSigner } from "../src/ports.ts";
 
@@ -16,6 +32,22 @@ export const TEST_SECRET = "test-dashboard-secret-0123456789-abcdef";
 export const fakeSigner: ArtifactUrlSigner = {
   async signedUrl(ctx, key, options) {
     return `https://storage.test/${ctx.workspaceId}/${key}?ttl=${options?.expiresInSeconds ?? 0}`;
+  },
+};
+
+/** Key tester stand-in: no network; a key containing "rejected" is refused like an HTTP 401. */
+export const fakeKeyTester: ProviderKeyTester = {
+  async test(apiKey) {
+    const base = { at: new Date(), latencyMs: 1 };
+    return apiKey.includes("rejected")
+      ? {
+          ...base,
+          ok: false,
+          verdict: "invalid",
+          httpStatus: 401,
+          error: { code: "UNAUTHENTICATED", message: "The provider rejected the API key", retryable: false },
+        }
+      : { ...base, ok: true, verdict: "available", httpStatus: 200 };
   },
 };
 
@@ -57,6 +89,13 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
   const base = `http://127.0.0.1:${port}`;
   const logger = createLogger({ service: "studix-app-test" }, { level: "error" });
   const repos = db.repos;
+  const providers = createProviderConnectionService({
+    connections: repos.providerConnections,
+    audit: repos.audit,
+    tester: fakeKeyTester,
+    isSupportedProvider: isRuntimeKeyProvider,
+    secrets: createSecretBox(randomBytes(32)),
+  });
   const deps: AppDeps = {
     logger,
     publicUrl: base,
@@ -83,8 +122,20 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
       signedUrlTtlSeconds: 600,
     },
     storage: fakeSigner,
+    rateLimitStore: repos.rateLimits,
+    providers,
+    modelPreferences: createModelPreferenceService({
+      preferences: repos.modelPreferences,
+      providers,
+      audit: repos.audit,
+      knownModel: (provider, modelId) => findPiModel(provider, modelId) !== undefined,
+    }),
     activity: createActivityRecorder(repos.activity, { logger }),
     readiness: [{ name: "database", check: async () => void (await db.client`select 1`) }],
+    agentHandoffs: createAgentHandoffService({
+      handoffs: repos.agentHandoffs,
+      validateOutput: packStageOutputValidator(),
+    }),
     ...overrides,
   };
   const app = createApp(deps);

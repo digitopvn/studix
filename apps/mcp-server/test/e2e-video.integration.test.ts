@@ -11,6 +11,7 @@ import { FfmpegProbe, renderToolchain } from "@studix/renderers";
 import type { VideoIR } from "@studix/video-ir";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type ComposedApp, composeApp } from "../src/compose-app.ts";
+import { AGENT_HANDOFF_MCP_TOOLS } from "../src/mcp/agent-handoff-tools.ts";
 import { NATIVE_TOOLS } from "../src/mcp/native-tools.ts";
 import { freePort } from "./app-test-harness.ts";
 import { callTool, type JobData, pollJob, startWorker, type WorkerHandle } from "./e2e-video-harness.ts";
@@ -150,7 +151,12 @@ describe.skipIf(!toolchain.ok)("E2E video over MCP with a real worker process", 
 
   it("(f) lists only native and meta tools, then searches, inspects and executes a connector tool", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect([...names].sort()).toEqual([...NATIVE_TOOLS.map((t) => t.name), ...META].sort());
+    expect([...names].sort()).toEqual(
+      [...NATIVE_TOOLS, ...AGENT_HANDOFF_MCP_TOOLS]
+        .map((t) => t.name)
+        .concat(META)
+        .sort(),
+    );
 
     const search = await callTool(client, "studix_tool_search", { query: "brand" });
     expect(search.status).toBe("ok");

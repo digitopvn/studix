@@ -56,6 +56,13 @@ export const ConfigSchema = z
       .regex(/^[a-z0-9]{2,8}$/, "2-8 lowercase alphanumerics")
       .default("dev"),
     BETTER_AUTH_SECRET: z.string().min(32).optional(),
+    /** 32 random bytes (base64) sealing stored provider credentials; without it none can be saved. */
+    STUDIX_SECRETS_KEY: optionalString,
+    /** Earlier STUDIX_SECRETS_KEY values that may still open stored credentials during a rotation. */
+    STUDIX_SECRETS_KEYS_PREVIOUS: csv.default([]),
+    ANTHROPIC_BASE_URL: origin.default("https://api.anthropic.com"),
+    /** Jobs may select `planner: {runtime: "claude"}` (Claude Agent SDK on the worker). Off by default. */
+    STUDIX_CLAUDE_PLANNER: bool.default(false),
 
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(1),
     JOB_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
@@ -76,6 +83,27 @@ export const ConfigSchema = z
     FFMPEG_PATH: z.string().min(1).default("ffmpeg"),
     FFPROBE_PATH: z.string().min(1).default("ffprobe"),
     MULTIX_BIN: optionalString,
+    /**
+     * Check every generated sound effect for a human voice (Silero VAD in the optional `speech` QA image) before
+     * it joins the mix. A voiced effect is generated once more, then fails the job. Needs that image: on the
+     * default one the check fails UNAVAILABLE rather than letting an unchecked effect through.
+     */
+    STUDIX_SPEECH_GATE: bool.default(false),
+    /** Default "<vendor>:<model>" per media role; unset means the provider's built-in default. */
+    MULTIX_IMAGE_MODEL: optionalString,
+    MULTIX_VIDEO_MODEL: optionalString,
+    MULTIX_LIPSYNC_MODEL: optionalString,
+    MULTIX_VOICE_MODEL: optionalString,
+    /** Speech model per language, `<language>=<vendor>:<model>[@<voice>]` comma-separated (`vi=openrouter:fish-audio/drama-3`). */
+    MULTIX_VOICE_LANGUAGE_MODELS: optionalString,
+    MULTIX_MUSIC_MODEL: optionalString,
+    MULTIX_SFX_MODEL: optionalString,
+    MULTIX_IMAGE_UPSCALE_MODEL: optionalString,
+    MULTIX_VIDEO_UPSCALE_MODEL: optionalString,
+    /** Let multix read ~/.multix/.env. Local development only: workers get keys from their environment. */
+    MULTIX_ALLOW_HOME_ENV: bool.default(false),
+    /** Longest wait for one upstream job before the call fails retryably (the job keeps its id). */
+    MULTIX_WAIT_TIMEOUT_SECONDS: z.coerce.number().int().min(30).max(7200).default(900),
 
     OTEL_SERVICE_NAME: z.string().min(1).default("studix"),
     OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,

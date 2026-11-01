@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Job } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
 
-const ACTIVE = new Set(["queued", "running", "waiting_approval"]);
+const ACTIVE = new Set(["queued", "running", "waiting_approval", "waiting_host"]);
 const POLL_MS = 3000;
 
 function durationOf(startedAt?: string, finishedAt?: string): string {
@@ -35,11 +35,52 @@ function StageTimeline({ job }: { job: Job }) {
   );
 }
 
+/** Send a creative gate back: the asset ids to redo and what to change; the job redoes them and asks again. */
+function RequestChanges({
+  approvalId,
+  onSubmit,
+}: {
+  approvalId: string;
+  onSubmit: (run: () => Promise<unknown>) => void;
+}) {
+  const [targets, setTargets] = useState("");
+  const [note, setNote] = useState("");
+  const ids = targets
+    .split(/[\s,]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  return (
+    <form
+      className="form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit(() =>
+          api.decideApproval(approvalId, "changes_requested", { targets: ids, comment: note.trim() }),
+        );
+      }}
+    >
+      <label>
+        Asset ids to redo
+        <input value={targets} onChange={(e) => setTargets(e.target.value)} placeholder="mai-sheet-v1" />
+      </label>
+      <label>
+        What to change
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={2000} />
+      </label>
+      <button type="submit" disabled={ids.length === 0 || note.trim().length === 0}>
+        Request changes
+      </button>
+    </form>
+  );
+}
+
 export function JobDetailPage({ jobId }: { jobId: string }) {
   const { data, error, reload } = useAsync(() => api.job(jobId), [jobId]);
   const [actionError, setActionError] = useState<unknown>();
   const job = data?.job;
   const active = job ? ACTIVE.has(job.status) : false;
+  // A publish is not idempotent, so the server refuses to resume it; do not offer a button that always fails.
+  const retryable = job ? job.status === "failed" && job.kind !== "video.publish" : false;
 
   // Poll while the job is still moving; stop once it reaches a terminal state.
   useEffect(() => {
@@ -66,11 +107,16 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
         <Section
           title={`Job ${job.kind}`}
           actions={
-            active && (
+            (active && (
               <button type="button" className="danger" onClick={() => act(() => api.cancelJob(job.id))}>
                 Cancel job
               </button>
-            )
+            )) ||
+            (retryable && (
+              <button type="button" onClick={() => act(() => api.retryJob(job.id))}>
+                Retry job
+              </button>
+            ))
           }
         >
           <dl className="facts">
@@ -116,6 +162,9 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
                   Reject
                 </button>
               </div>
+              {job.approval.action === "creative.gate" && (
+                <RequestChanges approvalId={job.approval.id} onSubmit={act} />
+              )}
             </div>
           )}
         </Section>

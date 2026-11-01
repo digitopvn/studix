@@ -9,7 +9,7 @@ import {
 } from "../abort-signals.ts";
 import { failureCostCents, failureReason, failureUsage, sanitizeDecisionError } from "../decision-errors.ts";
 import { validateDecisionRequest } from "../decision-request-validation.ts";
-import type { DecisionProvider, DecisionRequest, DecisionResult } from "../decision-types.ts";
+import type { DecisionProvider, DecisionRequest, DecisionResult, FallbackStep } from "../decision-types.ts";
 import { CircuitBreaker, type CircuitBreakerOptions } from "./circuit-breaker.ts";
 import { type DecisionRoute, DecisionRouteTable } from "./decision-route-table.ts";
 import { fingerprintOf, IdempotencyCache, type IdempotencyCacheOptions } from "./idempotency-cache.ts";
@@ -41,6 +41,15 @@ export interface DecisionRouterOptions {
 }
 
 const MAX_BACKOFF_MS = 5_000;
+
+/**
+ * A cached result describes the one provider call that was made. It keeps that call's cost and execution
+ * id so a caller whose first run never reached the ledger can still bill it; `replayed` tells callers
+ * that no new spend happened, and the ledger dedupes by execution id.
+ */
+function asReplay<T>(result: DecisionResult<T>): DecisionResult<T> {
+  return { ...result, replayed: true };
+}
 
 /**
  * Jev policy layer: per-kind provider chains, per-call budget and deadline, bounded retries of retryable
@@ -87,8 +96,11 @@ export class DecisionRouter implements DecisionProvider {
     if (!this.#cache) return this.#route(request, chain);
     const { tenant, kind, idempotencyKey } = request;
     const key = `${tenant.organizationId}:${tenant.workspaceId}:${kind}:${idempotencyKey}`;
-    return this.#cache.run(key, fingerprintOf({ input: request.input, version: request.schemaVersion }), () =>
-      this.#route(request, chain),
+    return this.#cache.run(
+      key,
+      fingerprintOf({ input: request.input, version: request.schemaVersion }),
+      () => this.#route(request, chain),
+      asReplay,
     );
   }
 
@@ -172,16 +184,17 @@ export class DecisionRouter implements DecisionProvider {
         );
         const latencyMs = this.#clock.now().getTime() - attemptStarted;
         accountSpend(state, result.costCents, result.usage);
-        state.steps.push({
+        const step: FallbackStep = {
           providerId: provider.id,
           model: result.model,
           attempt,
           outcome: "succeeded",
           latencyMs,
           costCents: result.costCents,
-        });
+        };
+        state.steps.push(step);
         this.#breaker?.recordSuccess(provider.id);
-        await recordExecution(this.#sink, this.#logger, request, {
+        const executionId = await recordExecution(this.#sink, this.#logger, request, {
           providerId: provider.id,
           model: result.model,
           attempt,
@@ -189,7 +202,9 @@ export class DecisionRouter implements DecisionProvider {
           costCents: result.costCents,
           usage: result.usage,
         });
-        return result;
+        if (!executionId) return result;
+        step.executionId = executionId;
+        return { ...result, providerExecutionId: executionId };
       } catch (thrown) {
         const error = deadline.signal.aborted
           ? deadlineError(deadline, request.timeoutMs)
@@ -200,7 +215,7 @@ export class DecisionRouter implements DecisionProvider {
         const model = typeof error.details?.model === "string" ? error.details.model : undefined;
         const latencyMs = this.#clock.now().getTime() - attemptStarted;
         accountSpend(state, costCents, usage);
-        state.steps.push({
+        const step: FallbackStep = {
           providerId: provider.id,
           ...(model ? { model } : {}),
           attempt,
@@ -209,10 +224,11 @@ export class DecisionRouter implements DecisionProvider {
           errorCode: error.code,
           latencyMs,
           costCents,
-        });
+        };
+        state.steps.push(step);
         state.lastError = error;
         this.#breaker?.recordFailure(provider.id, reason);
-        await recordExecution(this.#sink, this.#logger, request, {
+        const executionId = await recordExecution(this.#sink, this.#logger, request, {
           providerId: provider.id,
           model,
           attempt,
@@ -221,6 +237,7 @@ export class DecisionRouter implements DecisionProvider {
           usage,
           error,
         });
+        if (executionId) step.executionId = executionId;
         if (deadline.signal.aborted || error.code === "VALIDATION") throw error;
         if (!error.retryable || attempt === this.#maxAttempts) return undefined;
         const hinted = error.details?.retryAfterMs;

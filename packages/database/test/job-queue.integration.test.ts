@@ -22,6 +22,28 @@ const enqueueInput = (key?: string) => ({
 });
 
 describe("Postgres job queue", () => {
+  it("retry re-arms the window the caller asked for, even for a job that waited at a gate", async () => {
+    const { queue, jobs } = db.current.repos;
+    const ctx = await tenant("retry-window");
+    const requested = 60_000;
+    const { job } = await queue.enqueue(ctx, {
+      ...enqueueInput(),
+      initialStatus: "waiting_approval",
+      deadlineAt: new Date(Date.now() + requested),
+    });
+    expect(job.deadlineWindowMs).toBeGreaterThan(requested - 5_000);
+    expect(job.deadlineWindowMs).toBeLessThanOrEqual(requested);
+    // Parked at the gate the job has no absolute deadline; the failure leaves it unarmed as well.
+    await jobs.update(ctx, job.id, { status: "failed" });
+    const before = Date.now();
+    const retried = await queue.retry(ctx, job.id);
+    const window = (retried.deadlineAt?.getTime() ?? 0) - before;
+    // The paused remainder is dropped, or the next claim would re-arm the deadline from it instead.
+    expect(retried.deadlineRemainingMs).toBeUndefined();
+    expect(window).toBeLessThanOrEqual(requested + 1000);
+    expect(window).toBeGreaterThan(requested - 10_000);
+  });
+
   it("enqueue is idempotent per workspace, including under concurrency", async () => {
     const { queue, jobs } = db.current.repos;
     const a = await tenant("idem-a");
@@ -71,6 +93,20 @@ describe("Postgres job queue", () => {
 
     const finished = await queue.cancel(ctx, cancelled.id);
     expect(finished.status).toBe("cancelled");
+  });
+
+  it("starts the deadline of a job born at a gate only once it is claimed", async () => {
+    const { queue } = db.current.repos;
+    const ctx = await tenant("gate-deadline");
+    const deadlineAt = new Date(Date.now() + 600_000);
+    const { job } = await queue.enqueue(ctx, {
+      ...enqueueInput(),
+      deadlineAt,
+      initialStatus: "waiting_approval",
+    });
+    expect(job.deadlineAt).toBeUndefined();
+    expect(job.deadlineRemainingMs).toBeGreaterThan(590_000);
+    expect(job.deadlineRemainingMs).toBeLessThanOrEqual(600_000);
   });
 
   it("resumes only waiting_approval jobs (compare-and-set)", async () => {

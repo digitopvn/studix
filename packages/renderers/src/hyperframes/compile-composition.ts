@@ -4,7 +4,13 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { StudixError } from "@studix/shared";
 import { resolveSceneSpans, type VideoIR } from "@studix/video-ir";
-import { DEFAULT_FONT_FAMILY, type FontSlot, frameScale, resolvePalette } from "./brand-tokens.ts";
+import {
+  DEFAULT_FONT_FAMILY,
+  type FontSlot,
+  frameScale,
+  resolvePalette,
+  TEXT_STYLES,
+} from "./brand-tokens.ts";
 import { planFonts } from "./bundled-fonts.ts";
 import { cmp, escapeHtml, num, scriptJson, seconds } from "./html-utils.ts";
 import { compileScene, type SceneCaptionCue } from "./scene-composition.ts";
@@ -23,6 +29,13 @@ export const IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
   "image/gif": ".gif",
   "image/avif": ".avif",
   "image/svg+xml": ".svg",
+};
+
+/** Video MIME types HyperFrames can extract frames from, mapped to the file extension used in the project. */
+export const VIDEO_EXTENSIONS: Readonly<Record<string, string>> = {
+  "video/mp4": ".mp4",
+  "video/webm": ".webm",
+  "video/quicktime": ".mov",
 };
 
 export interface BuildCompositionOptions {
@@ -127,16 +140,23 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
 
   const copies = new Map<string, string>();
   const assetPaths = new Map<string, string>();
+  const videoAssetIds = new Set<string>();
   for (const asset of [...ir.assets].sort((a, b) => cmp(a.id, b.id))) {
     const source = options.assetFiles?.[asset.id];
-    const ext = IMAGE_EXTENSIONS[asset.mime];
-    if (!source || asset.kind !== "image" || !ext) continue;
+    const ext =
+      asset.kind === "image"
+        ? IMAGE_EXTENSIONS[asset.mime]
+        : asset.kind === "video"
+          ? VIDEO_EXTENSIONS[asset.mime]
+          : undefined;
+    if (!source || !ext) continue;
     if (!isAbsolute(source)) {
       throw new StudixError("VALIDATION", `Asset file for "${asset.id}" must be an absolute path`);
     }
     const dest = `assets/media/${asset.id}${ext}`;
     copies.set(dest, source);
     assetPaths.set(asset.id, dest);
+    if (asset.kind === "video") videoAssetIds.add(asset.id);
   }
 
   const cues = captionsByScene(ir);
@@ -155,10 +175,13 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
       palette,
       transitions: sceneTransitions(ir.scenes, index),
       captions: { position, cues: cues.get(scene.id) ?? [] },
-      markup,
+      markup: { ...markup, videoAssetIds },
     }),
   );
 
+  // Every scene stage names the body family, so it needs a bundled face even when no shot draws text;
+  // otherwise the producer injects one itself, which can mean a network font fetch.
+  if (fontWeights.body.size === 0) fontWeights.body.add(TEXT_STYLES.body.weight);
   const fonts = planFonts([
     { family: families.heading, weights: fontWeights.heading },
     { family: families.body, weights: fontWeights.body },

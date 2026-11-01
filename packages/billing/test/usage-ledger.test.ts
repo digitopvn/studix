@@ -1,6 +1,12 @@
 import { testTenant } from "@studix/core/testing";
 import { describe, expect, it } from "vitest";
-import { createJobBudgetPolicy, toBudgetCents, USAGE_KINDS, usageDedupeKey } from "../src/index.ts";
+import {
+  createJobBudgetPolicy,
+  executionUsageDedupeKey,
+  toBudgetCents,
+  USAGE_KINDS,
+  usageDedupeKey,
+} from "../src/index.ts";
 import { createInMemoryUsageLedger } from "../src/testing.ts";
 
 const usage = (key: string, costCents: number, jobId = "job_1") => ({
@@ -32,6 +38,51 @@ describe("usage ledger", () => {
       key,
       "job_1:plan:1:decision",
     ]);
+  });
+
+  it("replaces an estimate with the receipt of the same job instead of adding to it", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    const line = (costCents: number, costSource: string) => ({
+      ...usage("job_1:media:exec:sume:j1", costCents),
+      metadata: { costSource },
+    });
+    const first = await ledger.record(ctx, line(10, "estimate"));
+    const receipt = await ledger.record(ctx, line(7, "receipt"));
+    expect(first.created).toBe(true);
+    expect(receipt.created).toBe(false);
+    expect(receipt.event.id).toBe(first.event.id);
+    expect(receipt.event.costCents).toBe(7);
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7);
+    expect(await ledger.listForJob(ctx, "job_1")).toHaveLength(1);
+  });
+
+  it("keeps the stored job and execution ids when the receipt replaces the estimate", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    const base = { ...usage("job_1:media:exec:sume:j1", 10), providerExecutionId: "pex_1" };
+    await ledger.record(ctx, { ...base, metadata: { costSource: "estimate" } });
+    const { jobId: _job, providerExecutionId: _exec, ...bare } = base;
+    await ledger.record(ctx, { ...bare, costCents: 7, metadata: { costSource: "receipt" } });
+    const [event] = await ledger.listForJob(ctx, "job_1");
+    expect(event).toMatchObject({ jobId: "job_1", providerExecutionId: "pex_1", costCents: 7 });
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7);
+  });
+
+  it("keeps a receipt over a later estimate and the first of two estimates or two receipts", async () => {
+    const ledger = createInMemoryUsageLedger();
+    const ctx = testTenant();
+    const line = (key: string, costCents: number, costSource: string) => ({
+      ...usage(key, costCents),
+      metadata: { costSource },
+    });
+    await ledger.record(ctx, line("a", 7, "receipt"));
+    await ledger.record(ctx, line("a", 10, "estimate"));
+    await ledger.record(ctx, line("b", 10, "estimate"));
+    await ledger.record(ctx, line("b", 12, "estimate"));
+    await ledger.record(ctx, line("c", 5, "receipt"));
+    await ledger.record(ctx, line("c", 6, "receipt"));
+    expect(await ledger.jobCostCents(ctx, "job_1")).toBe(7 + 10 + 5);
   });
 
   it("isolates dedupe keys per workspace", async () => {
@@ -93,5 +144,13 @@ describe("job budget policy", () => {
     await expect(
       policy.authorizeSpend(ctx, { purpose: "render", estimatedCostCents: 1, budgetCents: -5 }),
     ).resolves.toMatchObject({ allowed: false });
+  });
+});
+
+describe("executionUsageDedupeKey", () => {
+  it("is the same for every attempt that reports one provider execution", () => {
+    const key = executionUsageDedupeKey({ jobId: "job_1", stage: "plan", executionId: "pex_1" });
+    expect(key).toBe("job_1:plan:exec:pex_1");
+    expect(() => executionUsageDedupeKey({ jobId: "job_1", stage: "plan", executionId: "pex 1" })).toThrow();
   });
 });

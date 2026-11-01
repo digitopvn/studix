@@ -1,0 +1,373 @@
+import { StudixError } from "@studix/shared";
+import { validateVideoIR } from "@studix/video-ir";
+import { describe, expect, it } from "vitest";
+import {
+  captionCues,
+  chunkCaption,
+  framePrompt,
+  HOOK_MAX_MS,
+  irVariants,
+  MAX_CAPTION_WORDS,
+  marketingScript,
+  marketingVideoTemplate,
+  motionGraphicTemplate,
+  packPipelines,
+  packRegistry,
+  resolveMotionStyle,
+  variantIr,
+  voiceoverWordBudget,
+  wordCount,
+} from "../src/index.ts";
+
+const brief = {
+  prompt: "Ba quảng cáo dọc cho tiệm trà Lá Mây",
+  title: "Lá Mây",
+  durationMs: 20_000,
+  brand: {
+    name: "Lá Mây",
+    palette: { primary: "#2f6b4f", background: "#f4efe6", foreground: "#1d2a24" },
+    fonts: { heading: "Be Vietnam Pro", body: "Be Vietnam Pro" },
+  },
+  directions: [
+    {
+      id: "sang-som",
+      name: "Buổi sáng",
+      concept: "Tách trà nóng mở đầu ngày mới.",
+      hook: "Sáng nay bạn uống trà chưa?",
+    },
+    {
+      id: "ban-be",
+      name: "Bạn bè",
+      concept: "Nhóm bạn bên ấm trà chiều.",
+      keyMessages: ["Yên tĩnh giữa phố"],
+    },
+  ],
+};
+
+function codeOf(fn: () => unknown): string | undefined {
+  try {
+    fn();
+  } catch (e) {
+    return e instanceof StudixError ? e.code : "NOT_STUDIX";
+  }
+  return undefined;
+}
+
+describe("caption chunks", () => {
+  it("keeps every chunk within the word limit and prefers clause boundaries", () => {
+    const text = "Trà hái tay mỗi sớm, ủ chậm trong bình gốm, rót ra thơm dịu cả căn phòng nhỏ";
+    const chunks = chunkCaption(text);
+    expect(chunks.every((c) => wordCount(c) <= MAX_CAPTION_WORDS)).toBe(true);
+    expect(chunks[0]).toBe("Trà hái tay mỗi sớm,");
+    expect(chunks.join(" ")).toBe(text.normalize("NFC"));
+  });
+
+  it("times cues in proportion to their words inside the span", () => {
+    const cues = captionCues("một hai ba bốn năm sáu bảy tám chín mười", 1000, 2000, 5);
+    expect(cues).toEqual([
+      { startMs: 1000, endMs: 2000, text: "một hai ba bốn năm" },
+      { startMs: 2000, endMs: 3000, text: "sáu bảy tám chín mười" },
+    ]);
+    expect(captionCues("", 0, 1000)).toEqual([]);
+  });
+});
+
+describe("marketing script", () => {
+  it("makes one ad per direction with a hook of at most three seconds and beats that fill the length", () => {
+    const script = marketingScript(brief);
+    expect(script).toMatchObject({ aspectRatio: "9:16", durationMs: 20_000, language: "vi" });
+    expect(script.ads.map((a) => a.id)).toEqual(["ad-1-sang-som", "ad-2-ban-be"]);
+    for (const ad of script.ads) {
+      expect(ad.beats[0]?.durationMs).toBeLessThanOrEqual(HOOK_MAX_MS);
+      const last = ad.beats.at(-1);
+      expect((last?.startMs ?? 0) + (last?.durationMs ?? 0)).toBe(20_000);
+      expect(ad.voiceoverWords).toBeLessThanOrEqual(voiceoverWordBudget(20_000));
+    }
+    // Derived closing frames carry the ad's own concept, so variants never share one prompt.
+    const closing = script.ads.map((a) => a.beats.at(-1)?.visual);
+    expect(new Set(closing).size).toBe(closing.length);
+  });
+
+  it("clamps the length and rejects a brief without directions or with an overlong voice-over", () => {
+    expect(marketingScript({ ...brief, durationMs: 2_000 }).durationMs).toBe(10_000);
+    expect(codeOf(() => marketingScript({ ...brief, directions: undefined }))).toBe("VALIDATION");
+    const long = Array.from({ length: voiceoverWordBudget(20_000) + 1 }, () => "trà").join(" ");
+    const over = {
+      ...brief,
+      directions: [{ ...brief.directions[0], beats: [{ visual: "a", voiceover: long }, { visual: "b" }] }],
+    };
+    expect(codeOf(() => marketingScript(over))).toBe("VALIDATION");
+  });
+
+  it("derives visuals that describe the scene, never the words the overlay sets", () => {
+    const script = marketingScript(brief);
+    for (const ad of script.ads) {
+      const visuals = ad.beats.map((b) => b.visual);
+      expect(new Set(visuals).size).toBe(visuals.length);
+      for (const beat of ad.beats) {
+        expect(beat.visual).not.toContain("Lá Mây");
+        if (beat.onScreen) expect(beat.visual).not.toContain(beat.onScreen);
+      }
+    }
+  });
+});
+
+describe("storyboard frame prompt", () => {
+  const prompt = (visual: string, aspectRatio = "9:16") =>
+    framePrompt(
+      visual,
+      "warm film grain",
+      { ...brief, brand: { ...brief.brand, tagline: "Trà ngon mỗi sớm" } },
+      aspectRatio,
+    );
+
+  it("keeps brand words and poster framing out of the image prompt", () => {
+    const text = prompt("A cup of Lá Mây tea on a windowsill, LÁ MÂY steam rising. Trà ngon mỗi sớm");
+    expect(text).not.toMatch(/lá mây/i);
+    expect(text).not.toContain("Trà ngon mỗi sớm");
+    expect(text).toContain("A cup of tea on a windowsill, steam rising.");
+    expect(text).not.toMatch(/advertis|poster|frame/i);
+    expect(text).toContain("tall portrait composition");
+    expect(text).toContain("no text or lettering anywhere");
+    expect(text).toContain("#2f6b4f");
+  });
+
+  it("only removes whole brand words and frames other ratios as a full-bleed scene", () => {
+    expect(prompt("Lá Mâyer leaves")).toContain("Lá Mâyer leaves");
+    expect(prompt("A tea field", "16:9")).toContain("wide landscape composition, full-bleed photograph");
+    expect(prompt("A tea field", "3:2")).toContain("3:2 composition, full-bleed photograph");
+  });
+});
+
+describe("marketing-video IR and variants", () => {
+  it("builds a valid back-to-back IR whose variants each stand alone", () => {
+    const ir = marketingVideoTemplate(brief);
+    expect(validateVideoIR(ir).ok).toBe(true);
+    expect(ir.format.durationMs).toBe(40_000);
+    const variants = irVariants(ir);
+    expect(variants.map((v) => v.startMs)).toEqual([0, 20_000]);
+    // A caption the second ad's copy does not already show, so it survives into that ad.
+    ir.captions?.cues.push({ startMs: 24_000, endMs: 25_000, text: "Một câu nói khác hẳn" });
+    const second = variantIr(ir, variants[1] as (typeof variants)[number]);
+    expect(validateVideoIR(second).ok).toBe(true);
+    expect(second.scenes).toHaveLength(1);
+    expect(second.format.durationMs).toBe(20_000);
+    expect(second.captions?.cues.every((c) => c.startMs >= 0 && c.endMs <= 20_000)).toBe(true);
+    expect(second.captions?.cues).toContainEqual({
+      startMs: 4_000,
+      endMs: 5_000,
+      text: "Một câu nói khác hẳn",
+    });
+  });
+
+  it("renders each ad's pictures full-bleed unless the IR names a region", () => {
+    const ir = marketingVideoTemplate(brief);
+    const scene = ir.scenes[0] as (typeof ir.scenes)[number];
+    const frame = {
+      id: "frame-a",
+      kind: "image" as const,
+      storageKey: "k/frame-a.png",
+      sha256: "a".repeat(64),
+      mime: "image/png",
+      bytes: 1,
+      provenance: { source: "generated" as const },
+    };
+    ir.assets.push(frame);
+    scene.shots.unshift(
+      {
+        id: "pic-free",
+        type: "image",
+        startMs: 0,
+        durationMs: 3000,
+        assetId: frame.id,
+        fit: "cover",
+        alt: "Tea on a windowsill",
+      },
+      {
+        id: "pic-top",
+        type: "image",
+        startMs: 3000,
+        durationMs: 3000,
+        assetId: frame.id,
+        fit: "cover",
+        alt: "Tea on a windowsill",
+        style: { region: "top" },
+      },
+    );
+    const one = variantIr(ir, irVariants(ir)[0] as ReturnType<typeof irVariants>[number]);
+    expect(validateVideoIR(one).ok).toBe(true);
+    const shots = Object.fromEntries((one.scenes[0]?.shots ?? []).map((s) => [s.id, s]));
+    expect(shots["pic-free"]?.style?.region).toBe("full");
+    expect(shots["pic-top"]?.style?.region).toBe("top");
+    // Copy keeps its own layout and sits on a card over the footage.
+    const copy = (one.scenes[0]?.shots ?? []).filter((s) =>
+      ["title", "text", "logo", "cta"].includes(s.type),
+    );
+    expect(copy.length).toBeGreaterThan(2);
+    for (const shot of copy) {
+      expect(shot.style?.region).not.toBe("full");
+      expect(shot.style?.background).toBe("background");
+    }
+  });
+
+  it("leaves copy uncarded when an ad has no full-bleed picture", () => {
+    const ir = marketingVideoTemplate(brief);
+    const one = variantIr(ir, irVariants(ir)[0] as ReturnType<typeof irVariants>[number]);
+    expect(one.scenes[0]?.shots.every((s) => s.style?.background === undefined)).toBe(true);
+  });
+
+  it("moves the CTA off the centred subject to the lower band only over footage", () => {
+    const plain = marketingVideoTemplate(brief);
+    const first = (ir: typeof plain) =>
+      variantIr(ir, irVariants(ir)[0] as ReturnType<typeof irVariants>[number]);
+    const ctaOf = (ir: typeof plain) => ir.scenes[0]?.shots.find((s) => s.type === "cta");
+    expect(ctaOf(first(plain))?.style?.region).toBe("middle");
+    const footage = marketingVideoTemplate(brief);
+    const scene = footage.scenes[0] as (typeof footage.scenes)[number];
+    footage.assets.push({
+      id: "frame-a",
+      kind: "image",
+      storageKey: "k/frame-a.png",
+      sha256: "a".repeat(64),
+      mime: "image/png",
+      provenance: { source: "generated" },
+    });
+    scene.shots.unshift({
+      id: "pic",
+      type: "image",
+      startMs: 0,
+      durationMs: 20_000,
+      assetId: "frame-a",
+      fit: "cover",
+      alt: "Tea on a windowsill",
+    });
+    const cta = scene.shots.find((s) => s.type === "cta");
+    if (!cta || !footage.captions) throw new Error("fixture has no CTA or captions");
+    const withCta = (c: { startMs: number; endMs: number }) =>
+      c.startMs < cta.startMs + cta.durationMs && c.endMs > cta.startMs;
+    // No caption shows with the CTA: it takes the lower band, clear of the subject's face.
+    footage.captions.cues = footage.captions.cues.filter((c) => !withCta(c));
+    const one = first(footage);
+    expect(validateVideoIR(one).ok).toBe(true);
+    expect(ctaOf(one)?.style?.region).toBe("bottom");
+    expect(one.scenes[0]?.shots.find((s) => s.type === "logo")?.style?.region).toBe("top");
+    // Nothing else the copy shows sits in the middle of the frame either.
+    const copy = one.scenes[0]?.shots.filter((s) => s.type !== "image" && s.type !== "video") ?? [];
+    expect(copy.every((s) => s.style?.region !== "middle")).toBe(true);
+    // A burned caption at the bottom while the CTA shows: the CTA goes to the top band instead of onto it.
+    footage.captions.cues.push({
+      startMs: cta.startMs + 1000,
+      endMs: cta.startMs + 3000,
+      text: "Một câu nói khác hẳn",
+    });
+    const captioned = first(footage);
+    expect(captioned.captions?.cues.map((c) => c.text)).toContain("Một câu nói khác hẳn");
+    expect(ctaOf(captioned)?.style?.region).toBe("top");
+  });
+
+  it("drops burned captions that only repeat the line on screen and keeps the rest", () => {
+    const ir = marketingVideoTemplate(brief);
+    const variant = irVariants(ir)[0] as ReturnType<typeof irVariants>[number];
+    const own = (ir.captions?.cues ?? []).filter((c) => c.endMs <= variant.startMs + variant.durationMs);
+    expect(own.length).toBeGreaterThan(0);
+    ir.captions?.cues.push({ startMs: 4_000, endMs: 5_000, text: "Một câu nói khác hẳn" });
+    const one = variantIr(ir, variant);
+    const shots = one.scenes[0]?.shots ?? [];
+    const words = (t: string) =>
+      t
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+    const onScreen = (startMs: number, endMs: number) =>
+      shots
+        .filter((s) => "text" in s && s.text && s.startMs < endMs && s.startMs + s.durationMs > startMs)
+        .map((s) => words((s as { text: string }).text));
+    const kept = one.captions?.cues ?? [];
+    expect(kept.length).toBeLessThan(own.length + 1);
+    for (const cue of kept) {
+      expect(onScreen(cue.startMs, cue.endMs).some((line) => line.includes(words(cue.text)))).toBe(false);
+    }
+    expect(kept.map((c) => c.text)).toContain("Một câu nói khác hẳn");
+  });
+
+  it("rejects an IR that carries no variants", () => {
+    const ir = motionGraphicTemplate({ prompt: "Lá Mây", keyMessages: ["Trà ngon"] });
+    expect(codeOf(() => irVariants(ir))).toBe("VALIDATION");
+  });
+});
+
+describe("motion graphic", () => {
+  it("resolves a named profile, a matching one, or kinetic typography", () => {
+    expect(
+      resolveMotionStyle({
+        prompt: "x",
+        directions: [{ id: "a", name: "a", concept: "a", visualStyle: "kinetic-typography" }],
+      }).id,
+    ).toBe("kinetic-typography");
+    expect(resolveMotionStyle({ prompt: "zzzz qqqq" }).id).toBe("kinetic-typography");
+    const style = resolveMotionStyle({ prompt: "x", tone: ["editorial"] });
+    expect(style.id).toEqual(expect.any(String));
+  });
+
+  it("sets every line in a colour that reads on its scene", () => {
+    const ir = motionGraphicTemplate({
+      prompt: "Lá Mây",
+      keyMessages: ["Trà hái tay mỗi sớm", "Hộp trà giao tận nơi"],
+      callToAction: "Ghé Lá Mây hôm nay",
+      brand: { ...brief.brand, palette: { ...brief.brand.palette, accent: "#d98e3f" } },
+    });
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const ink = (sceneId: string, shotId: string) =>
+      ir.scenes.find((s) => s.id === sceneId)?.shots.find((s) => s.id === shotId)?.style?.color;
+    // Dark green primary: the cream background colour, not the near-black foreground or the orange accent.
+    expect(ir.scenes.find((s) => s.id === "message-1")?.background?.color).toBe("primary");
+    expect(ink("message-1", "message-1-text")).toBe("background");
+    expect(ir.scenes.find((s) => s.id === "cta")?.background?.color).toBe("primary");
+    expect(ink("cta", "cta-text")).toBe("background");
+    expect(ink("cta", "cta-logo")).toBe("background");
+    // Cream background: the brand's own foreground.
+    expect(ink("hook", "hook-text")).toBe("foreground");
+    expect(ink("message-2", "message-2-text")).toBe("foreground");
+  });
+
+  it("builds a valid captioned IR with its voice-over script and rejects one that cannot fit", () => {
+    const ir = motionGraphicTemplate({
+      prompt: "Lá Mây",
+      durationMs: 12_000,
+      keyMessages: ["Trà hái tay mỗi sớm"],
+    });
+    expect(validateVideoIR(ir).ok).toBe(true);
+    expect(ir.format.durationMs).toBe(12_000);
+    expect(ir.metadata?.voiceover).toEqual(expect.any(String));
+    expect(ir.captions?.cues.every((c) => wordCount(c.text) <= MAX_CAPTION_WORDS)).toBe(true);
+    expect(ir.scenes.at(-1)?.role).toBe("cta");
+    const long = Array.from({ length: 60 }, () => "trà").join(" ");
+    expect(codeOf(() => motionGraphicTemplate({ prompt: "x", durationMs: 6_000, keyMessages: [long] }))).toBe(
+      "VALIDATION",
+    );
+  });
+});
+
+describe("pack pipelines", () => {
+  it("resolves both packs and rejects an unknown template", () => {
+    const resolve = packPipelines(packRegistry);
+    expect(resolve(undefined)).toBeUndefined();
+    expect(resolve("marketing-video")?.renderer).toBe("hyperframes");
+    expect(resolve("motion-graphic")?.renderer).toBe("hyperframes");
+    expect(codeOf(() => resolve("nope"))).toBe("VALIDATION");
+  });
+
+  it("gates every image-to-video and audio stage of marketing-video on an approved storyboard", () => {
+    const pipeline = packPipelines(packRegistry)("marketing-video");
+    const engine = new Proxy({}, { get: (_t, name) => ({ name: `engine.${String(name)}` }) });
+    const stages = pipeline?.stages({ fromVersion: true }, engine as never) ?? [];
+    const paid = stages.filter((s) =>
+      ["marketing-video.i2v", "marketing-video.audio", "marketing-video.voiceover"].includes(s.name),
+    );
+    expect(paid).toHaveLength(3);
+    expect(paid.every((s) => s.requiresApprovedStoryboard === true)).toBe(true);
+    const mg =
+      packPipelines(packRegistry)("motion-graphic")?.stages({ fromVersion: false }, engine as never) ?? [];
+    expect(mg.some((s) => s.name.includes("i2v"))).toBe(false);
+  });
+});

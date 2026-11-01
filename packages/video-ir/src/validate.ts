@@ -59,6 +59,13 @@ export function semanticIssues(ir: VideoIR): ValidationIssue[] {
       }
       if (shot.type === "image") checkAsset([...path, "assetId"], shot.assetId, ["image"]);
       if (shot.type === "video") checkAsset([...path, "assetId"], shot.assetId, ["video"]);
+      if (shot.type === "composition") {
+        checkAsset([...path, "assetId"], shot.assetId, ["code"]);
+        // A composition is code: it must be pinned to a library version so re-renders are reproducible.
+        const code = assets.get(shot.assetId);
+        if (code?.kind === "code" && code.assetVersionId === undefined)
+          add([...path, "assetId"], "unpinned_code", `code asset "${shot.assetId}" has no assetVersionId`);
+      }
       if (shot.type === "logo") {
         checkAsset([...path, "assetId"], shot.assetId, ["image"]);
         if (!shot.assetId && !shot.text && !ir.brand?.logoAssetId) {
@@ -114,6 +121,9 @@ export function semanticIssues(ir: VideoIR): ValidationIssue[] {
     const end = track.startMs + (track.durationMs ?? 0);
     if (track.startMs >= total || end > total)
       add([...path], "out_of_bounds", `audio "${track.id}" exceeds the video`);
+    const fades = (track.fadeInMs ?? 0) + (track.fadeOutMs ?? 0);
+    if (track.durationMs !== undefined && fades > track.durationMs)
+      add([...path, "fadeOutMs"], "out_of_bounds", `audio "${track.id}" fades are longer than the track`);
   });
   if (ir.audio) unique(ir.audio, ["audio"]);
 

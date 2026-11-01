@@ -22,6 +22,7 @@ interface FfprobeStream {
   avg_frame_rate?: string;
   r_frame_rate?: string;
   duration?: string;
+  nb_read_packets?: string;
 }
 
 interface FfprobeOutput {
@@ -29,14 +30,17 @@ interface FfprobeOutput {
   format?: { duration?: string; size?: string };
 }
 
-/** Normalize `ffprobe -print_format json -show_streams -show_format` output into a MediaProbe. */
-export function parseFfprobeJson(raw: string, fallbackBytes = 0): MediaProbe {
-  let data: FfprobeOutput;
+function parseJson(raw: string): FfprobeOutput {
   try {
-    data = JSON.parse(raw) as FfprobeOutput;
+    return JSON.parse(raw) as FfprobeOutput;
   } catch (err) {
     throw new StudixError("INTERNAL", "ffprobe returned invalid JSON", { cause: err });
   }
+}
+
+/** Normalize `ffprobe -print_format json -show_streams -show_format` output into a MediaProbe. */
+export function parseFfprobeJson(raw: string, fallbackBytes = 0): MediaProbe {
+  const data = parseJson(raw);
   const streams = data.streams ?? [];
   const video = streams.find((s) => s.codec_type === "video");
   const audio = streams.find((s) => s.codec_type === "audio");
@@ -73,6 +77,41 @@ export class FfmpegProbe {
   }
 
   async probe(filePath: string, signal?: AbortSignal): Promise<MediaProbe> {
+    const { stdout, bytes } = await this.run(filePath, [], signal);
+    return parseFfprobeJson(stdout, bytes);
+  }
+
+  /** Whether a file carries sound, and its length; works for audio-only files. */
+  async audioSource(
+    filePath: string,
+    signal?: AbortSignal,
+  ): Promise<{ hasAudio: boolean; durationMs: number }> {
+    const { stdout } = await this.run(filePath, [], signal);
+    const data = parseJson(stdout);
+    const seconds = Number(data.format?.duration ?? 0);
+    return {
+      hasAudio: (data.streams ?? []).some((s) => s.codec_type === "audio"),
+      durationMs: Number.isFinite(seconds) ? Math.round(seconds * 1000) : 0,
+    };
+  }
+
+  /** Stream facts a golden check needs: video frame count (packets read), fps and audio stream count. */
+  async streamFacts(filePath: string, signal?: AbortSignal): Promise<StreamFacts> {
+    const { stdout } = await this.run(filePath, ["-count_packets"], signal);
+    const streams = parseJson(stdout).streams ?? [];
+    const video = streams.find((s) => s.codec_type === "video");
+    return {
+      videoFrames: Number(video?.nb_read_packets ?? 0),
+      fps: parseRational(video?.avg_frame_rate) || parseRational(video?.r_frame_rate),
+      audioStreams: streams.filter((s) => s.codec_type === "audio").length,
+    };
+  }
+
+  private async run(
+    filePath: string,
+    extra: string[],
+    signal?: AbortSignal,
+  ): Promise<{ stdout: string; bytes: number }> {
     const file = resolve(filePath);
     const info = await stat(file).catch((err: unknown) => {
       throw new StudixError("NOT_FOUND", "Media file to probe does not exist", {
@@ -82,7 +121,7 @@ export class FfmpegProbe {
     });
     const result = await runProcess(
       this.bin,
-      ["-v", "error", "-print_format", "json", "-show_streams", "-show_format", file],
+      ["-v", "error", ...extra, "-print_format", "json", "-show_streams", "-show_format", file],
       { timeoutMs: this.timeoutMs, signal },
     );
     if (result.exitCode !== 0) {
@@ -90,8 +129,14 @@ export class FfmpegProbe {
         details: { stderr: result.stderr.slice(-2000) },
       });
     }
-    return parseFfprobeJson(result.stdout, info.size);
+    return { stdout: result.stdout, bytes: info.size };
   }
+}
+
+export interface StreamFacts {
+  videoFrames: number;
+  fps: number;
+  audioStreams: number;
 }
 
 export interface ExpectedMedia {

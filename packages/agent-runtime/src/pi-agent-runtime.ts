@@ -1,6 +1,8 @@
 import type { AgentRuntime } from "@studix/core";
 import { type Clock, StudixError } from "@studix/shared";
 import { type AgentLoop, createBoundedAgentRuntime } from "./bounded-agent-runtime.ts";
+import type { PiBindingResolver } from "./pi-binding.ts";
+import { createPiSdkLoop } from "./pi-sdk-loop.ts";
 
 export interface PiAgentRuntimeOptions {
   /**
@@ -24,4 +26,20 @@ export function createPiAgentRuntime(options: PiAgentRuntimeOptions = {}): Agent
       });
     });
   return createBoundedAgentRuntime({ id: PI_AGENT_RUNTIME_ID, loop, clock: options.clock });
+}
+
+export interface PiSdkAgentRuntimeOptions {
+  /** Per-job resolver: explicit provider, model and decrypted credential. Required, never inferred from env. */
+  resolver: PiBindingResolver;
+  scratchRoot?: string;
+  clock?: Clock;
+}
+
+/** Pi backed by the real SDK. Credentials arrive only through the resolver; see `createPiSdkLoop`. */
+export function createPiSdkAgentRuntime(options: PiSdkAgentRuntimeOptions): AgentRuntime {
+  return createBoundedAgentRuntime({
+    id: PI_AGENT_RUNTIME_ID,
+    loop: createPiSdkLoop({ resolver: options.resolver, scratchRoot: options.scratchRoot }),
+    clock: options.clock,
+  });
 }

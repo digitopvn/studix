@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { createJobBudgetPolicy, createPostgresUsageLedger } from "@studix/billing";
 import {
   createDefaultApprovalPolicy,
+  type ProjectRepository,
   type PublisherAdapter,
   type RendererAdapter,
+  type RenderRepository,
   type StorageAdapter,
   type TenantContext,
 } from "@studix/core";
@@ -19,6 +21,7 @@ import {
   createVideoCreateWorkflow,
   createVideoPublishWorkflow,
   createWorkerJobQueue,
+  type HeartbeatResult,
   type Planner,
 } from "../src/index.ts";
 
@@ -80,7 +83,7 @@ export function fakeRenderer(
     crash?: Promise<void>;
   } = {},
 ) {
-  const state = { calls: 0 };
+  const state: { calls: number; deadlineAt?: Date } = { calls: 0 };
   const renderer: RendererAdapter = {
     id: "fake-renderer",
     supports: () =>
@@ -89,6 +92,7 @@ export function fakeRenderer(
         : { supported: true, reasons: [] },
     async render(ir, opts) {
       state.calls++;
+      state.deadlineAt = opts.deadlineAt;
       opts.onProgress?.({ progress: 0.5, phase: "frames" });
       if (options.crash) {
         await options.crash;
@@ -170,8 +174,13 @@ export interface WorkerOptions {
   renderer?: RendererAdapter;
   storage?: StorageAdapter;
   publisher?: PublisherAdapter;
+  /** Read-side project repository the workflow sees (stage writes always go through the fenced commit). */
+  projects?: Pick<ProjectRepository, "get" | "getVersion">;
+  renders?: Pick<RenderRepository, "get">;
   leaseMs?: number;
   heartbeatIntervalMs?: number;
+  /** "hang": heartbeats never resolve, like a worker whose database connection froze. */
+  heartbeat?: "hang";
   renderCentsPerSecond?: number;
 }
 
@@ -180,10 +189,12 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
   const { repos } = db;
   const queue = createWorkerJobQueue(db.db, { leaseMs: options.leaseMs ?? 30_000 });
   const executor = createJobExecutor({
-    queue,
+    queue:
+      options.heartbeat === "hang"
+        ? { ...queue, heartbeat: () => new Promise<HeartbeatResult>(() => {}) }
+        : queue,
     jobs: repos.jobs,
     approvals: repos.approvals,
-    audit: repos.audit,
     approvalPolicy: createDefaultApprovalPolicy({ costThresholdCents: 1000 }),
     approvalTtlMs: 3_600_000,
     billing: createJobBudgetPolicy(),
@@ -197,8 +208,8 @@ export function createTestWorker(db: TestDatabase, workerId: string, options: Wo
         planner: options.planner ?? fakePlanner().planner,
         renderer: options.renderer ?? fakeRenderer().renderer,
         storage: options.storage ?? fakeStorage().storage,
-        projects: repos.projects,
-        renders: repos.renders,
+        projects: options.projects ?? repos.projects,
+        renders: options.renders ?? repos.renders,
         workRoot: mkdtempSync(join(tmpdir(), "studix-worker-test-")),
         renderCentsPerSecond: options.renderCentsPerSecond,
       }),
