@@ -1,17 +1,8 @@
-**/node_modules
-**/dist
-**/.wrangler
-**/.data
-**/coverage
-**/.venv
-**/__pycache__
-**/.pytest_cache
-**/*.log
-.git
-.github
-.claude
-.env
-.env.*
-!.env.example
-plans
-tmp
+# This branch builds only the standalone marketing site.
+*
+!Dockerfile
+!apps/
+!apps/marketing/
+!apps/marketing/nginx.conf
+!apps/marketing/public/
+!apps/marketing/public/**
