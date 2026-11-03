@@ -26,8 +26,8 @@ intent and the stable rules; it does not duplicate field lists.
   runs authorization code + PKCE. The user signs in, picks a workspace and
   approves `studix:read` and optionally `studix:write`. The access token is
   bound to the `/mcp` resource and a workspace; a token missing `studix:read`
-  fails with `403 insufficient_scope`. OAuth tokens never carry approval,
-  publish, API-key or member-management permissions. Users revoke a connection
+  fails with `403 insufficient_scope`. OAuth tokens never decide approvals or
+  hold publish, API-key or member-management permissions. Users revoke a connection
   from the dashboard's Connected apps page
   ([ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md)).
 - Requests whose `Host`/`Origin` is not derived from the configured

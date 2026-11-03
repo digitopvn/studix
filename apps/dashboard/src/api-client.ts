@@ -514,9 +514,8 @@ export const api = {
     request<OAuthRedirect>("POST", "/api/auth/oauth2/continue", { postLogin: true, oauth_query: oauthQuery }),
   decideOAuthConsent: (accept: boolean, oauthQuery: string) =>
     request<OAuthRedirect>("POST", "/api/auth/oauth2/consent", { accept, oauth_query: oauthQuery }),
-  oauthConnections: () => request<{ connections: OAuthConnection[] }>("GET", "/api/oauth/connections"),
-  revokeOAuthConnection: (id: string) =>
-    request<{ revoked: true }>("DELETE", `/api/oauth/connections/${enc(id)}`),
+  oauthConnections: () => request<{ items: OAuthConnection[] }>("GET", "/api/oauth/connections"),
+  revokeOAuthConnection: (id: string) => request<{ ok: true }>("DELETE", `/api/oauth/connections/${enc(id)}`),
   projects: () => request<Page<Project>>("GET", "/api/projects?limit=50"),
   project: (id: string) => request<ProjectDetail>("GET", `/api/projects/${enc(id)}`),
   projectReview: (id: string) => request<ProjectReview>("GET", `/api/projects/${enc(id)}/review`),

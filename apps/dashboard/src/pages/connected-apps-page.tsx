@@ -23,7 +23,7 @@ export function ConnectedAppsPage() {
     }
   }
 
-  const connections = data?.connections;
+  const connections = data?.items;
   return (
     <Section title="Connected apps">
       <ErrorBanner error={error} />

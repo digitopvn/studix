@@ -155,7 +155,8 @@ describe("MCP OAuth 2.1", () => {
     expect(res.status).toBe(401);
     const challenge = res.headers.get("www-authenticate") ?? "";
     expect(challenge).toContain(`resource_metadata="${t.base}/.well-known/oauth-protected-resource/mcp"`);
-    expect(challenge).toContain('scope="studix:read"');
+    // Clients ask for the challenged scope: it must include write and a refresh token.
+    expect(challenge).toContain('scope="studix:read studix:write offline_access"');
     expect(challenge).not.toContain("error=");
 
     const bad = await fetch(`${t.base}/mcp`, {
@@ -428,6 +429,17 @@ describe("MCP OAuth 2.1", () => {
         });
       }
       await expect(oauth.authenticate(`Bearer ${bad.issuer}`)).rejects.toBeInstanceOf(McpTokenError);
+    });
+
+    it("refuses a token minted before the current consent (revoke then reconnect)", async () => {
+      const { oauth, privateKey } = await verifier();
+      const g = await grantRow();
+      const claims = { sub: g.userId, azp: g.clientId, workspace_id: g.workspaceId };
+      const token = await mint(privateKey, claims);
+      await expect(oauth.authenticate(`Bearer ${token}`)).resolves.toBeTruthy();
+      await t.db
+        .client`update oauth_consents set created_at = now() + interval '1 hour' where client_id = ${g.clientId}`;
+      await expect(oauth.authenticate(`Bearer ${token}`)).rejects.toMatchObject({ failure: "invalid_token" });
     });
 
     it("reports insufficient_scope when the token lacks studix:read", async () => {

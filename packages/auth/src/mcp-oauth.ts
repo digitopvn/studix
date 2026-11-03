@@ -9,7 +9,7 @@ import {
 } from "@studix/core";
 import { type StudixDb, schema } from "@studix/database";
 import { type Logger, StudixError } from "@studix/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { createLocalJWKSet, type JSONWebKeySet, errors as joseErrors, jwtVerify } from "jose";
 import { isApiKeyFormat, parseBearerToken } from "./api-key-format.ts";
 import { WORKSPACE_CLAIM } from "./mcp-oauth-plugins.ts";
@@ -18,10 +18,17 @@ import { MCP_SUPPORTED_SCOPES, parseScopeClaim, permissionsForScopes } from "./m
 /** JWS algorithms the authorization server signs with; anything else is refused (never `none`/HMAC). */
 const ACCEPTED_ALGORITHMS = ["EdDSA", "ES256", "RS256"];
 const JWKS_CACHE_MS = 5 * 60_000;
+/** Unknown key ids may force a JWKS reload, but not more often than this (forged `kid` values). */
+const JWKS_FORCED_REFRESH_MS = 30_000;
+/** A token minted before its grant's consent existed belongs to an earlier, revoked grant. */
+const CONSENT_CLOCK_TOLERANCE_MS = 2_000;
 const CLOCK_TOLERANCE_SECONDS = 5;
 
 /** What a token must carry at minimum to reach the MCP endpoint. */
 export const MCP_REQUIRED_SCOPE = "studix:read";
+
+/** Scope string a connecting client is told to request: read, write and a refresh token. */
+export const MCP_CONNECT_SCOPE = "studix:read studix:write offline_access";
 
 /** RFC 9728 protected resource metadata for the MCP endpoint. */
 export interface ProtectedResourceMetadata {
@@ -114,7 +121,9 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
   let cachedKeys: { set: ReturnType<typeof createLocalJWKSet>; at: number } | undefined;
 
   async function keySet(forceRefresh: boolean) {
-    if (!forceRefresh && cachedKeys && now().getTime() - cachedKeys.at < JWKS_CACHE_MS) return cachedKeys.set;
+    const age = cachedKeys ? now().getTime() - cachedKeys.at : Number.POSITIVE_INFINITY;
+    if (cachedKeys && (forceRefresh ? age < JWKS_FORCED_REFRESH_MS : age < JWKS_CACHE_MS))
+      return cachedKeys.set;
     cachedKeys = { set: createLocalJWKSet(await deps.jwks()), at: now().getTime() };
     return cachedKeys.set;
   }
@@ -148,7 +157,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       return {
         resource: deps.resource,
         authorization_servers: [deps.issuer],
-        scopes_supported: [...MCP_SUPPORTED_SCOPES].filter((s) => s !== "offline_access"),
+        scopes_supported: [...MCP_SUPPORTED_SCOPES],
         bearer_methods_supported: ["header"],
         resource_name: "Studix MCP",
       };
@@ -165,7 +174,10 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       let payload: Awaited<ReturnType<typeof verifyJwt>>;
       try {
         payload = await verifyJwt(token);
-      } catch {
+      } catch (error) {
+        // Only a token problem is a 401; losing the signing keys (database down) must not look like one, or
+        // clients would discard good tokens and send users back through sign-in.
+        if (!(error instanceof joseErrors.JOSEError)) throw error;
         // Wrong issuer/audience, expired, bad signature, malformed: one answer, no detail about which.
         throw invalid();
       }
@@ -181,7 +193,11 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
 
       // The grant must still exist (revoking a connection deletes it) and the client must not be disabled.
       const [grant] = await db
-        .select({ scopes: schema.oauthConsents.scopes, disabled: schema.oauthClients.disabled })
+        .select({
+          scopes: schema.oauthConsents.scopes,
+          grantedAt: schema.oauthConsents.createdAt,
+          disabled: schema.oauthClients.disabled,
+        })
         .from(schema.oauthConsents)
         .innerJoin(schema.oauthClients, eq(schema.oauthClients.clientId, schema.oauthConsents.clientId))
         .where(
@@ -193,6 +209,11 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
         )
         .limit(1);
       if (!grant || grant.disabled) throw invalid();
+      // Revoking deletes the consent; reconnecting creates a new one. A token minted under the earlier grant
+      // must not come back to life with it.
+      const issuedAtMs = (payload.iat ?? 0) * 1000;
+      if (grant.grantedAt && issuedAtMs + CONSENT_CLOCK_TOLERANCE_MS < grant.grantedAt.getTime())
+        throw invalid();
 
       const granted = new Set(grant.scopes);
       const scopes = parseScopeClaim(payload.scope).filter((s) => granted.has(s));
@@ -257,7 +278,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
         and(
           eq(table.clientId, consent.clientId),
           eq(table.userId, userId),
-          consent.referenceId ? eq(table.referenceId, consent.referenceId) : undefined,
+          consent.referenceId ? eq(table.referenceId, consent.referenceId) : isNull(table.referenceId),
         );
       await db.transaction(async (tx) => {
         await tx

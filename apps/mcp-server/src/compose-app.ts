@@ -49,12 +49,12 @@ export const AppEnvSchema = z.object({
   /** Built dashboard directory (default: apps/dashboard/dist next to this app). */
   STUDIX_DASHBOARD_DIST: z.string().min(1).optional(),
   /** Reverse-proxy hops to trust for the client IP (0 = none). Set 1 behind the TOSE ingress. */
+  STUDIX_TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
   /** Serve OAuth 2.1 on /mcp (default on). `false` keeps workspace API keys as the only way in. */
   STUDIX_MCP_OAUTH: z
     .enum(["true", "false", "1", "0"])
     .default("true")
     .transform((v) => v === "true" || v === "1"),
-  STUDIX_TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
 });
 export type AppEnv = z.output<typeof AppEnvSchema>;
 

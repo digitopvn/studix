@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { type AuthInfo, createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import { MCP_REQUIRED_SCOPE, McpTokenError } from "@studix/auth";
+import { MCP_CONNECT_SCOPE, MCP_REQUIRED_SCOPE, McpTokenError } from "@studix/auth";
 import { GATEWAY_DEPTH_HEADER, parseGatewayDepth } from "@studix/mcp-gateway";
 import { activeTraceIds, withSpan } from "@studix/observability";
 import { StudixError, toStudixError } from "@studix/shared";
@@ -110,7 +110,12 @@ function listedToolNames(deps: AppDeps, native: string[]): string[] {
 function bearerChallenge(deps: AppDeps, failure?: { error: "invalid_token" | "insufficient_scope" }): string {
   const parts = ['realm="studix"'];
   const oauth = deps.dashboardAuth.mcpOAuth;
-  if (oauth) parts.push(`resource_metadata="${oauth.resourceMetadataUrl}"`, `scope="${MCP_REQUIRED_SCOPE}"`);
+  if (oauth) {
+    // Clients request the challenged scope: ask for everything a connector needs (including a refresh token),
+    // and only the minimum when the token already lacks it.
+    const scope = failure?.error === "insufficient_scope" ? MCP_REQUIRED_SCOPE : MCP_CONNECT_SCOPE;
+    parts.push(`resource_metadata="${oauth.resourceMetadataUrl}"`, `scope="${scope}"`);
+  }
   if (failure) parts.push(`error="${failure.error}"`);
   return `Bearer ${parts.join(", ")}`;
 }
@@ -166,7 +171,7 @@ export function mountMcpEndpoint(
         : await deps.apiKeys.authenticate(req.headers.authorization);
       const authInfo: StudixAuthInfo = {
         token: "[redacted]",
-        clientId: tenant.actor.id,
+        clientId: tenant.actor.type === "oauth" ? tenant.actor.clientId : tenant.actor.id,
         scopes:
           tenant.actor.type === "apiKey" || tenant.actor.type === "oauth" ? [...tenant.actor.scopes] : [],
         extra: { tenant, gatewayDepth: parseGatewayDepth(req.headers[GATEWAY_DEPTH_HEADER]) },

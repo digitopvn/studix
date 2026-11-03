@@ -60,7 +60,10 @@ Owner: `packages/auth` (`mcp-oauth*.ts`), `apps/mcp-server/src/api/oauth-routes.
   accepted. A token without a resource is opaque and refused.
 - Every request re-checks membership of the workspace, a live consent for the
   client and a non-disabled client, so removing a member or revoking a
-  connection takes effect on the next request. Permissions are the
+  connection from the dashboard takes effect on the next request (a token
+  minted before the current consent is refused, so reconnecting does not revive
+  it). A client revoking its own token through RFC 7009 only stops the refresh
+  token; the access token lives out its 10 minutes. Permissions are the
   intersection of token scope, consent and the user's current role. OAuth
   actors never hold approval, publish, API-key, member or operator permissions.
 - Tokens are never forwarded to connectors, providers or storage. Logs and
