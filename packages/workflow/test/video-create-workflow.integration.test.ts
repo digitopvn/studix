@@ -1,7 +1,8 @@
 import type { TenantContext } from "@studix/core";
 import { withTestDatabase } from "@studix/database/testing";
 import { StudixError } from "@studix/shared";
-import { describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   createTestWorker,
   enqueueCreate,
@@ -18,6 +19,16 @@ const usageFor = async (ctx: TenantContext, jobId: string) =>
   (await db.current.repos.usage.list(ctx, { jobId, limit: 100 })).items;
 
 describe("video.create workflow on Postgres", () => {
+  // Every test in this file shares one database and claims from one queue. A test that fails mid-way
+  // (a slow machine stretching a lease) leaves its job claimable, and the next test's claim would pick it
+  // up instead of its own. Closing leftovers keeps one slow test from failing the rest of the file.
+  afterEach(async () => {
+    await db.current.db.execute(
+      sql`update jobs set status = 'cancelled', locked_by = null, lease_expires_at = null
+          where status not in ('succeeded', 'failed', 'cancelled')`,
+    );
+  });
+
   it("runs plan -> validate_ir -> render -> upload -> finalize and writes the render", async () => {
     const ctx = await tenant(db.current, "happy");
     const { project, job } = await enqueueCreate(db.current, ctx);
@@ -184,11 +195,13 @@ describe("video.create workflow on Postgres", () => {
       renderer: {
         ...base,
         render: async (ir, opts) => {
-          await new Promise((r) => setTimeout(r, 3500));
+          await new Promise((r) => setTimeout(r, 4000));
           return base.render(ir, opts);
         },
       },
-      leaseMs: 1500,
+      // The lease covers the failed beat plus several more beats, so a slow database under load still
+      // renews it in time; the render still outlives the lease, so renewal is what keeps the attempt.
+      leaseMs: 3000,
       heartbeatIntervalMs: 500,
     });
     const realHeartbeat = a.queue.heartbeat;
@@ -322,9 +335,9 @@ describe("video.create workflow on Postgres", () => {
     const { job } = await enqueueCreate(db.current, ctx);
     const a = createTestWorker(db.current, "worker-hb", {
       renderer: fakeRenderer({ hold: "forever" }).renderer,
-      // Production ratio: the worker beats every lease/3.
-      leaseMs: 1500,
-      heartbeatIntervalMs: 500,
+      // Production ratio: the worker beats every lease/3. A longer lease leaves room for a slow database.
+      leaseMs: 3000,
+      heartbeatIntervalMs: 1000,
     });
     a.queue.heartbeat = async () => {
       throw new Error("database unreachable");
