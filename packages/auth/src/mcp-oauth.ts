@@ -3,7 +3,7 @@ import { OAUTH_OFFLINE_SCOPE, OAUTH_SCOPES, ROLE_PERMISSIONS } from "@studix/cor
 import type { StudixDb } from "@studix/database";
 import { schema } from "@studix/database";
 import { type Clock, type Logger, newId, StudixError, systemClock } from "@studix/shared";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { createLocalJWKSet, type JSONWebKeySet, jwtVerify } from "jose";
 import type { Membership } from "./personal-workspace.ts";
 
@@ -212,6 +212,10 @@ export function createMcpTokenVerifier(deps: McpTokenVerifierDeps): McpTokenVeri
     const options = {
       issuer: deps.issuer,
       audience: deps.resource,
+      // Only access tokens of our provider: not the session JWTs the signing plugin can also issue.
+      typ: "at+jwt",
+      algorithms: ["EdDSA"],
+      requiredClaims: ["exp", "iat", "sub", "azp"],
       currentDate: clock.now(),
       clockTolerance: 5,
     };
@@ -245,11 +249,14 @@ export function createMcpTokenVerifier(deps: McpTokenVerifierDeps): McpTokenVeri
       const consents = await deps.db
         .select({ scopes: schema.oauthConsents.scopes })
         .from(schema.oauthConsents)
+        .innerJoin(schema.oauthClients, eq(schema.oauthClients.clientId, schema.oauthConsents.clientId))
         .where(
           and(
             eq(schema.oauthConsents.userId, userId),
             eq(schema.oauthConsents.clientId, clientId),
             eq(schema.oauthConsents.referenceId, workspaceId),
+            // An operator who disables a client ends its live tokens too.
+            or(isNull(schema.oauthClients.disabled), eq(schema.oauthClients.disabled, false)),
           ),
         )
         .limit(1);

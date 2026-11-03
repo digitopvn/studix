@@ -53,7 +53,12 @@ Owner: `packages/auth`.
   granted scopes, the consented scopes and the user's role. Registration is
   limited to public PKCE clients; redirect URIs match exactly. Token
   endpoints are cookie-less and rate limited. Failures return fixed text;
-  tokens, codes and secrets are never logged. The access token is never
+  tokens, codes and secrets are never logged. Known limit: access tokens are
+  JWTs, so a client-side RFC 7009 revoke of the refresh token does not end
+  `/mcp` access until the token expires (at most 15 minutes); disconnecting
+  the app in the dashboard or disabling the client ends it at once. Dynamic
+  clients are unverified, so the consent page shows where the user is sent
+  back to and says the app's identity is not verified. The access token is never
   forwarded to a connector or provider API.
 
 ## Rate limiting

@@ -65,7 +65,10 @@ export function createApp(deps: AppDeps): Express {
     rateLimit(mcpWorkspaceLimiter, "mcp-ws", workspaceKey),
   ]);
 
-  mountMcpOAuthDiscovery(app, deps, rateLimit(authLimiter, "auth"));
+  mountMcpOAuthDiscovery(app, deps, {
+    registration: rateLimit(authLimiter, "auth"),
+    token: rateLimit(mcpIpLimiter, "oauth-token"),
+  });
 
   app.use("/api", originGuard, (_req, res, next) => {
     res.set("Cache-Control", "no-store");

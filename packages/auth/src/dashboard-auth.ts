@@ -8,6 +8,7 @@ import { schema } from "@studix/database";
 import { type Logger, newId, StudixError } from "@studix/shared";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import { jwt } from "better-auth/plugins";
 import {
@@ -110,6 +111,31 @@ interface PostLoginContext {
   isContinuation?: boolean;
 }
 
+/** Unauthenticated dynamic registration is limited to small public-client documents. */
+function registrationGuard(body: unknown): void {
+  const doc = (body ?? {}) as Record<string, unknown>;
+  const method = doc.token_endpoint_auth_method;
+  const text = (value: unknown, max: number) =>
+    value === undefined || (typeof value === "string" && value.length <= max);
+  const urls = doc.redirect_uris;
+  const ok =
+    (method === undefined || method === "none") &&
+    text(doc.client_name, 100) &&
+    text(doc.client_uri, 500) &&
+    text(doc.logo_uri, 500) &&
+    Array.isArray(urls) &&
+    urls.length <= 10 &&
+    urls.every((u) => typeof u === "string" && u.length <= 500) &&
+    (doc.contacts === undefined || (Array.isArray(doc.contacts) && doc.contacts.length <= 5));
+  if (!ok) {
+    throw new APIError("BAD_REQUEST", {
+      error: "invalid_client_metadata",
+      error_description:
+        "Only public clients (token_endpoint_auth_method none) with small metadata may register",
+    });
+  }
+}
+
 function mcpOAuthPlugins(options: DashboardAuthOptions, issuer: string) {
   const mcpOAuth = options.mcpOAuth;
   if (!mcpOAuth) return [];
@@ -117,7 +143,7 @@ function mcpOAuthPlugins(options: DashboardAuthOptions, issuer: string) {
   const memberships = (user: { id: string; email: string; name?: string | null }) =>
     ensurePersonalWorkspace(directory, user, logger);
   return [
-    // The JWT plugin signs access tokens; its own `/token` endpoint and header stay off (OAuth provider mode).
+    // The JWT plugin signs access tokens; its own header and `/token` endpoint (disabled below) stay off.
     jwt({ disableSettingJwtHeader: true, jwt: { issuer, audience: mcpOAuth.resource } }),
     mcp({
       loginPage: OAUTH_PAGES.login,
@@ -126,10 +152,9 @@ function mcpOAuthPlugins(options: DashboardAuthOptions, issuer: string) {
       scopes: [...MCP_OAUTH_SCOPES],
       resources: [{ identifier: mcpOAuth.resource, allowedScopes: [...MCP_OAUTH_SCOPES] }],
       // Hosted connectors without a Client ID Metadata Document register themselves: public clients only
-      // (PKCE), this resource only, the read scope by default. CIMD below is the preferred path.
+      // (PKCE) and this resource only; `registrationGuard` also caps field sizes. CIMD below is the preferred path.
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
-      clientRegistrationDefaultScopes: ["studix:read"],
       clientRegistrationAllowedScopes: [...MCP_OAUTH_SCOPES],
       clientRegistrationAllowedResources: [mcpOAuth.resource],
       clientRegistrationRequirePKCE: true,
@@ -218,7 +243,23 @@ function buildBetterAuth(options: DashboardAuthOptions) {
     // OAuth errors land on the dashboard sign-in page with ?error=<code>.
     onAPIError: { errorURL: options.baseUrl },
     session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
-    rateLimit: { enabled: options.rateLimit ?? true, window: 60, max: 60 },
+    // Better Auth's per-IP limiter would throttle hosted connectors that share egress IPs; the app limits
+    // these calls itself (http/mcp-oauth-routes.ts).
+    rateLimit: {
+      enabled: options.rateLimit ?? true,
+      window: 60,
+      max: 60,
+      customRules: options.mcpOAuth
+        ? { "/oauth2/token": false, "/oauth2/revoke": false, "/oauth2/introspect": false, "/jwks": false }
+        : {},
+    },
+    // The signing plugin's `/token` would mint session JWTs with the MCP audience: never expose it.
+    disabledPaths: ["/token"],
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (options.mcpOAuth && ctx.path === "/oauth2/register") registrationGuard(ctx.body);
+      }),
+    },
     telemetry: { enabled: false },
     advanced: {
       useSecureCookies: options.baseUrl.startsWith("https://"),
@@ -324,6 +365,11 @@ export function createDashboardAuth(options: DashboardAuthOptions): DashboardAut
     };
   };
 
+  // The plugin endpoints exist only when MCP OAuth is configured, so the static type does not list them.
+  const pluginApi = auth.api as unknown as {
+    getJwks(): Promise<unknown>;
+    getOAuthServerConfig(): Promise<unknown>;
+  };
   const mcpOAuth: McpOAuthSurface | undefined = options.mcpOAuth && {
     issuer,
     resource: options.mcpOAuth.resource,
@@ -332,11 +378,11 @@ export function createDashboardAuth(options: DashboardAuthOptions): DashboardAut
       directory: options.directory,
       resource: options.mcpOAuth.resource,
       issuer,
-      jwks: async () => (await auth.api.getJwks()) as never,
+      jwks: async () => (await pluginApi.getJwks()) as never,
       logger: options.logger,
     }),
     connections: createMcpConnectionService(options.db),
-    authorizationServerMetadata: async () => auth.api.getOAuthServerConfig(),
+    authorizationServerMetadata: async () => pluginApi.getOAuthServerConfig(),
     async selectWorkspace(headers, workspaceId) {
       const session = await resolveSession(headers);
       if (!session) throw new StudixError("UNAUTHENTICATED", "Sign in first");

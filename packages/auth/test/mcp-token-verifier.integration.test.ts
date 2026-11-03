@@ -81,6 +81,7 @@ async function token(
     exp?: string;
     key?: CryptoKey;
     kid?: string;
+    typ?: string;
   } = {},
 ) {
   return new SignJWT({
@@ -89,7 +90,7 @@ async function token(
     [WORKSPACE_CLAIM]: g.workspaceId,
     ...overrides.claims,
   })
-    .setProtectedHeader({ alg: "EdDSA", kid: overrides.kid ?? "k1" })
+    .setProtectedHeader({ alg: "EdDSA", kid: overrides.kid ?? "k1", typ: overrides.typ ?? "at+jwt" })
     .setSubject(g.userId)
     .setIssuer(overrides.iss ?? ISSUER)
     .setAudience(overrides.aud ?? RESOURCE)
@@ -129,6 +130,19 @@ describe("MCP OAuth access token verification", () => {
       code: "UNAUTHENTICATED",
     });
     await expect(verifier.authenticate("garbage")).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+  });
+
+  it("rejects tokens that are not access tokens or whose client was disabled", async () => {
+    const g = await grant();
+    await expect(verifier.authenticate(await token(g, { typ: "JWT" }))).rejects.toMatchObject({
+      code: "UNAUTHENTICATED",
+    });
+    await expect(verifier.authenticate(await token(g))).resolves.toBeDefined();
+    await db.current.db
+      .update(schema.oauthClients)
+      .set({ disabled: true })
+      .where(eq(schema.oauthClients.clientId, g.clientId));
+    await expect(verifier.authenticate(await token(g))).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
   });
 
   it("rejects a token without a workspace, client or subject binding", async () => {

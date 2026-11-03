@@ -16,9 +16,9 @@ import { parseBody, sessionOf } from "../api/api-context.ts";
 import type { AppDeps } from "../app-deps.ts";
 
 /** OAuth endpoints a client calls without a Studix session cookie (the code, PKCE or client auth proves it). */
-export const OAUTH_PUBLIC_API_PATHS = [
+export const OAUTH_REGISTRATION_PATH = "/api/auth/oauth2/register";
+export const OAUTH_TOKEN_API_PATHS = [
   "/api/auth/oauth2/token",
-  "/api/auth/oauth2/register",
   "/api/auth/oauth2/revoke",
   "/api/auth/oauth2/introspect",
   "/api/auth/jwks",
@@ -51,7 +51,11 @@ function openCors(methods: string): RequestHandler {
  * the token-endpoint family reachable without a cookie. Mounted before the CORS/Origin guard of `/api`,
  * which would otherwise refuse a browser-based client's foreign Origin.
  */
-export function mountMcpOAuthDiscovery(app: Express, deps: AppDeps, authLimiter: RequestHandler): void {
+export function mountMcpOAuthDiscovery(
+  app: Express,
+  deps: AppDeps,
+  limiters: { registration: RequestHandler; token: RequestHandler },
+): void {
   const oauth = deps.dashboardAuth.mcpOAuth;
   if (!oauth) return;
   const cache = (_req: Request, res: Response, next: NextFunction) => {
@@ -71,11 +75,15 @@ export function mountMcpOAuthDiscovery(app: Express, deps: AppDeps, authLimiter:
     res.json(await oauth.authorizationServerMetadata());
   });
 
-  app.all([...OAUTH_PUBLIC_API_PATHS], openCors("GET, POST, OPTIONS"), authLimiter, (req, res) => {
+  const forward = (req: Request, res: Response) => {
     // These calls are authenticated by the OAuth exchange itself; a browser cookie must not ride along.
     delete req.headers.cookie;
     void deps.dashboardAuth.nodeHandler(req, res);
-  });
+  };
+  // Registration is rare and abusable: strict per-IP bucket. Token calls come from hosted connectors that
+  // share egress IPs across many users (every refresh included), so they get the generous /mcp bucket.
+  app.all(OAUTH_REGISTRATION_PATH, openCors("GET, POST, OPTIONS"), limiters.registration, forward);
+  app.all([...OAUTH_TOKEN_API_PATHS], openCors("GET, POST, OPTIONS"), limiters.token, forward);
 }
 
 const SelectWorkspaceBody = z.object({ workspaceId: z.string().min(1).max(100) }).strict();

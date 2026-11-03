@@ -435,6 +435,23 @@ describe("MCP OAuth rejections", () => {
     expect(web.status).toBe(400);
   });
 
+  it("refuses confidential clients and oversized registration documents", async () => {
+    const confidential = await registerClient({ token_endpoint_auth_method: "client_secret_post" });
+    expect(confidential.status).toBe(400);
+    expect(confidential.body.client_secret).toBeUndefined();
+    expect((await registerClient({ client_name: "x".repeat(101) })).status).toBe(400);
+    expect(
+      (await registerClient({ redirect_uris: Array.from({ length: 11 }, (_, i) => `${REDIRECT}${i}`) }))
+        .status,
+    ).toBe(400);
+  });
+
+  it("does not let a dashboard session mint a JWT through the signing plugin", async () => {
+    const cookie = await app.signUp("jwt-endpoint@example.test");
+    const res = await fetch(`${app.base}/api/auth/token`, { headers: { cookie } });
+    expect(res.status).toBe(404);
+  });
+
   describe("tokens the server did not issue", () => {
     /** Issuer, audience and expiry checks are covered in packages/auth; here a foreign key must fail on /mcp. */
     async function forged(

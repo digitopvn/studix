@@ -76,6 +76,11 @@ function Consent({ me }: { me: Me }) {
   const params = new URLSearchParams(window.location.search);
   const clientId = params.get("client_id") ?? "";
   const scopes = (params.get("scope") ?? "").split(" ").filter(Boolean);
+  // Anyone can register a client, so the one fact the user can check is where the result is sent.
+  let returnsTo = "an unknown address";
+  try {
+    returnsTo = new URL(params.get("redirect_uri") ?? "").origin;
+  } catch {}
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
 
@@ -94,7 +99,8 @@ function Consent({ me }: { me: Me }) {
     <Frame title="Allow access to Studix?">
       <p>
         An app identifying itself as <code className="mono">{clientId}</code> wants to use your Studix account
-        (<strong>{me.user.email}</strong>).
+        (<strong>{me.user.email}</strong>). If you allow it, you are sent back to <strong>{returnsTo}</strong>
+        . Studix has not verified the app's name or identity.
       </p>
       <p className="muted">Only connect apps you trust. You can revoke access at any time under Account.</p>
       <ul>

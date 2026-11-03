@@ -113,7 +113,8 @@ function listedToolNames(deps: AppDeps, native: string[]): string[] {
 }
 
 /** Scope that lets a connector read the workspace; without it the token is refused outright. */
-const MINIMUM_OAUTH_SCOPE = "studix:read";
+/** Write implies read, so either scope opens the endpoint; each tool still checks its own permission. */
+const MINIMUM_OAUTH_SCOPES = ["studix:read", "studix:write"];
 
 /**
  * RFC 6750 / RFC 9728 challenge. A request with no credentials gets no `error` (RFC 6750 section 3.1); a
@@ -197,7 +198,7 @@ export function mountMcpEndpoint(
   const authenticate = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { tenant: resolved, scopes, oauth: viaOAuth } = await resolveTenant(req.headers.authorization);
-      if (viaOAuth && !scopes.includes(MINIMUM_OAUTH_SCOPE)) {
+      if (viaOAuth && !MINIMUM_OAUTH_SCOPES.some((scope) => scopes.includes(scope))) {
         res
           .status(HTTP_STATUS.FORBIDDEN)
           .set("WWW-Authenticate", bearerChallenge(resource, "insufficient_scope"))
@@ -206,7 +207,7 @@ export function mountMcpEndpoint(
             id: null,
             error: {
               code: -32003,
-              message: `The access token lacks the ${MINIMUM_OAUTH_SCOPE} scope`,
+              message: `The access token lacks the studix:read or studix:write scope`,
               data: { code: "FORBIDDEN", retryable: false },
             },
           });
