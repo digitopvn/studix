@@ -74,6 +74,18 @@ application", "Authorized redirect URIs"; the consent screen needs the
 `openid`, `email` and `profile` scopes). Linking rules are in
 [SECURITY.md](SECURITY.md#api-keys-inbound).
 
+MCP OAuth (hosted Claude and ChatGPT connectors) needs no extra secret: the
+authorization server shares `BETTER_AUTH_SECRET` and the database. The issuer
+is `<STUDIX_APP_URL>/api/auth` and the protected resource is
+`<STUDIX_PUBLIC_URL>/mcp`, so both URLs must be the public HTTPS origins. The
+signing keys live in the `jwks` table (the first key is generated on first use). Migration
+`0020_mcp_oauth` is additive; apply it before the new app version. After
+deploy, check `curl -i -X POST <STUDIX_PUBLIC_URL>/mcp` returns the
+`WWW-Authenticate` challenge, and that both `/.well-known/` documents list the
+new origin. After changing `STUDIX_*_URL`, users reconnect their apps (tokens
+bound to the old audience stop working). Route
+`/.well-known/*` and `/api/auth/*` to the app when a proxy sits in front.
+
 Keys for the Pi runtime and the per-stage model preferences need no extra
 setting: they use the same `STUDIX_SECRETS_KEY`, which the worker also needs to
 run a stage on a workspace key. Without it the worker keeps the operator's

@@ -49,6 +49,18 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> =
   viewer: new Set(READ),
 };
 
+/**
+ * Scopes an AI client can be granted through MCP OAuth, as the permissions each stands for. A grant never
+ * exceeds the user's own role: the effective permissions are the intersection of the two.
+ * Administration (keys, members, approvals, publishing) stays with the dashboard.
+ */
+export const OAUTH_SCOPES: Readonly<Record<string, readonly Permission[]>> = {
+  "studix:read": READ,
+  "studix:write": EDIT,
+};
+/** Standard scope that asks for a refresh token; it carries no permission. */
+export const OAUTH_OFFLINE_SCOPE = "offline_access";
+
 /** System actors (workers, schedulers) can do anything except grant human approvals. */
 const SYSTEM_PERMISSIONS: ReadonlySet<Permission> = new Set(
   PERMISSIONS.filter((p) => p !== "approval:decide"),
@@ -57,6 +69,11 @@ const SYSTEM_PERMISSIONS: ReadonlySet<Permission> = new Set(
 export type Actor =
   | { type: "user"; id: string; role: Role }
   | { type: "apiKey"; id: string; scopes: readonly Permission[] }
+  /**
+   * A person acting through an OAuth-connected AI client: `id` is the user, `clientId` the connector, and
+   * `scopes` the intersection of the grant and the user's current role. Never a human decision-maker.
+   */
+  | { type: "oauth"; id: string; clientId: string; scopes: readonly Permission[] }
   | { type: "system"; id: string };
 
 /** Who did something, as stored on records (no role/scope snapshot). */
@@ -88,6 +105,7 @@ export function can(actor: Actor, permission: Permission): boolean {
   switch (actor.type) {
     case "user":
       return ROLE_PERMISSIONS[actor.role]?.has(permission) ?? false;
+    case "oauth":
     case "apiKey":
       // A key issued before a permission became operator-only may still list it.
       return !OPERATOR_PERMISSIONS.has(permission) && actor.scopes.includes(permission);
@@ -107,7 +125,9 @@ export function assertPermission(ctx: TenantContext, permission: Permission): vo
         ? "Only the Studix platform operator can do this; contact them."
         : ctx.actor.type === "apiKey"
           ? `Use an API key with the "${permission}" scope.`
-          : "Ask a workspace admin for a role that grants this action.",
+          : ctx.actor.type === "oauth"
+            ? `Reconnect the client and grant the scope that covers "${permission}", or use a role that holds it.`
+            : "Ask a workspace admin for a role that grants this action.",
     });
   }
 }

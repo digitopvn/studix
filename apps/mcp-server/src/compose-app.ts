@@ -141,6 +141,7 @@ export async function composeApp(
     secret: dashboardSecret(config, logger),
     baseUrl: config.STUDIX_APP_URL,
     trustedOrigins: [config.STUDIX_PUBLIC_URL],
+    mcpOAuth: { resource: `${config.STUDIX_PUBLIC_URL.replace(/\/+$/, "")}/mcp` },
     sso: ssoClients(config),
     ipAddressHeaders: appEnv.STUDIX_TRUST_PROXY > 0 ? ["x-forwarded-for"] : undefined,
     logger,

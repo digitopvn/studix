@@ -9,6 +9,7 @@ import type { ArtifactUrlDeps } from "./artifact-urls.ts";
 import { mountDashboardStatic } from "./http/dashboard-static.ts";
 import { mountHealthRoutes } from "./http/health-routes.ts";
 import { apiErrorHandler } from "./http/http-errors.ts";
+import { mcpOAuthRoutes, mountMcpOAuthDiscovery } from "./http/mcp-oauth-routes.ts";
 import {
   createSharedLimiter,
   createTokenBucketLimiter,
@@ -64,6 +65,8 @@ export function createApp(deps: AppDeps): Express {
     rateLimit(mcpWorkspaceLimiter, "mcp-ws", workspaceKey),
   ]);
 
+  mountMcpOAuthDiscovery(app, deps, rateLimit(authLimiter, "auth"));
+
   app.use("/api", originGuard, (_req, res, next) => {
     res.set("Cache-Control", "no-store");
     next();
@@ -85,6 +88,7 @@ export function createApp(deps: AppDeps): Express {
   );
   api.use("/api-keys", apiKeyRoutes(deps));
   api.use("/connectors", connectorRoutes(deps));
+  api.use("/mcp-oauth", mcpOAuthRoutes(deps));
   api.use("/providers", providerRoutes(deps));
   api.use(studioRoutes(deps, artifacts));
   api.use(() => {

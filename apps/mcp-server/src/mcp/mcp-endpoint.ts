@@ -1,6 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { type AuthInfo, createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import {
+  isApiKeyFormat,
+  MCP_OAUTH_SCOPES,
+  parseBearerToken,
+  protectedResourceMetadataPath,
+} from "@studix/auth";
+import type { TenantContext } from "@studix/core";
 import { GATEWAY_DEPTH_HEADER, parseGatewayDepth } from "@studix/mcp-gateway";
 import { activeTraceIds, withSpan } from "@studix/observability";
 import { StudixError, toStudixError } from "@studix/shared";
@@ -105,10 +112,36 @@ function listedToolNames(deps: AppDeps, native: string[]): string[] {
   return deps.metaTools ? [...native, ...META_TOOL_NAMES] : native;
 }
 
-function sendUnauthenticated(res: Response, error: StudixError): void {
+/** Scope that lets a connector read the workspace; without it the token is refused outright. */
+const MINIMUM_OAUTH_SCOPE = "studix:read";
+
+/**
+ * RFC 6750 / RFC 9728 challenge. A request with no credentials gets no `error` (RFC 6750 section 3.1); a
+ * rejected token gets `invalid_token`, an under-scoped one `insufficient_scope`. `resource_metadata` lets an
+ * OAuth client discover the authorization server.
+ */
+export function bearerChallenge(
+  resource: string | undefined,
+  error?: "invalid_token" | "insufficient_scope",
+): string {
+  const parts = ['Bearer realm="studix"'];
+  if (error) parts.push(`error="${error}"`);
+  if (resource) {
+    parts.push(`resource_metadata="${new URL(resource).origin}${protectedResourceMetadataPath(resource)}"`);
+    parts.push(`scope="${MCP_OAUTH_SCOPES.filter((s) => s !== "offline_access").join(" ")}"`);
+  }
+  return parts.join(", ");
+}
+
+function sendUnauthenticated(
+  res: Response,
+  error: StudixError,
+  resource: string | undefined,
+  presented: boolean,
+): void {
   res
     .status(HTTP_STATUS.UNAUTHENTICATED)
-    .set("WWW-Authenticate", 'Bearer realm="studix", error="invalid_token"')
+    .set("WWW-Authenticate", bearerChallenge(resource, presented ? "invalid_token" : undefined))
     .json({
       jsonrpc: "2.0",
       id: null,
@@ -141,13 +174,53 @@ export function mountMcpEndpoint(
   });
   const node = toNodeHandler(handler, { onerror, maxRequestBodySize: MCP_MAX_BODY_BYTES });
 
+  const oauth = deps.dashboardAuth.mcpOAuth;
+  const resource = oauth?.resource;
+
+  /** `stx_` keys keep their own path; any other bearer token is an OAuth access token (when enabled). */
+  const resolveTenant = async (
+    authorization: string | undefined,
+  ): Promise<{ tenant: TenantContext; scopes: string[]; oauth: boolean }> => {
+    const token = parseBearerToken(authorization);
+    if (token && oauth && !isApiKeyFormat(token)) {
+      const verified = await oauth.verifier.authenticate(token);
+      return { tenant: verified, scopes: verified.scopes, oauth: true };
+    }
+    const tenant = await deps.apiKeys.authenticate(authorization);
+    return {
+      tenant,
+      scopes: tenant.actor.type === "apiKey" ? [...tenant.actor.scopes] : [],
+      oauth: false,
+    };
+  };
+
   const authenticate = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const tenant = await deps.apiKeys.authenticate(req.headers.authorization);
+      const { tenant: resolved, scopes, oauth: viaOAuth } = await resolveTenant(req.headers.authorization);
+      if (viaOAuth && !scopes.includes(MINIMUM_OAUTH_SCOPE)) {
+        res
+          .status(HTTP_STATUS.FORBIDDEN)
+          .set("WWW-Authenticate", bearerChallenge(resource, "insufficient_scope"))
+          .json({
+            jsonrpc: "2.0",
+            id: null,
+            error: {
+              code: -32003,
+              message: `The access token lacks the ${MINIMUM_OAUTH_SCOPE} scope`,
+              data: { code: "FORBIDDEN", retryable: false },
+            },
+          });
+        return;
+      }
+      const tenant: ToolContext["tenant"] = {
+        organizationId: resolved.organizationId,
+        workspaceId: resolved.workspaceId,
+        actor: resolved.actor,
+      };
       const authInfo: StudixAuthInfo = {
         token: "[redacted]",
-        clientId: tenant.actor.id,
-        scopes: tenant.actor.type === "apiKey" ? [...tenant.actor.scopes] : [],
+        clientId: tenant.actor.type === "oauth" ? tenant.actor.clientId : tenant.actor.id,
+        scopes,
         extra: { tenant, gatewayDepth: parseGatewayDepth(req.headers[GATEWAY_DEPTH_HEADER]) },
       };
       (req as Request & { auth?: AuthInfo }).auth = authInfo;
@@ -155,7 +228,7 @@ export function mountMcpEndpoint(
     } catch (err) {
       const error = toStudixError(err);
       if (error.code === "UNAUTHENTICATED") {
-        sendUnauthenticated(res, error);
+        sendUnauthenticated(res, error, resource, Boolean(parseBearerToken(req.headers.authorization)));
         return;
       }
       deps.logger.error("mcp authentication failed", { code: error.code, error: error.message });

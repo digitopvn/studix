@@ -9,4 +9,4 @@ export const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 
 export const createdAt = () => ts("created_at").notNull().defaultNow();
 export const updatedAt = () => ts("updated_at").notNull().defaultNow();
 
-export type ActorType = "user" | "apiKey" | "system";
+export type ActorType = "user" | "apiKey" | "oauth" | "system";

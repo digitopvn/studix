@@ -464,14 +464,38 @@ async function redirectToProvider(path: string, provider: SsoProvider, returnTo:
   window.location.assign(url);
 }
 
+export interface McpConnection {
+  id: string;
+  clientName: string;
+  workspaceId: string;
+  workspaceName?: string;
+  scopes: string[];
+  createdAt: string;
+}
+
+/** Better Auth answers the authorize continuation with the URL to navigate to next. */
+async function oauthStep(path: string, body: Record<string, unknown>): Promise<string> {
+  const { url } = await request<{ url: string }>("POST", path, body);
+  return url;
+}
+
 export const api = {
+  mcpConnections: () => request<{ connections: McpConnection[] }>("GET", "/api/mcp-oauth/connections"),
+  revokeMcpConnection: (id: string) => request<void>("DELETE", `/api/mcp-oauth/connections/${enc(id)}`),
+  selectMcpWorkspace: (workspaceId: string) =>
+    request<void>("POST", "/api/mcp-oauth/workspace", { workspaceId }),
+  continueMcpAuthorization: (oauthQuery: string) =>
+    oauthStep("/api/auth/oauth2/continue", { postLogin: true, oauth_query: oauthQuery }),
+  decideMcpConsent: (accept: boolean, oauthQuery: string) =>
+    oauthStep("/api/auth/oauth2/consent", { accept, oauth_query: oauthQuery }),
   signIn: (email: string, password: string) =>
     request("POST", "/api/auth/sign-in/email", { email, password }),
   signUp: (name: string, email: string, password: string) =>
     request("POST", "/api/auth/sign-up/email", { name, email, password }),
   signOut: () => request("POST", "/api/auth/sign-out", {}),
   ssoProviders: () => request<{ providers: SsoProvider[] }>("GET", "/api/sso-providers"),
-  signInWith: (provider: SsoProvider) => redirectToProvider("/api/auth/sign-in/social", provider, "/"),
+  signInWith: (provider: SsoProvider, returnTo = "/") =>
+    redirectToProvider("/api/auth/sign-in/social", provider, returnTo),
   linkProvider: (provider: SsoProvider) =>
     redirectToProvider("/api/auth/link-social", provider, "/#/account"),
   linkedAccounts: () => request<LinkedAccount[]>("GET", "/api/auth/list-accounts"),

@@ -44,7 +44,17 @@ Owner: `packages/auth`.
   at `account_not_linked`. An operator recovers the address by deleting that
   unverified password user (after checking it holds no work of the owner), so
   the owner's next SSO sign-in creates a fresh account.
-- Inbound OAuth for AI clients: [ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md).
+- Inbound OAuth for AI clients ([ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md)):
+  `/mcp` accepts either an `stx_` key or an OAuth access token, never both
+  and never neither. Tokens are short-lived JWTs verified for issuer,
+  audience (`<STUDIX_PUBLIC_URL>/mcp`), expiry and signature, then against the
+  live consent and workspace membership, so revoking a connection or leaving
+  the workspace cuts access at once. Permissions are the intersection of the
+  granted scopes, the consented scopes and the user's role. Registration is
+  limited to public PKCE clients; redirect URIs match exactly. Token
+  endpoints are cookie-less and rate limited. Failures return fixed text;
+  tokens, codes and secrets are never logged. The access token is never
+  forwarded to a connector or provider API.
 
 ## Rate limiting
 

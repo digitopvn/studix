@@ -32,6 +32,7 @@
     "@studix/mock-mcp": "workspace:*",
     "@studix/renderers": "workspace:*",
     "@types/express": "5.0.6",
+    "jose": "^6.2.13",
     "vitest": "5.0.5"
   }
 }

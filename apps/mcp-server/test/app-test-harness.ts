@@ -113,6 +113,7 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
       directory: repos.directory,
       secret: TEST_SECRET,
       baseUrl: base,
+      mcpOAuth: { resource: `${base}/mcp` },
       rateLimit: false,
     }),
     limits: {

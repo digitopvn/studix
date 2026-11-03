@@ -18,8 +18,10 @@ intent and the stable rules; it does not duplicate field lists.
   in the dashboard. The key resolves to exactly one workspace; every tool call
   runs in that tenant. Missing, unknown or revoked keys fail with
   `UNAUTHENTICATED`; a key without the needed scope fails with `FORBIDDEN`.
-- Inbound OAuth for AI clients is planned, not shipped
-  ([ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md)).
+- Auth, alternative: an OAuth 2.1 access token (MCP authorization, PKCE,
+  audience-bound to this `/mcp`) for hosted connectors; see
+  [Connecting with OAuth](#connecting-with-oauth). Any bearer that is not
+  `stx_...` is verified as an OAuth token. There is no anonymous access.
 - Requests whose `Host`/`Origin` is not derived from the configured
   `STUDIX_*_URL` values are rejected.
 
@@ -359,6 +361,28 @@ before new tools are created.
 You need the MCP URL and a workspace API key (`stx_...`) from the dashboard.
 Treat the key as a password: do not paste it into a chat message.
 
+### Connecting with OAuth
+
+Clients discover everything from the `/mcp` URL alone:
+
+1. An unauthenticated `POST /mcp` returns `401` with
+   `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource/mcp", scope="studix:read studix:write"`.
+2. `GET /.well-known/oauth-protected-resource[/mcp]` (RFC 9728) names the
+   resource and the authorization server `<STUDIX_APP_URL>/api/auth`.
+3. `GET /.well-known/oauth-authorization-server/api/auth` (RFC 8414) lists the
+   endpoints. Register with a Client ID Metadata Document URL or dynamic
+   client registration (public clients, PKCE `S256` required).
+4. Authorize with `code_challenge_method=S256`, `scope`, and
+   `resource=<STUDIX_PUBLIC_URL>/mcp`. The user signs in, picks a workspace
+   and approves; the code is exchanged for a 15-minute access token (add
+   `offline_access` for a rotating refresh token).
+
+Scopes: `studix:read` (view) and `studix:write` (create and edit, within the
+user's role; never API keys or members). A token missing `studix:read` gets
+`403 insufficient_scope`. Users disconnect an app under **Account >
+Connected apps**; the token stops working immediately. Tokens are not
+accepted for any other resource and are never forwarded to connectors.
+
 ### Claude Code
 
 ```bash
@@ -370,8 +394,10 @@ Then run `/mcp` in Claude Code to confirm `studix` is connected.
 
 ### Claude Desktop and claude.ai custom connectors
 
-Custom connectors added in Claude's settings authenticate with OAuth, not a
-static header. Until inbound OAuth ships (ADR-0006), use one of:
+Add `https://app.studix.digitop.ai/mcp` as a custom connector and sign in when
+Claude opens the Studix consent page ([Connecting with OAuth](#connecting-with-oauth)).
+Not yet smoke-tested against the hosted Claude app (see ADR-0006). Alternatives
+that use an API key:
 
 - **Claude Desktop local config** through a header-capable bridge such as
   `mcp-remote`, in `claude_desktop_config.json`:
@@ -391,13 +417,13 @@ static header. Until inbound OAuth ships (ADR-0006), use one of:
 
 - **Claude Code** as above.
 
-The custom-connector path is part of the OAuth verification plan in ADR-0006.
 
 ### ChatGPT
 
-ChatGPT connectors (developer mode) also expect OAuth or no auth, so they wait
-on ADR-0006. Programmatic use works now through the OpenAI Responses API remote
-MCP tool, which accepts request headers:
+ChatGPT connectors (developer mode) use OAuth: add the `/mcp` URL and choose
+OAuth ([Connecting with OAuth](#connecting-with-oauth)); not yet smoke-tested
+against hosted ChatGPT (see ADR-0006). Programmatic use also works through the
+OpenAI Responses API remote MCP tool, which accepts request headers:
 
 ```json
 {
