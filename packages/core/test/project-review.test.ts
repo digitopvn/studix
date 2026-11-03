@@ -524,6 +524,23 @@ describe("project review", () => {
       return { ...env, ctx, projectId: created.project.id };
     }
 
+    it("marks a cue as intentionally voiced through feedback", async () => {
+      const { studio, ctx, projectId, repos } = await filmSetup();
+      await studio.decideStoryboard(ctx, { projectId, target: "storyboard", decision: "approved" });
+      const out = await studio.submitFeedback(ctx, {
+        projectId,
+        shotId: "feature-1",
+        comment: "Tiếng đám đông là chủ ý",
+        patch: {
+          ops: [{ op: "add", path: "/metadata/film/scope/scenes/0/shots/0/voicedSfx", value: ["tiếng gió"] }],
+        },
+      });
+      const film = (await repos.projects.getVersion(ctx, out.versionId!))?.ir.metadata?.film as {
+        scope: { scenes: { shots: { voicedSfx?: string[] }[] }[] };
+      };
+      expect(film.scope.scenes[0]?.shots[0]?.voicedSfx).toEqual(["tiếng gió"]);
+    });
+
     it("rewrites one shot's cues in the scope, keeping the approved storyboard", async () => {
       const { studio, ctx, projectId, repos } = await filmSetup();
       await studio.decideStoryboard(ctx, { projectId, target: "storyboard", decision: "approved" });
@@ -536,6 +553,7 @@ describe("project review", () => {
       expect(out.allowedPaths).toEqual([
         expect.stringMatching(/^\/scenes\/\d+\/shots\/\d+$/),
         "/metadata/film/scope/scenes/0/shots/0/sfx",
+        "/metadata/film/scope/scenes/0/shots/0/voicedSfx",
       ]);
       expect(out.invalidated.filter((k) => k.startsWith("shot:") || k.startsWith("scene:"))).toEqual([]);
       const current = await repos.projects.getVersion(ctx, out.versionId!);
@@ -577,6 +595,8 @@ describe("project review", () => {
         expect.arrayContaining([
           "/metadata/film/scope/scenes/0/shots/0/sfx",
           "/metadata/film/scope/scenes/1/shots/0/sfx",
+          "/metadata/film/scope/scenes/0/shots/0/voicedSfx",
+          "/metadata/film/scope/scenes/1/shots/0/voicedSfx",
         ]),
       );
       const film = (await repos.projects.getVersion(ctx, out.versionId!))?.ir.metadata?.film as {

@@ -88,7 +88,8 @@ export function reuseOnAssets(ir: VideoIR, files: Record<string, string>): Pick<
   return { reuse: { inputs } };
 }
 
-type ReuseRequest = Pick<StoredMediaRequest, "kind" | "model" | "prompt" | "params" | "reuse">;
+type ReuseRequest = Pick<StoredMediaRequest, "kind" | "model" | "prompt" | "params" | "reuse"> &
+  Partial<Pick<StoredMediaRequest, "assetId">>;
 
 const EXT_BY_MIME: Record<string, string> = {
   "image/png": ".png",
@@ -177,6 +178,11 @@ export async function findReusableMedia(
   const key = mediaOutputKey(s, request);
   if (key === undefined || !s.mediaOutputs) return undefined;
   const hit = await s.mediaOutputs.get(key);
+  // This call's own earlier output (same job, same asset) is answered through its journal, which keeps the
+  // upstream job and the charge. Served from here it would come back as a free line, and a regeneration's
+  // output (stored under the same key) could stand in for the first attempt, so the ledger would lose both
+  // paid calls. Another asset of the same job with identical content still reuses it.
+  if (hit?.jobId === s.job.id && hit.asset.id === request.assetId) return undefined;
   if (!hit?.asset.storageKey || hit.asset.kind !== assetKind(request.kind)) return undefined;
   const stored = await requireService(s, "storage").head(s.ctx, hit.asset.storageKey);
   if (!stored || stored.sha256 !== hit.asset.sha256) return undefined;
@@ -237,10 +243,11 @@ function mediaIdempotencyKey(s: StageContext, stage: string, request: StoredMedi
  */
 export async function estimateMediaCents(
   s: StageContext,
-  requests: readonly Pick<
+  requests: readonly (Pick<
     StoredMediaRequest,
     "kind" | "model" | "prompt" | "params" | "maxCostCents" | "reuse"
-  >[],
+  > &
+    Partial<Pick<StoredMediaRequest, "assetId">>)[],
 ): Promise<number> {
   const media = requireService(s, "media");
   let total = 0;

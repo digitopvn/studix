@@ -4,6 +4,7 @@ import type {
   AgentRuntime,
   Approval,
   ApprovalAction,
+  FundingSource,
   Job,
   MediaJobJournal,
   MediaProvider,
@@ -28,6 +29,8 @@ export interface StageUsage {
   unit: string;
   costCents: number;
   providerExecutionId?: string;
+  /** Who paid the provider for this line; `operator` when omitted (ADR 0016: BYOK spend is recorded, not charged). */
+  funding?: FundingSource;
   /**
    * Upstream paid job this line bills (e.g. "sume:job_123"). Like a provider execution, it is billed once
    * per job whatever attempt reports it, so a stage that resumed a job it paid for never bills it twice.
@@ -316,6 +319,8 @@ export interface PlanUsage {
   /** Decision kind or capability the call served, e.g. "video.brief". */
   operation?: string;
   providerExecutionId?: string;
+  /** Who paid the provider for the call; `operator` when omitted. */
+  funding?: FundingSource;
 }
 
 export interface PlannerContext {

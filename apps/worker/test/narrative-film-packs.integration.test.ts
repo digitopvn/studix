@@ -79,15 +79,21 @@ function agentTranscript(request: ClaudeSessionRequest): ClaudeAgentEvent[] {
   return [usage, { type: "result", output: { boards } }];
 }
 
-function memoryStorage(): StorageAdapter {
+function memoryStorage(
+  refuse?: (key: string) => boolean,
+  malformedDigest?: (key: string) => boolean,
+): StorageAdapter {
   const objects = new Map<string, Buffer>();
   const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
   return {
     async put(_ctx, key, body, opts) {
       if (!("filePath" in body)) throw new Error("memory storage takes files only");
+      if (refuse?.(key)) throw new StudixError("UNAVAILABLE", `storage refused ${key}`, { retryable: false });
       const bytes = await readFile(body.filePath);
       objects.set(key, bytes);
-      return { key, bytes: bytes.length, sha256: sha(bytes), contentType: opts.contentType };
+      // A store that answers with a digest that is not a sha256: the object is kept, but no asset can name it.
+      const digest = malformedDigest?.(key) ? "not-a-sha256" : sha(bytes);
+      return { key, bytes: bytes.length, sha256: digest, contentType: opts.contentType };
     },
     get: async () => {
       throw new Error("not used");
@@ -117,12 +123,16 @@ function createWorld(
     refuse?: (request: MediaGenerationRequest) => boolean;
     /** Estimates of the models a request can name, in cents; other requests cost the fake's price. */
     modelCents?: Record<string, number>;
+    /** Object keys the storage refuses to write. */
+    refusePut?: (key: string) => boolean;
+    /** Object keys the storage stores but reports with a malformed digest. */
+    malformedDigestPut?: (key: string) => boolean;
   } = {},
 ) {
   const { repos } = db.current;
   const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
   const workRoot = mkdtempSync(join(tmpdir(), "studix-film-packs-"));
-  const storage = memoryStorage();
+  const storage = memoryStorage(opts.refusePut, opts.malformedDigestPut);
   const rendered: VideoIR[] = [];
   const renderer: RendererAdapter = {
     id: "hyperframes",
@@ -383,6 +393,25 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const after = await db.current.repos.projects.get(ctx, project.id);
     expect(after?.status).toBe("published");
     expect(after?.currentVersionId).toBe(project.currentVersionId);
+  });
+
+  it("bills the designs it paid for when publishing the G1 board fails afterwards", async () => {
+    const world = createWorld();
+    const { ctx, project } = await newFilm(`film-designs-fail-${pack}`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    // The project is finished while the designs are being drawn, so publishing their board is refused.
+    await db.current.repos.projects.update(ctx, project.id, { status: "published" });
+
+    expect(await world.runOnce(job.id)).toBe("failed");
+    expect(await db.current.repos.jobs.get(ctx, job.id)).toMatchObject({
+      status: "failed",
+      error: { code: "CONFLICT" },
+    });
+    expect(world.requests).toHaveLength(3);
+    const usage = (await world.repos.usage.list(ctx, { jobId: job.id, limit: 200 })).items;
+    expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(3);
   });
 
   it("stops at G0 and G1 for a person, then storyboards on the approved sheets, then renders on an approved storyboard", async () => {
@@ -854,6 +883,47 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     expect(paid).toHaveLength(world.requests.length);
   });
 
+  it("keeps a cue marked as voiced without checking it, while the other effects are still checked", async () => {
+    const burst = "fireworks bursting overhead";
+    const world = createWorld({ voiced: (prompt) => prompt === burst });
+    const { ctx, project } = await newFilm(`film-${pack}-voiced-on-purpose`, pack);
+    const job = await enqueue(ctx, project.id, pack);
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G0");
+    expect(await world.runOnce(job.id)).toBe("waiting_approval");
+    await signGate(world, ctx, job.id, "G1");
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+    const board = await currentIr(ctx, project.id);
+    await approveStoryboard(ctx, project.id);
+    const ir = structuredClone(board.ir);
+    const film = (
+      ir.metadata as {
+        film: { scope: { scenes: { shots: { id: string; sfx: string[]; voicedSfx?: string[] }[] }[] } };
+      }
+    ).film;
+    const s5 = film.scope.scenes.flatMap((sc) => sc.shots).find((sh) => sh.id === "s5");
+    expect(s5?.sfx).toContain(burst);
+    s5!.voicedSfx = [burst];
+    const patched = await db.current.repos.projects.createVersion(ctx, {
+      projectId: project.id,
+      ir,
+      source: "patch",
+      parentVersionId: board.version.id,
+      advanceFrom: board.version.id,
+      createdBy: actor,
+    });
+    await approveStoryboard(ctx, project.id, 2);
+    world.requests.length = 0;
+    const render = await enqueue(ctx, project.id, pack, { versionId: patched.id });
+
+    expect(await world.runOnce(render.id)).toBe("succeeded");
+    // Generated once, never probed; the other three effects were probed.
+    expect(world.requests.filter((r) => r.prompt === burst)).toHaveLength(1);
+    expect(world.heard.map((h) => h.prompt)).not.toContain(burst);
+    expect(world.heard).toHaveLength(3);
+    expect((world.rendered[0]?.audio ?? []).filter((t) => t.kind === "sfx")).toHaveLength(4);
+  });
+
   it("still bills the first take when the second take fails with a plain error", async () => {
     const wind = "soft wind over a rooftop";
     const world = createWorld({
@@ -869,6 +939,18 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
     const paid = usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration);
     // Every call the provider answered is in the ledger; the refused second take cost nothing and has no line.
     expect(paid).toHaveLength(world.requests.length - 1);
+  });
+
+  it("bills the clips it paid for when storing a scene fails afterwards", async () => {
+    const world = createWorld({ refusePut: (key) => key.includes("/scenes/") });
+    const { ctx, render } = await queueRender(world, `film-${pack}-scene-put-fails`);
+
+    const before = world.requests.length;
+    expect(await world.runOnce(render.id)).toBe("failed");
+    const paidRequests = world.requests.slice(before);
+    expect(paidRequests.some((r) => r.kind === "video")).toBe(true);
+    const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
+    expect(usage.filter((u) => u.kind === USAGE_KINDS.mediaGeneration)).toHaveLength(paidRequests.length);
   });
 
   it("does not probe effects when the worker has no speech probe", async () => {
@@ -917,6 +999,29 @@ describe.each(["anime", "long-form-film"])("%s pack on the Postgres queue (fake 
       const spent = usage.reduce((sum, u) => sum + u.costCents, 0);
       expect(spent).toBeGreaterThan(0);
       expect(await world.repos.jobs.get(ctx, render.id)).toMatchObject({ spentCents: spent });
+    },
+  );
+
+  it.each([
+    { stage: "dialogue", keyPart: "/dialogue/" },
+    { stage: "lipsync", keyPart: "/lipsync/" },
+  ] as const)(
+    "bills the $stage calls it paid for when building its result fails afterwards",
+    async ({ stage, keyPart }) => {
+      const world = createWorld({ malformedDigestPut: (key) => key.includes(keyPart) });
+      const { ctx, render } = await renderJobOnApprovedBoard(world, `film-${pack}-${stage}-after`, pack);
+
+      expect(await world.runOnce(render.id)).toBe("failed");
+      const usage = (await world.repos.usage.list(ctx, { jobId: render.id, limit: 200 })).items;
+      const billed = usage.filter(
+        (u) => u.metadata?.stage === n[stage] && u.kind === USAGE_KINDS.mediaGeneration && u.costCents > 0,
+      );
+      // Every call of the stage was paid before the failure, so each one has its line in the ledger.
+      expect(billed.length).toBeGreaterThan(0);
+      const calls = world.requests.filter((r) =>
+        r.idempotencyKey.includes(stage === "dialogue" ? "-vo" : "-sync"),
+      );
+      expect(billed).toHaveLength(calls.length);
     },
   );
 

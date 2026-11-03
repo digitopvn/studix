@@ -23,6 +23,7 @@ import {
   registerSecretsFromEnv,
   type StudixConfig,
   StudixError,
+  ssoClients,
   systemClock,
 } from "@studix/shared";
 import type { Express } from "express";
@@ -140,6 +141,7 @@ export async function composeApp(
     secret: dashboardSecret(config, logger),
     baseUrl: config.STUDIX_APP_URL,
     trustedOrigins: [config.STUDIX_PUBLIC_URL],
+    sso: ssoClients(config),
     ipAddressHeaders: appEnv.STUDIX_TRUST_PROXY > 0 ? ["x-forwarded-for"] : undefined,
     logger,
   });

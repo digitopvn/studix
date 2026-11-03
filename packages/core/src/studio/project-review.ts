@@ -584,7 +584,7 @@ const FilmScopeShots = z.object({
 });
 
 /**
- * Pointers to the SFX cues of the targeted shots in a film's scope, so feedback on them can rewrite the
+ * Pointers to the SFX cues, and the cues marked as intentionally voiced, of the targeted shots in a film's scope, so feedback on them can rewrite the
  * sounds they are scored with. None for a video without a film scope or shots the scope does not plan.
  */
 function filmSfxPointers(ir: VideoIR, shotIds: readonly string[]): string[] {
@@ -596,7 +596,12 @@ function filmSfxPointers(ir: VideoIR, shotIds: readonly string[]): string[] {
   const wanted = new Set(shotIds);
   return scope.data.scenes.flatMap((scene, i) =>
     scene.shots.flatMap((shot, j) =>
-      wanted.has(shot.id) ? [`/metadata/film/scope/scenes/${i}/shots/${j}/sfx`] : [],
+      wanted.has(shot.id)
+        ? [
+            `/metadata/film/scope/scenes/${i}/shots/${j}/sfx`,
+            `/metadata/film/scope/scenes/${i}/shots/${j}/voicedSfx`,
+          ]
+        : [],
     ),
   );
 }

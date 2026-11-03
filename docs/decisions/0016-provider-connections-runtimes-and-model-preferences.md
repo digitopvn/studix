@@ -52,6 +52,13 @@ workspace model, and what happens to a running job when the choice changes.
   discovered extensions or context files, and SDK retries and compaction off.
   Usage is reported to the bounded runtime on every assistant message, so the
   turn, cost and deadline caps of ADR-0015 stop the session while it runs.
+- **Agent stages on the same choice.** Harness-mode agent stages (ADR-0015) run
+  in the worker on this resolution too, keyed by the stage name, so they use
+  the `default` entries unless a stage entry exists. A job that selected the
+  Claude planner runs them on that connection. Otherwise the most specific
+  entry of either runtime wins, Pi on a tie, and the choice is pinned per job
+  and stage like the planner's. Each run records a provider execution with its
+  real tokens and cost, which the stage's `agent.run` usage line links to.
 - **Fallbacks.** A consented fallback is tried only for a failure at the
   provider (`PROVIDER_ERROR`, `RATE_LIMITED`, `UNAUTHENTICATED`). Caps,
   cancellation and invalid output never move to another key. A key the provider
@@ -65,9 +72,15 @@ workspace model, and what happens to a running job when the choice changes.
 
 - The migration only adds columns with defaults and two new tables; existing
   keys keep working for Claude unchanged.
-- Spend on a workspace's own key is recorded in the usage ledger like operator
-  spend. Whether it is charged to the workspace is a billing decision outside
-  this ADR.
+- Spend on a workspace's own key (BYOK) is recorded in the usage ledger but is
+  not charged to the workspace: the workspace already pays the provider. Every
+  `usage_events` and `provider_executions` row carries `funding`: `operator`
+  (the operator's key, the default, including all media spend), `workspace` (a
+  workspace-owned connection), `member` (a member's personal connection) or
+  `host` (a host-mode agent run on the MCP client's own agent). A pricing layer
+  charges only `operator` rows. Per-job budget caps (`job-budget-policy.ts`, the
+  agent stage cap) still count every row whatever its funding: the cap is a
+  safety limit on the customer's money too.
 - The Pi model catalog comes from the pinned Pi SDK version; upgrading the SDK
   can add or remove models. A preference for a removed model fails with a clear
   error and falls back to the rules.

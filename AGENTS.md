@@ -2,6 +2,25 @@
 
 Rules for coding agents working in this repository.
 
+## Definition of done
+
+- Use `pnpm`. Before reporting done, run `pnpm check` (lint, typecheck, QA and unit tests).
+- CI also runs `pnpm test:integration` and `pnpm build`. Integration tests need
+  `docker compose up -d --wait postgres minio`, then `docker compose run --rm minio-init`, and the
+  `DATABASE_URL` / `S3_*` values from `.env.example`.
+- Biome also formats Markdown: run `pnpm lint:fix` after editing docs.
+
+## Costly actions
+
+- `pnpm test:live` (`STUDIX_LIVE=1`) and `pnpm --filter @studix/mcp-server smoke` call paid providers.
+  Run them only when the task needs a live check.
+- Migrations: generate them with `pnpm db:generate`. Never edit, renumber or re-timestamp a committed
+  migration; fix forward with a new one. Keep migrations expand-then-contract
+  ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#rollback)).
+- TOSE: the workspace hosts other production projects, so touch only `studix-` resources. Select its key
+  explicitly, because the local default key belongs to another workspace. Route:
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#tose-access).
+
 ## Multix CLI
 
 Studix runs image, video, lip-sync and upscale jobs through the Multix CLI (`mrgoonie/multix-cli`).

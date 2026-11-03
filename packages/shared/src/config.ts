@@ -25,6 +25,11 @@ const origin = z
   .refine((v) => /^https?:\/\//.test(v), "must be an http(s) URL")
   .transform((v) => v.replace(/\/+$/, ""));
 
+const SSO_CLIENT_KEYS = [
+  ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"],
+  ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+] as const;
+
 export const ConfigSchema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -56,6 +61,11 @@ export const ConfigSchema = z
       .regex(/^[a-z0-9]{2,8}$/, "2-8 lowercase alphanumerics")
       .default("dev"),
     BETTER_AUTH_SECRET: z.string().min(32).optional(),
+    /** Dashboard SSO. A provider is on only when both its client id and secret are set. */
+    GITHUB_CLIENT_ID: optionalString,
+    GITHUB_CLIENT_SECRET: optionalString,
+    GOOGLE_CLIENT_ID: optionalString,
+    GOOGLE_CLIENT_SECRET: optionalString,
     /** 32 random bytes (base64) sealing stored provider credentials; without it none can be saved. */
     STUDIX_SECRETS_KEY: optionalString,
     /** Earlier STUDIX_SECRETS_KEY values that may still open stored credentials during a rotation. */
@@ -111,6 +121,12 @@ export const ConfigSchema = z
     STUDIX_LIVE: bool.default(false),
   })
   .superRefine((cfg, ctx) => {
+    for (const [id, secret] of SSO_CLIENT_KEYS) {
+      if ((cfg[id] === undefined) !== (cfg[secret] === undefined)) {
+        const missing = cfg[id] === undefined ? id : secret;
+        ctx.addIssue({ code: "custom", path: [missing], message: `set ${id} and ${secret} together` });
+      }
+    }
     if (cfg.NODE_ENV !== "production") return;
     const required = [
       "STUDIX_PUBLIC_URL",
@@ -139,6 +155,21 @@ export const ConfigSchema = z
   });
 
 export type StudixConfig = z.output<typeof ConfigSchema>;
+
+export interface SsoClient {
+  clientId: string;
+  clientSecret: string;
+}
+
+/** OAuth clients of the dashboard SSO providers that are configured; an absent provider is disabled. */
+export function ssoClients(config: StudixConfig): { github?: SsoClient; google?: SsoClient } {
+  const client = (clientId?: string, clientSecret?: string) =>
+    clientId && clientSecret ? { clientId, clientSecret } : undefined;
+  return {
+    github: client(config.GITHUB_CLIENT_ID, config.GITHUB_CLIENT_SECRET),
+    google: client(config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET),
+  };
+}
 
 /** Hosts accepted in the HTTP Host header: configured URL hosts plus STUDIX_ALLOWED_HOSTS. */
 export function allowedHosts(config: StudixConfig): string[] {

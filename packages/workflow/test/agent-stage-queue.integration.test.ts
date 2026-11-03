@@ -145,6 +145,7 @@ describe("agent stage on the Postgres queue", () => {
       expect.objectContaining({
         kind: USAGE_KINDS.agentRun,
         costCents: 0,
+        funding: "host",
         metadata: expect.objectContaining({ mode: "host" }),
       }),
     ]);
@@ -282,8 +283,9 @@ describe("agent stage on the Postgres queue", () => {
     expect(await repos.jobs.get(ctx, job.id)).toMatchObject({ status: "waiting_approval" });
 
     // Even when the job is run again while the request is open, the agent is not called a second time.
+    // Backdated because claims compare with the app clock, which may trail the database clock.
     await db.current.db.execute(
-      sql`update jobs set status = 'queued', run_after = now() where id = ${job.id}`,
+      sql`update jobs set status = 'queued', run_after = now() - interval '1 second' where id = ${job.id}`,
     );
     expect(await world.runOnce(job.id)).toBe("waiting_approval");
     expect(world.tasks).toHaveLength(1);
@@ -308,7 +310,7 @@ describe("agent stage on the Postgres queue", () => {
     // again at the same attempt and round: the agent really runs and pays a second time.
     await repos.approvals.decide(ctx, first.id, { status: "expired", decidedAt: new Date() });
     await db.current.db.execute(
-      sql`update jobs set status = 'queued', run_after = now() where id = ${job.id}`,
+      sql`update jobs set status = 'queued', run_after = now() - interval '1 second' where id = ${job.id}`,
     );
     expect(await world.runOnce(job.id)).toBe("waiting_approval");
 

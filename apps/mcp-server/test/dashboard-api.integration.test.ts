@@ -57,6 +57,12 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     expect(await ready.json()).toMatchObject({ ok: true });
   });
 
+  it("lists the enabled SSO providers without a session (none without OAuth clients)", async () => {
+    const res = await fetch(`${app.base}/api/sso-providers`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ providers: [] });
+  });
+
   it("requires a session and rejects foreign origins on writes", async () => {
     const anon = await app.api("GET", "/api/me");
     expect(anon.status).toBe(401);

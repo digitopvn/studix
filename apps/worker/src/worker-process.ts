@@ -11,6 +11,8 @@ export interface WorkerPortsRuntime {
   db: StudixDb;
   env: NodeJS.ProcessEnv;
   logger: Logger;
+  /** Aborts when the worker is asked to stop while it is still starting. */
+  signal: AbortSignal;
 }
 
 export interface WorkerProcessOptions {
@@ -114,6 +116,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       db: handle.db,
       env,
       logger,
+      signal: startup.signal,
     });
     if (stopping) throw new Error("worker stopped during startup");
     runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });

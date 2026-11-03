@@ -15,8 +15,8 @@ import type { Logger } from "@studix/shared";
  */
 export type ArtifactUrlSigner = Pick<StorageAdapter, "signedUrl">;
 
-/** Dashboard session resolution and the Better Auth node handler. */
-export type DashboardAuthPort = Pick<DashboardAuth, "nodeHandler" | "resolveSession">;
+/** Dashboard session resolution, the Better Auth node handler and the enabled SSO providers. */
+export type DashboardAuthPort = Pick<DashboardAuth, "nodeHandler" | "resolveSession" | "ssoProviders">;
 
 export const CONNECTOR_STATUSES = ["active", "disabled", "error"] as const;
 export type ConnectorStatus = (typeof CONNECTOR_STATUSES)[number];

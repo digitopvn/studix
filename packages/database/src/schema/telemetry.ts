@@ -1,4 +1,4 @@
-import type { ActivityLevel, ProviderExecutionStatus } from "@studix/core";
+import type { ActivityLevel, FundingSource, ProviderExecutionStatus } from "@studix/core";
 import type { StudixErrorPayload } from "@studix/shared";
 import { index, integer, jsonb, numeric, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 import { type ActorType, createdAt, id } from "./columns.ts";
@@ -25,6 +25,7 @@ export const providerExecutions = pgTable(
     costCents: cents("cost_cents").notNull(),
     attempt: integer("attempt").notNull(),
     error: jsonb("error").$type<StudixErrorPayload>(),
+    funding: text("funding").$type<FundingSource>().notNull().default("operator"),
     createdAt: createdAt(),
   },
   (t) => [index("provider_executions_job_idx").on(t.jobId, t.id)],
@@ -45,6 +46,7 @@ export const usageEvents = pgTable(
     providerExecutionId: text("provider_execution_id").references(() => providerExecutions.id, {
       onDelete: "set null",
     }),
+    funding: text("funding").$type<FundingSource>().notNull().default("operator"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: createdAt(),
   },

@@ -442,12 +442,39 @@ export interface FeedbackRequest {
 
 const enc = encodeURIComponent;
 
+export type SsoProvider = "github" | "google";
+
+export const SSO_LABELS: Record<SsoProvider, string> = { github: "GitHub", google: "Google" };
+
+export interface LinkedAccount {
+  providerId: string;
+  accountId: string;
+}
+
+/**
+ * Start an OAuth redirect (sign-in or linking). Better Auth returns the provider URL; success returns to
+ * `returnTo`, and a failure to the same place with `?error=<code>` before the hash.
+ */
+async function redirectToProvider(path: string, provider: SsoProvider, returnTo: string): Promise<void> {
+  const { url } = await request<{ url: string }>("POST", path, {
+    provider,
+    callbackURL: returnTo,
+    errorCallbackURL: returnTo,
+  });
+  window.location.assign(url);
+}
+
 export const api = {
   signIn: (email: string, password: string) =>
     request("POST", "/api/auth/sign-in/email", { email, password }),
   signUp: (name: string, email: string, password: string) =>
     request("POST", "/api/auth/sign-up/email", { name, email, password }),
   signOut: () => request("POST", "/api/auth/sign-out", {}),
+  ssoProviders: () => request<{ providers: SsoProvider[] }>("GET", "/api/sso-providers"),
+  signInWith: (provider: SsoProvider) => redirectToProvider("/api/auth/sign-in/social", provider, "/"),
+  linkProvider: (provider: SsoProvider) =>
+    redirectToProvider("/api/auth/link-social", provider, "/#/account"),
+  linkedAccounts: () => request<LinkedAccount[]>("GET", "/api/auth/list-accounts"),
   me: () => request<Me>("GET", "/api/me"),
   projects: () => request<Page<Project>>("GET", "/api/projects?limit=50"),
   project: (id: string) => request<ProjectDetail>("GET", `/api/projects/${enc(id)}`),

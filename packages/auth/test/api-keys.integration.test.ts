@@ -125,9 +125,10 @@ describe("api key scopes after job:retry joined the role matrix", () => {
       "project:read",
       "workspace:read",
     ]);
+    // `job:recover` came later still; 0017 adds it below and 0019 takes it away again (operator-only).
     const admin = await issue(
       "old-admin",
-      PERMISSIONS.filter((p) => p !== "job:retry"),
+      PERMISSIONS.filter((p) => p !== "job:retry" && p !== "job:recover"),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
     const already = await issue("already", ["project:read", "job:retry"]);
@@ -141,6 +142,9 @@ describe("api key scopes after job:retry joined the role matrix", () => {
 
     const sql = readFileSync(join(MIGRATIONS_FOLDER, "0012_api_key_job_retry.sql"), "utf8");
     await db.current.client.unsafe(sql);
+    for (const later of ["0017_api_key_job_recover.sql", "0019_api_key_drop_job_recover.sql"]) {
+      await db.current.client.unsafe(readFileSync(join(MIGRATIONS_FOLDER, later), "utf8"));
+    }
 
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
     expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
@@ -157,5 +161,51 @@ describe("api key scopes after job:retry joined the role matrix", () => {
     expect(
       (await keys.list(ctx)).find((k) => k.id === editor.id)?.scopes.filter((s) => s === "job:retry"),
     ).toHaveLength(1);
+  });
+});
+
+describe("api key scopes after job:recover became operator-only", () => {
+  it("takes the scope back from every key, so owner and admin keys keep their role", async () => {
+    const { keys, repos } = services();
+    const ctx = await tenant("pg-recover-scope");
+    const createdBy = { type: "user" as const, id: ctx.actor.id };
+    const issue = (name: string, scopes: string[]) =>
+      repos.apiKeys.create(ctx, {
+        name,
+        hash: hashApiKey(`stx_test_recover_${name}`),
+        prefix: name,
+        scopes: scopes as Permission[],
+        createdBy,
+      });
+    // As 0017 left an admin key, and a key created while admins could grant the scope.
+    const admin = await issue("old-admin", [...PERMISSIONS].reverse());
+    const custom = await issue("custom", ["project:read", "job:recover"]);
+    const editor = await issue("editor", [
+      "workspace:read",
+      "project:read",
+      "asset:read",
+      "project:write",
+      "job:cancel",
+      "job:retry",
+      "asset:write",
+      "approval:request",
+    ]);
+    const sql = readFileSync(join(MIGRATIONS_FOLDER, "0019_api_key_drop_job_recover.sql"), "utf8");
+    await db.current.client.unsafe(sql);
+    await db.current.client.unsafe(sql);
+
+    const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
+    expect(byId.get(admin.id)).toMatchObject({ role: "owner" });
+    expect(byId.get(admin.id)?.scopes).not.toContain("job:recover");
+    expect(byId.get(custom.id)?.scopes).toEqual(["project:read"]);
+    expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
+  });
+
+  it("refuses to issue a key with the scope", async () => {
+    const { keys } = services();
+    const ctx = await tenant("pg-recover-issue");
+    await expect(keys.create(ctx, { name: "recover", scopes: ["job:recover"] })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
   });
 });

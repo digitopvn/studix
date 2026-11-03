@@ -1,6 +1,8 @@
 import {
   type ActorRef,
   type BillingSource,
+  connectionFunding,
+  type FundingSource,
   type ModelChoice,
   type ModelPreference,
   type ResolvedModelSnapshot,
@@ -33,6 +35,8 @@ export interface PiRunBinding {
   modelId: string;
   apiKey: string;
   connectionId: string;
+  /** Who pays the provider for this binding's calls: the owner of its connection. Absent for a key probe. */
+  funding?: FundingSource;
   endpoint?: PiEndpoint;
   /** Report a 401/403 from the provider so the connection can be re-tested and marked invalid. */
   markRejected?: () => Promise<void>;
@@ -56,7 +60,13 @@ export interface PiCredentialSource {
     input: { connectionId: string; requestedBy: ActorRef; runtime: "pi" },
   ): Promise<{
     apiKey: string;
-    connection: { id: string; provider: string; version: number; billing: BillingSource };
+    connection: {
+      id: string;
+      provider: string;
+      version: number;
+      billing: BillingSource;
+      owner: "workspace" | "user";
+    };
     markRejected(): Promise<void>;
   }>;
 }
@@ -132,6 +142,7 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
           modelId: choice.modelId,
           apiKey: resolved.apiKey,
           connectionId: resolved.connection.id,
+          funding: connectionFunding(resolved.connection.owner),
           markRejected: () => resolved.markRejected(),
         };
         return { binding, connection: resolved.connection };

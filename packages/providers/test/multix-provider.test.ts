@@ -794,6 +794,7 @@ describe("MultixProvider async jobs", () => {
     const inner = new InMemoryMediaJobJournal();
     const journal = {
       get: inner.get.bind(inner),
+      claim: inner.claim.bind(inner),
       put: async (c: Parameters<typeof inner.put>[0], r: Parameters<typeof inner.put>[1]) => {
         if (r.state === "failed") throw new Error("journal down");
         return inner.put(c, r);
@@ -1001,6 +1002,33 @@ describe("MultixProvider async jobs", () => {
       });
       expect(runs).toBe(2);
       await expect(journal.get(ctx, "stage-2:upscale")).resolves.toMatchObject({ attempt: 2 });
+    });
+
+    it("submits once when two generates with the same key race", async () => {
+      const input = join(workDir, "frame.png");
+      await writeFile(input, "png");
+      const journal = new InMemoryMediaJobJournal();
+      let runs = 0;
+      const cli = atlasCli(() => {
+        runs += 1;
+        return { envelope: { job: { provider: "atlas", id: "pred_9" }, text: "pred_9" } };
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner, journal });
+      // Both calls read an empty journal before either one writes its intent.
+      const [a, b] = await Promise.allSettled([
+        multix.generate(ctx, upscaleRequest(input)),
+        multix.generate(ctx, upscaleRequest(input)),
+      ]);
+      expect(runs).toBe(1);
+      const outcomes = [a, b].map((o) => o.status).sort();
+      expect(outcomes).toEqual(["fulfilled", "rejected"]);
+      const lost = [a, b].find((o) => o.status === "rejected") as PromiseRejectedResult;
+      expect(lost.reason).toMatchObject({ code: "CONFLICT", retryable: true });
+      // The loser's retry collects the job the winner paid for instead of submitting again.
+      await expect(multix.generate(ctx, upscaleRequest(input))).resolves.toMatchObject({
+        job: { provider: "atlas", id: "pred_9" },
+      });
+      expect(runs).toBe(1);
     });
 
     it.each([
