@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { api } from "../api-client.ts";
-import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
 
 const ROLES = ["viewer", "editor", "admin"] as const;
 
@@ -47,6 +47,10 @@ export function ApiKeysPage({ mcpUrl }: { mcpUrl: string }) {
       <Section title="API keys">
         <p className="muted">
           MCP endpoint: <code>{mcpUrl}</code>. Send the key as <code>Authorization: Bearer &lt;key&gt;</code>.
+        </p>
+        <p className="muted">
+          Claude, ChatGPT and other connectors that support OAuth can sign in without a key; manage them under{" "}
+          <Link to="/connected-apps">Connected apps</Link>.
         </p>
         <form className="row" onSubmit={create}>
           <input

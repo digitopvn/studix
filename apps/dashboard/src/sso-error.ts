@@ -11,6 +11,20 @@ const MESSAGES: Record<string, string> = {
   access_denied: "Sign-in was cancelled at the provider.",
 };
 
+const ERROR_PARAMS = new Set(["error", "error_description"]);
+
+/**
+ * Drop the SSO error parameters from a `?query`, keeping every other pair byte-for-byte: an OAuth
+ * authorization page carries a signed query that must not be re-encoded.
+ */
+export function stripSsoErrorParams(search: string): string {
+  const kept = search
+    .replace(/^\?/, "")
+    .split("&")
+    .filter((pair) => pair && !ERROR_PARAMS.has(pair.split("=")[0] ?? ""));
+  return kept.length ? `?${kept.join("&")}` : "";
+}
+
 /**
  * Read and clear the OAuth error code from the URL so a reload does not show it again. Returns a message,
  * or undefined when the URL carries none.
@@ -19,6 +33,7 @@ export function takeSsoError(): string | undefined {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("error");
   if (!code) return undefined;
-  window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+  const { pathname, search, hash } = window.location;
+  window.history.replaceState(null, "", pathname + stripSsoErrorParams(search) + hash);
   return MESSAGES[code] ?? "Single sign-on failed. Try again or sign in with your password.";
 }

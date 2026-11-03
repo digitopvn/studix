@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { type AuthInfo, createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { MCP_REQUIRED_SCOPE, McpTokenError } from "@studix/auth";
 import { GATEWAY_DEPTH_HEADER, parseGatewayDepth } from "@studix/mcp-gateway";
 import { activeTraceIds, withSpan } from "@studix/observability";
 import { StudixError, toStudixError } from "@studix/shared";
@@ -105,10 +106,25 @@ function listedToolNames(deps: AppDeps, native: string[]): string[] {
   return deps.metaTools ? [...native, ...META_TOOL_NAMES] : native;
 }
 
-function sendUnauthenticated(res: Response, error: StudixError): void {
+/** RFC 6750 / RFC 9728 challenge: points OAuth clients at the protected resource metadata. */
+function bearerChallenge(deps: AppDeps, failure?: { error: "invalid_token" | "insufficient_scope" }): string {
+  const parts = ['realm="studix"'];
+  const oauth = deps.dashboardAuth.mcpOAuth;
+  if (oauth) parts.push(`resource_metadata="${oauth.resourceMetadataUrl}"`, `scope="${MCP_REQUIRED_SCOPE}"`);
+  if (failure) parts.push(`error="${failure.error}"`);
+  return `Bearer ${parts.join(", ")}`;
+}
+
+function sendAuthFailure(
+  deps: AppDeps,
+  res: Response,
+  error: StudixError,
+  failure: "invalid_token" | "insufficient_scope" | "missing",
+): void {
+  const forbidden = failure === "insufficient_scope";
   res
-    .status(HTTP_STATUS.UNAUTHENTICATED)
-    .set("WWW-Authenticate", 'Bearer realm="studix", error="invalid_token"')
+    .status(forbidden ? HTTP_STATUS.FORBIDDEN : HTTP_STATUS.UNAUTHENTICATED)
+    .set("WWW-Authenticate", bearerChallenge(deps, failure === "missing" ? undefined : { error: failure }))
     .json({
       jsonrpc: "2.0",
       id: null,
@@ -143,19 +159,29 @@ export function mountMcpEndpoint(
 
   const authenticate = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const tenant = await deps.apiKeys.authenticate(req.headers.authorization);
+      const oauth = deps.dashboardAuth.mcpOAuth;
+      // `stx_` keys keep their own path; any other bearer is an OAuth access token. No anonymous fallback.
+      const tenant = oauth?.isOAuthBearer(req.headers.authorization)
+        ? await oauth.authenticate(req.headers.authorization)
+        : await deps.apiKeys.authenticate(req.headers.authorization);
       const authInfo: StudixAuthInfo = {
         token: "[redacted]",
         clientId: tenant.actor.id,
-        scopes: tenant.actor.type === "apiKey" ? [...tenant.actor.scopes] : [],
+        scopes:
+          tenant.actor.type === "apiKey" || tenant.actor.type === "oauth" ? [...tenant.actor.scopes] : [],
         extra: { tenant, gatewayDepth: parseGatewayDepth(req.headers[GATEWAY_DEPTH_HEADER]) },
       };
       (req as Request & { auth?: AuthInfo }).auth = authInfo;
       next();
     } catch (err) {
       const error = toStudixError(err);
+      if (err instanceof McpTokenError) {
+        sendAuthFailure(deps, res, error, err.failure);
+        return;
+      }
       if (error.code === "UNAUTHENTICATED") {
-        sendUnauthenticated(res, error);
+        const missing = !req.headers.authorization;
+        sendAuthFailure(deps, res, error, missing ? "missing" : "invalid_token");
         return;
       }
       deps.logger.error("mcp authentication failed", { code: error.code, error: error.message });

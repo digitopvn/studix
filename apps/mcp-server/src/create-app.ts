@@ -3,6 +3,7 @@ import { StudixError } from "@studix/shared";
 import express, { type Express } from "express";
 import { apiKeyRoutes, connectorRoutes, providerRoutes } from "./api/admin-routes.ts";
 import { requireSession } from "./api/api-context.ts";
+import { mountOAuthDiscovery, oauthRoutes } from "./api/oauth-routes.ts";
 import { studioRoutes } from "./api/studio-routes.ts";
 import { type AppDeps, SERVER_VERSION } from "./app-deps.ts";
 import type { ArtifactUrlDeps } from "./artifact-urls.ts";
@@ -60,6 +61,9 @@ export function createApp(deps: AppDeps): Express {
 
   mountHealthRoutes(app, { version: SERVER_VERSION, checks: deps.readiness ?? [], logger: deps.logger });
 
+  const oauth = deps.dashboardAuth.mcpOAuth;
+  if (oauth) mountOAuthDiscovery(app, deps, oauth, rateLimit(apiLimiter, "api"));
+
   mountMcpEndpoint(app, deps, artifacts, [originGuard, rateLimit(mcpIpLimiter, "mcp")], (workspaceKey) => [
     rateLimit(mcpWorkspaceLimiter, "mcp-ws", workspaceKey),
   ]);
@@ -83,6 +87,7 @@ export function createApp(deps: AppDeps): Express {
     express.json({ limit: API_BODY_LIMIT }),
     requireSession(deps.dashboardAuth),
   );
+  if (oauth) api.use("/oauth", oauthRoutes(oauth));
   api.use("/api-keys", apiKeyRoutes(deps));
   api.use("/connectors", connectorRoutes(deps));
   api.use("/providers", providerRoutes(deps));

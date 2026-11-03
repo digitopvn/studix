@@ -11,6 +11,15 @@ const GLOBAL_TABLES = new Set([
   "auth_accounts",
   "auth_verifications",
   "rate_limit_buckets",
+  // OAuth authorization server state belongs to identities and clients; a grant's workspace is `reference_id`.
+  "auth_jwks",
+  "oauth_clients",
+  "oauth_resources",
+  "oauth_client_resources",
+  "oauth_consents",
+  "oauth_refresh_tokens",
+  "oauth_access_tokens",
+  "oauth_client_assertions",
 ]);
 
 const tables = Object.values(schema).filter((value) => isTable(value));

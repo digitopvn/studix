@@ -3,7 +3,7 @@ import { join } from "node:path";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 
 /** Server-owned path prefixes the SPA fallback must never answer. */
-export const RESERVED_PREFIXES = ["/mcp", "/api", "/healthz", "/readyz"] as const;
+export const RESERVED_PREFIXES = ["/mcp", "/api", "/healthz", "/readyz", "/.well-known"] as const;
 
 function isReserved(path: string): boolean {
   return RESERVED_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));

@@ -3,10 +3,12 @@ import { ApiError, api, type Me, selectedWorkspace, selectWorkspace } from "./ap
 import { AccountPage } from "./pages/account-page.tsx";
 import { ApiKeysPage } from "./pages/api-keys-page.tsx";
 import { AuthPage } from "./pages/auth-page.tsx";
+import { ConnectedAppsPage } from "./pages/connected-apps-page.tsx";
 import { ConnectorsPage } from "./pages/connectors-page.tsx";
 import { CreateVideoPage } from "./pages/create-video-page.tsx";
 import { JobDetailPage } from "./pages/job-detail-page.tsx";
 import { JobsPage } from "./pages/jobs-page.tsx";
+import { OAuthPage, oauthViewFor } from "./pages/oauth-pages.tsx";
 import { ProjectDetailPage } from "./pages/project-detail-page.tsx";
 import { ProjectReviewPage } from "./pages/project-review-page.tsx";
 import { ProjectsPage } from "./pages/projects-page.tsx";
@@ -21,6 +23,7 @@ const NAV = [
   { to: "/create", label: "New video" },
   { to: "/api-keys", label: "API keys" },
   { to: "/connectors", label: "Connectors" },
+  { to: "/connected-apps", label: "Connected apps" },
   { to: "/providers", label: "AI & Providers" },
   { to: "/account", label: "Account" },
 ] as const;
@@ -42,6 +45,8 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
       return <ApiKeysPage mcpUrl={me.mcpUrl} />;
     case "connectors":
       return <ConnectorsPage />;
+    case "connected-apps":
+      return <ConnectedAppsPage />;
     case "providers":
       return <ProvidersPage />;
     case "account":
@@ -52,6 +57,8 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
 }
 
 export function App() {
+  // `/oauth/*` (inbound OAuth authorization) is a real path, not a hash route, and renders without the shell.
+  const [oauthView] = useState(() => oauthViewFor(window.location.pathname));
   const segments = useHashRoute();
   const [session, setSession] = useState<SessionState>({ status: "loading" });
   const [error, setError] = useState<unknown>();
@@ -96,6 +103,17 @@ export function App() {
   }
 
   if (session.status === "loading") return <p className="muted center">Loading...</p>;
+  if (oauthView) {
+    return (
+      <OAuthPage
+        view={oauthView}
+        me={session.status === "ready" ? session.me : undefined}
+        error={error}
+        ssoError={ssoError}
+        onSignedIn={() => void loadSession()}
+      />
+    );
+  }
   if (session.status === "anonymous") {
     return (
       <>
