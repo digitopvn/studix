@@ -118,6 +118,18 @@ cannot move it off the volume. The ReadWriteOnce claim means one worker pod; to
 scale the worker out, give each replica its own volume (a StatefulSet with
 `volumeClaimTemplates`), and note that a retry that lands on another replica
 then relies on the journal fallback alone.
+TOSE production (`studix-prod-worker`) is built from the root `Dockerfile` and
+has no persistent volume attached: `deploy/k8s/worker.yaml` and the compose
+volume do not apply to it. There the work directory is lost on every restart or
+deploy, so only the journal fallback protects synchronous audio, and two
+windows remain where a retry calls the upstream (and is charged) again: the
+worker is stopped while the call runs (the abort kills the call, the upstream
+may still charge it), and a crash between the upstream call and the upload. A
+volume would not close the first one either, because a killed call writes no
+file. Before a deploy, restart the worker only when no job is in its voice,
+music or sound-effect stage (the same check as for the render stage above).
+Attach a TOSE volume to the project at `/var/lib/studix/work` once TOSE offers
+one; this needs the TOSE dashboard, not a repository change.
 When Anthropic answers a run with 401, the worker re-tests that key directly
 and, only if it is still rejected and was not rotated meanwhile, marks its
 connection `invalid`, so job creation stops accepting it until the key is
