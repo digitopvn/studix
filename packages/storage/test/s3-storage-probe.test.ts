@@ -16,6 +16,7 @@ afterEach(async () => {
 /** A real local HTTP endpoint standing in for the object store; `handler` decides the status per method. */
 async function adapterAgainst(
   handler: (method: string) => number,
+  getBody = "studix storage probe",
 ): Promise<{ adapter: S3StorageAdapter; methods: string[] }> {
   const methods: string[] = [];
   const server = createServer((req, res) => {
@@ -24,7 +25,8 @@ async function adapterAgainst(
     req.on("end", () => {
       const status = handler(req.method ?? "");
       res.writeHead(status, status >= 400 ? { "content-type": "application/xml" } : {});
-      res.end(status >= 400 && req.method !== "HEAD" ? ACCESS_DENIED : "");
+      if (status >= 400) res.end(req.method === "HEAD" ? "" : ACCESS_DENIED);
+      else res.end(req.method === "GET" ? getBody : "");
     });
   });
   servers.push(server);
@@ -42,10 +44,10 @@ async function adapterAgainst(
 }
 
 describe("S3StorageAdapter.probeWrite", () => {
-  it("passes when put, head and delete succeed", async () => {
+  it("passes when put, get, head and delete succeed", async () => {
     const { adapter, methods } = await adapterAgainst((m) => (m === "DELETE" ? 204 : 200));
     expect(await adapter.probeWrite()).toEqual({ ok: true });
-    expect(methods).toEqual(["PUT", "HEAD", "DELETE"]);
+    expect(methods).toEqual(["PUT", "GET", "HEAD", "DELETE"]);
   });
 
   it("reports a 403 on put as a definitive refusal without leaking credentials", async () => {
@@ -64,6 +66,16 @@ describe("S3StorageAdapter.probeWrite", () => {
   it("treats a server error as transient, not denied", async () => {
     const { adapter } = await adapterAgainst(() => 503);
     expect(await adapter.probeWrite()).toMatchObject({ ok: false, step: "put", denied: false });
+  });
+
+  it("names get when the object cannot be read back", async () => {
+    const { adapter } = await adapterAgainst((m) => (m === "GET" ? 403 : 200));
+    expect(await adapter.probeWrite()).toMatchObject({ ok: false, step: "get", status: 403, denied: true });
+  });
+
+  it("fails at get when the bytes read back differ from what was written", async () => {
+    const { adapter } = await adapterAgainst(() => 200, "something else");
+    expect(await adapter.probeWrite()).toMatchObject({ ok: false, step: "get" });
   });
 
   it("names the failing step when only delete is refused", async () => {

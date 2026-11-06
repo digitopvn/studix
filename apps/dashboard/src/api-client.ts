@@ -247,6 +247,80 @@ export interface AnthropicProvider {
   claudePlanner: boolean;
 }
 
+export type PlatformSecretStatus = "configured" | "missing" | "invalid" | "unverified";
+
+export interface PlatformStorageTest {
+  ok: boolean;
+  at: string;
+  failedStep?: string;
+  httpStatus?: number;
+  s3Code?: string;
+  diagnosis:
+    | "ok"
+    | "missing_credential"
+    | "bad_credential"
+    | "missing_permission"
+    | "missing_bucket"
+    | "remote_unavailable";
+  message?: string;
+  suggestedAction?: string;
+}
+
+export interface PlatformCredential {
+  name: string;
+  source: "dashboard" | "environment" | "missing";
+  keyHint?: string;
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: { type: string; id: string };
+  lastTest?: { ok: boolean; at: string; detail?: string };
+}
+
+export interface PlatformMediaVendor {
+  vendor: string;
+  keyName: string;
+  kinds: string[];
+  credential: PlatformCredential;
+  status: "configured" | "missing" | "unverified";
+}
+
+export interface PlatformSettings {
+  storage: {
+    configured: boolean;
+    source: "environment";
+    endpointHost?: string;
+    bucket?: string;
+    region: string;
+    pathStyle: boolean;
+    signedUrlTtlSeconds: number;
+    accessKeyId?: string;
+    secretAccessKey: PlatformSecretStatus;
+    lastTest?: PlatformStorageTest;
+    changeNeedsRedeploy: true;
+  };
+  media: {
+    executable: "configured" | "missing";
+    path?: string;
+    homeEnvDisabled: boolean;
+    credentialStorage: "available" | "unavailable";
+    vendors: PlatformMediaVendor[];
+    lastCheck?: { at: string; state: string; reason?: string; code?: string };
+    apply: { keyChange: string; executableChange: string };
+    processNote: string;
+  };
+}
+
+export interface PlatformMediaTest {
+  ok: boolean;
+  at: string;
+  state: "ready" | "missing_executable" | "check_failed";
+  diagnosis: "ok" | "missing_executable" | "missing_credential" | "check_failed";
+  vendors: Array<{ vendor: string; keyName: string; hasKey: boolean }>;
+  reason?: string;
+  code?: string;
+  paidCalls: false;
+}
+
 export interface FeatureSwitch {
   enabled: boolean;
   /** `operator`: forced on by env; `workspace`: the owner's switch here; `off`. */
@@ -570,6 +644,13 @@ export const api = {
     ),
   disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
   anthropicProvider: () => request<AnthropicProvider>("GET", "/api/providers/anthropic"),
+  platformSettings: () => request<PlatformSettings>("GET", "/api/platform/storage-media"),
+  testPlatformStorage: () => request<PlatformStorageTest>("POST", "/api/platform/storage/test", {}),
+  testPlatformMedia: () => request<PlatformMediaTest>("POST", "/api/platform/media/test", {}),
+  setPlatformMediaKey: (name: string, value: string) =>
+    request<PlatformCredential>("PUT", `/api/platform/media-keys/${enc(name)}`, { value }),
+  revokePlatformMediaKey: (name: string) =>
+    request<PlatformCredential>("DELETE", `/api/platform/media-keys/${enc(name)}`),
   workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
   updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
     request<WorkspaceFeatures>("PUT", "/api/providers/features", patch),

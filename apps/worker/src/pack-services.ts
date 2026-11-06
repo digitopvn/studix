@@ -1,5 +1,12 @@
 import { join } from "node:path";
-import { createMultixProviderFromConfig } from "@studix/providers";
+import {
+  createPlatformCredentialService,
+  createSecretBox,
+  type PlatformCredentialService,
+  parseSecretKey,
+} from "@studix/auth";
+import { createRepositories } from "@studix/database";
+import { createMultixProviderFromConfig, MULTIX_VENDOR_KEYS, MULTIX_VENDORS } from "@studix/providers";
 import {
   assertSpeechProbeReady,
   createHardQaGate,
@@ -18,6 +25,27 @@ const QA_TOOL_TIMEOUT_MS = 120_000;
 /** Longest the speech check may take on one sound effect (a few seconds of audio plus loading the model). */
 const SPEECH_TOOL_TIMEOUT_MS = 60_000;
 
+/** The dashboard-managed vendor keys, or undefined without STUDIX_SECRETS_KEY (nothing can be stored then). */
+function platformCredentials(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+): PlatformCredentialService | undefined {
+  const { config } = settings;
+  if (!config.STUDIX_SECRETS_KEY) return undefined;
+  const repos = createRepositories(runtime.db);
+  return createPlatformCredentialService({
+    credentials: repos.platformCredentials,
+    audit: repos.audit,
+    secrets: createSecretBox(
+      parseSecretKey(config.STUDIX_SECRETS_KEY),
+      config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+    ),
+    allowedNames: MULTIX_VENDORS.map((vendor) => MULTIX_VENDOR_KEYS[vendor]),
+    env: runtime.env,
+    logger: runtime.logger,
+  });
+}
+
 /**
  * The media provider and QA gate pack stages run with. Multix stays disabled (every paid stage fails
  * UNAVAILABLE) until MULTIX_BIN is set; a missing QA toolchain is logged at startup and fails the QA stage
@@ -28,7 +56,12 @@ export async function loadPackServices(
   runtime: WorkerPortsRuntime,
 ): Promise<Pick<WorkerPorts, "media" | "qa" | "speech">> {
   const { config } = settings;
-  const media = createMultixProviderFromConfig(config, { env: runtime.env });
+  const credentials = platformCredentials(settings, runtime);
+  const media = createMultixProviderFromConfig(config, {
+    env: runtime.env,
+    // Vendor keys an operator set in the dashboard apply to the next Multix call, with no restart.
+    ...(credentials ? { credentials: () => credentials.loadValues() } : {}),
+  });
   const toolchain = resolveQaToolchain(runtime.env);
   const qaStatus = qaToolchainStatus(toolchain, runtime.env);
   if (!qaStatus.ok) {

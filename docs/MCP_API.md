@@ -379,6 +379,21 @@ three tools; they never appear in `tools/list`.
 Every execute is re-authorized at call time; a grant revoked after search
 returns `FORBIDDEN`. See [SECURITY.md](SECURITY.md#mcp-in-mcp-connectors).
 
+## Platform settings (dashboard API only)
+
+Storage and media settings are not MCP tools: agents and API keys cannot read
+or change them. They are dashboard session routes for the `operator` role
+(anything else gets `403 FORBIDDEN`; no session gets `401`). Responses are
+`Cache-Control: no-store` and never carry a key value.
+
+| Route                                   | Body        | Returns                                                              |
+| --------------------------------------- | ----------- | -------------------------------------------------------------------- |
+| `GET /api/platform/storage-media`       | none        | Redacted R2 status, media executable status, vendor key metadata.    |
+| `POST /api/platform/storage/test`       | `{}`        | Put/get/head/delete result with a diagnosis and a suggested action.  |
+| `POST /api/platform/media/test`         | `{}`        | Safe `multix check` result; `paidCalls` is always `false`.           |
+| `PUT /api/platform/media-keys/:name`    | `{ value }` | Credential metadata with a last-four hint. Name must be allowlisted. |
+| `DELETE /api/platform/media-keys/:name` | none        | Metadata after removal; the environment value, if any, applies.      |
+
 ## Roadmap tools
 
 Not implemented; do not depend on them. Capabilities are added to the contract

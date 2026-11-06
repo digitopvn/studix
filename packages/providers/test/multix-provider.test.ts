@@ -325,6 +325,122 @@ describe("MultixProvider capabilities", () => {
     }
   });
 
+  describe("dashboard-stored vendor keys", () => {
+    const checkOnly = (seen: Array<Record<string, string>>) =>
+      scriptedCli((argv, options) => {
+        seen.push({ ...options.env });
+        if (argv[0] === "check") return { envelope: { text: CHECK_TEXT } };
+        return { envelope: { data: [] } };
+      });
+
+    it("overlays stored keys on the child env and falls back to the process env", async () => {
+      const seen: Array<Record<string, string>> = [];
+      const cli = checkOnly(seen);
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: cli.runner,
+        env: { SUME_API_KEY: "from-process-env", FISH_API_KEY: "fish-from-env" },
+        credentials: async () => ({ values: { SUME_API_KEY: "from-dashboard" }, revision: "r1" }),
+      });
+      await multix.capabilities();
+      expect(seen[0]?.SUME_API_KEY).toBe("from-dashboard");
+      expect(seen[0]?.FISH_API_KEY).toBe("fish-from-env");
+      expect(seen[0]?.MULTIX_DISABLE_HOME_ENV).toBe("1");
+    });
+
+    it("ignores stored names that are not Multix vendor keys", async () => {
+      const seen: Array<Record<string, string>> = [];
+      const cli = checkOnly(seen);
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: cli.runner,
+        env: {},
+        credentials: async () => ({
+          values: { PATH: "/evil", LD_PRELOAD: "/evil.so", NODE_OPTIONS: "--require /evil.js" },
+          revision: "r1",
+        }),
+      });
+      await multix.capabilities();
+      expect(seen[0]?.PATH).not.toBe("/evil");
+      expect(seen[0]).not.toHaveProperty("LD_PRELOAD");
+      expect(seen[0]).not.toHaveProperty("NODE_OPTIONS");
+    });
+
+    it("drops the cached check when the stored revision changes", async () => {
+      const cli = checkOnly([]);
+      let revision = "r1";
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: cli.runner,
+        env: {},
+        credentials: async () => ({ values: {}, revision }),
+      });
+      await multix.capabilities();
+      await multix.capabilities();
+      expect(cli.commands().filter((c) => c.startsWith("check"))).toHaveLength(1);
+      revision = "r2";
+      await multix.capabilities();
+      expect(cli.commands().filter((c) => c.startsWith("check"))).toHaveLength(2);
+    });
+
+    it("keeps working when the loader throws", async () => {
+      const cli = checkOnly([]);
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: cli.runner,
+        env: {},
+        credentials: async () => {
+          throw new Error("db down");
+        },
+      });
+      expect((await multix.readiness()).sume).toBe(true);
+    });
+  });
+
+  describe("diagnose", () => {
+    it("reports ready with the vendors that have a key, without a paid call", async () => {
+      const cli = scriptedCli((argv) => {
+        if (argv[0] === "check") return { envelope: { text: CHECK_TEXT } };
+        throw new Error(`unexpected argv ${argv.join(" ")}`);
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+      const result = await multix.diagnose();
+      expect(result.state).toBe("ready");
+      expect(result.vendors).toMatchObject({ sume: true, atlas: false, elevenlabs: true, fish: false });
+      expect(cli.commands()).toEqual(["check --json"]);
+    });
+
+    it("reports check_failed when the CLI answers with an error", async () => {
+      const cli = scriptedCli(() => ({
+        exitCode: 3,
+        envelope: { error: { code: "CONFIG", message: "no keys" } },
+      }));
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+      const result = await multix.diagnose();
+      expect(result.state).toBe("check_failed");
+      expect(Object.values(result.vendors).every((v) => v === false)).toBe(true);
+    });
+
+    it("reports missing_executable when the binary cannot be started", async () => {
+      const runner: MultixRunner = async () => {
+        throw Object.assign(new Error("spawn multix ENOENT"), { code: "ENOENT" });
+      };
+      const multix = new MultixProvider({ bin: "multix", runner });
+      const result = await multix.diagnose();
+      expect(["missing_executable", "check_failed"]).toContain(result.state);
+      expect(result.state).not.toBe("ready");
+    });
+
+    it("reports missing_executable without MULTIX_BIN", async () => {
+      const multix = createMultixProviderFromConfig({
+        MULTIX_BIN: undefined,
+        MULTIX_ALLOW_HOME_ENV: false,
+        MULTIX_WAIT_TIMEOUT_SECONDS: 900,
+      });
+      expect(await multix.diagnose()).toMatchObject({ state: "missing_executable", code: "NOT_SET" });
+    });
+  });
+
   it("is disabled without MULTIX_BIN", async () => {
     const multix = createMultixProviderFromConfig({
       MULTIX_BIN: undefined,

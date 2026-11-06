@@ -6,6 +6,7 @@ import {
   createApiKeyService,
   createDashboardAuth,
   createModelPreferenceService,
+  createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
   createWorkspaceFeatureService,
@@ -16,7 +17,7 @@ import {
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
-import { createMultixProviderFromConfig } from "@studix/providers";
+import { createMultixProviderFromConfig, MULTIX_VENDOR_KEYS, MULTIX_VENDORS } from "@studix/providers";
 import {
   allowedHosts,
   createLogger,
@@ -35,6 +36,7 @@ import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
+import { createPlatformSettingsService } from "./platform-settings.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -140,10 +142,28 @@ export async function composeApp(
   });
   const activity = createActivityRecorder(repos.activity, { logger });
   const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
+  const secretBox = config.STUDIX_SECRETS_KEY
+    ? createSecretBox(
+        parseSecretKey(config.STUDIX_SECRETS_KEY),
+        config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+      )
+    : undefined;
+  // Vendor keys an operator set in the dashboard; the worker reads the same rows with the same master key.
+  const platformCredentials = createPlatformCredentialService({
+    credentials: repos.platformCredentials,
+    audit: repos.audit,
+    secrets: secretBox,
+    allowedNames: MULTIX_VENDORS.map((vendor) => MULTIX_VENDOR_KEYS[vendor]),
+    env,
+    logger,
+  });
+  const multix = config.MULTIX_BIN
+    ? createMultixProviderFromConfig(config, { env, credentials: () => platformCredentials.loadValues() })
+    : undefined;
   const studio = new StudioService({
     ...repos,
     // Operators attach Atlas predictions by hand; each is checked with Atlas first, so this needs multix.
-    providerJobs: config.MULTIX_BIN ? createMultixProviderFromConfig(config, { env }) : undefined,
+    providerJobs: multix,
     approvalPolicy,
     clock: systemClock,
     logger,
@@ -188,12 +208,7 @@ export async function composeApp(
       createPiKeyTester(),
     ),
     isSupportedProvider: isRuntimeKeyProvider,
-    secrets: config.STUDIX_SECRETS_KEY
-      ? createSecretBox(
-          parseSecretKey(config.STUDIX_SECRETS_KEY),
-          config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
-        )
-      : undefined,
+    secrets: secretBox,
     claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
     logger,
   });
@@ -241,6 +256,12 @@ export async function composeApp(
     skills: overrides.skills ?? integrations.skills,
     agentHandoffs: integrations.agentHandoffs,
     externalSkills: overrides.externalSkills ?? integrations.externalSkills,
+    platform: createPlatformSettingsService({
+      config,
+      storage: integrations.storage,
+      multix,
+      credentials: platformCredentials,
+    }),
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,

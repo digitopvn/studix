@@ -118,6 +118,29 @@ refused when the connector is added and again at resolve time. Without that
 binding any self-registered workspace could point a connector at its own
 server and receive the operator's token.
 
+### Platform credentials (operator)
+
+Media vendor keys that the Multix CLI uses can be stored from **Storage &
+Media**. They are sealed with the same master key as workspace provider keys
+(AES-256-GCM, bound to the name `platform:<NAME>`, so a ciphertext copied under
+another name does not open). Rules:
+
+- Only a signed-in dashboard session of a user with the `operator` role may read
+  the overview, store, rotate, revoke or test. Owners, admins, API keys, OAuth
+  clients (agents) and the system actor get `FORBIDDEN`; there is no MCP tool
+  that reads or writes these keys.
+- A key travels in a request body once. Responses, audit events and logs carry
+  a hint (last four characters), the version and who changed it, never the
+  value; the value is also registered for log redaction.
+- Only names on a fixed allowlist are accepted, so this is not an environment
+  editor. The Multix child receives only allowlisted vendor names from the
+  store (`PATH`, `LD_PRELOAD` and the like are ignored) and runs with
+  `MULTIX_DISABLE_HOME_ENV=1`.
+- The R2 secret key is not stored by Studix and is never shown; the page reports
+  only whether it works.
+- Every change is audited (`platform_credential.created`, `rotated`, `revoked`,
+  `tested`) in the operator's workspace.
+
 ### Anthropic provider credentials
 
 Workspaces connect Claude through **AI & Providers** in the dashboard

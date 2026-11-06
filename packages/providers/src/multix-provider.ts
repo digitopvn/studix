@@ -69,6 +69,13 @@ export interface MultixProviderOptions {
   voiceLanguageModels?: string;
   /** Source of PATH, HOME and provider keys for the child; defaults to process.env. */
   env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Vendor keys set from the dashboard, read before each CLI call so a rotation applies to the next call
+   * without a restart (a call already running keeps the key it started with). Only the vendor key names
+   * Multix reads are used; any other name is ignored. `revision` must change when a value changes: it drops
+   * the cached `multix check` result. A throwing source leaves the environment keys in place.
+   */
+  credentials?: () => Promise<{ values: Readonly<Record<string, string>>; revision: string }>;
   /** Let multix read ~/.multix/.env (local development only). */
   allowHomeEnv?: boolean;
   /** Longest wait for one upstream job. */
@@ -84,6 +91,20 @@ export interface MultixProviderOptions {
 }
 
 export type MultixReadiness = Readonly<Record<MultixVendor, boolean>>;
+
+/**
+ * Outcome of one safe `multix check` (it reads key presence and calls no paid API). `missing_executable` is
+ * a configuration or image problem; `check_failed` means the CLI ran but did not answer.
+ */
+export interface MultixDiagnosis {
+  state: "ready" | "missing_executable" | "check_failed";
+  /** Per vendor: has a key. Empty of truth (all false) unless `state` is `ready`. */
+  vendors: MultixReadiness;
+  /** Redacted reason for any state other than `ready`. */
+  reason?: string;
+  /** Stable code of the failure (`ENOENT`, `EACCES`, a StudixError code), when known. */
+  code?: string;
+}
 
 export interface MultixProviderStatus {
   id: string;
@@ -205,6 +226,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   private readonly capabilityTtlMs: number;
   private probe: { at: number; value: Promise<MediaCapability[]> } | undefined;
   private lastReadiness: MultixReadiness | undefined;
+  private readonly credentialSource: MultixProviderOptions["credentials"];
+  private credentialRevision: string | undefined;
 
   constructor(options: MultixProviderOptions = {}) {
     const bin = options.bin?.trim();
@@ -220,6 +243,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     this.voiceRoutes = parseVoiceLanguageRoutes(options.voiceLanguageModels, this.defaults);
     this.sourceEnv = options.env ?? process.env;
     this.allowHomeEnv = options.allowHomeEnv ?? false;
+    this.credentialSource = options.credentials;
     this.waitTimeoutMs = options.waitTimeoutMs ?? DEFAULT_WAIT_MS;
     this.journal = options.journal ?? new InMemoryMediaJobJournal();
     this.clock = options.clock ?? systemClock;
@@ -266,6 +290,41 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     );
   }
 
+  /**
+   * One uncached `multix check --json`, for the operator's Test button. It reuses no cached result and
+   * refreshes the capability cache, so what the dashboard shows and what jobs use agree.
+   */
+  async diagnose(signal?: AbortSignal): Promise<MultixDiagnosis> {
+    const none = Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixReadiness;
+    if (!this.enabled) {
+      return { state: "missing_executable", vendors: none, reason: "MULTIX_BIN is not set", code: "NOT_SET" };
+    }
+    try {
+      const text = (
+        await this.inScratchDir((cwd) =>
+          this.exec("check", ["check", "--json"], cwd, PROBE_TIMEOUT_MS, signal),
+        )
+      ).text;
+      const keys = parseCheckKeys(text);
+      const vendors = Object.fromEntries(
+        MULTIX_VENDORS.map((v) => [v, keys.has(MULTIX_VENDOR_KEYS[v])]),
+      ) as MultixReadiness;
+      this.lastReadiness = vendors;
+      this.probe = undefined;
+      return { state: "ready", vendors };
+    } catch (err) {
+      const cause = err instanceof StudixError ? err : undefined;
+      const code = (cause?.details as { code?: unknown } | undefined)?.code;
+      const startFailure = cause?.message.includes("could not be started") === true;
+      return {
+        state: startFailure ? "missing_executable" : "check_failed",
+        vendors: none,
+        reason: cause?.message ?? "multix check failed",
+        code: typeof code === "string" ? code : (cause?.code ?? "UNKNOWN"),
+      };
+    }
+  }
+
   /** The "<vendor>:<model>" a request runs on; results report the same id. */
   resolveModel(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string {
     return resolveMultixModel(request, this.defaults, this.voiceRoutes).model.id;
@@ -282,6 +341,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   /** Kinds whose vendor key `multix check --json` reports, with models from the live catalogs. */
   async capabilities(): Promise<MediaCapability[]> {
     if (!this.enabled) return [];
+    await this.storedCredentials();
     const now = this.clock.now().getTime();
     if (!this.probe || now - this.probe.at > this.capabilityTtlMs) {
       const value = this.probeCapabilities();
@@ -431,10 +491,28 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     return { defaults: this.defaults, voiceRoutes: this.voiceRoutes, waitTimeoutMs: this.waitTimeoutMs };
   }
 
-  private childEnv(cacheDir: string): Record<string, string> {
+  /** Dashboard-stored vendor keys; the child filter below keeps only the names Multix reads. Never throws. */
+  private async storedCredentials(): Promise<Readonly<Record<string, string>>> {
+    if (!this.credentialSource) return {};
+    try {
+      const { values, revision } = await this.credentialSource();
+      if (this.credentialRevision !== undefined && this.credentialRevision !== revision) {
+        // A key was added, rotated or revoked: what `multix check` reported no longer holds.
+        this.probe = undefined;
+        this.lastReadiness = undefined;
+      }
+      this.credentialRevision = revision;
+      return values;
+    } catch {
+      return {};
+    }
+  }
+
+  private childEnv(cacheDir: string, stored: Readonly<Record<string, string>> = {}): Record<string, string> {
     const env: Record<string, string> = {};
-    for (const name of [...PASSTHROUGH_ENV, ...Object.values(MULTIX_VENDOR_KEYS)]) {
-      const value = this.sourceEnv[name];
+    const vendorKeys: readonly string[] = Object.values(MULTIX_VENDOR_KEYS);
+    for (const name of [...PASSTHROUGH_ENV, ...vendorKeys]) {
+      const value = (vendorKeys.includes(name) ? stored[name] : undefined) ?? this.sourceEnv[name];
       if (value !== undefined && value !== "") env[name] = value;
     }
     env.MULTIX_OUTPUT_DIR = cacheDir;
@@ -465,9 +543,10 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     signal?: AbortSignal,
   ): Promise<{ result: Awaited<ReturnType<MultixRunner>>; envelope: MultixEnvelope | undefined }> {
     const cacheDir = join(cwd, `${CACHE_DIR}-${randomUUID()}`);
+    const stored = await this.storedCredentials();
     let result: Awaited<ReturnType<MultixRunner>>;
     try {
-      result = await this.runner!(argv, { cwd, env: this.childEnv(cacheDir), timeoutMs, signal });
+      result = await this.runner!(argv, { cwd, env: this.childEnv(cacheDir, stored), timeoutMs, signal });
     } finally {
       await rm(cacheDir, { recursive: true, force: true }).catch(() => undefined);
     }
