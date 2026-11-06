@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import { createGitHubSkillSource } from "../../src/external/index.ts";
 import { createFakeGitHub, type FakeRepo, skillMd } from "./fake-github.ts";
 
-const MIT = { spdxId: "MIT", name: "MIT License", text: "MIT License\n\nCopyright (c) 2025 Acme Inc.\n\nPermission..." };
+const MIT = {
+  spdxId: "MIT",
+  name: "MIT License",
+  text: "MIT License\n\nCopyright (c) 2025 Acme Inc.\n\nPermission...",
+};
 
 function setup(repo: Partial<FakeRepo> & Pick<FakeRepo, "files">) {
   const github = createFakeGitHub([{ owner: "acme", repo: "skills", ...repo }]);
@@ -55,11 +59,20 @@ describe("GitHub skill source: discover", () => {
 
   it("restricts discovery to a path from the URL or the request", async () => {
     const { source } = setup({
-      files: { "skills/a/SKILL.md": skillMd("a"), "skills/b/SKILL.md": skillMd("b"), "other/SKILL.md": skillMd("o") },
+      files: {
+        "skills/a/SKILL.md": skillMd("a"),
+        "skills/b/SKILL.md": skillMd("b"),
+        "other/SKILL.md": skillMd("o"),
+      },
     });
-    const fromUrl = await source.discover({ repositoryUrl: "https://github.com/acme/skills/tree/main/skills" });
+    const fromUrl = await source.discover({
+      repositoryUrl: "https://github.com/acme/skills/tree/main/skills",
+    });
     expect(fromUrl.candidates.map((c) => c.path)).toEqual(["skills/a", "skills/b"]);
-    const fromRequest = await source.discover({ repositoryUrl: "https://github.com/acme/skills", path: "skills/b" });
+    const fromRequest = await source.discover({
+      repositoryUrl: "https://github.com/acme/skills",
+      path: "skills/b",
+    });
     expect(fromRequest.candidates.map((c) => c.path)).toEqual(["skills/b"]);
     await expect(
       source.discover({ repositoryUrl: "https://github.com/acme/skills", path: "../x" }),
@@ -106,7 +119,8 @@ describe("GitHub skill source: discover", () => {
         "s/notes.txt": "ignored: not in a supported directory",
       },
     });
-    const [candidate] = (await source.discover({ repositoryUrl: "https://github.com/acme/skills" })).candidates;
+    const [candidate] = (await source.discover({ repositoryUrl: "https://github.com/acme/skills" }))
+      .candidates;
     expect(candidate?.files).toEqual([
       { path: "SKILL.md", kind: "skill", bytes: expect.any(Number) },
       { path: "assets/icon.svg", kind: "asset", bytes: 6, skipped: "svg may contain script" },
@@ -125,7 +139,8 @@ describe("GitHub skill source: discover", () => {
       license: MIT,
       files: { "a/SKILL.md": skillMd("a", "d", "license: Proprietary, see LICENSE.txt\n") },
     });
-    const [candidate] = (await source.discover({ repositoryUrl: "https://github.com/acme/skills" })).candidates;
+    const [candidate] = (await source.discover({ repositoryUrl: "https://github.com/acme/skills" }))
+      .candidates;
     expect(candidate?.license).toEqual({
       source: "repository",
       spdxId: "MIT",
@@ -141,7 +156,8 @@ describe("GitHub skill source: discover", () => {
       license: { spdxId: "NOASSERTION", name: "Other", text: "Custom terms" },
       files: { "SKILL.md": skillMd("skills") },
     });
-    const [a] = (await noAssert.source.discover({ repositoryUrl: "https://github.com/acme/skills" })).candidates;
+    const [a] = (await noAssert.source.discover({ repositoryUrl: "https://github.com/acme/skills" }))
+      .candidates;
     expect(a?.license).toEqual({ source: "repository", name: "Other", uncertain: true });
 
     const none = setup({ files: { "SKILL.md": skillMd("skills") } });
@@ -149,7 +165,8 @@ describe("GitHub skill source: discover", () => {
     expect(b?.license).toEqual({ source: "none", uncertain: true });
 
     const declared = setup({ files: { "SKILL.md": skillMd("skills", "d", "license: Apache-2.0\n") } });
-    const [c] = (await declared.source.discover({ repositoryUrl: "https://github.com/acme/skills" })).candidates;
+    const [c] = (await declared.source.discover({ repositoryUrl: "https://github.com/acme/skills" }))
+      .candidates;
     expect(c?.license).toEqual({ source: "frontmatter", spdxId: "Apache-2.0", uncertain: false });
   });
 
@@ -168,12 +185,14 @@ describe("GitHub skill source: discover", () => {
 
   it("rejects an unknown repository or ref as NOT_FOUND", async () => {
     const { source } = setup({ files: { "SKILL.md": skillMd("skills") } });
-    await expect(source.discover({ repositoryUrl: "https://github.com/acme/missing" })).rejects.toMatchObject({
-      code: "NOT_FOUND",
-    });
-    await expect(source.resolve({ repositoryUrl: "https://github.com/acme/skills", ref: "nope" })).rejects.toThrow(
-      StudixError,
+    await expect(source.discover({ repositoryUrl: "https://github.com/acme/missing" })).rejects.toMatchObject(
+      {
+        code: "NOT_FOUND",
+      },
     );
+    await expect(
+      source.resolve({ repositoryUrl: "https://github.com/acme/skills", ref: "nope" }),
+    ).rejects.toThrow(StudixError);
     await expect(
       source.resolve({ repositoryUrl: "https://github.com/acme/skills", ref: "nope" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND", message: expect.stringMatching(/not found or not public/) });
@@ -182,11 +201,16 @@ describe("GitHub skill source: discover", () => {
   it("resolves a named ref or a commit sha without listing the tree", async () => {
     const { source, github } = setup({ refs: ["v1"], files: { "SKILL.md": skillMd("skills") } });
     const sha = github.commitSha("acme", "skills");
-    await expect(source.resolve({ repositoryUrl: "https://github.com/acme/skills/tree/v1" })).resolves.toMatchObject({
+    await expect(
+      source.resolve({ repositoryUrl: "https://github.com/acme/skills/tree/v1" }),
+    ).resolves.toMatchObject({
       ref: "v1",
       commitSha: sha,
     });
-    const bySha = await source.resolve({ repositoryUrl: "https://github.com/acme/skills", ref: sha.toUpperCase() });
+    const bySha = await source.resolve({
+      repositoryUrl: "https://github.com/acme/skills",
+      ref: sha.toUpperCase(),
+    });
     expect(bySha).toMatchObject({ ref: sha, commitSha: sha });
     expect(bySha.defaultBranch).toBeUndefined();
     expect(github.calls.some((c) => c.url.pathname.includes("/git/"))).toBe(false);

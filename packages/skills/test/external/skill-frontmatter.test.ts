@@ -48,11 +48,15 @@ describe("parseSkillMd", () => {
       "l2: &l2 [*l1, *l1, *l1, *l1, *l1, *l1, *l1, *l1, *l1]",
       "l3: [*l2, *l2, *l2, *l2, *l2, *l2, *l2, *l2, *l2]",
     ].join("\n");
-    expect(parseSkillMd(`---\n${bomb}\n---\n`, "a")).toEqual({ ok: false, reason: "malformed YAML frontmatter" });
+    expect(parseSkillMd(`---\n${bomb}\n---\n`, "a")).toEqual({
+      ok: false,
+      reason: "malformed YAML frontmatter",
+    });
   });
 
   it("drops prototype-polluting keys", () => {
-    const text = "---\nname: a\ndescription: d\n__proto__:\n  polluted: true\nnested:\n  constructor: x\n  ok: 1\n---\n";
+    const text =
+      "---\nname: a\ndescription: d\n__proto__:\n  polluted: true\nnested:\n  constructor: x\n  ok: 1\n---\n";
     const parsed = parseSkillMd(text, "a");
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;

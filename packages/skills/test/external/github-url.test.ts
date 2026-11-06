@@ -10,8 +10,14 @@ describe("parseGitHubUrl", () => {
     ["github.com/owner/repo", { owner: "owner", repo: "repo", path: "" }],
     ["  https://GitHub.com/owner/re.po_x-1?tab=readme#top ", { owner: "owner", repo: "re.po_x-1", path: "" }],
     ["https://github.com/o/r/tree/main", { owner: "o", repo: "r", ref: "main", path: "" }],
-    ["https://github.com/o/r/tree/v1.2.0/skills/pdf/", { owner: "o", repo: "r", ref: "v1.2.0", path: "skills/pdf" }],
-    ["https://github.com/o/r/blob/main/skills/pdf/SKILL.md", { owner: "o", repo: "r", ref: "main", path: "skills/pdf" }],
+    [
+      "https://github.com/o/r/tree/v1.2.0/skills/pdf/",
+      { owner: "o", repo: "r", ref: "v1.2.0", path: "skills/pdf" },
+    ],
+    [
+      "https://github.com/o/r/blob/main/skills/pdf/SKILL.md",
+      { owner: "o", repo: "r", ref: "main", path: "skills/pdf" },
+    ],
     ["https://github.com/o/r/blob/main/SKILL.md", { owner: "o", repo: "r", ref: "main", path: "" }],
     ["https://github.com/o/r/tree/main/a%20b", { owner: "o", repo: "r", ref: "main", path: "a b" }],
   ])("accepts %s", (input, expected) => {
@@ -89,10 +95,18 @@ describe("normalizeRepoPath", () => {
     expect(normalizeRepoPath(input)).toBe(expected);
   });
 
-  it.each(["/etc", "a/../b", "..", "a/./b", "a//b", "a\\b", "a\u0000b", "a\tb", "%2e%2e/x", "x".repeat(1025)])(
-    "rejects %j",
-    (input) => {
-      expect(normalizeRepoPath(input)).toBeUndefined();
-    },
-  );
+  it.each([
+    "/etc",
+    "a/../b",
+    "..",
+    "a/./b",
+    "a//b",
+    "a\\b",
+    "a\u0000b",
+    "a\tb",
+    "%2e%2e/x",
+    "x".repeat(1025),
+  ])("rejects %j", (input) => {
+    expect(normalizeRepoPath(input)).toBeUndefined();
+  });
 });

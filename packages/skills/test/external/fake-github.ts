@@ -40,11 +40,18 @@ export function gitBlobSha(bytes: Uint8Array): string {
 }
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
 }
 
 function base64Lines(bytes: Uint8Array): string {
-  return (Buffer.from(bytes).toString("base64").match(/.{1,60}/g) ?? []).join("\n");
+  return (
+    Buffer.from(bytes)
+      .toString("base64")
+      .match(/.{1,60}/g) ?? []
+  ).join("\n");
 }
 
 function buildRepo(spec: FakeRepo) {
@@ -73,7 +80,11 @@ function buildRepo(spec: FakeRepo) {
       continue;
     }
     const bytes =
-      typeof file === "string" ? encoder.encode(file) : file instanceof Uint8Array ? file : encoder.encode(file.symlink);
+      typeof file === "string"
+        ? encoder.encode(file)
+        : file instanceof Uint8Array
+          ? file
+          : encoder.encode(file.symlink);
     const sha = gitBlobSha(bytes);
     blobs.set(sha, bytes);
     const mode = typeof file === "object" && "symlink" in file ? "120000" : "100644";
@@ -134,7 +145,8 @@ export function createFakeGitHub(specs: FakeRepo[], intercept?: FakeIntercept) {
     if (section === "git" && rest[0] === "trees") {
       const dir = repo.shaToDir.get(rest[1] ?? "");
       if (dir === undefined) return json({ message: "Not Found" }, 404);
-      if (url.searchParams.get("recursive") !== "1") return json({ tree: repo.dirs.get(dir), truncated: false });
+      if (url.searchParams.get("recursive") !== "1")
+        return json({ tree: repo.dirs.get(dir), truncated: false });
       if (spec.truncatedTree) return json({ tree: repo.dirs.get(dir), truncated: true });
       return json({ tree: repo.recursive(dir), truncated: false });
     }
@@ -158,7 +170,8 @@ export function createFakeGitHub(specs: FakeRepo[], intercept?: FakeIntercept) {
     fetch,
     calls,
     /** Blob shas requested so far. */
-    blobRequests: () => calls.filter((c) => c.url.pathname.includes("/git/blobs/")).map((c) => c.url.pathname),
+    blobRequests: () =>
+      calls.filter((c) => c.url.pathname.includes("/git/blobs/")).map((c) => c.url.pathname),
     blobSha: (owner: string, repo: string, path: string): string => {
       const file = specs.find((s) => s.owner === owner && s.repo === repo)?.files[path];
       if (typeof file === "string") return gitBlobSha(encoder.encode(file));
@@ -166,13 +179,19 @@ export function createFakeGitHub(specs: FakeRepo[], intercept?: FakeIntercept) {
       throw new Error(`fake GitHub: no regular file ${path}`);
     },
     commitSha: (owner: string, repo: string) => repos.get(`${owner}/${repo}`.toLowerCase())?.commitSha ?? "",
-    rootTreeSha: (owner: string, repo: string) => repos.get(`${owner}/${repo}`.toLowerCase())?.rootTreeSha ?? "",
+    rootTreeSha: (owner: string, repo: string) =>
+      repos.get(`${owner}/${repo}`.toLowerCase())?.rootTreeSha ?? "",
   };
 }
 
 export type FakeGitHub = ReturnType<typeof createFakeGitHub>;
 
 /** A minimal valid SKILL.md with optional extra frontmatter lines and body. */
-export function skillMd(name: string, description = `${name} does a thing`, extra = "", body = "Body."): string {
+export function skillMd(
+  name: string,
+  description = `${name} does a thing`,
+  extra = "",
+  body = "Body.",
+): string {
   return `---\nname: ${name}\ndescription: ${description}\n${extra}---\n\n${body}\n`;
 }

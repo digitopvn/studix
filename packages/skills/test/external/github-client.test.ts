@@ -7,7 +7,10 @@ import { createFakeGitHub, type FakeIntercept, skillMd } from "./fake-github.ts"
 const TOKEN = "ghp_secretTOKEN1234567890";
 const URL_ = "https://github.com/acme/skills";
 
-function setup(intercept?: FakeIntercept, options: { token?: string; clock?: ReturnType<typeof createManualClock> } = {}) {
+function setup(
+  intercept?: FakeIntercept,
+  options: { token?: string; clock?: ReturnType<typeof createManualClock> } = {},
+) {
   const github = createFakeGitHub(
     [{ owner: "acme", repo: "skills", files: { "a/SKILL.md": skillMd("a") } }],
     intercept,
@@ -58,7 +61,9 @@ describe("GitHub client behaviour", () => {
     const authed = setup(() => new Response("{}", { status: 401 }), { token: TOKEN });
     const err = await caught(authed.source.resolve({ repositoryUrl: URL_ }));
     expect(err.code).toBe("UNAUTHENTICATED");
-    const missing = await caught(setup(undefined, { token: TOKEN }).source.resolve({ repositoryUrl: `${URL_}x` }));
+    const missing = await caught(
+      setup(undefined, { token: TOKEN }).source.resolve({ repositoryUrl: `${URL_}x` }),
+    );
     for (const e of [err, missing]) {
       expect(JSON.stringify(e.toJSON())).not.toContain(TOKEN);
       expect(`${e.message} ${e.stack}`).not.toContain(TOKEN);
@@ -69,7 +74,10 @@ describe("GitHub client behaviour", () => {
     const clock = createManualClock(new Date("2026-01-01T00:00:00Z"));
     const reset = String(clock.now().getTime() / 1000 + 120);
     const limited = () =>
-      new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset } });
+      new Response("{}", {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset },
+      });
     const err = await caught(setup(limited, { clock }).source.resolve({ repositoryUrl: URL_ }));
     expect(err).toMatchObject({ code: "RATE_LIMITED", retryable: true, details: { retryAfterSeconds: 120 } });
 
@@ -77,7 +85,9 @@ describe("GitHub client behaviour", () => {
     const err2 = await caught(setup(retryAfter).source.resolve({ repositoryUrl: URL_ }));
     expect(err2.details).toEqual({ retryAfterSeconds: 30 });
 
-    const forbidden = await caught(setup(() => new Response("{}", { status: 403 })).source.resolve({ repositoryUrl: URL_ }));
+    const forbidden = await caught(
+      setup(() => new Response("{}", { status: 403 })).source.resolve({ repositoryUrl: URL_ }),
+    );
     expect(forbidden.code).toBe("FORBIDDEN");
   });
 
@@ -96,7 +106,9 @@ describe("GitHub client behaviour", () => {
   it("retries 5xx GETs and succeeds when GitHub recovers", async () => {
     let failures = 2;
     const { source } = setup(() => (failures-- > 0 ? new Response("oops", { status: 502 }) : undefined));
-    await expect(source.resolve({ repositoryUrl: URL_ })).resolves.toMatchObject({ repository: "acme/skills" });
+    await expect(source.resolve({ repositoryUrl: URL_ })).resolves.toMatchObject({
+      repository: "acme/skills",
+    });
   });
 
   it("treats an unexpected response shape as a provider error", async () => {
