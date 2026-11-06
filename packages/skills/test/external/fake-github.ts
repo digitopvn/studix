@@ -55,13 +55,28 @@ function base64Lines(bytes: Uint8Array): string {
 }
 
 function buildRepo(spec: FakeRepo) {
+  // Like real git, the commit and tree ids depend on the content, so changed files mean a new commit.
+  const salt = sha1(
+    JSON.stringify(
+      Object.entries(spec.files)
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([path, file]) => [
+          path,
+          typeof file === "string" || file instanceof Uint8Array
+            ? sha1(file)
+            : "symlink" in file
+              ? `symlink:${file.symlink}`
+              : "submodule",
+        ]),
+    ),
+  );
   const blobs = new Map<string, Uint8Array>();
   const dirs = new Map<string, TreeNode[]>([["", []]]);
-  const treeShas = new Map<string, string>([["", sha1(`tree:${spec.owner}/${spec.repo}:`)]]);
+  const treeShas = new Map<string, string>([["", sha1(`tree:${spec.owner}/${spec.repo}:${salt}:`)]]);
   const ensureDir = (dir: string): string => {
     const known = treeShas.get(dir);
     if (known) return known;
-    const sha = sha1(`tree:${spec.owner}/${spec.repo}:${dir}`);
+    const sha = sha1(`tree:${spec.owner}/${spec.repo}:${salt}:${dir}`);
     treeShas.set(dir, sha);
     dirs.set(dir, []);
     const slash = dir.lastIndexOf("/");
@@ -102,7 +117,7 @@ function buildRepo(spec: FakeRepo) {
     dirs,
     shaToDir,
     rootTreeSha: treeShas.get("") ?? "",
-    commitSha: sha1(`commit:${spec.owner}/${spec.repo}`),
+    commitSha: sha1(`commit:${spec.owner}/${spec.repo}:${salt}`),
     recursive,
   };
 }

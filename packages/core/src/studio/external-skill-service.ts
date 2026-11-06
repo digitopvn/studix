@@ -227,7 +227,7 @@ export class ExternalSkillService {
     }
     const pinned = await this.deps.source.resolve({
       repositoryUrl: input.repositoryUrl,
-      ref: input.ref ?? expectedCommit,
+      ref: input.ref,
     });
     if (expectedCommit !== undefined && pinned.commitSha !== expectedCommit) {
       throw new StudixError("CONFLICT", "The repository moved since you inspected it", {

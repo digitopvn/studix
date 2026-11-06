@@ -14,6 +14,7 @@ import {
 import {
   createAgentHandoffService,
   createDefaultApprovalPolicy,
+  createExternalSkillService,
   type ProviderJobInspector,
   type Role,
   StudioService,
@@ -22,6 +23,8 @@ import {
 import { createTestDatabase, insertTestUser, type TestDatabase } from "@studix/database/testing";
 import { createActivityRecorder } from "@studix/observability";
 import { createLogger, newId, systemClock } from "@studix/shared";
+import { createGitHubSkillSource } from "@studix/skills";
+import { InMemoryStorageAdapter } from "@studix/storage";
 import type { AppDeps } from "../src/app-deps.ts";
 import { packStageOutputValidator } from "../src/compose-integrations.ts";
 import { createApp } from "../src/create-app.ts";
@@ -73,7 +76,14 @@ export async function freePort(): Promise<number> {
   });
 }
 
+/** Swappable GitHub transport so a test chooses which fake repositories the skill source sees. */
+export interface GitHubTransport {
+  fetch: typeof globalThis.fetch;
+}
+
 export interface TestApp {
+  /** Replace `github.fetch` to serve different fake repositories to the external skill source. */
+  github: GitHubTransport;
   db: TestDatabase;
   base: string;
   deps: AppDeps;
@@ -99,6 +109,9 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
   const base = `http://127.0.0.1:${port}`;
   const logger = createLogger({ service: "studix-app-test" }, { level: "error" });
   const repos = db.repos;
+  const github: GitHubTransport = {
+    fetch: async () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 }),
+  };
   const providers = createProviderConnectionService({
     connections: repos.providerConnections,
     audit: repos.audit,
@@ -148,6 +161,11 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
       handoffs: repos.agentHandoffs,
       validateOutput: packStageOutputValidator(),
     }),
+    externalSkills: createExternalSkillService({
+      skills: repos.externalSkills,
+      source: createGitHubSkillSource({ fetch: (input, init) => github.fetch(input, init) }),
+      storage: new InMemoryStorageAdapter(),
+    }),
     ...overrides,
   };
   const app = createApp(deps);
@@ -157,6 +175,7 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
   const clients: Client[] = [];
 
   return {
+    github,
     db,
     base,
     deps,
