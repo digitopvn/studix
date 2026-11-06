@@ -27,8 +27,10 @@ import type { SecretBox } from "./secret-box.ts";
 /*
  * Outbound AI provider credentials. Two authentication methods are modelled and kept apart: an API key
  * billed by usage (Anthropic and the other providers the Pi runtime supports) and a Claude subscription
- * through OAuth, which is reported as restricted until Anthropic approves that use for a multi-tenant
- * service (ADR 0011). Nothing here ever falls back from one method or connection to another, and Studix
+ * through OAuth. The subscription stays restricted unless the operator runs a self-hosted server and sets
+ * STUDIX_CLAUDE_SUBSCRIPTION: then each user may store their own token from Claude Code's built-in
+ * `claude setup-token`, personal only, released only to its owner's jobs and only to the Claude Code
+ * binary (never to the Agent SDK, never used to call the API directly, never tested against it). Nothing here ever falls back from one method or connection to another, and Studix
  * inbound credentials (`stx_` keys, dashboard sessions) are never used as provider credentials.
  *
  * Each connection lists the agent runtimes allowed to spend it (ADR 0016). The Claude runtime only runs
@@ -50,7 +52,7 @@ export interface ProviderConnectionView {
   id: string;
   /** Provider id from the Pi catalog, e.g. `anthropic`, `openai`, `openrouter`. */
   provider: string;
-  authMethod: "api_key";
+  authMethod: "api_key" | "oauth_subscription";
   billing: BillingSource;
   runtimes: AgentRuntimeName[];
   /** Bumped on every key rotation or runtime change. */
@@ -81,10 +83,13 @@ export interface SubscriptionMethodInfo {
   authMethod: "oauth_subscription";
   title: string;
   billing: "subscription";
-  availability: "restricted";
+  /** `restricted` unless the server is self-hosted with STUDIX_CLAUDE_SUBSCRIPTION on. */
+  availability: "restricted" | "available" | "unavailable";
   reason: string;
   alternative: string;
   references: string[];
+  /** The caller may connect their own subscription now. */
+  canConnect: boolean;
 }
 
 export interface ProviderConnectionsOverview {
@@ -106,10 +111,13 @@ const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
 /** Non-Anthropic keys have no common shape; this only rejects pasted junk (spaces, newlines, huge blobs). */
 const GENERIC_API_KEY_PATTERN = /^[\x21-\x7e]{8,512}$/;
 
+const SUBSCRIPTION_TOKEN_PREFIX = /^sk-ant-oat/;
 const ANTHROPIC_KEY_MESSAGE = "must be an Anthropic API key (sk-ant-…)";
 const GENERIC_KEY_MESSAGE = "must be an API key without spaces";
 
 function keyShapeOk(provider: string, apiKey: string): boolean {
+  // A subscription token is never accepted as an API key: it would be tested against the API directly.
+  if (SUBSCRIPTION_TOKEN_PREFIX.test(apiKey)) return false;
   return provider === ANTHROPIC_PROVIDER
     ? ANTHROPIC_API_KEY_PATTERN.test(apiKey)
     : GENERIC_API_KEY_PATTERN.test(apiKey);
@@ -154,6 +162,18 @@ export const SaveApiKeyInput = z
   });
 export type SaveApiKeyInput = z.input<typeof SaveApiKeyInput>;
 
+/** Token printed by `claude setup-token`; never an API key, which is billed by usage instead. */
+const SUBSCRIPTION_TOKEN_PATTERN = /^sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,300}$/;
+const SUBSCRIPTION_TOKEN_MESSAGE = "must be the token printed by `claude setup-token` (sk-ant-oat…)";
+
+export const ConnectSubscriptionInput = z
+  .object({
+    token: z.string().trim().regex(SUBSCRIPTION_TOKEN_PATTERN, SUBSCRIPTION_TOKEN_MESSAGE),
+    label: z.string().trim().min(1).max(80).optional(),
+  })
+  .strict();
+export type ConnectSubscriptionInput = z.input<typeof ConnectSubscriptionInput>;
+
 export const RotateApiKeyInput = z.object({ apiKey: z.string().trim().min(1).max(512) }).strict();
 export type RotateApiKeyInput = z.input<typeof RotateApiKeyInput>;
 
@@ -161,7 +181,9 @@ export const SetRuntimesInput = z.object({ runtimes: Runtimes }).strict();
 export type SetRuntimesInput = z.input<typeof SetRuntimesInput>;
 
 export interface ResolvedProviderCredential {
+  /** An API key, or for `oauth_subscription` the owner's Claude Code token (Claude Code binary only). */
   apiKey: string;
+  authMethod: "api_key" | "oauth_subscription";
   connection: ProviderConnectionView;
   /**
    * Called after a run got a 401 with this key. It re-tests the key directly and, only if Anthropic
@@ -171,11 +193,20 @@ export interface ResolvedProviderCredential {
   markRejected(): Promise<void>;
 }
 
+/** The Claude transport a resolved credential may go to: subscriptions only to the Claude Code binary. */
+export function claudeCredentialKind(
+  credential: Pick<ResolvedProviderCredential, "authMethod">,
+): "api_key" | "subscription" {
+  return credential.authMethod === "oauth_subscription" ? "subscription" : "api_key";
+}
+
 export interface ProviderConnectionService {
   /** The Anthropic view the Claude runtime settings use; every provider is listed by `list`. */
   overview(ctx: TenantContext): Promise<ProviderConnectionsOverview>;
   list(ctx: TenantContext): Promise<ProviderConnectionList>;
   saveApiKey(ctx: TenantContext, input: SaveApiKeyInput): Promise<ProviderConnectionView>;
+  /** Store the caller's own Claude subscription token (self-hosted servers only, personal only). */
+  connectSubscription(ctx: TenantContext, input: ConnectSubscriptionInput): Promise<ProviderConnectionView>;
   rotateApiKey(ctx: TenantContext, id: string, input: RotateApiKeyInput): Promise<ProviderConnectionView>;
   /** Opt a connection in or out of agent runtimes; managed by the same people who manage the key. */
   setRuntimes(ctx: TenantContext, id: string, input: SetRuntimesInput): Promise<ProviderConnectionView>;
@@ -214,6 +245,8 @@ export interface ProviderConnectionServiceDeps {
   isSupportedProvider?: (provider: string) => boolean;
   /** Without it the API-key method is reported unavailable and nothing can be stored. */
   secrets?: SecretBox;
+  /** STUDIX_CLAUDE_SUBSCRIPTION: a self-hosted server lets each user connect their own subscription. */
+  claudeSubscription?: boolean;
   logger?: Logger;
 }
 
@@ -230,7 +263,37 @@ export const SUBSCRIPTION_RESTRICTION: SubscriptionMethodInfo = {
     "https://code.claude.com/docs/en/legal-and-compliance",
     "https://code.claude.com/docs/en/agent-sdk/overview",
   ],
+  canConnect: false,
 };
+
+const STORAGE_OFF =
+  "Encrypted credential storage is not configured on this server. The operator must set STUDIX_SECRETS_KEY.";
+
+const SUBSCRIPTION_REFERENCES = ["https://code.claude.com/docs/en/legal-and-compliance"];
+
+/** What the subscription card offers on this server and to this caller. */
+function subscriptionMethod(ctx: TenantContext, enabled: boolean, storage: boolean): SubscriptionMethodInfo {
+  if (!enabled) return SUBSCRIPTION_RESTRICTION;
+  const alternative = "You can also add your own Anthropic API key (usage-based billing) instead.";
+  if (!storage) {
+    return {
+      ...SUBSCRIPTION_RESTRICTION,
+      availability: "unavailable",
+      reason: STORAGE_OFF,
+      alternative,
+      references: SUBSCRIPTION_REFERENCES,
+    };
+  }
+  return {
+    ...SUBSCRIPTION_RESTRICTION,
+    availability: "available",
+    reason:
+      "Self-hosted server: connect your own Claude subscription. Sign in with Claude Code's own `claude setup-token` on your machine and paste the token. It is stored encrypted for you only, and only the official Claude Code binary uses it, for jobs you create.",
+    alternative,
+    references: SUBSCRIPTION_REFERENCES,
+    canConnect: canAddPersonal(ctx),
+  };
+}
 
 const SUBJECT = "provider_connection";
 
@@ -264,7 +327,7 @@ function toView(ctx: TenantContext, row: ProviderConnectionRecord): ProviderConn
   return {
     id: row.id,
     provider: row.provider,
-    authMethod: "api_key",
+    authMethod: row.authMethod,
     billing: row.billingSource,
     runtimes: row.runtimes,
     version: row.version,
@@ -294,6 +357,10 @@ export function providerName(provider: string): string {
 }
 
 /** `sk-ant-…a1b2` for Anthropic, `…a1b2` otherwise: enough to tell keys apart, never enough to use one. */
+function subscriptionHint(token: string): string {
+  return `sk-ant-oat…${token.slice(-4)}`;
+}
+
 export function apiKeyHint(provider: string, apiKey: string): string {
   return provider === ANTHROPIC_PROVIDER ? anthropicKeyHint(apiKey) : `…${apiKey.slice(-4)}`;
 }
@@ -437,13 +504,24 @@ export function createProviderConnectionService(
   ): Promise<ProviderConnectionRecord> {
     assertPermission(ctx, "project:write");
     const row = await deps.connections.get(ctx, connectionId);
-    if (!row || row.revokedAt || !row.secretCiphertext || row.authMethod !== "api_key") {
+    const subscription = row?.authMethod === "oauth_subscription";
+    if (
+      !row ||
+      row.revokedAt ||
+      !row.secretCiphertext ||
+      (row.authMethod !== "api_key" && !(subscription && deps.claudeSubscription))
+    ) {
       throw new StudixError("UNAVAILABLE", "The selected provider connection no longer exists", {
         retryable: false,
         suggestedAction: "Choose another provider connection in Settings → AI & Providers.",
       });
     }
     const name = providerName(row.provider);
+    if (subscription && (row.ownerType !== "user" || runtime !== "claude")) {
+      throw new StudixError("FORBIDDEN", "A Claude subscription only runs its owner's Claude Code jobs", {
+        retryable: false,
+      });
+    }
     if (row.ownerType === "user" && !(requestedBy.type === "user" && requestedBy.id === row.ownerUserId)) {
       throw new StudixError("FORBIDDEN", `A personal ${name} key can only be used by its owner`, {
         retryable: false,
@@ -465,6 +543,11 @@ export function createProviderConnectionService(
     return row;
   }
 
+  /** Subscription rows are shown (and usable) only while the operator keeps the feature on. */
+  const visible = (row: ProviderConnectionRecord) =>
+    row.authMethod === "api_key" ||
+    (row.authMethod === "oauth_subscription" && deps.claudeSubscription === true);
+
   return {
     async overview(ctx) {
       assertPermission(ctx, "workspace:read");
@@ -479,16 +562,12 @@ export function createProviderConnectionService(
             availability: deps.secrets ? "available" : "unavailable",
             canAddWorkspaceKey: Boolean(deps.secrets) && can(ctx.actor, "member:manage"),
             canAddPersonalKey: Boolean(deps.secrets) && canAddPersonal(ctx),
-            ...(deps.secrets
-              ? {}
-              : { reason: "Encrypted credential storage is not configured on this server." }),
+            ...(deps.secrets ? {} : { reason: STORAGE_OFF }),
           },
-          SUBSCRIPTION_RESTRICTION,
+          subscriptionMethod(ctx, deps.claudeSubscription === true, Boolean(deps.secrets)),
         ],
         connections: rows
-          .filter(
-            (row) => row.provider === ANTHROPIC_PROVIDER && row.authMethod === "api_key" && canSee(ctx, row),
-          )
+          .filter((row) => row.provider === ANTHROPIC_PROVIDER && visible(row) && canSee(ctx, row))
           .map((row) => toView(ctx, row)),
       };
     },
@@ -500,9 +579,7 @@ export function createProviderConnectionService(
         storage: deps.secrets ? "available" : "unavailable",
         canAddWorkspaceKey: Boolean(deps.secrets) && can(ctx.actor, "member:manage"),
         canAddPersonalKey: Boolean(deps.secrets) && canAddPersonal(ctx),
-        connections: rows
-          .filter((row) => row.authMethod === "api_key" && canSee(ctx, row))
-          .map((row) => toView(ctx, row)),
+        connections: rows.filter((row) => visible(row) && canSee(ctx, row)).map((row) => toView(ctx, row)),
       };
     },
 
@@ -563,10 +640,71 @@ export function createProviderConnectionService(
       return toView(ctx, row);
     },
 
+    async connectSubscription(ctx, rawInput) {
+      if (!deps.claudeSubscription) {
+        throw new StudixError("FORBIDDEN", "Claude subscriptions are not available on this server", {
+          retryable: false,
+          suggestedAction: SUBSCRIPTION_RESTRICTION.alternative,
+        });
+      }
+      assertPermission(ctx, "project:write");
+      const ownerUserId = userId(ctx);
+      if (!ownerUserId) {
+        throw new StudixError("FORBIDDEN", "A Claude subscription can only be connected by a signed-in user");
+      }
+      const input = parse(ConnectSubscriptionInput, rawInput);
+      const secrets = requireSecrets();
+      const active = await deps.connections.listActive(ctx);
+      if (
+        active.some(
+          (row) =>
+            row.provider === ANTHROPIC_PROVIDER &&
+            row.authMethod === "oauth_subscription" &&
+            row.ownerUserId === ownerUserId,
+        )
+      ) {
+        throw new StudixError("CONFLICT", "Your Claude subscription is already connected", {
+          retryable: false,
+          suggestedAction: "Replace the token instead of connecting again.",
+        });
+      }
+      const id = newId("pcon");
+      // Not tested here: only the Claude Code binary may use the token, so the first run verifies it.
+      const row = await deps.connections.create(ctx, {
+        id,
+        provider: ANTHROPIC_PROVIDER,
+        authMethod: "oauth_subscription",
+        ownerType: "user",
+        ownerUserId,
+        label: input.label ?? "My Claude subscription",
+        status: "unverified",
+        secretCiphertext: secrets.seal(input.token, associatedData(ctx, id)),
+        secretHint: subscriptionHint(input.token),
+        runtimes: ["claude"],
+        billingSource: "subscription",
+        createdBy: actorRef(ctx.actor),
+      });
+      await audit(ctx, "created", row);
+      deps.logger?.info("claude subscription connected", { connectionId: id, workspaceId: ctx.workspaceId });
+      return toView(ctx, row);
+    },
+
     async rotateApiKey(ctx, id, rawInput) {
-      const input = parse(RotateApiKeyInput, rawInput);
       const existing = await load(ctx, id);
       requireManage(ctx, existing);
+      if (existing.authMethod === "oauth_subscription") {
+        const token = parse(ConnectSubscriptionInput, {
+          token: (rawInput as { apiKey?: unknown })?.apiKey,
+        }).token;
+        const row = await deps.connections.update(ctx, id, {
+          status: "unverified",
+          secretCiphertext: requireSecrets().seal(token, associatedData(ctx, id)),
+          secretHint: subscriptionHint(token),
+        });
+        await audit(ctx, "rotated", row);
+        return toView(ctx, row);
+      }
+      const input = parse(RotateApiKeyInput, rawInput);
       assertKeyShape(existing.provider, input.apiKey);
       const secrets = requireSecrets();
       const result = await deps.tester.test(input.apiKey, existing.provider);
@@ -585,6 +723,11 @@ export function createProviderConnectionService(
       const input = parse(SetRuntimesInput, rawInput);
       const existing = await load(ctx, id);
       requireManage(ctx, existing);
+      if (existing.authMethod === "oauth_subscription" && input.runtimes.some((r) => r !== "claude")) {
+        throw new StudixError("VALIDATION", "A Claude subscription only runs on the claude runtime", {
+          retryable: false,
+        });
+      }
       if (existing.provider !== ANTHROPIC_PROVIDER && input.runtimes.includes("claude")) {
         throw new StudixError("VALIDATION", "The claude runtime only runs Anthropic keys", {
           retryable: false,
@@ -600,6 +743,8 @@ export function createProviderConnectionService(
       requireManage(ctx, existing);
       if (!existing.secretCiphertext)
         throw new StudixError("NOT_FOUND", `provider connection ${id} has no key`);
+      // Never sent to the API directly; the next Claude Code run is the test.
+      if (existing.authMethod === "oauth_subscription") return toView(ctx, existing);
       const apiKey = openKey(ctx, existing, existing.secretCiphertext);
       const result = await deps.tester.test(apiKey, existing.provider);
       const row = await deps.connections.recordTest(ctx, id, existing.secretCiphertext, {
@@ -627,8 +772,27 @@ export function createProviderConnectionService(
       const ciphertext = row.secretCiphertext as string;
       return {
         apiKey,
+        authMethod: row.authMethod,
         connection: toView(ctx, row),
         async markRejected() {
+          if (row.authMethod === "oauth_subscription") {
+            // Claude Code itself refused the token; there is no direct check to run, so trust that.
+            const updated = await deps.connections.recordTest(ctx, row.id, ciphertext, {
+              status: "invalid",
+              lastTest: {
+                ok: false,
+                at: new Date(),
+                latencyMs: 0,
+                error: {
+                  code: "UNAUTHENTICATED",
+                  message: "Claude Code rejected the subscription token",
+                  retryable: false,
+                },
+              },
+            });
+            if (updated) await audit(ctx, "rejected", updated);
+            return;
+          }
           // A 401 can come from a gateway or a short provider incident; only a direct test of this key decides.
           const result = await deps.tester.test(apiKey, row.provider);
           if (result.verdict !== "invalid") return;

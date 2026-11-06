@@ -205,6 +205,38 @@ S3-compatible storage. Set the `STUDIX_*_URL` values to your hostnames. Apply
 migrations before starting the new app version (see `packages/database`).
 Kubernetes manifests (Kustomize) live under `deploy/k8s`.
 
+### Claude subscription (self-hosted only)
+
+On a personal or self-hosted server, members can run Claude jobs on their own
+Claude Pro/Max subscription instead of an API key. It is off by default, and
+the hosted Studix cloud keeps it off, so the card on Settings → AI & Providers
+stays "Restricted" there. To turn it on, set on both the app and the worker:
+
+- `STUDIX_CLAUDE_SUBSCRIPTION=true`
+- `STUDIX_CLAUDE_PLANNER=true` (the worker runs the Claude Code binary)
+- `STUDIX_SECRETS_KEY` (encrypted credential storage; without it the card says
+  storage is not configured and nothing is stored)
+
+Each member then runs `claude setup-token` on their own machine, signs in with
+their own Claude account, and pastes the printed token on the card. Members
+can also add their own Anthropic API key (personal key, usage-based) on the
+API key card on the same page; that also needs only `STUDIX_SECRETS_KEY`.
+
+What Studix does and does not do with a subscription token, following
+Anthropic's [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
+page:
+
+- Only the official, unmodified Claude Code executable uses it, run directly
+  as `claude --print` with the token in `CLAUDE_CODE_OAUTH_TOKEN`. The token is
+  never passed to the Claude Agent SDK, never used to call the Anthropic API
+  directly, and never tested against it (the first run verifies it; a token
+  Claude Code rejects is marked invalid).
+- It is personal: stored encrypted for its owner, usable only by jobs that
+  owner creates, only on the `claude` runtime, never shared with other members
+  or the workspace. A subscription token pasted into the API key form is
+  refused.
+- Turning the flag off hides stored subscriptions and stops releasing them.
+
 ## Cloudflare marketing
 
 - Source: `apps/marketing`; static assets served by a Worker.

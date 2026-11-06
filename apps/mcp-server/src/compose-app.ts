@@ -166,6 +166,7 @@ export async function composeApp(
           config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
         )
       : undefined,
+    claudeSubscription: config.STUDIX_CLAUDE_SUBSCRIPTION,
     logger,
   });
   if (!config.STUDIX_SECRETS_KEY)

@@ -1,5 +1,9 @@
 import { agentSpendOf, type ClaudeAgentTransport, createClaudeAgentRuntime } from "@studix/agent-runtime";
-import type { ProviderConnectionService, ResolvedProviderCredential } from "@studix/auth";
+import {
+  claudeCredentialKind as credentialKind,
+  type ProviderConnectionService,
+  type ResolvedProviderCredential,
+} from "@studix/auth";
 import { USAGE_KINDS, usageDedupeKey } from "@studix/billing";
 import {
   type AgentRunResult,
@@ -121,7 +125,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
             runtime: "claude",
           });
           resolvedKey = resolved;
-          return resolved.apiKey;
+          return { secret: resolved.apiKey, kind: credentialKind(resolved) };
         },
       },
       validateOutput: (output) =>

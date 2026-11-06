@@ -144,6 +144,12 @@ export function providerRoutes(deps: AppDeps): Router {
       .status(201)
       .json(await requireProviders(deps).saveApiKey(sessionOf(res).ctx, anthropicBody(req.body)));
   });
+  // Self-hosted only (STUDIX_CLAUDE_SUBSCRIPTION): the caller's own `claude setup-token` output.
+  router.post("/anthropic/subscription", async (req, res) => {
+    res
+      .status(201)
+      .json(await requireProviders(deps).connectSubscription(sessionOf(res).ctx, req.body ?? {}));
+  });
   router.put("/anthropic/api-keys/:connectionId", async (req, res) => {
     const id = idParam(req, "connectionId");
     res.json(await requireProviders(deps).rotateApiKey(sessionOf(res).ctx, id, req.body ?? {}));
