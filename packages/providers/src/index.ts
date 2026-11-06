@@ -45,6 +45,7 @@ export {
 export {
   createMultixProviderFromConfig,
   MULTIX_PROVIDER_ID,
+  type MultixDiagnosis,
   MultixProvider,
   type MultixProviderOptions,
   type MultixProviderStatus,

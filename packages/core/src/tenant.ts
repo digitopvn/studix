@@ -131,6 +131,25 @@ export function assertPermission(ctx: TenantContext, permission: Permission): vo
   }
 }
 
+/**
+ * Platform-wide settings (object storage, media provider keys) belong to the platform's own staff acting in
+ * a dashboard session. Workspace owners and admins do not hold them, and neither do API keys, OAuth-delegated
+ * agents or system actors, so an agent can never change or reveal platform credentials.
+ */
+export function isPlatformOperator(actor: Actor): boolean {
+  return actor.type === "user" && actor.role === "operator";
+}
+
+/** Throw FORBIDDEN unless the context is a platform operator's own dashboard session. */
+export function assertPlatformOperator(ctx: TenantContext): void {
+  if (!isPlatformOperator(ctx.actor)) {
+    throw new StudixError("FORBIDDEN", "Only a platform operator can manage platform settings", {
+      details: { actorType: ctx.actor.type },
+      suggestedAction: "Ask the platform operator to change this setting.",
+    });
+  }
+}
+
 /** Validate a TenantContext at a system boundary (e.g. built from a decoded token). */
 export function assertTenantContext(ctx: TenantContext | undefined): asserts ctx is TenantContext {
   if (!ctx?.organizationId || !ctx.workspaceId || !ctx.actor?.id) {

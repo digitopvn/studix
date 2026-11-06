@@ -68,6 +68,44 @@ saving keys is disabled. Losing it makes every stored key unreadable, so back
 it up with the database secrets. To rotate it, move the old value to
 `STUDIX_SECRETS_KEYS_PREVIOUS` and set a new one.
 
+### Storage and media settings (platform operators)
+
+A platform operator (a user whose `role` is `operator`, set directly in the
+database) sees **Storage & Media** in the dashboard. Nobody else does, and the
+API behind it (`/api/platform/*`) answers `FORBIDDEN` to every other role, API
+key and OAuth client.
+
+- **Object storage (R2) stays in the deployment settings.** The page shows the
+  endpoint host, bucket, region, a masked access key id and whether the secret
+  key works, but never holds the secret. To rotate it, change `S3_ACCESS_KEY_ID`
+  and `S3_SECRET_ACCESS_KEY` in the deployment, redeploy the app and the
+  worker, then press **Test connection**. The test writes, reads, checks and
+  deletes one small object under a probe prefix. A failure is classified as
+  missing credential, bad credential, missing permission (token can reach the
+  bucket but not write it), bucket not found or remote unavailable.
+- **Media vendor keys can be set on the page.** `SUME_API_KEY`,
+  `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`, `FISH_API_KEY`, `MINIMAX_API_KEY`
+  and `OPENROUTER_API_KEY` are stored sealed with `STUDIX_SECRETS_KEY` in the
+  `platform_credentials` table (no second vault) and are never shown again,
+  only a hint of the last four characters. A stored key overrides the
+  environment variable of the same name; revoking it falls back to the
+  environment. The worker reads them with the same `STUDIX_SECRETS_KEY`, so set
+  that on the app **and** the worker, otherwise the page reports that keys
+  cannot be stored. The worker passes the Multix CLI only these allowlisted
+  names and keeps `MULTIX_DISABLE_HOME_ENV=1`.
+- **Applying a change needs no restart.** The next media call on the app and the
+  worker uses the new key (within a few seconds); a call already running keeps
+  the key it started with. `MULTIX_BIN` is still deployment configuration.
+- **The safe check calls no paid provider.** It runs `multix check`, which only
+  reports which keys exist, so it cannot tell a wrong key from a right one; a
+  bad key shows up on the first real job. The check runs in the app process, and
+  the worker's `/readyz` does not report media yet: the first media job confirms
+  the worker reads the key. A worker without `STUDIX_SECRETS_KEY` logs a warning
+  at startup when keys exist in the database.
+- **Rollback:** revoke the key on the page (the environment value applies again)
+  and revoke it at the provider if it leaked. Losing `STUDIX_SECRETS_KEY` makes
+  stored keys unreadable (they are skipped and logged); set them again.
+
 Dashboard sign-in with GitHub and Google is off until a provider's client id
 and secret are both set (`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`,
 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`); setting only one of a pair fails

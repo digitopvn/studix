@@ -75,8 +75,8 @@ function storageError(action: string, err: unknown): StudixError {
 
 export interface StorageProbeResult {
   ok: boolean;
-  /** Step that failed: `put`, `head` or `delete`. */
-  step?: "put" | "head" | "delete";
+  /** Step that failed: `put`, `get`, `head` or `delete`. */
+  step?: "put" | "get" | "head" | "delete";
   status?: number;
   s3Code?: string;
   /** True when the failure is a definitive refusal (4xx other than 429) rather than a transient outage. */
@@ -103,6 +103,13 @@ function buildClient(options: S3StorageOptions, endpoint: string | undefined): S
 }
 
 /** StorageAdapter over the S3 API (Cloudflare R2, MinIO, AWS S3). Buckets stay private; reads use signed URLs. */
+/** The object read back is not what the probe wrote: something between us and the bucket changed it. */
+class ProbeBodyMismatch extends Error {
+  constructor() {
+    super("The object read back differs from what was written");
+  }
+}
+
 export class S3StorageAdapter implements StorageAdapter {
   readonly bucket: string;
   private readonly client: S3Client;
@@ -224,17 +231,21 @@ export class S3StorageAdapter implements StorageAdapter {
   }
 
   /**
-   * Write, read back and delete one tiny temporary object under a tenant-shaped prefix. Never throws; the
+   * Write, read (get and head) and delete one tiny temporary object under a tenant-shaped prefix. Never throws; the
    * result carries only the failing step, HTTP status and S3 error code (no credentials or bucket names).
    */
   async probeWrite(): Promise<StorageProbeResult> {
     const key = resolveTenantKey(PROBE_TENANT, `probe/${randomUUID()}.txt`);
     const body = new TextEncoder().encode("studix storage probe");
-    let step: "put" | "head" | "delete" = "put";
+    let step: "put" | "get" | "head" | "delete" = "put";
     try {
       await this.client.send(
         new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: "text/plain" }),
       );
+      step = "get";
+      const read = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      const echoed = (await read.Body?.transformToString()) ?? "";
+      if (echoed !== "studix storage probe") throw new ProbeBodyMismatch();
       step = "head";
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       step = "delete";
@@ -251,6 +262,7 @@ export class S3StorageAdapter implements StorageAdapter {
         step,
         ...(status === undefined ? {} : { status }),
         ...(err instanceof S3ServiceException ? { s3Code: err.name } : {}),
+        ...(err instanceof ProbeBodyMismatch ? { s3Code: "BodyMismatch" } : {}),
         denied: status !== undefined && status >= 400 && status < 500 && status !== 429,
         message: redact(err instanceof Error ? err.message : String(err)),
       };
