@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { MediaGenerationRequest } from "@studix/core";
+import type { MediaGenerationRequest, NewProviderExecution } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
-import { createManualClock } from "@studix/shared";
+import { createManualClock, StudixError } from "@studix/shared";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   centsFromPrice,
@@ -206,5 +206,41 @@ describe("media price book", () => {
         recordedAt: "x",
       }),
     ).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+});
+
+describe("runMediaBatchWithProbe execution rows", () => {
+  it("records every call, failed ones included, against the job and stage", async () => {
+    const provider = new FakeMediaProvider({ pricing: { estimateCents: () => 4, chargeCents: () => 3 } });
+    const rows: NewProviderExecution[] = [];
+    const recorder = {
+      recordProviderExecution: async (_c: unknown, input: NewProviderExecution) => {
+        rows.push(input);
+        return input;
+      },
+    };
+    const outcome = await runMediaBatchWithProbe(ctx, provider, batch(3), {
+      priceBook: new InMemoryMediaPriceBook(),
+      budgetCents: 100,
+      clock,
+      executions: { recorder, jobId: "job_1", stageId: "shots" },
+    });
+    expect(outcome.status).toBe("completed");
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.status === "succeeded" && r.jobId === "job_1" && r.stageId === "shots")).toBe(
+      true,
+    );
+
+    rows.length = 0;
+    vi.spyOn(provider, "generate").mockRejectedValueOnce(new StudixError("CANCELLED", "stop"));
+    await expect(
+      runMediaBatchWithProbe(ctx, provider, batch(1), {
+        priceBook: new InMemoryMediaPriceBook(),
+        budgetCents: 100,
+        clock,
+        executions: { recorder },
+      }),
+    ).rejects.toThrow("stop");
+    expect(rows).toEqual([expect.objectContaining({ status: "cancelled", operation: "media.image" })]);
   });
 });

@@ -125,7 +125,7 @@ describe("api key scopes after job:retry joined the role matrix", () => {
       "project:read",
       "workspace:read",
     ]);
-    // `job:recover` came later still; 0017 adds it below and 0019 takes it back for operators only.
+    // `job:recover` came later still; 0017 adds it below and 0020 takes it back for operators only.
     const admin = await issue(
       "old-admin",
       PERMISSIONS.filter((p) => p !== "job:retry" && p !== "job:recover"),
@@ -142,7 +142,7 @@ describe("api key scopes after job:retry joined the role matrix", () => {
 
     const sql = readFileSync(join(MIGRATIONS_FOLDER, "0012_api_key_job_retry.sql"), "utf8");
     await db.current.client.unsafe(sql);
-    for (const later of ["0017_api_key_job_recover.sql", "0019_api_key_operator_job_recover.sql"]) {
+    for (const later of ["0017_api_key_job_recover.sql", "0020_api_key_operator_job_recover.sql"]) {
       await db.current.client.unsafe(readFileSync(join(MIGRATIONS_FOLDER, later), "utf8"));
     }
 
@@ -199,7 +199,7 @@ describe("api key scopes as job:recover joined the admin roles, then moved to op
 
     // A custom key minted by an owner while owners held the scope loses it too.
     const custom = await issue("custom", ["project:read", "job:recover"]);
-    const strip = readFileSync(join(MIGRATIONS_FOLDER, "0019_api_key_operator_job_recover.sql"), "utf8");
+    const strip = readFileSync(join(MIGRATIONS_FOLDER, "0020_api_key_operator_job_recover.sql"), "utf8");
     await db.current.client.unsafe(strip);
     await db.current.client.unsafe(strip);
 

@@ -49,6 +49,7 @@ function toExecution(row: typeof providerExecutions.$inferSelect): ProviderExecu
     attempt: row.attempt,
     error: opt(row.error),
     funding: row.funding,
+    externalId: opt(row.externalId),
     createdAt: row.createdAt,
   };
 }
@@ -157,6 +158,7 @@ export function createUsageRepository(db: DbExecutor, clock: Clock): UsageReposi
           attempt: input.attempt,
           error: input.error ? redactDeep(input.error) : null,
           funding: input.funding ?? "operator",
+          externalId: input.externalId ?? null,
           createdAt: clock.now(),
         })
         .returning();

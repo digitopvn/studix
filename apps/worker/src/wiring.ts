@@ -105,6 +105,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
       qa: deps.qa,
       ...(deps.speech ? { speech: deps.speech } : {}),
       workRoot: settings.workDir,
+      executions: repos.usage,
     },
     clock,
     logger,
