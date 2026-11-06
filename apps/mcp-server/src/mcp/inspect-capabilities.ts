@@ -62,7 +62,7 @@ export function inspectCapabilities(input: {
               ? {}
               : {
                   reason: input.media.reason ?? "The Multix provider is not configured",
-                  note: "Workflows that need paid media (voice-over, sound effects, music, generated images) are refused at creation. Silent motion-graphic briefs, with no voiceover lines, still work.",
+                  note: "Workflows that need paid media (voice-over, sound effects, music, generated images) are refused at creation. A motion-graphic whose first direction has beats and none of them a voiceover, or one created from a spec, still works.",
                 }),
           },
         }

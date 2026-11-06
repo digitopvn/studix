@@ -8,25 +8,39 @@ export interface MediaAvailability {
   reason?: string;
 }
 
-type Brief = Pick<CreativeBrief, "directions"> | { directions?: unknown } | undefined;
+type Brief = Record<string, unknown> | undefined;
 
-const hasVoiceover = (brief: Brief): boolean => {
-  const directions = (brief as { directions?: Array<{ beats?: Array<{ voiceover?: string }> }> } | undefined)
-    ?.directions;
-  return (directions ?? []).some((d) => (d.beats ?? []).some((b) => Boolean(b.voiceover)));
-};
+/**
+ * Mirrors the motion-graphic template: only a first direction with `beats`, none of which is spoken, is
+ * silent. Without beats the template voices the hook, key messages and call to action.
+ */
+function motionGraphicIsSilent(brief: Brief): boolean {
+  const directions = brief?.directions;
+  const first: unknown = Array.isArray(directions) ? directions[0] : undefined;
+  const beats = (first as { beats?: unknown } | null | undefined)?.beats;
+  if (!Array.isArray(beats)) return false;
+  return !beats.some(
+    (b) =>
+      typeof (b as { voiceover?: unknown } | null)?.voiceover === "string" &&
+      (b as { voiceover: string }).voiceover !== "",
+  );
+}
 
 /**
  * What a job of this workflow needs from the media provider, so a deployment without it can refuse before
- * the job runs its free stages and fails on the first paid one. `none` means the workflow renders without
- * paid media. A spec supplied by the caller skips planning but not its media stages, so it is not exempt.
+ * the job runs its free stages and fails on the first paid one. `undefined` means no paid media. A
+ * caller-supplied spec skips planning; a motion graphic built from one only renders, but the other packs
+ * still generate media for it.
  */
-export function mediaNeededBy(workflowTemplate: string, brief: Brief): string | undefined {
+export function mediaNeededBy(workflowTemplate: string, brief: Brief, hasSpec = false): string | undefined {
   switch (workflowTemplate) {
     case "motion-graphic":
-      return hasVoiceover(brief) ? "voice-over and sound effect" : undefined;
+      return hasSpec || motionGraphicIsSilent(brief) ? undefined : "voice-over and sound effect";
     case "marketing-video":
       return "image, voice-over, music and sound effect";
+    case "anime":
+    case "long-form-film":
+      return "image, video, voice and music";
     default:
       return undefined;
   }
@@ -37,9 +51,10 @@ export function assertMediaAvailable(
   media: MediaAvailability | undefined,
   workflowTemplate: string,
   brief: Brief,
+  hasSpec = false,
 ): void {
   if (!media || media.enabled) return;
-  const needed = mediaNeededBy(workflowTemplate, brief);
+  const needed = mediaNeededBy(workflowTemplate, brief, hasSpec);
   if (!needed) return;
   throw new StudixError(
     "UNAVAILABLE",
@@ -49,7 +64,7 @@ export function assertMediaAvailable(
       details: { provider: "multix", workflowTemplate },
       suggestedAction:
         workflowTemplate === "motion-graphic"
-          ? "Remove the voiceover lines from the brief to make a silent motion graphic, or ask the operator to set MULTIX_BIN on the app and worker."
+          ? "Give a silent motion graphic explicit directions[0].beats with no voiceover, or ask the operator to set MULTIX_BIN on the app and worker."
           : "Ask the operator to set MULTIX_BIN on the app and worker, or use a workflow that needs no paid media.",
     },
   );

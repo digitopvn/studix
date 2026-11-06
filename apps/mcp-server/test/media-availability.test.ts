@@ -3,8 +3,12 @@ import { inspectCapabilities } from "../src/mcp/inspect-capabilities.ts";
 import { assertMediaAvailable, mediaAvailability, mediaNeededBy } from "../src/media-availability.ts";
 
 const off = { enabled: false, reason: "MULTIX_BIN is not set" };
-const spoken = { directions: [{ beats: [{ visual: "a" }, { visual: "b", voiceover: "Xin chào" }] }] };
-const silent = { directions: [{ beats: [{ visual: "a", onScreen: "x" }, { visual: "b" }] }] };
+const spoken: Record<string, unknown> = {
+  directions: [{ beats: [{ visual: "a" }, { visual: "b", voiceover: "Xin chào" }] }],
+};
+const silent: Record<string, unknown> = {
+  directions: [{ beats: [{ visual: "a", onScreen: "x" }, { visual: "b" }] }],
+};
 
 describe("media availability", () => {
   it("derives the server view from MULTIX_BIN", () => {
@@ -15,7 +19,14 @@ describe("media availability", () => {
   it("needs media for a spoken motion graphic but not a silent one", () => {
     expect(mediaNeededBy("motion-graphic", spoken)).toBeDefined();
     expect(mediaNeededBy("motion-graphic", silent)).toBeUndefined();
-    expect(mediaNeededBy("motion-graphic", undefined)).toBeUndefined();
+    expect(mediaNeededBy("motion-graphic", undefined)).toBeDefined();
+    expect(mediaNeededBy("motion-graphic", { prompt: "x" })).toBeDefined();
+    expect(mediaNeededBy("motion-graphic", { directions: [{ hook: "h" }] })).toBeDefined();
+    expect(mediaNeededBy("motion-graphic", spoken, true)).toBeUndefined();
+    expect(mediaNeededBy("motion-graphic", { directions: "x" })).toBeDefined();
+    expect(mediaNeededBy("motion-graphic", { directions: [null] })).toBeDefined();
+    expect(mediaNeededBy("anime", undefined)).toBeDefined();
+    expect(mediaNeededBy("long-form-film", undefined)).toBeDefined();
     expect(mediaNeededBy("brand-intro", spoken)).toBeUndefined();
   });
 

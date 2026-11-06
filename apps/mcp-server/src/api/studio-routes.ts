@@ -135,7 +135,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       ...(body.callToAction ? { callToAction: body.callToAction } : {}),
     };
     pack.checkBrief?.(brief);
-    assertMediaAvailable(deps.media, pack.id, undefined);
+    assertMediaAvailable(deps.media, pack.id, {});
     const result = await deps.studio.createVideoProject(ctx, {
       brief,
       title: body.title,

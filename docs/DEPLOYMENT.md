@@ -392,9 +392,12 @@ The app and the worker must both have `MULTIX_BIN`. The app reads it to decide
 whether media is on: `studix_inspect` returns `media.enabled`, and
 `studix_create_video` (and the dashboard create route) refuse with `UNAVAILABLE`
 before any job exists when the workflow needs paid media and `MULTIX_BIN` is
-unset. A `motion-graphic` brief with `voiceover` lines needs media; a silent one
-(no `voiceover`) does not and never calls Multix. `marketing-video` always needs
-it. A worker without `MULTIX_BIN` logs a `media generation is off` warning at
+unset. `marketing-video`, `anime` and `long-form-film` always need it. A
+`motion-graphic` needs it unless its first direction has `beats` and none has a
+`voiceover` (without beats the template voices the hook, messages and call to
+action), or it is created from a caller-supplied `spec`. A silent one never
+calls Multix. Re-rendering, feedback and retries are not checked. A worker
+without `MULTIX_BIN` logs a `media generation is off` warning at
 startup.
 
 Runbook when a job fails with `UNAVAILABLE` / "The Multix provider is not

@@ -316,7 +316,12 @@ export const NATIVE_TOOLS = [
         ? await resolveAgentSelection(ctx.deps, ctx.tenant, input.agent, needsDefault)
         : undefined;
       const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles, input.agentMode !== "host");
-      assertMediaAvailable(ctx.deps.media, pack.id, brief);
+      assertMediaAvailable(
+        ctx.deps.media,
+        pack.id,
+        brief as Record<string, unknown>,
+        input.spec !== undefined,
+      );
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
         spec: input.spec,
