@@ -3,6 +3,7 @@
 # Pushes to main run it through deploy.yml, which deploys only after it passes.
 # During the bootstrap stage pull requests into dev and pushes to dev skip CI; contributors run
 # `pnpm check` locally before merging. Remove the dev exclusions to gate dev again.
+# Jobs run in parallel; the integration suite is split into shards, each with its own Postgres and MinIO.
 name: ci
 
 on:
@@ -17,52 +18,27 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NODE_ENV: test
+  # Local-only credentials from docker-compose.yml, not secrets.
+  DATABASE_URL: postgres://studix:studix@127.0.0.1:55432/studix
+  S3_ENDPOINT: http://127.0.0.1:59000
+  S3_REGION: us-east-1
+  S3_BUCKET: studix-test
+  S3_ACCESS_KEY_ID: studix
+  S3_SECRET_ACCESS_KEY: studix-local-secret
+  S3_FORCE_PATH_STYLE: "true"
+  # The QA media tests fail instead of skipping when ffmpeg or the QA venv is missing.
+  STUDIX_QA_REQUIRE_TOOLCHAIN: "1"
+
 jobs:
-  check:
+  static:
+    name: lint, typecheck, migrations, build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      NODE_ENV: test
-      # Local-only credentials from docker-compose.yml, not secrets.
-      DATABASE_URL: postgres://studix:studix@127.0.0.1:55432/studix
-      S3_ENDPOINT: http://127.0.0.1:59000
-      S3_REGION: us-east-1
-      S3_BUCKET: studix-test
-      S3_ACCESS_KEY_ID: studix
-      S3_SECRET_ACCESS_KEY: studix-local-secret
-      S3_FORCE_PATH_STYLE: "true"
-      # The QA media tests fail instead of skipping when ffmpeg or the QA venv is missing.
-      STUDIX_QA_REQUIRE_TOOLCHAIN: "1"
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      # Rendering toolchain for the HyperFrames integration test: FFmpeg/ffprobe plus
-      # chrome-headless-shell (the runner image already ships Chrome's shared libraries).
-      # man-db triggers make apt installs crawl on hosted runners, so they are disabled first.
-      - name: Install FFmpeg and chrome-headless-shell
-        timeout-minutes: 10
-        run: |
-          sudo rm -f /var/lib/man-db/auto-update
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends ffmpeg
-          # Same build id as the worker image: read it from the Dockerfile so they cannot diverge.
-          chrome_version="$(sed -n 's/^ARG CHROME_HEADLESS_SHELL_VERSION=//p' Dockerfile)"
-          test -n "$chrome_version"
-          # Outside the checkout, so npx fetches the package instead of reusing pnpm's bin-less copy.
-          (cd "$RUNNER_TEMP" && npx --yes --package @puppeteer/browsers@3.2.6 -- browsers install "chrome-headless-shell@${chrome_version}" --path ~/.cache/puppeteer)
-
-      # uv runs the Python MCP SDK client test against /mcp and the QA tools' pytest (pnpm test).
-      - uses: astral-sh/setup-uv@v6
+      - uses: ./.github/actions/setup
 
       - name: Lint
         run: pnpm lint
@@ -70,37 +46,80 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      # pytest for tools/qa (it also creates tools/qa/.venv), then the TypeScript unit tests.
-      - name: Unit tests
-        run: pnpm test
-
-      # The real Silero VAD on a synthesized voice and on voiceless sound, in its own venv so the main one
-      # stays the default image (no torch). Fails, not skips, when the detector or espeak-ng is missing.
-      - name: QA speech tests (speech image)
-        timeout-minutes: 15
-        env:
-          STUDIX_QA_REQUIRE_SPEECH: "1"
-          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/qa-speech-venv
-        run: |
-          sudo apt-get install -y -qq --no-install-recommends espeak-ng
-          uv run --locked --extra speech --project tools/qa pytest tools/qa/tests/test_speech_activity.py -v
-
       - name: Migrations match schema
         run: |
           pnpm db:generate
           git diff --exit-code -- packages/database/migrations
           test -z "$(git status --porcelain -- packages/database/migrations)"
 
+      - name: Build
+        run: pnpm build
+
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          media: "true"
+          uv: "true"
+
+      # pytest for tools/qa, then the TypeScript unit tests.
+      - name: Unit tests
+        run: pnpm test
+
+  qa-speech:
+    name: QA speech tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          cache-dependency-glob: tools/qa/uv.lock
+
+      # The real Silero VAD on a synthesized voice and on voiceless sound, in its own venv so the main one
+      # stays the default image (no torch). Fails, not skips, when the detector or espeak-ng is missing.
+      - name: QA speech tests (speech image)
+        env:
+          STUDIX_QA_REQUIRE_SPEECH: "1"
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/qa-speech-venv
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends espeak-ng
+          uv run --locked --extra speech --project tools/qa pytest tools/qa/tests/test_speech_activity.py -v
+
+  integration:
+    name: integration tests (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pulls and starts the services while the toolchain installs.
       - name: Start Postgres and MinIO
+        run: docker compose up -d postgres minio
+
+      # uv runs the Python MCP SDK client test against /mcp; the QA venv backs the media checks.
+      - uses: ./.github/actions/setup
+        with:
+          media: "true"
+          uv: "true"
+
+      - name: Wait for Postgres and MinIO
         run: |
           docker compose up -d --wait postgres minio
           docker compose run --rm minio-init
 
       - name: Integration tests
-        run: pnpm test:integration
-
-      - name: Build
-        run: pnpm build
+        run: pnpm test:integration --shard=${{ matrix.shard }}/3
 
       - name: Stop services
         if: always()
