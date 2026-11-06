@@ -6,10 +6,12 @@ import { StudixError } from "@studix/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentSpendOf,
+  cheapestPiModel,
   createPiKeyTester,
   createPiSdkAgentRuntime,
   createProviderBindingResolver,
   isNoModelSelected,
+  isRuntimeKeyProvider,
   listPiCatalog,
   type PiBindingResolver,
   type PiCredentialSource,
@@ -350,6 +352,18 @@ describe("provider binding resolver", () => {
     expect(queries).toEqual([{ runtime: "pi", userId: "u1" }]);
   });
 
+  it("binds an OpenCode Go connection chosen for the stage", async () => {
+    const opencodeGo: FakeConnection = { id: "pcon_go", provider: "opencode-go", runtimes: ["pi"] };
+    const modelId = cheapestPiModel("opencode-go")!.id;
+    const { resolver } = resolverFor(
+      [opencodeGo],
+      [preference({ connectionId: "pcon_go", provider: "opencode-go", modelId })],
+    );
+    const run = await resolver.resolve(ctx(), { stage: "plan" });
+    expect(run.bindings[0]).toMatchObject({ provider: "opencode-go", modelId, connectionId: "pcon_go" });
+    expect(run.snapshot).toMatchObject({ provider: "opencode-go", connectionId: "pcon_go" });
+  });
+
   it("fails clearly when no model is chosen or the key is not enabled for Pi", async () => {
     const none = await resolverFor([shared], [])
       .resolver.resolve(ctx(), { stage: "plan" })
@@ -424,5 +438,15 @@ describe("Pi catalog", () => {
     expect(anthropic?.oauthRestriction).toBeDefined();
     expect(catalog.find((p) => p.id === "amazon-bedrock")).toBeUndefined();
     expect(catalog.find((p) => p.id === "openrouter")?.models.length).toBeGreaterThan(0);
+  });
+
+  it("offers OpenCode Go as an API-key provider with priced models", () => {
+    const opencodeGo = listPiCatalog().find((p) => p.id === "opencode-go");
+    expect(opencodeGo?.name).toBe("OpenCode Go");
+    expect(opencodeGo?.authMethods).toEqual(["api_key"]);
+    expect(opencodeGo?.models.length).toBeGreaterThan(0);
+    expect(opencodeGo?.models.every((m) => m.cost.input > 0)).toBe(true);
+    expect(isRuntimeKeyProvider("opencode-go")).toBe(true);
+    expect(cheapestPiModel("opencode-go")).toBeDefined();
   });
 });
