@@ -64,6 +64,7 @@ export function indexTree(raw: TreeEntry[]): TreeIndex {
     index.entries.push(safe);
     if (isSkillMd) index.skillMds.set(dirName(path), safe);
   }
+  index.entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return index;
 }
 

@@ -71,10 +71,13 @@ export function createGitHubSkillSource(options: GitHubSkillSourceOptions = {}):
 
   async function pin(session: GitHubSession, location: GitHubLocation): Promise<PinnedSource> {
     const ref: RepoRef = { owner: location.owner.toLowerCase(), repo: location.repo.toLowerCase() };
-    let defaultBranch: string | undefined;
-    if (location.ref === undefined) {
-      defaultBranch = (await session.getJson(RepoResponse, ["repos", ref.owner, ref.repo])).default_branch;
+    // Always read the repository record: a token with wider access must never turn a private repository
+    // into an importable one, so anything not explicitly public is reported as not found.
+    const repo = await session.getJson(RepoResponse, ["repos", ref.owner, ref.repo]);
+    if (repo.private !== false || (repo.visibility !== undefined && repo.visibility !== "public")) {
+      throw new StudixError("NOT_FOUND", "GitHub repository or ref not found or not public");
     }
+    const defaultBranch = location.ref === undefined ? repo.default_branch : undefined;
     const named = location.ref ?? defaultBranch ?? "";
     const commitRef = SHA_PATTERN.test(named.toLowerCase()) ? named.toLowerCase() : named;
     const commit = await session.getJson(CommitResponse, [
@@ -118,7 +121,7 @@ export function createGitHubSkillSource(options: GitHubSkillSourceOptions = {}):
     const location = parseGitHubUrl(request.repositoryUrl, { ref: request.ref });
     const scope = request.path === undefined ? location.path : requirePath(request.path);
     const session = newSession();
-    const source = await pin(session, location);
+    const source = request.pinned ?? (await pin(session, location));
     const listing = await cachedTree(session, source, [scope]);
     const index = indexTree(listing.entries);
     const notes = [...listing.notes];
@@ -133,7 +136,7 @@ export function createGitHubSkillSource(options: GitHubSkillSourceOptions = {}):
       found = found.slice(0, EXTERNAL_SKILL_LIMITS.maxCandidates);
     }
     const ref = repoRefOf(source);
-    const license = found.length > 0 ? await fetchRepoLicense(session, ref) : undefined;
+    const license = found.length > 0 ? await fetchRepoLicense(session, ref, source.commitSha) : undefined;
     const ctx: LoadContext = { session, ref, index, license, download: false };
     const candidates: SkillCandidate[] = [];
     for (const [dir, entry] of found) {
@@ -174,7 +177,7 @@ export function createGitHubSkillSource(options: GitHubSkillSourceOptions = {}):
     const listing = await cachedTree(session, source, safeDirs.length > 0 ? safeDirs : [""]);
     const index = indexTree(listing.entries);
     const needsLicense = safeDirs.some((dir) => index.skillMds.has(dir));
-    const license = needsLicense ? await fetchRepoLicense(session, ref) : undefined;
+    const license = needsLicense ? await fetchRepoLicense(session, ref, source.commitSha) : undefined;
     const ctx: LoadContext = { session, ref, index, license, download: true };
     const missing = `no SKILL.md at this path in this commit${listing.truncated ? " (tree listing was bounded)" : ""}`;
 

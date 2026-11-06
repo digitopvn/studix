@@ -174,7 +174,19 @@ export const EXTERNAL_SKILL_MCP_TOOLS = [
       return {
         data,
         next: [],
-        attributes: { skillId: input.skillId, action: input.action },
+        attributes: {
+          skillId: input.skillId,
+          action: input.action,
+          ...(input.versionId ? { versionId: input.versionId } : {}),
+          ...("activeVersionId" in data && data.activeVersionId
+            ? { activeVersionId: data.activeVersionId }
+            : {}),
+          ...("upstream" in data ? { upstream: data.upstream } : {}),
+          ...("upstreamCommit" in data && data.upstreamCommit ? { upstreamCommit: data.upstreamCommit } : {}),
+          ...("import" in data && data.import
+            ? { importStatus: (data.import as { status?: string }).status }
+            : {}),
+        },
       };
     },
   }),

@@ -201,8 +201,35 @@ export class ExternalSkillService {
     return skill;
   }
 
+  /** Operations that call GitHub in flight per workspace, bounded so one workspace cannot drain the shared quota. */
+  private readonly inFlight = new Map<string, number>();
+
+  private async guarded<T>(ctx: TenantContext, run: () => Promise<T>): Promise<T> {
+    const key = ctx.workspaceId;
+    const active = this.inFlight.get(key) ?? 0;
+    if (active >= LIMITS.maxConcurrentRemoteOperations) {
+      throw new StudixError("RATE_LIMITED", "This workspace already has skill imports or checks running", {
+        retryable: true,
+        suggestedAction: "Wait for the running operation to finish, then retry.",
+        details: { retryAfterSeconds: 10 },
+      });
+    }
+    this.inFlight.set(key, active + 1);
+    try {
+      return await run();
+    } finally {
+      const left = (this.inFlight.get(key) ?? 1) - 1;
+      if (left <= 0) this.inFlight.delete(key);
+      else this.inFlight.set(key, left);
+    }
+  }
+
   async discover(ctx: TenantContext, input: DiscoverInput) {
     assertPermission(ctx, "skill:write");
+    return this.guarded(ctx, () => this.discoverNow(ctx, input));
+  }
+
+  private async discoverNow(ctx: TenantContext, input: DiscoverInput) {
     const discovery = await this.deps.source.discover(input);
     const candidates: DiscoveredCandidate[] = [];
     for (const candidate of discovery.candidates) {
@@ -241,6 +268,10 @@ export class ExternalSkillService {
 
   async import(ctx: TenantContext, input: ImportInput): Promise<ImportResult> {
     assertPermission(ctx, "skill:write");
+    return this.guarded(ctx, () => this.importNow(ctx, input));
+  }
+
+  private async importNow(ctx: TenantContext, input: ImportInput): Promise<ImportResult> {
     const storage = this.requireStorage();
     const wantsAll = input.all === true;
     if (wantsAll === (input.skillPaths !== undefined)) {
@@ -254,7 +285,7 @@ export class ExternalSkillService {
     if (wantsAll) {
       const found = await this.deps.source.discover({
         repositoryUrl: input.repositoryUrl,
-        ref: pinned.commitSha,
+        pinned,
       });
       for (const r of found.rejected) results.push({ path: r.path, status: "rejected", reason: r.reason });
       paths = found.candidates.map((c) => c.path);
@@ -340,8 +371,12 @@ export class ExternalSkillService {
         warnings: skill.warnings,
       };
     } catch (err) {
-      if (err instanceof StudixError && err.code === "FORBIDDEN") throw err;
-      return { path, status: "rejected", reason: `Could not store the skill: ${(err as Error).message}` };
+      // Only a problem with this skill's own content is a per-skill rejection. Storage and database failures
+      // are the operation's, so they surface as errors instead of an "ok" import with raw backend text.
+      if (err instanceof StudixError && err.code === "VALIDATION") {
+        return { path, status: "rejected", reason: `Could not store the skill: ${err.message}` };
+      }
+      throw err;
     }
   }
 
@@ -435,8 +470,10 @@ export class ExternalSkillService {
     const all = await readBytes(object.body, Math.max(file.bytes, LIMITS.maxTextFileBytes) + 1);
     const offset = Math.min(input.offset ?? 0, all.byteLength);
     const size = Math.min(input.maxBytes ?? LIMITS.defaultReadBytes, LIMITS.maxReadBytes);
-    const slice = all.subarray(offset, offset + size);
-    const end = offset + slice.byteLength;
+    let end = Math.min(offset + size, all.byteLength);
+    // Never cut inside a multibyte character: the next page must start where this one stopped.
+    while (end < all.byteLength && end > offset + 1 && ((all[end] ?? 0) & 0xc0) === 0x80) end--;
+    const slice = all.subarray(offset, end);
     return {
       ...base,
       path,
@@ -453,7 +490,7 @@ export class ExternalSkillService {
     assertPermission(ctx, "skill:write");
     const skill = await this.require(ctx, input.skillId);
     if (input.action === "activate") return this.activate(ctx, skill, input.versionId);
-    return this.upstream(ctx, skill, input);
+    return this.guarded(ctx, () => this.upstream(ctx, skill, input));
   }
 
   private async activate(ctx: TenantContext, skill: ExternalSkill, versionId: string | undefined) {
@@ -482,7 +519,8 @@ export class ExternalSkillService {
     try {
       pinned = await this.deps.source.resolve({ repositoryUrl: sourceUrl(skill.repository), ref });
     } catch (err) {
-      if (err instanceof StudixError && err.code === "NOT_FOUND") {
+      // A ref the caller typed may simply not exist; only the stored ref vanishing means the skill is gone.
+      if (err instanceof StudixError && err.code === "NOT_FOUND" && input.ref === undefined) {
         const marked = await this.deps.skills.recordUpstreamCheck(ctx, skill.id, {
           status: "missing",
           checkedAt,

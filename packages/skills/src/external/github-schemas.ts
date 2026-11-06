@@ -2,7 +2,12 @@ import { z } from "zod";
 
 /** Shapes of the GitHub REST responses this source reads; anything else is a provider error. */
 
-export const RepoResponse = z.object({ default_branch: z.string().min(1).max(255) });
+export const RepoResponse = z.object({
+  default_branch: z.string().min(1).max(255),
+  /** Only an explicit `false` counts as public; a missing flag is treated as not public. */
+  private: z.boolean().optional(),
+  visibility: z.string().optional(),
+});
 
 export const CommitResponse = z.object({
   sha: z.string().regex(/^[0-9a-f]{40}$/),

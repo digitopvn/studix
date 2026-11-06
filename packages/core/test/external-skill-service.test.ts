@@ -73,8 +73,9 @@ function setup(options: { storage?: boolean; skills?: Record<string, FetchSkills
     "c/bad": { path: "c/bad", status: "rejected", code: "invalid", reason: "bad frontmatter" },
   };
   const source: ExternalSkillSource = {
-    async resolve({ repositoryUrl }) {
-      if (!repositoryUrl.includes(repository)) throw new StudixError("NOT_FOUND", "no such repository");
+    async resolve({ repositoryUrl, ref }) {
+      if (!repositoryUrl.includes(repository) || ref?.startsWith("nope"))
+        throw new StudixError("NOT_FOUND", "no such repository");
       return pinned(repository);
     },
     async discover() {
@@ -153,5 +154,61 @@ describe("ExternalSkillService", () => {
     });
     const check = await gone.update(ctx, { skillId: first.skillId, action: "check" });
     expect("upstream" in check ? check.upstream : undefined).toBe("missing");
+  });
+
+  it("does not mark a skill missing because the caller typed an unknown ref", async () => {
+    const { service, ctx, repositoryUrl } = setup();
+    const res = await service.import(ctx, { repositoryUrl, skillPaths: ["a/one"] });
+    const first = res.results[0];
+    if (first?.status === "rejected" || !first) throw new Error("import failed");
+    await expect(
+      service.update(ctx, { skillId: first.skillId, action: "check", ref: "nope/not-here" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const [listed] = (await service.list(ctx, {})).items;
+    expect(listed?.upstreamStatus).toBe("unknown");
+  });
+
+  it("pages multibyte text without cutting a character", async () => {
+    const text = "Xin chào ".repeat(40) + "日本語のスキル。".repeat(60);
+    const { service, ctx, repositoryUrl } = setup({
+      skills: { "a/one": { path: "a/one", status: "ok", skill: fetched("a/one", "multi", text) } },
+    });
+    const res = await service.import(ctx, { repositoryUrl, skillPaths: ["a/one"] });
+    const first = res.results[0];
+    if (first?.status === "rejected" || !first) throw new Error("import failed");
+    let offset = 0;
+    let joined = "";
+    for (let i = 0; i < 2000; i++) {
+      const page = await service.get(ctx, { skillId: first.skillId, offset, maxBytes: 7 });
+      joined += page.content ?? "";
+      if (!("nextOffset" in page) || page.nextOffset === undefined) break;
+      offset = page.nextOffset;
+    }
+    expect(joined).toBe(text);
+  });
+
+  it("limits concurrent GitHub operations per workspace", async () => {
+    const { service, ctx, repositoryUrl } = setup();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = createExternalSkillService({
+      skills: createInMemoryExternalSkillRepository(systemClock),
+      source: {
+        resolve: async () => pinned("acme/skills"),
+        discover: async () => {
+          await gate;
+          return { source: pinned("acme/skills"), candidates: [], rejected: [], truncated: false, notes: [] };
+        },
+        fetchSkills: async () => [],
+      },
+    });
+    const running = [slow.discover(ctx, { repositoryUrl }), slow.discover(ctx, { repositoryUrl })];
+    await expect(slow.discover(ctx, { repositoryUrl })).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    release();
+    await Promise.all(running);
+    await expect(slow.discover(ctx, { repositoryUrl })).resolves.toBeDefined();
+    expect(service).toBeDefined();
   });
 });

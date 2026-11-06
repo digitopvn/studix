@@ -34,6 +34,8 @@ export const EXTERNAL_SKILL_LIMITS = {
   maxRuntimeMs: 45_000,
   /** Largest slice `studix_skill_get` returns in one call. */
   maxReadBytes: 100 * 1024,
+  /** Operations that call GitHub at once per workspace (per server process). */
+  maxConcurrentRemoteOperations: 2,
   defaultReadBytes: 48 * 1024,
 } as const;
 
@@ -176,6 +178,8 @@ export interface DiscoverRequest {
   ref?: string;
   /** Restrict to one skill directory (and below). */
   path?: string;
+  /** An already pinned source: list that exact commit instead of resolving the URL and ref again. */
+  pinned?: PinnedSource;
 }
 
 /**

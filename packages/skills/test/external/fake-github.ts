@@ -13,6 +13,8 @@ export interface FakeRepo {
   license?: { spdxId: string | null; name: string; text: string };
   /** Make the recursive tree listing report `truncated: true` with only the top-level entries. */
   truncatedTree?: boolean;
+  /** Serve the repository as private (default: public). */
+  private?: boolean;
 }
 
 export interface FakeCall {
@@ -139,7 +141,13 @@ export function createFakeGitHub(specs: FakeRepo[], intercept?: FakeIntercept) {
     if (root !== "repos" || !repo) return json({ message: "Not Found" }, 404);
     const { spec } = repo;
     const branch = spec.defaultBranch ?? "main";
-    if (section === undefined) return json({ default_branch: branch });
+    if (section === undefined) {
+      return json({
+        default_branch: branch,
+        private: spec.private === true,
+        visibility: spec.private === true ? "private" : "public",
+      });
+    }
     if (section === "commits") {
       const ref = rest.join("/");
       const known = [branch, ...(spec.refs ?? []), repo.commitSha].includes(ref);

@@ -52,8 +52,12 @@ function isRealSpdx(id: string | null | undefined): id is string {
 export async function fetchRepoLicense(
   session: GitHubSession,
   ref: RepoRef,
+  /** The pinned commit: the license text must be the one that commit carries, not the default branch's. */
+  commitSha: string,
 ): Promise<RepoLicense | undefined> {
-  const response = await session.getOptionalJson(LicenseResponse, ["repos", ref.owner, ref.repo, "license"]);
+  const response = await session.getOptionalJson(LicenseResponse, ["repos", ref.owner, ref.repo, "license"], {
+    ref: commitSha,
+  });
   if (!response) return undefined;
   const license: RepoLicense = {
     spdxId: response.license?.spdx_id ?? undefined,

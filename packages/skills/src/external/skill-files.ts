@@ -3,7 +3,6 @@ import { decodeUtf8, downloadBlob, sha256Hex } from "./github-blob.ts";
 import type { GitHubSession } from "./github-client.ts";
 import type { TreeEntry } from "./github-schemas.ts";
 import type { RepoRef } from "./github-tree.ts";
-import { isWithin } from "./repo-path.ts";
 
 /** A file under a skill directory, classified from the tree alone (nothing downloaded yet). */
 export interface PlannedFile {
@@ -88,6 +87,7 @@ function classify(entry: TreeEntry, rel: string, kind: ExternalSkillFileKind): P
  * aggregate size bounds stay listed with a `skipped` reason; nothing is silently dropped.
  */
 export function planSkillFiles(
+  /** Sorted by path (as `indexTree` returns them), so a directory's entries are one contiguous range. */
   entries: TreeEntry[],
   dir: string,
   reserved: { files: number; bytes: number },
@@ -95,9 +95,18 @@ export function planSkillFiles(
   let files = reserved.files;
   let bytes = reserved.bytes;
   const planned: PlannedFile[] = [];
-  const sorted = [...entries].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  for (const entry of sorted) {
-    if (entry.type === "tree" || entry.path === dir || !isWithin(entry.path, dir)) continue;
+  const prefix = dir === "" ? "" : `${dir}/`;
+  let lo = 0;
+  let hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((entries[mid]?.path ?? "") < prefix) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry === undefined || !entry.path.startsWith(prefix)) break;
+    if (entry.type === "tree" || entry.path === dir) continue;
     const rel = dir === "" ? entry.path : entry.path.slice(dir.length + 1);
     const slash = rel.indexOf("/");
     const kind = slash > 0 ? KIND_BY_DIR[rel.slice(0, slash)] : undefined;

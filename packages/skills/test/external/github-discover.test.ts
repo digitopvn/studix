@@ -216,3 +216,33 @@ describe("GitHub skill source: discover", () => {
     expect(github.calls.some((c) => c.url.pathname.includes("/git/"))).toBe(false);
   });
 });
+
+describe("GitHub skill source: visibility and pinned commit", () => {
+  it("treats a repository that is not explicitly public as not found, even when the token can read it", async () => {
+    const { source } = setup({ private: true, files: { "SKILL.md": skillMd("s") } });
+    await expect(source.discover({ repositoryUrl: "https://github.com/acme/skills" })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await expect(
+      source.resolve({ repositoryUrl: "https://github.com/acme/skills", ref: "main" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("lists a pinned commit under a /tree/ URL without re-parsing the ref", async () => {
+    const { source } = setup({
+      files: { "skills/a/SKILL.md": skillMd("a"), "other/b/SKILL.md": skillMd("b") },
+    });
+    const url = "https://github.com/acme/skills/tree/main/skills";
+    const pinned = await source.resolve({ repositoryUrl: url });
+    const found = await source.discover({ repositoryUrl: url, pinned });
+    expect(found.candidates.map((c) => c.path)).toEqual(["skills/a"]);
+    expect(found.source.commitSha).toBe(pinned.commitSha);
+  });
+
+  it("reads the license at the pinned commit", async () => {
+    const { source, github } = setup({ files: { "SKILL.md": skillMd("s") }, license: MIT });
+    const found = await source.discover({ repositoryUrl: "https://github.com/acme/skills" });
+    const licenseCall = github.calls.find((c) => c.url.pathname.endsWith("/license"));
+    expect(licenseCall?.url.searchParams.get("ref")).toBe(found.source.commitSha);
+  });
+});

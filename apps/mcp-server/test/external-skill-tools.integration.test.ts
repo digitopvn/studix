@@ -165,6 +165,16 @@ describe("external skill tools over MCP (Postgres)", () => {
     expect(res.error?.code).toBe("CONFLICT");
   });
 
+  it("imports everything under a /tree/ folder URL with all: true", async () => {
+    const client = await app.connect(editor);
+    const res = await call(client, "studix_skill_import", {
+      repositoryUrl: `${REPO}/tree/main/skills`,
+      all: true,
+    });
+    expect(res.status).toBe("ok");
+    expect(res.data?.results.map((r: { path: string }) => r.path)).toEqual(["skills/brand-launch"]);
+  });
+
   it("returns an empty result for a repository without skills", async () => {
     github = createFakeGitHub([{ owner: "acme", repo: "empty", files: { "README.md": "x" } }]);
     const client = await app.connect(editor);

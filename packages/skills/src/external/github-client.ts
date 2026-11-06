@@ -25,7 +25,11 @@ interface GetJsonOptions {
 export interface GitHubSession {
   getJson<T>(schema: z.ZodType<T>, segments: string[], query?: Record<string, string>): Promise<T>;
   /** Like `getJson`, but a 404 yields `undefined` (an optional resource such as the license). */
-  getOptionalJson<T>(schema: z.ZodType<T>, segments: string[]): Promise<T | undefined>;
+  getOptionalJson<T>(
+    schema: z.ZodType<T>,
+    segments: string[],
+    query?: Record<string, string>,
+  ): Promise<T | undefined>;
   requestsLeft(): number;
   remainingMs(): number;
 }
@@ -160,7 +164,7 @@ export function createGitHubSession(options: GitHubClientOptions): GitHubSession
       if (value === undefined) throw new StudixError("NOT_FOUND", NOT_FOUND_MESSAGE);
       return value;
     },
-    getOptionalJson: (schema, segments) => request(schema, segments, { allowNotFound: true }),
+    getOptionalJson: (schema, segments, query) => request(schema, segments, { allowNotFound: true, query }),
     requestsLeft: () => EXTERNAL_SKILL_LIMITS.maxRequests - requests,
     remainingMs,
   };
