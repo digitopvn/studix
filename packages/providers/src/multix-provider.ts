@@ -203,7 +203,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   private readonly journal: MediaJobJournal;
   private readonly clock: Clock;
   private readonly capabilityTtlMs: number;
-  private probe: { at: number; value: Promise<MediaCapability[]> } | undefined;
+  private probe: { at: number; keys: string; value: Promise<MediaCapability[]> } | undefined;
   private lastReadiness: MultixReadiness | undefined;
 
   constructor(options: MultixProviderOptions = {}) {
@@ -289,6 +289,14 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     });
   }
 
+  /** Names of the vendor key variables currently set, as one comparable string (never the values). */
+  private presentVendorKeys(): string {
+    return Object.values(MULTIX_VENDOR_KEYS)
+      .filter((name) => Boolean(this.sourceEnv[name]))
+      .sort()
+      .join(",");
+  }
+
   /** The "<vendor>:<model>" a request runs on; results report the same id. */
   resolveModel(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string {
     return resolveMultixModel(request, this.defaults, this.voiceRoutes).model.id;
@@ -306,9 +314,12 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   async capabilities(): Promise<MediaCapability[]> {
     if (!this.enabled) return [];
     const now = this.clock.now().getTime();
-    if (!this.probe || now - this.probe.at > this.capabilityTtlMs) {
+    // A vendor key added or removed through the environment overlay changes what can run, so the cached probe
+    // is dropped at once instead of after the TTL.
+    const keys = this.presentVendorKeys();
+    if (!this.probe || this.probe.keys !== keys || now - this.probe.at > this.capabilityTtlMs) {
       const value = this.probeCapabilities();
-      this.probe = { at: now, value };
+      this.probe = { at: now, keys, value };
       value.catch(() => {
         if (this.probe?.value === value) this.probe = undefined;
       });

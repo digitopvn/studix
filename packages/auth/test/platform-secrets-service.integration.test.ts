@@ -254,3 +254,19 @@ describe("platform secret source over Postgres", () => {
     expect(source.mediaEnv.FISH_API_KEY).toBe("deployment-fish-0000");
   });
 });
+
+describe("platform secret source refresh ordering", () => {
+  it("a refresh asked for during a load still reads what was committed meanwhile", async () => {
+    const { svc, box } = build();
+    const t = await actors("pss-order");
+    const source = createPlatformSecretSource({
+      secrets: db.current.repos.platformSecrets,
+      box,
+      base: {},
+    });
+    const inFlight = source.refresh();
+    await svc.saveMediaKey(t.operator, "SUME_API_KEY", { apiKey: VENDOR_KEY });
+    await Promise.all([inFlight, source.refresh()]);
+    expect(source.mediaEnv.SUME_API_KEY).toBe(VENDOR_KEY);
+  });
+});

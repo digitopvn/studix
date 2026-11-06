@@ -196,7 +196,8 @@ export function createPlatformCredentialService(
   deps: PlatformCredentialServiceDeps,
 ): PlatformCredentialService {
   const now = deps.now ?? (() => new Date());
-  const refreshSeconds = deps.refreshSeconds ?? 15;
+  // The source re-reads every 15 s and the storage client may reuse its identity for up to 15 s more.
+  const refreshSeconds = deps.refreshSeconds ?? 30;
   /** Outcomes for credentials the environment holds: there is no row to keep them on. */
   const envTests = new Map<string, PlatformTestView>();
   let lastCheck: (PlatformTestView & { found?: string[] }) | undefined;
@@ -402,7 +403,7 @@ export function createPlatformCredentialService(
       // Informational only: a vendor check can fail for reasons unrelated to the key (a restricted key, an
       // outage), so it never blocks saving. The verdict is shown as the credential's status.
       const verdict = await deps.vendorTester?.(spec.name, apiKey).catch(() => undefined);
-      const status = verdict?.verdict === "available" ? "available" : "unverified";
+      const status = verdict?.verdict ?? "unverified";
       const row = await deps.secrets.put(
         spec.name,
         {

@@ -100,11 +100,21 @@ export function createPlatformSecretSource(options: PlatformSecretSourceOptions)
     }
   }
 
-  const refresh = () => {
-    pending ??= load().finally(() => {
-      pending = undefined;
+  // A refresh asked for while a load is running may have been started before the change that prompted it
+  // committed, so it waits for that load and then runs one more.
+  let rerun: Promise<void> | undefined;
+  const refresh = (): Promise<void> => {
+    if (!pending) {
+      pending = load().finally(() => {
+        pending = undefined;
+      });
+      return pending;
+    }
+    rerun ??= pending.then(() => {
+      rerun = undefined;
+      return refresh();
     });
-    return pending;
+    return rerun;
   };
 
   return {

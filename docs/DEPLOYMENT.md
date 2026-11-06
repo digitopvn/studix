@@ -160,6 +160,9 @@ read-only and the environment variables keep working.
   environment into the database. Revoking a stored value hands the variable back
   to the environment; storage cannot be revoked when the environment has no
   `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` (replace it instead).
+- With `STUDIX_SECRETS_KEY` set, storage credentials come from the dashboard or
+  the `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` pair (required in production);
+  the AWS default credential chain is not used.
 - Only `S3` access key id and secret and the vendor keys listed below can be
   stored (`SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
   `FISH_API_KEY`, `MINIMAX_API_KEY`, `OPENROUTER_API_KEY`); endpoint, bucket,
@@ -169,7 +172,10 @@ read-only and the environment variables keep working.
 - A new storage key is checked with a real write, read, head and delete before it
   replaces the current one; a failure names the step and the HTTP and S3 code and
   stores nothing. **Test connection** repeats the check on the active key.
-- The app and the worker re-read the table every 15 seconds. A job already
+- The app and the worker re-read the table every 15 seconds, and the storage
+  client may reuse its previous key for up to 15 more, so allow about 30 seconds
+  before deleting an old R2 key. Adding or removing a media vendor key also
+  refreshes the worker's capability check at once. A job already
   running keeps the credential it started with; its next call uses the new one.
   Nothing is restarted. `OPENROUTER_API_KEY` stored here goes to Multix only;
   planning and decision routing still read the environment.
