@@ -167,7 +167,7 @@ export const filmStageNames = (id: string): FilmPackStageNames => ({
 /** The shared contract both narrative agents work under, prepended to each pack's own instructions. */
 const SCOPE_CONTRACT =
   "Write the scope lock of a short narrative film from the creative brief: the series bible (logline, world, " +
-  "tone, a style prompt block, original characters with visual anchors, palette, negatives, handedness and " +
+  "tone, a style prompt block, original characters with visual anchors (the full costume among them: garments, sleeve and trouser length, colours, shoes), palette, negatives, handedness and " +
   "voice direction, and sets with their light) and the beat sheet (scenes of shots). Every shot has an id, " +
   "a length in ms, the beat, the camera, its tier (T0 code/GL scene, T1 still with camera motion, T2 " +
   "image-to-video insert, T3 image-to-video full action), its render class, the characters in frame, the " +
@@ -200,7 +200,7 @@ function designRequests(s: StageContext, scope: FilmScope, stage: string) {
         assetId: `${c.id}-sheet-v1`.slice(0, 64),
         kind: "image" as const,
         prompt: characterSheetPrompt(scope, c),
-        params: { aspectRatio: "16:9" },
+        params: { aspectRatio: scope.aspectRatio },
         keyPrefix: `generated/${s.job.id}/designs/${c.id}-sheet-v1`,
         maxCostCents: 0,
       } satisfies StoredMediaRequest,
@@ -424,20 +424,25 @@ function keyframeRequest(
   revision?: string,
 ) {
   const lead = shot.characters[0];
-  const sheet = lead
+  const leadSheet = lead
     ? film.production.characters
         .find((c) => c.characterId === lead)
         ?.references.find((r) => r.status !== "retired")
     : undefined;
+  // Only a reference already in the film's frame conditions the keyframe: the edit keeps its reference's
+  // frame, and grok-image refuses an aspect ratio next to a reference. A sheet in another frame (one drawn
+  // before sheets followed the film's frame) leaves the keyframe to the prompt and the film's aspect ratio.
+  const sheet =
+    leadSheet &&
+    hasFilmFrame(
+      ir.assets.find((a) => a.id === leadSheet.assetId),
+      film.scope,
+    )
+      ? leadSheet
+      : undefined;
   const setFrame = shot.characters.length === 0 ? signedSetFrame(ir, setId) : undefined;
   const reference =
     sheet?.assetId ?? (setFrame && hasFilmFrame(setFrame, film.scope) ? setFrame.id : undefined);
-  const framed =
-    reference !== undefined &&
-    hasFilmFrame(
-      ir.assets.find((a) => a.id === reference),
-      film.scope,
-    );
   const assetId = keyframeAssetId(shot.id, version);
   return {
     shot,
@@ -449,7 +454,7 @@ function keyframeRequest(
       assetId,
       kind: "image" as const,
       prompt: keyframePrompt(film.scope, setId, shot, board.frame, revision),
-      params: framed ? {} : { aspectRatio: film.scope.aspectRatio },
+      params: reference !== undefined ? {} : { aspectRatio: film.scope.aspectRatio },
       keyPrefix: `generated/${jobId}/keyframes/${version === 1 ? shot.id : assetId}`,
       maxCostCents: 0,
     } satisfies StoredMediaRequest,
@@ -580,7 +585,7 @@ function redesignRequests(
       return {
         target: { type: "character" as const, id: c.id },
         stage,
-        request: request(id, characterSheetPrompt(scope, c, change.note), "16:9"),
+        request: request(id, characterSheetPrompt(scope, c, change.note), scope.aspectRatio),
       };
     }
     for (const set of scope.sets) {
