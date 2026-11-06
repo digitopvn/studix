@@ -34,6 +34,8 @@ export interface ProviderExecution extends TenantOwned {
   error?: StudixErrorPayload;
   /** Who paid for the call; `operator` when omitted. */
   funding?: FundingSource;
+  /** Upstream job the call ran as, `<route>:<id>` (e.g. an Atlas prediction id). */
+  externalId?: string;
 }
 
 /**

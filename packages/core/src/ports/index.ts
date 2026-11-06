@@ -3,6 +3,7 @@ export * from "./approval-policy.ts";
 export * from "./billing-policy.ts";
 export * from "./execution-backend.ts";
 export * from "./job-queue.ts";
+export * from "./media-execution.ts";
 export * from "./media-provider.ts";
 export * from "./publisher-adapter.ts";
 export * from "./renderer-adapter.ts";
