@@ -1,4 +1,9 @@
-import type { ApiKeyService, ModelPreferenceService, ProviderConnectionService } from "@studix/auth";
+import type {
+  ApiKeyService,
+  ModelPreferenceService,
+  ProviderConnectionService,
+  WorkspaceFeatureService,
+} from "@studix/auth";
 import type {
   ActivityRepository,
   AgentHandoffService,
@@ -59,6 +64,11 @@ export interface AppDeps {
   modelPreferences?: ModelPreferenceService;
   /** STUDIX_CLAUDE_PLANNER: jobs may select the Claude planner. */
   claudePlanner?: boolean;
+  /**
+   * Per-workspace Claude switches (env flags plus the owner's Dashboard switch on a self-hosted server).
+   * When set it decides whether the Claude planner is on; `claudePlanner` is the fallback.
+   */
+  features?: WorkspaceFeatureService;
   /** Meta-tool registration hook from the gateway; without it the meta-tools are not listed. */
   metaTools?: RegisterMetaTools;
   /** Activity/trace recorder for MCP and API mutations (best effort). */

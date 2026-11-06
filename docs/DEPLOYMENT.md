@@ -206,6 +206,57 @@ S3-compatible storage. Set the `STUDIX_*_URL` values to your hostnames. Apply
 migrations before starting the new app version (see `packages/database`).
 Kubernetes manifests (Kustomize) live under `deploy/k8s`.
 
+### Claude subscription (self-hosted only)
+
+On a personal or self-hosted server, members can run Claude jobs on their own
+Claude Pro/Max subscription instead of an API key. It is off by default, and
+the hosted Studix cloud keeps it off, so the card on Settings → AI & Providers
+stays "Restricted" there.
+
+The simplest setup is one env flag, `STUDIX_SELF_HOSTED=true`, on both the app
+and the worker. Then:
+
+- The workspace owner switches "Claude planner" and "Claude subscription" on
+  in Settings → AI & Providers → Self-hosted Claude features. Other roles see
+  the switches read-only. Without `STUDIX_SELF_HOSTED` the switches are
+  hidden, saved values are ignored, and only the env flags below apply.
+- If `STUDIX_SECRETS_KEY` is unset, the server generates a random master key
+  into `STUDIX_SECRETS_KEY_FILE` (default `.studix/secrets.key`, mode 0600) on
+  first start and reads it on later starts. The key never goes into the
+  database. With Docker, mount one volume into both the app and the worker and
+  point `STUDIX_SECRETS_KEY_FILE` at it, so both open the same credentials.
+  Back the file up: losing it makes every stored credential unreadable. An
+  explicit `STUDIX_SECRETS_KEY` always wins over the file.
+- If the worker host cannot run the Claude Code binary, the worker logs a
+  warning and keeps running; Claude jobs fail until it is installed.
+
+Operators can still force the features on for every workspace with
+`STUDIX_CLAUDE_SUBSCRIPTION=true` and `STUDIX_CLAUDE_PLANNER=true` (plus
+`STUDIX_SECRETS_KEY`); the Dashboard then shows them as set by the server.
+Without any master key, the card says storage is not configured and nothing
+is stored.
+
+Each member then runs `claude setup-token` on their own machine, signs in with
+their own Claude account, and pastes the printed token on the card. Members
+can also add their own Anthropic API key (personal key, usage-based) on the
+API key card on the same page; that also needs only `STUDIX_SECRETS_KEY`.
+
+What Studix does and does not do with a subscription token, following
+Anthropic's [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
+page:
+
+- Only the official, unmodified Claude Code executable uses it, run directly
+  as `claude --print` with the token in `CLAUDE_CODE_OAUTH_TOKEN`. The token is
+  never passed to the Claude Agent SDK, never used to call the Anthropic API
+  directly, and never tested against it (the first run verifies it; a token
+  Claude Code rejects is marked invalid).
+- It is personal: stored encrypted for its owner, usable only by jobs that
+  owner creates, only on the `claude` runtime, never shared with other members
+  or the workspace. A subscription token pasted into the API key form is
+  refused.
+- Turning the switch (or flag) off hides stored subscriptions and stops
+  releasing them; the worker re-reads the switch for every job.
+
 ## Cloudflare marketing
 
 - Source: `apps/marketing`; static assets served by a Worker.

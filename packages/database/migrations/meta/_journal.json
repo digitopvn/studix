@@ -148,6 +148,13 @@
       "when": 1793958978952,
       "tag": "0020_api_key_operator_job_recover",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793960148615,
+      "tag": "0021_workspace_settings",
+      "breakpoints": true
     }
   ]
 }

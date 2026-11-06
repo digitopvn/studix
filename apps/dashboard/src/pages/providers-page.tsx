@@ -7,6 +7,7 @@ import {
   type SubscriptionMethodInfo,
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { ClaudeFeaturesSection } from "./claude-features-section.tsx";
 import { ProviderModelsSection } from "./provider-models-section.tsx";
 
 type Owner = ProviderConnection["owner"];
@@ -19,7 +20,8 @@ const STATUS_LABELS: Record<ProviderConnectionStatus, string> = {
 
 /**
  * AI provider access. The two Anthropic auth methods stay in separate cards on purpose: an API key is
- * usage-based billing that Studix can use; a Claude subscription (OAuth) is informational only.
+ * usage-based billing; a Claude subscription is restricted unless the server is self-hosted, where each
+ * user connects their own (personal only, run by the Claude Code binary).
  */
 export function ProvidersPage() {
   const { data, error, reload } = useAsync(() => api.anthropicProvider());
@@ -31,9 +33,10 @@ export function ProvidersPage() {
   return (
     <>
       <ErrorBanner error={error} />
+      <ClaudeFeaturesSection onChange={reload} />
       {data && (
         <ApiKeyCard
-          connections={data.connections}
+          connections={data.connections.filter((c) => c.authMethod === "api_key")}
           canAddWorkspace={apiKeyMethod?.canAddWorkspaceKey ?? false}
           canAddPersonal={apiKeyMethod?.canAddPersonalKey ?? false}
           unavailableReason={
@@ -44,7 +47,13 @@ export function ProvidersPage() {
           reload={reload}
         />
       )}
-      {subscription && <SubscriptionCard method={subscription} />}
+      {subscription && (
+        <SubscriptionCard
+          method={subscription}
+          connection={data?.connections.find((c) => c.authMethod === "oauth_subscription" && c.ownedByMe)}
+          reload={reload}
+        />
+      )}
       <ProviderModelsSection />
     </>
   );
@@ -258,19 +267,131 @@ function ApiKeyCard({
   );
 }
 
-/** Informational only: Studix cannot sign in with a Claude subscription, so there is no connect control. */
-function SubscriptionCard({ method }: { method: SubscriptionMethodInfo }) {
+const SUBSCRIPTION_BADGE: Record<SubscriptionMethodInfo["availability"], string> = {
+  restricted: "Restricted",
+  unavailable: "Unavailable",
+  available: "Self-hosted",
+};
+
+/**
+ * Restricted on hosted servers (no connect control). On a self-hosted server the user pastes the token
+ * Claude Code's own `claude setup-token` printed; it is stored for them only and only Claude Code uses it.
+ */
+function SubscriptionCard({
+  method,
+  connection,
+  reload,
+}: {
+  method: SubscriptionMethodInfo;
+  connection?: ProviderConnection;
+  reload: () => void;
+}) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<unknown>();
+
+  async function act(action: () => Promise<unknown>) {
+    setActionError(undefined);
+    setBusy(true);
+    try {
+      await action();
+      reload();
+    } catch (e) {
+      setActionError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function connect(event: FormEvent) {
+    event.preventDefault();
+    const value = token.trim();
+    // The token leaves component state as soon as it is sent.
+    setToken("");
+    await act(() =>
+      connection
+        ? api.replaceAnthropicKey(connection.id, value)
+        : api.connectClaudeSubscription({ token: value }),
+    );
+  }
+
+  async function disconnect(id: string) {
+    if (
+      !window.confirm(
+        "Disconnect your Claude subscription from Studix? To also revoke the token, sign out of it in Claude Code.",
+      )
+    ) {
+      return;
+    }
+    await act(() => api.removeAnthropicKey(id));
+  }
+
   return (
     <Section
       title="Claude subscription (OAuth)"
-      actions={<StatusBadge status="restricted" label="Restricted" />}
+      actions={
+        <StatusBadge
+          status={method.availability === "available" ? (connection?.status ?? "available") : "restricted"}
+          label={
+            connection && method.availability === "available"
+              ? (STATUS_LABELS[connection.status] ?? connection.status)
+              : SUBSCRIPTION_BADGE[method.availability]
+          }
+        />
+      }
     >
       <p>{method.reason}</p>
       <p className="muted">{method.alternative}</p>
-      <p className="muted">
-        To use a Claude subscription, run Claude Code on your own machine and add Studix as an MCP server (see
-        API keys).
-      </p>
+      {method.availability === "restricted" && (
+        <p className="muted">
+          To use a Claude subscription, run Claude Code on your own machine and add Studix as an MCP server
+          (see API keys).
+        </p>
+      )}
+      {method.availability === "available" && (
+        <>
+          <p className="muted">
+            On your own machine, run <span className="mono">claude setup-token</span>, sign in with your own
+            Claude account, and paste the token it prints. Studix runs the official Claude Code program with
+            it for jobs you create; it is never shared with other members or used for anyone else's jobs.
+          </p>
+          {connection && (
+            <div className="row">
+              <span className="mono">{connection.keyHint ?? "-"}</span>
+              <span className="muted">Connected {formatDate(connection.createdAt)}</span>
+              {connection.lastTest && !connection.lastTest.ok && connection.lastTest.error && (
+                <span className="muted">{connection.lastTest.error.message}</span>
+              )}
+              <button
+                type="button"
+                className="danger small"
+                disabled={busy}
+                onClick={() => disconnect(connection.id)}
+              >
+                Disconnect
+              </button>
+            </div>
+          )}
+          {method.canConnect && (
+            <form className="row" onSubmit={connect}>
+              <input
+                required
+                type="password"
+                autoComplete="new-password"
+                aria-label="Claude Code token"
+                placeholder="sk-ant-oat…"
+                value={token}
+                disabled={busy}
+                onChange={(e) => setToken(e.target.value)}
+              />
+              <button type="submit" disabled={busy}>
+                {connection ? "Replace token" : "Connect my subscription"}
+              </button>
+            </form>
+          )}
+        </>
+      )}
+      <ErrorBanner error={actionError} />
       {method.references.length > 0 && (
         <ul>
           {method.references.map((url) => (

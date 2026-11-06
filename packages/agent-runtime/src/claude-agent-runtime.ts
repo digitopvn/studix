@@ -24,6 +24,11 @@ export interface ClaudeSessionRequest {
   maxBudgetUsd: number;
   /** Credential for this job only (an `sk-ant-…` key); never logged or placed in prompts. */
   credential: string;
+  /**
+   * `subscription`: the job owner's Claude Code token (`claude setup-token`). Only a transport that runs
+   * the Claude Code binary itself may accept it; the Agent SDK transport refuses it. Default `api_key`.
+   */
+  credentialKind?: ClaudeCredentialKind;
   /** Called before every tool execution. Must be awaited by the transport; `false` denies. */
   canUseTool(toolName: string, toolInput: unknown): Promise<boolean>;
 }
@@ -56,9 +61,19 @@ export interface ClaudeAgentTransport {
   start(request: ClaudeSessionRequest): ClaudeAgentSession;
 }
 
+export type ClaudeCredentialKind = "api_key" | "subscription";
+
+export interface ClaudeCredential {
+  secret: string;
+  kind: ClaudeCredentialKind;
+}
+
 export interface ClaudeCredentialResolver {
-  /** Resolve the credential this tenant is allowed to use; throws UNAUTHENTICATED/FORBIDDEN/UNAVAILABLE. */
-  resolve(ctx: TenantContext, signal?: AbortSignal): Promise<string>;
+  /**
+   * Resolve the credential this tenant is allowed to use; throws UNAUTHENTICATED/FORBIDDEN/UNAVAILABLE.
+   * A bare string is an API key.
+   */
+  resolve(ctx: TenantContext, signal?: AbortSignal): Promise<string | ClaudeCredential>;
 }
 
 export interface ClaudeAgentRuntimeOptions {
@@ -184,8 +199,10 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
       let failure: StudixError | undefined;
       let iterator: AsyncIterator<ClaudeAgentEvent> | undefined;
       try {
-        const credential = await Promise.race([options.credentials.resolve(ctx, task.signal), stopped]);
-        if (credential === "stopped") throw stopReason;
+        const resolved = await Promise.race([options.credentials.resolve(ctx, task.signal), stopped]);
+        if (resolved === "stopped") throw stopReason;
+        const { secret: credential, kind: credentialKind } =
+          typeof resolved === "string" ? { secret: resolved, kind: "api_key" as const } : resolved;
         if (stopReason) throw stopReason;
         session = options.transport.start({
           model: options.model,
@@ -196,6 +213,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
           maxTurns: task.maxTurns,
           maxBudgetUsd: task.maxCostCents / 100,
           credential,
+          credentialKind,
           canUseTool: async (name) => !closing && allowed.has(name),
         });
         iterator = session.events[Symbol.asyncIterator]();

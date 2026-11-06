@@ -9,7 +9,7 @@ import {
   type PiCredentialSource,
   type PiResolvedRun,
 } from "@studix/agent-runtime";
-import type { ProviderConnectionService } from "@studix/auth";
+import { claudeCredentialKind as credentialKind, type ProviderConnectionService } from "@studix/auth";
 import {
   type AgentRunResult,
   type AgentRuntime,
@@ -218,7 +218,9 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       transport: claude.transport,
       model: choice.model,
       clock,
-      credentials: { resolve: async () => credential.apiKey },
+      credentials: {
+        resolve: async () => ({ secret: credential.apiKey, kind: credentialKind(credential) }),
+      },
     });
     return {
       runtime,

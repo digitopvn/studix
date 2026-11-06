@@ -30,7 +30,10 @@ workspace model, and what happens to a running job when the choice changes.
 - **Version and billing.** `version` increases when the secret or the runtimes
   change. `billing_source` records how the provider bills the key; API keys are
   `usage_based`. Subscription (OAuth) logins stay out of scope for the same
-  reason as in ADR-0011.
+  reason as in ADR-0011, except on a self-hosted server with
+  `STUDIX_CLAUDE_SUBSCRIPTION` on, where each user may store their own
+  `claude setup-token` token, run only by the Claude Code binary
+  ([DEPLOYMENT.md](../DEPLOYMENT.md#claude-subscription-self-hosted-only)).
 - **Model preferences.** `model_preferences` maps (scope, stage, runtime) to a
   connection and model, plus optional fallbacks (at most 3) that are used only
   when `allowFallback` is set. The most specific entry wins: the member's entry

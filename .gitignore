@@ -27,3 +27,6 @@ tmp/
 
 # Agent worktrees and local tooling
 .claude/
+
+# Self-hosted generated master key
+.studix/
