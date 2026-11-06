@@ -63,7 +63,8 @@ async function walkTree(
   const notes = [
     "The repository tree is too large to list in one response; it was walked directory by directory.",
   ];
-  if (stopped) notes.push("The walk stopped at the request, time or entry limit, so some skills may be missing.");
+  if (stopped)
+    notes.push("The walk stopped at the request, time or entry limit, so some skills may be missing.");
   return { entries: capEntries(entries, notes).entries, truncated: true, notes };
 }
 

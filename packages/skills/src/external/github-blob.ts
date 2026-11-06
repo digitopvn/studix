@@ -12,7 +12,8 @@ export function sha256Hex(bytes: Uint8Array): string {
 /** Decode base64 content whose declared size was already checked; `undefined` when it does not match. */
 export function decodeBase64(content: string, expectedBytes: number): Uint8Array | undefined {
   // Base64 is 4/3 the size plus line breaks; refuse anything far larger before allocating.
-  if (content.length > Math.ceil(expectedBytes / 3) * 4 + Math.ceil(expectedBytes / 32) + 16) return undefined;
+  if (content.length > Math.ceil(expectedBytes / 3) * 4 + Math.ceil(expectedBytes / 32) + 16)
+    return undefined;
   const bytes = new Uint8Array(Buffer.from(content, "base64"));
   return bytes.length === expectedBytes ? bytes : undefined;
 }

@@ -58,7 +58,8 @@ function parseYamlMapping(source: string): Record<string, unknown> | string {
  */
 export function parseSkillMd(text: string, dirName: string): ParsedSkillMd {
   const source = extractFrontmatter(text);
-  if (source === undefined) return { ok: false, reason: "SKILL.md has no YAML frontmatter between --- lines" };
+  if (source === undefined)
+    return { ok: false, reason: "SKILL.md has no YAML frontmatter between --- lines" };
   if (new TextEncoder().encode(source).length > MAX_FRONTMATTER_BYTES) {
     return { ok: false, reason: `frontmatter exceeds ${MAX_FRONTMATTER_BYTES} bytes` };
   }
@@ -73,7 +74,8 @@ export function parseSkillMd(text: string, dirName: string): ParsedSkillMd {
   if (trimmedName.length > MAX_NAME_LENGTH) {
     return { ok: false, reason: `frontmatter name exceeds ${MAX_NAME_LENGTH} characters` };
   }
-  if (CONTROL_CHARS.test(trimmedName)) return { ok: false, reason: "frontmatter name contains control characters" };
+  if (CONTROL_CHARS.test(trimmedName))
+    return { ok: false, reason: "frontmatter name contains control characters" };
   if (typeof description !== "string" || description.trim() === "") {
     return { ok: false, reason: "frontmatter description is missing or not a string" };
   }

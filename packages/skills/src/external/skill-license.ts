@@ -49,7 +49,10 @@ function isRealSpdx(id: string | null | undefined): id is string {
 }
 
 /** Fetch the repository license once; `undefined` when the repository declares none. */
-export async function fetchRepoLicense(session: GitHubSession, ref: RepoRef): Promise<RepoLicense | undefined> {
+export async function fetchRepoLicense(
+  session: GitHubSession,
+  ref: RepoRef,
+): Promise<RepoLicense | undefined> {
   const response = await session.getOptionalJson(LicenseResponse, ["repos", ref.owner, ref.repo, "license"]);
   if (!response) return undefined;
   const license: RepoLicense = {
@@ -60,7 +63,11 @@ export async function fetchRepoLicense(session: GitHubSession, ref: RepoRef): Pr
   const entry = { path: "LICENSE", kind: "license" as const, bytes: size, contentType: LICENSE_TYPE };
   const sha = response.sha === undefined ? "" : metadataSha(response.sha);
   if (size > MAX_LICENSE_BYTES) {
-    license.file = { ...entry, sha256: sha, skipped: `too large (${size} bytes, limit ${MAX_LICENSE_BYTES})` };
+    license.file = {
+      ...entry,
+      sha256: sha,
+      skipped: `too large (${size} bytes, limit ${MAX_LICENSE_BYTES})`,
+    };
     return license;
   }
   if (response.content === undefined || response.encoding !== "base64") return license;
@@ -73,8 +80,12 @@ export async function fetchRepoLicense(session: GitHubSession, ref: RepoRef): Pr
 }
 
 /** Combine the repository license with a frontmatter `license` field. Uncertain unless a real SPDX id. */
-export function resolveLicense(repo: RepoLicense | undefined, frontmatter: Record<string, unknown>): SkillLicense {
-  const raw = typeof frontmatter.license === "string" ? frontmatter.license.trim().slice(0, MAX_NOTICE_LENGTH) : "";
+export function resolveLicense(
+  repo: RepoLicense | undefined,
+  frontmatter: Record<string, unknown>,
+): SkillLicense {
+  const raw =
+    typeof frontmatter.license === "string" ? frontmatter.license.trim().slice(0, MAX_NOTICE_LENGTH) : "";
   const declaredSpdx = raw !== "" && KNOWN_SPDX.has(raw.toLowerCase()) ? raw : undefined;
   if (repo) {
     const real = isRealSpdx(repo.spdxId);
@@ -96,7 +107,10 @@ function stringValues(value: unknown): string[] {
 }
 
 /** Author and copyright lines from the frontmatter and the license text, bounded and de-duplicated. */
-export function collectNotices(frontmatter: Record<string, unknown>, licenseText: string | undefined): string[] {
+export function collectNotices(
+  frontmatter: Record<string, unknown>,
+  licenseText: string | undefined,
+): string[] {
   const fromFrontmatter = ["author", "authors", "copyright"].flatMap((key) => stringValues(frontmatter[key]));
   const fromLicense = (licenseText ?? "")
     .split(/\r?\n/)

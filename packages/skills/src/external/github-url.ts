@@ -17,7 +17,8 @@ const REF_PATTERN = /^[A-Za-z0-9._+@/-]{1,255}$/;
 const URL_PATTERN = /^https:\/\/([^/?#]*)([^?#]*)/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are rejected.
 const CONTROL_CHARS = /[\u0000-\u001f\u007f\\]/;
-const URL_HINT = "Use a public repository URL such as https://github.com/owner/repo or .../tree/<ref>/<path>.";
+const URL_HINT =
+  "Use a public repository URL such as https://github.com/owner/repo or .../tree/<ref>/<path>.";
 
 function invalid(message: string): StudixError {
   return new StudixError("VALIDATION", message, { suggestedAction: URL_HINT });
@@ -93,7 +94,8 @@ function splitTreeRef(rest: string[], explicitRef: string | undefined): { ref: s
 export function parseGitHubUrl(input: string, options: { ref?: string } = {}): GitHubLocation {
   if (typeof input !== "string") throw invalid("Repository URL must be a string");
   const trimmed = input.trim();
-  if (trimmed.length === 0 || trimmed.length > MAX_URL_LENGTH) throw invalid("Repository URL is empty or too long");
+  if (trimmed.length === 0 || trimmed.length > MAX_URL_LENGTH)
+    throw invalid("Repository URL is empty or too long");
   if (CONTROL_CHARS.test(trimmed)) throw invalid("Repository URL contains control characters or backslashes");
   const withScheme = /^github\.com\//i.test(trimmed) ? `https://${trimmed}` : trimmed;
   const match = URL_PATTERN.exec(withScheme);
@@ -104,9 +106,11 @@ export function parseGitHubUrl(input: string, options: { ref?: string } = {}): G
   }
   const segments = rawPath.replace(/\/+$/, "").split("/").slice(1).map(decodeSegment);
   const [owner, rawRepo, kind, ...rest] = segments;
-  if (owner === undefined || rawRepo === undefined) throw invalid("Repository URL must name an owner and a repo");
+  if (owner === undefined || rawRepo === undefined)
+    throw invalid("Repository URL must name an owner and a repo");
   const repo = rawRepo.replace(/\.git$/i, "");
-  if (!isValidOwner(owner) || !isValidRepo(repo)) throw invalid("Repository URL has an invalid owner or repo name");
+  if (!isValidOwner(owner) || !isValidRepo(repo))
+    throw invalid("Repository URL has an invalid owner or repo name");
   const explicitRef = options.ref === undefined ? undefined : validateRef(options.ref);
   if (kind === undefined) return { owner, repo, ref: explicitRef, path: "" };
   if (kind !== "tree" && kind !== "blob") throw invalid(`Unsupported GitHub URL section "/${kind}"`);

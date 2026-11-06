@@ -132,7 +132,9 @@ export async function fetchPlannedFiles(
       files.push({ ...entry, sha256: metadataSha(file.gitSha), skipped: file.skipped });
       continue;
     }
-    const limit = file.text ? EXTERNAL_SKILL_LIMITS.maxTextFileBytes : EXTERNAL_SKILL_LIMITS.maxAssetFileBytes;
+    const limit = file.text
+      ? EXTERNAL_SKILL_LIMITS.maxTextFileBytes
+      : EXTERNAL_SKILL_LIMITS.maxAssetFileBytes;
     const blob = await downloadBlob(session, ref, file.gitSha, limit);
     const text = blob.ok && file.text ? decodeUtf8(blob.bytes) : undefined;
     if (!blob.ok || (file.text && text === undefined)) {

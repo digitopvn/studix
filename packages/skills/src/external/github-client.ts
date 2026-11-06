@@ -68,7 +68,8 @@ export function createGitHubSession(options: GitHubClientOptions): GitHubSession
   function buildUrl(segments: string[], query: Record<string, string> | undefined): URL {
     const url = new URL(`${base.origin}/${segments.map(encodeURIComponent).join("/")}`);
     for (const [key, value] of Object.entries(query ?? {})) url.searchParams.set(key, value);
-    if (url.origin !== base.origin) throw new StudixError("INTERNAL", "Refusing a request outside the GitHub API");
+    if (url.origin !== base.origin)
+      throw new StudixError("INTERNAL", "Refusing a request outside the GitHub API");
     return url;
   }
 
@@ -89,7 +90,12 @@ export function createGitHubSession(options: GitHubClientOptions): GitHubSession
     const left = remainingMs();
     if (left <= 0) throw timeout();
     try {
-      return await options.fetch(url, { method: "GET", headers, redirect: "error", signal: AbortSignal.timeout(left) });
+      return await options.fetch(url, {
+        method: "GET",
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(left),
+      });
     } catch (err) {
       if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) throw timeout();
       throw new RetryableFailure(`GitHub request failed (${label})`);
@@ -124,7 +130,9 @@ export function createGitHubSession(options: GitHubClientOptions): GitHubSession
       });
     }
     if (response.status >= 500) throw new RetryableFailure(`GitHub returned ${response.status} (${label})`);
-    throw new StudixError("PROVIDER_ERROR", `GitHub returned ${response.status} (${label})`, { retryable: false });
+    throw new StudixError("PROVIDER_ERROR", `GitHub returned ${response.status} (${label})`, {
+      retryable: false,
+    });
   }
 
   async function request<T>(schema: z.ZodType<T>, segments: string[], opts: GetJsonOptions) {
@@ -153,5 +161,7 @@ export function createGitHubSession(options: GitHubClientOptions): GitHubSession
       return value;
     },
     getOptionalJson: (schema, segments) => request(schema, segments, { allowNotFound: true }),
-    requestsLeft: () => EXTERNAL_SKILL_LIMITS.maxRequests - requests, remainingMs };
+    requestsLeft: () => EXTERNAL_SKILL_LIMITS.maxRequests - requests,
+    remainingMs,
+  };
 }
