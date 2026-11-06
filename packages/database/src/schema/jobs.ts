@@ -68,6 +68,13 @@ export const jobs = pgTable(
     leaseExpiresAt: ts("lease_expires_at"),
     idempotencyKey: text("idempotency_key"),
     cancelRequested: boolean("cancel_requested").notNull().default(false),
+    /**
+     * The request a parked job is waiting on (action and scope key), set when the worker parks it and
+     * cleared when it claims the job again. Null on jobs parked elsewhere (the studio service parks a
+     * costly job before the worker sees it), where the sweeper falls back to the scope-key convention.
+     */
+    parkedAction: text("parked_action").$type<ApprovalAction>(),
+    parkedScopeKey: text("parked_scope_key"),
     deadlineAt: ts("deadline_at"),
     deadlineRemainingMs: bigint("deadline_remaining_ms", { mode: "number" }),
     deadlineWindowMs: bigint("deadline_window_ms", { mode: "number" }),

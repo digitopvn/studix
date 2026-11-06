@@ -28,6 +28,27 @@ import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared
 import { and, asc, eq, inArray, lt, lte, ne, or, type SQL, sql } from "drizzle-orm";
 
 const { jobs, approvals, stages, agentHandoffs } = schema;
+/** The approval request a parked job waits on. */
+export interface ParkedRequest {
+  action: ApprovalAction;
+  scopeKey: string;
+}
+
+/**
+ * SQL for "approval row `alias` is a request the parked job waits on". A job the worker parked records the
+ * request it waits on, and only that one counts: another pending request on the same job (a render approval
+ * the studio opened, say) must not hold it. A job without a record, parked by the studio service, falls
+ * back to the scope-key convention: workflow gates (empty scope key), agent overrun (`agent:<stage>`) and
+ * creative gates (`gate:<id>`). Outer columns carry the table name: unqualified names would bind to the
+ * inner alias.
+ */
+const gatingRequest = (alias: string): SQL => {
+  const a = sql.raw(alias);
+  return sql`(case when "jobs"."parked_action" is not null
+    then ${a}.action = "jobs"."parked_action" and ${a}.scope_key = "jobs"."parked_scope_key"
+    else ${a}.scope_key = '' or ${a}.scope_key like 'agent:%' or ${a}.scope_key like 'gate:%' end)`;
+};
+
 type JobSet = Partial<typeof jobs.$inferInsert>;
 
 /** A gated action's pending approval request, opened on behalf of a claimed attempt. */
@@ -153,7 +174,7 @@ export interface WorkerJobQueue {
   /** Give the job back without consuming the attempt (graceful shutdown). */
   release(job: Job, workerId: string): Promise<boolean>;
   /** Park in waiting_approval without consuming the attempt; resumed by resumeDecidedApprovals. */
-  park(job: Job, workerId: string): Promise<boolean>;
+  park(job: Job, workerId: string, waitingOn?: ParkedRequest): Promise<boolean>;
   /** Park in waiting_host without consuming the attempt; resumed by an accepted host submission. */
   parkForHost(job: Job, workerId: string): Promise<boolean>;
   /**
@@ -311,6 +332,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
           attempts: sql`${jobs.attempts} + 1`,
           lockedBy: workerId,
           leaseExpiresAt: leaseUntil(),
+          parkedAction: null,
+          parkedScopeKey: null,
           startedAt: sql`coalesce(${jobs.startedAt}, ${now.toISOString()}::timestamptz)`,
           // Re-arm a deadline that was paused while the job waited at a gate or for the host agent.
           deadlineAt: sql`case when ${jobs.deadlineRemainingMs} is not null
@@ -455,9 +478,11 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     retry: (job, workerId, error, runAfter) => finish(job, workerId, { status: "queued", error, runAfter }),
     release: (job, workerId) =>
       finish(job, workerId, { status: "queued", attempts: job.attempts - 1, runAfter: clock.now() }),
-    park: (job, workerId) =>
+    park: (job, workerId, waitingOn) =>
       finish(job, workerId, {
         status: "waiting_approval",
+        parkedAction: waitingOn?.action ?? null,
+        parkedScopeKey: waitingOn?.scopeKey ?? null,
         attempts: job.attempts - 1,
         ...pausedDeadline(job),
       }),
@@ -557,15 +582,14 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         .where(
           and(
             eq(jobs.status, "waiting_approval"),
-            // A job still waiting on a gating request (workflow gate, agent overrun, creative gate) stays
+            // A job still waiting on its gating request (workflow gate, agent overrun, creative gate) stays
             // parked: running it again would only reach the same open request, after paying for the work
-            // in front of it. Outer columns are spelled out with the table name: unqualified names would
-            // bind to the inner alias.
+            // in front of it.
             sql`not exists (
               select 1 from ${approvals} p
               where p.workspace_id = "jobs"."workspace_id" and p.subject_type = 'job'
                 and p.subject_id = "jobs"."id" and p.status = 'pending'
-                and (p.scope_key = '' or p.scope_key like 'agent:%' or p.scope_key like 'gate:%')
+                and ${gatingRequest("p")}
             )`,
             // A decision only resumes the job while it is the latest answer for its own request, that is
             // for the same action and scope key.
@@ -635,9 +659,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
         }
         // Driven by the job, not by the rows closed above: an approval can also be closed elsewhere (a
         // reviewer answering after expiry, opening a new request, a migration), which leaves the job parked
-        // with nothing pending. Fail it when its latest approval expired and no request is still open. Only workflow
-        // gate requests (empty scope key), agent overrun requests (`agent:<stage>`) and creative gates
-        // (`gate:<id>`) count: connector requests carry no expiry and must not park the job.
+        // with nothing pending. Fail it when its latest gating approval expired and no gating request is still
+        // open: connector requests carry no expiry and must not park the job.
         const failed = await tx
           .update(jobs)
           .set({
@@ -649,7 +672,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
               'message', (select l.action from ${approvals} l where l.id = (
                 select max(m.id) from ${approvals} m
                 where m.workspace_id = "jobs"."workspace_id" and m.subject_type = 'job' and m.subject_id = "jobs"."id"
-                  and (m.scope_key = '' or m.scope_key like 'agent:%' or m.scope_key like 'gate:%')
+                  and ${gatingRequest("m")}
               )) || ' approval expired before a reviewer decided',
               'retryable', false,
               'suggestedAction', 'Submit the job again and ask a reviewer to approve it before the request expires.',
@@ -662,16 +685,16 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
               sql`not exists (
                 select 1 from ${approvals} p
                 where p.workspace_id = "jobs"."workspace_id" and p.subject_type = 'job'
-                  and p.subject_id = "jobs"."id" and p.status = 'pending' and (p.scope_key = '' or p.scope_key like 'agent:%' or p.scope_key like 'gate:%')
+                  and p.subject_id = "jobs"."id" and p.status = 'pending' and ${gatingRequest("p")}
               )`,
               sql`exists (
                 select 1 from ${approvals} l
                 where l.workspace_id = "jobs"."workspace_id" and l.subject_type = 'job'
-                  and l.subject_id = "jobs"."id" and l.status = 'expired' and (l.scope_key = '' or l.scope_key like 'agent:%' or l.scope_key like 'gate:%')
+                  and l.subject_id = "jobs"."id" and l.status = 'expired' and ${gatingRequest("l")}
                   and l.id = (
                     select max(m.id) from ${approvals} m
                     where m.workspace_id = l.workspace_id and m.subject_type = 'job' and m.subject_id = l.subject_id
-                      and (m.scope_key = '' or m.scope_key like 'agent:%' or m.scope_key like 'gate:%')
+                      and ${gatingRequest("m")}
                   )
               )`,
             ),

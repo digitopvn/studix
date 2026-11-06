@@ -183,7 +183,13 @@ export function createJobExecutor(deps: JobExecutorDeps): JobExecutor {
         const outcome = await runStages(deps, ctx, job, workerId, workflow, controller.signal);
         if (outcome.status === "waiting_approval") {
           log.info("job waits for approval", { approvalId: outcome.approval.id, stage: outcome.stage });
-          return await settle(queue.park(job, workerId), "waiting_approval");
+          return await settle(
+            queue.park(job, workerId, {
+              action: outcome.approval.action,
+              scopeKey: outcome.approval.scopeKey ?? "",
+            }),
+            "waiting_approval",
+          );
         }
         if (outcome.status === "waiting_host") {
           log.info("job waits for the host agent", { taskId: outcome.handoff.id, stage: outcome.stage });
