@@ -8,6 +8,9 @@ import { isPermission, type Permission } from "@studix/core";
 export const MCP_OAUTH_SCOPES = {
   "studix:read": ["workspace:read", "project:read", "asset:read"],
   "studix:write": ["project:write", "job:cancel", "job:retry", "asset:write", "approval:request"],
+  // Skills have their own scopes, so a client consented before they existed never gains them silently.
+  "studix:skills:read": ["skill:read"],
+  "studix:skills:write": ["skill:write"],
 } as const satisfies Record<string, readonly Permission[]>;
 
 export type McpOAuthScope = keyof typeof MCP_OAUTH_SCOPES;

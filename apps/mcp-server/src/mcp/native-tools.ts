@@ -49,6 +49,10 @@ export interface NativeTool<I extends z.ZodType = z.ZodType> {
   input: I;
   readOnly: boolean;
   destructive?: boolean;
+  /** Repeating the call with the same input changes nothing more. Read-only tools always are. */
+  idempotent?: boolean;
+  /** The tool contacts services outside Studix (the MCP `openWorldHint`). */
+  openWorld?: boolean;
   /** Mutations are recorded in the workspace activity trail. */
   audited?: boolean;
   run(ctx: ToolContext, input: z.output<I>): Promise<ToolOutcome>;
@@ -173,6 +177,7 @@ export const NATIVE_TOOLS = [
         limits: ctx.deps.limits,
         skills: ctx.deps.skills ?? [],
         toolNames: ctx.toolNames,
+        importedSkills: ctx.deps.externalSkills !== undefined,
         include: input.include ?? [],
       });
       return { data, next: [] };

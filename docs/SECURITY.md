@@ -237,6 +237,21 @@ fetched content are **data**, not instructions.
 - Credentials are never placed in prompts, so an injected instruction has
   nothing to exfiltrate from model context.
 
+## External skills
+
+Imported Agent Skills ([EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md)) are third-party text. The store treats
+them as data only:
+
+- Scripts are never fetched, stored or run; only their path, size and hash are recorded.
+- Reads return a `trust` marker and a notice that the content is not instructions for the agent.
+- Only public GitHub hosts are contacted; cross-host redirects are refused, and file count, bytes, depth,
+  requests and runtime are bounded.
+- Everything is scoped to organization and workspace and gated by `skill:read` / `skill:write`; imports and
+  changes are audited in the same transaction as the write.
+- `expectedCommit` makes an import fail if the branch moved after discovery.
+- The optional `STUDIX_GITHUB_TOKEN` is outbound only, read-only for public repositories, and never returned.
+- Studix does not verify that a skill's license allows reuse; license and author notices are kept in the manifest.
+
 ## Approval gates
 
 Owner: `ApprovalPolicy` in `packages/core`, enforced by `packages/workflow`.

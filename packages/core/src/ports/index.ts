@@ -2,6 +2,7 @@ export * from "./agent-runtime.ts";
 export * from "./approval-policy.ts";
 export * from "./billing-policy.ts";
 export * from "./execution-backend.ts";
+export * from "./external-skill-source.ts";
 export * from "./job-queue.ts";
 export * from "./media-execution.ts";
 export * from "./media-provider.ts";

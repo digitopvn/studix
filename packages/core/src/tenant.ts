@@ -27,10 +27,14 @@ export const PERMISSIONS = [
   "audit:read",
   "apikey:manage",
   "member:manage",
+  /** Read the workspace's imported external skills. */
+  "skill:read",
+  /** Import, update, activate and disable external skills (reaches out to public GitHub). */
+  "skill:write",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-const READ: Permission[] = ["workspace:read", "project:read", "asset:read"];
+const READ: Permission[] = ["workspace:read", "project:read", "asset:read", "skill:read"];
 const EDIT: Permission[] = [
   ...READ,
   "project:write",
@@ -38,6 +42,7 @@ const EDIT: Permission[] = [
   "job:retry",
   "asset:write",
   "approval:request",
+  "skill:write",
 ];
 
 const TENANT_ADMIN: Permission[] = PERMISSIONS.filter((p) => p !== "job:recover");

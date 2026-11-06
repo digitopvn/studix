@@ -40,6 +40,7 @@ describe("workflow packs on the MCP server", () => {
       limits: {} as AppLimits,
       skills,
       toolNames: [],
+      importedSkills: false,
       include: [],
     });
     expect(capabilities.skills).toContainEqual({

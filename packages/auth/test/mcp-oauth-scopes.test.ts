@@ -10,14 +10,27 @@ describe("mcp oauth scopes", () => {
     expect(permissionsForScopes(["studix:write"])).not.toContain("apikey:manage");
   });
 
+  it("keeps skill permissions out of the existing read and write scopes", () => {
+    expect(permissionsForScopes(["studix:read", "studix:write"])).not.toContain("skill:read");
+    expect(permissionsForScopes(["studix:read", "studix:write"])).not.toContain("skill:write");
+    expect(permissionsForScopes(["studix:skills:read"])).toEqual(["skill:read"]);
+    expect(permissionsForScopes(["studix:skills:write"])).toEqual(["skill:write"]);
+  });
+
   it("parses space separated and array scope claims", () => {
     expect(parseScopeClaim("studix:read  offline_access")).toEqual(["studix:read", "offline_access"]);
     expect(parseScopeClaim(["a", 1, "b"])).toEqual(["a", "b"]);
     expect(parseScopeClaim(undefined)).toEqual([]);
   });
 
-  it("advertises read, write and offline access", () => {
-    expect(MCP_SUPPORTED_SCOPES).toEqual(["studix:read", "studix:write", "offline_access"]);
+  it("advertises read, write, skill scopes and offline access", () => {
+    expect(MCP_SUPPORTED_SCOPES).toEqual([
+      "studix:read",
+      "studix:write",
+      "studix:skills:read",
+      "studix:skills:write",
+      "offline_access",
+    ]);
   });
 
   it("inserts the resource path into the well-known metadata URL", () => {

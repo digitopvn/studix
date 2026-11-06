@@ -28,7 +28,8 @@ const CLOCK_TOLERANCE_SECONDS = 5;
 export const MCP_REQUIRED_SCOPE = "studix:read";
 
 /** Scope string a connecting client is told to request: read, write and a refresh token. */
-export const MCP_CONNECT_SCOPE = "studix:read studix:write offline_access";
+export const MCP_CONNECT_SCOPE =
+  "studix:read studix:write studix:skills:read studix:skills:write offline_access";
 
 /** RFC 9728 protected resource metadata for the MCP endpoint. */
 export interface ProtectedResourceMetadata {

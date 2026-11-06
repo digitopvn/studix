@@ -156,7 +156,7 @@ describe("MCP OAuth 2.1", () => {
     const challenge = res.headers.get("www-authenticate") ?? "";
     expect(challenge).toContain(`resource_metadata="${t.base}/.well-known/oauth-protected-resource/mcp"`);
     // Clients ask for the challenged scope: it must include write and a refresh token.
-    expect(challenge).toContain('scope="studix:read studix:write offline_access"');
+    expect(challenge).toContain('scope="studix:read studix:write studix:skills:read studix:skills:write offline_access"');
     expect(challenge).not.toContain("error=");
 
     const bad = await fetch(`${t.base}/mcp`, {

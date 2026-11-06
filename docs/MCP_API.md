@@ -24,7 +24,8 @@ intent and the stable rules; it does not duplicate field lists.
   `WWW-Authenticate: Bearer ... resource_metadata="..."` challenge; the client
   discovers the authorization server (`<app URL>/api/auth`), registers, and
   runs authorization code + PKCE. The user signs in, picks a workspace and
-  approves `studix:read` and optionally `studix:write`. The access token is
+  approves `studix:read` and optionally `studix:write` (and `studix:skills:read`
+  and `studix:skills:write` for the skill store). The access token is
   bound to the `/mcp` resource and a workspace; a token missing `studix:read`
   fails with `403 insufficient_scope`. OAuth tokens never decide approvals or
   hold publish, API-key or member-management permissions. Users revoke a connection
@@ -337,6 +338,53 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   `agent.overrun` approval. A person approving it in the dashboard grants one
   more run with every limit doubled; rejecting it fails the job with
   `FORBIDDEN`.
+
+### External skill tools
+
+A workspace can import Agent Skills (`SKILL.md` folders) from any public GitHub
+repository into a durable store, and a later conversation can read them back.
+Imported skills are third-party **data**: the host reads them and applies their
+guidance while it writes the brief or VideoIR for `studix_create_video`. A skill
+is not installed into the host's own skill system, Studix never runs a skill's
+scripts, and phase 1 does not change the worker pipelines. Setup and flow:
+[EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
+
+| Tool                    | Permission    | Arguments                                                                                       | Returns                                                                                                              |
+| ----------------------- | ------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `studix_skill_discover` | `skill:write` | `repositoryUrl`, `ref?`, `path?`                                                                | Pinned `commitSha`, valid `skills[]` (and whether each is already imported), `invalid[]` with reasons, `partial?`.    |
+| `studix_skill_import`   | `skill:write` | `repositoryUrl`, `ref?`, `path?`, `skillPaths?`, `expectedCommit?`, `idempotencyKey?`           | Per skill `imported`, `new_version`, `unchanged` or `rejected` (with `reason`), plus `counts` and the pinned commit.   |
+| `studix_skill_list`     | `skill:read`  | `q?`, `status?` (`enabled` default, `disabled`, `all`), `repository?`, `limit?`, `cursor?`      | Page of skills: ids, source, name, description, status, `upstream`, active and latest version, `pendingVersion`.      |
+| `studix_skill_get`      | `skill:read`  | `skillId` or `name`, `versionId?`, `file?`, `offset?`, `maxBytes?`                              | Manifest summary, `files[]`, bounded text `content` (SKILL.md by default), `trust` and a `notice`.                    |
+| `studix_skill_update`   | `skill:write` | `skillId`, `action` (`check`, `import`, `activate`), `versionId?`, `ref?`, `expectedCommit?`, `activate?` | `check`: upstream state and whether the commit changed. `import`: the import result. `activate`: the skill.           |
+| `studix_skill_disable`  | `skill:write` | `skillId`, `disabled?` (default true)                                                           | The skill with its new status. Nothing is deleted; `disabled: false` offers it again.                                |
+
+- Discover, import and update reach `github.com` and carry `openWorldHint: true`;
+  discover, list and get are read-only. Reading never contacts GitHub.
+- Import is idempotent per workspace, repository, skill path and content: the same
+  commit again is `unchanged`. A changed upstream creates a new immutable version
+  that is **not** active until `studix_skill_update` with `action: "activate"`
+  (or `activate: true` on an `import` update); the first import of a skill is
+  active at once. Versions are never edited or deleted.
+- `expectedCommit` (7 to 40 hex characters) turns a moved branch into `CONFLICT`
+  instead of importing something you did not look at. Discovery returns the
+  commit to pass. `idempotencyKey` is kept on created versions as provenance;
+  repeating an import is safe without it.
+- `skillPaths` come from discovery (the folder, `""` for the repository root);
+  omit it to import every valid skill, at most 25 per call. Malformed skills are
+  reported per path and never stop the valid ones.
+- A skill name is not unique. `studix_skill_get` by `name` is `CONFLICT` with
+  `details.candidates` when several skills share it; pass the `skillId` then.
+- A disabled skill stays in the store: it is hidden from the default list and
+  `studix_skill_get` returns its metadata and file list with
+  `contentWithheld: "disabled"` instead of text.
+- Files: only text can be read inline (`readable` in `files[]`); `scripts/` are
+  listed with size and hash and never stored; binary assets are stored and listed.
+  Page a long file with `offset` and `maxBytes` (default 64 KiB, at most 256 KiB).
+- A skill removed upstream stays readable; `studix_skill_update` `check` reports
+  `upstream: "missing"` and an `import` fails with `NOT_FOUND`.
+- Tools answer `UNAVAILABLE` on a server without object storage. Other
+  workspaces' skills are `NOT_FOUND`. `studix_inspect` keeps `skills` as the
+  built-in workflow packs and adds `importedSkills` with the tool names.
 
 ## P0 meta-tools (MCP-in-MCP)
 

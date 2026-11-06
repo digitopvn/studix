@@ -14,6 +14,7 @@ import {
 import {
   createAgentHandoffService,
   createDefaultApprovalPolicy,
+  createExternalSkillService,
   type ProviderJobInspector,
   type Role,
   StudioService,
@@ -22,10 +23,15 @@ import {
 import { createTestDatabase, insertTestUser, type TestDatabase } from "@studix/database/testing";
 import { createActivityRecorder } from "@studix/observability";
 import { createLogger, newId, systemClock } from "@studix/shared";
+import { InMemoryStorageAdapter } from "@studix/storage";
 import type { AppDeps } from "../src/app-deps.ts";
 import { packStageOutputValidator } from "../src/compose-integrations.ts";
 import { createApp } from "../src/create-app.ts";
 import type { ArtifactUrlSigner } from "../src/ports.ts";
+import { FakeSkillSource } from "./fake-skill-source.ts";
+
+/** GitHub stand-in behind the skill store of every test app; tests set the repositories it serves. */
+export const skillSource = new FakeSkillSource();
 
 export const TEST_SECRET = "test-dashboard-secret-0123456789-abcdef";
 
@@ -147,6 +153,11 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
     agentHandoffs: createAgentHandoffService({
       handoffs: repos.agentHandoffs,
       validateOutput: packStageOutputValidator(),
+    }),
+    externalSkills: createExternalSkillService({
+      skills: repos.externalSkills,
+      storage: new InMemoryStorageAdapter(),
+      source: skillSource,
     }),
     ...overrides,
   };

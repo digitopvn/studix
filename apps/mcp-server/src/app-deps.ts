@@ -7,6 +7,7 @@ import type {
 import type {
   ActivityRepository,
   AgentHandoffService,
+  ExternalSkillService,
   JobRepository,
   RenderRepository,
   StudioService,
@@ -79,6 +80,8 @@ export interface AppDeps {
   skills?: SkillSummary[];
   /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
   agentHandoffs?: AgentHandoffService;
+  /** Workspace store of skills imported from public GitHub repositories; without it the skill tools answer UNAVAILABLE. */
+  externalSkills?: ExternalSkillService;
 
   /** Built dashboard directory; when missing, browser navigations get a 503 page. */
   dashboardDist?: string;

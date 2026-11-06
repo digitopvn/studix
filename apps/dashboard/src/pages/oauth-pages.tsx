@@ -25,6 +25,9 @@ const SCOPE_DESCRIPTIONS: Record<string, string> = {
   "studix:read": "View projects, jobs and assets in the selected workspace",
   "studix:write":
     "Create and edit projects, request renders, cancel or retry jobs and upload assets (never approve or publish)",
+  "studix:skills:read": "Read the Agent Skills imported into the selected workspace",
+  "studix:skills:write":
+    "Import Agent Skills from public GitHub repositories into the workspace, update, activate or disable them",
   offline_access: "Stay connected without asking you again",
 };
 

@@ -3,6 +3,7 @@ import type { StudixDb } from "../client.ts";
 import { createAgentHandoffRepository } from "./agent-handoff-repository.ts";
 import { createAssetRepository } from "./asset-repository.ts";
 import { createConnectorRepository } from "./connector-repository.ts";
+import { createExternalSkillRepository } from "./external-skill-repository.ts";
 import {
   createApprovalRepository,
   createAuditRepository,
@@ -30,6 +31,7 @@ import { createWorkspaceSettingsRepository } from "./workspace-settings-reposito
 export * from "./agent-handoff-repository.ts";
 export * from "./asset-repository.ts";
 export * from "./connector-repository.ts";
+export * from "./external-skill-repository.ts";
 export * from "./governance-repositories.ts";
 export * from "./job-repository.ts";
 export * from "./model-preference-repository.ts";
@@ -61,6 +63,7 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     stageCache: createStageCacheRepository(db, clock),
     storyboards: createStoryboardRepository(db, clock),
     agentHandoffs: createAgentHandoffRepository(db, clock),
+    externalSkills: createExternalSkillRepository(db, clock),
     approvals: createApprovalRepository(db, clock),
     reviews: createReviewRepository(db, clock),
     audit: createAuditRepository(db, clock),

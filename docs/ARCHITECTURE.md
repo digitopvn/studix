@@ -277,6 +277,21 @@ AI client --(inbound credential: stx_ key)--> /mcp
   calls, the worker role lets a workflow stage call a bound capability.
 - Every execute re-authorizes against the current grant, not the search result.
 
+## External skill store
+
+Public GitHub Agent Skills are imported as workspace data ([EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md)).
+
+```text
+studix_skill_* tools -> ExternalSkillService (core)
+                          |-- ExternalSkillSource port -> GitHub source (@studix/skills), bounded, read-only
+                          |-- external skill repository -> Postgres (skills, immutable versions, audit)
+                          '-- StorageAdapter -> content-addressed blobs (external-skills/blobs/<sha256>)
+```
+
+- Discovery stores nothing; import pins one commit and records immutable versions.
+- Reads are served from Postgres and object storage and never call GitHub.
+- The renderer and workflow stages never read skills: the host agent applies them when it writes the brief.
+
 ## Trust boundaries
 
 | Boundary                      | Crossing                 | Control                                                                                                                         |
