@@ -338,6 +338,30 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   more run with every limit doubled; rejecting it fails the job with
   `FORBIDDEN`.
 
+### Imported GitHub skills
+
+Public GitHub Agent Skills (`SKILL.md`) imported into the workspace and read
+back as untrusted reference text. Guide: [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
+
+| Tool                    | Arguments                                                                                          | Returns                                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `studix_skill_discover` | `repositoryUrl`, `ref?`, `path?`                                                                   | Pinned `source.commitSha` and every `SKILL.md` found (valid or invalid, stored vs described files).   |
+| `studix_skill_import`   | `repositoryUrl`, `ref?`, `path?`, `skillPaths?`, `expectedCommit?`, `idempotencyKey?`, `activate?` | Per skill: `imported`, `new_version`, `unchanged` or `rejected`, ids, license, `nameCollisions`.      |
+| `studix_skill_list`     | `limit?`, `cursor?`, `status?`, `q?`, `owner?`, `repo?`                                            | Skills (enabled by default) with `activeVersionId` and upstream status.                               |
+| `studix_skill_get`      | `skillId`, `versionId?`, `path?`, `offset?`, `limit?`, `includeVersions?`                          | Metadata, license, notices, `securityNotes`, file list, a bounded text slice and a `trust` block.     |
+| `studix_skill_update`   | `skillId`, `action`: `check`, `import`, `activate` (`versionId`) or `enable`                       | Updated skill and, for `check`/`import`, the upstream result. Never changes the active version alone. |
+| `studix_skill_disable`  | `skillId`                                                                                          | The disabled skill; versions and files are kept.                                                      |
+- `discover` and `import` read from GitHub (`openWorldHint`); nothing from a
+  repository is executed. Only `github.com` repository URLs are accepted, other
+  hosts, IPs and schemes are `VALIDATION`.
+- Reading needs `skill:read`; `discover`, `import`, `update` and `disable` need
+  `skill:write`. Other workspaces' skills are `NOT_FOUND`; a disabled skill is
+  `CONFLICT` on `get`.
+- Errors: `NOT_FOUND` (repository not public, path or skill missing),
+  `CONFLICT` (`expectedCommit` mismatch), `RATE_LIMITED` (with the reset time),
+  `UNAVAILABLE` (no object storage).
+- `studix_inspect` returns `importedSkills` when the caller may read them.
+
 ## P0 meta-tools (MCP-in-MCP)
 
 Third-party tools registered in the workspace are reached only through these

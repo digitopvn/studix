@@ -71,6 +71,8 @@ export const ConfigSchema = z
     /** Earlier STUDIX_SECRETS_KEY values that may still open stored credentials during a rotation. */
     STUDIX_SECRETS_KEYS_PREVIOUS: csv.default([]),
     ANTHROPIC_BASE_URL: origin.default("https://api.anthropic.com"),
+    /** Optional token for importing GitHub skills (raises the API rate limit); sent to api.github.com only. */
+    STUDIX_GITHUB_TOKEN: optionalString,
     /** Jobs may select `planner: {runtime: "claude"}` (Claude Agent SDK on the worker). Off by default. */
     STUDIX_CLAUDE_PLANNER: bool.default(false),
     /**
