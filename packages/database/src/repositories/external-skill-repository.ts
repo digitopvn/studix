@@ -315,6 +315,9 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
               .limit(1)
           : [];
         if (!rows[0] || !skillRows[0]) throw err;
+        if (skillRows[0].sourceKey !== input.sourceKey) {
+          throw new StudixError("CONFLICT", "The idempotency key was already used for a different skill");
+        }
         return { outcome: "unchanged" as const, skill: toSkill(skillRows[0]), version: toVersion(rows[0]) };
       }
     },

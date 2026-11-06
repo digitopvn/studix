@@ -1,5 +1,5 @@
 import { StudixError } from "@studix/shared";
-import { isFullCommitSha, isSafeRepoPath } from "./github-url.ts";
+import { isSafeRepoPath } from "./github-url.ts";
 import type { SkillImportLimits } from "./import-limits.ts";
 
 export interface GitTreeEntry {
@@ -31,6 +31,8 @@ export interface GitHubSource {
   repository(owner: string, repo: string): Promise<GitHubRepositoryInfo>;
   /** Commit sha of a branch, tag or commit; undefined when the ref does not exist. */
   commit(owner: string, repo: string, ref: string): Promise<string | undefined>;
+  /** Whether the commit is on (an ancestor of or equal to) the head of `branch` of this repository. */
+  onBranch(owner: string, repo: string, branch: string, commitSha: string): Promise<boolean>;
   tree(owner: string, repo: string, commitSha: string): Promise<GitHubTree>;
   /** Bytes of one file at a commit; fails with VALIDATION when it is larger than `maxBytes`. */
   blob(owner: string, repo: string, commitSha: string, path: string, maxBytes: number): Promise<Uint8Array>;
@@ -280,15 +282,25 @@ export function createGitHubSource(options: GitHubSourceOptions): GitHubSource {
     },
 
     async commit(owner, repo, ref) {
-      if (isFullCommitSha(ref)) {
-        // Confirm the commit exists in this repository; the answer carries the canonical id.
-        const res = await json(`${repoPath(owner, repo)}/commits/${ref}`);
-        return res.status === 200 ? ref : undefined;
-      }
-      const res = await json(`${repoPath(owner, repo)}/commits/${encodeURIComponent(ref)}`);
+      // The sha media type answers with the bare commit id instead of the commit's files and patches.
+      const res = await request(
+        `https://${API_HOST}${repoPath(owner, repo)}/commits/${encodeURIComponent(ref)}`,
+        "application/vnd.github.sha",
+        1024,
+      );
       if (res.status !== 200) return undefined;
-      const sha = asRecord(res.data).sha;
-      return typeof sha === "string" && isHex(sha) ? sha : undefined;
+      const sha = new TextDecoder().decode(res.body).trim().toLowerCase();
+      return isHex(sha) ? sha : undefined;
+    },
+
+    async onBranch(owner, repo, branch, commitSha) {
+      // GitHub serves a fork's commits under the parent's name; only ancestry of a real branch proves origin.
+      const res = await json(
+        `${repoPath(owner, repo)}/compare/${encodeURIComponent(branch)}...${commitSha}?per_page=1`,
+      );
+      if (res.status !== 200) return false;
+      const status = asRecord(res.data).status;
+      return status === "behind" || status === "identical";
     },
 
     async tree(owner, repo, commitSha) {

@@ -120,6 +120,13 @@ function sourceLabel(skill: ExternalSkill): string {
   return `${skill.source.owner}/${skill.source.repo}${skill.source.path ? `/${skill.source.path}` : ""}`;
 }
 
+const LIST_DESCRIPTION_CHARS = 300;
+const UNTRUSTED = { origin: "third-party", untrusted: true, guidance: THIRD_PARTY_GUIDANCE } as const;
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 export function externalSkillView(skill: ExternalSkill) {
   return {
     id: skill.id,
@@ -264,8 +271,34 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
       }
     }
 
-    const bundle = await loadSkillBundle(options.source, scan, candidate, limits);
-    if (bundle.storedBytes > options.budget.left) {
+    // Reserve the planned bytes before any await so parallel candidates cannot overshoot the budget.
+    const planned = candidate.planned.reduce((sum, f) => sum + (f.skipped ? 0 : f.bytes), 0);
+    if (planned > options.budget.left) {
+      return {
+        path: candidate.path,
+        outcome: "rejected",
+        name: candidate.name,
+        error: {
+          code: "VALIDATION",
+          message: `The import exceeds ${limits.maxImportBytes} bytes of skill content`,
+        },
+      };
+    }
+    options.budget.left -= planned;
+    let reserved = planned;
+    const refund = () => {
+      options.budget.left += reserved;
+      reserved = 0;
+    };
+    let bundle: SkillBundle;
+    try {
+      bundle = await loadSkillBundle(options.source, scan, candidate, limits);
+    } catch (err) {
+      refund();
+      throw err;
+    }
+    if (bundle.storedBytes > reserved) {
+      refund();
       return {
         path: candidate.path,
         outcome: "rejected",
@@ -279,9 +312,18 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
     const existing = await repository.findBySourceKey(ctx, sourceKey);
     if (existing) {
       const same = await repository.findVersionByContentHash(ctx, existing.id, bundle.contentHash);
-      if (same) return itemFor("unchanged", existing, same, { bundle, unsupported });
+      if (same) {
+        refund();
+        // Upstream reverted to a stored version: activate it when the caller asked for the newest to be active.
+        if (options.activate && existing.activeVersionId !== same.id) {
+          const activated = await repository.activateVersion(ctx, existing.id, same.id, options.actor);
+          return itemFor("unchanged", activated, same, { bundle, unsupported });
+        }
+        return itemFor("unchanged", existing, same, { bundle, unsupported });
+      }
     }
-    options.budget.left -= bundle.storedBytes;
+    options.budget.left += reserved - bundle.storedBytes;
+    reserved = bundle.storedBytes;
 
     const versionId = newId("eskv");
     const prefix = `external-skills/${versionId}`;
@@ -396,7 +438,9 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
           return {
             path: c.path,
             status: c.status,
-            ...(c.name ? { name: c.name, description: c.description } : {}),
+            ...(c.name
+              ? { name: c.name, description: clip(c.description ?? "", LIST_DESCRIPTION_CHARS) }
+              : {}),
             ...(c.problems.length ? { problems: c.problems } : {}),
             files: {
               stored: stored.length,
@@ -417,6 +461,7 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
         }),
       );
       return {
+        trust: UNTRUSTED,
         source: targetSummary(scan.target),
         candidates,
         valid: candidates.filter((c) => c.status === "valid").length,
@@ -484,7 +529,11 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
       assertPermission(ctx, "skill:read");
       const page = await repository.list(ctx, input);
       return {
-        items: page.items.map(externalSkillView),
+        trust: UNTRUSTED,
+        items: page.items.map((skill) => {
+          const view = externalSkillView(skill);
+          return { ...view, description: clip(view.description, LIST_DESCRIPTION_CHARS) };
+        }),
         ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
       };
     },
@@ -498,6 +547,10 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
           details: { skillId: skill.id },
           suggestedAction: 'Ask a workspace member to re-enable it (studix_skill_update action "enable").',
         });
+      }
+      // Inactive versions have not been accepted for use; only people who can activate them may read them.
+      if (input.versionId !== undefined && input.versionId !== skill.activeVersionId) {
+        assertPermission(ctx, "skill:write");
       }
       const versionId = input.versionId ?? skill.activeVersionId;
       if (!versionId) throw new StudixError("NOT_FOUND", "The skill has no version yet");
@@ -557,7 +610,7 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
         license: version.manifest.license,
         notices: version.manifest.notices,
         securityNotes: version.manifest.securityNotes,
-        trust: { origin: "third-party", untrusted: true, guidance: THIRD_PARTY_GUIDANCE },
+        trust: UNTRUSTED,
         ...(versions ? { versions } : {}),
       };
     },
@@ -591,6 +644,13 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
         if (!(err instanceof StudixError) || err.code !== "NOT_FOUND") throw err;
       }
       const candidate = scan?.candidates.find((c) => c.path === skill.source.path);
+      if (scan && !candidate && scan.incomplete.length > 0) {
+        // A partial listing cannot show that the skill is gone, so nothing is flagged.
+        return {
+          skill: externalSkillView(skill),
+          upstream: { status: "unknown", incomplete: scan.incomplete },
+        };
+      }
       if (!scan || !candidate) {
         const flagged = await repository.recordUpstreamCheck(ctx, skill.id, "removed", actor);
         return { skill: externalSkillView(flagged), upstream: { status: "removed" } };
@@ -605,7 +665,8 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
       const bundle = await loadSkillBundle(github, scan, candidate, limits);
       const known = await repository.findVersionByContentHash(ctx, skill.id, bundle.contentHash);
       if (input.action === "check") {
-        const status = known ? "current" : "changed";
+        const matchesActive = known !== undefined && known.id === skill.activeVersionId;
+        const status = matchesActive ? "current" : "changed";
         const checked = await repository.recordUpstreamCheck(ctx, skill.id, status, actor);
         return {
           skill: externalSkillView(checked),
@@ -613,7 +674,11 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
             status,
             commitSha: scan.target.commitSha,
             contentHash: bundle.contentHash,
-            ...(known ? { matchesVersionId: known.id } : {}),
+            ...(known
+              ? matchesActive
+                ? { matchesVersionId: known.id }
+                : { matchesInactiveVersionId: known.id }
+              : {}),
           },
         };
       }
@@ -642,7 +707,7 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
     async summary(ctx: TenantContext) {
       const page = await repository.list(ctx, { limit: 5 });
       return {
-        count: page.items.length,
+        shown: page.items.length,
         hasMore: page.nextCursor !== undefined,
         names: page.items.map((s) => s.name),
       };

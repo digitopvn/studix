@@ -25,8 +25,12 @@ Tool contract: [MCP_API.md](MCP_API.md#imported-github-skills).
    active version, never changes it), `import` (store the upstream content as a
    new version), `activate` (make a stored version the one readers get) or
    `enable`. `studix_skill_disable` stops serving a skill and keeps its data.
+   `check` is `current` only when upstream equals the active version; when it
+   equals a stored inactive version it reports `matchesInactiveVersionId`, and
+   it reports `unknown` when the listing was truncated and the skill could not
+   be found. Reading a non-active `versionId` needs `skill:write`.
 
-`studix_inspect` reports `importedSkills` (count, a few names and the tool names)
+`studix_inspect` reports `importedSkills` (`shown` names and the tool names)
 so an agent can find the store from the handshake.
 
 ## What is stored
@@ -65,3 +69,11 @@ Object storage (`S3_BUCKET`) is required; without it the tools answer
 rate limit for public repositories; it is sent to `api.github.com` and never to
 another host, and it is redacted from logs. Private repositories are not
 supported.
+
+## Refs and trust
+
+- A full 40-hex commit SHA is accepted as `ref` only if it is reachable from the
+  repository's default branch; otherwise use a branch or tag name.
+- Top-level text files next to `SKILL.md` are stored as references.
+- `list`, `discover` and `get` all carry a `trust` block marking the content as
+  untrusted; names and descriptions in listings are clipped to 300 characters.

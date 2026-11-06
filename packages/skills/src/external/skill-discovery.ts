@@ -128,6 +128,15 @@ export async function resolveTarget(
     const ref = option.ref ?? info.defaultBranch;
     const commitSha = await source.commit(parsed.owner, parsed.repo, ref);
     if (!commitSha) continue;
+    if (
+      isFullCommitSha(ref) &&
+      !(await source.onBranch(parsed.owner, parsed.repo, info.defaultBranch, commitSha))
+    ) {
+      throw new StudixError("NOT_FOUND", "That commit is not on the default branch of this repository", {
+        details: { ref },
+        suggestedAction: "Use a branch or tag name of the repository instead of a commit id.",
+      });
+    }
     return {
       owner: parsed.owner,
       repo: parsed.repo,
@@ -171,6 +180,8 @@ function classify(rel: string): ExternalSkillFileKind {
   if (first === "assets" && rel.includes("/")) return "asset";
   if (first === "scripts" && rel.includes("/")) return "script";
   if (!rel.includes("/") && LICENSE_NAME.test(rel)) return "license";
+  // Docs linked from SKILL.md usually sit next to it.
+  if (!rel.includes("/") && TEXT_EXTENSIONS.has(extensionOf(rel))) return "reference";
   return "other";
 }
 

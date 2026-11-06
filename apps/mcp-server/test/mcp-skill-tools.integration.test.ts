@@ -127,7 +127,7 @@ describe("imported GitHub skills over MCP (Postgres)", () => {
     expect(activity.items.some((e) => e.name === "mcp.studix_skill_import")).toBe(true);
 
     const inspect = await call(client, "studix_inspect");
-    expect(inspect.data?.importedSkills).toMatchObject({ count: 1, names: ["promo-style"] });
+    expect(inspect.data?.importedSkills).toMatchObject({ shown: 1, names: ["promo-style"] });
   });
 
   it("denies writes to a viewer key, allows reads, and hides foreign skills", async () => {

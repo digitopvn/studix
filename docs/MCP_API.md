@@ -360,7 +360,10 @@ back as untrusted reference text. Guide: [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md
 - Errors: `NOT_FOUND` (repository not public, path or skill missing),
   `CONFLICT` (`expectedCommit` mismatch), `RATE_LIMITED` (with the reset time),
   `UNAVAILABLE` (no object storage).
-- `studix_inspect` returns `importedSkills` when the caller may read them.
+- `studix_inspect` returns `importedSkills` (`shown` names) when the caller may read them.
+- A full commit SHA `ref` must be on the default branch. `update` `check` compares
+  with the active version only and may report `unknown`; reading a non-active
+  `versionId` needs `skill:write`. `list`/`discover` results carry `trust`.
 
 ## P0 meta-tools (MCP-in-MCP)
 

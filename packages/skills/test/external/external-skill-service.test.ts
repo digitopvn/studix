@@ -217,4 +217,86 @@ describe("external skill service", () => {
       code: "UNAVAILABLE",
     });
   });
+  it("does not flag a skill as removed when the repository listing is incomplete", async () => {
+    const { service, github } = setup({ "a/b/demo/SKILL.md": skillMarkdown({ name: "demo" }) });
+    const ctx = testTenant();
+    const res = await service.import(ctx, { repositoryUrl: url });
+    const id = res.results[0]!.skillId!;
+    github.setTruncated(REPO, true);
+    const check = await service.update(ctx, { skillId: id, action: "check" });
+    expect(check.upstream?.status).toBe("unknown");
+    expect(check.skill.upstreamStatus).not.toBe("removed");
+  });
+
+  it("stores text references next to SKILL.md", async () => {
+    const { service } = setup({
+      "pdf/SKILL.md": skillMarkdown({ name: "pdf" }, "See forms.md"),
+      "pdf/forms.md": "Form filling notes",
+    });
+    const ctx = testTenant();
+    const res = await service.import(ctx, { repositoryUrl: url });
+    const got = await service.get(ctx, { skillId: res.results[0]!.skillId!, path: "forms.md" });
+    expect(got.content.text).toBe("Form filling notes");
+  });
+
+  it("rejects a commit id that is not on the repository's default branch", async () => {
+    const { service, github } = setup(basic, { "x/SKILL.md": skillMarkdown({ name: "other-ref" }) });
+    const ctx = testTenant();
+    const other = await github.source.commit("acme", "skills", "v2");
+    await expect(service.discover(ctx, { repositoryUrl: url, ref: other })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    const head = await github.source.commit("acme", "skills", "main");
+    await expect(service.discover(ctx, { repositoryUrl: url, ref: head })).resolves.toBeDefined();
+  });
+
+  it("marks list and discover results untrusted and clips long descriptions", async () => {
+    const { service } = setup({
+      "SKILL.md": skillMarkdown({ name: "wordy", description: "d".repeat(1000) }),
+    });
+    const ctx = testTenant();
+    const found = await service.discover(ctx, { repositoryUrl: url });
+    expect(found.trust.untrusted).toBe(true);
+    await service.import(ctx, { repositoryUrl: url });
+    const listed = await service.list(ctx);
+    expect(listed.trust.untrusted).toBe(true);
+    expect(listed.items[0]!.description.length).toBeLessThanOrEqual(301);
+  });
+
+  it("lets only skill:write holders read a version that is not active", async () => {
+    const { service, github } = setup({ "SKILL.md": skillMarkdown({ name: "v" }, "one") });
+    const editor = testTenant();
+    const first = await service.import(editor, { repositoryUrl: url });
+    const id = first.results[0]!.skillId!;
+    github.setFiles(REPO, "main", { "SKILL.md": skillMarkdown({ name: "v" }, "two") });
+    const upd = await service.update(editor, { skillId: id, action: "import" });
+    const viewer = { ...editor, actor: { type: "user" as const, id: "usr_v", role: "viewer" as const } };
+    await expect(
+      service.get(viewer, { skillId: id, versionId: upd.result!.versionId }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(
+      service.get(editor, { skillId: id, versionId: upd.result!.versionId }),
+    ).resolves.toBeDefined();
+  });
+
+  it("reactivates a stored version when upstream reverts and activation is requested", async () => {
+    const { service, github } = setup({ "SKILL.md": skillMarkdown({ name: "r" }, "one") });
+    const ctx = testTenant();
+    const first = await service.import(ctx, { repositoryUrl: url });
+    const id = first.results[0]!.skillId!;
+    github.setFiles(REPO, "main", { "SKILL.md": skillMarkdown({ name: "r" }, "two") });
+    const two = await service.update(ctx, { skillId: id, action: "import", activate: true });
+    github.setFiles(REPO, "main", { "SKILL.md": skillMarkdown({ name: "r" }, "one") });
+    const check = await service.update(ctx, { skillId: id, action: "check" });
+    expect(check.upstream?.status).toBe("changed");
+    expect((check.upstream as { matchesInactiveVersionId?: string }).matchesInactiveVersionId).toBe(
+      first.results[0]!.versionId,
+    );
+    const back = await service.update(ctx, { skillId: id, action: "import", activate: true });
+    expect(back.result?.outcome).toBe("unchanged");
+    expect((await service.get(ctx, { skillId: id })).content.text).toContain("one");
+    expect(two.result?.outcome).toBe("new_version");
+  });
 });

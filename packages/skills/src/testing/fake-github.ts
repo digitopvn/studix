@@ -78,6 +78,10 @@ export function createFakeGitHub(repos: Record<string, FakeRepository>) {
       }
       return commitOf(key, ref);
     },
+    async onBranch(owner, repo, branch, commitSha) {
+      const { key } = find(owner, repo);
+      return commitOf(key, branch) === commitSha;
+    },
     async tree(owner, repo, commitSha): Promise<GitHubTree> {
       calls.tree++;
       const { key, repo: r } = find(owner, repo);
@@ -118,6 +122,10 @@ export function createFakeGitHub(repos: Record<string, FakeRepository>) {
     /** Replace the files of a ref (a new commit). */
     setFiles(repoKey: string, ref: string, files: Record<string, FakeFile>) {
       repos[repoKey]!.refs[ref] = files;
+    },
+    /** Report the repository's listing as truncated (only root entries), as for a huge repository. */
+    setTruncated(repoKey: string, truncated: boolean) {
+      repos[repoKey]!.truncatedTree = truncated;
     },
     /** Remove a repository, as when its owner deletes it. */
     remove(repoKey: string) {
