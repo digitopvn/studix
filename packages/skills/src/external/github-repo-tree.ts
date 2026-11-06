@@ -122,7 +122,9 @@ export class RepoTree {
       depthLimited: false,
     };
     if (!isRecord(data) || !Array.isArray(data.tree)) {
-      throw new StudixError("PROVIDER_ERROR", "GitHub returned an unexpected tree listing", { retryable: false });
+      throw new StudixError("PROVIDER_ERROR", "GitHub returned an unexpected tree listing", {
+        retryable: false,
+      });
     }
     listing.truncated = data.truncated === true;
     let visited = 0;
@@ -132,7 +134,8 @@ export class RepoTree {
         break;
       }
       if (!isRecord(item)) continue;
-      const rawPath = typeof item.path === "string" ? (prefix === "" ? item.path : `${prefix}/${item.path}`) : "";
+      const rawPath =
+        typeof item.path === "string" ? (prefix === "" ? item.path : `${prefix}/${item.path}`) : "";
       const path = normaliseRelativePath(rawPath, this.limits.maxPathLength);
       if (path === undefined || path === "") {
         listing.dropped.push({ path: reportablePath(rawPath), reason: "unsafe path; not read" });
@@ -147,11 +150,18 @@ export class RepoTree {
       }
       if (segments.length > this.limits.maxDepth) {
         listing.depthLimited = true;
-        if (type !== "tree") listing.dropped.push({ path, reason: `deeper than ${this.limits.maxDepth} folders` });
+        if (type !== "tree")
+          listing.dropped.push({ path, reason: `deeper than ${this.limits.maxDepth} folders` });
         continue;
       }
-      const entry: TreeEntry = { path, mode: typeof item.mode === "string" ? item.mode : "", type, sha: item.sha };
-      if (typeof item.size === "number" && Number.isSafeInteger(item.size) && item.size >= 0) entry.size = item.size;
+      const entry: TreeEntry = {
+        path,
+        mode: typeof item.mode === "string" ? item.mode : "",
+        type,
+        sha: item.sha,
+      };
+      if (typeof item.size === "number" && Number.isSafeInteger(item.size) && item.size >= 0)
+        entry.size = item.size;
       listing.entries.push(entry);
     }
     return listing;

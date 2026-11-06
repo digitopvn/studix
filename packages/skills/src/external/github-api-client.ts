@@ -86,11 +86,7 @@ export class GithubApiSession {
 
       if (isRateLimited(response)) {
         const waitMs = rateLimitWaitMs(response, this.options.now());
-        if (
-          waitMs <= limits.maxRateLimitWaitMs &&
-          attempt < limits.maxRetries &&
-          waitMs < this.remaining()
-        ) {
+        if (waitMs <= limits.maxRateLimitWaitMs && attempt < limits.maxRetries && waitMs < this.remaining()) {
           attempt++;
           await sleep(waitMs);
           continue;
@@ -111,16 +107,24 @@ export class GithubApiSession {
   }
 
   /** Request and parse a JSON document; a response over `maxBytes` is an error. */
-  async json(path: string, request: Omit<GithubRequestOptions, "accept">): Promise<{ status: number; data: unknown }> {
+  async json(
+    path: string,
+    request: Omit<GithubRequestOptions, "accept">,
+  ): Promise<{ status: number; data: unknown }> {
     const response = await this.request(path, { ...request, accept: ACCEPT_JSON });
     if (response.tooLarge) {
-      throw new StudixError("PROVIDER_ERROR", "GitHub response exceeded the size limit", { retryable: false });
+      throw new StudixError("PROVIDER_ERROR", "GitHub response exceeded the size limit", {
+        retryable: false,
+      });
     }
     if (response.status < 200 || response.status >= 300) return { status: response.status, data: undefined };
     try {
       return { status: response.status, data: JSON.parse(new TextDecoder().decode(response.body)) };
     } catch (err) {
-      throw new StudixError("PROVIDER_ERROR", "GitHub returned malformed JSON", { retryable: false, cause: err });
+      throw new StudixError("PROVIDER_ERROR", "GitHub returned malformed JSON", {
+        retryable: false,
+        cause: err,
+      });
     }
   }
 
@@ -218,9 +222,13 @@ function statusError(status: number): StudixError {
     case 403:
       return new StudixError("FORBIDDEN", "GitHub refused access to this repository");
     case 404:
-      return new StudixError("NOT_FOUND", "Repository, ref or path not found on GitHub, or the repository is private", {
-        suggestedAction: "Check the URL; only public repositories can be imported",
-      });
+      return new StudixError(
+        "NOT_FOUND",
+        "Repository, ref or path not found on GitHub, or the repository is private",
+        {
+          suggestedAction: "Check the URL; only public repositories can be imported",
+        },
+      );
     case 422:
       return new StudixError("VALIDATION", "GitHub rejected the request as invalid");
     default:

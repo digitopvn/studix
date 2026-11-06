@@ -13,7 +13,13 @@ import type {
 } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { ACCEPT_RAW, ACCEPT_SHA, GithubApiSession } from "./github-api-client.ts";
-import { emptyRepository, RepoTree, reportablePath, SYMLINK_MODE, type TreeEntry } from "./github-repo-tree.ts";
+import {
+  emptyRepository,
+  RepoTree,
+  reportablePath,
+  SYMLINK_MODE,
+  type TreeEntry,
+} from "./github-repo-tree.ts";
 import { type GithubSkillLimits, resolveGithubSkillLimits } from "./github-skill-limits.ts";
 import {
   isGitSha,
@@ -80,7 +86,8 @@ async function discover(
   limits: GithubSkillLimits,
   input: SkillDiscoverRequest,
 ): Promise<SkillDiscovery> {
-  if (typeof input !== "object" || input === null) throw new StudixError("VALIDATION", "Discovery input is required");
+  if (typeof input !== "object" || input === null)
+    throw new StudixError("VALIDATION", "Discovery input is required");
   const url = parseGithubRepositoryUrl(input.repositoryUrl);
   const explicitRef = input.ref === undefined ? undefined : validateGitRef(input.ref);
   const explicitPath = input.path === undefined ? undefined : validatePath(input.path, limits);
@@ -120,16 +127,23 @@ async function discover(
     commitSha = await resolveCommit(ctx, defaultBranch);
   }
   if (commitSha === undefined) {
-    throw new StudixError("NOT_FOUND", `Ref "${reportablePath(ref, 100)}" was not found in ${url.repository}`, {
-      suggestedAction: "Check the branch, tag or commit name",
-    });
+    throw new StudixError(
+      "NOT_FOUND",
+      `Ref "${reportablePath(ref, 100)}" was not found in ${url.repository}`,
+      {
+        suggestedAction: "Check the branch, tag or commit name",
+      },
+    );
   }
   const basePath = explicitPath ?? validatePath(urlPath.join("/"), limits);
 
   const tree = new RepoTree(session, limits, url.owner, url.repo, commitSha);
   const listing = await tree.subtree(basePath);
   if (!listing) {
-    throw new StudixError("NOT_FOUND", `Folder "${reportablePath(basePath, 100)}" does not exist at this commit`);
+    throw new StudixError(
+      "NOT_FOUND",
+      `Folder "${reportablePath(basePath, 100)}" does not exist at this commit`,
+    );
   }
   const partial: string[] = [];
   if (listing.truncated) partial.push("GitHub truncated the repository tree");
@@ -151,7 +165,8 @@ async function discover(
   }
 
   const rootEntries = await tree.rootEntries();
-  const outcomes = await mapLimit(skillFiles, limits.concurrency, async (entry) => {
+  type Outcome = { candidate: SkillCandidate } | { folder: string; reason: string };
+  const outcomes = await mapLimit(skillFiles, limits.concurrency, async (entry): Promise<Outcome> => {
     const folder = parentPath(entry.path);
     if (entry.mode === SYMLINK_MODE) return { folder, reason: "SKILL.md is a symlink and was not followed" };
     const blob = await readBlob(ctx, entry, limits.maxSkillMdBytes);
@@ -197,7 +212,8 @@ async function fetchSkills(
   limits: GithubSkillLimits,
   input: SkillFetchRequest,
 ): Promise<SkillFetchResult[]> {
-  if (typeof input !== "object" || input === null) throw new StudixError("VALIDATION", "Fetch input is required");
+  if (typeof input !== "object" || input === null)
+    throw new StudixError("VALIDATION", "Fetch input is required");
   const { owner, repo } = parseRepositoryName(input.repository);
   if (!isGitSha(input.commitSha)) {
     throw new StudixError("VALIDATION", "commitSha must be a 40-character lower-case hex commit id");
@@ -228,7 +244,8 @@ async function fetchOne(
 ): Promise<SkillFetchResult> {
   const { limits } = ctx;
   const reportPath = reportablePath(requested);
-  const folder = typeof requested === "string" ? normaliseRelativePath(requested, limits.maxPathLength) : undefined;
+  const folder =
+    typeof requested === "string" ? normaliseRelativePath(requested, limits.maxPathLength) : undefined;
   const reject = (reason: string): SkillFetchResult => ({
     path: folder ?? reportPath,
     status: "rejected",
@@ -238,13 +255,15 @@ async function fetchOne(
 
   const listing = await tree.subtree(folder);
   if (!listing) return reject("skill folder not found at this commit");
-  if (listing.truncated || listing.entryLimited) return reject("skill folder is too large to list completely");
+  if (listing.truncated || listing.entryLimited)
+    return reject("skill folder is too large to list completely");
 
   const entries = entriesBelow(listing.entries, folder);
   const skillEntry = entries.find((item) => item.relative === SKILL_FILE)?.entry;
-  if (!skillEntry || skillEntry.type !== "blob") return reject("no SKILL.md in this folder");
+  if (skillEntry?.type !== "blob") return reject("no SKILL.md in this folder");
   if (skillEntry.mode === SYMLINK_MODE) return reject("SKILL.md is a symlink and was not followed");
-  if ((skillEntry.size ?? 0) > limits.maxSkillMdBytes) return reject(`SKILL.md exceeds ${limits.maxSkillMdBytes} bytes`);
+  if ((skillEntry.size ?? 0) > limits.maxSkillMdBytes)
+    return reject(`SKILL.md exceeds ${limits.maxSkillMdBytes} bytes`);
 
   const skipped: ExternalSkillSkippedFile[] = listing.dropped
     .filter((dropped) => folder === "" || dropped.path.startsWith(`${folder}/`))
@@ -278,7 +297,8 @@ async function fetchOne(
   if (plannedBytes > limits.maxSkillBytes) {
     return reject(`skill is ${plannedBytes} bytes; the limit is ${limits.maxSkillBytes}`);
   }
-  if (plannedBytes > budget.remaining) return reject(`import byte budget of ${limits.maxImportBytes} bytes exhausted`);
+  if (plannedBytes > budget.remaining)
+    return reject(`import byte budget of ${limits.maxImportBytes} bytes exhausted`);
   budget.remaining -= plannedBytes;
 
   const skillBlob = await readBlob(ctx, skillEntry, limits.maxSkillMdBytes);
@@ -339,10 +359,13 @@ async function fetchOne(
 }
 
 async function readDefaultBranch(ctx: Context, repository: string): Promise<string> {
-  const { status, data } = await ctx.session.json(`/repos/${encodeURIComponent(ctx.owner)}/${encodeURIComponent(ctx.repo)}`, {
-    maxBytes: 1024 * 1024,
-    pass: [404],
-  });
+  const { status, data } = await ctx.session.json(
+    `/repos/${encodeURIComponent(ctx.owner)}/${encodeURIComponent(ctx.repo)}`,
+    {
+      maxBytes: 1024 * 1024,
+      pass: [404],
+    },
+  );
   const record = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : undefined;
   if (status === 404 || record?.private === true) {
     throw new StudixError("NOT_FOUND", `Repository ${repository} was not found on GitHub or is private`, {
@@ -351,7 +374,9 @@ async function readDefaultBranch(ctx: Context, repository: string): Promise<stri
   }
   const branch = record?.default_branch;
   if (typeof branch !== "string" || !isValidRef(branch)) {
-    throw new StudixError("PROVIDER_ERROR", "GitHub did not report a usable default branch", { retryable: false });
+    throw new StudixError("PROVIDER_ERROR", "GitHub did not report a usable default branch", {
+      retryable: false,
+    });
   }
   return branch;
 }
@@ -450,7 +475,10 @@ function capSkipped(skipped: ExternalSkillSkippedFile[]): ExternalSkillSkippedFi
 function validatePath(path: string, limits: GithubSkillLimits): string {
   const normalised = normaliseRelativePath(path, limits.maxPathLength);
   if (normalised === undefined) {
-    throw new StudixError("VALIDATION", "Path must be a relative folder without `..`, backslashes or control characters");
+    throw new StudixError(
+      "VALIDATION",
+      "Path must be a relative folder without `..`, backslashes or control characters",
+    );
   }
   return normalised;
 }

@@ -19,7 +19,10 @@ const TEXT_TYPES: Record<string, string> = {
 };
 
 const IMAGE_TYPES: Record<string, { contentType: string; matches: (bytes: Uint8Array) => boolean }> = {
-  png: { contentType: "image/png", matches: (b) => startsWith(b, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
+  png: {
+    contentType: "image/png",
+    matches: (b) => startsWith(b, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  },
   jpg: { contentType: "image/jpeg", matches: (b) => startsWith(b, [0xff, 0xd8, 0xff]) },
   jpeg: { contentType: "image/jpeg", matches: (b) => startsWith(b, [0xff, 0xd8, 0xff]) },
   gif: { contentType: "image/gif", matches: (b) => startsWith(b, [0x47, 0x49, 0x46, 0x38]) },
@@ -55,13 +58,18 @@ export function placeSkillFile(relativePath: string): SkillFilePlacement {
 }
 
 /** Type a downloaded file. SVG is an asset that is never treated as inline text. */
-export function describeSkillFile(path: string, bytes: Uint8Array, kind: ExternalSkillFileKind): SkillFileContent {
+export function describeSkillFile(
+  path: string,
+  bytes: Uint8Array,
+  kind: ExternalSkillFileKind,
+): SkillFileContent {
   const ext = extension(path);
   const text = isUtf8Text(bytes);
   if (kind === "script") {
     return { contentType: TEXT_TYPES[ext] ?? (text ? "text/plain" : "application/octet-stream"), text };
   }
-  if (ext === "svg") return text ? { contentType: "image/svg+xml", text: false } : { skip: "SVG is not valid text" };
+  if (ext === "svg")
+    return text ? { contentType: "image/svg+xml", text: false } : { skip: "SVG is not valid text" };
   const image = IMAGE_TYPES[ext];
   if (image) {
     return image.matches(bytes)

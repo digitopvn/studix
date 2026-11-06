@@ -81,10 +81,14 @@ export function parseSkillMarkdown(text: string): ParsedSkillMarkdown {
   const name = rawName.replace(CONTROL_RE, "").replace(/\s+/g, " ").trim();
   if (name.length === 0) return { ok: false, reason: "Frontmatter `name` is empty" };
   if (name.length > SKILL_FRONTMATTER_LIMITS.maxNameChars) {
-    return { ok: false, reason: `Frontmatter \`name\` exceeds ${SKILL_FRONTMATTER_LIMITS.maxNameChars} characters` };
+    return {
+      ok: false,
+      reason: `Frontmatter \`name\` exceeds ${SKILL_FRONTMATTER_LIMITS.maxNameChars} characters`,
+    };
   }
   const rawDescription = entries.get("description");
-  if (typeof rawDescription !== "string") return { ok: false, reason: "Frontmatter `description` is missing" };
+  if (typeof rawDescription !== "string")
+    return { ok: false, reason: "Frontmatter `description` is missing" };
   const description = rawDescription.replace(CONTROL_RE, "").trim();
   if (description.length === 0) return { ok: false, reason: "Frontmatter `description` is empty" };
   if (description.length > SKILL_FRONTMATTER_LIMITS.maxDescriptionChars) {
@@ -183,9 +187,10 @@ function parseValue(rest: string, children: string[]): YamlValue {
   const value = parseScalar(rest);
   if (content.length === 0) return value;
   // A plain scalar may continue on more-indented lines; quoted or flow values may not.
-  if (/^["'[]/.test(rest)) throw new FrontmatterError("multi-line quoted or flow values are not supported");
-  const continuation = children.map((child) => child.trim());
-  return foldLines([value, ...continuation]);
+  if (typeof value !== "string" || /^["']/.test(rest)) {
+    throw new FrontmatterError("multi-line quoted or flow values are not supported");
+  }
+  return foldLines([value, ...children.map((child) => child.trim())]);
 }
 
 function parseMap(children: string[]): Map<string, string> {
@@ -312,13 +317,22 @@ function parseDoubleQuoted(value: string): [string, string] {
       continue;
     }
     const esc = value[++i];
-    const simple: Record<string, string> = { "\\": "\\", '"': '"', "/": "/", n: "\n", t: "\t", r: "\r", " ": " " };
+    const simple: Record<string, string> = {
+      "\\": "\\",
+      '"': '"',
+      "/": "/",
+      n: "\n",
+      t: "\t",
+      r: "\r",
+      " ": " ",
+    };
     if (esc !== undefined && simple[esc] !== undefined) {
       out += simple[esc];
     } else if (esc === "u" || esc === "x") {
       const width = esc === "u" ? 4 : 2;
       const hex = value.slice(i + 1, i + 1 + width);
-      if (!new RegExp(`^[0-9A-Fa-f]{${width}}$`).test(hex)) throw new FrontmatterError("invalid escape sequence");
+      if (!new RegExp(`^[0-9A-Fa-f]{${width}}$`).test(hex))
+        throw new FrontmatterError("invalid escape sequence");
       const code = Number.parseInt(hex, 16);
       if (code === 0) throw new FrontmatterError("NUL escapes are not allowed");
       out += String.fromCharCode(code);
@@ -349,7 +363,8 @@ function parseSingleQuoted(value: string): [string, string] {
 
 function expectEnd(parsed: string, remainder: string): string {
   const tail = remainder.trim();
-  if (tail !== "" && !tail.startsWith("#")) throw new FrontmatterError("unexpected text after a quoted string");
+  if (tail !== "" && !tail.startsWith("#"))
+    throw new FrontmatterError("unexpected text after a quoted string");
   return parsed;
 }
 
