@@ -6,6 +6,8 @@ import { type Logger, newId, StudixError } from "@studix/shared";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
+import { createMcpOAuth, type McpOAuth, oauthProviderAuthServerMetadata } from "./mcp-oauth.ts";
+import { type McpOAuthOptions, mcpOAuthPlugins, SESSION_WORKSPACE_FIELD } from "./mcp-oauth-plugins.ts";
 import { ensurePersonalWorkspace, type Membership } from "./personal-workspace.ts";
 
 /** Prefix for application-generated ids of Better Auth rows (matches the rest of the schema's newId ids). */
@@ -47,6 +49,8 @@ export interface DashboardAuthOptions {
   ipAddressHeaders?: string[];
   /** Better Auth's per-IP limiter (strict on sign-in/sign-up). Default true; tests without client IPs turn it off. */
   rateLimit?: boolean;
+  /** Serve OAuth 2.1 for the MCP endpoint from this Better Auth instance. Omit to keep API keys only. */
+  mcpOAuth?: McpOAuthOptions;
   logger?: Logger;
 }
 
@@ -82,6 +86,14 @@ function buildBetterAuth(options: DashboardAuthOptions) {
         session: schema.authSessions,
         account: schema.authAccounts,
         verification: schema.authVerifications,
+        jwks: schema.authJwks,
+        oauthClientAssertion: schema.oauthClientAssertions,
+        oauthClient: schema.oauthClients,
+        oauthRefreshToken: schema.oauthRefreshTokens,
+        oauthAccessToken: schema.oauthAccessTokens,
+        oauthConsent: schema.oauthConsents,
+        oauthResource: schema.oauthResources,
+        oauthClientResource: schema.oauthClientResources,
       },
     }),
     emailAndPassword: {
@@ -114,7 +126,15 @@ function buildBetterAuth(options: DashboardAuthOptions) {
     },
     // OAuth errors land on the dashboard sign-in page with ?error=<code>.
     onAPIError: { errorURL: options.baseUrl },
-    session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
+    session: {
+      expiresIn: 60 * 60 * 24 * 7,
+      updateAge: 60 * 60 * 24,
+      // Workspace the user picked for the OAuth authorization in progress (never read for dashboard calls).
+      additionalFields: { [SESSION_WORKSPACE_FIELD]: { type: "string", required: false, input: false } },
+    },
+    // The OAuth provider serves its own token endpoint; the jwt plugin's `/token` is not exposed.
+    disabledPaths: ["/token"],
+    plugins: options.mcpOAuth ? mcpOAuthPlugins(options.mcpOAuth, options.directory) : [],
     rateLimit: { enabled: options.rateLimit ?? true, window: 60, max: 60 },
     telemetry: { enabled: false },
     advanced: {
@@ -165,6 +185,8 @@ export interface DashboardAuth {
    * no valid session. Throws FORBIDDEN when the requested workspace is not one of the user's memberships.
    */
   resolveSession(headers: IncomingHttpHeaders | Headers): Promise<DashboardSession | undefined>;
+  /** OAuth 2.1 for the MCP endpoint; undefined when `mcpOAuth` is not configured. */
+  mcpOAuth?: McpOAuth;
 }
 
 function toHeaders(headers: IncomingHttpHeaders | Headers): Headers {
@@ -175,9 +197,23 @@ export function createDashboardAuth(options: DashboardAuthOptions): DashboardAut
   if (options.secret.length < 32)
     throw new RangeError("dashboard auth secret must be at least 32 characters");
   const auth = buildBetterAuth(options);
+  const mcpOAuth = options.mcpOAuth
+    ? createMcpOAuth({
+        db: options.db,
+        directory: options.directory,
+        resource: options.mcpOAuth.resource,
+        issuer: `${options.baseUrl.replace(/\/+$/, "")}${options.basePath ?? "/api/auth"}`,
+        // biome-ignore lint/suspicious/noExplicitAny: plugin endpoints are typed per configured plugins
+        jwks: async () => (await (auth.api as any).getJwks()) as { keys: never[] },
+        // biome-ignore lint/suspicious/noExplicitAny: see above
+        serverMetadata: oauthProviderAuthServerMetadata(auth as any),
+        logger: options.logger,
+      })
+    : undefined;
 
   return {
     auth,
+    mcpOAuth,
     nodeHandler: toNodeHandler(auth),
     ssoProviders: SSO_PROVIDERS.filter((id) => options.sso?.[id]),
     async resolveSession(rawHeaders) {

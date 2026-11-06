@@ -60,6 +60,8 @@ export const authSessions = pgTable(
     expiresAt: ts("expires_at").notNull(),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
+    /** Workspace picked for the OAuth (MCP connector) authorization in progress; not used by the dashboard. */
+    oauthWorkspaceId: text("oauth_workspace_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

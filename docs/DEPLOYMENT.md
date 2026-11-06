@@ -347,6 +347,35 @@ released, not failed
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.
 
+## MCP OAuth
+
+`/mcp` accepts OAuth access tokens next to `stx_` API keys; the dashboard's
+Better Auth instance is the authorization server.
+
+- Migrating: deploy a build that includes the additive migration (new `auth_jwks`
+  and `oauth_*` tables, `auth_sessions.oauth_workspace_id`). API-key clients
+  are unaffected. Set `STUDIX_MCP_OAUTH=false` to turn OAuth off.
+- Issuer `<STUDIX_APP_URL>/api/auth`, resource `<STUDIX_PUBLIC_URL>/mcp`. Both
+  must be reachable by AI clients, and the reverse proxy must pass
+  `/.well-known/*` and `/api/auth/*` to the app.
+- No new callback is registered with GitHub or Google: the dashboard sign-in
+  reuses the existing SSO callbacks. AI clients' own redirect URIs are
+  registered by the clients (dynamic registration or Client ID Metadata).
+- Signing keys are generated on first use and stored in `auth_jwks`; they
+  rotate through Better Auth, and the app refreshes its cached JWKS when it
+  sees an unknown key id.
+- Check after deploy:
+
+```bash
+APP=https://dev-app.studix.digitop.ai
+curl -s $APP/.well-known/oauth-protected-resource/mcp
+curl -s $APP/.well-known/oauth-authorization-server/api/auth
+curl -si -X POST $APP/mcp | grep -i www-authenticate
+```
+
+- Revoke a misbehaving client for everyone by setting `disabled` on its
+  `oauth_clients` row; users revoke their own grants on the Connected apps page.
+
 ## Smoke test
 
 The deploy workflow checks `/healthz` and `/readyz`. The full smoke test calls a

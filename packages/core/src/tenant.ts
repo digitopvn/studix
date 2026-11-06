@@ -57,6 +57,12 @@ const SYSTEM_PERMISSIONS: ReadonlySet<Permission> = new Set(
 export type Actor =
   | { type: "user"; id: string; role: Role }
   | { type: "apiKey"; id: string; scopes: readonly Permission[] }
+  /**
+   * An AI client acting for a user through an OAuth access token. `id` is the user's id; `scopes` are the
+   * permissions that survive both the granted OAuth scopes and the user's current role. Never a "user":
+   * human-only decisions (approvals) stay out of reach of delegated agents.
+   */
+  | { type: "oauth"; id: string; clientId: string; scopes: readonly Permission[] }
   | { type: "system"; id: string };
 
 /** Who did something, as stored on records (no role/scope snapshot). */
@@ -89,7 +95,8 @@ export function can(actor: Actor, permission: Permission): boolean {
     case "user":
       return ROLE_PERMISSIONS[actor.role]?.has(permission) ?? false;
     case "apiKey":
-      // A key issued before a permission became operator-only may still list it.
+    case "oauth":
+      // A key or token issued before a permission became operator-only may still list it.
       return !OPERATOR_PERMISSIONS.has(permission) && actor.scopes.includes(permission);
     case "system":
       return SYSTEM_PERMISSIONS.has(permission);
@@ -107,7 +114,9 @@ export function assertPermission(ctx: TenantContext, permission: Permission): vo
         ? "Only the Studix platform operator can do this; contact them."
         : ctx.actor.type === "apiKey"
           ? `Use an API key with the "${permission}" scope.`
-          : "Ask a workspace admin for a role that grants this action.",
+          : ctx.actor.type === "oauth"
+            ? "Reconnect the app with a broader scope, or ask a workspace admin for a role that grants this action."
+            : "Ask a workspace admin for a role that grants this action.",
     });
   }
 }

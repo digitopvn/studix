@@ -27,6 +27,14 @@ describe("authorization matrix", () => {
     expect(can({ type: "system", id: "worker" }, "approval:decide")).toBe(false);
   });
 
+  it("oauth actors hold only their scopes, never approve, never operator permissions", () => {
+    const actor = { type: "oauth", id: "u", clientId: "c", scopes: ["project:read", "job:recover"] } as const;
+    expect(can(actor, "project:read")).toBe(true);
+    expect(can(actor, "project:write")).toBe(false);
+    expect(can(actor, "approval:decide")).toBe(false);
+    expect(can(actor, "job:recover")).toBe(false);
+  });
+
   it("assertPermission throws FORBIDDEN with a suggested action", () => {
     const ctx = testTenant({ scopes: ["project:read"] });
     expect(() => assertPermission(ctx, "project:write")).toThrow(StudixError);

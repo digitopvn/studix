@@ -114,6 +114,7 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
       secret: TEST_SECRET,
       baseUrl: base,
       rateLimit: false,
+      mcpOAuth: { resource: `${base}/mcp` },
     }),
     limits: {
       defaultJobBudgetCents: 500,

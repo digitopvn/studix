@@ -148,6 +148,13 @@
       "when": 1793692785895,
       "tag": "0020_job_parked_request",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793957489946,
+      "tag": "0021_mcp_oauth_provider",
+      "breakpoints": true
     }
   ]
 }
