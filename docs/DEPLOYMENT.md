@@ -192,6 +192,22 @@ storage, the renderer and the hard QA gate from the worker
 toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
 is never published.
 
+Check media readiness before a paid job. The worker's `/readyz` reports a
+`media` field (`configured` and the generatable `kinds`, names only); it never
+fails readiness, because a worker without media still renders silent jobs.
+`studix_inspect` returns a `media.appProcess` block for the app process only.
+When a job fails `UNAVAILABLE: The Multix provider is not configured`:
+
+1. Confirm the worker instance serving the job has `MULTIX_BIN` set and that
+   `/readyz` lists `voice` or `sfx` under `media.kinds`.
+2. If `kinds` is empty with `MULTIX_BIN` set, the CLI or vendor keys are the
+   problem: run `multix check --json` on that instance and read which vendor is
+   missing (do not print key values).
+3. Fix the worker environment through the secret store, redeploy, then retry
+   the job (finished stages and paid calls are reused).
+
+Jobs without `voiceover` or SFX never call Multix and are unaffected.
+
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
 

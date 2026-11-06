@@ -138,10 +138,11 @@ export async function composeApp(
   });
   const activity = createActivityRecorder(repos.activity, { logger });
   const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
+  const media = config.MULTIX_BIN ? createMultixProviderFromConfig(config, { env }) : undefined;
   const studio = new StudioService({
     ...repos,
     // Operators attach Atlas predictions by hand; each is checked with Atlas first, so this needs multix.
-    providerJobs: config.MULTIX_BIN ? createMultixProviderFromConfig(config, { env }) : undefined,
+    providerJobs: media,
     approvalPolicy,
     clock: systemClock,
     logger,
@@ -237,6 +238,7 @@ export async function composeApp(
       ...(overrides.readiness ?? []),
     ],
     skills: overrides.skills ?? integrations.skills,
+    ...(media ? { mediaKinds: async () => (await media.capabilities()).map((c) => c.kind) } : {}),
     agentHandoffs: integrations.agentHandoffs,
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),

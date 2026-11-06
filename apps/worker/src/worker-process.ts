@@ -2,6 +2,7 @@ import { createDb, type StudixDb } from "@studix/database";
 import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } from "@studix/shared";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
+import { mediaReadiness } from "./pack-services.ts";
 import { createWorkerRuntime, type WorkerPorts, type WorkerRuntime } from "./wiring.ts";
 import { sweepStaleJobDirs } from "./work-dir-sweep.ts";
 import { loadWorkerSettings, type WorkerSettings } from "./worker-settings.ts";
@@ -67,7 +68,9 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       if (stopping || !pool?.running)
         return { ok: false, details: { reason: stopping ? "stopping" : "starting" } };
       const db = await databaseReady(handle).catch(() => false);
-      return { ok: db, details: { database: db, activeJobs: pool.activeJobs } };
+      // Informational: a worker without media still renders silent jobs, so this never fails readiness.
+      const media = await mediaReadiness(ports?.media);
+      return { ok: db, details: { database: db, activeJobs: pool.activeJobs, media } };
     },
   });
   logger.info("health server listening", { port: health.port });

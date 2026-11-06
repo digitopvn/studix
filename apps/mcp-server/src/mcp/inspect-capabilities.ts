@@ -17,6 +17,8 @@ export function inspectCapabilities(input: {
   limits: AppLimits;
   skills: SkillSummary[];
   toolNames: string[];
+  /** Media kinds the app process can generate; undefined when it has no media provider. */
+  mediaKinds?: string[];
   include: ReadonlyArray<(typeof INSPECT_SECTIONS)[number]>;
 }) {
   const { limits } = input;
@@ -52,6 +54,12 @@ export function inspectCapabilities(input: {
       "Media is returned as signed URLs, never inline.",
     ],
     skills: input.skills,
+    media: {
+      appProcess: input.mediaKinds?.length
+        ? { configured: true, kinds: input.mediaKinds }
+        : { configured: false },
+      note: "Voice-over, SFX, music and generated images or clips run on the worker, which needs MULTIX_BIN and vendor keys. This block only reports this app process; check the worker's /readyz `media` field for the authoritative state.",
+    },
   };
   if (!input.include.includes("schemas")) return capabilities;
   cachedSchemas ??= exportJsonSchemas();

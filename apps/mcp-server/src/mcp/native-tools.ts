@@ -168,7 +168,9 @@ export const NATIVE_TOOLS = [
     input: z.object({ include: z.array(z.enum(INSPECT_SECTIONS)).max(4).optional() }),
     readOnly: true,
     async run(ctx, input) {
+      const mediaKinds = await ctx.deps.mediaKinds?.().catch(() => []);
       const data = inspectCapabilities({
+        ...(mediaKinds ? { mediaKinds } : {}),
         tenant: ctx.tenant,
         limits: ctx.deps.limits,
         skills: ctx.deps.skills ?? [],

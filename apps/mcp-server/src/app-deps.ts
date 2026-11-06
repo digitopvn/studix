@@ -77,6 +77,11 @@ export interface AppDeps {
   readiness?: ReadinessCheck[];
   /** Workflow templates listed by `studix_inspect`. */
   skills?: SkillSummary[];
+  /**
+   * Media kinds the app process's own media provider can generate; without it `studix_inspect` reports the
+   * app as having no media provider. The worker runs the paid stages, so this is a hint, not a guarantee.
+   */
+  mediaKinds?: () => Promise<string[]>;
   /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
   agentHandoffs?: AgentHandoffService;
 

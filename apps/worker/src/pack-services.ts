@@ -91,3 +91,16 @@ export async function loadPackServices(
     }),
   };
 }
+
+/** Media kinds this worker can generate, for `/readyz`. Names only; never keys or paths. */
+export async function mediaReadiness(
+  media: WorkerPorts["media"],
+): Promise<{ configured: boolean; kinds: string[] }> {
+  if (!media) return { configured: false, kinds: [] };
+  // A disabled Multix provider (no MULTIX_BIN) reports no kinds, so empty means "cannot generate".
+  const kinds = await media
+    .capabilities()
+    .then((caps) => caps.map((c) => c.kind))
+    .catch(() => []);
+  return { configured: kinds.length > 0, kinds };
+}

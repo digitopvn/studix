@@ -54,4 +54,13 @@ describe("workflow packs on the MCP server", () => {
     registerPack(samplePack)();
     expect(skillSummaries().map((s) => s.id)).toEqual(BUILT_IN);
   });
+
+  it("reports whether the app process has a media provider", () => {
+    const base = { tenant: testTenant(), limits: {} as AppLimits, skills: [], toolNames: [], include: [] };
+    expect(inspectCapabilities(base).media.appProcess).toEqual({ configured: false });
+    expect(inspectCapabilities({ ...base, mediaKinds: ["voice"] }).media.appProcess).toEqual({
+      configured: true,
+      kinds: ["voice"],
+    });
+  });
 });
