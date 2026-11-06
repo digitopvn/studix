@@ -28,6 +28,7 @@ function tool<I extends z.ZodType>(def: NativeTool<I>): NativeTool<I> {
 
 const applyHint = {
   tool: STUDIX_TOOLS.createVideo,
+  arguments: {},
   reason:
     "Apply the skill's instructions yourself while writing the brief or spec, then create the video. Studix does not run skills.",
 };
