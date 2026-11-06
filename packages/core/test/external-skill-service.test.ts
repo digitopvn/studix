@@ -6,6 +6,7 @@ import type {
   FetchSkillsResult,
   PinnedSource,
 } from "../src/entities/index.ts";
+import type { StorageAdapter, StoredObject } from "../src/ports/storage-adapter.ts";
 import { createExternalSkillService } from "../src/studio/external-skill-service.ts";
 import { createInMemoryExternalSkillRepository, testTenant } from "../src/testing/index.ts";
 
@@ -44,17 +45,22 @@ function fetched(path: string, name: string, body: string): FetchedSkill {
   };
 }
 
-function memoryStorage() {
+function memoryStorage(): Pick<StorageAdapter, "put" | "get"> {
   const objects = new Map<string, Uint8Array>();
   return {
-    async put(_ctx: unknown, key: string, body: Uint8Array | string) {
-      objects.set(key, typeof body === "string" ? new TextEncoder().encode(body) : body);
-      return { key, bytes: objects.get(key)?.length ?? 0 };
+    async put(_ctx, key, body) {
+      const bytes = typeof body === "string" ? new TextEncoder().encode(body) : (body as Uint8Array);
+      objects.set(key, bytes);
+      return { key, bytes: bytes.length } as unknown as StoredObject;
     },
-    async get(_ctx: unknown, key: string) {
+    async get(_ctx, key) {
       const found = objects.get(key);
-      if (!found) return undefined;
-      return { body: found, contentType: "text/markdown" };
+      if (!found) throw new StudixError("NOT_FOUND", "no such object");
+      return {
+        body: new Blob([found as BlobPart]).stream(),
+        contentType: "text/markdown",
+        bytes: found.length,
+      };
     },
   };
 }
@@ -146,6 +152,6 @@ describe("ExternalSkillService", () => {
       },
     });
     const check = await gone.update(ctx, { skillId: first.skillId, action: "check" });
-    expect(check.upstream).toBe("missing");
+    expect("upstream" in check ? check.upstream : undefined).toBe("missing");
   });
 });

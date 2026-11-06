@@ -27,6 +27,10 @@ The client calls these tools (full contract in [MCP_API.md](MCP_API.md#external-
 Importing needs the `skill:write` permission (OAuth scope `studix:write`); listing and reading need `skill:read`
 (`studix:read`). A read-only connection can read skills but never import, update or disable them.
 
+API keys issued before this feature keep their scopes, except that a key holding exactly one role's earlier scope
+set is upgraded to that role's current set (viewers and reviewers gain `skill:read`; editors, admins and owners also
+gain `skill:write`). Custom keys are left as issued; create a new key to give one skill access.
+
 ## What gets imported
 
 - `SKILL.md` anywhere in the repository (root, `skills/`, `.agents/skills/`, `.claude/skills/`, `.cursor/skills/`,

@@ -142,7 +142,7 @@ describe.skipIf(!hasUv)("Python MCP SDK against the app process", () => {
     expect(result.stderr, `python stderr:\n${result.stderr}\nserver log:\n${serverLog}`).not.toContain(
       "failed",
     );
-    expect(result.code).toBe(0);
+    expect(result.code, `python stderr:\n${result.stderr}\nserver log:\n${serverLog}`).toBe(0);
     const summary = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}");
     expect(summary.workspaceId).toBe(workspaceId);
     expect(summary.tools).toContain("studix_create_video");
