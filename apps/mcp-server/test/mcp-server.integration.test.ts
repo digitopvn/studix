@@ -2,7 +2,7 @@ import { request } from "node:http";
 import type { Client } from "@modelcontextprotocol/client";
 import type { TenantContext } from "@studix/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { startTestApp, type TestApp } from "./app-test-harness.ts";
+import { FAKE_ATLAS_MODEL, startTestApp, type TestApp } from "./app-test-harness.ts";
 
 interface Envelope {
   status: "ok" | "error";
@@ -179,8 +179,12 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
   });
 
   it("attaches a found Atlas prediction to a stuck submitting record through studix_attach_media_job", async () => {
-    // Attaching needs `job:recover`, which only owner and admin keys hold.
-    const clientA = await app.connect(await app.createKey(tenantA, "admin"));
+    // Attaching needs `job:recover`, which only platform operators hold: a tenant's owner or admin does not.
+    const operatorOf = (tenant: typeof tenantA) => ({
+      ...tenant,
+      actor: { type: "user" as const, id: tenant.actor.id, role: "operator" as const },
+    });
+    const clientA = await app.connect(await app.createKey(operatorOf(tenantA), "operator"));
     const stuck = async (client: Awaited<ReturnType<typeof app.connect>>, tenant: typeof tenantA) => {
       const created = await call(client, "studix_create_video", { prompt: "Recover my upscale" });
       const jobId = created.envelope.data?.jobId as string;
@@ -188,7 +192,7 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
       const intent = {
         idempotencyKey: key,
         kind: "image",
-        model: "atlas/upscaler",
+        model: `atlas:${FAKE_ATLAS_MODEL}`,
         attempt: 1,
         state: "submitting",
         estimatedCostCents: 4,
@@ -210,16 +214,29 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     const args = await stuck(clientA, tenantA);
     const { jobId } = args;
 
-    // Editors can retry but not attach: the prediction id is trusted without checking it against Atlas.
+    // Editors can retry but not attach, and neither can the workspace's owner or admin: Atlas cannot say
+    // which workspace submitted a prediction, so a tenant could collect another tenant's output.
     const limited = await call(await app.connect(keyA), "studix_attach_media_job", args);
     expect(limited.envelope.error?.code).toBe("FORBIDDEN");
-    const clientB = await app.connect(await app.createKey(tenantB, "admin"));
+    for (const role of ["owner", "admin"] as const) {
+      const member = await call(
+        await app.connect(await app.createKey(tenantA, role)),
+        "studix_attach_media_job",
+        args,
+      );
+      expect(member.envelope.error?.code).toBe("FORBIDDEN");
+    }
+    await expect(app.createKey(tenantA, "operator")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const clientB = await app.connect(await app.createKey(operatorOf(tenantB), "operator"));
     const foreign = await call(clientB, "studix_attach_media_job", args);
     expect(foreign.envelope.error?.code).toBe("NOT_FOUND");
     const unknownKey = await call(clientA, "studix_attach_media_job", { ...args, idempotencyKey: "nope" });
     expect(unknownKey.envelope.error?.code).toBe("NOT_FOUND");
     const badId = await call(clientA, "studix_attach_media_job", { ...args, predictionId: "../etc" });
     expect(badId.envelope.error?.code).toBe("VALIDATION");
+    // A prediction Atlas does not know is refused before anything is written.
+    const unknown = await call(clientA, "studix_attach_media_job", { ...args, predictionId: "nope_42" });
+    expect(unknown.envelope.error?.code).toBe("VALIDATION");
 
     const attached = await call(clientA, "studix_attach_media_job", args);
     expect(attached.envelope.status).toBe("ok");

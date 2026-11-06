@@ -184,6 +184,22 @@ export interface MediaResumeRequest {
   signal?: AbortSignal;
 }
 
+/** What the upstream reports about one of its jobs, read with the platform's provider key. */
+export interface ProviderJobInfo {
+  /** Upstream model id as the upstream names it (no "<vendor>:" prefix). */
+  model?: string;
+  /** ISO time the upstream created the job. */
+  createdAt?: string;
+}
+
+/**
+ * Looks up an upstream job before an operator attaches it to a media call. Resolves undefined when the
+ * upstream does not know the job. It cannot tell which tenant submitted it: every call uses one key.
+ */
+export interface ProviderJobInspector {
+  inspectJob(job: ProviderJobRef): Promise<ProviderJobInfo | undefined>;
+}
+
 /** Image/video/audio generation backend (e.g. Multix). */
 export interface MediaProvider {
   readonly id: string;

@@ -134,6 +134,20 @@
       "when": 1793512218734,
       "tag": "0018_spend_funding",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793957136009,
+      "tag": "0019_provider_execution_external_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793958978952,
+      "tag": "0020_api_key_operator_job_recover",
+      "breakpoints": true
     }
   ]
 }

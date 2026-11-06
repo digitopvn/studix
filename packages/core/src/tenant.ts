@@ -1,6 +1,10 @@
 import { StudixError } from "@studix/shared";
 
-export const ROLES = ["owner", "admin", "editor", "reviewer", "viewer"] as const;
+/**
+ * `operator` is the platform's own staff, never a tenant role: no service assigns it (owners manage members
+ * but cannot grant a role above their own), so it is set directly in the database.
+ */
+export const ROLES = ["operator", "owner", "admin", "editor", "reviewer", "viewer"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const PERMISSIONS = [
@@ -9,7 +13,11 @@ export const PERMISSIONS = [
   "project:write",
   "job:cancel",
   "job:retry",
-  /** Operator recovery of a job's media calls, e.g. attaching an upstream job found by hand (admins only). */
+  /**
+   * Operator recovery of a job's media calls, e.g. attaching an upstream job found by hand. Platform
+   * operators only: the upstream job is fetched with the platform's provider key, so a tenant could
+   * otherwise collect another tenant's output.
+   */
   "job:recover",
   "asset:read",
   "asset:write",
@@ -32,10 +40,13 @@ const EDIT: Permission[] = [
   "approval:request",
 ];
 
+const TENANT_ADMIN: Permission[] = PERMISSIONS.filter((p) => p !== "job:recover");
+
 /** Role -> permission matrix. Reviewers may decide approvals but not edit; viewers only read. */
 export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> = {
-  owner: new Set(PERMISSIONS),
-  admin: new Set(PERMISSIONS),
+  operator: new Set(PERMISSIONS),
+  owner: new Set(TENANT_ADMIN),
+  admin: new Set(TENANT_ADMIN),
   editor: new Set(EDIT),
   reviewer: new Set([...READ, "approval:decide"]),
   viewer: new Set(READ),

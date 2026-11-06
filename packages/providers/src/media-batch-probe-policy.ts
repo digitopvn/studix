@@ -1,10 +1,13 @@
-import type {
-  MediaGenerationRequest,
-  MediaGenerationResult,
-  MediaProvider,
-  TenantContext,
+import {
+  MediaChargedError,
+  type MediaGenerationRequest,
+  type MediaGenerationResult,
+  type MediaProvider,
+  mediaExecutionRecord,
+  type ProviderExecutionRecorder,
+  type TenantContext,
 } from "@studix/core";
-import { type Clock, StudixError, systemClock } from "@studix/shared";
+import { type Clock, StudixError, systemClock, toStudixError } from "@studix/shared";
 import { centsFromPrice, type MediaPriceBook, mediaBillingQuantity } from "./media-price-book.ts";
 
 /** A model's first real cost may exceed its estimate by this share before the batch stops for review. */
@@ -21,6 +24,8 @@ export interface ProbeBeforeBatchOptions {
    */
   resolveModel?: (request: MediaGenerationRequest) => string;
   clock?: Clock;
+  /** Records every call (failed ones included) as a `provider_executions` row of this job and stage. */
+  executions?: { recorder: ProviderExecutionRecorder; jobId?: string; stageId?: string };
 }
 
 export type MediaBatchStopReason =
@@ -87,8 +92,48 @@ export async function runMediaBatchWithProbe(
     groups.set(model, [...(groups.get(model) ?? []), index]);
   });
 
+  const record = async (
+    request: MediaGenerationRequest,
+    startedAt: number,
+    outcome: { result?: MediaGenerationResult; error?: unknown },
+  ): Promise<void> => {
+    const sink = options.executions;
+    if (!sink) return;
+    const { result, error } = outcome;
+    const charge = error instanceof MediaChargedError ? error.charge : undefined;
+    const job = result?.job ?? charge?.job;
+    try {
+      await sink.recorder.recordProviderExecution(
+        ctx,
+        mediaExecutionRecord({
+          provider: result?.provider ?? charge?.provider ?? provider.id,
+          model: result?.model ?? charge?.model ?? resolveModel(request),
+          kind: request.kind,
+          ...(sink.jobId !== undefined ? { jobId: sink.jobId } : {}),
+          ...(sink.stageId !== undefined ? { stageId: sink.stageId } : {}),
+          latencyMs: result?.latencyMs ?? Date.now() - startedAt,
+          costCents: result?.costCents ?? charge?.costCents ?? 0,
+          attempt: 1,
+          ...(job ? { job } : {}),
+          ...(error !== undefined ? { error: toStudixError(error) } : {}),
+        }),
+      );
+    } catch {
+      // Telemetry only: a failed write never changes the batch outcome.
+    }
+  };
+
   const run = async (index: number): Promise<MediaGenerationResult> => {
-    const result = await provider.generate(ctx, requests[index]!);
+    const request = requests[index]!;
+    const startedAt = Date.now();
+    let result: MediaGenerationResult;
+    try {
+      result = await provider.generate(ctx, request);
+    } catch (error) {
+      await record(request, startedAt, { error });
+      throw error;
+    }
+    await record(request, startedAt, { result });
     results[index] = result;
     spent += result.costCents;
     return result;

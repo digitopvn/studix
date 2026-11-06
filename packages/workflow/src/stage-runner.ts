@@ -490,14 +490,15 @@ export async function runStages(
       for (const usage of lines) {
         await fenced(
           queue.recordUsage(job, workerId, {
-            // A usage line tied to a provider execution is that one call's cost, whatever attempt reports
-            // it (e.g. a retry served from the decision cache); anything else re-ran and cost again.
+            // A usage line tied to an upstream job or a provider execution is that one call's cost, whatever
+            // attempt reports it (e.g. a retry served from the decision cache); anything else re-ran and cost
+            // again. The upstream job wins: a resumed job gets a new execution row but was paid only once.
             dedupeKey:
-              (usage.providerExecutionId ?? usage.upstreamJob)
+              (usage.upstreamJob ?? usage.providerExecutionId)
                 ? executionUsageDedupeKey({
                     jobId: job.id,
                     stage: stage.name,
-                    executionId: (usage.providerExecutionId ?? usage.upstreamJob) as string,
+                    executionId: (usage.upstreamJob ?? usage.providerExecutionId) as string,
                   })
                 : usageDedupeKey({
                     jobId: job.id,
