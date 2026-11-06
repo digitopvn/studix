@@ -61,7 +61,10 @@ function storageError(action: string, err: unknown): StudixError {
     cause: err,
     retryable: status === undefined || status >= 500 || status === 429,
     details: { action, status },
-    suggestedAction: "Check S3_ENDPOINT, S3_BUCKET and credentials, then retry.",
+    suggestedAction:
+      status === 403
+        ? "Store denied the request: check S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY and the bucket policy for S3_BUCKET, then retry the job. The worker's /readyz reports storage:false while this persists."
+        : "Check S3_ENDPOINT, S3_BUCKET and credentials, then retry.",
   });
 }
 

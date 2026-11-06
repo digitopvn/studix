@@ -506,18 +506,19 @@ tose redeploy studix-app -y            # redeploy current config
 tose db list --json                    # database id, then: tose db info <id> --json
 ```
 
-| Symptom                     | Check                                                 | Action                                               |
-| --------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
-| `/readyz` failing           | Database URL, managed Postgres status, R2 credentials | Fix secret or dependency; pods recover on next probe |
-| Dev hostname 5xx, TOSE fine | Proxy Worker logs (Cloudflare observability)          | Check `STUDIX_UPSTREAM_ORIGIN`; roll the Worker back |
-| Deploy job fails            | Workflow log names the deployment and its status      | TOSE dashboard build log; fix, push again            |
-| `/mcp` rejects the host     | `STUDIX_ALLOWED_HOSTS`, `STUDIX_APP_URL`              | Include the TOSE default host; redeploy              |
-| Jobs stay queued            | `studix-worker` running? recent worker logs           | Restart worker; leases expire and jobs are reclaimed |
-| Jobs fail at render         | Worker logs for Chromium/FFmpeg errors, memory limits | Raise worker resources or reduce concurrency         |
-| Preview URL 403             | URL expired or signing config changed                 | Call `studix_get_job` again for a fresh URL          |
-| `/mcp` 401 for everyone     | Auth secret or key table migration                    | Check deploy diff; roll back if needed               |
-| Bad deploy                  | TOSE deployment history                               | Roll back both projects (above)                      |
-| Suspected key leak          | Dashboard API keys                                    | Revoke the key; issue a new one                      |
+| Symptom                     | Check                                                                                                                | Action                                                                                                       |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `/readyz` failing           | Database URL, managed Postgres status, R2 credentials                                                                | Fix secret or dependency; pods recover on next probe                                                         |
+| Dev hostname 5xx, TOSE fine | Proxy Worker logs (Cloudflare observability)                                                                         | Check `STUDIX_UPSTREAM_ORIGIN`; roll the Worker back                                                         |
+| Deploy job fails            | Workflow log names the deployment and its status                                                                     | TOSE dashboard build log; fix, push again                                                                    |
+| `/mcp` rejects the host     | `STUDIX_ALLOWED_HOSTS`, `STUDIX_APP_URL`                                                                             | Include the TOSE default host; redeploy                                                                      |
+| Jobs stay queued            | `studix-worker` running? recent worker logs                                                                          | Restart worker; leases expire and jobs are reclaimed                                                         |
+| Jobs fail at render         | Worker logs for Chromium/FFmpeg errors, memory limits                                                                | Raise worker resources or reduce concurrency                                                                 |
+| Upload fails with 403       | Worker `/readyz` shows `storage:false`; worker log "object storage write probe failed" has the step, status and hint | Fix R2 key/permissions or bucket policy, restart worker, then retry the job (render/QA checkpoints are kept) |
+| Preview URL 403             | URL expired or signing config changed                                                                                | Call `studix_get_job` again for a fresh URL                                                                  |
+| `/mcp` 401 for everyone     | Auth secret or key table migration                                                                                   | Check deploy diff; roll back if needed                                                                       |
+| Bad deploy                  | TOSE deployment history                                                                                              | Roll back both projects (above)                                                                              |
+| Suspected key leak          | Dashboard API keys                                                                                                   | Revoke the key; issue a new one                                                                              |
 
 Trace ids from MCP errors map to the dashboard trace view.
 

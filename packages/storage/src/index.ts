@@ -7,4 +7,5 @@ export {
   type SignedUrlPolicy,
 } from "./signed-url-options.ts";
 export { sha256File, sha256Hex } from "./storage-body.ts";
+export * from "./storage-write-probe.ts";
 export { resolveTenantKey, tenantPrefix } from "./tenant-storage-key.ts";

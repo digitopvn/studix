@@ -2,6 +2,7 @@ import { createDb, type StudixDb } from "@studix/database";
 import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } from "@studix/shared";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
+import { createStorageReadiness, type StorageReadiness } from "./storage-readiness.ts";
 import { createWorkerRuntime, type WorkerPorts, type WorkerRuntime } from "./wiring.ts";
 import { sweepStaleJobDirs } from "./work-dir-sweep.ts";
 import { loadWorkerSettings, type WorkerSettings } from "./worker-settings.ts";
@@ -57,6 +58,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   let stopping = false;
   const startup = new AbortController();
   let sweepTimer: NodeJS.Timeout | undefined;
+  let storageReadiness: StorageReadiness | undefined;
 
   const health: HealthServer = await startHealthServer({
     port: settings.healthPort,
@@ -67,7 +69,20 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       if (stopping || !pool?.running)
         return { ok: false, details: { reason: stopping ? "stopping" : "starting" } };
       const db = await databaseReady(handle).catch(() => false);
-      return { ok: db, details: { database: db, activeJobs: pool.activeJobs } };
+      const storage = storageReadiness ? await storageReadiness.check() : undefined;
+      return {
+        ok: db && (storage?.ok ?? true),
+        details: {
+          database: db,
+          ...(storage
+            ? {
+                storage: storage.ok,
+                ...(storage.ok ? {} : { storageStep: storage.step, storageStatus: storage.status }),
+              }
+            : {}),
+          activeJobs: pool.activeJobs,
+        },
+      };
     },
   });
   logger.info("health server listening", { port: health.port });
@@ -121,6 +136,9 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       signal: startup.signal,
     });
     if (stopping) throw new Error("worker stopped during startup");
+    storageReadiness = createStorageReadiness(ports.storage, logger);
+    // Surface a bad bucket or credential now, not after a job has rendered. Not fatal: storage may recover.
+    await storageReadiness.check();
     runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });
     runtime.start();
     const sweep = () =>
