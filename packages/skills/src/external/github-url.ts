@@ -78,6 +78,9 @@ export function parseGitHubUrl(input: string): GitHubTarget {
   return { owner, repo, treeSegments, blob: kind === "blob" };
 }
 
+/** Prefixes tried as a ref; bounds the GitHub calls one URL can cause. */
+const MAX_REF_SEGMENTS = 6;
+
 /**
  * Split `/tree/<ref>/<path>` segments into ref and path by asking `exists` whether a prefix is a ref,
  * shortest first (the common case is a one-segment branch or tag).
@@ -86,9 +89,16 @@ export async function resolveTreeSegments(
   segments: readonly string[],
   exists: (ref: string) => Promise<boolean>,
 ): Promise<{ ref: string; path: string } | undefined> {
-  for (let i = 1; i <= segments.length; i += 1) {
+  for (let i = 1; i <= Math.min(segments.length, MAX_REF_SEGMENTS); i += 1) {
     const ref = segments.slice(0, i).join("/");
     if (await exists(ref)) return { ref, path: segments.slice(i).join("/") };
   }
   return undefined;
+}
+
+/** A ref that cannot alter the API request path: no empty, `.` or `..` segments, backslashes or control characters. */
+export function isSafeRef(ref: string): boolean {
+  if (ref.length === 0 || ref.length > 200 || ref.includes("\\")) return false;
+  for (const ch of ref) if (ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f) return false;
+  return ref.split("/").every((s) => s !== "" && s !== "." && s !== "..");
 }

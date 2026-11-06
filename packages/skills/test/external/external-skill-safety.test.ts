@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createGitHubHttpSource } from "../../src/external/github-source.ts";
-import { parseGitHubUrl } from "../../src/external/github-url.ts";
+import { isSafeRef, parseGitHubUrl } from "../../src/external/github-url.ts";
 import { scanForRisk } from "../../src/external/risk-scan.ts";
 import { parseSkillMd } from "../../src/external/skill-frontmatter.ts";
 import { isSafeRepoPath, normalizeSkillDir } from "../../src/external/skill-path.ts";
@@ -175,5 +175,40 @@ describe("GitHub HTTP source", () => {
     expect(seen.length).toBeGreaterThan(0);
     for (const s of seen)
       expect(new URL(s.url).hostname).toMatch(/^(api\.github\.com|raw\.githubusercontent\.com)$/);
+  });
+});
+
+describe("hostile input", () => {
+  it("scans large adversarial text in bounded time", () => {
+    const started = performance.now();
+    scanForRisk(["curl a ".repeat(40_000), "dd if=x ".repeat(40_000)]);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it.each(["../../repos/o/r/commits/main", "a//b", "a/./b", "", "a\\b", "a\u0000b"])(
+    "rejects ref %j that could rewrite the API path",
+    (ref) => {
+      expect(isSafeRef(ref)).toBe(false);
+    },
+  );
+
+  it("accepts ordinary refs", () => {
+    for (const ref of ["main", "v1.2.3", "feature/x-y", "a".repeat(40)]) expect(isSafeRef(ref)).toBe(true);
+  });
+
+  it("refuses a dot-segment ref before any request is made", async () => {
+    let calls = 0;
+    const source = createGitHubHttpSource({
+      fetch: (async () => {
+        calls += 1;
+        return new Response("{}");
+      }) as typeof fetch,
+    });
+    await expect(source.refExists("acme", "skills", "../../../repos/x/y/commits/main")).rejects.toMatchObject(
+      {
+        code: "VALIDATION",
+      },
+    );
+    expect(calls).toBe(0);
   });
 });

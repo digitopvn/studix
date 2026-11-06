@@ -78,7 +78,7 @@ function fakeSource(repo: FakeRepo): GitHubSkillSource {
       if (owner.toLowerCase() !== "acme" || name.toLowerCase() !== "skills") {
         throw new StudixError("NOT_FOUND", "repository not found");
       }
-      if (ref && /^[0-9a-f]{40}$/.test(ref)) return { ...pinned(), commitSha: ref, ref };
+      if (ref && /^[0-9a-f]{40}$/.test(ref)) return { ...pinned(), commitSha: ref };
       return { ...pinned(), ...(ref ? { ref } : {}) };
     },
     async refExists(_o, _r, ref) {
@@ -243,5 +243,30 @@ describe("external skill service", () => {
     const item = (imported.results as Array<Record<string, unknown>>)[0];
     expect(item?.status).toBe("imported");
     expect(item?.riskFlags).toEqual(expect.arrayContaining(["instruction-override", "remote-script-pipe"]));
+  });
+
+  it("keeps tracking the branch after an import pinned to a discovered commit", async () => {
+    const { service, repo } = setup();
+    const ctx = ctxFor("ws_1");
+    const imported = await service.import(ctx, {
+      repositoryUrl: URL_,
+      ref: "main",
+      expectedCommit: COMMIT_A,
+    });
+    const skillId = (imported.results as Array<Record<string, unknown>>)[0]?.skillId as string;
+    repo.commit = COMMIT_B;
+    repo.files["skills/launch/SKILL.md"] = skillMd("launch", "Changed upstream.");
+    const checked = await service.update(ctx, { skillId, action: "check" });
+    expect(checked.upstreamStatus).toBe("changed");
+  });
+
+  it("imports only the requested directory when a path is given", async () => {
+    const { service } = setup({
+      "skills/launch/SKILL.md": skillMd("launch"),
+      "skills/other/SKILL.md": skillMd("other"),
+    });
+    const imported = await service.import(ctxFor("ws_1"), { repositoryUrl: URL_, path: "skills/other" });
+    const results = imported.results as Array<Record<string, unknown>>;
+    expect(results.map((r) => r.name)).toEqual(["other"]);
   });
 });

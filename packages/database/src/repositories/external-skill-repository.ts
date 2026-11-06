@@ -9,16 +9,7 @@ import { newId } from "@studix/shared";
 import { desc, eq, ilike, ne, or, sql } from "drizzle-orm";
 import type { DbExecutor } from "../client.ts";
 import { externalSkills, externalSkillVersions } from "../schema/external-skills.ts";
-import {
-  actorFrom,
-  beforeCursor,
-  isUniqueViolation,
-  opt,
-  pageLimit,
-  scoped,
-  tenantValues,
-  toPage,
-} from "./helpers.ts";
+import { actorFrom, beforeCursor, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
 
 function toSkill(row: typeof externalSkills.$inferSelect): ExternalSkill {
   return {
@@ -65,8 +56,6 @@ function toVersion(row: typeof externalSkillVersions.$inferSelect): ExternalSkil
 function likePattern(text: string): string {
   return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
-
-const MAX_VERSION_ATTEMPTS = 5;
 
 export function createExternalSkillRepository(db: DbExecutor, clock: Clock): ExternalSkillRepository {
   const findSkill = async (ctx: Parameters<ExternalSkillRepository["get"]>[0], id: string) => {
@@ -138,37 +127,31 @@ export function createExternalSkillRepository(db: DbExecutor, clock: Clock): Ext
         }
         if (!skill) throw new Error("external skill insert returned no row");
 
-        let versionRow: typeof externalSkillVersions.$inferSelect | undefined;
-        for (let attempt = 0; attempt < MAX_VERSION_ATTEMPTS && !versionRow; attempt += 1) {
-          const [{ next }] = (await tx
-            .select({ next: sql<number>`coalesce(max(${externalSkillVersions.version}), 0) + 1` })
-            .from(externalSkillVersions)
-            .where(eq(externalSkillVersions.skillId, skillId))) as [{ next: number }];
-          try {
-            versionRow = (
-              await tx
-                .insert(externalSkillVersions)
-                .values({
-                  id: versionId,
-                  ...tenantValues(ctx),
-                  skillId,
-                  version: Number(next),
-                  commitSha: input.commitSha,
-                  ref: input.ref ?? null,
-                  contentHash: input.contentHash,
-                  name: input.name,
-                  description: input.description,
-                  manifest: input.manifest,
-                  importedByType: input.importedBy.type,
-                  importedById: input.importedBy.id,
-                  createdAt: now,
-                })
-                .returning()
-            )[0];
-          } catch (err) {
-            if (!isUniqueViolation(err) || attempt === MAX_VERSION_ATTEMPTS - 1) throw err;
-          }
-        }
+        // The advisory lock above serializes writers of this source, so the next number cannot be taken.
+        const [{ next }] = (await tx
+          .select({ next: sql<number>`coalesce(max(${externalSkillVersions.version}), 0) + 1` })
+          .from(externalSkillVersions)
+          .where(eq(externalSkillVersions.skillId, skillId))) as [{ next: number }];
+        const versionRow = (
+          await tx
+            .insert(externalSkillVersions)
+            .values({
+              id: versionId,
+              ...tenantValues(ctx),
+              skillId,
+              version: Number(next),
+              commitSha: input.commitSha,
+              ref: input.ref ?? null,
+              contentHash: input.contentHash,
+              name: input.name,
+              description: input.description,
+              manifest: input.manifest,
+              importedByType: input.importedBy.type,
+              importedById: input.importedBy.id,
+              createdAt: now,
+            })
+            .returning()
+        )[0];
         if (!versionRow) throw new Error("external skill version insert returned no row");
 
         const activate = input.activate || created || skill.activeVersionId === null;

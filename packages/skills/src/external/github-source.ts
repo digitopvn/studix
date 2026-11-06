@@ -1,4 +1,5 @@
 import { StudixError } from "@studix/shared";
+import { isSafeRef } from "./github-url.ts";
 import { EXTERNAL_SKILL_LIMITS, type ExternalSkillLimits } from "./limits.ts";
 
 export interface GitHubTreeEntry {
@@ -241,6 +242,8 @@ export function createGitHubHttpSource(options: GitHubHttpSourceOptions = {}): G
     repo: string,
     ref: string,
   ): Promise<string | undefined> {
+    if (!isSafeRef(ref))
+      throw new StudixError("VALIDATION", "Invalid ref", { details: { ref: ref.slice(0, 100) } });
     const res = await api(
       scope,
       `/repos/${owner}/${repo}/commits/${encodePath(ref)}`,
@@ -285,7 +288,7 @@ export function createGitHubHttpSource(options: GitHubHttpSourceOptions = {}): G
         repo: canonicalRepo ?? repo,
         defaultBranch,
         ...(license ? { license } : {}),
-        ...(ref ? { ref } : {}),
+        ...(ref && !HEX40.test(ref) ? { ref } : {}),
         commitSha: sha,
       };
     },
