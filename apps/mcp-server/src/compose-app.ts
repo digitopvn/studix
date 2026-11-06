@@ -14,6 +14,7 @@ import {
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
+import { createMultixProviderFromConfig } from "@studix/providers";
 import {
   allowedHosts,
   createLogger,
@@ -126,6 +127,8 @@ export async function composeApp(
   const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
   const studio = new StudioService({
     ...repos,
+    // Operators attach Atlas predictions by hand; each is checked with Atlas first, so this needs multix.
+    providerJobs: config.MULTIX_BIN ? createMultixProviderFromConfig(config, { env }) : undefined,
     approvalPolicy,
     clock: systemClock,
     logger,

@@ -14,6 +14,7 @@ import {
 import {
   createAgentHandoffService,
   createDefaultApprovalPolicy,
+  type ProviderJobInspector,
   type Role,
   StudioService,
   type TenantContext,
@@ -48,6 +49,15 @@ export const fakeKeyTester: ProviderKeyTester = {
           error: { code: "UNAUTHENTICATED", message: "The provider rejected the API key", retryable: false },
         }
       : { ...base, ok: true, verdict: "available", httpStatus: 200 };
+  },
+};
+
+/** A stand-in for `atlas status`: every `pred_*` id is a just-created upscale; anything else is unknown. */
+export const FAKE_ATLAS_MODEL = "atlascloud/upscaler";
+export const fakeAtlas: ProviderJobInspector = {
+  async inspectJob(job) {
+    if (job.provider !== "atlas" || !job.id.startsWith("pred_")) return undefined;
+    return { model: FAKE_ATLAS_MODEL, createdAt: new Date().toISOString() };
   },
 };
 
@@ -103,6 +113,7 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
     allowedHosts: ["127.0.0.1", "localhost"],
     studio: new StudioService({
       ...repos,
+      providerJobs: fakeAtlas,
       approvalPolicy: createDefaultApprovalPolicy({ costThresholdCents: 1000 }),
       clock: systemClock,
     }),

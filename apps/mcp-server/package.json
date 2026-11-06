@@ -18,6 +18,7 @@
     "@studix/database": "workspace:*",
     "@studix/mcp-gateway": "workspace:*",
     "@studix/observability": "workspace:*",
+    "@studix/providers": "workspace:*",
     "@studix/shared": "workspace:*",
     "@studix/skills": "workspace:*",
     "@studix/storage": "workspace:*",

@@ -13,6 +13,7 @@ import {
   ensureActionApproved,
   openApproval,
 } from "./approval-operations.ts";
+import { verifyAttachableProviderJob } from "./attach-media-job-verification.ts";
 import { type CreateVideoProjectResult, createVideoProject } from "./create-video-project.ts";
 import {
   decideStoryboard,
@@ -139,8 +140,9 @@ export class StudioService {
    * Operator recovery of an Atlas call stuck at "submitting" (Atlas accepted or may have accepted the run,
    * but its prediction id never reached the journal): record the prediction found in `multix history` or
    * the Atlas Cloud console, so {@link retryJob} collects that paid job instead of being blocked. Needs
-   * `job:recover` (owners and admins: the prediction is fetched with the platform's provider key and
-   * billed to this job), and the job must be failed so no worker holds it.
+   * `job:recover` (platform operators only: the prediction is fetched with the platform's provider key and
+   * billed to this job), the prediction must match the record (see {@link verifyAttachableProviderJob}),
+   * and the job must be failed so no worker holds it.
    */
   async attachMediaJob(
     ctx: TenantContext,
@@ -150,6 +152,7 @@ export class StudioService {
     const input = parseInput(AttachMediaJobRequest, rawInput, "media job attachment");
     const job = await this.deps.jobs.get(ctx, input.jobId);
     if (!job) throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
+    await verifyAttachableProviderJob(this.deps, ctx, input);
     const mediaJob = await this.deps.queue.attachMediaJob(ctx, {
       jobId: job.id,
       stage: input.stage,
