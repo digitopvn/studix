@@ -304,8 +304,9 @@ resources prefixed `studix-`.
   step, HTTP status and S3 error code) when the store refuses it. The worker also reports the result under
   `storage` in `/readyz`; it does not gate readiness, so the deploy that fixes a credential is never blocked.
   The key must be allowed to write under `orgs/*`. A failed `upload` stage reports `status` and `s3Code` in
-  `error.details`; after fixing the credential, retry the job: the render checkpoint is reused and the
-  upload key is deterministic, so no duplicate object is created.
+  `error.details`; after fixing the credential, retry the job: the render checkpoint is reused while the
+  render file is still on that worker (otherwise the render stage runs again), and the upload key is
+  deterministic, so no duplicate object is created.
 - Secrets: set per project with `tose env push <file> --project <name>` from a
   file outside the repo (mode 600, deleted afterwards). App and worker of one
   environment share `BETTER_AUTH_SECRET`; environments never share it. Names

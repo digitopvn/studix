@@ -59,6 +59,16 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   const startup = new AbortController();
   let sweepTimer: NodeJS.Timeout | undefined;
   let storageCheck: (() => Promise<StorageProbeResult>) | undefined;
+  let lastStorageProbe: StorageProbeResult | undefined;
+  /** Refresh the cached probe in the background; readiness only ever reports the last known result. */
+  const refreshStorageProbe = (): void => {
+    storageCheck?.().then(
+      (result) => {
+        lastStorageProbe = result;
+      },
+      () => {},
+    );
+  };
 
   const health: HealthServer = await startHealthServer({
     port: settings.healthPort,
@@ -69,7 +79,8 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       if (stopping || !pool?.running)
         return { ok: false, details: { reason: stopping ? "stopping" : "starting" } };
       const db = await databaseReady(handle).catch(() => false);
-      const storage = storageCheck ? await storageCheck() : undefined;
+      refreshStorageProbe();
+      const storage = lastStorageProbe;
       // Reported, not gating: a rejected bucket credential is fixed by configuration, and an unready worker
       // would also block the deploy that carries the fix.
       return {
@@ -141,15 +152,22 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     if (stopping) throw new Error("worker stopped during startup");
     if (ports.storage instanceof S3StorageAdapter) {
       storageCheck = createStorageWriteCheck(ports.storage);
-      const probe = await storageCheck();
-      if (probe.ok) logger.info("object storage write probe passed");
-      else {
-        logger.error("object storage write probe failed; renders cannot be uploaded until it is fixed", {
-          step: probe.step,
-          status: probe.status,
-          s3Code: probe.s3Code,
-        });
-      }
+      // Not awaited: the result is only logged and reported, and must not delay startup or shutdown.
+      storageCheck().then(
+        (probe) => {
+          lastStorageProbe = probe;
+          if (stopping) return;
+          if (probe.ok) logger.info("object storage write probe passed");
+          else {
+            logger.error("object storage write probe failed; renders cannot be uploaded until it is fixed", {
+              step: probe.step,
+              status: probe.status,
+              s3Code: probe.s3Code,
+            });
+          }
+        },
+        () => {},
+      );
     }
     runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });
     runtime.start();

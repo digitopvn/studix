@@ -57,7 +57,7 @@ function isNotFound(err: unknown): boolean {
 const DENIED_HINT =
   "The store rejected the credentials or the bucket policy (HTTP 401/403). Check that S3_ACCESS_KEY_ID / " +
   "S3_SECRET_ACCESS_KEY belong to this bucket, were not rotated, and may write under orgs/*; also check " +
-  "S3_ENDPOINT, S3_REGION and S3_FORCE_PATH_STYLE. Run the storage write probe, then retry the job.";
+  "S3_ENDPOINT, S3_REGION and S3_FORCE_PATH_STYLE. Restart the worker to re-run the startup write probe (its result is in the logs and in the worker /readyz), then retry the job.";
 
 function storageError(action: string, err: unknown): StudixError {
   if (err instanceof StudixError) return err;
