@@ -12,6 +12,7 @@ import type { Job, JobStatus, StageStatus } from "../entities/job.ts";
 import type { Approval, ApprovalAction, ApprovalStatus, ApprovalSubjectType } from "../entities/review.ts";
 import type { ApprovalPolicy } from "../ports/approval-policy.ts";
 import type { JobQueue } from "../ports/job-queue.ts";
+import type { ProviderJobInspector } from "../ports/media-provider.ts";
 import type { AssetRepository } from "../repositories/asset-repository.ts";
 import type {
   ApprovalRepository,
@@ -64,6 +65,8 @@ export interface StudioServiceDeps {
   revisions: RevisionRepository;
   storyboards: StoryboardRepository;
   queue: JobQueue;
+  /** Checks an upstream job before `attachMediaJob` records it; without one, attaching is refused. */
+  providerJobs?: ProviderJobInspector;
   approvalPolicy: ApprovalPolicy;
   clock: Clock;
   logger?: Logger;

@@ -1302,3 +1302,47 @@ describe("MultixProvider synchronous audio", () => {
     ).resolves.toBe(30);
   });
 });
+
+describe("MultixProvider.inspectJob", () => {
+  const prediction = {
+    id: "pred_42",
+    model: "atlascloud/upscaler",
+    status: "processing",
+    created_at: "2026-01-01T00:00:06Z",
+  };
+
+  it("reads the model and creation time from one `atlas status` GET", async () => {
+    const cli = scriptedCli(() => ({ stdout: `${JSON.stringify(prediction, null, 2)}\n` }));
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+    await expect(multix.inspectJob({ provider: "atlas", id: "pred_42" })).resolves.toEqual({
+      model: "atlascloud/upscaler",
+      createdAt: "2026-01-01T00:00:06Z",
+    });
+    // No wait and no download: the check never collects or pays for anything.
+    expect(cli.calls.map((c) => c.argv)).toEqual([["atlas", "status", "pred_42"]]);
+  });
+
+  it("reports an unknown job for a failed run, another id, a Sume job, or no multix", async () => {
+    const failed = new MultixProvider({ bin: "multix", runner: scriptedCli(() => ({ exitCode: 1 })).runner });
+    await expect(failed.inspectJob({ provider: "atlas", id: "pred_42" })).resolves.toBeUndefined();
+    const crashed = new MultixProvider({
+      bin: "multix",
+      runner: async () => {
+        throw new Error("spawn failed");
+      },
+    });
+    await expect(crashed.inspectJob({ provider: "atlas", id: "pred_42" })).resolves.toBeUndefined();
+    const other = new MultixProvider({
+      bin: "multix",
+      runner: scriptedCli(() => ({ stdout: JSON.stringify({ ...prediction, id: "pred_9" }) })).runner,
+    });
+    await expect(other.inspectJob({ provider: "atlas", id: "pred_42" })).resolves.toBeUndefined();
+    const sume = scriptedCli(() => ({ stdout: JSON.stringify(prediction) }));
+    const multix = new MultixProvider({ bin: "multix", runner: sume.runner });
+    await expect(multix.inspectJob({ provider: "sume", id: "pred_42" })).resolves.toBeUndefined();
+    expect(sume.calls).toHaveLength(0);
+    await expect(
+      new MultixProvider().inspectJob({ provider: "atlas", id: "pred_42" }),
+    ).resolves.toBeUndefined();
+  });
+});

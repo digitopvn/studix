@@ -62,6 +62,22 @@ export interface AttachMediaJobInput {
   job: ProviderJobRef;
 }
 
+/** The newest record of a stage's media job across its attempts: the record a resumed stage reads. */
+export function latestMediaJobRecord(
+  rows: readonly Stage[],
+  key: Pick<AttachMediaJobInput, "jobId" | "stage" | "idempotencyKey">,
+): MediaJobRecord | undefined {
+  let current: MediaJobRecord | undefined;
+  const stageRows = rows.filter((row) => row.jobId === key.jobId && row.name === key.stage);
+  for (const row of [...stageRows].sort((a, b) => a.attempt - b.attempt)) {
+    for (const record of row.mediaJobs ?? []) {
+      if (record.idempotencyKey !== key.idempotencyKey) continue;
+      if (!current || record.updatedAt >= current.updatedAt) current = record;
+    }
+  }
+  return current;
+}
+
 /**
  * The stage rows and journals that `attachMediaJob` writes. The newest record of the key across the stage's
  * attempts (the record a resumed stage reads) must be "submitting"; it becomes "submitted" with `input.job`,
@@ -75,13 +91,7 @@ export function attachToSubmittingRecord(
   at: Date,
 ): { updates: Array<{ stageId: string; mediaJobs: MediaJobRecord[] }>; record: MediaJobRecord } {
   const stageRows = rows.filter((row) => row.jobId === input.jobId && row.name === input.stage);
-  let current: MediaJobRecord | undefined;
-  for (const row of [...stageRows].sort((a, b) => a.attempt - b.attempt)) {
-    for (const record of row.mediaJobs ?? []) {
-      if (record.idempotencyKey !== input.idempotencyKey) continue;
-      if (!current || record.updatedAt >= current.updatedAt) current = record;
-    }
-  }
+  const current = latestMediaJobRecord(stageRows, input);
   if (!current) {
     throw new StudixError("NOT_FOUND", `stage ${input.stage} has no media job ${input.idempotencyKey}`);
   }

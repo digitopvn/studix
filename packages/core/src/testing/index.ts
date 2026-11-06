@@ -1,6 +1,7 @@
 import { type Clock, createManualClock, newId } from "@studix/shared";
 import type { ApprovalPolicy } from "../ports/approval-policy.ts";
 import { createDefaultApprovalPolicy } from "../ports/approval-policy.ts";
+import type { ProviderJobInspector } from "../ports/media-provider.ts";
 import { StudioService } from "../studio/studio-service.ts";
 import type { StudioDefaults } from "../studio/studio-types.ts";
 import type { Actor, Permission, Role, TenantContext } from "../tenant.ts";
@@ -65,6 +66,7 @@ export interface InMemoryStudioOptions {
   approvalPolicy?: ApprovalPolicy;
   approvalCostThresholdCents?: number;
   defaults?: Partial<StudioDefaults>;
+  providerJobs?: ProviderJobInspector;
 }
 
 /** Complete in-memory wiring of every repository plus a StudioService over them. */
@@ -91,6 +93,12 @@ export function createInMemoryStudio(options: InMemoryStudioOptions = {}) {
   const approvalPolicy =
     options.approvalPolicy ??
     createDefaultApprovalPolicy({ costThresholdCents: options.approvalCostThresholdCents ?? 1000 });
-  const studio = new StudioService({ ...repos, approvalPolicy, clock, defaults: options.defaults });
+  const studio = new StudioService({
+    ...repos,
+    approvalPolicy,
+    clock,
+    defaults: options.defaults,
+    providerJobs: options.providerJobs,
+  });
   return { clock, repos, approvalPolicy, studio };
 }
