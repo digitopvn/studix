@@ -21,6 +21,7 @@ import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
 import type { JobWebhookService } from "./job-webhooks.ts";
 import type { PlatformSettingsService } from "./platform-settings.ts";
+import type { MediaAvailability } from "./media-availability.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -76,6 +77,8 @@ export interface AppDeps {
    * When set it decides whether the Claude planner is on; `claudePlanner` is the fallback.
    */
   features?: WorkspaceFeatureService;
+  /** Paid media availability (Multix) on this server; undefined means unknown and nothing is refused. */
+  media?: MediaAvailability;
   /** Meta-tool registration hook from the gateway; without it the meta-tools are not listed. */
   metaTools?: RegisterMetaTools;
   /** Activity/trace recorder for MCP and API mutations (best effort). */

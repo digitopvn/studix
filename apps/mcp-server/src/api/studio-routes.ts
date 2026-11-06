@@ -23,6 +23,7 @@ import {
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, playbackForRender, signRender } from "../artifact-urls.ts";
 import { withMediaExecUrls } from "../mcp/media-exec-tool.ts";
+import { assertMediaAvailable } from "../media-availability.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
@@ -134,6 +135,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       ...(body.callToAction ? { callToAction: body.callToAction } : {}),
     };
     pack.checkBrief?.(brief);
+    assertMediaAvailable(deps.media, pack.id, undefined);
     const result = await deps.studio.createVideoProject(ctx, {
       brief,
       title: body.title,

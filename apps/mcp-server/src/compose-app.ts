@@ -63,6 +63,7 @@ import { createApp } from "./create-app.ts";
 import { createJobWebhookService } from "./job-webhooks.ts";
 import { platformAuditContext } from "./platform-audit-context.ts";
 import { createPlatformSettingsService, fetchWorkerMedia } from "./platform-settings.ts";
+import { mediaAvailability } from "./media-availability.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -319,6 +320,7 @@ export async function composeApp(
       approvalCostThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
       signedUrlTtlSeconds: config.S3_SIGNED_URL_TTL_SECONDS,
     },
+    media: mediaAvailability(config),
     storage: overrides.storage ?? integrations.storage,
     connectors: overrides.connectors ?? integrations.connectors,
     metaTools: overrides.metaTools ?? integrations.metaTools,

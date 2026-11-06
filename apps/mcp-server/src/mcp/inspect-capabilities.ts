@@ -1,6 +1,7 @@
 import { STUDIX_TOOLS, type TenantContext } from "@studix/core";
 import { ASPECT_RATIOS, exportJsonSchemas, RENDER_PRESETS, VIDEO_IR_SCHEMA_VERSION } from "@studix/video-ir";
 import { type AppLimits, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
+import type { MediaAvailability } from "../media-availability.ts";
 import type { SkillSummary } from "../ports.ts";
 
 export const INSPECT_SECTIONS = ["schemas"] as const;
@@ -16,6 +17,7 @@ export function inspectCapabilities(input: {
   tenant: TenantContext;
   limits: AppLimits;
   skills: SkillSummary[];
+  media?: MediaAvailability | undefined;
   toolNames: string[];
   include: ReadonlyArray<(typeof INSPECT_SECTIONS)[number]>;
 }) {
@@ -52,6 +54,19 @@ export function inspectCapabilities(input: {
       "Media is returned as signed URLs, never inline.",
     ],
     skills: input.skills,
+    ...(input.media
+      ? {
+          media: {
+            enabled: input.media.enabled,
+            ...(input.media.enabled
+              ? {}
+              : {
+                  reason: input.media.reason ?? "The Multix provider is not configured",
+                  note: "Workflows that need paid media (voice-over, sound effects, music, generated images) are refused at creation. Silent motion-graphic briefs, with no voiceover lines, still work.",
+                }),
+          },
+        }
+      : {}),
   };
   if (!input.include.includes("schemas")) return capabilities;
   cachedSchemas ??= exportJsonSchemas();
