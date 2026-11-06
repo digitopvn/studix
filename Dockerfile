@@ -54,41 +54,8 @@ RUN corepack enable
 COPY --from=multix /opt/multix /opt/multix
 RUN chmod +x /opt/multix/dist/cli.js && ln -s /opt/multix/dist/cli.js /usr/local/bin/multix
 
-WORKDIR /app
-COPY . .
-
-# Full install (tsx runs the TypeScript sources directly), then build the dashboard SPA.
-# This also installs the pinned Claude Agent SDK and its native CLI: pnpm picks the lockfile's
-# optional @anthropic-ai/claude-agent-sdk-linux-<arch> package matching this glibc image, and it
-# has no install script, so `onlyBuiltDependencies` does not apply. Nothing is installed at runtime.
-RUN pnpm install --frozen-lockfile --prod=false \
- && pnpm --filter @studix/dashboard build
-
-# QA measurement tools: a venv at tools/qa/.venv (where packages/qa looks by default) on Debian's python3,
-# pinned by tools/qa/uv.lock. uv is used at build time only. The default image has no torch; build the
-# optional image with `--build-arg STUDIX_QA_EXTRAS=depth`, which also bakes the depth model in at a pinned
-# revision (tools never download anything at run time). `STUDIX_QA_EXTRAS=speech` adds Silero VAD, whose
-# model ships inside the wheel (the worker's STUDIX_SPEECH_GATE needs it); extras combine as "depth speech".
-# See docs/QA.md.
-ARG STUDIX_QA_EXTRAS=""
-ARG DEPTH_MODEL_REVISION=5426e4f0f36572d16453bbda7a8389317b1bef99
-COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
-RUN set -eu; extras=""; for e in $STUDIX_QA_EXTRAS; do extras="$extras --extra $e"; done; \
-    UV_PYTHON_DOWNLOADS=never UV_PYTHON=/usr/bin/python3 UV_NO_CACHE=1 UV_LINK_MODE=copy \
-      uv sync --project tools/qa --locked --no-dev --no-editable $extras; \
-    case " $STUDIX_QA_EXTRAS " in *" depth "*) \
-      tools/qa/.venv/bin/python -m studix_qa.depth_maps fetch /opt/studix-qa/models/depth-anything-v2-small \
-        --revision "$DEPTH_MODEL_REVISION";; \
-    esac; \
-    rm /usr/local/bin/uv; \
-    tools/qa/.venv/bin/python -I -m studix_qa --list; \
-    chown -R node:node /app
-
-# Job scratch directories (WORKER_WORK_DIR). Created here and owned by node so a named volume or a PVC
-# mounted over it starts writable by the unprivileged user. See docs/DEPLOYMENT.md.
-ENV WORKER_WORK_DIR=/var/lib/studix/work
-RUN mkdir -p /var/lib/studix/work && chown -R node:node /var/lib/studix
-
+# Layers that change rarely come first so a builder with a layer cache reuses them across commits:
+# the browser, the QA venv (keyed on tools/qa) and the pnpm store (keyed on the lockfile).
 # Pin the browser path so the renderer never depends on the runtime user's cache layout.
 # Chrome for Testing ships chrome-headless-shell for linux64 and, from build 153, linux-arm64, so amd64
 # and arm64 (local Apple Silicon) images install the same pinned build. @puppeteer/browsers resolves
@@ -105,6 +72,48 @@ RUN set -eu; mkdir -p /opt/studix-browser; cd /; \
     ln -s "$(find /opt/studix-browser/cache -type f -name chrome-headless-shell | head -n1)" /opt/studix-browser/chrome; \
     /opt/studix-browser/chrome --version; \
     rm -rf /root/.npm
+
+WORKDIR /app
+# Job scratch directories (WORKER_WORK_DIR). Created here and owned by node so a named volume or a PVC
+# mounted over it starts writable by the unprivileged user. See docs/DEPLOYMENT.md.
+ENV WORKER_WORK_DIR=/var/lib/studix/work
+RUN mkdir -p /var/lib/studix/work && chown -R node:node /var/lib/studix
+
+# QA measurement tools: a venv at tools/qa/.venv (where packages/qa looks by default) on Debian's python3,
+# pinned by tools/qa/uv.lock. uv is used at build time only. The default image has no torch; build the
+# optional image with `--build-arg STUDIX_QA_EXTRAS=depth`, which also bakes the depth model in at a pinned
+# revision (tools never download anything at run time). `STUDIX_QA_EXTRAS=speech` adds Silero VAD, whose
+# model ships inside the wheel (the worker's STUDIX_SPEECH_GATE needs it); extras combine as "depth speech".
+# See docs/QA.md.
+ARG STUDIX_QA_EXTRAS=""
+ARG DEPTH_MODEL_REVISION=5426e4f0f36572d16453bbda7a8389317b1bef99
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
+COPY tools/qa /app/tools/qa
+RUN set -eu; extras=""; for e in $STUDIX_QA_EXTRAS; do extras="$extras --extra $e"; done; \
+    UV_PYTHON_DOWNLOADS=never UV_PYTHON=/usr/bin/python3 UV_NO_CACHE=1 UV_LINK_MODE=copy \
+      uv sync --project tools/qa --locked --no-dev --no-editable $extras; \
+    case " $STUDIX_QA_EXTRAS " in *" depth "*) \
+      tools/qa/.venv/bin/python -m studix_qa.depth_maps fetch /opt/studix-qa/models/depth-anything-v2-small \
+        --revision "$DEPTH_MODEL_REVISION";; \
+    esac; \
+    rm /usr/local/bin/uv; \
+    tools/qa/.venv/bin/python -I -m studix_qa --list
+
+# Downloads every locked package into the store from the lockfile alone, so a source-only change
+# skips the download.
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY patches ./patches
+RUN pnpm fetch --prod=false
+
+COPY . .
+
+# Full install from the store fetched above (tsx runs the TypeScript sources directly), then build the dashboard SPA.
+# This also installs the pinned Claude Agent SDK and its native CLI: pnpm picks the lockfile's
+# optional @anthropic-ai/claude-agent-sdk-linux-<arch> package matching this glibc image, and it
+# has no install script, so `onlyBuiltDependencies` does not apply. Nothing is installed at runtime.
+RUN pnpm install --offline --frozen-lockfile --prod=false \
+ && pnpm --filter @studix/dashboard build \
+ && chown -R node:node /app
 
 USER node
 

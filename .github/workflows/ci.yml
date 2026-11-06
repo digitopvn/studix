@@ -1,6 +1,6 @@
 # Lint, typecheck, unit + integration tests and build. Never calls paid provider APIs:
 # the live test project only runs when STUDIX_LIVE=1, which CI never sets.
-# Pushes to main run it through deploy.yml, which deploys only after it passes.
+# Pull requests into main gate production: deploy.yml trusts that result and does not re-run CI on push.
 # During the bootstrap stage pull requests into dev and pushes to dev skip CI; contributors run
 # `pnpm check` locally before merging. Remove the dev exclusions to gate dev again.
 # Jobs run in parallel; the integration suite is split into shards, each with its own Postgres and MinIO.
