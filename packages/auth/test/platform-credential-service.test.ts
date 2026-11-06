@@ -160,17 +160,17 @@ describe("platform credential service", () => {
 });
 
 describe("live credential environment", () => {
-  const base = { PATH: "/usr/bin", SUME_API_KEY: "env-sume-key-00000", FISH_API_KEY: "env-fish-key-00000" };
+  const base = { PATH: "/usr/bin", SUME_API_KEY: "env-sume-value", FISH_API_KEY: "env-fish-value" };
   const names = Object.values(NAMES);
 
   it("prefers the stored key, applies a rotation on refresh and hides a revoked name", async () => {
     const { credentials, secrets, service } = setup();
     const live = createLiveCredentialEnv({ credentials, secrets, base, names });
     await live.refresh();
-    expect(live.env.SUME_API_KEY).toBe("env-sume-key-00000");
+    expect(live.env.SUME_API_KEY).toBe("env-sume-value");
 
     await service.save(ctx, "sume", { apiKey: KEY });
-    expect(live.env.SUME_API_KEY).toBe("env-sume-key-00000"); // not applied until the next reload
+    expect(live.env.SUME_API_KEY).toBe("env-sume-value"); // not applied until the next reload
     await live.refresh();
     expect(live.env.SUME_API_KEY).toBe(KEY);
     expect(live.env.PATH).toBe("/usr/bin");
@@ -179,7 +179,7 @@ describe("live credential environment", () => {
     await live.refresh();
     expect(live.env.SUME_API_KEY).toBeUndefined();
     expect("SUME_API_KEY" in live.env).toBe(false);
-    expect(live.env.FISH_API_KEY).toBe("env-fish-key-00000");
+    expect(live.env.FISH_API_KEY).toBe("env-fish-value");
   });
 
   it("ignores rows outside the allowlist and treats an unreadable row as missing, not as the env value", async () => {
