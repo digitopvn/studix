@@ -58,6 +58,8 @@ export interface SessionUser {
   id: string;
   email: string;
   name: string;
+  /** True only when the sign-in provider verified the email; password sign-up does not. */
+  emailVerified: boolean;
 }
 
 export interface DashboardSession {
@@ -231,7 +233,7 @@ export function createDashboardAuth(options: DashboardAuthOptions): DashboardAut
         });
       }
       return {
-        user: { id: user.id, email: user.email, name: user.name },
+        user: { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified === true },
         sessionId: session.id,
         expiresAt: session.expiresAt,
         role: selected.member.role,

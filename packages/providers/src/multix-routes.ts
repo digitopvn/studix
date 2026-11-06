@@ -39,6 +39,13 @@ export const MULTIX_ROLE_VENDORS: Readonly<Record<MultixRole, readonly MultixVen
   sfx: ["elevenlabs"],
 };
 
+/** Media roles a vendor can serve (for display: which kinds go dark when its key is missing). */
+export function multixVendorRoles(vendor: MultixVendor): MultixRole[] {
+  return (Object.keys(MULTIX_ROLE_VENDORS) as MultixRole[]).filter((role) =>
+    MULTIX_ROLE_VENDORS[role].includes(vendor),
+  );
+}
+
 /**
  * Built-in defaults, each overridable through config (MULTIX_<ROLE>_MODEL). They live here, in the
  * adapter, so workflow code never names a model.

@@ -70,6 +70,11 @@ export const ConfigSchema = z
     STUDIX_SECRETS_KEY: optionalString,
     /** Earlier STUDIX_SECRETS_KEY values that may still open stored credentials during a rotation. */
     STUDIX_SECRETS_KEYS_PREVIOUS: csv.default([]),
+    /**
+     * Sign-in emails of the platform operators (comma separated, case-insensitive). Only they can manage
+     * platform storage and media credentials in the dashboard; a workspace owner is not an operator.
+     */
+    STUDIX_OPERATOR_EMAILS: csv.default([]),
     ANTHROPIC_BASE_URL: origin.default("https://api.anthropic.com"),
     /** Optional token for importing GitHub skills (raises the API rate limit); sent to api.github.com only. */
     STUDIX_GITHUB_TOKEN: optionalString,

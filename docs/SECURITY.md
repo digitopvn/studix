@@ -343,3 +343,14 @@ Each item maps to a negative test in the owning package.
 | Imported skill text steering the agent or running code | Data-only storage, untrusted marker, notes, no execution, explicit activation |
 | Expired artifact URL still valid                       | Presign expiry tests                                                          |
 | Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                                   |
+
+## Platform operator credentials
+
+- `/api/platform/*` requires an operator: an email in `STUDIX_OPERATOR_EMAILS`
+  that a sign-in provider has verified (`/api/me` returns `operator`).
+- Media vendor keys are sealed with AES-256-GCM under `STUDIX_SECRETS_KEY`
+  (associated data `platform-credential:<ENV_NAME>`), accepted only as
+  printable ASCII without spaces (8 to 512 characters) so a value cannot inject
+  another variable, and never returned. Responses are `no-store`, audit events
+  (`platform_credential.saved`, `platform_credential.revoked`) hold no value.
+- Revoking removes the ciphertext in Studix; revoke the key at the vendor too.

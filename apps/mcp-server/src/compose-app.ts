@@ -5,7 +5,9 @@ import {
   createAnthropicKeyTester,
   createApiKeyService,
   createDashboardAuth,
+  createLiveCredentialEnv,
   createModelPreferenceService,
+  createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
   createWorkspaceFeatureService,
@@ -16,7 +18,7 @@ import {
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
-import { createMultixProviderFromConfig } from "@studix/providers";
+import { createMultixProviderFromConfig, MULTIX_VENDOR_KEYS } from "@studix/providers";
 import {
   allowedHosts,
   createLogger,
@@ -35,6 +37,7 @@ import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
+import { createPlatformAdmin, storageSettingsFromConfig, VENDOR_CREDENTIAL_NAMES } from "./platform-admin.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -140,10 +143,29 @@ export async function composeApp(
   });
   const activity = createActivityRecorder(repos.activity, { logger });
   const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
+  const secretBox = config.STUDIX_SECRETS_KEY
+    ? createSecretBox(
+        parseSecretKey(config.STUDIX_SECRETS_KEY),
+        config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+      )
+    : undefined;
+  // Media vendor keys: sealed rows the operator manages in the dashboard, over the process environment.
+  const credentialEnv = createLiveCredentialEnv({
+    credentials: repos.platformCredentials,
+    secrets: secretBox,
+    base: env,
+    names: Object.values(MULTIX_VENDOR_KEYS),
+    logger,
+  });
+  await credentialEnv.refresh().catch(() => undefined);
+  const stopCredentialRefresh = credentialEnv.start();
+  const multix = config.MULTIX_BIN
+    ? createMultixProviderFromConfig(config, { env: credentialEnv.env })
+    : undefined;
   const studio = new StudioService({
     ...repos,
     // Operators attach Atlas predictions by hand; each is checked with Atlas first, so this needs multix.
-    providerJobs: config.MULTIX_BIN ? createMultixProviderFromConfig(config, { env }) : undefined,
+    providerJobs: multix,
     approvalPolicy,
     clock: systemClock,
     logger,
@@ -188,12 +210,7 @@ export async function composeApp(
       createPiKeyTester(),
     ),
     isSupportedProvider: isRuntimeKeyProvider,
-    secrets: config.STUDIX_SECRETS_KEY
-      ? createSecretBox(
-          parseSecretKey(config.STUDIX_SECRETS_KEY),
-          config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
-        )
-      : undefined,
+    secrets: secretBox,
     claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
     logger,
   });
@@ -226,6 +243,21 @@ export async function composeApp(
     metaTools: overrides.metaTools ?? integrations.metaTools,
     providers,
     modelPreferences,
+    platform: createPlatformAdmin({
+      operatorEmails: config.STUDIX_OPERATOR_EMAILS,
+      credentials: createPlatformCredentialService({
+        credentials: repos.platformCredentials,
+        audit: repos.audit,
+        secrets: secretBox,
+        names: VENDOR_CREDENTIAL_NAMES,
+        env,
+      }),
+      refreshCredentials: () => credentialEnv.refresh(),
+      storage: integrations.storage,
+      storageSettings: storageSettingsFromConfig(config),
+      multix,
+      multixBin: config.MULTIX_BIN,
+    }),
     claudePlanner: config.STUDIX_CLAUDE_PLANNER,
     features,
     activity,
@@ -265,6 +297,7 @@ export async function composeApp(
 
   const close = async () => {
     closed = true;
+    stopCredentialRefresh();
     integrations.storage?.destroy();
     await handle.close();
   };

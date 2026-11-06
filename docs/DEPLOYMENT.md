@@ -539,3 +539,25 @@ Hostnames are configuration, so the cutover changes no business code:
    allow-list, CORS, links and (later) OAuth redirect URIs derive from them.
 3. Redeploy, run the smoke test against the new hostnames.
 4. Keep the old hostnames redirecting until clients have moved their MCP URL.
+
+
+### Storage & Media (platform operators)
+
+Dashboard → Storage & Media is for platform operators only: the emails in
+`STUDIX_OPERATOR_EMAILS` (comma-separated), and only when the address is
+verified by a sign-in provider (Google or GitHub). Password sign-up does not
+verify the address, so it never grants access. Everyone else gets 403.
+
+- **Object storage (R2)** stays in the environment (`S3_*`); the page shows it
+  redacted (host, bucket, masked access key id) and **Test connection** runs a
+  put, head and delete of a small probe object, classifying failures as
+  missing or bad credential, missing permission or remote unavailable.
+- **Media provider keys** (SUME, Atlas Cloud, ElevenLabs, Fish, MiniMax,
+  OpenRouter) can be added, rotated and revoked there. They are sealed with
+  `STUDIX_SECRETS_KEY` in the `platform_credentials` table, win over the
+  environment, and a revoked key stays off even if the environment has a
+  value. Nothing can show a stored key again; audit events carry no value.
+- **Run multix check** is free: it reports whether the CLI finds each key and
+  never spends money. The first paid job proves a vendor accepts the key.
+- The app and the worker reload keys every 15 seconds, so a change needs no
+  redeploy. A job that is already running keeps the keys it started with.

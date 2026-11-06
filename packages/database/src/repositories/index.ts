@@ -14,6 +14,7 @@ import {
   createModelPreferenceRepository,
   createModelSnapshotRepository,
 } from "./model-preference-repository.ts";
+import { createPlatformCredentialRepository } from "./platform-credential-repository.ts";
 import { createProjectRepository } from "./project-repository.ts";
 import { createProviderConnectionRepository } from "./provider-connection-repository.ts";
 import { createRateLimitRepository } from "./rate-limit-repository.ts";
@@ -35,6 +36,7 @@ export * from "./external-skill-repository.ts";
 export * from "./governance-repositories.ts";
 export * from "./job-repository.ts";
 export * from "./model-preference-repository.ts";
+export * from "./platform-credential-repository.ts";
 export * from "./project-repository.ts";
 export * from "./provider-connection-repository.ts";
 export * from "./rate-limit-repository.ts";
@@ -75,6 +77,7 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     modelSnapshots: createModelSnapshotRepository(db, clock),
     rateLimits: createRateLimitRepository(db),
     workspaceSettings: createWorkspaceSettingsRepository(db),
+    platformCredentials: createPlatformCredentialRepository(db),
   };
 }
 

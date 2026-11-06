@@ -17,6 +17,7 @@ import type { ActivityRecorder } from "@studix/observability";
 import type { Logger } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
+import type { PlatformAdmin } from "./platform-admin.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -63,6 +64,8 @@ export interface AppDeps {
   providers?: ProviderConnectionService;
   /** Per-stage model choices for the Pi runtime; without it the model API answers UNAVAILABLE. */
   modelPreferences?: ModelPreferenceService;
+  /** Operator-only storage and media credential management; without it the platform API answers UNAVAILABLE. */
+  platform?: PlatformAdmin;
   /** STUDIX_CLAUDE_PLANNER: jobs may select the Claude planner. */
   claudePlanner?: boolean;
   /**

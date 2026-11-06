@@ -536,3 +536,16 @@ The client should call `studix_inspect`, then `studix_create_video`, then poll
 | `APPROVAL_REQUIRED`             | Publish or high-cost step                           | Approve in the dashboard, then retry                                                   |
 | Job stuck in one stage          | Worker down or lease recovery pending               | Check `traceId` in the dashboard; operators see [DEPLOYMENT.md](DEPLOYMENT.md#runbook) |
 | Search finds no connector tool  | Connector disabled, not refreshed, or tool denied   | Test/refresh the connector in the dashboard                                            |
+
+## Platform storage and media (dashboard API, operators only)
+
+Not exposed to agents or API keys; a Better Auth session of an operator is required (403 otherwise).
+
+| Route                                           | Purpose                                                |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| `GET /api/platform/media`                       | Redacted R2 settings, Multix status, vendor key status |
+| `POST /api/platform/media/storage/test`         | Probe put/head/delete on the bucket                    |
+| `POST /api/platform/media/multix/check`         | Free check of which vendor keys the CLI finds          |
+| `POST /api/platform/media/vendors/:vendor/test` | Same check for one vendor                              |
+| `PUT /api/platform/media/vendors/:vendor`       | Save or rotate a key, body `{ apiKey }`                |
+| `DELETE /api/platform/media/vendors/:vendor`    | Revoke a key                                           |

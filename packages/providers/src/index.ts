@@ -59,4 +59,5 @@ export {
   type MultixModelDefaults,
   type MultixRole,
   type MultixVendor,
+  multixVendorRoles,
 } from "./multix-routes.ts";

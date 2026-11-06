@@ -279,6 +279,11 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     return typeof named === "string" ? named : resolved.voice;
   }
 
+  /** Forget the cached `multix check`, so the next readiness read runs it again (after a key change). */
+  invalidateCapabilities(): void {
+    this.probe = undefined;
+  }
+
   /** Kinds whose vendor key `multix check --json` reports, with models from the live catalogs. */
   async capabilities(): Promise<MediaCapability[]> {
     if (!this.enabled) return [];

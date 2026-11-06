@@ -11,6 +11,8 @@ const GLOBAL_TABLES = new Set([
   "auth_accounts",
   "auth_verifications",
   "rate_limit_buckets",
+  // Operator-managed platform credentials (media vendor keys) are not owned by any tenant.
+  "platform_credentials",
   // OAuth authorization server state belongs to identities and clients; a grant's workspace is `reference_id`.
   "auth_jwks",
   "oauth_clients",

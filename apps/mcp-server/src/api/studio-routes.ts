@@ -72,6 +72,8 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     res.json({
       user: session.user,
       role: session.role,
+      // Whether this user may open the platform storage and media settings.
+      operator: deps.platform?.isOperator(session.user) === true,
       organization: current?.organization,
       workspace: current?.workspace,
       workspaces: session.memberships.map((m) => ({

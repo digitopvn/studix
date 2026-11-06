@@ -1,5 +1,7 @@
 import { join } from "node:path";
-import { createMultixProviderFromConfig } from "@studix/providers";
+import { createLiveCredentialEnv, createSecretBox, parseSecretKey } from "@studix/auth";
+import { createRepositories } from "@studix/database";
+import { createMultixProviderFromConfig, MULTIX_VENDOR_KEYS } from "@studix/providers";
 import {
   assertSpeechProbeReady,
   createHardQaGate,
@@ -28,7 +30,24 @@ export async function loadPackServices(
   runtime: WorkerPortsRuntime,
 ): Promise<Pick<WorkerPorts, "media" | "qa" | "speech">> {
   const { config } = settings;
-  const media = createMultixProviderFromConfig(config, { env: runtime.env });
+  // Vendor keys the operator saved in the dashboard (sealed rows) over the process environment. They are
+  // reloaded on a timer, so a rotation reaches new jobs without a redeploy; a running job keeps its env.
+  const credentialEnv = createLiveCredentialEnv({
+    credentials: createRepositories(runtime.db).platformCredentials,
+    secrets: config.STUDIX_SECRETS_KEY
+      ? createSecretBox(
+          parseSecretKey(config.STUDIX_SECRETS_KEY),
+          config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+        )
+      : undefined,
+    base: runtime.env,
+    names: Object.values(MULTIX_VENDOR_KEYS),
+    logger: runtime.logger,
+  });
+  await credentialEnv.refresh().catch(() => undefined);
+  const stopCredentialRefresh = credentialEnv.start();
+  runtime.signal.addEventListener("abort", stopCredentialRefresh, { once: true });
+  const media = createMultixProviderFromConfig(config, { env: credentialEnv.env });
   const toolchain = resolveQaToolchain(runtime.env);
   const qaStatus = qaToolchainStatus(toolchain, runtime.env);
   if (!qaStatus.ok) {

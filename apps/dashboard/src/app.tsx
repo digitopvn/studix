@@ -13,11 +13,12 @@ import { ProjectDetailPage } from "./pages/project-detail-page.tsx";
 import { ProjectReviewPage } from "./pages/project-review-page.tsx";
 import { ProjectsPage } from "./pages/projects-page.tsx";
 import { ProvidersPage } from "./pages/providers-page.tsx";
+import { StorageMediaPage } from "./pages/storage-media-page.tsx";
 import { takeSsoError } from "./sso-error.ts";
 import { ErrorBanner, Link } from "./ui.tsx";
 import { navigate, useHashRoute } from "./use-hash-route.ts";
 
-const NAV = [
+const NAV_ITEMS = [
   { to: "/projects", label: "Projects" },
   { to: "/jobs", label: "Jobs" },
   { to: "/create", label: "New video" },
@@ -25,6 +26,8 @@ const NAV = [
   { to: "/connectors", label: "Connectors" },
   { to: "/connected-apps", label: "Connected apps" },
   { to: "/providers", label: "AI & Providers" },
+  // Platform operators only; the API refuses everyone else.
+  { to: "/storage-media", label: "Storage & Media", operatorOnly: true },
   { to: "/account", label: "Account" },
 ] as const;
 
@@ -49,6 +52,8 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
       return <ConnectedAppsPage />;
     case "providers":
       return <ProvidersPage />;
+    case "storage-media":
+      return me.operator ? <StorageMediaPage /> : <p className="muted">Page not found.</p>;
     case "account":
       return <AccountPage email={me.user.email} />;
     default:
@@ -130,7 +135,7 @@ export function App() {
       <header className="topbar">
         <strong className="brand">Studix</strong>
         <nav>
-          {NAV.map((item) => (
+          {NAV_ITEMS.filter((item) => !("operatorOnly" in item) || me.operator).map((item) => (
             <Link key={item.to} to={item.to} className={current === item.to.slice(1) ? "active" : undefined}>
               {item.label}
             </Link>

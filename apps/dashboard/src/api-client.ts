@@ -76,10 +76,75 @@ export interface WorkspaceSummary {
 export interface Me {
   user: { id: string; email: string; name: string };
   role: string;
+  /** True for platform operators (STUDIX_OPERATOR_EMAILS): they may open Storage & Media. */
+  operator: boolean;
   workspace?: { id: string; name: string };
   organization?: { id: string; name: string };
   workspaces: WorkspaceSummary[];
   mcpUrl: string;
+}
+
+export type DiagnosticClass =
+  | "ok"
+  | "missing_credential"
+  | "bad_credential"
+  | "missing_executable"
+  | "missing_permission"
+  | "remote_unavailable";
+
+export interface PlatformVendor {
+  id: string;
+  vendor: string;
+  envName: string;
+  kinds: string[];
+  status: "configured" | "missing" | "revoked" | "invalid";
+  source: "platform" | "env" | "none";
+  keyHint?: string;
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: { type: string; id: string };
+  lastTest?: { ok: boolean; at: string; outcome: string; message?: string };
+}
+
+export interface StorageTestResult {
+  ok: boolean;
+  at: string;
+  diagnostic: DiagnosticClass;
+  step?: string;
+  status?: number;
+  s3Code?: string;
+  message: string;
+}
+
+export interface MultixCheckResult {
+  ok: boolean;
+  at: string;
+  diagnostic: DiagnosticClass;
+  message: string;
+  keyFound: Record<string, boolean>;
+}
+
+export interface PlatformMedia {
+  storage: {
+    source: "env";
+    configured: boolean;
+    endpointHost?: string;
+    bucket?: string;
+    region: string;
+    forcePathStyle: boolean;
+    accessKeyId?: string;
+    secretAccessKey: "configured" | "missing";
+    lastTest?: StorageTestResult;
+  };
+  multix: {
+    enabled: boolean;
+    bin?: string;
+    reason?: string;
+    models: Record<string, string>;
+    lastCheck?: MultixCheckResult;
+  };
+  vendors: PlatformVendor[];
+  apply: { mediaKeys: string; storage: string };
 }
 
 export interface Page<T> {
@@ -583,6 +648,15 @@ export const api = {
     request<ProviderConnection>("POST", `/api/providers/anthropic/api-keys/${enc(id)}/test`, {}),
   removeAnthropicKey: (id: string) =>
     request<ProviderConnection>("DELETE", `/api/providers/anthropic/api-keys/${enc(id)}`),
+  platformMedia: () => request<PlatformMedia>("GET", "/api/platform/media"),
+  testPlatformStorage: () => request<StorageTestResult>("POST", "/api/platform/media/storage/test", {}),
+  checkMultix: () => request<MultixCheckResult>("POST", "/api/platform/media/multix/check", {}),
+  checkMediaVendor: (vendor: string) =>
+    request<MultixCheckResult>("POST", `/api/platform/media/vendors/${enc(vendor)}/test`, {}),
+  saveMediaVendorKey: (vendor: string, apiKey: string) =>
+    request<PlatformVendor>("PUT", `/api/platform/media/vendors/${enc(vendor)}`, { apiKey }),
+  revokeMediaVendorKey: (vendor: string) =>
+    request<PlatformVendor>("DELETE", `/api/platform/media/vendors/${enc(vendor)}`),
   providerCatalog: () => request<{ providers: CatalogProvider[] }>("GET", "/api/providers/catalog"),
   providerConnections: () => request<ProviderConnectionList>("GET", "/api/providers/connections"),
   addProviderKey: (input: {
