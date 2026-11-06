@@ -9,9 +9,9 @@ import type {
 } from "../entities/external-skill.ts";
 import type {
   FetchedSkillFile,
-  ExternalSkillSource as SkillSource,
   SkillDiscovery,
   SkillFetchResult,
+  ExternalSkillSource as SkillSource,
 } from "../ports/external-skill-source.ts";
 import type { StorageAdapter } from "../ports/storage-adapter.ts";
 import type { ExternalSkillRepository } from "../repositories/external-skill-repository.ts";
@@ -129,7 +129,14 @@ export interface SkillGetResult {
   version: SkillVersionSummary;
   manifest: Pick<ExternalSkillManifest, "metadata" | "license" | "notices" | "skipped">;
   files: SkillFileView[];
-  content?: { path: string; text: string; offset: number; bytes: number; totalBytes: number; truncated: boolean };
+  content?: {
+    path: string;
+    text: string;
+    offset: number;
+    bytes: number;
+    totalBytes: number;
+    truncated: boolean;
+  };
   contentWithheld?: "disabled";
   trust: "untrusted-third-party-content";
   notice: string;
@@ -137,7 +144,14 @@ export interface SkillGetResult {
 
 export type SkillUpdateInput =
   | { skillId: string; action: "check"; ref?: string }
-  | { skillId: string; action: "import"; ref?: string; expectedCommit?: string; activate?: boolean; idempotencyKey?: string }
+  | {
+      skillId: string;
+      action: "import";
+      ref?: string;
+      expectedCommit?: string;
+      activate?: boolean;
+      idempotencyKey?: string;
+    }
   | { skillId: string; action: "activate"; versionId: string };
 
 export type SkillUpdateResult =

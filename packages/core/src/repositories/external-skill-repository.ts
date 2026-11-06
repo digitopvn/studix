@@ -46,7 +46,11 @@ export interface ExternalSkillRepository {
   /** Enabled-or-not skills whose name equals `name` (case-insensitive), for name lookups. */
   findByName(ctx: TenantContext, name: string, limit: number): Promise<ExternalSkill[]>;
   list(ctx: TenantContext, query?: ExternalSkillListQuery): Promise<Page<ExternalSkill>>;
-  getVersion(ctx: TenantContext, skillId: string, versionId: string): Promise<ExternalSkillVersion | undefined>;
+  getVersion(
+    ctx: TenantContext,
+    skillId: string,
+    versionId: string,
+  ): Promise<ExternalSkillVersion | undefined>;
   listVersions(ctx: TenantContext, skillId: string, query?: PageRequest): Promise<Page<ExternalSkillVersion>>;
   /**
    * Atomically upsert the skill for (repository, path) and insert the version unless the same

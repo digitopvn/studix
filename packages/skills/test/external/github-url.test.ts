@@ -26,21 +26,16 @@ describe("parseGithubRepositoryUrl", () => {
   });
 
   it("keeps the ambiguous ref/path segments of /tree/ URLs", () => {
-    expect(parseGithubRepositoryUrl("https://github.com/acme/skills/tree/feature/x/skills/pdf").refPath).toEqual([
-      "feature",
-      "x",
-      "skills",
-      "pdf",
-    ]);
+    expect(
+      parseGithubRepositoryUrl("https://github.com/acme/skills/tree/feature/x/skills/pdf").refPath,
+    ).toEqual(["feature", "x", "skills", "pdf"]);
     expect(parseGithubRepositoryUrl("https://github.com/acme/skills/tree/main").refPath).toEqual(["main"]);
   });
 
   it("maps a /blob/ URL of a SKILL.md to its folder", () => {
-    expect(parseGithubRepositoryUrl("https://github.com/acme/skills/blob/main/skills/pdf/SKILL.md").refPath).toEqual([
-      "main",
-      "skills",
-      "pdf",
-    ]);
+    expect(
+      parseGithubRepositoryUrl("https://github.com/acme/skills/blob/main/skills/pdf/SKILL.md").refPath,
+    ).toEqual(["main", "skills", "pdf"]);
     rejects("https://github.com/acme/skills/blob/main/skills/pdf/README.md");
   });
 

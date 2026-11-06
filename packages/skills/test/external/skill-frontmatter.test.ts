@@ -40,23 +40,40 @@ describe("parseSkillMarkdown", () => {
   });
 
   it("supports quoted strings and escapes", () => {
-    const parsed = ok(['---', `name: "Kỹ năng \\"video\\""`, "description: 'It''s: quoted'", "---"].join("\n"));
+    const parsed = ok(
+      ["---", `name: "Kỹ năng \\"video\\""`, "description: 'It''s: quoted'", "---"].join("\n"),
+    );
     expect(parsed.name).toBe('Kỹ năng "video"');
     expect(parsed.slug).toBe("ky-nang-video");
     expect(parsed.description).toBe("It's: quoted");
   });
 
   it("supports literal and folded block scalars and plain continuation lines", () => {
-    const literal = ok(["---", "name: a", "description: |", "  line one", "  line two", "", "---"].join("\n"));
+    const literal = ok(
+      ["---", "name: a", "description: |", "  line one", "  line two", "", "---"].join("\n"),
+    );
     expect(literal.description).toBe("line one\nline two");
-    const folded = ok(["---", "name: a", "description: >-", "  folded one", "  folded two", "", "  para", "---"].join("\n"));
+    const folded = ok(
+      ["---", "name: a", "description: >-", "  folded one", "  folded two", "", "  para", "---"].join("\n"),
+    );
     expect(folded.description).toBe("folded one folded two\npara");
     const plain = ok(["---", "name: a", "description: starts here", "  and continues", "---"].join("\r\n"));
     expect(plain.description).toBe("starts here and continues");
   });
 
   it("joins simple lists into metadata strings", () => {
-    const parsed = ok(["---", "name: a", "description: b", "tags: [video, audio]", "tools:", "  - Read", "  - Write", "---"].join("\n"));
+    const parsed = ok(
+      [
+        "---",
+        "name: a",
+        "description: b",
+        "tags: [video, audio]",
+        "tools:",
+        "  - Read",
+        "  - Write",
+        "---",
+      ].join("\n"),
+    );
     expect(parsed.metadata).toEqual({ tags: "video, audio", tools: "Read, Write" });
   });
 

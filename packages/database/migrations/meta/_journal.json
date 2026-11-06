@@ -169,6 +169,13 @@
       "when": 1793966526382,
       "tag": "0023_external_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793967512601,
+      "tag": "0024_api_key_skill_scopes",
+      "breakpoints": true
     }
   ]
 }

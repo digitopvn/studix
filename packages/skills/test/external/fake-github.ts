@@ -61,7 +61,11 @@ export class FakeGithub {
     for (const [sha, commit] of Object.entries(repo.commits)) {
       this.trees.set(sha, { repo: `${repo.owner}/${repo.repo}`.toLowerCase(), commit: sha, dir: "" });
       for (const dir of directories(Object.keys(commit.files))) {
-        this.trees.set(dirSha(sha, dir), { repo: `${repo.owner}/${repo.repo}`.toLowerCase(), commit: sha, dir });
+        this.trees.set(dirSha(sha, dir), {
+          repo: `${repo.owner}/${repo.repo}`.toLowerCase(),
+          commit: sha,
+          dir,
+        });
       }
       for (const entry of Object.values(commit.files)) {
         const bytes = entryBytes(entry);
@@ -83,7 +87,9 @@ export class FakeGithub {
   private route(url: URL): Response {
     const match = /^\/repos\/([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
     if (!match) return json({ message: "Not Found" }, 404);
-    const repo = this.repos.get(`${decodeURIComponent(match[1] ?? "")}/${decodeURIComponent(match[2] ?? "")}`.toLowerCase());
+    const repo = this.repos.get(
+      `${decodeURIComponent(match[1] ?? "")}/${decodeURIComponent(match[2] ?? "")}`.toLowerCase(),
+    );
     if (!repo) return json({ message: "Not Found" }, 404);
     const rest = match[3];
     if (rest === undefined) {
@@ -93,7 +99,9 @@ export class FakeGithub {
       if (repo.empty) return json({ message: "Git Repository is empty." }, 409);
       const ref = rest.slice("commits/".length).split("/").map(decodeURIComponent).join("/");
       const sha = repo.refs[ref] ?? (repo.commits[ref] ? ref : undefined);
-      return sha ? new Response(sha, { status: 200 }) : json({ message: `No commit found for SHA: ${ref}` }, 422);
+      return sha
+        ? new Response(sha, { status: 200 })
+        : json({ message: `No commit found for SHA: ${ref}` }, 422);
     }
     if (rest.startsWith("git/trees/")) {
       const tree = this.trees.get(rest.slice("git/trees/".length));
@@ -103,7 +111,9 @@ export class FakeGithub {
     }
     if (rest.startsWith("git/blobs/")) {
       const bytes = this.blobs.get(rest.slice("git/blobs/".length));
-      return bytes ? new Response(bytes, { status: 200 }) : json({ message: "Not Found" }, 404);
+      return bytes
+        ? new Response(new Uint8Array(bytes), { status: 200 })
+        : json({ message: "Not Found" }, 404);
     }
     return json({ message: "Not Found" }, 404);
   }
@@ -119,7 +129,8 @@ export function json(body: unknown, status = 200, headers: Record<string, string
 function entryBytes(entry: FakeEntry): Uint8Array | undefined {
   if (typeof entry === "string") return encoder.encode(entry);
   if (entry instanceof Uint8Array) return entry;
-  if ("content" in entry) return typeof entry.content === "string" ? encoder.encode(entry.content) : entry.content;
+  if ("content" in entry)
+    return typeof entry.content === "string" ? encoder.encode(entry.content) : entry.content;
   if ("symlink" in entry) return encoder.encode(entry.symlink);
   return undefined;
 }

@@ -349,15 +349,14 @@ is not installed into the host's own skill system, Studix never runs a skill's
 scripts, and phase 1 does not change the worker pipelines. Setup and flow:
 [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
 
-| Tool                    | Permission    | Arguments                                                                                       | Returns                                                                                                              |
-| ----------------------- | ------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `studix_skill_discover` | `skill:write` | `repositoryUrl`, `ref?`, `path?`                                                                | Pinned `commitSha`, valid `skills[]` (and whether each is already imported), `invalid[]` with reasons, `partial?`.    |
-| `studix_skill_import`   | `skill:write` | `repositoryUrl`, `ref?`, `path?`, `skillPaths?`, `expectedCommit?`, `idempotencyKey?`           | Per skill `imported`, `new_version`, `unchanged` or `rejected` (with `reason`), plus `counts` and the pinned commit.   |
-| `studix_skill_list`     | `skill:read`  | `q?`, `status?` (`enabled` default, `disabled`, `all`), `repository?`, `limit?`, `cursor?`      | Page of skills: ids, source, name, description, status, `upstream`, active and latest version, `pendingVersion`.      |
-| `studix_skill_get`      | `skill:read`  | `skillId` or `name`, `versionId?`, `file?`, `offset?`, `maxBytes?`                              | Manifest summary, `files[]`, bounded text `content` (SKILL.md by default), `trust` and a `notice`.                    |
-| `studix_skill_update`   | `skill:write` | `skillId`, `action` (`check`, `import`, `activate`), `versionId?`, `ref?`, `expectedCommit?`, `activate?` | `check`: upstream state and whether the commit changed. `import`: the import result. `activate`: the skill.           |
-| `studix_skill_disable`  | `skill:write` | `skillId`, `disabled?` (default true)                                                           | The skill with its new status. Nothing is deleted; `disabled: false` offers it again.                                |
-
+| Tool                    | Permission    | Arguments                                                                                                 | Returns                                                                                                              |
+| ----------------------- | ------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `studix_skill_discover` | `skill:write` | `repositoryUrl`, `ref?`, `path?`                                                                          | Pinned `commitSha`, valid `skills[]` (and whether each is already imported), `invalid[]` with reasons, `partial?`.   |
+| `studix_skill_import`   | `skill:write` | `repositoryUrl`, `ref?`, `path?`, `skillPaths?`, `expectedCommit?`, `idempotencyKey?`                     | Per skill `imported`, `new_version`, `unchanged` or `rejected` (with `reason`), plus `counts` and the pinned commit. |
+| `studix_skill_list`     | `skill:read`  | `q?`, `status?` (`enabled` default, `disabled`, `all`), `repository?`, `limit?`, `cursor?`                | Page of skills: ids, source, name, description, status, `upstream`, active and latest version, `pendingVersion`.     |
+| `studix_skill_get`      | `skill:read`  | `skillId` or `name`, `versionId?`, `file?`, `offset?`, `maxBytes?`                                        | Manifest summary, `files[]`, bounded text `content` (SKILL.md by default), `trust` and a `notice`.                   |
+| `studix_skill_update`   | `skill:write` | `skillId`, `action` (`check`, `import`, `activate`), `versionId?`, `ref?`, `expectedCommit?`, `activate?` | `check`: upstream state and whether the commit changed. `import`: the import result. `activate`: the skill.          |
+| `studix_skill_disable`  | `skill:write` | `skillId`, `disabled?` (default true)                                                                     | The skill with its new status. Nothing is deleted; `disabled: false` offers it again.                                |
 - Discover, import and update reach `github.com` and carry `openWorldHint: true`;
   discover, list and get are read-only. Reading never contacts GitHub.
 - Import is idempotent per workspace, repository, skill path and content: the same

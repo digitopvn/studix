@@ -40,19 +40,19 @@ Reading needs `skill:read`, importing and changing needs `skill:write`. OAuth cl
 
 The importer enforces these defaults (`DEFAULT_GITHUB_SKILL_LIMITS` in `packages/skills`):
 
-| Bound                            | Default             |
-| -------------------------------- | ------------------- |
-| Folder depth                     | 12                  |
-| Skills read per discovery        | 100                 |
-| Files per skill                  | 200                 |
-| One supporting file              | 1 MiB               |
-| `SKILL.md`                       | 256 KiB             |
-| One skill                        | 5 MiB               |
-| One import call                  | 25 MiB              |
-| HTTP requests per call           | 1000                |
-| Request / total timeout          | 15 s / 120 s        |
-| Retries (5xx, network)           | 2, exponential      |
-| Same-host redirects              | 2 (cross-host: none) |
+| Bound                     | Default              |
+| ------------------------- | -------------------- |
+| Folder depth              | 12                   |
+| Skills read per discovery | 100                  |
+| Files per skill           | 200                  |
+| One supporting file       | 1 MiB                |
+| `SKILL.md`                | 256 KiB              |
+| One skill                 | 5 MiB                |
+| One import call           | 25 MiB               |
+| HTTP requests per call    | 1000                 |
+| Request / total timeout   | 15 s / 120 s         |
+| Retries (5xx, network)    | 2, exponential       |
+| Same-host redirects       | 2 (cross-host: none) |
 
 Only public GitHub hosts are contacted. Anything over a bound is skipped or rejected with a reason in the result.
 

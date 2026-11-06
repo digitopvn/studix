@@ -106,7 +106,9 @@ export class FakeSkillSource implements ExternalSkillSource {
       ref: input.ref ?? "main",
       commitSha: repo.commitSha,
       skills,
-      invalid: [...repo.invalid].filter(([path]) => inScope(path)).map(([path, reason]) => ({ path, reason })),
+      invalid: [...repo.invalid]
+        .filter(([path]) => inScope(path))
+        .map(([path, reason]) => ({ path, reason })),
     };
   }
 
@@ -130,7 +132,9 @@ export class FakeSkillSource implements ExternalSkillSource {
           return {
             path: f.path,
             kind: f.kind,
-            contentType: f.path.endsWith(".md") ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8",
+            contentType: f.path.endsWith(".md")
+              ? "text/markdown; charset=utf-8"
+              : "text/plain; charset=utf-8",
             size: bytes.byteLength,
             sha256: sha256(f.content),
             text: true,

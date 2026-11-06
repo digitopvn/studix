@@ -158,7 +158,7 @@ async function discover(
   }
   let skillFiles = listing.entries
     .filter((entry) => entry.type === "blob" && baseName(entry.path) === SKILL_FILE)
-    .sort((a, b) => compareStrings(a.path, b.path));
+    .sort((a, b) => compareStrings(parentPath(a.path), parentPath(b.path)));
   if (skillFiles.length > limits.maxSkillCandidates) {
     partial.push(`only the first ${limits.maxSkillCandidates} SKILL.md files were read`);
     skillFiles = skillFiles.slice(0, limits.maxSkillCandidates);
@@ -284,7 +284,11 @@ async function fetchOne(
       skipped.push({ path: relative, reason: placement.skip });
       continue;
     }
-    if (entry.size === undefined || entry.size > limits.maxFileBytes) {
+    if (entry.size === undefined) {
+      skipped.push({ path: relative, reason: "size unknown; not read" });
+      continue;
+    }
+    if (entry.size > limits.maxFileBytes) {
       skipped.push({ path: relative, reason: `file exceeds ${limits.maxFileBytes} bytes` });
       continue;
     }
