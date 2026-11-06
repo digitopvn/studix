@@ -1,5 +1,6 @@
 export * from "./agent-handoffs.ts";
 export * from "./connectors.ts";
+export * from "./external-skills.ts";
 export * from "./jobs.ts";
 export * from "./oauth.ts";
 export * from "./projects.ts";

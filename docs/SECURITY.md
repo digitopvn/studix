@@ -237,6 +237,24 @@ fetched content are **data**, not instructions.
 - Credentials are never placed in prompts, so an injected instruction has
   nothing to exfiltrate from model context.
 
+## Imported GitHub skills
+
+Skills imported from public GitHub repositories are untrusted third-party text
+([ADR-0017](decisions/0017-external-github-skill-store.md),
+[EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md)).
+
+- Egress is fixed to `api.github.com` and `raw.githubusercontent.com`. The
+  user's URL is only parsed, never requested, so it cannot reach internal hosts;
+  redirects are handled manually inside the allowlist.
+- Only text is stored. Scripts and binaries are described, symlinks and
+  submodules skipped, unsafe paths dropped, and every read is byte-capped with
+  timeouts. Nothing is executed or installed.
+- Versions are pinned to a commit, content-hashed and immutable; the hash is
+  rechecked on read. An upstream change is never served until activated.
+- `studix_skill_get` marks content untrusted and lists heuristic
+  `securityNotes`; the prompt-injection rule above applies to it.
+- `STUDIX_GITHUB_TOKEN` is optional, sent to `api.github.com` only and redacted.
+
 ## Approval gates
 
 Owner: `ApprovalPolicy` in `packages/core`, enforced by `packages/workflow`.
@@ -297,29 +315,31 @@ Owner: `redact()` and the logger in `packages/shared`, spans in
 
 Each item maps to a negative test in the owning package.
 
-| Threat                                                 | Control                                                                 |
-| ------------------------------------------------------ | ----------------------------------------------------------------------- |
-| Cross-tenant read/write                                | `TenantContext` in every repository call; tenant A/B tests              |
-| Stolen or leaked API key                               | Hashed storage, revocation, scopes, redaction                           |
-| OAuth token replayed to another resource or workspace  | `aud`/`iss` check, `workspace_id` claim, membership and consent recheck |
-| Revoked OAuth grant still usable                       | Consent row required on every request, tokens revoked with it           |
-| Inbound credential forwarded downstream                | Separate outbound credentials via `secretRef`                           |
-| `secretRef` value leak                                 | Resolution only at execute, never serialized                            |
-| SSRF to internal or metadata IPs                       | URL policy, IP range denylist                                           |
-| DNS rebinding                                          | Pinned resolution                                                       |
-| Redirect to internal host or wrong origin              | Manual redirect handling, origin-bound credentials                      |
-| Malicious tool description / result (prompt injection) | Data-not-instruction rule, bounded summaries, code-side authorization   |
-| Permission changed after search                        | Re-authorization at execute                                             |
-| Disabled or revoked tool still callable                | Catalog invalidation and execute-time check                             |
-| Recursion through Studix's own `/mcp`                  | Self-reference rejection                                                |
-| Oversized result or schema                             | Size caps, truncation, asset refs                                       |
-| Duplicate side effects on retry                        | Idempotency keys, no auto-retry of unknown-outcome mutations            |
-| Duplicate billing on retry                             | Usage dedupe keys ([ADR-0008](decisions/0008-billing-usage-ledger.md))  |
-| Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                           |
-| Runaway cost                                           | Budgets checked before each costly stage                                |
-| Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                      |
-| Agent run past its caps                                | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate     |
-| Forged or stale host output                            | Output schema check, attempt fencing, idempotent digest per task        |
-| Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key           |
-| Expired artifact URL still valid                       | Presign expiry tests                                                    |
-| Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                             |
+| Threat                                                 | Control                                                                       |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Cross-tenant read/write                                | `TenantContext` in every repository call; tenant A/B tests                    |
+| Stolen or leaked API key                               | Hashed storage, revocation, scopes, redaction                                 |
+| OAuth token replayed to another resource or workspace  | `aud`/`iss` check, `workspace_id` claim, membership and consent recheck       |
+| Revoked OAuth grant still usable                       | Consent row required on every request, tokens revoked with it                 |
+| Inbound credential forwarded downstream                | Separate outbound credentials via `secretRef`                                 |
+| `secretRef` value leak                                 | Resolution only at execute, never serialized                                  |
+| SSRF to internal or metadata IPs                       | URL policy, IP range denylist                                                 |
+| DNS rebinding                                          | Pinned resolution                                                             |
+| Redirect to internal host or wrong origin              | Manual redirect handling, origin-bound credentials                            |
+| Malicious tool description / result (prompt injection) | Data-not-instruction rule, bounded summaries, code-side authorization         |
+| Permission changed after search                        | Re-authorization at execute                                                   |
+| Disabled or revoked tool still callable                | Catalog invalidation and execute-time check                                   |
+| Recursion through Studix's own `/mcp`                  | Self-reference rejection                                                      |
+| Oversized result or schema                             | Size caps, truncation, asset refs                                             |
+| Duplicate side effects on retry                        | Idempotency keys, no auto-retry of unknown-outcome mutations                  |
+| Duplicate billing on retry                             | Usage dedupe keys ([ADR-0008](decisions/0008-billing-usage-ledger.md))        |
+| Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                                 |
+| Runaway cost                                           | Budgets checked before each costly stage                                      |
+| Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                            |
+| Agent run past its caps                                | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate           |
+| Forged or stale host output                            | Output schema check, attempt fencing, idempotent digest per task              |
+| Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key                 |
+| SSRF or path escape through a skill import             | Fixed GitHub hosts, parsed-only URL, safe-path filter, symlink skip           |
+| Imported skill text steering the agent or running code | Data-only storage, untrusted marker, notes, no execution, explicit activation |
+| Expired artifact URL still valid                       | Presign expiry tests                                                          |
+| Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                                   |

@@ -17,6 +17,7 @@ bug.
 | [METRICS.md](METRICS.md)                 | Baseline metric definitions and results                                                                                 |
 | [KNOWLEDGE_PACKS.md](KNOWLEDGE_PACKS.md) | Knowledge packs: stage-scoped loading, `hard`/`evidence` checks, pack lint, how to add a pack                           |
 | [WORKFLOW_PACKS.md](WORKFLOW_PACKS.md)   | Workflow pack: stage contract, gates, retry and resume, adding a pack, media providers, sample prompts, troubleshooting |
+| [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md) | Importing public GitHub Agent Skills: workflow, what is stored, limits, permissions, configuration                      |
 | [QA.md](QA.md)                           | QA hard gate, evidence and human review, sandboxed measurement tools, limits, how to add a tool                         |
 | [PORTING.md](PORTING.md)                 | What was taken from `motion-mcp`, `zuey-workspace` and `agentkit`, at which SHA, and what was replaced                  |
 | [porting/](porting/migration-matrix.md)  | Audit and migration matrix for the epic #2 sources                                                                      |

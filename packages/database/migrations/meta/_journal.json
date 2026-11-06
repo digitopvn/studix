@@ -162,6 +162,20 @@
       "when": 1793961385242,
       "tag": "0022_job_parked_request_mcp_oauth",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793966559727,
+      "tag": "0023_deep_mole_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793967420203,
+      "tag": "0024_api_key_skill_scopes",
+      "breakpoints": true
     }
   ]
 }

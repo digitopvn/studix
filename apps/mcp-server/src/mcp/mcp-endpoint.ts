@@ -13,6 +13,7 @@ import { HTTP_STATUS } from "../http/http-errors.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
 import { NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
+import { SKILL_MCP_TOOLS } from "./skill-tools.ts";
 import { errorEnvelope, okEnvelope, ToolEnvelopeSchema } from "./tool-envelope.ts";
 
 /** Upper bound for one JSON-RPC request body (a host-authored VideoIR spec fits comfortably). */
@@ -44,7 +45,11 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     { instructions: INSTRUCTIONS },
   );
   const requestTraceId = newTraceId();
-  const tools: readonly NativeTool[] = [...NATIVE_TOOLS, ...AGENT_HANDOFF_MCP_TOOLS] as readonly NativeTool[];
+  const tools: readonly NativeTool[] = [
+    ...NATIVE_TOOLS,
+    ...AGENT_HANDOFF_MCP_TOOLS,
+    ...SKILL_MCP_TOOLS,
+  ] as readonly NativeTool[];
   const toolNames = tools.map((t) => t.name);
 
   for (const def of tools) {
@@ -58,8 +63,8 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
         annotations: {
           readOnlyHint: def.readOnly,
           destructiveHint: def.destructive ?? false,
-          idempotentHint: def.readOnly,
-          openWorldHint: false,
+          idempotentHint: def.idempotent ?? def.readOnly,
+          openWorldHint: def.openWorld ?? false,
         },
       },
       async (args: unknown) =>
