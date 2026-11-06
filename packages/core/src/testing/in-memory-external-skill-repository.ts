@@ -32,7 +32,8 @@ export function createInMemoryExternalSkillRepository(clock: Clock): ExternalSki
         (s) =>
           (query.enabled === undefined || s.enabled === query.enabled) &&
           (repository === undefined || s.repository === repository) &&
-          (!text || [s.name, s.description, s.repository].some((field) => field.toLowerCase().includes(text))),
+          (!text ||
+            [s.name, s.description, s.repository].some((field) => field.toLowerCase().includes(text))),
       );
     },
     async getVersion(ctx, skillId, versionId) {
@@ -49,15 +50,15 @@ export function createInMemoryExternalSkillRepository(clock: Clock): ExternalSki
       const skill =
         found ??
         skills.insert(ctx, {
-        id: input.skillId,
-        repository,
-        skillPath: input.skillPath,
-        name: input.name,
-        description: input.description,
-        enabled: true,
-        upstreamStatus: "unknown",
-        createdBy: input.createdBy,
-      });
+          id: input.skillId,
+          repository,
+          skillPath: input.skillPath,
+          name: input.name,
+          description: input.description,
+          enabled: true,
+          upstreamStatus: "unknown",
+          createdBy: input.createdBy,
+        });
       const existing = versions.filter(
         ctx,
         (v) => v.skillId === skill.id && v.contentHash === input.contentHash,

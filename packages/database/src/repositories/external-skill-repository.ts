@@ -202,7 +202,11 @@ export function createExternalSkillRepository(db: DbExecutor, clock: Clock): Ext
           )
           .for("update");
         const skillRow = locked[0];
-        if (!skillRow) throw new StudixError("INTERNAL", `external skill ${repository}/${input.skillPath} vanished during import`);
+        if (!skillRow)
+          throw new StudixError(
+            "INTERNAL",
+            `external skill ${repository}/${input.skillPath} vanished during import`,
+          );
         const skillCreated = inserted.length > 0;
 
         const created = await tx
@@ -237,7 +241,11 @@ export function createExternalSkillRepository(db: DbExecutor, clock: Clock): Ext
               ),
             )
             .limit(1);
-          if (!existing[0]) throw new StudixError("INTERNAL", `external skill version ${input.contentHash} conflicted without a row`);
+          if (!existing[0])
+            throw new StudixError(
+              "INTERNAL",
+              `external skill version ${input.contentHash} conflicted without a row`,
+            );
           return {
             skill: toSkill(skillRow),
             version: toVersion(existing[0]),
@@ -257,7 +265,8 @@ export function createExternalSkillRepository(db: DbExecutor, clock: Clock): Ext
           { activeVersionId: version.id, name: version.name, description: version.description },
           tx,
         );
-        if (!activated) throw new StudixError("INTERNAL", `external skill ${skillRow.id} vanished during import`);
+        if (!activated)
+          throw new StudixError("INTERNAL", `external skill ${skillRow.id} vanished during import`);
         return { skill: activated, version, outcome: "created", skillCreated, activated: true };
       };
       return db.transaction(run);

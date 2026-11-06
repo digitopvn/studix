@@ -172,7 +172,9 @@ export function runExternalSkillRepositoryContract(label: string, harness: Exter
     it("concurrent identical imports converge on one skill and one version", async () => {
       const repo = harness.repo();
       const ctx = await harness.tenant();
-      const results = await Promise.all(Array.from({ length: 8 }, () => repo.importVersion(ctx, importInput())));
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => repo.importVersion(ctx, importInput())),
+      );
 
       expect(new Set(results.map((r) => r.skill.id)).size).toBe(1);
       expect(new Set(results.map((r) => r.version.id)).size).toBe(1);
@@ -200,7 +202,10 @@ export function runExternalSkillRepositoryContract(label: string, harness: Exter
       const winners = results.filter((r) => r.activated);
       expect(winners).toHaveLength(1);
       const skill = await repo.get(ctx, results[0]!.skill.id);
-      expect(skill).toMatchObject({ activeVersionId: winners[0]!.version.id, name: winners[0]!.version.name });
+      expect(skill).toMatchObject({
+        activeVersionId: winners[0]!.version.id,
+        name: winners[0]!.version.name,
+      });
       expect((await repo.listVersions(ctx, skill!.id)).items).toHaveLength(8);
     });
 
@@ -281,7 +286,8 @@ export function runExternalSkillRepositoryContract(label: string, harness: Exter
       const repo = harness.repo();
       const ctx = await harness.tenant();
       const imported = [];
-      for (let i = 0; i < 3; i++) imported.push(await repo.importVersion(ctx, importInput({ contentHash: `h${i}` })));
+      for (let i = 0; i < 3; i++)
+        imported.push(await repo.importVersion(ctx, importInput({ contentHash: `h${i}` })));
       const skillId = imported[0]!.skill.id;
       const first = await repo.listVersions(ctx, skillId, { limit: 2 });
       expect(first.items.map((v) => v.id)).toEqual([imported[2]!.version.id, imported[1]!.version.id]);
