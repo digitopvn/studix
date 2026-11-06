@@ -374,12 +374,29 @@ password: do not paste it into a chat message.
 
 ### Claude Code
 
+Sign in with OAuth (no key):
+
+```bash
+claude mcp add --transport http studix https://app.studix.digitop.ai/mcp
+```
+
+Then run `/mcp` in Claude Code, pick `studix` and choose **Authenticate**. The
+browser opens the Studix sign-in; sign in, pick the workspace if you belong to
+several, and approve the scopes. Claude Code stores and refreshes the token.
+Revoke it from the dashboard's Connected apps page; the next call answers `401`
+and `/mcp` offers to sign in again.
+
+Or use a workspace API key:
+
 ```bash
 claude mcp add --transport http studix https://app.studix.digitop.ai/mcp \
   --header "Authorization: Bearer stx_..."
 ```
 
-Then run `/mcp` in Claude Code to confirm `studix` is connected.
+Then run `/mcp` in Claude Code to confirm `studix` is connected. Verified
+locally with the MCP TypeScript SDK client (registration, PKCE, consent,
+`tools/list`, `studix_inspect`); the interactive Claude Code `/mcp` login has not
+yet been smoke-tested end to end.
 
 ### Claude Desktop and claude.ai custom connectors
 
