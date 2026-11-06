@@ -335,6 +335,79 @@ describe("MCP OAuth 2.1", () => {
     expect(res.status).toBe(401);
   });
 
+  it("rotates refresh tokens and refuses the old one", async () => {
+    const cookie = await t.signUp(`oauth-r-${Date.now()}@example.test`);
+    const { token, clientId } = await fullFlow(cookie);
+    const refresh = (refreshToken: string) =>
+      fetch(`${t.base}/api/auth/oauth2/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: clientId,
+          resource,
+        }),
+      });
+    const first = await refresh(token.body.refresh_token as string);
+    expect(first.status).toBe(200);
+    const body = (await first.json()) as Record<string, string>;
+    expect(body.refresh_token).toBeTruthy();
+    expect(body.refresh_token).not.toBe(token.body.refresh_token);
+    const ok = await fetch(`${t.base}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${body.access_token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(ok.status).toBe(200);
+    const reuse = await refresh(token.body.refresh_token as string);
+    expect(reuse.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it("refuses plain PKCE", async () => {
+    const cookie = await t.signUp(`oauth-p-${Date.now()}@example.test`);
+    const { client_id } = await registerClient();
+    const res = await fetch(
+      `${t.base}/api/auth/oauth2/authorize?${new URLSearchParams({
+        response_type: "code",
+        client_id,
+        redirect_uri: REDIRECT,
+        scope: "studix:read",
+        code_challenge: "x".repeat(43),
+        code_challenge_method: "plain",
+        resource,
+      })}`,
+      { headers: { cookie }, redirect: "manual" },
+    );
+    expect(await redirectOf(res)).not.toContain("/oauth/consent");
+  });
+
+  it("registers only public clients and never returns a client secret", async () => {
+    const res = await fetch(`${t.base}/api/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Confidential",
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: "client_secret_post",
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+      }),
+    });
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    expect(body.client_secret).toBeUndefined();
+  });
+
+  it("does not let a dashboard session mint a JWT through the signing plugin", async () => {
+    const cookie = await t.signUp(`oauth-j-${Date.now()}@example.test`);
+    const res = await fetch(`${t.base}/api/auth/token`, { headers: { cookie } });
+    expect(res.status).toBe(404);
+  });
+
   it("keeps stx_ API keys working unchanged", async () => {
     const ctx = await t.provisionTenant("oauth-keys");
     const key = await t.createKey(ctx);

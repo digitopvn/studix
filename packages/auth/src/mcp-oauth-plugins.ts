@@ -70,7 +70,9 @@ export function mcpOAuthPlugins(
         {
           identifier: options.resource,
           accessTokenTtl,
-          allowedScopes: scopes.filter((s) => s !== "offline_access"),
+          // offline_access must stay on the stored refresh token, or the provider stops rotating it and the
+          // old refresh token stays usable until it expires. It maps to no permission on /mcp.
+          allowedScopes: scopes,
         },
       ],
       accessTokenExpiresIn: accessTokenTtl,
