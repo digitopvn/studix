@@ -245,8 +245,11 @@ export interface ProviderConnectionServiceDeps {
   isSupportedProvider?: (provider: string) => boolean;
   /** Without it the API-key method is reported unavailable and nothing can be stored. */
   secrets?: SecretBox;
-  /** STUDIX_CLAUDE_SUBSCRIPTION: a self-hosted server lets each user connect their own subscription. */
-  claudeSubscription?: boolean;
+  /**
+   * Whether users of this workspace may connect and run their own Claude subscription: STUDIX_CLAUDE_SUBSCRIPTION,
+   * or the owner's switch on a self-hosted server (`WorkspaceFeatureService.effective`).
+   */
+  claudeSubscription?: boolean | ((ctx: TenantContext) => Promise<boolean>);
   logger?: Logger;
 }
 
@@ -478,6 +481,11 @@ export function createProviderConnectionService(
     }
   };
 
+  const subscriptionOn = async (ctx: TenantContext): Promise<boolean> =>
+    typeof deps.claudeSubscription === "function"
+      ? deps.claudeSubscription(ctx)
+      : deps.claudeSubscription === true;
+
   const audit = (ctx: TenantContext, action: string, row: ProviderConnectionRecord) =>
     deps.audit.append(ctx, {
       actor: actorRef(ctx.actor),
@@ -509,7 +517,7 @@ export function createProviderConnectionService(
       !row ||
       row.revokedAt ||
       !row.secretCiphertext ||
-      (row.authMethod !== "api_key" && !(subscription && deps.claudeSubscription))
+      (row.authMethod !== "api_key" && !(subscription && (await subscriptionOn(ctx))))
     ) {
       throw new StudixError("UNAVAILABLE", "The selected provider connection no longer exists", {
         retryable: false,
@@ -543,15 +551,15 @@ export function createProviderConnectionService(
     return row;
   }
 
-  /** Subscription rows are shown (and usable) only while the operator keeps the feature on. */
-  const visible = (row: ProviderConnectionRecord) =>
-    row.authMethod === "api_key" ||
-    (row.authMethod === "oauth_subscription" && deps.claudeSubscription === true);
+  /** Subscription rows are shown (and usable) only while the feature stays on for the workspace. */
+  const visible = (row: ProviderConnectionRecord, subscriptions: boolean) =>
+    row.authMethod === "api_key" || (row.authMethod === "oauth_subscription" && subscriptions);
 
   return {
     async overview(ctx) {
       assertPermission(ctx, "workspace:read");
       const rows = await deps.connections.listActive(ctx);
+      const subscriptions = await subscriptionOn(ctx);
       return {
         provider: "anthropic",
         methods: [
@@ -564,10 +572,12 @@ export function createProviderConnectionService(
             canAddPersonalKey: Boolean(deps.secrets) && canAddPersonal(ctx),
             ...(deps.secrets ? {} : { reason: STORAGE_OFF }),
           },
-          subscriptionMethod(ctx, deps.claudeSubscription === true, Boolean(deps.secrets)),
+          subscriptionMethod(ctx, subscriptions, Boolean(deps.secrets)),
         ],
         connections: rows
-          .filter((row) => row.provider === ANTHROPIC_PROVIDER && visible(row) && canSee(ctx, row))
+          .filter(
+            (row) => row.provider === ANTHROPIC_PROVIDER && visible(row, subscriptions) && canSee(ctx, row),
+          )
           .map((row) => toView(ctx, row)),
       };
     },
@@ -575,11 +585,14 @@ export function createProviderConnectionService(
     async list(ctx) {
       assertPermission(ctx, "workspace:read");
       const rows = await deps.connections.listActive(ctx);
+      const subscriptions = await subscriptionOn(ctx);
       return {
         storage: deps.secrets ? "available" : "unavailable",
         canAddWorkspaceKey: Boolean(deps.secrets) && can(ctx.actor, "member:manage"),
         canAddPersonalKey: Boolean(deps.secrets) && canAddPersonal(ctx),
-        connections: rows.filter((row) => visible(row) && canSee(ctx, row)).map((row) => toView(ctx, row)),
+        connections: rows
+          .filter((row) => visible(row, subscriptions) && canSee(ctx, row))
+          .map((row) => toView(ctx, row)),
       };
     },
 
@@ -641,7 +654,7 @@ export function createProviderConnectionService(
     },
 
     async connectSubscription(ctx, rawInput) {
-      if (!deps.claudeSubscription) {
+      if (!(await subscriptionOn(ctx))) {
         throw new StudixError("FORBIDDEN", "Claude subscriptions are not available on this server", {
           retryable: false,
           suggestedAction: SUBSCRIPTION_RESTRICTION.alternative,

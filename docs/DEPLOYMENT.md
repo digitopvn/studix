@@ -210,12 +210,30 @@ Kubernetes manifests (Kustomize) live under `deploy/k8s`.
 On a personal or self-hosted server, members can run Claude jobs on their own
 Claude Pro/Max subscription instead of an API key. It is off by default, and
 the hosted Studix cloud keeps it off, so the card on Settings → AI & Providers
-stays "Restricted" there. To turn it on, set on both the app and the worker:
+stays "Restricted" there.
 
-- `STUDIX_CLAUDE_SUBSCRIPTION=true`
-- `STUDIX_CLAUDE_PLANNER=true` (the worker runs the Claude Code binary)
-- `STUDIX_SECRETS_KEY` (encrypted credential storage; without it the card says
-  storage is not configured and nothing is stored)
+The simplest setup is one env flag, `STUDIX_SELF_HOSTED=true`, on both the app
+and the worker. Then:
+
+- The workspace owner switches "Claude planner" and "Claude subscription" on
+  in Settings → AI & Providers → Self-hosted Claude features. Other roles see
+  the switches read-only. Without `STUDIX_SELF_HOSTED` the switches are
+  hidden, saved values are ignored, and only the env flags below apply.
+- If `STUDIX_SECRETS_KEY` is unset, the server generates a random master key
+  into `STUDIX_SECRETS_KEY_FILE` (default `.studix/secrets.key`, mode 0600) on
+  first start and reads it on later starts. The key never goes into the
+  database. With Docker, mount one volume into both the app and the worker and
+  point `STUDIX_SECRETS_KEY_FILE` at it, so both open the same credentials.
+  Back the file up: losing it makes every stored credential unreadable. An
+  explicit `STUDIX_SECRETS_KEY` always wins over the file.
+- If the worker host cannot run the Claude Code binary, the worker logs a
+  warning and keeps running; Claude jobs fail until it is installed.
+
+Operators can still force the features on for every workspace with
+`STUDIX_CLAUDE_SUBSCRIPTION=true` and `STUDIX_CLAUDE_PLANNER=true` (plus
+`STUDIX_SECRETS_KEY`); the Dashboard then shows them as set by the server.
+Without any master key, the card says storage is not configured and nothing
+is stored.
 
 Each member then runs `claude setup-token` on their own machine, signs in with
 their own Claude account, and pastes the printed token on the card. Members
@@ -235,7 +253,8 @@ page:
   owner creates, only on the `claude` runtime, never shared with other members
   or the workspace. A subscription token pasted into the API key form is
   refused.
-- Turning the flag off hides stored subscriptions and stops releasing them.
+- Turning the switch (or flag) off hides stored subscriptions and stops
+  releasing them; the worker re-reads the switch for every job.
 
 ## Cloudflare marketing
 

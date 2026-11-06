@@ -247,6 +247,20 @@ export interface AnthropicProvider {
   claudePlanner: boolean;
 }
 
+export interface FeatureSwitch {
+  enabled: boolean;
+  /** `operator`: forced on by env; `workspace`: the owner's switch here; `off`. */
+  source: "operator" | "workspace" | "off";
+  canChange: boolean;
+}
+
+/** Claude switches for the workspace; only a self-hosted server lets the owner change them. */
+export interface WorkspaceFeatures {
+  selfHosted: boolean;
+  claudePlanner: FeatureSwitch;
+  claudeSubscription: FeatureSwitch;
+}
+
 export interface ProviderConnectionList {
   storage: "available" | "unavailable";
   canAddWorkspaceKey: boolean;
@@ -516,6 +530,9 @@ export const api = {
     ),
   disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
   anthropicProvider: () => request<AnthropicProvider>("GET", "/api/providers/anthropic"),
+  workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
+  updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
+    request<WorkspaceFeatures>("PUT", "/api/providers/features", patch),
   connectClaudeSubscription: (input: { token: string; label?: string }) =>
     request<ProviderConnection>("POST", "/api/providers/anthropic/subscription", input),
   addAnthropicKey: (input: { owner: "workspace" | "user"; apiKey: string; label?: string }) =>

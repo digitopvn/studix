@@ -7,3 +7,4 @@ export * from "./rate-limits.ts";
 export * from "./revisions.ts";
 export * from "./telemetry.ts";
 export * from "./tenancy.ts";
+export * from "./workspace-settings.ts";

@@ -41,6 +41,8 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
   // Env secrets (database URL, STUDIX_SECRETS_KEY, provider keys) are redacted from every log line.
   registerSecretsFromEnv(env);
   for (const key of settings.config.STUDIX_SECRETS_KEYS_PREVIOUS) registerSecret(key);
+  // A self-hosted worker may have read its master key from a file rather than the env scan above.
+  if (settings.config.STUDIX_SECRETS_KEY) registerSecret(settings.config.STUDIX_SECRETS_KEY);
   const logger = (
     options.logger ?? createLogger({ service: "studix-worker" }, { level: settings.config.LOG_LEVEL })
   ).child({

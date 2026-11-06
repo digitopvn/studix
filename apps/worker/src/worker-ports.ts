@@ -12,9 +12,11 @@ import {
   createAnthropicKeyTester,
   createProviderConnectionService,
   createSecretBox,
+  createWorkspaceFeatureService,
   type ProviderConnectionService,
   parseSecretKey,
   routeKeyTester,
+  type WorkspaceFeatureService,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy } from "@studix/core";
 import { createRepositories } from "@studix/database";
@@ -91,8 +93,22 @@ function providerConnections(
       parseSecretKey(config.STUDIX_SECRETS_KEY),
       config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
     ),
-    claudeSubscription: config.STUDIX_CLAUDE_SUBSCRIPTION,
+    claudeSubscription: async (ctx) =>
+      (await workspaceFeatures(settings, runtime).effective(ctx)).claudeSubscription,
     logger: runtime.logger,
+  });
+}
+
+/** Env flags plus each workspace owner's switch (self-hosted only), read per job. */
+function workspaceFeatures(settings: WorkerSettings, runtime: WorkerPortsRuntime): WorkspaceFeatureService {
+  const { config } = settings;
+  return createWorkspaceFeatureService({
+    settings: createRepositories(runtime.db).workspaceSettings,
+    selfHosted: config.STUDIX_SELF_HOSTED,
+    operator: {
+      claudePlanner: config.STUDIX_CLAUDE_PLANNER,
+      claudeSubscription: config.STUDIX_CLAUDE_SUBSCRIPTION,
+    },
   });
 }
 
@@ -141,7 +157,8 @@ function claudeTransport(
     runtime.logger,
   );
   const apiKey = createClaudeSdkTransport({ baseUrl: settings.config.ANTHROPIC_BASE_URL, sandboxRoot });
-  if (!settings.config.STUDIX_CLAUDE_SUBSCRIPTION || !executable) return apiKey;
+  const { config } = settings;
+  if (!(config.STUDIX_CLAUDE_SUBSCRIPTION || config.STUDIX_SELF_HOSTED) || !executable) return apiKey;
   return createClaudeRoutingTransport({
     apiKey,
     subscription: createClaudeCodeCliTransport({ executable, sandboxRoot }),
@@ -207,6 +224,13 @@ async function assertClaudeRuntime(
 ): Promise<string | undefined> {
   if (!settings.claudePlanner) return undefined;
   const check = await preflightClaudeRuntime();
+  if (!check.ok && !settings.config.STUDIX_CLAUDE_PLANNER) {
+    // Self-hosted without the env flag: Claude stays off on this host instead of blocking the worker.
+    logger.warn("Claude runtime unavailable; Claude jobs will fail until it is installed", {
+      reason: check.reason,
+    });
+    return undefined;
+  }
   if (!check.ok) {
     throw new StudixError("UNAVAILABLE", `STUDIX_CLAUDE_PLANNER is on but ${check.reason}`, {
       retryable: false,
@@ -217,7 +241,11 @@ async function assertClaudeRuntime(
   logger.info("Claude runtime ready", {
     executable: check.executable,
     version: check.version,
-    subscriptions: settings.config.STUDIX_CLAUDE_SUBSCRIPTION ? "on" : "off",
+    subscriptions: settings.config.STUDIX_CLAUDE_SUBSCRIPTION
+      ? "on"
+      : settings.config.STUDIX_SELF_HOSTED
+        ? "per-workspace"
+        : "off",
   });
   return check.executable;
 }
@@ -273,6 +301,12 @@ export async function loadWorkerPorts(
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),
       claude,
+      ...(config.STUDIX_CLAUDE_PLANNER
+        ? {}
+        : {
+            claudeEnabled: async (tenant) =>
+              (await workspaceFeatures(settings, runtime).effective(tenant)).claudePlanner,
+          }),
     }),
     renderer,
     storage,

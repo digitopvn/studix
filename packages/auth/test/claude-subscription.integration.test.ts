@@ -157,3 +157,24 @@ describe("Claude subscription connections (self-hosted)", () => {
     ).toBe("UNAVAILABLE");
   });
 });
+
+describe("Claude subscription switched per workspace", () => {
+  it("follows the workspace switch read at call time", async () => {
+    const ws = await workspace("sub-switch");
+    let on = false;
+    const svc = createProviderConnectionService({
+      connections: db.current.repos.providerConnections,
+      audit: db.current.repos.audit,
+      tester: { test: async () => ({ ok: true, verdict: "available", at: new Date(), latencyMs: 1 }) },
+      secrets: createSecretBox(randomBytes(32)),
+      claudeSubscription: async () => on,
+    });
+    expect(await codeOf(svc.connectSubscription(ws.alice, { token: TOKEN }))).toBe("FORBIDDEN");
+    on = true;
+    const view = await svc.connectSubscription(ws.alice, { token: TOKEN });
+    expect((await svc.overview(ws.alice)).connections.map((c) => c.id)).toContain(view.id);
+    on = false;
+    expect((await svc.overview(ws.alice)).connections.map((c) => c.id)).not.toContain(view.id);
+    expect(await codeOf(svc.assertUsable(ws.alice, view.id, "claude"))).toBe("UNAVAILABLE");
+  });
+});

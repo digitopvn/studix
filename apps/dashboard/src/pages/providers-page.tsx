@@ -7,6 +7,7 @@ import {
   type SubscriptionMethodInfo,
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { ClaudeFeaturesSection } from "./claude-features-section.tsx";
 import { ProviderModelsSection } from "./provider-models-section.tsx";
 
 type Owner = ProviderConnection["owner"];
@@ -32,6 +33,7 @@ export function ProvidersPage() {
   return (
     <>
       <ErrorBanner error={error} />
+      <ClaudeFeaturesSection onChange={reload} />
       {data && (
         <ApiKeyCard
           connections={data.connections.filter((c) => c.authMethod === "api_key")}

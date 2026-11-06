@@ -4,12 +4,14 @@ import type {
   PreviewInput,
   ProviderConnectionService,
   SaveApiKeyInput,
+  WorkspaceFeatureService,
 } from "@studix/auth";
 import { assertPermission } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { Router } from "express";
 import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
+import { claudePlannerOn } from "../planner-selection.ts";
 import type { ConnectorAdmin } from "../ports.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
 
@@ -125,6 +127,11 @@ function anthropicBody(body: unknown): SaveApiKeyInput {
   return { ...(body && typeof body === "object" ? body : {}), provider: "anthropic" } as SaveApiKeyInput;
 }
 
+function requireFeatures(deps: AppDeps): WorkspaceFeatureService {
+  if (!deps.features) throw new StudixError("UNAVAILABLE", "Workspace switches are not configured");
+  return deps.features;
+}
+
 /**
  * Outbound AI provider credentials (Anthropic). Permission checks per owner live in the service;
  * keys are accepted in request bodies only and every response is `no-store` and key-free.
@@ -136,8 +143,16 @@ export function providerRoutes(deps: AppDeps): Router {
     next();
   });
   router.get("/anthropic", async (_req, res) => {
-    const overview = await requireProviders(deps).overview(sessionOf(res).ctx);
-    res.json({ ...overview, claudePlanner: deps.claudePlanner === true });
+    const ctx = sessionOf(res).ctx;
+    const overview = await requireProviders(deps).overview(ctx);
+    res.json({ ...overview, claudePlanner: await claudePlannerOn(deps, ctx) });
+  });
+  // Claude switches for this workspace; only a self-hosted server lets the owner change them.
+  router.get("/features", async (_req, res) => {
+    res.json(await requireFeatures(deps).view(sessionOf(res).ctx));
+  });
+  router.put("/features", async (req, res) => {
+    res.json(await requireFeatures(deps).update(sessionOf(res).ctx, req.body));
   });
   router.post("/anthropic/api-keys", async (req, res) => {
     res

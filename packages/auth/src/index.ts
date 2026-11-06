@@ -6,3 +6,5 @@ export * from "./model-preference-service.ts";
 export * from "./personal-workspace.ts";
 export * from "./provider-connection-service.ts";
 export * from "./secret-box.ts";
+export * from "./self-hosted-secrets-key.ts";
+export * from "./workspace-feature-service.ts";
