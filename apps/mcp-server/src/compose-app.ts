@@ -247,6 +247,19 @@ export async function composeApp(
     rateLimitStore: repos.rateLimits,
   };
   if (!deps.storage) logger.warn("S3_BUCKET is not set; playback URLs are unavailable");
+  else if (integrations.storage) {
+    // Surface a rejected bucket credential at startup instead of when the first render fails to upload.
+    void integrations.storage.probeWrite().then((probe) => {
+      if (probe.ok) logger.info("object storage write probe passed");
+      else {
+        logger.error("object storage write probe failed; renders cannot be uploaded until it is fixed", {
+          step: probe.step,
+          status: probe.status,
+          s3Code: probe.s3Code,
+        });
+      }
+    });
+  }
 
   const close = async () => {
     integrations.storage?.destroy();
