@@ -53,8 +53,18 @@ export const AppEnvSchema = z.object({
   STUDIX_DASHBOARD_DIST: z.string().min(1).optional(),
   /** Reverse-proxy hops to trust for the client IP (0 = none). Set 1 behind the TOSE ingress. */
   STUDIX_TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
+  /** Serve OAuth 2.1 on /mcp (default on). `false` keeps workspace API keys as the only way in. */
+  STUDIX_MCP_OAUTH: z
+    .enum(["true", "false", "1", "0"])
+    .default("true")
+    .transform((v) => v === "true" || v === "1"),
 });
 export type AppEnv = z.output<typeof AppEnvSchema>;
+
+/** Canonical resource identifier of the MCP endpoint: the audience every OAuth access token must carry. */
+export function mcpResourceUrl(publicUrl: string): string {
+  return `${publicUrl.replace(/\/+$/, "")}/mcp`;
+}
 
 /** Replacements for the adapters composeIntegrations builds from the environment (tests, embedding). */
 export interface ComposeOverrides {
@@ -148,6 +158,7 @@ export async function composeApp(
     baseUrl: config.STUDIX_APP_URL,
     trustedOrigins: [config.STUDIX_PUBLIC_URL],
     sso: ssoClients(config),
+    mcpOAuth: appEnv.STUDIX_MCP_OAUTH ? { resource: mcpResourceUrl(config.STUDIX_PUBLIC_URL) } : undefined,
     ipAddressHeaders: appEnv.STUDIX_TRUST_PROXY > 0 ? ["x-forwarded-for"] : undefined,
     logger,
   });

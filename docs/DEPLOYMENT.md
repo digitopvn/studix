@@ -118,6 +118,18 @@ cannot move it off the volume. The ReadWriteOnce claim means one worker pod; to
 scale the worker out, give each replica its own volume (a StatefulSet with
 `volumeClaimTemplates`), and note that a retry that lands on another replica
 then relies on the journal fallback alone.
+TOSE production (`studix-prod-worker`) is built from the root `Dockerfile` and
+has no persistent volume attached: `deploy/k8s/worker.yaml` and the compose
+volume do not apply to it. There the work directory is lost on every restart or
+deploy, so only the journal fallback protects synchronous audio, and two
+windows remain where a retry calls the upstream (and is charged) again: the
+worker is stopped while the call runs (the abort kills the call, the upstream
+may still charge it), and a crash between the upstream call and the upload. A
+volume would not close the first one either, because a killed call writes no
+file. Before a deploy, restart the worker only when no job is in its voice,
+music or sound-effect stage (the same check as for the render stage above).
+Attach a TOSE volume to the project at `/var/lib/studix/work` once TOSE offers
+one; this needs the TOSE dashboard, not a repository change.
 When Anthropic answers a run with 401, the worker re-tests that key directly
 and, only if it is still rejected and was not rotated meanwhile, marks its
 connection `invalid`, so job creation stops accepting it until the key is
@@ -381,6 +393,35 @@ released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
 `succeeded` at attempt 1.
+
+## MCP OAuth
+
+`/mcp` accepts OAuth access tokens next to `stx_` API keys; the dashboard's
+Better Auth instance is the authorization server.
+
+- Migrating: deploy a build that includes the additive migration (new `auth_jwks`
+  and `oauth_*` tables, `auth_sessions.oauth_workspace_id`). API-key clients
+  are unaffected. Set `STUDIX_MCP_OAUTH=false` to turn OAuth off.
+- Issuer `<STUDIX_APP_URL>/api/auth`, resource `<STUDIX_PUBLIC_URL>/mcp`. Both
+  must be reachable by AI clients, and the reverse proxy must pass
+  `/.well-known/*` and `/api/auth/*` to the app.
+- No new callback is registered with GitHub or Google: the dashboard sign-in
+  reuses the existing SSO callbacks. AI clients' own redirect URIs are
+  registered by the clients (dynamic registration or Client ID Metadata).
+- Signing keys are generated on first use and stored in `auth_jwks`; they
+  rotate through Better Auth, and the app refreshes its cached JWKS when it
+  sees an unknown key id.
+- Check after deploy:
+
+```bash
+APP=https://dev-app.studix.digitop.ai
+curl -s $APP/.well-known/oauth-protected-resource/mcp
+curl -s $APP/.well-known/oauth-authorization-server/api/auth
+curl -si -X POST $APP/mcp | grep -i www-authenticate
+```
+
+- Revoke a misbehaving client for everyone by setting `disabled` on its
+  `oauth_clients` row; users revoke their own grants on the Connected apps page.
 
 ## Smoke test
 

@@ -18,7 +18,17 @@ intent and the stable rules; it does not duplicate field lists.
   in the dashboard. The key resolves to exactly one workspace; every tool call
   runs in that tenant. Missing, unknown or revoked keys fail with
   `UNAUTHENTICATED`; a key without the needed scope fails with `FORBIDDEN`.
-- Inbound OAuth for AI clients is planned, not shipped
+- Auth, OAuth: AI clients that support MCP authorization connect with only the
+  URL. `/mcp` publishes protected resource metadata
+  (`/.well-known/oauth-protected-resource/mcp`) and answers `401` with a
+  `WWW-Authenticate: Bearer ... resource_metadata="..."` challenge; the client
+  discovers the authorization server (`<app URL>/api/auth`), registers, and
+  runs authorization code + PKCE. The user signs in, picks a workspace and
+  approves `studix:read` and optionally `studix:write`. The access token is
+  bound to the `/mcp` resource and a workspace; a token missing `studix:read`
+  fails with `403 insufficient_scope`. OAuth tokens never decide approvals or
+  hold publish, API-key or member-management permissions. Users revoke a connection
+  from the dashboard's Connected apps page
   ([ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md)).
 - Requests whose `Host`/`Origin` is not derived from the configured
   `STUDIX_*_URL` values are rejected.
@@ -357,22 +367,45 @@ before new tools are created.
 
 ## Connecting a client
 
-You need the MCP URL and a workspace API key (`stx_...`) from the dashboard.
-Treat the key as a password: do not paste it into a chat message.
+You need the MCP URL. Clients with MCP authorization (Claude and ChatGPT
+connectors, Claude Code's `/mcp` login) need nothing else: they open the
+dashboard sign-in and ask for approval. Header-based clients and automation use
+a workspace API key (`stx_...`) from the dashboard. Treat the key as a
+password: do not paste it into a chat message.
 
 ### Claude Code
+
+Sign in with OAuth (no key):
+
+```bash
+claude mcp add --transport http studix https://app.studix.digitop.ai/mcp
+```
+
+Then run `/mcp` in Claude Code, pick `studix` and choose **Authenticate**. The
+browser opens the Studix sign-in; sign in, pick the workspace if you belong to
+several, and approve the scopes. Claude Code stores and refreshes the token.
+Revoke it from the dashboard's Connected apps page; the next call answers `401`
+and `/mcp` offers to sign in again.
+
+Or use a workspace API key:
 
 ```bash
 claude mcp add --transport http studix https://app.studix.digitop.ai/mcp \
   --header "Authorization: Bearer stx_..."
 ```
 
-Then run `/mcp` in Claude Code to confirm `studix` is connected.
+Then run `/mcp` in Claude Code to confirm `studix` is connected. Verified
+locally with the MCP TypeScript SDK client (registration, PKCE, consent,
+`tools/list`, `studix_inspect`); the interactive Claude Code `/mcp` login has not
+yet been smoke-tested end to end.
 
 ### Claude Desktop and claude.ai custom connectors
 
-Custom connectors added in Claude's settings authenticate with OAuth, not a
-static header. Until inbound OAuth ships (ADR-0006), use one of:
+Add the MCP URL in Claude's connector settings with no key: Claude discovers
+the authorization server, opens the Studix sign-in and consent page, and stores
+the token. Hosted connector sign-in has not yet been smoke-tested against the
+live clients (see the verification status in ADR-0006). If it does not connect,
+use one of:
 
 - **Claude Desktop local config** through a header-capable bridge such as
   `mcp-remote`, in `claude_desktop_config.json`:
@@ -392,13 +425,11 @@ static header. Until inbound OAuth ships (ADR-0006), use one of:
 
 - **Claude Code** as above.
 
-The custom-connector path is part of the OAuth verification plan in ADR-0006.
-
 ### ChatGPT
 
-ChatGPT connectors (developer mode) also expect OAuth or no auth, so they wait
-on ADR-0006. Programmatic use works now through the OpenAI Responses API remote
-MCP tool, which accepts request headers:
+ChatGPT connectors (developer mode) use OAuth: add the MCP URL and choose
+OAuth. Programmatic use also works through the OpenAI Responses API remote MCP
+tool, which accepts request headers:
 
 ```json
 {
@@ -470,6 +501,8 @@ The client should call `studix_inspect`, then `studix_create_video`, then poll
 | ------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | `UNAUTHENTICATED` on every call | Missing `Bearer ` prefix, wrong key, or key revoked | Recreate the key in the dashboard; check the header value                              |
 | `FORBIDDEN`                     | Key scope lacks the tool, or connector tool denied  | Adjust key scope or connector grant in the dashboard                                   |
+| `401` with `invalid_token`      | OAuth token expired, revoked, or for another URL    | Reconnect the app; check the Connected apps page and that the URL matches the resource |
+| `403` `insufficient_scope`      | OAuth grant lacks `studix:read`                     | Reconnect and approve the requested scopes                                             |
 | Client shows no tools           | Wrong URL (missing `/mcp`) or blocked by host check | Use the exact URL from the dashboard                                                   |
 | Connection drops on long calls  | Proxy buffering or timeout on the client side       | Studix tools return fast; poll `studix_get_job` instead of waiting                     |
 | `BUDGET_EXCEEDED`               | Workspace or job budget                             | Lower scope (duration, formats) or raise the budget                                    |

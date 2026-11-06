@@ -66,6 +66,12 @@ export function setFramePrompt(scope: FilmScope, set: FilmScope["sets"][number],
   ]);
 }
 
+/** The shot's declared wardrobe state of a character (`wardrobe.<id>`), held as an anchor of that shot. */
+function wardrobe(shot: FilmScopeShot, characterId: string): string[] {
+  const worn = shot.state?.[`wardrobe.${characterId}`];
+  return worn ? [`wearing ${worn}`] : [];
+}
+
 /** Cast clause of a shot: only these characters, each exactly once, with their anchors. */
 function castClause(scope: FilmScope, shot: FilmScopeShot): string {
   const cast = shot.characters
@@ -75,7 +81,7 @@ function castClause(scope: FilmScope, shot: FilmScopeShot): string {
   return `Cast, each exactly once and no one else: ${cast
     .map(
       (c) =>
-        `${c.name} (${c.anchors.slice(0, 4).join(", ")}${c.handedness ? `, ${c.handedness}-handed` : ""})`,
+        `${c.name} (${[...c.anchors, ...wardrobe(shot, c.id)].join(", ")}${c.handedness ? `, ${c.handedness}-handed` : ""})`,
     )
     .join("; ")}`;
 }

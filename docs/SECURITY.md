@@ -44,7 +44,36 @@ Owner: `packages/auth`.
   at `account_not_linked`. An operator recovers the address by deleting that
   unverified password user (after checking it holds no work of the owner), so
   the owner's next SSO sign-in creates a fresh account.
-- Inbound OAuth for AI clients: [ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md).
+
+## OAuth access tokens (inbound)
+
+Owner: `packages/auth` (`mcp-oauth*.ts`), `apps/mcp-server/src/api/oauth-routes.ts`.
+
+- The authorization server is the dashboard's Better Auth instance, not the
+  dashboard login itself: it owns separate clients, consents and tokens, and
+  reuses the dashboard sign-in as one step.
+- Authorization code + PKCE `S256` only, exact redirect URI match, signed
+  authorization query, 120 second single-use codes, hashed client secrets,
+  codes and refresh tokens. Dynamic clients are public PKCE clients.
+- Access tokens are JWTs (10 minutes) with `iss`, `aud` = the `/mcp` resource
+  (RFC 8707), `azp` and `workspace_id`. Only `EdDSA`, `ES256` and `RS256` are
+  accepted. A token without a resource is opaque and refused.
+- Every request re-checks membership of the workspace, a live consent for the
+  client and a non-disabled client, so removing a member or revoking a
+  connection from the dashboard takes effect on the next request (a token
+  minted before the current consent is refused, so reconnecting does not revive
+  it). A client revoking its own token through RFC 7009 only stops the refresh
+  token; the access token lives out its 10 minutes. Permissions are the
+  intersection of token scope, consent and the user's current role. OAuth
+  actors never hold approval, publish, API-key, member or operator permissions.
+- Tokens are never forwarded to connectors, providers or storage. Logs and
+  error bodies carry no token, code or secret; a rejected token gets one
+  generic `invalid_token` answer without saying why.
+- Public CORS (any origin, no credentials) applies only to the discovery
+  documents and the token, registration and revocation endpoints; everything
+  under `/api` otherwise keeps the Origin guard.
+- Details and verification status:
+  [ADR-0006](decisions/0006-auth-and-oauth-client-compatibility.md).
 
 ## Rate limiting
 
@@ -268,27 +297,29 @@ Owner: `redact()` and the logger in `packages/shared`, spans in
 
 Each item maps to a negative test in the owning package.
 
-| Threat                                                 | Control                                                                |
-| ------------------------------------------------------ | ---------------------------------------------------------------------- |
-| Cross-tenant read/write                                | `TenantContext` in every repository call; tenant A/B tests             |
-| Stolen or leaked API key                               | Hashed storage, revocation, scopes, redaction                          |
-| Inbound credential forwarded downstream                | Separate outbound credentials via `secretRef`                          |
-| `secretRef` value leak                                 | Resolution only at execute, never serialized                           |
-| SSRF to internal or metadata IPs                       | URL policy, IP range denylist                                          |
-| DNS rebinding                                          | Pinned resolution                                                      |
-| Redirect to internal host or wrong origin              | Manual redirect handling, origin-bound credentials                     |
-| Malicious tool description / result (prompt injection) | Data-not-instruction rule, bounded summaries, code-side authorization  |
-| Permission changed after search                        | Re-authorization at execute                                            |
-| Disabled or revoked tool still callable                | Catalog invalidation and execute-time check                            |
-| Recursion through Studix's own `/mcp`                  | Self-reference rejection                                               |
-| Oversized result or schema                             | Size caps, truncation, asset refs                                      |
-| Duplicate side effects on retry                        | Idempotency keys, no auto-retry of unknown-outcome mutations           |
-| Duplicate billing on retry                             | Usage dedupe keys ([ADR-0008](decisions/0008-billing-usage-ledger.md)) |
-| Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                          |
-| Runaway cost                                           | Budgets checked before each costly stage                               |
-| Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                     |
-| Agent run past its caps                                | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate    |
-| Forged or stale host output                            | Output schema check, attempt fencing, idempotent digest per task       |
-| Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key          |
-| Expired artifact URL still valid                       | Presign expiry tests                                                   |
-| Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                            |
+| Threat                                                 | Control                                                                 |
+| ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Cross-tenant read/write                                | `TenantContext` in every repository call; tenant A/B tests              |
+| Stolen or leaked API key                               | Hashed storage, revocation, scopes, redaction                           |
+| OAuth token replayed to another resource or workspace  | `aud`/`iss` check, `workspace_id` claim, membership and consent recheck |
+| Revoked OAuth grant still usable                       | Consent row required on every request, tokens revoked with it           |
+| Inbound credential forwarded downstream                | Separate outbound credentials via `secretRef`                           |
+| `secretRef` value leak                                 | Resolution only at execute, never serialized                            |
+| SSRF to internal or metadata IPs                       | URL policy, IP range denylist                                           |
+| DNS rebinding                                          | Pinned resolution                                                       |
+| Redirect to internal host or wrong origin              | Manual redirect handling, origin-bound credentials                      |
+| Malicious tool description / result (prompt injection) | Data-not-instruction rule, bounded summaries, code-side authorization   |
+| Permission changed after search                        | Re-authorization at execute                                             |
+| Disabled or revoked tool still callable                | Catalog invalidation and execute-time check                             |
+| Recursion through Studix's own `/mcp`                  | Self-reference rejection                                                |
+| Oversized result or schema                             | Size caps, truncation, asset refs                                       |
+| Duplicate side effects on retry                        | Idempotency keys, no auto-retry of unknown-outcome mutations            |
+| Duplicate billing on retry                             | Usage dedupe keys ([ADR-0008](decisions/0008-billing-usage-ledger.md))  |
+| Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                           |
+| Runaway cost                                           | Budgets checked before each costly stage                                |
+| Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                      |
+| Agent run past its caps                                | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate     |
+| Forged or stale host output                            | Output schema check, attempt fencing, idempotent digest per task        |
+| Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key           |
+| Expired artifact URL still valid                       | Presign expiry tests                                                    |
+| Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                             |

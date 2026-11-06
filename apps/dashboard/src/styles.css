@@ -459,3 +459,28 @@ th {
 .auth-card {
   width: min(380px, 100%);
 }
+
+.oauth-card {
+  width: min(460px, 100%);
+}
+
+.oauth-client {
+  display: grid;
+  gap: 0.15rem;
+  word-break: break-all;
+}
+
+.oauth-choices {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.oauth-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}

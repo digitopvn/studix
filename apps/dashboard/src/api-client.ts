@@ -482,6 +482,33 @@ async function redirectToProvider(path: string, provider: SsoProvider, returnTo:
   window.location.assign(url);
 }
 
+/** Display fields Better Auth exposes for a registered OAuth client. */
+export interface OAuthClientInfo {
+  client_id: string;
+  client_name?: string;
+  client_uri?: string;
+  logo_uri?: string;
+}
+
+/** An OAuth client (e.g. a Claude or ChatGPT connector) the signed-in user has authorized for a workspace. */
+export interface OAuthConnection {
+  id: string;
+  clientId: string;
+  clientName: string;
+  clientUri?: string;
+  scopes: string[];
+  workspaceId: string;
+  workspaceName: string;
+  organizationName: string;
+  createdAt: string;
+}
+
+/** Better Auth's answer to an OAuth step that continues the authorization flow elsewhere. */
+export interface OAuthRedirect {
+  redirect: boolean;
+  url: string;
+}
+
 export const api = {
   signIn: (email: string, password: string) =>
     request("POST", "/api/auth/sign-in/email", { email, password }),
@@ -489,11 +516,24 @@ export const api = {
     request("POST", "/api/auth/sign-up/email", { name, email, password }),
   signOut: () => request("POST", "/api/auth/sign-out", {}),
   ssoProviders: () => request<{ providers: SsoProvider[] }>("GET", "/api/sso-providers"),
-  signInWith: (provider: SsoProvider) => redirectToProvider("/api/auth/sign-in/social", provider, "/"),
+  /** `returnTo` is where the provider sends the browser back (same-origin path, may carry a query). */
+  signInWith: (provider: SsoProvider, returnTo = "/") =>
+    redirectToProvider("/api/auth/sign-in/social", provider, returnTo),
   linkProvider: (provider: SsoProvider) =>
     redirectToProvider("/api/auth/link-social", provider, "/#/account"),
   linkedAccounts: () => request<LinkedAccount[]>("GET", "/api/auth/list-accounts"),
   me: () => request<Me>("GET", "/api/me"),
+  oauthClient: (clientId: string) =>
+    request<OAuthClientInfo>("GET", `/api/auth/oauth2/public-client?client_id=${enc(clientId)}`),
+  selectOAuthWorkspace: (workspaceId: string) =>
+    request<{ ok: true }>("POST", "/api/oauth/select-workspace", { workspaceId }),
+  /** `oauthQuery` is the signed query string Better Auth put on the page URL, without the leading `?`. */
+  continueOAuth: (oauthQuery: string) =>
+    request<OAuthRedirect>("POST", "/api/auth/oauth2/continue", { postLogin: true, oauth_query: oauthQuery }),
+  decideOAuthConsent: (accept: boolean, oauthQuery: string) =>
+    request<OAuthRedirect>("POST", "/api/auth/oauth2/consent", { accept, oauth_query: oauthQuery }),
+  oauthConnections: () => request<{ items: OAuthConnection[] }>("GET", "/api/oauth/connections"),
+  revokeOAuthConnection: (id: string) => request<{ ok: true }>("DELETE", `/api/oauth/connections/${enc(id)}`),
   projects: () => request<Page<Project>>("GET", "/api/projects?limit=50"),
   project: (id: string) => request<ProjectDetail>("GET", `/api/projects/${enc(id)}`),
   projectReview: (id: string) => request<ProjectReview>("GET", `/api/projects/${enc(id)}/review`),

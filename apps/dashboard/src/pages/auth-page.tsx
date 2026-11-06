@@ -4,9 +4,18 @@ import { ErrorBanner, useAsync } from "../ui.tsx";
 
 /**
  * Email/password sign-in and sign-up plus GitHub/Google SSO (Better Auth). Either way a new user gets a
- * personal workspace server-side. `ssoError` is the message of a failed SSO redirect.
+ * personal workspace server-side. `ssoError` is the message of a failed SSO redirect; `returnTo` is where
+ * GitHub/Google sign-in comes back to (default `/`).
  */
-export function AuthPage({ onSignedIn, ssoError }: { onSignedIn: () => void; ssoError?: string }) {
+export function AuthPage({
+  onSignedIn,
+  ssoError,
+  returnTo,
+}: {
+  onSignedIn: () => void;
+  ssoError?: string;
+  returnTo?: string;
+}) {
   // Without the list (older server, network) the page still offers email/password.
   const sso = useAsync(() => api.ssoProviders());
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -36,7 +45,7 @@ export function AuthPage({ onSignedIn, ssoError }: { onSignedIn: () => void; sso
     setBusy(true);
     setError(undefined);
     try {
-      await api.signInWith(provider);
+      await api.signInWith(provider, returnTo);
     } catch (e) {
       setError(e);
       setBusy(false);

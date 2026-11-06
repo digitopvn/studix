@@ -155,6 +155,13 @@
       "when": 1793960148615,
       "tag": "0021_workspace_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793961385242,
+      "tag": "0022_job_parked_request_mcp_oauth",
+      "breakpoints": true
     }
   ]
 }
