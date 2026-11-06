@@ -45,7 +45,12 @@ const RUNTIME_KEY_PROVIDERS: ReadonlySet<string> = new Set([
   "huggingface",
   "zai",
   "moonshotai",
+  // OpenCode Go subscription: one key for the OpenAI-compatible endpoint the SDK pins per model.
+  "opencode-go",
 ]);
+
+/** Display names for providers the SDK only knows by id (it names just the ones with an OAuth login). */
+const PROVIDER_NAMES: Readonly<Record<string, string>> = { "opencode-go": "OpenCode Go" };
 
 export function isRuntimeKeyProvider(provider: string): boolean {
   return RUNTIME_KEY_PROVIDERS.has(provider);
@@ -70,7 +75,7 @@ export function listPiCatalog(): PiCatalogProvider[] {
     .sort()
     .map((id) => ({
       id,
-      name: oauth.get(id)?.replace(/\s*\(.*\)$/, "") ?? id,
+      name: PROVIDER_NAMES[id] ?? oauth.get(id)?.replace(/\s*\(.*\)$/, "") ?? id,
       authMethods: ["api_key"],
       ...(oauth.has(id) ? { oauthRestriction: OAUTH_RESTRICTION } : {}),
       models: getModels(id as Parameters<typeof getModels>[0]).map((m) => ({
