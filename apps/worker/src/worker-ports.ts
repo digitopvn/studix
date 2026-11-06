@@ -18,7 +18,7 @@ import {
   routeKeyTester,
   type WorkspaceFeatureService,
 } from "@studix/auth";
-import { createDefaultApprovalPolicy } from "@studix/core";
+import { createDefaultApprovalPolicy, type StorageAdapter } from "@studix/core";
 import { createRepositories } from "@studix/database";
 import {
   createDecisionRouterFromConfig,
@@ -29,7 +29,7 @@ import {
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import { createActivityRecorder } from "@studix/observability";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
-import { StudixError } from "@studix/shared";
+import { type Logger, StudixError } from "@studix/shared";
 import { createS3StorageAdapterFromConfig } from "@studix/storage";
 import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
@@ -251,6 +251,23 @@ async function assertClaudeRuntime(
 }
 
 /**
+ * Log, but do not abort on, a storage write failure at boot: a transient outage must not crash-loop the
+ * worker, while a permanent misconfiguration shows up in the log at once instead of after a render.
+ */
+async function probeStorageAtStartup(storage: StorageAdapter, logger: Logger): Promise<void> {
+  try {
+    await storage.verifyWritable?.({ organizationId: "studix-system", workspaceId: "startup-probe" });
+    logger.info("object storage write probe passed");
+  } catch (err) {
+    logger.error("object storage write probe failed; uploads will fail until fixed", {
+      error: err instanceof Error ? err.message : String(err),
+      code: err instanceof StudixError ? err.code : undefined,
+      details: err instanceof StudixError ? err.details : undefined,
+    });
+  }
+}
+
+/**
  * Production adapters for the standalone worker: S3-compatible storage, the HyperFrames renderer and
  * the brief planner (DecisionRouter for `video.brief` with a deterministic rules fallback, optional
  * connector brand lookup). Misconfiguration (no bucket, bad decision routes) fails startup loudly.
@@ -262,6 +279,7 @@ export async function loadWorkerPorts(
   const { config } = settings;
   const { logger } = runtime;
   const storage = createS3StorageAdapterFromConfig(config);
+  await probeStorageAtStartup(storage, logger);
   const toolchain = renderToolchain(runtime.env);
   if (!toolchain.ok) {
     logger.warn("render toolchain incomplete; render stages will fail until it is installed", {

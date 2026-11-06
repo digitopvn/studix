@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import {
   DeleteObjectCommand,
@@ -24,7 +25,7 @@ import {
   type SignedUrlPolicy,
 } from "./signed-url-options.ts";
 import { assertExpectedSha256, materializeBody, writeStreamToFile } from "./storage-body.ts";
-import { assertContentType, resolveTenantKey } from "./tenant-storage-key.ts";
+import { assertContentType, resolveTenantKey, tenantPrefix } from "./tenant-storage-key.ts";
 
 export interface S3StorageOptions {
   bucket: string;
@@ -45,6 +46,8 @@ export interface S3StorageOptions {
 const DEFAULT_POLICY: SignedUrlPolicy = { defaultTtlSeconds: 3600, maxTtlSeconds: 86_400 };
 /** Object metadata key carrying the content hash (S3 lowercases user metadata keys). */
 const SHA256_METADATA = "sha256";
+/** How long a passed write probe is trusted before the next job probes again. */
+const WRITE_PROBE_TTL_MS = 60_000;
 
 function isNotFound(err: unknown): boolean {
   return (
@@ -61,7 +64,10 @@ function storageError(action: string, err: unknown): StudixError {
     cause: err,
     retryable: status === undefined || status >= 500 || status === 429,
     details: { action, status },
-    suggestedAction: "Check S3_ENDPOINT, S3_BUCKET and credentials, then retry.",
+    suggestedAction:
+      status === 401 || status === 403
+        ? "The storage credentials were rejected. Check that S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY are current and allow PutObject, GetObject, HeadObject and DeleteObject on S3_BUCKET under the orgs/ prefix, then retry the job: it resumes from the stored render."
+        : "Check S3_ENDPOINT, S3_BUCKET and credentials, then retry.",
   });
 }
 
@@ -83,6 +89,7 @@ export class S3StorageAdapter implements StorageAdapter {
   private readonly client: S3Client;
   private readonly signer: S3Client;
   private readonly policy: SignedUrlPolicy;
+  private readonly probedUntil = new Map<string, number>();
 
   constructor(options: S3StorageOptions) {
     if (!options.bucket) throw new StudixError("VALIDATION", "S3 bucket is not configured");
@@ -196,6 +203,33 @@ export class S3StorageAdapter implements StorageAdapter {
       if (isNotFound(err)) return;
       throw storageError("delete", err);
     }
+  }
+
+  async verifyWritable(ctx: Pick<TenantContext, "organizationId" | "workspaceId">): Promise<void> {
+    const prefix = tenantPrefix(ctx);
+    if ((this.probedUntil.get(prefix) ?? 0) > Date.now()) return;
+    const key = `preflight/${randomUUID()}.txt`;
+    const body = new TextEncoder().encode("studix storage preflight");
+    await this.put(ctx as TenantContext, key, body, { contentType: "text/plain" });
+    try {
+      const stored = await this.head(ctx as TenantContext, key);
+      if (!stored) {
+        throw new StudixError(
+          "UNAVAILABLE",
+          "Object storage accepted a write but the object is not readable",
+          {
+            retryable: true,
+            details: { action: "preflight" },
+            suggestedAction:
+              "Check that S3_ENDPOINT and S3_BUCKET point at the same store the credentials belong to.",
+          },
+        );
+      }
+    } finally {
+      // A leftover probe object is harmless, so a failed delete must not mask the real result.
+      await this.delete(ctx as TenantContext, key).catch(() => undefined);
+    }
+    this.probedUntil.set(prefix, Date.now() + WRITE_PROBE_TTL_MS);
   }
 
   /** Release sockets held by the SDK clients. */

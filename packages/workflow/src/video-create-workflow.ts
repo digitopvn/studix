@@ -187,6 +187,8 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
     },
     async run(s) {
       const ir = irOf(s);
+      // Fail before the long render when storage would refuse the upload afterwards.
+      await deps.storage.verifyWritable?.(s.ctx);
       const spec = resolveRenderSpec(payloadOf(s).renderPreset);
       const support = deps.renderer.supports(ir, spec);
       if (!support.supported) {

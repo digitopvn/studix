@@ -39,6 +39,12 @@ export interface StorageAdapter {
   head(ctx: TenantContext, key: string): Promise<StoredObject | undefined>;
   signedUrl(ctx: TenantContext, key: string, options?: SignedUrlOptions): Promise<string>;
   delete(ctx: TenantContext, key: string): Promise<void>;
+  /**
+   * Prove the credentials can write, read back and delete under the tenant prefix, using a throwaway
+   * object. Throws the same structured error a real upload would. Lets a workflow fail before it spends
+   * minutes rendering a file it could not store. Adapters that cannot misconfigure may omit it.
+   */
+  verifyWritable?(ctx: Pick<TenantContext, "organizationId" | "workspaceId">): Promise<void>;
 }
 
 const KEY_PATTERN = /^[A-Za-z0-9][\w\-./]*$/;
