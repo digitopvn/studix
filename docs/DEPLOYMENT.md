@@ -26,6 +26,11 @@ and HyperFrames because the worker renders, and the multix CLI for paid media
 generation. The app role does not invoke them; shipping one image keeps build,
 pinning and rollback to a single artifact.
 
+Layers are ordered from rarely to often changed (system packages, multix,
+Chromium, the QA venv, the pnpm store fetched from `pnpm-lock.yaml`, then the
+sources), so a builder that keeps its layer cache rebuilds only the source
+layers on an ordinary commit.
+
 multix is built in a separate stage from a pinned commit of
 `mrgoonie/multix-cli` (`MULTIX_COMMIT` in the `Dockerfile` owns the value). The
 stage fails if the fetched HEAD is not that commit. The pin must be v1.26.0 or
@@ -331,29 +336,58 @@ resources prefixed `studix-`.
 ### CI deploy
 
 `.github/workflows/deploy.yml`: a push to `dev` deploys dev, a push to `main`
-deploys production. It runs `ci.yml` first and deploys only if it passes (during
-the bootstrap stage `dev` skips CI, on pushes and on pull requests into it, and
-deploys directly; `main` stays gated), then
-`deploy/tose/deploy.ts` triggers a TOSE build of the app project, waits until it
-is live (the app migrates on start), does the same for the worker, and checks
-`/healthz` and `/readyz` on the public hostname.
+deploys production. Pushes that only touch Markdown, `docs/`, `plans/`,
+`.claude/` or `ci.yml` do not deploy. The workflow does not re-run CI: `main`
+only receives merged pull requests, whose CI already passed, and `dev` skips CI
+during the bootstrap stage. This is a pre-MVP speed trade-off: a direct push to
+`main` (the branch is not protected) deploys untested. Run CI on such a commit
+by opening a pull request, or restore the `ci` job in `deploy.yml` once the
+project needs the extra gate.
 
-TOSE builds the branch tip, not a chosen commit. Before each build the script
-checks that the tip is still the commit CI tested; if a newer push landed, it
-stops and leaves the deploy to that push's run (the app may then be one commit
-ahead of the worker until it finishes). If TOSE still built another commit (a
-push in the seconds between check and build), the job fails so someone looks.
+How the image is built depends on the environment variable
+`STUDIX_DEPLOY_IMAGE`:
+
+- `1` (image mode): the `image` job builds the root `Dockerfile` once with
+  Buildx, layer cache in the GitHub Actions cache, and pushes
+  `ghcr.io/digitopvn/studix:<sha>`. `deploy/tose/deploy.ts` then calls TOSE
+  `deploy-image` with that digest for the app, waits until it is live (the app
+  applies migrations on start), then does the same for the worker. Both
+  projects run the exact commit that was pushed, and a rollout takes a minute or
+  two instead of a TOSE build.
+- unset (branch mode): TOSE builds each project from the branch tip itself. TOSE
+  keeps no layer cache, so each build takes about 15 minutes; the script starts
+  both builds at the same time. Because the worker no longer waits for the app,
+  it can go live first and briefly run new code against the old schema; jobs
+  that need the new schema can fail until the app has migrated. For a release
+  whose worker code cannot run before its migration, deploy the app alone first
+  (`node deploy/tose/deploy.ts <app-project>` with the
+  [TOSE access](#tose-access) key), then run the workflow. Before starting the
+  builds the script checks that the tip is still the pushed commit; if a newer
+  push landed, it skips and leaves the deploy to that push's run. If TOSE still
+  built another commit, the job fails so someone looks.
+
+Either way the job then checks `/healthz` and `/readyz` on the public hostname.
+
+One-time setup for image mode, per environment: TOSE pulls the private GHCR
+package with a workspace registry credential (TOSE `createRegistryCredential`,
+host `ghcr.io`, a token with `read:packages` only). Put its id in the
+environment variable `TOSE_REGISTRY_CREDENTIAL_ID`, check that `TOSE_API_KEY`
+has the `deployments:execute` scope, then set `STUDIX_DEPLOY_IMAGE=1`. Unset it
+to fall back to branch mode.
+
 A started rollout is never cancelled; a newer push queues behind it.
 
 The GitHub environments `dev` and `production` hold what the job needs, and
 each accepts deployments only from its own branch:
 
-| Kind     | Name                                      | Value                            |
-| -------- | ----------------------------------------- | -------------------------------- |
-| Secret   | `TOSE_API_KEY`                            | TOSE API key for `wearetopgroup` |
-| Variable | `TOSE_WORKSPACE`                          | `wearetopgroup`                  |
-| Variable | `TOSE_APP_PROJECT`, `TOSE_WORKER_PROJECT` | the environment's projects       |
-| Variable | `STUDIX_APP_URL`                          | the environment's public origin  |
+| Kind     | Name                                      | Value                             |
+| -------- | ----------------------------------------- | --------------------------------- |
+| Secret   | `TOSE_API_KEY`                            | TOSE API key for `wearetopgroup`  |
+| Variable | `TOSE_WORKSPACE`                          | `wearetopgroup`                   |
+| Variable | `TOSE_APP_PROJECT`, `TOSE_WORKER_PROJECT` | the environment's projects        |
+| Variable | `STUDIX_APP_URL`                          | the environment's public origin   |
+| Variable | `STUDIX_DEPLOY_IMAGE`                     | `1` for image mode (optional)     |
+| Variable | `TOSE_REGISTRY_CREDENTIAL_ID`             | TOSE GHCR credential (image mode) |
 
 To redeploy without a push, run the workflow manually (**Run workflow** on the
 branch). Env-only changes need no build: `tose redeploy <project> -y`.
