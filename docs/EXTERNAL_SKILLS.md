@@ -69,7 +69,9 @@ that its own user did not ask for. Details and the threat model: [SECURITY.md](S
 - Skill files live in the same S3-compatible bucket as artifacts, under `external-skills/` in the workspace prefix.
   Without `S3_BUCKET`, import and content reads answer `UNAVAILABLE`.
 - Only `api.github.com` is contacted. `STUDIX_GITHUB_API_TOKEN` is an optional token for that host alone, to raise the
-  rate limit; without it GitHub's anonymous limit applies and a limit hit returns `RATE_LIMITED` with
+  rate limit. Use a token with no private-repository access: Studix also refuses any repository GitHub does not
+  report as public, and each workspace may run at most two GitHub-calling operations at once. Without a token
+  GitHub's anonymous limit applies and a limit hit returns `RATE_LIMITED` with
   `details.retryAfterSeconds`.
 - Mutations are recorded in the workspace activity trail (`mcp.studix_skill_import`, `…_update`, `…_disable`) with the
   repository, commit and outcome per skill.
