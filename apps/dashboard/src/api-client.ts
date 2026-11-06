@@ -509,6 +509,53 @@ export interface OAuthRedirect {
   url: string;
 }
 
+export type PlatformCredentialStatus = "configured" | "missing" | "invalid" | "unverified";
+
+export interface PlatformTestResult {
+  ok: boolean;
+  at: string;
+  latencyMs: number;
+  step?: string;
+  httpStatus?: number;
+  error?: StudixErrorPayload;
+  found?: string[];
+}
+
+export interface PlatformCredential {
+  name: string;
+  label: string;
+  group: "storage" | "media";
+  vendor?: string;
+  kinds?: string[];
+  status: PlatformCredentialStatus;
+  source: "dashboard" | "environment" | "none";
+  hint?: string;
+  version?: number;
+  updatedAt?: string;
+  lastTest?: PlatformTestResult;
+  environmentFallback: boolean;
+}
+
+export interface PlatformCredentials {
+  secretStorage: "available" | "unavailable";
+  storage: {
+    configured: boolean;
+    endpoint?: string;
+    publicEndpoint?: string;
+    bucket?: string;
+    region?: string;
+    forcePathStyle?: boolean;
+    signedUrlTtlSeconds?: number;
+    credentials: PlatformCredential;
+  };
+  media: {
+    executable: { configured: boolean; path?: string; reason?: string };
+    lastCheck?: PlatformTestResult;
+    vendors: PlatformCredential[];
+  };
+  apply: { restartRequired: false; withinSeconds: number; runningJobs: string; scope: string };
+}
+
 export const api = {
   signIn: (email: string, password: string) =>
     request("POST", "/api/auth/sign-in/email", { email, password }),
@@ -583,6 +630,18 @@ export const api = {
     request<ProviderConnection>("POST", `/api/providers/anthropic/api-keys/${enc(id)}/test`, {}),
   removeAnthropicKey: (id: string) =>
     request<ProviderConnection>("DELETE", `/api/providers/anthropic/api-keys/${enc(id)}`),
+  platformCredentials: () => request<PlatformCredentials>("GET", "/api/platform/credentials"),
+  savePlatformStorage: (input: { accessKeyId: string; secretAccessKey: string }) =>
+    request<PlatformCredentials>("PUT", "/api/platform/credentials/storage", input),
+  testPlatformStorage: () =>
+    request<PlatformTestResult>("POST", "/api/platform/credentials/storage/test", {}),
+  savePlatformMediaKey: (name: string, apiKey: string) =>
+    request<PlatformCredentials>("PUT", `/api/platform/credentials/media/${enc(name)}`, { apiKey }),
+  testPlatformMediaKey: (name: string) =>
+    request<PlatformTestResult>("POST", `/api/platform/credentials/media/${enc(name)}/test`, {}),
+  checkPlatformMultix: () => request<PlatformTestResult>("POST", "/api/platform/media/check", {}),
+  revokePlatformCredential: (name: string) =>
+    request<PlatformCredentials>("DELETE", `/api/platform/credentials/${enc(name)}`),
   providerCatalog: () => request<{ providers: CatalogProvider[] }>("GET", "/api/providers/catalog"),
   providerConnections: () => request<ProviderConnectionList>("GET", "/api/providers/connections"),
   addProviderKey: (input: {

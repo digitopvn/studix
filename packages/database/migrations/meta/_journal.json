@@ -176,6 +176,13 @@
       "when": 1793967420203,
       "tag": "0024_api_key_skill_scopes",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793981222090,
+      "tag": "0025_platform_secrets",
+      "breakpoints": true
     }
   ]
 }

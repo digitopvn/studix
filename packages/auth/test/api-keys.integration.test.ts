@@ -130,7 +130,9 @@ describe("api key scopes after job:retry joined the role matrix", () => {
     // `job:recover` came later still; 0017 adds it below and 0020 takes it back for operators only.
     const admin = await issue(
       "old-admin",
-      PERMISSIONS.filter((p) => p !== "job:retry" && p !== "job:recover" && !SKILL_SCOPES.has(p)),
+      PERMISSIONS.filter(
+        (p) => p !== "job:retry" && p !== "job:recover" && p !== "platform:manage" && !SKILL_SCOPES.has(p),
+      ),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
     const already = await issue("already", ["project:read", "job:retry"]);
@@ -185,7 +187,9 @@ describe("api key scopes as job:recover joined the admin roles, then moved to op
       });
     const admin = await issue(
       "old-admin",
-      [...PERMISSIONS.filter((p) => p !== "job:recover" && !SKILL_SCOPES.has(p))].reverse(),
+      [
+        ...PERMISSIONS.filter((p) => p !== "job:recover" && p !== "platform:manage" && !SKILL_SCOPES.has(p)),
+      ].reverse(),
     );
     const editor = await issue("editor", [
       "workspace:read",
@@ -251,7 +255,9 @@ describe("api key scopes as skill:read and skill:write joined the role matrix", 
     ]);
     const admin = await issue(
       "admin",
-      [...PERMISSIONS.filter((p) => p !== "job:recover" && !SKILL_SCOPES.has(p))].reverse(),
+      [
+        ...PERMISSIONS.filter((p) => p !== "job:recover" && p !== "platform:manage" && !SKILL_SCOPES.has(p)),
+      ].reverse(),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
 

@@ -27,6 +27,34 @@ import {
 import { assertExpectedSha256, materializeBody, writeStreamToFile } from "./storage-body.ts";
 import { assertContentType, resolveTenantKey } from "./tenant-storage-key.ts";
 
+export interface S3Credentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+}
+
+/**
+ * Credentials read again whenever the SDK needs them (at most every `CREDENTIAL_REFRESH_MS`), so a rotated
+ * key applies without a restart. Resolves the credentials that are active right now.
+ */
+export type S3CredentialSource = () => Promise<S3Credentials>;
+
+/**
+ * The SDK memoizes a provider's identity until it is within five minutes of `expiration`; an identity
+ * without one is kept for the life of the client. Declaring one just past that window makes the SDK call the
+ * source again after this long.
+ */
+export const CREDENTIAL_REFRESH_MS = 15_000;
+const SDK_EXPIRY_WINDOW_MS = 5 * 60_000;
+
+function credentialProvider(source: S3Credentials | S3CredentialSource | undefined) {
+  if (source === undefined || typeof source !== "function") return source;
+  return async () => ({
+    ...(await source()),
+    expiration: new Date(Date.now() + SDK_EXPIRY_WINDOW_MS + CREDENTIAL_REFRESH_MS),
+  });
+}
+
 export interface S3StorageOptions {
   bucket: string;
   region: string;
@@ -39,7 +67,7 @@ export interface S3StorageOptions {
   publicEndpoint?: string;
   /** Path-style addressing (`endpoint/bucket/key`); required by MinIO, harmless for R2. */
   forcePathStyle?: boolean;
-  credentials?: { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
+  credentials?: S3Credentials | S3CredentialSource;
   signedUrlPolicy?: SignedUrlPolicy;
 }
 
@@ -75,8 +103,8 @@ function storageError(action: string, err: unknown): StudixError {
 
 export interface StorageProbeResult {
   ok: boolean;
-  /** Step that failed: `put`, `head` or `delete`. */
-  step?: "put" | "head" | "delete";
+  /** Step that failed: `put`, `get`, `head` or `delete`. */
+  step?: "put" | "get" | "head" | "delete";
   status?: number;
   s3Code?: string;
   /** True when the failure is a definitive refusal (4xx other than 429) rather than a transient outage. */
@@ -95,7 +123,7 @@ function buildClient(options: S3StorageOptions, endpoint: string | undefined): S
     region: options.region,
     endpoint,
     forcePathStyle: options.forcePathStyle ?? false,
-    credentials: options.credentials,
+    credentials: credentialProvider(options.credentials),
     // S3-compatible stores (R2, older MinIO) do not all accept the SDK's default trailing CRC checksums.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
@@ -230,11 +258,15 @@ export class S3StorageAdapter implements StorageAdapter {
   async probeWrite(): Promise<StorageProbeResult> {
     const key = resolveTenantKey(PROBE_TENANT, `probe/${randomUUID()}.txt`);
     const body = new TextEncoder().encode("studix storage probe");
-    let step: "put" | "head" | "delete" = "put";
+    let step: "put" | "get" | "head" | "delete" = "put";
     try {
       await this.client.send(
         new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: "text/plain" }),
       );
+      step = "get";
+      const read = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      // Drain the body so the connection is released; the content itself is not inspected.
+      await read.Body?.transformToByteArray();
       step = "head";
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       step = "delete";
@@ -280,7 +312,7 @@ export function createS3StorageAdapterFromConfig(
     | "S3_FORCE_PATH_STYLE"
     | "S3_SIGNED_URL_TTL_SECONDS"
   >,
-  overrides: Partial<Pick<S3StorageOptions, "publicEndpoint" | "signedUrlPolicy">> = {},
+  overrides: Partial<Pick<S3StorageOptions, "publicEndpoint" | "signedUrlPolicy" | "credentials">> = {},
 ): S3StorageAdapter {
   if (!config.S3_BUCKET) {
     throw new StudixError("VALIDATION", "S3_BUCKET is not configured", {
@@ -288,7 +320,7 @@ export function createS3StorageAdapterFromConfig(
     });
   }
   const hasKeyId = Boolean(config.S3_ACCESS_KEY_ID);
-  if (hasKeyId !== Boolean(config.S3_SECRET_ACCESS_KEY)) {
+  if (!overrides.credentials && hasKeyId !== Boolean(config.S3_SECRET_ACCESS_KEY)) {
     throw new StudixError("VALIDATION", "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together");
   }
   const ttl = config.S3_SIGNED_URL_TTL_SECONDS;
@@ -297,9 +329,11 @@ export function createS3StorageAdapterFromConfig(
     region: config.S3_REGION,
     endpoint: config.S3_ENDPOINT,
     forcePathStyle: config.S3_FORCE_PATH_STYLE,
-    credentials: hasKeyId
-      ? { accessKeyId: config.S3_ACCESS_KEY_ID!, secretAccessKey: config.S3_SECRET_ACCESS_KEY! }
-      : undefined,
+    credentials:
+      overrides.credentials ??
+      (hasKeyId
+        ? { accessKeyId: config.S3_ACCESS_KEY_ID!, secretAccessKey: config.S3_SECRET_ACCESS_KEY! }
+        : undefined),
     signedUrlPolicy: overrides.signedUrlPolicy ?? { defaultTtlSeconds: ttl, maxTtlSeconds: ttl },
     publicEndpoint: overrides.publicEndpoint ?? config.S3_PUBLIC_ENDPOINT,
   });

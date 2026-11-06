@@ -266,6 +266,29 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     );
   }
 
+  /** The executable path (a deployment setting, not a credential) for operator status pages. */
+  get executablePath(): string | undefined {
+    return this.bin;
+  }
+
+  /**
+   * Run `multix check --json` now and return the key variables the CLI found (names only, never values). Free
+   * and read-only; unlike {@link readiness} it neither reuses a cached probe nor hides a CLI that cannot run:
+   * that failure is thrown with its diagnosis.
+   */
+  async checkKeys(): Promise<string[]> {
+    this.assertEnabled();
+    return this.inScratchDir(async (cwd) => {
+      const found = parseCheckKeys(
+        (await this.exec("check", ["check", "--json"], cwd, PROBE_TIMEOUT_MS)).text,
+      );
+      this.lastReadiness = Object.fromEntries(
+        MULTIX_VENDORS.map((v) => [v, found.has(MULTIX_VENDOR_KEYS[v])]),
+      ) as Record<MultixVendor, boolean>;
+      return [...found].filter((name) => Object.values(MULTIX_VENDOR_KEYS).includes(name)).sort();
+    });
+  }
+
   /** The "<vendor>:<model>" a request runs on; results report the same id. */
   resolveModel(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string {
     return resolveMultixModel(request, this.defaults, this.voiceRoutes).model.id;

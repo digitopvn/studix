@@ -15,7 +15,11 @@ import {
   type PackRegistry,
   packRegistry,
 } from "@studix/skills";
-import { createS3StorageAdapterFromConfig, type S3StorageAdapter } from "@studix/storage";
+import {
+  createS3StorageAdapterFromConfig,
+  type S3CredentialSource,
+  type S3StorageAdapter,
+} from "@studix/storage";
 import { createConnectorAdminAdapter } from "./connector-admin-adapter.ts";
 import { createGatewayMetaTools } from "./mcp/gateway-meta-tools.ts";
 import type { ConnectorAdmin, RegisterMetaTools, SkillSummary } from "./ports.ts";
@@ -82,10 +86,17 @@ export function composeIntegrations(input: {
   approvalPolicy: ApprovalPolicy;
   activity: ActivityRecorder;
   logger: Logger;
+  /** Active storage credentials, read again as they rotate; omitted to use the configuration's static pair. */
+  storageCredentials?: S3CredentialSource;
 }): Integrations {
   const { config, repos, logger } = input;
   const gatewayConfig = loadGatewayConfig(input.env);
-  const storage = config.S3_BUCKET ? createS3StorageAdapterFromConfig(config) : undefined;
+  const storage = config.S3_BUCKET
+    ? createS3StorageAdapterFromConfig(
+        config,
+        input.storageCredentials ? { credentials: input.storageCredentials } : {},
+      )
+    : undefined;
   // The resolved public/app URLs (with their localhost defaults) are self origins too.
   const selfOrigins = [config.STUDIX_PUBLIC_URL, config.STUDIX_APP_URL].map((u) => new URL(u).origin);
   const gateway = createMcpGateway({

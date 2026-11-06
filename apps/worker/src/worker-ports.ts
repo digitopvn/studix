@@ -39,6 +39,7 @@ import { prepareClaudeSandboxRoot } from "./planner/claude-sandbox.ts";
 import { createExecutionSink } from "./planner/execution-sink.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
 import { createWorkspaceModelDecisions } from "./planner/workspace-model-decisions.ts";
+import { platformSourceFor } from "./platform-source.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
@@ -261,7 +262,13 @@ export async function loadWorkerPorts(
 ): Promise<WorkerPorts> {
   const { config } = settings;
   const { logger } = runtime;
-  const storage = createS3StorageAdapterFromConfig(config);
+  const platform = await platformSourceFor(settings, runtime);
+  // With a master key the dashboard may rotate the storage key, so the adapter reads it as it changes;
+  // otherwise it keeps the static pair from the environment.
+  const storage = createS3StorageAdapterFromConfig(
+    config,
+    platform.managed ? { credentials: platform.source.storageCredentials } : {},
+  );
   const toolchain = renderToolchain(runtime.env);
   if (!toolchain.ok) {
     logger.warn("render toolchain incomplete; render stages will fail until it is installed", {
@@ -320,6 +327,7 @@ export async function loadWorkerPorts(
       if (idle.includes(false)) {
         logger.warn("agent runs still closing at shutdown", { graceMs: CLAUDE_SHUTDOWN_GRACE_MS });
       }
+      platform.stop();
       await storage.destroy();
     },
   };

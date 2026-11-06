@@ -146,6 +146,41 @@ ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
 plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the
 rejected-key test uses a made-up key and costs nothing.
 
+### Storage and media credentials in the dashboard
+
+The platform operator (the `operator` role, set on the member row in the database;
+no dashboard flow grants it) manages the object-storage key and the media vendor
+keys under **Storage & Media**, so a rotation needs no redeploy and no restart.
+It needs `STUDIX_SECRETS_KEY` on the app and the worker; without it the page is
+read-only and the environment variables keep working.
+
+- A value stored there is sealed in `platform_secrets` (AES-256-GCM, the same
+  master key as provider connections, associated data `platform:<name>`) and wins
+  over the environment variable of the same name. Nothing is copied from the
+  environment into the database. Revoking a stored value hands the variable back
+  to the environment; storage cannot be revoked when the environment has no
+  `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` (replace it instead).
+- Only `S3` access key id and secret and the vendor keys listed below can be
+  stored (`SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
+  `FISH_API_KEY`, `MINIMAX_API_KEY`, `OPENROUTER_API_KEY`); endpoint, bucket,
+  region and `MULTIX_BIN` stay environment settings, so the page cannot be used
+  to redirect uploads. The worker keeps `MULTIX_DISABLE_HOME_ENV=1` and its
+  allowlist.
+- A new storage key is checked with a real write, read, head and delete before it
+  replaces the current one; a failure names the step and the HTTP and S3 code and
+  stores nothing. **Test connection** repeats the check on the active key.
+- The app and the worker re-read the table every 15 seconds. A job already
+  running keeps the credential it started with; its next call uses the new one.
+  Nothing is restarted. `OPENROUTER_API_KEY` stored here goes to Multix only;
+  planning and decision routing still read the environment.
+- **Run multix check** runs `multix check --json` with the live environment and
+  reports which vendor keys the CLI found. A vendor **Test** is a free
+  authentication request where the vendor offers one, otherwise the key stays
+  `unverified`.
+- Credential values are accepted in request bodies only, never returned, never
+  logged, and every change is audited (`platform_secret.*`) without the value.
+  Every `/api/platform/*` response is `no-store`.
+
 Paid media runs through the Multix provider (`packages/providers`), which is
 off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
 video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,

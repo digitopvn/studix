@@ -6,8 +6,11 @@ import {
   createApiKeyService,
   createDashboardAuth,
   createModelPreferenceService,
+  createPlatformCredentialService,
+  createPlatformSecretSource,
   createProviderConnectionService,
   createSecretBox,
+  createVendorKeyTester,
   createWorkspaceFeatureService,
   parseSecretKey,
   routeKeyTester,
@@ -35,6 +38,7 @@ import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
+import { createPlatformMediaPort, createPlatformStoragePort } from "./platform-credentials-wiring.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -139,11 +143,40 @@ export async function composeApp(
     costThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
   });
   const activity = createActivityRecorder(repos.activity, { logger });
-  const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
+  // One master key seals provider connections and the operator's platform credentials alike.
+  const secretBox = config.STUDIX_SECRETS_KEY
+    ? createSecretBox(
+        parseSecretKey(config.STUDIX_SECRETS_KEY),
+        config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+      )
+    : undefined;
+  // What the Multix provider and the storage adapter read: the deployment's variables overlaid with what the
+  // operator stored in the dashboard. Refreshed on a timer, so a change needs no restart.
+  const platformSource = createPlatformSecretSource({
+    secrets: repos.platformSecrets,
+    box: secretBox,
+    base: env,
+    logger,
+  });
+  await platformSource.refresh();
+  const stopPlatformRefresh = platformSource.start();
+  const integrations = composeIntegrations({
+    env,
+    config,
+    repos,
+    approvalPolicy,
+    activity,
+    logger,
+    // Without a master key nothing can be stored, so the adapter keeps its static environment credentials.
+    ...(secretBox ? { storageCredentials: platformSource.storageCredentials } : {}),
+  });
+  const multix = config.MULTIX_BIN
+    ? createMultixProviderFromConfig(config, { env: platformSource.mediaEnv })
+    : undefined;
   const studio = new StudioService({
     ...repos,
     // Operators attach Atlas predictions by hand; each is checked with Atlas first, so this needs multix.
-    providerJobs: config.MULTIX_BIN ? createMultixProviderFromConfig(config, { env }) : undefined,
+    providerJobs: multix,
     approvalPolicy,
     clock: systemClock,
     logger,
@@ -188,17 +221,22 @@ export async function composeApp(
       createPiKeyTester(),
     ),
     isSupportedProvider: isRuntimeKeyProvider,
-    secrets: config.STUDIX_SECRETS_KEY
-      ? createSecretBox(
-          parseSecretKey(config.STUDIX_SECRETS_KEY),
-          config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
-        )
-      : undefined,
+    secrets: secretBox,
     claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
     logger,
   });
   if (!config.STUDIX_SECRETS_KEY)
     logger.warn("STUDIX_SECRETS_KEY is not set; provider keys cannot be stored");
+  const platformCredentials = createPlatformCredentialService({
+    secrets: repos.platformSecrets,
+    box: secretBox,
+    audit: repos.audit,
+    env,
+    ...(integrations.storage ? { storage: createPlatformStoragePort(config, integrations.storage) } : {}),
+    media: createPlatformMediaPort(multix),
+    vendorTester: createVendorKeyTester(),
+    onChanged: () => platformSource.refresh(),
+  });
   const modelPreferences = createModelPreferenceService({
     preferences: repos.modelPreferences,
     providers,
@@ -225,6 +263,7 @@ export async function composeApp(
     connectors: overrides.connectors ?? integrations.connectors,
     metaTools: overrides.metaTools ?? integrations.metaTools,
     providers,
+    platformCredentials,
     modelPreferences,
     claudePlanner: config.STUDIX_CLAUDE_PLANNER,
     features,
@@ -265,6 +304,7 @@ export async function composeApp(
 
   const close = async () => {
     closed = true;
+    stopPlatformRefresh();
     integrations.storage?.destroy();
     await handle.close();
   };

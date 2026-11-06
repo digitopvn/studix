@@ -42,10 +42,10 @@ async function adapterAgainst(
 }
 
 describe("S3StorageAdapter.probeWrite", () => {
-  it("passes when put, head and delete succeed", async () => {
+  it("passes when put, get, head and delete succeed", async () => {
     const { adapter, methods } = await adapterAgainst((m) => (m === "DELETE" ? 204 : 200));
     expect(await adapter.probeWrite()).toEqual({ ok: true });
-    expect(methods).toEqual(["PUT", "HEAD", "DELETE"]);
+    expect(methods).toEqual(["PUT", "GET", "HEAD", "DELETE"]);
   });
 
   it("reports a 403 on put as a definitive refusal without leaking credentials", async () => {
@@ -66,9 +66,54 @@ describe("S3StorageAdapter.probeWrite", () => {
     expect(await adapter.probeWrite()).toMatchObject({ ok: false, step: "put", denied: false });
   });
 
+  it("names the get step when reading back is refused", async () => {
+    const { adapter } = await adapterAgainst((m) => (m === "GET" ? 403 : 200));
+    expect(await adapter.probeWrite()).toMatchObject({ ok: false, step: "get", status: 403 });
+  });
+
   it("names the failing step when only delete is refused", async () => {
     const { adapter } = await adapterAgainst((m) => (m === "DELETE" ? 403 : 200));
     expect(await adapter.probeWrite()).toMatchObject({ ok: false, step: "delete", status: 403 });
+  });
+});
+
+describe("S3StorageAdapter with a credential source", () => {
+  it("signs with the source's current value after the refresh interval", async () => {
+    const seen: string[] = [];
+    const server = createServer((req, res) => {
+      seen.push(String(req.headers.authorization).match(/Credential=([^/]+)/)?.[1] ?? "");
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200);
+        res.end("");
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    let active = "AKIAFIRSTKEY";
+    const adapter = new S3StorageAdapter({
+      bucket: "test-bucket",
+      region: "auto",
+      endpoint: `http://127.0.0.1:${port}`,
+      forcePathStyle: true,
+      credentials: async () => ({ accessKeyId: active, secretAccessKey: "test-secret-not-real" }),
+    });
+    adapters.push(adapter);
+    const realNow = Date.now;
+    try {
+      await adapter.probeWrite();
+      active = "AKIASECONDKEY";
+      await adapter.probeWrite();
+      // Still inside the refresh interval: the first identity is reused.
+      expect(new Set(seen)).toEqual(new Set(["AKIAFIRSTKEY"]));
+      const later = realNow() + 6 * 60_000;
+      Date.now = () => later;
+      await adapter.probeWrite();
+    } finally {
+      Date.now = realNow;
+    }
+    expect(seen.at(-1)).toBe("AKIASECONDKEY");
   });
 });
 

@@ -35,6 +35,17 @@ describe("authorization matrix", () => {
     expect(can(actor, "job:recover")).toBe(false);
   });
 
+  it("platform:manage belongs to a signed-in operator only", () => {
+    expect(can({ type: "user", id: "u", role: "operator" }, "platform:manage")).toBe(true);
+    for (const role of ["owner", "admin", "editor", "reviewer", "viewer"] as const) {
+      expect(can({ type: "user", id: "u", role }, "platform:manage")).toBe(false);
+    }
+    expect(can({ type: "apiKey", id: "k", scopes: ["platform:manage"] }, "platform:manage")).toBe(false);
+    const oauth = { type: "oauth", id: "u", clientId: "c", scopes: ["platform:manage"] } as const;
+    expect(can(oauth, "platform:manage")).toBe(false);
+    expect(can({ type: "system", id: "worker" }, "platform:manage")).toBe(false);
+  });
+
   it("assertPermission throws FORBIDDEN with a suggested action", () => {
     const ctx = testTenant({ scopes: ["project:read"] });
     expect(() => assertPermission(ctx, "project:write")).toThrow(StudixError);

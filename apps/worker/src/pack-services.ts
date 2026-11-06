@@ -9,6 +9,7 @@ import {
 } from "@studix/qa";
 import { StudixError, toStudixError } from "@studix/shared";
 import { knowledgeCatalog } from "@studix/skills";
+import { platformSourceFor } from "./platform-source.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
@@ -28,7 +29,9 @@ export async function loadPackServices(
   runtime: WorkerPortsRuntime,
 ): Promise<Pick<WorkerPorts, "media" | "qa" | "speech">> {
   const { config } = settings;
-  const media = createMultixProviderFromConfig(config, { env: runtime.env });
+  // Media vendor keys the operator stored in the dashboard are laid over the environment and followed live.
+  const platform = await platformSourceFor(settings, runtime);
+  const media = createMultixProviderFromConfig(config, { env: platform.source.mediaEnv });
   const toolchain = resolveQaToolchain(runtime.env);
   const qaStatus = qaToolchainStatus(toolchain, runtime.env);
   if (!qaStatus.ok) {

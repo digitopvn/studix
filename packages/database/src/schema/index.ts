@@ -3,6 +3,7 @@ export * from "./connectors.ts";
 export * from "./external-skills.ts";
 export * from "./jobs.ts";
 export * from "./oauth.ts";
+export * from "./platform-secrets.ts";
 export * from "./projects.ts";
 export * from "./provider-connections.ts";
 export * from "./rate-limits.ts";

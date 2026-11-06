@@ -77,6 +77,26 @@ Rules:
 The union is `ErrorCode` in `packages/shared`; the `retryable` column is a
 guide, the per-error value is authoritative.
 
+## Platform credentials API
+
+Dashboard session only, not MCP tools: an agent or API key cannot read or change
+platform credentials (`platform:manage` is held by the `operator` role through a
+signed-in session only). All responses are `no-store` and never contain a secret.
+
+| Route                                             | Purpose                                                                             |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `GET /api/platform/credentials`                   | Storage settings, key status, Multix executable, vendor statuses, how changes apply |
+| `PUT /api/platform/credentials/storage`           | Body `{ accessKeyId, secretAccessKey }`; probed first, stored only if it works      |
+| `POST /api/platform/credentials/storage/test`     | Put, get, head, delete a throwaway object; failure names step, HTTP and S3 code     |
+| `PUT /api/platform/credentials/media/:name`       | Body `{ apiKey }` for an allowlisted vendor variable (add or rotate)                |
+| `POST /api/platform/credentials/media/:name/test` | Free vendor authentication check where available                                    |
+| `POST /api/platform/media/check`                  | `multix check --json` with the live environment                                     |
+| `DELETE /api/platform/credentials/:name`          | Remove the stored value; the environment value, if any, takes over                  |
+
+Errors: `FORBIDDEN` for any non-operator, `NOT_FOUND` for a name outside the
+allowlist, `VALIDATION` for a malformed or rejected key, `UNAVAILABLE` without
+`STUDIX_SECRETS_KEY`, `CONFLICT` when revoking would leave storage without a key.
+
 ## P0 native tools
 
 | Tool                      | Purpose                                                                                                                                                                                                                                                |

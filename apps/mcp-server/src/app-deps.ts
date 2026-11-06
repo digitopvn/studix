@@ -1,6 +1,7 @@
 import type {
   ApiKeyService,
   ModelPreferenceService,
+  PlatformCredentialService,
   ProviderConnectionService,
   WorkspaceFeatureService,
 } from "@studix/auth";
@@ -61,6 +62,8 @@ export interface AppDeps {
   connectors?: ConnectorAdmin;
   /** Outbound AI provider credentials; without it the provider API answers UNAVAILABLE. */
   providers?: ProviderConnectionService;
+  /** Operator-managed storage and media credentials; without it the platform API answers UNAVAILABLE. */
+  platformCredentials?: PlatformCredentialService;
   /** Per-stage model choices for the Pi runtime; without it the model API answers UNAVAILABLE. */
   modelPreferences?: ModelPreferenceService;
   /** STUDIX_CLAUDE_PLANNER: jobs may select the Claude planner. */

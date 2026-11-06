@@ -160,6 +160,16 @@ two auth methods are separate and are never used as each other's fallback:
   third-party products to offer claude.ai login or route requests through
   subscription credentials without approval. The dashboard therefore shows the
   reason and the alternatives, and offers no connect action.
+- **Platform credentials** (object-storage key, media vendor keys) are managed
+  only by the platform `operator` (`platform:manage`), which no API key, OAuth
+  token, agent or system actor can hold. They are sealed under the same master
+  key with associated data `platform:<name>`, so a ciphertext moved to another
+  name does not open. Only allowlisted names are accepted; the endpoint and
+  bucket are not editable, so the page is not an SSRF or redirect path. Views
+  carry status, a four-character hint and test metadata only; routes are
+  `no-store`; opened values are registered with the log redactor; audit events
+  record names, versions and outcomes. Rotating the master key follows the same
+  steps below.
 - Master-key rotation:
   1. Move the old value into `STUDIX_SECRETS_KEYS_PREVIOUS`.
   2. Set a new `STUDIX_SECRETS_KEY`.

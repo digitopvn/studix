@@ -19,6 +19,13 @@ export const PERMISSIONS = [
    * otherwise collect another tenant's output.
    */
   "job:recover",
+  /**
+   * Platform infrastructure: the object-storage credentials and the media vendor keys every workspace's
+   * jobs run on. Held only by a signed-in operator (dashboard session): never by an API key, an OAuth
+   * client acting for a user, or a system actor, so an agent can inspect the redacted status but cannot
+   * change a secret.
+   */
+  "platform:manage",
   "asset:read",
   "asset:write",
   /**
@@ -47,7 +54,7 @@ const EDIT: Permission[] = [
   "approval:request",
 ];
 
-const TENANT_ADMIN: Permission[] = PERMISSIONS.filter((p) => p !== "job:recover");
+const TENANT_ADMIN: Permission[] = PERMISSIONS.filter((p) => p !== "job:recover" && p !== "platform:manage");
 
 /** Role -> permission matrix. Reviewers may decide approvals but not edit; viewers only read. */
 export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> = {
@@ -61,7 +68,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> =
 
 /** System actors (workers, schedulers) can do anything except grant human approvals. */
 const SYSTEM_PERMISSIONS: ReadonlySet<Permission> = new Set(
-  PERMISSIONS.filter((p) => p !== "approval:decide"),
+  PERMISSIONS.filter((p) => p !== "approval:decide" && p !== "platform:manage"),
 );
 
 export type Actor =
@@ -101,6 +108,8 @@ export function isPermission(value: unknown): value is Permission {
 }
 
 export function can(actor: Actor, permission: Permission): boolean {
+  // Only a signed-in operator changes platform infrastructure; a key or token can never carry it.
+  if (permission === "platform:manage" && actor.type !== "user") return false;
   switch (actor.type) {
     case "user":
       return ROLE_PERMISSIONS[actor.role]?.has(permission) ?? false;
