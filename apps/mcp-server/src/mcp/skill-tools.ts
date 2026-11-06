@@ -1,4 +1,9 @@
-import { type ExternalSkillService, EXTERNAL_SKILL_TOOLS as NAMES, STUDIX_TOOLS } from "@studix/core";
+import {
+  type ExternalSkillService,
+  EXTERNAL_SKILL_TOOLS as NAMES,
+  STUDIX_TOOLS,
+  UNTRUSTED_CONTENT_NOTICE,
+} from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { z } from "zod";
 import type { NativeTool, ToolContext } from "./native-tools.ts";
@@ -27,6 +32,9 @@ const Commit = z
   .describe("Commit SHA (7-40 hex) the repo must still be at.");
 const IdempotencyKey = z.string().regex(/^[A-Za-z0-9._:-]{1,200}$/);
 
+/** Names, descriptions and metadata come from a third-party repository, so every result that carries them says so. */
+const untrusted = { trust: "untrusted-third-party-content", notice: UNTRUSTED_CONTENT_NOTICE } as const;
+
 const useIt = (skillId: string) => ({
   tool: NAMES.get,
   arguments: { skillId },
@@ -54,7 +62,7 @@ export const EXTERNAL_SKILL_MCP_TOOLS = [
     async run(ctx, input) {
       const discovery = await service(ctx).discover(ctx.tenant, input);
       return {
-        data: discovery,
+        data: { ...discovery, ...untrusted },
         next:
           discovery.skills.length > 0
             ? [
@@ -63,8 +71,9 @@ export const EXTERNAL_SKILL_MCP_TOOLS = [
                   arguments: {
                     repositoryUrl: input.repositoryUrl,
                     ...(input.ref ? { ref: input.ref } : {}),
+                    ...(input.path ? { path: input.path } : {}),
                     expectedCommit: discovery.commitSha,
-                    skillPaths: discovery.skills.map((s) => s.path),
+                    skillPaths: discovery.skills.slice(0, 25).map((s) => s.path),
                   },
                   reason: "Import the skills you want (omit skillPaths for all) at this exact commit.",
                 },
@@ -99,7 +108,7 @@ export const EXTERNAL_SKILL_MCP_TOOLS = [
       const result = await service(ctx).import(ctx.tenant, input);
       const first = result.results.find((r) => r.skillId);
       return {
-        data: result,
+        data: { ...result, ...untrusted },
         next: first?.skillId ? [useIt(first.skillId)] : [],
       };
     },
@@ -119,7 +128,7 @@ export const EXTERNAL_SKILL_MCP_TOOLS = [
     async run(ctx, input) {
       const page = await service(ctx).list(ctx.tenant, input);
       return {
-        data: page,
+        data: { ...page, ...untrusted },
         next: page.items.slice(0, 1).map((s) => useIt(s.id)),
       };
     },

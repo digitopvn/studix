@@ -29,6 +29,9 @@ interface FakeRepository {
 
 const REPOSITORY_URL = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/.*)?$/;
 
+/** A ref this fake never resolves, for tests of a mistyped branch name. */
+export const UNKNOWN_REF = "no-such-ref";
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /** Build a fake skill: the SKILL.md (frontmatter plus body) and any supporting files. */
@@ -89,6 +92,7 @@ export class FakeSkillSource implements ExternalSkillSource {
   async discover(input: SkillDiscoverRequest): Promise<SkillDiscovery> {
     this.calls.discover += 1;
     const { name, repo } = this.lookup(input.repositoryUrl);
+    if (input.ref === UNKNOWN_REF) throw new StudixError("NOT_FOUND", "Ref not found");
     const inScope = (path: string) => !input.path || path === input.path || path.startsWith(`${input.path}/`);
     const skills: SkillCandidate[] = [...repo.skills]
       .filter(([path]) => inScope(path))

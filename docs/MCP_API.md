@@ -359,8 +359,8 @@ scripts, and phase 1 does not change the worker pipelines. Setup and flow:
 | `studix_skill_disable`  | `skill:write` | `skillId`, `disabled?` (default true)                                                                     | The skill with its new status. Nothing is deleted; `disabled: false` offers it again.                                |
 - Discover, import and update reach `github.com` and carry `openWorldHint: true`;
   discover, list and get are read-only. Reading never contacts GitHub.
-- Import is idempotent per workspace, repository, skill path and content: the same
-  commit again is `unchanged`. A changed upstream creates a new immutable version
+- Import is idempotent per workspace, repository, skill path, commit and content: the same
+  commit again is `unchanged`. A new commit creates a new version even when the content is identical. A changed upstream creates a new immutable version
   that is **not** active until `studix_skill_update` with `action: "activate"`
   (or `activate: true` on an `import` update); the first import of a skill is
   active at once. Versions are never edited or deleted.

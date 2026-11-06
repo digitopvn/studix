@@ -322,7 +322,7 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
         importedBy: actorRef(ctx.actor),
       });
       let skill = recorded.skill;
-      if (activate && recorded.outcome === "new_version") {
+      if (activate && skill.activeVersionId !== recorded.version.id) {
         skill =
           (await deps.skills.activateVersion(ctx, skill.id, recorded.version.id, actorRef(ctx.actor))) ??
           skill;
@@ -416,11 +416,20 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
         ...(skill.path ? { path: skill.path } : {}),
       });
     } catch (err) {
-      if (err instanceof StudixError && err.code === "NOT_FOUND") return { missing: true as const };
+      // A ref the caller supplied that does not resolve is a bad request, not proof the skill is gone.
+      if (!ref && err instanceof StudixError && err.code === "NOT_FOUND") return { missing: true as const };
       throw err;
     }
     const candidate = discovery.skills.find((c) => c.path === skill.path);
-    return candidate ? { missing: false as const, discovery } : { missing: true as const, discovery };
+    if (candidate) return { missing: false as const, discovery };
+    const invalid = discovery.invalid.find((i) => i.path === skill.path);
+    if (invalid) {
+      throw new StudixError("VALIDATION", `The upstream SKILL.md is no longer valid: ${invalid.reason}`, {
+        retryable: false,
+        suggestedAction: "The stored versions stay readable. Fix or disable the skill upstream.",
+      });
+    }
+    return { missing: true as const, discovery };
   }
 
   return {

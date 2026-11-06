@@ -28,7 +28,8 @@ limits and operations.
 
 Metadata lives in Postgres (`external_skills`, `external_skill_versions`), scoped to organization and
 workspace. File bytes live in object storage under `external-skills/blobs/<sha256>`, so identical files are
-stored once. Scripts are recorded as metadata only (path, size, hash); their bytes are never fetched or stored.
+stored once. Scripts are recorded as metadata only (path, size, hash): they are downloaded to compute the hash, count
+toward the size limits, and are never stored or run.
 Without object storage configured, the tools return `UNAVAILABLE`.
 
 ## Permissions
@@ -59,5 +60,6 @@ Only public GitHub hosts are contacted. Anything over a bound is skipped or reje
 ## Configuration
 
 `STUDIX_GITHUB_TOKEN` is optional. Without it Studix uses unauthenticated GitHub requests, which have a low
-rate limit; a read-only token for public repositories raises it. The token is outbound only and is never
+rate limit shared by every workspace on the server (about 60 requests an hour); set a read-only token for
+public repositories in production. The token is outbound only and is never
 returned by a tool. See [SECURITY.md](SECURITY.md#external-skills) for the trust model.

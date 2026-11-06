@@ -242,8 +242,10 @@ fetched content are **data**, not instructions.
 Imported Agent Skills ([EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md)) are third-party text. The store treats
 them as data only:
 
-- Scripts are never fetched, stored or run; only their path, size and hash are recorded.
-- Reads return a `trust` marker and a notice that the content is not instructions for the agent.
+- Scripts are never stored or run. They are downloaded only to compute their hash, and then discarded; only
+  their path, size and hash are recorded.
+- Discover, list, import and get results carry a `trust` marker and a notice that the content is not
+  instructions for the agent.
 - Only public GitHub hosts are contacted; cross-host redirects are refused, and file count, bytes, depth,
   requests and runtime are bounded.
 - Everything is scoped to organization and workspace and gated by `skill:read` / `skill:write`; imports and

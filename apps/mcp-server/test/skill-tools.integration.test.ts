@@ -2,7 +2,7 @@ import type { Client } from "@modelcontextprotocol/client";
 import type { TenantContext } from "@studix/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { skillSource, startTestApp, type TestApp } from "./app-test-harness.ts";
-import { fakeSkill } from "./fake-skill-source.ts";
+import { fakeSkill, UNKNOWN_REF } from "./fake-skill-source.ts";
 
 interface Envelope {
   status: "ok" | "error";
@@ -200,6 +200,19 @@ describe("external skill tools over MCP (Postgres)", () => {
     });
     expect(fresh.data?.content.text).toContain("bold claim");
     expect(fresh.data?.version).toMatchObject({ commitSha: COMMIT_B, active: false });
+  });
+
+  it("does not mark a skill missing when the ref it was asked about does not resolve", async () => {
+    const hooks = (await call(editor, "studix_skill_list", { q: "hooks" })).data?.items[0];
+    const res = await call(editor, "studix_skill_update", {
+      skillId: hooks.id,
+      action: "check",
+      ref: UNKNOWN_REF,
+    });
+    expect(res.status).toBe("error");
+    expect(res.error?.code).toBe("NOT_FOUND");
+    const after = (await call(editor, "studix_skill_list", { q: "hooks" })).data?.items[0];
+    expect(after.upstream).toBe("present");
   });
 
   it("activates a stored version explicitly and keeps older versions immutable", async () => {
