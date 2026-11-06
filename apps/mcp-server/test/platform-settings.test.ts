@@ -222,6 +222,34 @@ describe("platform settings service", () => {
     expect(view.media.vendors.find((v) => v.vendor === "fish")?.status).toBe("missing");
   });
 
+  it("redacts the check reason in the overview as well as in the test answer", async () => {
+    const none = {
+      sume: false,
+      atlas: false,
+      elevenlabs: false,
+      fish: false,
+      minimax: false,
+      openrouter: false,
+    };
+    const leaked = "request failed, api_key=sk-proj-abcdef0123456789abcdef";
+    const { service } = setup({ diagnosis: { state: "check_failed", vendors: none, reason: leaked } });
+    const answer = await service.testMedia(operator);
+    expect(JSON.stringify(answer)).not.toContain("sk-proj-abcdef0123456789abcdef");
+    const view = await service.overview(operator);
+    expect(JSON.stringify(view.media.lastCheck)).not.toContain("sk-proj-abcdef0123456789abcdef");
+  });
+
+  it("records the check outcome on a stored key and audits it", async () => {
+    const { service, events } = setup();
+    await service.setMediaKey(operator, "SUME_API_KEY", SECRET);
+    await service.testMedia(operator);
+    const view = await service.overview(operator);
+    expect(view.media.vendors.find((v) => v.keyName === "SUME_API_KEY")?.credential.lastTest).toMatchObject({
+      ok: true,
+    });
+    expect(events.map((e) => e.action)).toContain("platform_credential.tested");
+  });
+
   it("distinguishes a missing executable, a failed check and no keys", async () => {
     const none = {
       sume: false,

@@ -98,8 +98,10 @@ key and OAuth client.
   the key it started with. `MULTIX_BIN` is still deployment configuration.
 - **The safe check calls no paid provider.** It runs `multix check`, which only
   reports which keys exist, so it cannot tell a wrong key from a right one; a
-  bad key shows up on the first real job. The check runs in the app process:
-  confirm the worker's `/readyz` reports the same media status.
+  bad key shows up on the first real job. The check runs in the app process, and
+  the worker's `/readyz` does not report media yet: the first media job confirms
+  the worker reads the key. A worker without `STUDIX_SECRETS_KEY` logs a warning
+  at startup when keys exist in the database.
 - **Rollback:** revoke the key on the page (the environment value applies again)
   and revoke it at the provider if it leaked. Losing `STUDIX_SECRETS_KEY` makes
   stored keys unreadable (they are skipped and logged); set them again.

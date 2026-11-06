@@ -103,6 +103,13 @@ function buildClient(options: S3StorageOptions, endpoint: string | undefined): S
 }
 
 /** StorageAdapter over the S3 API (Cloudflare R2, MinIO, AWS S3). Buckets stay private; reads use signed URLs. */
+/** The object read back is not what the probe wrote: something between us and the bucket changed it. */
+class ProbeBodyMismatch extends Error {
+  constructor() {
+    super("The object read back differs from what was written");
+  }
+}
+
 export class S3StorageAdapter implements StorageAdapter {
   readonly bucket: string;
   private readonly client: S3Client;
@@ -238,8 +245,7 @@ export class S3StorageAdapter implements StorageAdapter {
       step = "get";
       const read = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
       const echoed = (await read.Body?.transformToString()) ?? "";
-      if (echoed !== "studix storage probe")
-        throw new Error("The object read back differs from what was written");
+      if (echoed !== "studix storage probe") throw new ProbeBodyMismatch();
       step = "head";
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       step = "delete";
@@ -256,6 +262,7 @@ export class S3StorageAdapter implements StorageAdapter {
         step,
         ...(status === undefined ? {} : { status }),
         ...(err instanceof S3ServiceException ? { s3Code: err.name } : {}),
+        ...(err instanceof ProbeBodyMismatch ? { s3Code: "BodyMismatch" } : {}),
         denied: status !== undefined && status >= 400 && status < 500 && status !== 429,
         message: redact(err instanceof Error ? err.message : String(err)),
       };

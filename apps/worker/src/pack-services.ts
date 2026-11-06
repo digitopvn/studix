@@ -31,8 +31,22 @@ function platformCredentials(
   runtime: WorkerPortsRuntime,
 ): PlatformCredentialService | undefined {
   const { config } = settings;
-  if (!config.STUDIX_SECRETS_KEY) return undefined;
   const repos = createRepositories(runtime.db);
+  if (!config.STUDIX_SECRETS_KEY) {
+    // The app may hold keys an operator set in the dashboard; without the master key this worker cannot open them.
+    void repos.platformCredentials.list().then(
+      (rows) => {
+        if (rows.length > 0) {
+          runtime.logger.warn(
+            "dashboard-stored media keys exist but STUDIX_SECRETS_KEY is not set on the worker; they are ignored here",
+            { count: rows.length },
+          );
+        }
+      },
+      () => {},
+    );
+    return undefined;
+  }
   return createPlatformCredentialService({
     credentials: repos.platformCredentials,
     audit: repos.audit,

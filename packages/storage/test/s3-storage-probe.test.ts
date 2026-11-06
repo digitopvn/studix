@@ -75,7 +75,7 @@ describe("S3StorageAdapter.probeWrite", () => {
 
   it("fails at get when the bytes read back differ from what was written", async () => {
     const { adapter } = await adapterAgainst(() => 200, "something else");
-    expect(await adapter.probeWrite()).toMatchObject({ ok: false, step: "get" });
+    expect(await adapter.probeWrite()).toMatchObject({ ok: false, step: "get", s3Code: "BodyMismatch" });
   });
 
   it("names the failing step when only delete is refused", async () => {

@@ -315,7 +315,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     } catch (err) {
       const cause = err instanceof StudixError ? err : undefined;
       const code = (cause?.details as { code?: unknown } | undefined)?.code;
-      const startFailure = cause?.message.includes("could not be started") === true;
+      // The runner reports a spawn failure with the errno (ENOENT, EACCES) in `details.code`.
+      const startFailure = typeof code === "string" && /^E(NOENT|ACCES|PERM|NOTDIR|ISDIR|NOEXEC)$/.test(code);
       return {
         state: startFailure ? "missing_executable" : "check_failed",
         vendors: none,

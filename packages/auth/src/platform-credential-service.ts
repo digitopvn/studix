@@ -1,6 +1,6 @@
 import { type AuditRepository, actorRef, assertPlatformOperator, type TenantContext } from "@studix/core";
 import type { PlatformCredentialRecord, PlatformCredentialRepository } from "@studix/database";
-import { type Clock, type Logger, registerSecret, StudixError, systemClock } from "@studix/shared";
+import { type Clock, type Logger, redact, registerSecret, StudixError, systemClock } from "@studix/shared";
 import type { SecretBox } from "./secret-box.ts";
 
 /*
@@ -86,7 +86,8 @@ function aad(name: string): string {
 }
 
 function hintOf(value: string): string {
-  return `…${value.slice(-4)}`;
+  // A short key would give away too much of itself.
+  return value.length >= 16 ? `…${value.slice(-4)}` : "…";
 }
 
 export function createPlatformCredentialService(
@@ -210,7 +211,7 @@ export function createPlatformCredentialService(
       const stored = await deps.credentials.recordTest(name, {
         ok: result.ok,
         at: clock.now(),
-        ...(result.detail ? { detail: result.detail.slice(0, 300) } : {}),
+        ...(result.detail ? { detail: redact(result.detail).slice(0, 300) } : {}),
       });
       if (stored) await audit(ctx, "tested", name, { ok: result.ok });
     },
@@ -238,7 +239,7 @@ export function createPlatformCredentialService(
           const plain = box.open(row.secretCiphertext, aad(row.name));
           registerSecret(plain);
           values[row.name] = plain;
-          revision.push(`${row.name}:${row.version}`);
+          revision.push(`${row.name}:${row.version}:${row.updatedAt.getTime()}`);
         } catch {
           unreadable.push(row.name);
         }

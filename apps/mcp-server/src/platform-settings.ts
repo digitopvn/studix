@@ -200,6 +200,19 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
       : "unverified";
   };
 
+  /** Keep the outcome of the check next to each dashboard-stored key (a key from the environment has no row). */
+  const recordVendorTests = async (ctx: TenantContext, diagnosis: MultixDiagnosis): Promise<void> => {
+    for (const vendor of MULTIX_VENDORS) {
+      const ok = diagnosis.state === "ready" && diagnosis.vendors[vendor];
+      await deps.credentials
+        .recordTest(ctx, MULTIX_VENDOR_KEYS[vendor], {
+          ok,
+          detail: ok ? "Key found by multix check" : (diagnosis.reason ?? "Key not found by multix check"),
+        })
+        .catch(() => {});
+    }
+  };
+
   const kindsOf = (vendor: MultixVendor): string[] =>
     (Object.keys(MULTIX_ROLE_VENDORS) as MultixRole[])
       .filter((role) => MULTIX_ROLE_VENDORS[role].includes(vendor))
@@ -250,7 +263,7 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           },
           process: "app",
           processNote: config.MULTIX_BIN
-            ? "This check runs in the app process. The worker runs the jobs: confirm it reports the same media status on its /readyz."
+            ? "This check runs in the app process. The worker runs the jobs and needs the same STUDIX_SECRETS_KEY to read keys set here; the first media job confirms it."
             : "MULTIX_BIN is not set in the app process. Check the worker separately: it runs the jobs.",
         },
       };
@@ -279,7 +292,14 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           ...(probe.status === undefined ? {} : { httpStatus: probe.status }),
           ...(probe.s3Code ? { s3Code: probe.s3Code } : {}),
           ...(probe.message ? { message: redact(probe.message).slice(0, 300) } : {}),
-          ...(diagnosis === "ok" ? {} : { suggestedAction: DIAGNOSIS_ACTION[diagnosis] }),
+          ...(diagnosis === "ok"
+            ? {}
+            : {
+                suggestedAction:
+                  probe.s3Code === "BodyMismatch"
+                    ? "The endpoint answered, but with different content than was written. Check that S3_ENDPOINT is the bucket's S3 API and that no proxy rewrites responses."
+                    : DIAGNOSIS_ACTION[diagnosis],
+              }),
         };
       }
       storageTest = view;
@@ -307,9 +327,10 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
       mediaCheck = {
         at,
         state: diagnosis.state,
-        ...(diagnosis.reason ? { reason: diagnosis.reason } : {}),
+        ...(diagnosis.reason ? { reason: redact(diagnosis.reason).slice(0, 300) } : {}),
         ...(diagnosis.code ? { code: diagnosis.code } : {}),
       };
+      await recordVendorTests(ctx, diagnosis);
       return {
         ok: diagnosis.state === "ready" && anyKey,
         at,

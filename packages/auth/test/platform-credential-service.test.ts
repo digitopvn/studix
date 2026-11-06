@@ -160,6 +160,21 @@ describe("platform credential service storage", () => {
     expect(repo.rows.size).toBe(0);
   });
 
+  it("shows no hint for a short key", async () => {
+    const { service } = setup();
+    expect((await service.set(operator, "SUME_API_KEY", "short-key-12")).keyHint).toBe("…");
+  });
+
+  it("changes the revision when a key is revoked and stored again", async () => {
+    const { service } = setup();
+    await service.set(operator, "SUME_API_KEY", KEY);
+    const first = await service.loadValues();
+    await service.revoke(operator, "SUME_API_KEY");
+    await new Promise((r) => setTimeout(r, 5));
+    await service.set(operator, "SUME_API_KEY", KEY);
+    expect((await service.loadValues()).revision).not.toBe(first.revision);
+  });
+
   it("answers UNAVAILABLE without a master key and never stores plaintext", async () => {
     const { service, repo } = setup({ master: null });
     await expect(service.set(operator, "SUME_API_KEY", KEY)).rejects.toMatchObject({ code: "UNAVAILABLE" });
