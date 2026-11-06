@@ -194,15 +194,19 @@ export interface ApiKeyMethodInfo {
   canAddPersonalKey: boolean;
 }
 
-/** Claude subscription OAuth: informational only, Studix cannot connect it. */
+/**
+ * Claude subscription: restricted on hosted servers; on a self-hosted server (STUDIX_CLAUDE_SUBSCRIPTION)
+ * each user may connect their own token from `claude setup-token`, run only by the Claude Code binary.
+ */
 export interface SubscriptionMethodInfo {
   authMethod: "oauth_subscription";
   title: string;
   billing: "subscription";
-  availability: "restricted";
+  availability: "restricted" | "available" | "unavailable";
   reason: string;
   alternative: string;
   references: string[];
+  canConnect: boolean;
 }
 
 export interface ProviderConnectionTest {
@@ -219,7 +223,7 @@ export type AgentRuntimeName = "claude" | "pi";
 export interface ProviderConnection {
   id: string;
   provider: string;
-  authMethod: "api_key";
+  authMethod: "api_key" | "oauth_subscription";
   billing: "usage_based" | "subscription" | "extra_usage" | "unknown";
   /** Agent runtimes allowed to spend this key; Anthropic keys start with `claude` only. */
   runtimes: AgentRuntimeName[];
@@ -241,6 +245,20 @@ export interface AnthropicProvider {
   connections: ProviderConnection[];
   /** Jobs may select the Claude planner on this server. */
   claudePlanner: boolean;
+}
+
+export interface FeatureSwitch {
+  enabled: boolean;
+  /** `operator`: forced on by env; `workspace`: the owner's switch here; `off`. */
+  source: "operator" | "workspace" | "off";
+  canChange: boolean;
+}
+
+/** Claude switches for the workspace; only a self-hosted server lets the owner change them. */
+export interface WorkspaceFeatures {
+  selfHosted: boolean;
+  claudePlanner: FeatureSwitch;
+  claudeSubscription: FeatureSwitch;
 }
 
 export interface ProviderConnectionList {
@@ -552,6 +570,11 @@ export const api = {
     ),
   disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
   anthropicProvider: () => request<AnthropicProvider>("GET", "/api/providers/anthropic"),
+  workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
+  updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
+    request<WorkspaceFeatures>("PUT", "/api/providers/features", patch),
+  connectClaudeSubscription: (input: { token: string; label?: string }) =>
+    request<ProviderConnection>("POST", "/api/providers/anthropic/subscription", input),
   addAnthropicKey: (input: { owner: "workspace" | "user"; apiKey: string; label?: string }) =>
     request<ProviderConnection>("POST", "/api/providers/anthropic/api-keys", input),
   replaceAnthropicKey: (id: string, apiKey: string) =>

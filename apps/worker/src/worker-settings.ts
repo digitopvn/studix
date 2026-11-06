@@ -1,5 +1,6 @@
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { withSelfHostedSecretsKey } from "@studix/auth";
 import { parseQualifiedToolName } from "@studix/mcp-gateway";
 import { loadConfig, type StudixConfig, StudixError } from "@studix/shared";
 import { z } from "zod";
@@ -68,13 +69,16 @@ export interface WorkerSettings {
   renderCentsPerSecond: number;
   /** Qualified connector tool for brand enrichment; unset disables the lookup. */
   brandLookupTool?: string;
-  /** Set when STUDIX_CLAUDE_PLANNER is on; unset means jobs that select Claude fail with UNAVAILABLE. */
+  /**
+   * Set when STUDIX_CLAUDE_PLANNER or STUDIX_SELF_HOSTED is on; unset means jobs that select Claude fail
+   * with UNAVAILABLE. On a self-hosted worker each workspace's switch still decides.
+   */
   claudePlanner?: ClaudePlannerSettings;
 }
 
 /** Parse worker settings; throws a VALIDATION StudixError naming bad variables (values never echoed). */
 export function loadWorkerSettings(env: NodeJS.ProcessEnv = process.env): WorkerSettings {
-  const config = loadConfig(env);
+  const config = withSelfHostedSecretsKey(loadConfig(env));
   const cleaned = Object.fromEntries(
     Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ""),
   );
@@ -116,7 +120,8 @@ export function loadWorkerSettings(env: NodeJS.ProcessEnv = process.env): Worker
     approvalCostThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
     renderCentsPerSecond: w.RENDER_COST_CENTS_PER_SECOND,
     ...(w.STUDIX_BRAND_LOOKUP_TOOL ? { brandLookupTool: w.STUDIX_BRAND_LOOKUP_TOOL } : {}),
-    ...(config.STUDIX_CLAUDE_PLANNER
+    // A self-hosted worker keeps the Claude planner ready; each workspace owner decides whether it runs.
+    ...(config.STUDIX_CLAUDE_PLANNER || config.STUDIX_SELF_HOSTED
       ? {
           claudePlanner: {
             model: w.STUDIX_CLAUDE_PLANNER_MODEL,

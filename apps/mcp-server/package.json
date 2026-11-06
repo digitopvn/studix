@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "node --import tsx src/main.ts",
-    "smoke": "node --import tsx scripts/smoke-video.ts",
-    "recover:attach": "node --import tsx scripts/attach-media-job.ts"
+    "smoke": "node --import tsx scripts/smoke-video.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.2",
@@ -19,6 +18,7 @@
     "@studix/database": "workspace:*",
     "@studix/mcp-gateway": "workspace:*",
     "@studix/observability": "workspace:*",
+    "@studix/providers": "workspace:*",
     "@studix/shared": "workspace:*",
     "@studix/skills": "workspace:*",
     "@studix/storage": "workspace:*",

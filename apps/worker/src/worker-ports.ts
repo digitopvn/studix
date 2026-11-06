@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import {
   type ClaudeAgentTransport,
+  createClaudeCodeCliTransport,
+  createClaudeRoutingTransport,
   createClaudeSdkTransport,
   createPiKeyTester,
   isRuntimeKeyProvider,
@@ -10,9 +12,11 @@ import {
   createAnthropicKeyTester,
   createProviderConnectionService,
   createSecretBox,
+  createWorkspaceFeatureService,
   type ProviderConnectionService,
   parseSecretKey,
   routeKeyTester,
+  type WorkspaceFeatureService,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy } from "@studix/core";
 import { createRepositories } from "@studix/database";
@@ -89,7 +93,22 @@ function providerConnections(
       parseSecretKey(config.STUDIX_SECRETS_KEY),
       config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
     ),
+    claudeSubscription: async (ctx) =>
+      (await workspaceFeatures(settings, runtime).effective(ctx)).claudeSubscription,
     logger: runtime.logger,
+  });
+}
+
+/** Env flags plus each workspace owner's switch (self-hosted only), read per job. */
+function workspaceFeatures(settings: WorkerSettings, runtime: WorkerPortsRuntime): WorkspaceFeatureService {
+  const { config } = settings;
+  return createWorkspaceFeatureService({
+    settings: createRepositories(runtime.db).workspaceSettings,
+    selfHosted: config.STUDIX_SELF_HOSTED,
+    operator: {
+      claudePlanner: config.STUDIX_CLAUDE_PLANNER,
+      claudeSubscription: config.STUDIX_CLAUDE_SUBSCRIPTION,
+    },
   });
 }
 
@@ -119,23 +138,30 @@ function withWorkspaceModels(
 }
 
 /**
- * The Claude Agent SDK transport shared by the Claude planner and the agent harness, built only when
- * STUDIX_CLAUDE_PLANNER is on (the flag means this host can run the Claude process).
+ * The Claude transport shared by the Claude planner and the agent harness, built only when
+ * STUDIX_CLAUDE_PLANNER is on (the flag means this host can run the Claude process). API keys run through
+ * the Claude Agent SDK; with STUDIX_CLAUDE_SUBSCRIPTION a user's own subscription runs only through the
+ * Claude Code executable the preflight found, invoked directly and never through the SDK.
  */
 function claudeTransport(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
+  executable: string | undefined,
 ): ClaudeAgentTransport | undefined {
   const claude = settings.claudePlanner;
   if (!claude) return undefined;
-  return createClaudeSdkTransport({
-    baseUrl: settings.config.ANTHROPIC_BASE_URL,
-    // A session never outlives its deadline plus the runtime's interrupt-then-kill grace.
-    sandboxRoot: prepareClaudeSandboxRoot(
-      join(settings.workDir, "claude"),
-      Math.max(claude.timeoutMs, CLAUDE_SANDBOX_MAX_SESSION_MS) + 60_000,
-      runtime.logger,
-    ),
+  // A session never outlives its deadline plus the runtime's interrupt-then-kill grace.
+  const sandboxRoot = prepareClaudeSandboxRoot(
+    join(settings.workDir, "claude"),
+    Math.max(claude.timeoutMs, CLAUDE_SANDBOX_MAX_SESSION_MS) + 60_000,
+    runtime.logger,
+  );
+  const apiKey = createClaudeSdkTransport({ baseUrl: settings.config.ANTHROPIC_BASE_URL, sandboxRoot });
+  const { config } = settings;
+  if (!(config.STUDIX_CLAUDE_SUBSCRIPTION || config.STUDIX_SELF_HOSTED) || !executable) return apiKey;
+  return createClaudeRoutingTransport({
+    apiKey,
+    subscription: createClaudeCodeCliTransport({ executable, sandboxRoot }),
   });
 }
 
@@ -192,9 +218,19 @@ function agentHarness(
  * With STUDIX_CLAUDE_PLANNER on, refuse to start when the Claude process cannot run on this host (no SDK
  * binary for the platform, a libc mismatch), instead of failing every Claude job until its attempts run out.
  */
-async function assertClaudeRuntime(settings: WorkerSettings, logger: WorkerPortsRuntime["logger"]) {
-  if (!settings.claudePlanner) return;
+async function assertClaudeRuntime(
+  settings: WorkerSettings,
+  logger: WorkerPortsRuntime["logger"],
+): Promise<string | undefined> {
+  if (!settings.claudePlanner) return undefined;
   const check = await preflightClaudeRuntime();
+  if (!check.ok && !settings.config.STUDIX_CLAUDE_PLANNER) {
+    // Self-hosted without the env flag: Claude stays off on this host instead of blocking the worker.
+    logger.warn("Claude runtime unavailable; Claude jobs will fail until it is installed", {
+      reason: check.reason,
+    });
+    return undefined;
+  }
   if (!check.ok) {
     throw new StudixError("UNAVAILABLE", `STUDIX_CLAUDE_PLANNER is on but ${check.reason}`, {
       retryable: false,
@@ -202,7 +238,16 @@ async function assertClaudeRuntime(settings: WorkerSettings, logger: WorkerPorts
         "Run the worker on a platform the Claude Agent SDK ships a binary for, or unset STUDIX_CLAUDE_PLANNER.",
     });
   }
-  logger.info("Claude runtime ready", { executable: check.executable, version: check.version });
+  logger.info("Claude runtime ready", {
+    executable: check.executable,
+    version: check.version,
+    subscriptions: settings.config.STUDIX_CLAUDE_SUBSCRIPTION
+      ? "on"
+      : settings.config.STUDIX_SELF_HOSTED
+        ? "per-workspace"
+        : "off",
+  });
+  return check.executable;
 }
 
 /**
@@ -228,7 +273,7 @@ export async function loadWorkerPorts(
     ffprobePath: config.FFPROBE_PATH,
     logger: logger.child({ component: "hyperframes-renderer" }),
   });
-  await assertClaudeRuntime(settings, logger);
+  const claudeExecutable = await assertClaudeRuntime(settings, logger);
   const rules = registerBriefRule(new RulesAdapter({ logger }));
   const { usage } = createRepositories(runtime.db);
   const sink = createExecutionSink(usage);
@@ -249,13 +294,19 @@ export async function loadWorkerPorts(
     workspaceModels: providers ? "on" : "off",
     agentHarness: providers ? (settings.claudePlanner ? "pi+claude" : "pi") : "off",
   });
-  const transport = claudeTransport(settings, runtime);
+  const transport = claudeTransport(settings, runtime, claudeExecutable);
   const claude = claudePlanner(settings, runtime, providers, transport);
   const harness = agentHarness(settings, runtime, providers, transport);
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),
       claude,
+      ...(config.STUDIX_CLAUDE_PLANNER
+        ? {}
+        : {
+            claudeEnabled: async (tenant) =>
+              (await workspaceFeatures(settings, runtime).effective(tenant)).claudePlanner,
+          }),
     }),
     renderer,
     storage,

@@ -9,6 +9,7 @@ import type {
   MediaJobJournal,
   MediaProvider,
   PlannerSelection,
+  ProviderExecutionRecorder,
   RendererAdapter,
   StorageAdapter,
   TenantContext,
@@ -100,6 +101,8 @@ export interface StageServices {
   speech?: SpeechProbe;
   /** Local scratch root; a stage writes under `<workRoot>/<jobId>/attempt-<n>/<stage>`. */
   workRoot?: string;
+  /** Where media calls are recorded as `provider_executions` rows; calls go unrecorded when not wired. */
+  executions?: ProviderExecutionRecorder;
 }
 
 /** A media output an earlier job of the tenant paid for and stored, found by the content key of its request. */

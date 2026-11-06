@@ -17,7 +17,11 @@ describe("secret box", () => {
     const box = createSecretBox(key);
     const sealed = box.seal("secret-value", "ws1/pcon1");
     expect(() => box.open(sealed, "ws2/pcon1")).toThrow(expect.objectContaining({ code: "INTERNAL" }));
-    const tampered = `${sealed.slice(0, -2)}${sealed.endsWith("A") ? "B" : "A"}A`;
+    // Flip one ciphertext byte; editing the base64 text directly can leave the decoded bytes unchanged.
+    const [version, keyId, blob] = sealed.split(".");
+    const bytes = Buffer.from(blob!, "base64url");
+    bytes[bytes.length - 1]! ^= 0x01;
+    const tampered = `${version}.${keyId}.${bytes.toString("base64url")}`;
     expect(() => box.open(tampered, "ws1/pcon1")).toThrow(expect.objectContaining({ code: "INTERNAL" }));
   });
 

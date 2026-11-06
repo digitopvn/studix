@@ -92,6 +92,9 @@ importers:
       '@studix/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@studix/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
       '@studix/shared':
         specifier: workspace:*
         version: link:../../packages/shared
