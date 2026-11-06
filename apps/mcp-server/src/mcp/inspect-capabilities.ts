@@ -3,7 +3,7 @@ import { ASPECT_RATIOS, exportJsonSchemas, RENDER_PRESETS, VIDEO_IR_SCHEMA_VERSI
 import { type AppLimits, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { SkillSummary } from "../ports.ts";
 
-export const INSPECT_SECTIONS = ["schemas"] as const;
+export const INSPECT_SECTIONS = ["schemas", "importedSkills"] as const;
 
 /** Lazily built once: the JSON Schemas are static for a given build. */
 let cachedSchemas: ReturnType<typeof exportJsonSchemas> | undefined;
@@ -18,6 +18,8 @@ export function inspectCapabilities(input: {
   skills: SkillSummary[];
   toolNames: string[];
   include: ReadonlyArray<(typeof INSPECT_SECTIONS)[number]>;
+  /** Workspace-imported skills (distinct from `skills`, the built-in workflow templates). */
+  importedSkills?: Record<string, unknown>;
 }) {
   const { limits } = input;
   const capabilities = {
@@ -52,6 +54,7 @@ export function inspectCapabilities(input: {
       "Media is returned as signed URLs, never inline.",
     ],
     skills: input.skills,
+    ...(input.importedSkills ? { importedSkills: input.importedSkills } : {}),
   };
   if (!input.include.includes("schemas")) return capabilities;
   cachedSchemas ??= exportJsonSchemas();

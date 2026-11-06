@@ -18,6 +18,7 @@ bug.
 | [KNOWLEDGE_PACKS.md](KNOWLEDGE_PACKS.md) | Knowledge packs: stage-scoped loading, `hard`/`evidence` checks, pack lint, how to add a pack                           |
 | [WORKFLOW_PACKS.md](WORKFLOW_PACKS.md)   | Workflow pack: stage contract, gates, retry and resume, adding a pack, media providers, sample prompts, troubleshooting |
 | [QA.md](QA.md)                           | QA hard gate, evidence and human review, sandboxed measurement tools, limits, how to add a tool                         |
+| [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md) | Importing Agent Skills from public GitHub repositories: flow, versions, limits, permissions, safety                     |
 | [PORTING.md](PORTING.md)                 | What was taken from `motion-mcp`, `zuey-workspace` and `agentkit`, at which SHA, and what was replaced                  |
 | [porting/](porting/migration-matrix.md)  | Audit and migration matrix for the epic #2 sources                                                                      |
 | [decisions/](decisions/README.md)        | Architecture decision records                                                                                           |

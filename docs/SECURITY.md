@@ -237,6 +237,35 @@ fetched content are **data**, not instructions.
 - Credentials are never placed in prompts, so an injected instruction has
   nothing to exfiltrate from model context.
 
+## Imported skills
+
+Skills imported from public GitHub repositories are untrusted third-party text
+([EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md)). They are stored and served as data
+and are never executed, installed or fed to a shell.
+
+- **Egress**: only `https://api.github.com` and `https://raw.githubusercontent.com`
+  are contacted. The repository URL must be `https://github.com` or
+  `www.github.com` with no credentials or port. Redirects are not followed, so
+  a redirect cannot reach an internal address. The optional token is sent only
+  to those hosts.
+- **Bounds**: per-file, per-bundle and file-count caps, a streaming response cap,
+  a per-request and a whole-operation deadline, and a bounded retry for server
+  errors. Rate limiting is reported, not waited out.
+- **Paths**: entries with traversal, absolute, backslash or control-character
+  paths are skipped. Symlinks and submodules are never read.
+- **Parsing**: YAML frontmatter uses the core schema with an alias limit, so no
+  tags or alias bombs.
+- **Prompt injection**: results carry a notice to treat content as reference
+  material. A heuristic scan adds `riskFlags` (piped remote scripts, install
+  commands, script execution, instruction overrides, credential requests,
+  destructive commands). Flags warn; they do not reject, and they are not a
+  guarantee.
+- **Tenancy**: skills, versions and stored content are keyed by organization
+  and workspace; another workspace's skill is `NOT_FOUND`. Stored content is
+  re-verified against its hash on read.
+- **Authorization and audit**: `skill:read` / `skill:write`; mutations are
+  audited with repository, commit and idempotency key.
+
 ## Approval gates
 
 Owner: `ApprovalPolicy` in `packages/core`, enforced by `packages/workflow`.

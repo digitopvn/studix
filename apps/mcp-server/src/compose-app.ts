@@ -238,6 +238,7 @@ export async function composeApp(
     ],
     skills: overrides.skills ?? integrations.skills,
     agentHandoffs: integrations.agentHandoffs,
+    ...(integrations.externalSkills ? { externalSkills: integrations.externalSkills } : {}),
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,

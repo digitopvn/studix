@@ -253,6 +253,24 @@ shot. It calls these routes:
 
 The body's `projectId` is always taken from the path.
 
+## Imported skills
+
+`packages/skills/src/external` discovers and imports Agent Skills from public
+GitHub repositories ([EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md)). The flow:
+
+```text
+studix_skill_* tool -> ExternalSkillService -> GitHubSkillSource (api.github.com, raw.githubusercontent.com)
+                                            -> ExternalSkillRepository (Postgres: skills, immutable versions)
+                                            -> StorageAdapter (content-addressed blobs under the tenant prefix)
+```
+
+The service validates and bounds everything read from GitHub; the Postgres
+repository records one skill per (workspace, source) and one version per
+distinct content hash, under an advisory lock so concurrent imports agree.
+Content bytes live in object storage, so the tools need `S3_BUCKET`. The tools
+are registered in `apps/mcp-server/src/mcp/skill-tools.ts`; the worker does not
+use imported skills yet.
+
 ## MCP-in-MCP gateway placement
 
 Studix is an MCP server to AI clients and an MCP client to workspace-registered

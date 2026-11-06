@@ -128,7 +128,7 @@ describe("api key scopes after job:retry joined the role matrix", () => {
     // `job:recover` came later still; 0017 adds it below and 0020 takes it back for operators only.
     const admin = await issue(
       "old-admin",
-      PERMISSIONS.filter((p) => p !== "job:retry" && p !== "job:recover"),
+      PERMISSIONS.filter((p) => p !== "job:retry" && p !== "job:recover" && !p.startsWith("skill:")),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
     const already = await issue("already", ["project:read", "job:retry"]);
@@ -142,7 +142,11 @@ describe("api key scopes after job:retry joined the role matrix", () => {
 
     const sql = readFileSync(join(MIGRATIONS_FOLDER, "0012_api_key_job_retry.sql"), "utf8");
     await db.current.client.unsafe(sql);
-    for (const later of ["0017_api_key_job_recover.sql", "0020_api_key_operator_job_recover.sql"]) {
+    for (const later of [
+      "0017_api_key_job_recover.sql",
+      "0020_api_key_operator_job_recover.sql",
+      "0024_api_key_skill_scopes.sql",
+    ]) {
       await db.current.client.unsafe(readFileSync(join(MIGRATIONS_FOLDER, later), "utf8"));
     }
 
@@ -177,7 +181,10 @@ describe("api key scopes as job:recover joined the admin roles, then moved to op
         scopes,
         createdBy,
       });
-    const admin = await issue("old-admin", [...PERMISSIONS.filter((p) => p !== "job:recover")].reverse());
+    const admin = await issue(
+      "old-admin",
+      [...PERMISSIONS.filter((p) => p !== "job:recover" && !p.startsWith("skill:"))].reverse(),
+    );
     const editor = await issue("editor", [
       "workspace:read",
       "project:read",
@@ -202,6 +209,10 @@ describe("api key scopes as job:recover joined the admin roles, then moved to op
     const strip = readFileSync(join(MIGRATIONS_FOLDER, "0020_api_key_operator_job_recover.sql"), "utf8");
     await db.current.client.unsafe(strip);
     await db.current.client.unsafe(strip);
+    // Skill scopes joined the matrix later; the keys above predate them and are upgraded to keep their role.
+    await db.current.client.unsafe(
+      readFileSync(join(MIGRATIONS_FOLDER, "0024_api_key_skill_scopes.sql"), "utf8"),
+    );
 
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
     // The admin key is an owner/admin key again: owner and admin share one set, labelled by the first match.

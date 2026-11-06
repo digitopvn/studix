@@ -15,6 +15,7 @@ import type {
 import type { RateLimitRepository } from "@studix/database";
 import type { ActivityRecorder } from "@studix/observability";
 import type { Logger } from "@studix/shared";
+import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
 import type {
   ArtifactUrlSigner,
@@ -79,6 +80,8 @@ export interface AppDeps {
   skills?: SkillSummary[];
   /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
   agentHandoffs?: AgentHandoffService;
+  /** Workspace store of imported GitHub Agent Skills; without it the skill tools answer UNAVAILABLE. */
+  externalSkills?: ExternalSkillService;
 
   /** Built dashboard directory; when missing, browser navigations get a 503 page. */
   dashboardDist?: string;

@@ -338,6 +338,28 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   more run with every limit doubled; rejecting it fails the job with
   `FORBIDDEN`.
 
+### Imported skill tools
+
+Agent Skills imported from public GitHub repositories into the workspace
+([EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md)). Content is third-party data, served
+with a notice, never executed.
+
+| Tool                    | Arguments                                                                                           | Returns                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `studix_skill_discover` | `repositoryUrl`, `ref?`, `path?`                                                                    | Valid and skipped skills at the pinned `commitSha`. Read-only.                         |
+| `studix_skill_import`   | `repositoryUrl`, `ref?`, `path?`, `skillPaths?`, `expectedCommit?`, `idempotencyKey?`, `activate?`  | Per skill: `imported`, `unchanged` or `rejected`, ids, version, `riskFlags`, warnings. |
+| `studix_skill_list`     | `query?`, `repository?`, `enabled?`, `limit?`, `cursor?`                                            | Skills: `id`, `name`, `description`, source, status.                                   |
+| `studix_skill_get`      | `skillId`, `versionId?`, `path?`, `offset?`, `maxChars?`                                            | Manifest, licence notice and a page of `content` (`nextOffset` while truncated).       |
+| `studix_skill_update`   | `skillId`, `action` (`check`, `import`, `activate`, `enable`), `commit?`, `versionId?`, `activate?` | The skill after the action; `check` reports upstream status.                           |
+| `studix_skill_disable`  | `skillId`                                                                                           | The skill; its content is withheld until re-enabled.                                   |
+- Reading needs `skill:read`; import, update (except `check`) and disable need
+  `skill:write`. OAuth `studix:read` / `studix:write` map to them.
+- Import, update and disable are audited. `expectedCommit` must be a full
+  40-character sha; a ref that moved past it is `CONFLICT`.
+- Errors: `VALIDATION` (bad URL, path or oversized file), `FORBIDDEN`,
+  `NOT_FOUND` (also for another workspace's skill), `RATE_LIMITED` (GitHub),
+  `UNAVAILABLE` (no object storage configured).
+
 ## P0 meta-tools (MCP-in-MCP)
 
 Third-party tools registered in the workspace are reached only through these

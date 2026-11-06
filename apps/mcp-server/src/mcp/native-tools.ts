@@ -17,6 +17,7 @@ import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.t
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
+import { importedSkillsSection } from "./skill-tools.ts";
 
 /** Native tool names. `studix_cancel_job` is not referenced by core next-hints, so it is named here. */
 export const NATIVE_TOOL_NAMES = {
@@ -40,6 +41,8 @@ export interface ToolOutcome {
   next: NextAction[];
   /** Job/project ids for the activity trail. */
   scope?: { jobId?: string; projectId?: string };
+  /** Extra attributes for the activity trail (never secrets). */
+  audit?: Record<string, unknown>;
 }
 
 export interface NativeTool<I extends z.ZodType = z.ZodType> {
@@ -49,6 +52,10 @@ export interface NativeTool<I extends z.ZodType = z.ZodType> {
   input: I;
   readOnly: boolean;
   destructive?: boolean;
+  /** The tool talks to services outside Studix (MCP `openWorldHint`), e.g. GitHub. */
+  openWorld?: boolean;
+  /** Repeating the same call leaves the same state (MCP `idempotentHint`); read-only tools always are. */
+  idempotent?: boolean;
   /** Mutations are recorded in the workspace activity trail. */
   audited?: boolean;
   run(ctx: ToolContext, input: z.output<I>): Promise<ToolOutcome>;
@@ -164,16 +171,18 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.inspect,
     title: "Inspect Studix capabilities",
     description:
-      "Capabilities handshake: versions, formats, limits, workflow templates. include=['schemas'] adds JSON Schemas. Call first.",
+      "Capabilities handshake: versions, formats, limits, workflow templates. include: schemas, importedSkills. Call first.",
     input: z.object({ include: z.array(z.enum(INSPECT_SECTIONS)).max(4).optional() }),
     readOnly: true,
     async run(ctx, input) {
+      const include = input.include ?? [];
       const data = inspectCapabilities({
         tenant: ctx.tenant,
         limits: ctx.deps.limits,
         skills: ctx.deps.skills ?? [],
         toolNames: ctx.toolNames,
-        include: input.include ?? [],
+        include,
+        importedSkills: await importedSkillsSection(ctx, include.includes("importedSkills")),
       });
       return { data, next: [] };
     },
