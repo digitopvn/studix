@@ -192,6 +192,16 @@ storage, the renderer and the hard QA gate from the worker
 toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
 is never published.
 
+`studix_inspect` returns `media: { enabled, reason? }` from the app process's
+`MULTIX_BIN`, and `studix_create_video` refuses a brief with `voiceover` lines
+with `UNAVAILABLE` before any job exists while it is off. Silent briefs are not
+affected. If a voice-over job still fails with `The Multix provider is not
+configured`, the worker lacks `MULTIX_BIN` even though the app has it: the
+worker logs `pack services ready` with `media: off (...)` at startup, so check
+that line first, then confirm `MULTIX_BIN` is in the secret that the worker
+(not only the app) receives and that the image's multix file is executable.
+Provider keys are checked with `multix check`; never print their values.
+
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
 

@@ -159,6 +159,28 @@ const FeedbackToolInput = z.object({
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),
 });
 
+/** True when a brief asks for a spoken line, which only the media provider can produce. */
+function briefHasVoiceover(brief: unknown): boolean {
+  const directions = (brief as { directions?: Array<{ beats?: Array<{ voiceover?: string }> }> }).directions;
+  return (directions ?? []).some((d) => (d.beats ?? []).some((b) => Boolean(b.voiceover)));
+}
+
+/**
+ * Refuse a voice-over brief before a job exists when this deployment cannot make speech, so the caller gets
+ * the fix now instead of a failed job after the planning stages ran.
+ */
+function assertMediaForBrief(deps: AppDeps, brief: unknown): void {
+  if (!deps.media || deps.media.enabled || !briefHasVoiceover(brief)) return;
+  throw new StudixError(
+    "UNAVAILABLE",
+    `This deployment cannot generate voice-over or sound effects: ${deps.media.reason ?? "paid media is off"}`,
+    {
+      retryable: false,
+      details: { provider: "multix" },
+    },
+  );
+}
+
 export const NATIVE_TOOLS = [
   tool({
     name: NATIVE_TOOL_NAMES.inspect,
@@ -172,6 +194,7 @@ export const NATIVE_TOOLS = [
         tenant: ctx.tenant,
         limits: ctx.deps.limits,
         skills: ctx.deps.skills ?? [],
+        media: ctx.deps.media,
         toolNames: ctx.toolNames,
         include: input.include ?? [],
       });
@@ -189,6 +212,7 @@ export const NATIVE_TOOLS = [
     async run(ctx, input) {
       const brief = input.brief ?? { prompt: input.prompt };
       const pack = resolveWorkflowPack(packRegistry, input.workflowTemplate);
+      assertMediaForBrief(ctx.deps, brief);
       if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, input.planner);
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },

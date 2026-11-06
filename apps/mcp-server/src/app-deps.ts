@@ -25,6 +25,13 @@ import type {
   SkillSummary,
 } from "./ports.ts";
 
+/** Paid-media availability of this deployment, as reported by `studix_inspect`. */
+export interface MediaAvailability {
+  enabled: boolean;
+  /** Why media is off, with the fix an operator applies. */
+  reason?: string;
+}
+
 /** Product limits and defaults advertised by `studix_inspect` (values come from configuration). */
 export interface AppLimits {
   defaultJobBudgetCents: number;
@@ -77,6 +84,12 @@ export interface AppDeps {
   readiness?: ReadinessCheck[];
   /** Workflow templates listed by `studix_inspect`. */
   skills?: SkillSummary[];
+  /**
+   * Whether paid media (voice-over, sound effects, generated images and clips) can run. Voice-over and sound
+   * effects need the multix CLI on the worker, so `studix_inspect` reports this and `studix_create_video`
+   * refuses a voice-over brief while it is off.
+   */
+  media?: MediaAvailability;
   /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
   agentHandoffs?: AgentHandoffService;
 

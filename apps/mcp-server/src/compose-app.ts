@@ -237,6 +237,9 @@ export async function composeApp(
       ...(overrides.readiness ?? []),
     ],
     skills: overrides.skills ?? integrations.skills,
+    media: config.MULTIX_BIN
+      ? { enabled: true }
+      : { enabled: false, reason: "MULTIX_BIN is not set on this deployment (see docs/DEPLOYMENT.md)" },
     agentHandoffs: integrations.agentHandoffs,
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
