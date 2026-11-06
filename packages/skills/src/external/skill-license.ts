@@ -50,9 +50,7 @@ function isRealSpdx(id: string | null | undefined): id is string {
 
 /** Fetch the repository license once; `undefined` when the repository declares none. */
 export async function fetchRepoLicense(session: GitHubSession, ref: RepoRef): Promise<RepoLicense | undefined> {
-  const response = await session.getJson(LicenseResponse, ["repos", ref.owner, ref.repo, "license"], {
-    allowNotFound: true,
-  });
+  const response = await session.getOptionalJson(LicenseResponse, ["repos", ref.owner, ref.repo, "license"]);
   if (!response) return undefined;
   const license: RepoLicense = {
     spdxId: response.license?.spdx_id ?? undefined,

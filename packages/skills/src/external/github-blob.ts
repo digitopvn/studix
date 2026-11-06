@@ -38,7 +38,6 @@ export async function downloadBlob(
   maxBytes: number,
 ): Promise<BlobResult> {
   const blob = await session.getJson(BlobResponse, ["repos", ref.owner, ref.repo, "git", "blobs", sha]);
-  if (!blob) return { ok: false, reason: "blob not found" };
   if (blob.size > maxBytes) return { ok: false, reason: `too large (${blob.size} bytes, limit ${maxBytes})` };
   if (blob.encoding !== "base64") return { ok: false, reason: "unsupported blob encoding" };
   const bytes = decodeBase64(blob.content, blob.size);

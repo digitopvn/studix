@@ -16,15 +16,16 @@ export interface GitHubClientOptions {
   apiBase: string;
 }
 
-export interface GetJsonOptions {
+interface GetJsonOptions {
   query?: Record<string, string>;
-  /** Return `undefined` on 404 instead of failing (an optional resource such as the license). */
   allowNotFound?: boolean;
 }
 
 /** One bounded operation: shares a request budget and a deadline across every call it makes. */
 export interface GitHubSession {
-  getJson<T>(schema: z.ZodType<T>, segments: string[], options?: GetJsonOptions): Promise<T | undefined>;
+  getJson<T>(schema: z.ZodType<T>, segments: string[], query?: Record<string, string>): Promise<T>;
+  /** Like `getJson`, but a 404 yields `undefined` (an optional resource such as the license). */
+  getOptionalJson<T>(schema: z.ZodType<T>, segments: string[]): Promise<T | undefined>;
   requestsLeft(): number;
   remainingMs(): number;
 }
@@ -126,7 +127,7 @@ export function createGitHubSession(options: GitHubClientOptions): GitHubSession
     throw new StudixError("PROVIDER_ERROR", `GitHub returned ${response.status} (${label})`, { retryable: false });
   }
 
-  async function getJson<T>(schema: z.ZodType<T>, segments: string[], opts: GetJsonOptions = {}) {
+  async function request<T>(schema: z.ZodType<T>, segments: string[], opts: GetJsonOptions) {
     const url = buildUrl(segments, opts.query);
     const label = segments.slice(0, 1).concat(segments.slice(3, 5)).join("/");
     for (let retry = 0; ; retry += 1) {
@@ -145,5 +146,12 @@ export function createGitHubSession(options: GitHubClientOptions): GitHubSession
     }
   }
 
-  return { getJson, requestsLeft: () => EXTERNAL_SKILL_LIMITS.maxRequests - requests, remainingMs };
+  return {
+    getJson: async (schema, segments, query) => {
+      const value = await request(schema, segments, { query });
+      if (value === undefined) throw new StudixError("NOT_FOUND", NOT_FOUND_MESSAGE);
+      return value;
+    },
+    getOptionalJson: (schema, segments) => request(schema, segments, { allowNotFound: true }),
+    requestsLeft: () => EXTERNAL_SKILL_LIMITS.maxRequests - requests, remainingMs };
 }

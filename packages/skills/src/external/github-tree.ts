@@ -53,7 +53,7 @@ async function walkTree(
       break;
     }
     const response = await session.getJson(TreeResponse, treeSegments(ref, next.sha));
-    for (const entry of response?.tree ?? []) {
+    for (const entry of response.tree) {
       const path = next.prefix === "" ? entry.path : `${next.prefix}/${entry.path}`;
       entries.push({ ...entry, path });
       const descend = entry.type === "tree" && pathDepth(path) < EXTERNAL_SKILL_LIMITS.maxPathDepth;
@@ -74,9 +74,9 @@ export async function listTree(
   treeSha: string,
   scopes: string[],
 ): Promise<TreeListing> {
-  const response = await session.getJson(TreeResponse, treeSegments(ref, treeSha), { query: { recursive: "1" } });
-  if (response?.truncated) return walkTree(session, ref, treeSha, scopes);
+  const response = await session.getJson(TreeResponse, treeSegments(ref, treeSha), { recursive: "1" });
+  if (response.truncated) return walkTree(session, ref, treeSha, scopes);
   const notes: string[] = [];
-  const capped = capEntries(response?.tree ?? [], notes);
+  const capped = capEntries(response.tree, notes);
   return { entries: capped.entries, truncated: capped.capped, notes };
 }
