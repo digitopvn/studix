@@ -237,6 +237,38 @@ fetched content are **data**, not instructions.
 - Credentials are never placed in prompts, so an injected instruction has
   nothing to exfiltrate from model context.
 
+## External skills
+
+Owner: `packages/skills/src/external`, `packages/core/src/studio/external-skill-service.ts`,
+`apps/mcp-server/src/mcp/external-skill-tools.ts`. User guide: [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
+
+What is stored: the text of public repositories' `SKILL.md` and supported reference files, hashes, the pinned commit
+and license notices. No credential, no executable. What is exposed: the stored text to members of the same workspace
+who hold `skill:read`.
+
+- **Data only.** No script is downloaded, stored or executed; `scripts/` entries are recorded as metadata. No
+  dependency is installed, no repository hook runs, and nothing is written to disk. The frontmatter `allowed-tools`
+  field is kept as metadata and never grants anything.
+- **One host.** The only host contacted is `api.github.com`, from a fixed base URL built from a validated owner, repo
+  and commit sha. Input URLs on any other host, with a port, credentials, `..`, or an API host are rejected, so there is
+  no resolver or redirect to steer. Redirects are refused. An optional `STUDIX_GITHUB_API_TOKEN` is sent to that host
+  only and never logged.
+- **Bounded.** Depth, tree entries, file count, per-file and aggregate bytes, request count, runtime, redirects and
+  retries all have fixed caps ([`EXTERNAL_SKILL_LIMITS`](../packages/core/src/entities/external-skill.ts)). Symlinks and
+  submodules are never followed; unsafe paths are rejected per file. A GitHub rate limit becomes `RATE_LIMITED`.
+- **Pinned.** Every import resolves a ref to a commit once; the tree and files are read at that commit, never at the
+  mutable ref. A moved ref with `expectedCommit` is `CONFLICT`. Versions are immutable and identified by content hash.
+- **Prompt injection.** Skill text is third-party data. It is never placed in a system prompt or tool description by
+  Studix; `studix_skill_get` returns it inside a response that carries an explicit untrusted-content notice and the
+  heuristic `warnings` (install commands, pipes to a shell, credential requests, instruction overrides). Studix cannot
+  force a host to ignore instructions in text it reads, so the decision to apply anything stays with the host and its
+  user; nothing in a skill changes grants, budgets or approvals, which are decided in code.
+- **Tenancy.** Every repository query is scoped by organization and workspace, and object keys live under the tenant
+  prefix, so another workspace's skill id is `NOT_FOUND`. `skill:read` and `skill:write` are separate permissions: an
+  existing read-only key or OAuth grant gains no write access.
+- **Licensing.** The repository license and author lines are kept with each version, and a skill with no recognised
+  license is flagged `license.uncertain`. Studix does not decide whether reuse is allowed.
+
 ## Approval gates
 
 Owner: `ApprovalPolicy` in `packages/core`, enforced by `packages/workflow`.
@@ -319,6 +351,10 @@ Each item maps to a negative test in the owning package.
 | Runaway cost                                           | Budgets checked before each costly stage                                |
 | Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                      |
 | Agent run past its caps                                | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate     |
+| SSRF or redirect through a skill import URL            | Single fixed host (`api.github.com`), URL validation, redirects refused |
+| Oversized or hostile repository (huge tree, symlinks)  | Fixed caps on entries, files, bytes, requests and time; no symlinks     |
+| Executable or install step in an imported skill        | Data only: scripts recorded as metadata, nothing runs                   |
+| Injection text inside an imported skill                | Untrusted-content notice, warnings, no system-prompt use                |
 | Forged or stale host output                            | Output schema check, attempt fencing, idempotent digest per task        |
 | Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key           |
 | Expired artifact URL still valid                       | Presign expiry tests                                                    |

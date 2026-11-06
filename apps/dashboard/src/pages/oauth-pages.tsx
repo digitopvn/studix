@@ -22,9 +22,9 @@ export function oauthViewFor(pathname: string): OAuthView | "unknown" | undefine
 }
 
 const SCOPE_DESCRIPTIONS: Record<string, string> = {
-  "studix:read": "View projects, jobs and assets in the selected workspace",
+  "studix:read": "View projects, jobs, assets and imported skills in the selected workspace",
   "studix:write":
-    "Create and edit projects, request renders, cancel or retry jobs and upload assets (never approve or publish)",
+    "Create and edit projects, request renders, cancel or retry jobs, upload assets and import skills from public GitHub repositories (never approve or publish)",
   offline_access: "Stay connected without asking you again",
 };
 

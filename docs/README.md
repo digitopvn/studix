@@ -11,6 +11,7 @@ bug.
 | [ARCHITECTURE.md](ARCHITECTURE.md)       | Package ownership, request flow, job lifecycle, trust boundaries                                                        |
 | [MCP_API.md](MCP_API.md)                 | The northbound `/mcp` tool contract and client connection guide                                                         |
 | [RENDERER.md](RENDERER.md)               | What the renderer supports, audio mix, loudness, deliveries, headless WebGL measurements                                |
+| [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md) | Importing Agent Skills from public GitHub repositories and using them from an MCP client                                |
 | [SECURITY.md](SECURITY.md)               | Tenancy, credentials, connector egress, approvals, threat list                                                          |
 | [DEPLOYMENT.md](DEPLOYMENT.md)           | Local, self-host, Cloudflare marketing, TOSE dev/prod, CI, runbook                                                      |
 | [ROADMAP.md](ROADMAP.md)                 | P0..P3 and the P0 done-means checklist                                                                                  |

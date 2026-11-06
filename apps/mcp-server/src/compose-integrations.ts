@@ -3,12 +3,14 @@ import {
   type AgentOutputValidator,
   type ApprovalPolicy,
   createAgentHandoffService,
+  createExternalSkillService,
+  type ExternalSkillService,
 } from "@studix/core";
 import type { createRepositories } from "@studix/database";
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import type { ActivityRecorder } from "@studix/observability";
 import { type Logger, type StudixConfig, StudixError } from "@studix/shared";
-import { listSkills, type PackRegistry, packRegistry } from "@studix/skills";
+import { createGitHubSkillSource, listSkills, type PackRegistry, packRegistry } from "@studix/skills";
 import { createS3StorageAdapterFromConfig, type S3StorageAdapter } from "@studix/storage";
 import { createConnectorAdminAdapter } from "./connector-admin-adapter.ts";
 import { createGatewayMetaTools } from "./mcp/gateway-meta-tools.ts";
@@ -22,6 +24,8 @@ export interface Integrations {
   skills: SkillSummary[];
   /** Host-agent handoff of agent stages (the studix_*_agent_task tools). */
   agentHandoffs: AgentHandoffService;
+  /** Skills imported from public GitHub repositories (the studix_skill_* tools). */
+  externalSkills: ExternalSkillService;
 }
 
 /** Workflow templates from the skills registry, as advertised by `studix_inspect`. */
@@ -89,14 +93,20 @@ export function composeIntegrations(input: {
     config: { ...gatewayConfig, selfOrigins: [...new Set([...gatewayConfig.selfOrigins, ...selfOrigins])] },
     logger: logger.child({ component: "mcp-gateway" }),
   });
+  const storage = config.S3_BUCKET ? createS3StorageAdapterFromConfig(config) : undefined;
   return {
-    ...(config.S3_BUCKET ? { storage: createS3StorageAdapterFromConfig(config) } : {}),
+    ...(storage ? { storage } : {}),
     connectors: createConnectorAdminAdapter({ admin: gateway.connectors, connectors: repos.connectors }),
     metaTools: createGatewayMetaTools(gateway),
     skills: skillSummaries(),
     agentHandoffs: createAgentHandoffService({
       handoffs: repos.agentHandoffs,
       validateOutput: packStageOutputValidator(),
+    }),
+    externalSkills: createExternalSkillService({
+      skills: repos.externalSkills,
+      source: createGitHubSkillSource({ token: config.STUDIX_GITHUB_API_TOKEN }),
+      ...(storage ? { storage } : {}),
     }),
   };
 }

@@ -338,6 +338,41 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   more run with every limit doubled; rejecting it fails the job with
   `FORBIDDEN`.
 
+### External skill tools
+
+Skills (`SKILL.md` directories) from public GitHub repositories are imported into the workspace and read back in
+later conversations. They are stored as data: Studix never runs them, and the host applies their instructions itself
+while it writes the brief or spec for `studix_create_video`. User guide: [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
+These are separate from the `skills` list of `studix_inspect`, which names the built-in workflow packs; `studix_inspect`
+also returns `importedSkills` with the tools to use.
+
+| Tool                    | Arguments                                                                              | Returns                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `studix_skill_discover` | `repositoryUrl`, `ref?`, `path?`                                                       | `source` (pinned `commitSha`), `candidates` (name, description, files, license, warnings), `rejected`.     |
+| `studix_skill_import`   | `repositoryUrl`, `skillPaths?` or `all?`, `ref?`, `expectedCommit?`, `idempotencyKey?` | Per skill: `imported`, `unchanged` or `rejected`, with `skillId`, `versionId`, `active`, `nameCollisions`. |
+| `studix_skill_list`     | `query?`, `repository?`, `status?` (`enabled` default), `limit?`, `cursor?`            | A page of skill summaries.                                                                                 |
+| `studix_skill_get`      | `skillId`, `versionId?`, `path?`, `offset?`, `maxBytes?`                               | Source, license, warnings, file list and a bounded slice of `SKILL.md` or one stored file.                 |
+| `studix_skill_update`   | `skillId`, `action` (`check`, `import`, `activate`), `versionId?`, `ref?`, `activate?` | The upstream state (`current`, `changed`, `missing`) and any new version.                                  |
+| `studix_skill_disable`  | `skillId`, `enable?`                                                                   | The skill summary; content is withheld while disabled.                                                     |
+- Permissions: `skill:read` for list and get; `skill:write` for discover, import, update and disable (discover and
+  `check` call GitHub). OAuth scope `studix:read` carries `skill:read`, `studix:write` carries `skill:write`. Viewers,
+  reviewers and editors hold `skill:read`; editors, admins and owners hold `skill:write`. API keys created before this
+  feature keep the scopes they were created with, so create a new key (or edit its scopes) to use the skill tools.
+- `discover`, `import` and `update` set `openWorldHint: true` because they contact `api.github.com`. Only public
+  `https://github.com/owner/repo` URLs (optionally `/tree/<ref>/<path>`) are accepted; any other host, a port,
+  credentials in the URL or a path with `..` is `VALIDATION`.
+- Imports are pinned to a commit. Pass `expectedCommit` (from `discover`) to fail with `CONFLICT` if the ref moved.
+  Re-importing the same content is `unchanged`; new upstream content becomes a new immutable version that stays
+  inactive until `studix_skill_update` activates it. `idempotencyKey` is recorded in the activity trail; the import is
+  idempotent per workspace, repository, skill path and content regardless.
+- One skill never fails another: each result is `imported`, `unchanged` or `rejected` with a reason (malformed
+  frontmatter, symlink, over the size bounds, no `SKILL.md` at the path).
+- `get` returns `trust.notice` and `warnings` with the text. The text is untrusted third-party content. A `path` must be
+  a stored file listed in `files[]`; there is no filesystem lookup. Binary assets are listed but not returned inline.
+- Errors: `NOT_FOUND` (skill of another workspace or missing repository/ref), `RATE_LIMITED` (GitHub, with
+  `details.retryAfterSeconds`), `TIMEOUT`, `CONFLICT` (moved ref), `UNAVAILABLE` (no object storage), `FORBIDDEN`.
+- Every mutation is recorded in the workspace activity trail with the repository, commit and per-skill outcome.
+
 ## P0 meta-tools (MCP-in-MCP)
 
 Third-party tools registered in the workspace are reached only through these

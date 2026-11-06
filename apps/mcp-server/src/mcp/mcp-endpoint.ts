@@ -11,6 +11,7 @@ import { type AppDeps, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
+import { EXTERNAL_SKILL_MCP_TOOLS } from "./external-skill-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
 import { NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
 import { errorEnvelope, okEnvelope, ToolEnvelopeSchema } from "./tool-envelope.ts";
@@ -44,7 +45,11 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     { instructions: INSTRUCTIONS },
   );
   const requestTraceId = newTraceId();
-  const tools: readonly NativeTool[] = [...NATIVE_TOOLS, ...AGENT_HANDOFF_MCP_TOOLS] as readonly NativeTool[];
+  const tools: readonly NativeTool[] = [
+    ...NATIVE_TOOLS,
+    ...AGENT_HANDOFF_MCP_TOOLS,
+    ...EXTERNAL_SKILL_MCP_TOOLS,
+  ] as readonly NativeTool[];
   const toolNames = tools.map((t) => t.name);
 
   for (const def of tools) {
@@ -58,8 +63,8 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
         annotations: {
           readOnlyHint: def.readOnly,
           destructiveHint: def.destructive ?? false,
-          idempotentHint: def.readOnly,
-          openWorldHint: false,
+          idempotentHint: def.idempotent ?? def.readOnly,
+          openWorldHint: def.openWorld ?? false,
         },
       },
       async (args: unknown) =>
@@ -79,7 +84,12 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
                 name: `mcp.${def.name}`,
                 scope: outcome.scope,
                 traceId,
-                attributes: { tool: def.name, actorType: tenant.actor.type, actorId: tenant.actor.id },
+                attributes: {
+                  ...outcome.attributes,
+                  tool: def.name,
+                  actorType: tenant.actor.type,
+                  actorId: tenant.actor.id,
+                },
               });
             }
             return okEnvelope(outcome.data, outcome.next, traceId);

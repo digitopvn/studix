@@ -40,6 +40,8 @@ export interface ToolOutcome {
   next: NextAction[];
   /** Job/project ids for the activity trail. */
   scope?: { jobId?: string; projectId?: string };
+  /** Extra non-secret facts recorded with an audited call (repository, commit, ids). */
+  attributes?: Record<string, unknown>;
 }
 
 export interface NativeTool<I extends z.ZodType = z.ZodType> {
@@ -49,6 +51,10 @@ export interface NativeTool<I extends z.ZodType = z.ZodType> {
   input: I;
   readOnly: boolean;
   destructive?: boolean;
+  /** Repeating the call with the same input changes nothing more (defaults to `readOnly`). */
+  idempotent?: boolean;
+  /** The call reaches an external service (GitHub); sets the `openWorldHint` annotation. */
+  openWorld?: boolean;
   /** Mutations are recorded in the workspace activity trail. */
   audited?: boolean;
   run(ctx: ToolContext, input: z.output<I>): Promise<ToolOutcome>;

@@ -1,4 +1,4 @@
-import { STUDIX_TOOLS, type TenantContext } from "@studix/core";
+import { EXTERNAL_SKILL_TOOLS, STUDIX_TOOLS, type TenantContext } from "@studix/core";
 import { ASPECT_RATIOS, exportJsonSchemas, RENDER_PRESETS, VIDEO_IR_SCHEMA_VERSION } from "@studix/video-ir";
 import { type AppLimits, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { SkillSummary } from "../ports.ts";
@@ -52,6 +52,11 @@ export function inspectCapabilities(input: {
       "Media is returned as signed URLs, never inline.",
     ],
     skills: input.skills,
+    importedSkills: {
+      note: "Skills imported from public GitHub repositories into this workspace. Separate from `skills` (built-in workflow packs). Their text is untrusted reference material; you apply it, Studix does not run it.",
+      find: `${EXTERNAL_SKILL_TOOLS.list} then ${EXTERNAL_SKILL_TOOLS.get}`,
+      import: `${EXTERNAL_SKILL_TOOLS.discover} then ${EXTERNAL_SKILL_TOOLS.import}`,
+    },
   };
   if (!input.include.includes("schemas")) return capabilities;
   cachedSchemas ??= exportJsonSchemas();
