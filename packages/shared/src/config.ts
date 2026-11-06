@@ -73,6 +73,20 @@ export const ConfigSchema = z
     ANTHROPIC_BASE_URL: origin.default("https://api.anthropic.com"),
     /** Jobs may select `planner: {runtime: "claude"}` (Claude Agent SDK on the worker). Off by default. */
     STUDIX_CLAUDE_PLANNER: bool.default(false),
+    /**
+     * Self-hosted/personal servers only: each user may connect their own Claude subscription, signed in
+     * with Claude Code's built-in `claude setup-token`, and only the unmodified `claude` binary consumes it.
+     * Off by default so a hosted multi-tenant deployment keeps the method restricted.
+     */
+    STUDIX_CLAUDE_SUBSCRIPTION: bool.default(false),
+    /**
+     * Self-hosted/personal server: workspace owners may switch the Claude planner and Claude subscriptions on
+     * in the Dashboard, and a missing STUDIX_SECRETS_KEY is generated into STUDIX_SECRETS_KEY_FILE. Off by
+     * default; a hosted multi-tenant deployment must leave it off.
+     */
+    STUDIX_SELF_HOSTED: bool.default(false),
+    /** Where a self-hosted server keeps its generated master key (default `.studix/secrets.key`). */
+    STUDIX_SECRETS_KEY_FILE: optionalString,
 
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(1),
     JOB_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),

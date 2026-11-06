@@ -1,5 +1,9 @@
 import { agentSpendOf, type ClaudeAgentTransport, createClaudeAgentRuntime } from "@studix/agent-runtime";
-import type { ProviderConnectionService, ResolvedProviderCredential } from "@studix/auth";
+import {
+  claudeCredentialKind as credentialKind,
+  type ProviderConnectionService,
+  type ResolvedProviderCredential,
+} from "@studix/auth";
 import { USAGE_KINDS, usageDedupeKey } from "@studix/billing";
 import {
   type AgentRunResult,
@@ -10,7 +14,7 @@ import {
 } from "@studix/core";
 import { type Clock, isStudixError, type Logger, StudixError, systemClock } from "@studix/shared";
 import { exportJsonSchemas, unwrapValidation, type VideoIR, validateVideoIR } from "@studix/video-ir";
-import type { Planner } from "@studix/workflow";
+import type { Planner, PlannerContext } from "@studix/workflow";
 
 export interface ClaudePlannerDeps {
   transport: ClaudeAgentTransport;
@@ -121,7 +125,7 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
             runtime: "claude",
           });
           resolvedKey = resolved;
-          return resolved.apiKey;
+          return { secret: resolved.apiKey, kind: credentialKind(resolved) };
         },
       },
       validateOutput: (output) =>
@@ -254,10 +258,15 @@ export function createClaudePlanner(deps: ClaudePlannerDeps): ClaudePlanner {
  * Picks the planner a job asked for. A job that selected Claude on a worker without the Claude planner
  * fails with UNAVAILABLE; it is never planned by the default planner instead.
  */
-export function createPlannerRouter(planners: { default: Planner; claude?: Planner }): Planner {
+export function createPlannerRouter(planners: {
+  default: Planner;
+  claude?: Planner;
+  /** Per-workspace switch (self-hosted owner toggle); omitted means on whenever `claude` is set. */
+  claudeEnabled?: (tenant: PlannerContext["tenant"]) => Promise<boolean>;
+}): Planner {
   return async (brief, ctx, signal) => {
     if (!ctx.planner) return planners.default(brief, ctx, signal);
-    if (!planners.claude) {
+    if (!planners.claude || (planners.claudeEnabled && !(await planners.claudeEnabled(ctx.tenant)))) {
       throw new StudixError("UNAVAILABLE", "The Claude planner is not enabled on this Studix worker", {
         retryable: false,
         suggestedAction: "Create the video without a planner selection, or ask the operator to enable it.",

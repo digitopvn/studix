@@ -2,8 +2,7 @@ import { request } from "node:http";
 import type { Client } from "@modelcontextprotocol/client";
 import type { TenantContext } from "@studix/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { attachMediaJobAsOperator } from "../src/operator/attach-media-job.ts";
-import { startTestApp, type TestApp } from "./app-test-harness.ts";
+import { FAKE_ATLAS_MODEL, startTestApp, type TestApp } from "./app-test-harness.ts";
 
 interface Envelope {
   status: "ok" | "error";
@@ -75,6 +74,7 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "studix_approve",
+      "studix_attach_media_job",
       "studix_cancel_job",
       "studix_create_video",
       "studix_feedback",
@@ -178,11 +178,13 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     expect((await call(clientA, "studix_retry_job", { jobId })).envelope.error?.code).toBe("CONFLICT");
   });
 
-  it("lets only the operator attach a found Atlas prediction to a stuck submitting record", async () => {
-    // Owners and admins create jobs here, but no workspace key may attach: every workspace shares the
-    // platform's Atlas account, and the prediction id is trusted as given.
-    const clientA = await app.connect(await app.createKey(tenantA, "owner"));
-    const clientB = await app.connect(await app.createKey(tenantB, "admin"));
+  it("attaches a found Atlas prediction to a stuck submitting record through studix_attach_media_job", async () => {
+    // Attaching needs `job:recover`, which only platform operators hold: a tenant's owner or admin does not.
+    const operatorOf = (tenant: typeof tenantA) => ({
+      ...tenant,
+      actor: { type: "user" as const, id: tenant.actor.id, role: "operator" as const },
+    });
+    const clientA = await app.connect(await app.createKey(operatorOf(tenantA), "operator"));
     const stuck = async (client: Awaited<ReturnType<typeof app.connect>>, tenant: typeof tenantA) => {
       const created = await call(client, "studix_create_video", { prompt: "Recover my upscale" });
       const jobId = created.envelope.data?.jobId as string;
@@ -190,7 +192,7 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
       const intent = {
         idempotencyKey: key,
         kind: "image",
-        model: "atlas/upscaler",
+        model: `atlas:${FAKE_ATLAS_MODEL}`,
         attempt: 1,
         state: "submitting",
         estimatedCostCents: 4,
@@ -212,46 +214,59 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     const args = await stuck(clientA, tenantA);
     const { jobId } = args;
 
-    expect((await clientA.listTools()).tools.map((t) => t.name)).not.toContain("studix_attach_media_job");
-
-    const operator = (input: typeof args, retry = false) =>
-      attachMediaJobAsOperator(
-        { client: app.db.client, studio: app.deps.studio },
-        { ...input, operator: "ops", retry },
+    // Editors can retry but not attach, and neither can the workspace's owner or admin: Atlas cannot say
+    // which workspace submitted a prediction, so a tenant could collect another tenant's output.
+    const limited = await call(await app.connect(keyA), "studix_attach_media_job", args);
+    expect(limited.envelope.error?.code).toBe("FORBIDDEN");
+    for (const role of ["owner", "admin"] as const) {
+      const member = await call(
+        await app.connect(await app.createKey(tenantA, role)),
+        "studix_attach_media_job",
+        args,
       );
-    await expect(
-      attachMediaJobAsOperator(
-        { client: app.db.client, studio: app.deps.studio },
-        { ...args, operator: "ops; drop table" },
-      ),
-    ).rejects.toMatchObject({ code: "VALIDATION" });
-    await expect(operator({ ...args, jobId: "job_missing" })).rejects.toMatchObject({ code: "NOT_FOUND" });
-    await expect(operator({ ...args, idempotencyKey: "nope" })).rejects.toMatchObject({ code: "NOT_FOUND" });
-    await expect(operator({ ...args, predictionId: "../etc" })).rejects.toMatchObject({
-      code: "VALIDATION",
-    });
+      expect(member.envelope.error?.code).toBe("FORBIDDEN");
+    }
+    await expect(app.createKey(tenantA, "operator")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const clientB = await app.connect(await app.createKey(operatorOf(tenantB), "operator"));
+    const foreign = await call(clientB, "studix_attach_media_job", args);
+    expect(foreign.envelope.error?.code).toBe("NOT_FOUND");
+    const unknownKey = await call(clientA, "studix_attach_media_job", { ...args, idempotencyKey: "nope" });
+    expect(unknownKey.envelope.error?.code).toBe("NOT_FOUND");
+    const badId = await call(clientA, "studix_attach_media_job", { ...args, predictionId: "../etc" });
+    expect(badId.envelope.error?.code).toBe("VALIDATION");
+    // A prediction Atlas does not know is refused before anything is written.
+    const unknown = await call(clientA, "studix_attach_media_job", { ...args, predictionId: "nope_42" });
+    expect(unknown.envelope.error?.code).toBe("VALIDATION");
 
-    const attached = await operator(args);
-    expect(attached).toMatchObject({
+    const attached = await call(clientA, "studix_attach_media_job", args);
+    expect(attached.envelope.status).toBe("ok");
+    expect(attached.envelope.data).toMatchObject({
       job: { id: jobId, status: "failed" },
       mediaJob: { state: "submitted", job: { provider: "atlas", id: "pred_42" }, attempt: 1 },
     });
+    expect(attached.envelope.next.map((n) => n.tool)).toContain("studix_retry_job");
     const [stage] = await app.deps.repos.jobs.listStages(tenantA, jobId);
     expect(stage?.mediaJobs).toEqual([
       expect.objectContaining({ state: "submitted", job: { provider: "atlas", id: "pred_42" } }),
     ]);
-    const audit = await app.db.client`select actor_type, actor_id from audit_events
+    const audit = await app.db.client`select data from audit_events
       where subject_id = ${jobId} and action = 'job.media_job_attached'`;
-    expect(audit).toEqual([{ actor_type: "system", actor_id: "operator:ops" }]);
+    expect(audit).toHaveLength(1);
 
-    // One upstream job is attached once, whichever workspace the job belongs to.
+    // One upstream job is attached once, whichever workspace asks.
     const other = await stuck(clientB, tenantB);
-    await expect(operator(other)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect((await call(clientB, "studix_attach_media_job", other)).envelope.error?.code).toBe("CONFLICT");
+    const ownOther = await stuck(clientA, tenantA);
+    expect((await call(clientA, "studix_attach_media_job", ownOther)).envelope.error?.code).toBe("CONFLICT");
+    expect(
+      (await call(clientA, "studix_attach_media_job", { ...ownOther, predictionId: "pred_43" })).envelope
+        .status,
+    ).toBe("ok");
 
-    // The record is no longer submitting; by default the operator also requeues the job.
-    await expect(operator(args)).rejects.toMatchObject({ code: "CONFLICT" });
-    const retried = await operator({ ...other, predictionId: "pred_43" }, true);
-    expect(retried.job).toMatchObject({ id: other.jobId, status: "queued" });
+    // The record is no longer submitting, and a requeued job is held by the queue, not the operator.
+    expect((await call(clientA, "studix_attach_media_job", args)).envelope.error?.code).toBe("CONFLICT");
+    expect((await call(clientA, "studix_retry_job", { jobId })).envelope.status).toBe("ok");
+    expect((await call(clientA, "studix_attach_media_job", args)).envelope.error?.code).toBe("CONFLICT");
   });
 
   it("returns validation errors as tool envelopes", async () => {

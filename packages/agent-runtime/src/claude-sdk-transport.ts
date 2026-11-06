@@ -98,6 +98,11 @@ export interface ClaudeSdkTransportOptions {
   spawnProcess?: (options: ClaudeSpawnOptions) => ClaudeSpawnedProcess;
   /** Parent of the per-session working directory. Defaults to the OS temp directory. */
   sandboxRoot?: string;
+  /**
+   * Which credential kind this transport accepts. `subscription` is set only by the Claude Code CLI
+   * transport, whose `query` runs the binary directly; the default SDK transport refuses subscriptions.
+   */
+  credentialKind?: "api_key" | "subscription";
 }
 
 const SYSTEM_PROMPT = [
@@ -239,6 +244,16 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
 
   return {
     start(request: ClaudeSessionRequest): ClaudeAgentSession {
+      const accepts = options.credentialKind ?? "api_key";
+      if ((request.credentialKind ?? "api_key") !== accepts) {
+        throw new StudixError(
+          "FORBIDDEN",
+          accepts === "api_key"
+            ? "A Claude subscription is never passed to the Claude Agent SDK"
+            : "This transport only runs Claude subscription tokens",
+          { retryable: false },
+        );
+      }
       if (request.allowedTools.length > 0) {
         throw new StudixError(
           "UNAVAILABLE",
@@ -276,11 +291,13 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
         PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
         HOME: sandbox,
         TMPDIR: sandbox,
-        ANTHROPIC_API_KEY: request.credential,
+        ...(accepts === "subscription"
+          ? { CLAUDE_CODE_OAUTH_TOKEN: request.credential }
+          : { ANTHROPIC_API_KEY: request.credential }),
         DISABLE_AUTOUPDATER: "1",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       };
-      if (options.baseUrl) env.ANTHROPIC_BASE_URL = options.baseUrl;
+      if (options.baseUrl && accepts === "api_key") env.ANTHROPIC_BASE_URL = options.baseUrl;
 
       const queryOptions: ClaudeQueryOptions = {
         model: request.model,

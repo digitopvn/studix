@@ -15,6 +15,8 @@ import {
   type MediaKind,
   type MediaProvider,
   type MediaResumeRequest,
+  type ProviderJobInfo,
+  type ProviderJobInspector,
   type ProviderJobRef,
   type TenantContext,
 } from "@studix/core";
@@ -189,7 +191,7 @@ interface CatalogModels {
  * first. Async jobs are journaled right after submission and collected with `status --wait --download`,
  * so a retry (or another worker) resumes the paid job instead of submitting a new one.
  */
-export class MultixProvider implements MediaProvider {
+export class MultixProvider implements MediaProvider, ProviderJobInspector {
   readonly id = MULTIX_PROVIDER_ID;
   private readonly bin: string | undefined;
   private readonly runner: MultixRunner | undefined;
@@ -226,6 +228,24 @@ export class MultixProvider implements MediaProvider {
 
   get enabled(): boolean {
     return this.runner !== undefined;
+  }
+
+  /**
+   * One `atlas status <id>` GET (no wait, no download): the prediction's model and creation time, or
+   * undefined when Atlas does not return it. Any failure is reported as unknown, so a caller that refuses
+   * unknown jobs fails closed.
+   */
+  async inspectJob(job: ProviderJobRef): Promise<ProviderJobInfo | undefined> {
+    if (!this.runner || job.provider !== "atlas") return undefined;
+    const dir = await mkdtemp(join(tmpdir(), "studix-multix-"));
+    try {
+      const { result } = await this.execRaw(["atlas", "status", job.id], dir, PROBE_TIMEOUT_MS);
+      return parseAtlasPrediction(result.stdout, job.id);
+    } catch {
+      return undefined;
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   status(): MultixProviderStatus {
@@ -322,7 +342,7 @@ export class MultixProvider implements MediaProvider {
             submittedAt: existing.submittedAt,
           },
           suggestedAction:
-            "Do not retry blindly: ask the Studix operator to find the prediction in `multix history` or the Atlas Cloud console and attach it to this job, which then retries it.",
+            "Find the prediction in `multix history` or the Atlas Cloud console, attach it to the failed job with `studix_attach_media_job`, then retry the job.",
         },
       );
     }
@@ -1020,6 +1040,25 @@ async function fileSize(path: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+/** The model and creation time of the prediction `atlas status` printed as JSON, if it is `id`. */
+function parseAtlasPrediction(stdout: string, id: string): ProviderJobInfo | undefined {
+  const start = stdout.indexOf("{");
+  if (start < 0) return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stdout.slice(start, stdout.lastIndexOf("}") + 1));
+  } catch {
+    return undefined;
+  }
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const prediction = raw as { id?: unknown; model?: unknown; created_at?: unknown };
+  if (prediction.id !== id) return undefined;
+  return {
+    ...(typeof prediction.model === "string" ? { model: prediction.model } : {}),
+    ...(typeof prediction.created_at === "string" ? { createdAt: prediction.created_at } : {}),
+  };
 }
 
 export function createMultixProviderFromConfig(

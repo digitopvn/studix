@@ -1,6 +1,10 @@
 import { StudixError } from "@studix/shared";
 
-export const ROLES = ["owner", "admin", "editor", "reviewer", "viewer"] as const;
+/**
+ * `operator` is the platform's own staff, never a tenant role: no service assigns it (owners manage members
+ * but cannot grant a role above their own), so it is set directly in the database.
+ */
+export const ROLES = ["operator", "owner", "admin", "editor", "reviewer", "viewer"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const PERMISSIONS = [
@@ -9,7 +13,11 @@ export const PERMISSIONS = [
   "project:write",
   "job:cancel",
   "job:retry",
-  /** Platform operator recovery of a job's media calls, e.g. attaching an upstream job found by hand. */
+  /**
+   * Operator recovery of a job's media calls, e.g. attaching an upstream job found by hand. Platform
+   * operators only: the upstream job is fetched with the platform's provider key, so a tenant could
+   * otherwise collect another tenant's output.
+   */
   "job:recover",
   "asset:read",
   "asset:write",
@@ -22,14 +30,6 @@ export const PERMISSIONS = [
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-/**
- * Held only by system actors (the operator CLI), never by a workspace role or API key: attaching an upstream
- * job trusts its id without checking it against the provider, and every workspace shares the platform's
- * provider account, so a tenant could otherwise collect another workspace's media.
- */
-const OPERATOR_PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>(["job:recover"]);
-const WORKSPACE_PERMISSIONS = PERMISSIONS.filter((p) => !OPERATOR_PERMISSIONS.has(p));
-
 const READ: Permission[] = ["workspace:read", "project:read", "asset:read"];
 const EDIT: Permission[] = [
   ...READ,
@@ -40,10 +40,13 @@ const EDIT: Permission[] = [
   "approval:request",
 ];
 
+const TENANT_ADMIN: Permission[] = PERMISSIONS.filter((p) => p !== "job:recover");
+
 /** Role -> permission matrix. Reviewers may decide approvals but not edit; viewers only read. */
 export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> = {
-  owner: new Set(WORKSPACE_PERMISSIONS),
-  admin: new Set(WORKSPACE_PERMISSIONS),
+  operator: new Set(PERMISSIONS),
+  owner: new Set(TENANT_ADMIN),
+  admin: new Set(TENANT_ADMIN),
   editor: new Set(EDIT),
   reviewer: new Set([...READ, "approval:decide"]),
   viewer: new Set(READ),
@@ -95,9 +98,10 @@ export function can(actor: Actor, permission: Permission): boolean {
     case "user":
       return ROLE_PERMISSIONS[actor.role]?.has(permission) ?? false;
     case "apiKey":
+      return actor.scopes.includes(permission);
     case "oauth":
-      // A key or token issued before a permission became operator-only may still list it.
-      return !OPERATOR_PERMISSIONS.has(permission) && actor.scopes.includes(permission);
+      // Delegated agents never act as the platform operator, whatever the user's role.
+      return permission !== "job:recover" && actor.scopes.includes(permission);
     case "system":
       return SYSTEM_PERMISSIONS.has(permission);
     default:
@@ -110,9 +114,8 @@ export function assertPermission(ctx: TenantContext, permission: Permission): vo
   if (!can(ctx.actor, permission)) {
     throw new StudixError("FORBIDDEN", `Missing permission ${permission}`, {
       details: { permission, actorType: ctx.actor.type },
-      suggestedAction: OPERATOR_PERMISSIONS.has(permission)
-        ? "Only the Studix platform operator can do this; contact them."
-        : ctx.actor.type === "apiKey"
+      suggestedAction:
+        ctx.actor.type === "apiKey"
           ? `Use an API key with the "${permission}" scope.`
           : ctx.actor.type === "oauth"
             ? "Reconnect the app with a broader scope, or ask a workspace admin for a role that grants this action."

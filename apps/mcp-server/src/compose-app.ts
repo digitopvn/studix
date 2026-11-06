@@ -8,12 +8,15 @@ import {
   createModelPreferenceService,
   createProviderConnectionService,
   createSecretBox,
+  createWorkspaceFeatureService,
   parseSecretKey,
   routeKeyTester,
+  withSelfHostedSecretsKey,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
+import { createMultixProviderFromConfig } from "@studix/providers";
 import {
   allowedHosts,
   createLogger,
@@ -112,7 +115,8 @@ export async function composeApp(
   env: NodeJS.ProcessEnv = process.env,
   overrides: ComposeOverrides = {},
 ): Promise<ComposedApp> {
-  const config = loadConfig(env);
+  const config = withSelfHostedSecretsKey(loadConfig(env));
+  if (config.STUDIX_SECRETS_KEY) registerSecret(config.STUDIX_SECRETS_KEY);
   const appEnv = parseAppEnv(env);
   registerSecretsFromEnv(env);
   // The env scan registers the comma-separated list as one value; each retired key is a secret on its own.
@@ -136,6 +140,8 @@ export async function composeApp(
   const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
   const studio = new StudioService({
     ...repos,
+    // Operators attach Atlas predictions by hand; each is checked with Atlas first, so this needs multix.
+    providerJobs: config.MULTIX_BIN ? createMultixProviderFromConfig(config, { env }) : undefined,
     approvalPolicy,
     clock: systemClock,
     logger,
@@ -162,6 +168,15 @@ export async function composeApp(
     env: config.STUDIX_API_KEY_ENV,
     logger,
   });
+  const features = createWorkspaceFeatureService({
+    settings: repos.workspaceSettings,
+    audit: repos.audit,
+    selfHosted: config.STUDIX_SELF_HOSTED,
+    operator: {
+      claudePlanner: config.STUDIX_CLAUDE_PLANNER,
+      claudeSubscription: config.STUDIX_CLAUDE_SUBSCRIPTION,
+    },
+  });
   const providers = createProviderConnectionService({
     connections: repos.providerConnections,
     audit: repos.audit,
@@ -177,6 +192,7 @@ export async function composeApp(
           config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
         )
       : undefined,
+    claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
     logger,
   });
   if (!config.STUDIX_SECRETS_KEY)
@@ -209,6 +225,7 @@ export async function composeApp(
     providers,
     modelPreferences,
     claudePlanner: config.STUDIX_CLAUDE_PLANNER,
+    features,
     activity,
     readiness: [
       {

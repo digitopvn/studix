@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MediaJobRecord } from "../src/index.ts";
+import type { MediaJobRecord, ProviderJobInfo } from "../src/index.ts";
 import { createInMemoryStudio, testTenant } from "../src/testing/index.ts";
 
 const key = "job:upscale:shot-1";
@@ -7,7 +7,7 @@ const intent = (attempt: number, updatedAt: string, state: MediaJobRecord["state
   ({
     idempotencyKey: key,
     kind: "image",
-    model: "atlas/upscaler",
+    model: "atlas:atlascloud/upscaler",
     attempt,
     state,
     estimatedCostCents: 4,
@@ -15,10 +15,28 @@ const intent = (attempt: number, updatedAt: string, state: MediaJobRecord["state
     updatedAt,
   }) satisfies MediaJobRecord;
 
-async function stuckJob(records: MediaJobRecord[][]) {
-  const env = createInMemoryStudio();
-  // Only the operator CLI, a system actor, may attach: no workspace role or key holds `job:recover`.
-  const ctx = testTenant({ actor: { type: "system", id: "operator:test" } });
+/** Predictions Atlas knows, as `atlas status` reports them. */
+const ATLAS: Record<string, ProviderJobInfo> = {
+  pred_42: { model: "atlascloud/upscaler", createdAt: "2026-01-01T00:00:06.000Z" },
+  pred_old: { model: "atlascloud/upscaler", createdAt: "2025-12-31T23:00:00.000Z" },
+  pred_video: { model: "kwaivgi/kling-video", createdAt: "2026-01-01T00:00:06.000Z" },
+};
+
+async function stuckJob(records: MediaJobRecord[][], options: { inspector?: boolean } = {}) {
+  const inspected: string[] = [];
+  const env = createInMemoryStudio({
+    providerJobs:
+      options.inspector === false
+        ? undefined
+        : {
+            inspectJob: async (job) => {
+              inspected.push(job.id);
+              return ATLAS[job.id];
+            },
+          },
+  });
+  // `job:recover` is a platform operator's: tenant owners and admins do not hold it.
+  const ctx = testTenant({ role: "operator" });
   const { job } = await env.studio.createVideoProject(ctx, { brief: { prompt: "Brand intro" } });
   await env.repos.jobs.update(ctx, job.id, { status: "failed", attempts: records.length });
   for (const [index, mediaJobs] of records.entries()) {
@@ -31,7 +49,7 @@ async function stuckJob(records: MediaJobRecord[][]) {
     });
   }
   const input = { jobId: job.id, stage: "upscale", idempotencyKey: key, predictionId: "pred_42" };
-  return { ...env, ctx, job, input };
+  return { ...env, ctx, job, input, inspected };
 }
 
 describe("attaching a found Atlas prediction to a submitting record", () => {
@@ -67,28 +85,23 @@ describe("attaching a found Atlas prediction to a submitting record", () => {
     });
   });
 
-  it("refuses a record that is not submitting, a job that is not failed, and every workspace actor", async () => {
+  it("refuses a record that is not submitting, a job that is not failed, and readers", async () => {
     const done = await stuckJob([[intent(1, "2026-01-01T00:00:00.000Z", "completed")]]);
     await expect(done.studio.attachMediaJob(done.ctx, done.input)).rejects.toMatchObject({
       code: "CONFLICT",
     });
 
     const stuck = await stuckJob([[intent(1, "2026-01-01T00:00:00.000Z")]]);
-    // The prediction id is trusted as given and every workspace shares the platform's Atlas account.
-    for (const role of ["owner", "admin", "editor", "viewer"] as const) {
+    const viewer = { ...stuck.ctx, actor: { type: "user" as const, id: "usr_v", role: "viewer" as const } };
+    await expect(stuck.studio.attachMediaJob(viewer, stuck.input)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    for (const role of ["editor", "admin", "owner"] as const) {
       const member = { ...stuck.ctx, actor: { type: "user" as const, id: `usr_${role}`, role } };
       await expect(stuck.studio.attachMediaJob(member, stuck.input)).rejects.toMatchObject({
         code: "FORBIDDEN",
       });
     }
-    // A key issued while admins could grant the scope still lists it, but it no longer counts.
-    const staleKey = {
-      ...stuck.ctx,
-      actor: { type: "apiKey" as const, id: "key_old", scopes: ["job:recover" as const] },
-    };
-    await expect(stuck.studio.attachMediaJob(staleKey, stuck.input)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
     await expect(
       stuck.studio.attachMediaJob(stuck.ctx, { ...stuck.input, stage: "frames" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -102,5 +115,34 @@ describe("attaching a found Atlas prediction to a submitting record", () => {
     });
     const [stage] = await stuck.repos.jobs.listStages(stuck.ctx, stuck.job.id);
     expect(stage?.mediaJobs?.[0]?.state).toBe("submitting");
+  });
+
+  it("refuses a prediction Atlas does not know, that runs another model, or that predates the call", async () => {
+    const stuck = await stuckJob([[intent(1, "2026-01-01T00:00:05.000Z")]]);
+    const refusals = [];
+    for (const predictionId of ["pred_missing", "pred_video", "pred_old"]) {
+      refusals.push(
+        await stuck.studio.attachMediaJob(stuck.ctx, { ...stuck.input, predictionId }).catch((e) => e),
+      );
+    }
+    // One error for every mismatch, so the answer does not say which predictions exist or what they ran.
+    expect(refusals.map((e) => e.code)).toEqual(["VALIDATION", "VALIDATION", "VALIDATION"]);
+    expect(new Set(refusals.map((e) => e.message.replace(/pred_\w+/, "")))).toHaveProperty("size", 1);
+    expect(stuck.inspected).toEqual(["pred_missing", "pred_video", "pred_old"]);
+    const [stage] = await stuck.repos.jobs.listStages(stuck.ctx, stuck.job.id);
+    expect(stage?.mediaJobs?.[0]?.state).toBe("submitting");
+
+    // A prediction created a little before the record (clock skew) still matches.
+    const skewed = await stuckJob([[intent(1, "2026-01-01T00:01:00.000Z")]]);
+    await expect(skewed.studio.attachMediaJob(skewed.ctx, skewed.input)).resolves.toMatchObject({
+      mediaJob: { state: "submitted" },
+    });
+  });
+
+  it("refuses to attach when no provider can check the prediction", async () => {
+    const stuck = await stuckJob([[intent(1, "2026-01-01T00:00:05.000Z")]], { inspector: false });
+    await expect(stuck.studio.attachMediaJob(stuck.ctx, stuck.input)).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+    });
   });
 });
