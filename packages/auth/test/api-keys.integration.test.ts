@@ -125,7 +125,7 @@ describe("api key scopes after job:retry joined the role matrix", () => {
       "project:read",
       "workspace:read",
     ]);
-    // `job:recover` came later still; 0017 adds it below.
+    // `job:recover` came later still; 0017 adds it below and 0019 takes it back for operators only.
     const admin = await issue(
       "old-admin",
       PERMISSIONS.filter((p) => p !== "job:retry" && p !== "job:recover"),
@@ -142,9 +142,9 @@ describe("api key scopes after job:retry joined the role matrix", () => {
 
     const sql = readFileSync(join(MIGRATIONS_FOLDER, "0012_api_key_job_retry.sql"), "utf8");
     await db.current.client.unsafe(sql);
-    await db.current.client.unsafe(
-      readFileSync(join(MIGRATIONS_FOLDER, "0017_api_key_job_recover.sql"), "utf8"),
-    );
+    for (const later of ["0017_api_key_job_recover.sql", "0019_api_key_operator_job_recover.sql"]) {
+      await db.current.client.unsafe(readFileSync(join(MIGRATIONS_FOLDER, later), "utf8"));
+    }
 
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
     expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
@@ -164,8 +164,8 @@ describe("api key scopes after job:retry joined the role matrix", () => {
   });
 });
 
-describe("api key scopes after job:recover joined the admin roles", () => {
-  it("gives the scope to owner and admin keys only", async () => {
+describe("api key scopes as job:recover joined the admin roles, then moved to operators", () => {
+  it("gives the scope to owner and admin keys only, then takes it from every key", async () => {
     const { keys, repos } = services();
     const ctx = await tenant("pg-recover-scope");
     const createdBy = { type: "user" as const, id: ctx.actor.id };
@@ -192,10 +192,22 @@ describe("api key scopes after job:recover joined the admin roles", () => {
     await db.current.client.unsafe(sql);
     await db.current.client.unsafe(sql);
 
+    const scopesOf = async () => new Map((await keys.list(ctx)).map((k) => [k.id, k.scopes]));
+    const granted = await scopesOf();
+    expect(granted.get(admin.id)?.filter((s) => s === "job:recover")).toHaveLength(1);
+    expect(granted.get(editor.id)).not.toContain("job:recover");
+
+    // A custom key minted by an owner while owners held the scope loses it too.
+    const custom = await issue("custom", ["project:read", "job:recover"]);
+    const strip = readFileSync(join(MIGRATIONS_FOLDER, "0019_api_key_operator_job_recover.sql"), "utf8");
+    await db.current.client.unsafe(strip);
+    await db.current.client.unsafe(strip);
+
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
+    // The admin key is an owner/admin key again: owner and admin share one set, labelled by the first match.
     expect(byId.get(admin.id)).toMatchObject({ role: "owner" });
-    expect(byId.get(admin.id)?.scopes.filter((s) => s === "job:recover")).toHaveLength(1);
+    expect(byId.get(admin.id)?.scopes).not.toContain("job:recover");
     expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
-    expect(byId.get(editor.id)?.scopes).not.toContain("job:recover");
+    expect(byId.get(custom.id)?.scopes).toEqual(["project:read"]);
   });
 });

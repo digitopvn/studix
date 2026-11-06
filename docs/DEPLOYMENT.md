@@ -157,7 +157,8 @@ journals a `submitting` record right before `atlas run`. If the worker dies
 before the job id is journaled, a retry with the same idempotency key is
 refused (non-retryable) instead of paying twice for one upscale (about $0.01):
 find the prediction in `multix history` or the Atlas Cloud console, attach it
-with `studix_attach_media_job`, then retry the job
+with `studix_attach_media_job` (platform `operator` role only; the app process
+needs `MULTIX_BIN` and the Atlas key to check the prediction), then retry the job
 ([docs/MCP_API.md](MCP_API.md#retrying-a-failed-job)). The intent is an
 insert-if-absent, so two concurrent calls with the same idempotency key submit
 once; the other fails `CONFLICT` (retryable). Its retry collects the job once

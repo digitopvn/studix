@@ -278,7 +278,7 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.attachMediaJob,
     title: "Attach Atlas prediction",
     description:
-      "Failed job whose Atlas call 'may already have been charged': attach the prediction id from `multix history`, then retry the job to collect it unpaid.",
+      "Platform operators only. Failed job whose Atlas call 'may already have been charged': attach the prediction id from `multix history` (it must run the call's model and postdate the call), then retry the job to collect it unpaid.",
     input: z.object({
       jobId: Id,
       stage: z.string().trim().min(1).max(100),
