@@ -277,6 +277,16 @@ AI client --(inbound credential: stx_ key)--> /mcp
   calls, the worker role lets a workflow stage call a bound capability.
 - Every execute re-authorizes against the current grant, not the search result.
 
+## Imported skills
+
+`packages/skills/src/external` imports public GitHub Agent Skills: URL parsing,
+a GitHub client with fixed hosts and size/time caps, discovery and bundling, and
+`createExternalSkillService`. Rows live in `external_skills` and
+`external_skill_versions` (`packages/database`), files in object storage under
+`external-skills/<versionId>/<sha256>`. `apps/mcp-server` exposes the six
+`studix_skill_*` tools and wires the service from `S3_BUCKET` and the optional
+`STUDIX_GITHUB_TOKEN`. See [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
+
 ## Trust boundaries
 
 | Boundary                      | Crossing                 | Control                                                                                                                         |
@@ -286,6 +296,7 @@ AI client --(inbound credential: stx_ key)--> /mcp
 | App/worker -> third-party MCP | Outbound connector call  | URL policy (SSRF, DNS rebinding, redirects), secretRef, caps, re-authorization                                                  |
 | Worker -> model providers     | Decision and media calls | Server-held credentials, redaction, budget, timeouts                                                                            |
 | Worker -> agent runtime       | Pi session               | Process/pod isolation, not a path guard; no shell, no secrets in prompt                                                         |
+| App -> GitHub                 | Skill discover/import    | Fixed hosts, parsed-only URL, byte and time caps, data-only storage, no execution                                               |
 | Storage -> client             | Artifact download        | Short-lived signed URLs, tenant-prefixed keys                                                                                   |
 
 Details and threat list: [SECURITY.md](SECURITY.md).

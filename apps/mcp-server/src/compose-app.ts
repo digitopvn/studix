@@ -29,6 +29,7 @@ import {
   ssoClients,
   systemClock,
 } from "@studix/shared";
+import type { ExternalSkillService } from "@studix/skills";
 import type { Express } from "express";
 import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
@@ -73,6 +74,7 @@ export interface ComposeOverrides {
   metaTools?: RegisterMetaTools;
   readiness?: ReadinessCheck[];
   skills?: SkillSummary[];
+  externalSkills?: ExternalSkillService;
   logger?: Logger;
 }
 
@@ -238,6 +240,7 @@ export async function composeApp(
     ],
     skills: overrides.skills ?? integrations.skills,
     agentHandoffs: integrations.agentHandoffs,
+    externalSkills: overrides.externalSkills ?? integrations.externalSkills,
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,

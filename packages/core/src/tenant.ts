@@ -21,6 +21,12 @@ export const PERMISSIONS = [
   "job:recover",
   "asset:read",
   "asset:write",
+  /**
+   * Imported external Agent Skills (third-party instruction text kept in the workspace). Reading never
+   * leaves Studix; writing contacts public GitHub and stores what it finds, so it is a separate grant.
+   */
+  "skill:read",
+  "skill:write",
   "approval:request",
   "approval:decide",
   "publish",
@@ -30,13 +36,14 @@ export const PERMISSIONS = [
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-const READ: Permission[] = ["workspace:read", "project:read", "asset:read"];
+const READ: Permission[] = ["workspace:read", "project:read", "asset:read", "skill:read"];
 const EDIT: Permission[] = [
   ...READ,
   "project:write",
   "job:cancel",
   "job:retry",
   "asset:write",
+  "skill:write",
   "approval:request",
 ];
 

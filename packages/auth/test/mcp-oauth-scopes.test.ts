@@ -4,7 +4,14 @@ import { MCP_SUPPORTED_SCOPES, parseScopeClaim, permissionsForScopes } from "../
 
 describe("mcp oauth scopes", () => {
   it("maps scopes to permissions and ignores unknown ones", () => {
-    expect(permissionsForScopes(["studix:read"])).toEqual(["workspace:read", "project:read", "asset:read"]);
+    expect(permissionsForScopes(["studix:read"])).toEqual([
+      "workspace:read",
+      "project:read",
+      "asset:read",
+      "skill:read",
+    ]);
+    expect(permissionsForScopes(["studix:read"])).not.toContain("skill:write");
+    expect(permissionsForScopes(["studix:write"])).toContain("skill:write");
     expect(permissionsForScopes(["offline_access", "admin"])).toEqual([]);
     expect(permissionsForScopes(["studix:write"])).not.toContain("approval:decide");
     expect(permissionsForScopes(["studix:write"])).not.toContain("apikey:manage");

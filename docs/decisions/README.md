@@ -20,5 +20,6 @@ supersedes the old one; accepted ADRs are not rewritten.
 | [0014](0014-storyboard-revisions-and-stage-cache.md)                | Storyboard, revision scene/shot, stage cache và pack registry              | Accepted |
 | [0015](0015-agent-stage-caps-and-host-handoff.md)                   | Agent stage: cap cứng trong harness và handoff cho host agent              | Accepted |
 | [0016](0016-provider-connections-runtimes-and-model-preferences.md) | Provider connections per runtime and per-stage model preferences           | Accepted |
+| [0017](0017-external-github-skill-store.md)                         | External GitHub skill store: data-only, pinned, immutable versions         | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.
