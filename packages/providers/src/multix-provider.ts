@@ -266,6 +266,11 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     );
   }
 
+  /** False when the last `multix check` could not run (timeout, crash), so `readiness()` is a guess, not a finding. */
+  checkRan(): boolean {
+    return this.lastReadiness !== undefined;
+  }
+
   /** The "<vendor>:<model>" a request runs on; results report the same id. */
   resolveModel(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string {
     return resolveMultixModel(request, this.defaults, this.voiceRoutes).model.id;

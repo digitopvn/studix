@@ -91,7 +91,7 @@ export interface PlatformAdminDeps {
   refreshCredentials(): Promise<void>;
   storage?: { probeWrite(): Promise<StorageProbeResult> };
   storageSettings: StorageSettingsView;
-  multix?: Pick<MultixProvider, "status" | "readiness" | "invalidateCapabilities">;
+  multix?: Pick<MultixProvider, "status" | "readiness" | "checkRan" | "invalidateCapabilities">;
   /** MULTIX_BIN as configured (a path, not a secret). */
   multixBin?: string;
   clock?: { now(): Date };
@@ -168,20 +168,29 @@ export function createPlatformAdmin(deps: PlatformAdminDeps): PlatformAdmin {
       const readiness = await deps.multix.readiness();
       for (const v of MULTIX_VENDORS) keyFound[v] = readiness[v] === true;
       const anyFound = Object.values(keyFound).some(Boolean);
-      result = {
-        ok: vendor ? keyFound[vendor] === true : anyFound,
-        at: now(),
-        diagnostic: (vendor ? keyFound[vendor] === true : anyFound) ? "ok" : "missing_credential",
-        message: anyFound
-          ? "multix check ran. It reports whether a key is present; it does not spend money to prove the vendor accepts it."
-          : "multix check found no vendor key, or could not run. Save a vendor key below, then check again.",
-        keyFound,
-      };
+      result = !deps.multix.checkRan()
+        ? {
+            ok: false,
+            at: now(),
+            diagnostic: "remote_unavailable",
+            message:
+              "multix check could not run (it timed out or failed). No key was judged missing; try again.",
+            keyFound,
+          }
+        : {
+            ok: vendor ? keyFound[vendor] === true : anyFound,
+            at: now(),
+            diagnostic: (vendor ? keyFound[vendor] === true : anyFound) ? "ok" : "missing_credential",
+            message: anyFound
+              ? "multix check ran. It reports whether a key is present; it does not spend money to prove the vendor accepts it."
+              : "multix check found no vendor key, or could not run. Save a vendor key below, then check again.",
+            keyFound,
+          };
     }
     lastCheck = result;
     for (const v of MULTIX_VENDORS) {
       if (vendor && v !== vendor) continue;
-      if (result.diagnostic === "missing_executable") continue;
+      if (result.diagnostic === "missing_executable" || result.diagnostic === "remote_unavailable") continue;
       await deps.credentials.recordTest(v, {
         ok: keyFound[v] === true,
         outcome: keyFound[v] ? "found" : "missing",
@@ -212,14 +221,14 @@ export function createPlatformAdmin(deps: PlatformAdminDeps): PlatformAdmin {
 
     async saveVendorKey(ctx, vendor, input) {
       const view = await deps.credentials.save(ctx, vendorOf(vendor), input);
-      await deps.refreshCredentials();
+      await deps.refreshCredentials().catch(() => undefined); // saved; the periodic reload applies it
       deps.multix?.invalidateCapabilities();
       return toVendor(view);
     },
 
     async revokeVendorKey(ctx, vendor) {
       const view = await deps.credentials.revoke(ctx, vendorOf(vendor));
-      await deps.refreshCredentials();
+      await deps.refreshCredentials().catch(() => undefined); // saved; the periodic reload applies it
       deps.multix?.invalidateCapabilities();
       return toVendor(view);
     },

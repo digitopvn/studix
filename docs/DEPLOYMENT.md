@@ -541,7 +541,7 @@ Hostnames are configuration, so the cutover changes no business code:
 4. Keep the old hostnames redirecting until clients have moved their MCP URL.
 
 
-### Storage & Media (platform operators)
+## Storage & Media (platform operators)
 
 Dashboard → Storage & Media is for platform operators only: the emails in
 `STUDIX_OPERATOR_EMAILS` (comma-separated), and only when the address is
@@ -559,5 +559,9 @@ verify the address, so it never grants access. Everyone else gets 403.
   value. Nothing can show a stored key again; audit events carry no value.
 - **Run multix check** is free: it reports whether the CLI finds each key and
   never spends money. The first paid job proves a vendor accepts the key.
+- The worker needs the same `STUDIX_SECRETS_KEY` as the app (or the shared key
+  file) whenever keys are saved here; without it the worker treats saved keys
+  as missing and logs a warning. Until a process has read the database once, it
+  treats these names as unset.
 - The app and the worker reload keys every 15 seconds, so a change needs no
   redeploy. A job that is already running keeps the keys it started with.

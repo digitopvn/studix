@@ -58,6 +58,7 @@ describe("platform storage and media API (Better Auth session, Postgres)", () =>
       multix: {
         status: () => ({ id: "multix", enabled: true, models: {} }) as never,
         readiness: async () => multixKeys as never,
+        checkRan: () => true,
         invalidateCapabilities: () => {
           invalidations += 1;
         },

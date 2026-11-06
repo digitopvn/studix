@@ -217,6 +217,27 @@ describe("live credential environment", () => {
     expect(live.env.SUME_API_KEY).toBe(KEY);
   });
 
+  it("hides managed names until the first load succeeds, so a revoked key is never briefly live", async () => {
+    const { credentials, secrets } = setup();
+    const broken = { ...credentials, list: async () => Promise.reject(new Error("db down")) };
+    const live = createLiveCredentialEnv({ credentials: broken, secrets, base, names });
+    await expect(live.refresh()).rejects.toThrow("db down");
+    expect(live.env.SUME_API_KEY).toBeUndefined();
+    expect("SUME_API_KEY" in live.env).toBe(false);
+    expect(live.env.PATH).toBe("/usr/bin");
+  });
+
+  it("treats stored keys as missing, and says so, when this process has no secrets key", async () => {
+    const { credentials, service } = setup();
+    await service.save(ctx, "sume", { apiKey: KEY });
+    const warnings: string[] = [];
+    const logger = { warn: (m: string) => warnings.push(m), info() {}, error() {}, debug() {} };
+    const live = createLiveCredentialEnv({ credentials, base, names, logger: logger as never });
+    await live.refresh();
+    expect(live.env.SUME_API_KEY).toBeUndefined();
+    expect(warnings.join()).toContain("STUDIX_SECRETS_KEY");
+  });
+
   it("cannot be written through", () => {
     const { credentials, secrets } = setup();
     const live = createLiveCredentialEnv({ credentials, secrets, base, names });

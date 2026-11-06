@@ -239,11 +239,22 @@ export interface LiveCredentialEnv {
 export function createLiveCredentialEnv(options: LiveCredentialEnvOptions): LiveCredentialEnv {
   const allowed = new Set(options.names);
   let overlay = new Map<string, string | null>();
+  // Until the first successful load nobody knows which names were revoked, so managed names read as unset
+  // rather than falling back to an environment value an operator may have revoked.
+  let loaded = false;
   const reload = async () => {
     const next = new Map<string, string | null>();
     for (const row of await options.credentials.list()) {
       if (!allowed.has(row.name)) continue;
-      if (row.status === "revoked" || !row.secretCiphertext || !options.secrets) {
+      if (row.status === "revoked" || !row.secretCiphertext) {
+        next.set(row.name, null);
+        continue;
+      }
+      if (!options.secrets) {
+        options.logger?.warn(
+          "a platform credential is stored but STUDIX_SECRETS_KEY is not set here; treating it as missing",
+          { name: row.name },
+        );
         next.set(row.name, null);
         continue;
       }
@@ -259,16 +270,21 @@ export function createLiveCredentialEnv(options: LiveCredentialEnvOptions): Live
       }
     }
     overlay = next;
+    loaded = true;
   };
 
   const env = new Proxy(options.base as Record<string, string | undefined>, {
     get(target, prop) {
       if (typeof prop !== "string") return undefined;
       if (overlay.has(prop)) return overlay.get(prop) ?? undefined;
+      if (!loaded && allowed.has(prop)) return undefined;
       return target[prop];
     },
     has(target, prop) {
-      return typeof prop === "string" && (overlay.has(prop) ? overlay.get(prop) != null : prop in target);
+      return (
+        typeof prop === "string" &&
+        (overlay.has(prop) ? overlay.get(prop) != null : (loaded || !allowed.has(prop)) && prop in target)
+      );
     },
     set() {
       return false;
