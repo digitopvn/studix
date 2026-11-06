@@ -30,6 +30,10 @@ export const BlobResponse = z.object({
 });
 
 export const LicenseResponse = z.object({
+  sha: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .optional(),
   size: z.number().int().nonnegative().optional(),
   encoding: z.string().optional(),
   content: z.string().optional(),
