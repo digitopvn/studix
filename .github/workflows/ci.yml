@@ -89,7 +89,7 @@ jobs:
         run: |
           sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends espeak-ng
+          sudo apt-get install -y -qq --no-install-recommends espeak-ng ffmpeg
           uv run --locked --extra speech --project tools/qa pytest tools/qa/tests/test_speech_activity.py -v
 
   integration:
