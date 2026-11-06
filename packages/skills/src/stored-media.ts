@@ -7,6 +7,8 @@ import {
   type MediaGenerationResult,
   type MediaJobRecord,
   type MediaKind,
+  mediaExecutionRecord,
+  type ProviderJobRef,
 } from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
 import { type AssetMediaKind, type AssetRef, contentDigest, type VideoIR } from "@studix/video-ir";
@@ -264,8 +266,55 @@ export async function estimateMediaCents(
   return total;
 }
 
+/**
+ * Store the `provider_executions` row of one provider call, failed and cancelled ones included. The upstream
+ * job id and attempt come from the call's journal record when the result does not carry them. Recording is
+ * telemetry: a failing write never fails the stage, and the usage line is then left unlinked.
+ */
+async function recordMediaExecution(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+  idempotencyKey: string,
+  call: {
+    provider: string;
+    model: string | undefined;
+    latencyMs: number;
+    costCents: number;
+    job: ProviderJobRef | undefined;
+    error?: StudixError;
+  },
+): Promise<string | undefined> {
+  const recorder = s.services.executions;
+  if (!recorder) return undefined;
+  try {
+    const journaled = await s.mediaJournal?.get(s.ctx, idempotencyKey).catch(() => undefined);
+    const job = call.job ?? journaled?.job;
+    const record = mediaExecutionRecord({
+      provider: call.provider,
+      ...(call.model ? { model: call.model } : {}),
+      kind: request.kind,
+      jobId: s.job.id,
+      stageId: stage,
+      latencyMs: call.latencyMs,
+      costCents: call.costCents,
+      attempt: journaled?.attempt ?? 1,
+      ...(job ? { job } : {}),
+      ...(call.error ? { error: call.error } : {}),
+    });
+    await recorder.recordProviderExecution(s.ctx, record);
+    return record.id;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The usage line of a provider call that charged, whether it then returned or failed. */
-function mediaUsage(request: StoredMediaRequest, charge: MediaCharge): StageUsage {
+function mediaUsage(
+  request: StoredMediaRequest,
+  charge: MediaCharge,
+  providerExecutionId?: string,
+): StageUsage {
   const upstreamJob = charge.job ? `${charge.job.provider}:${charge.job.id}` : undefined;
   return {
     item: `media-${request.assetId}${retrySuffix(request, "-r")}`,
@@ -274,6 +323,7 @@ function mediaUsage(request: StoredMediaRequest, charge: MediaCharge): StageUsag
     unit: request.kind,
     costCents: charge.costCents,
     ...(upstreamJob ? { upstreamJob } : {}),
+    ...(providerExecutionId ? { providerExecutionId } : {}),
     metadata: {
       provider: charge.provider,
       model: charge.model,
@@ -382,24 +432,46 @@ export async function generateStoredMedia(
   const reuseKey = mediaOutputKey(s, request);
   // The provider writes to the job-scoped media directory, not the attempt scratch directory.
   const mediaDir = await stageMediaDir(s, stage);
+  const providerRequest = mediaRequest(s, stage, request, mediaDir);
+  const startedAt = Date.now();
   let result: MediaGenerationResult;
   try {
-    result = await media.generate(s.ctx, mediaRequest(s, stage, request, mediaDir));
+    result = await media.generate(s.ctx, providerRequest);
   } catch (err) {
+    const charge = err instanceof MediaChargedError ? err.charge : undefined;
+    const executionId = await recordMediaExecution(s, stage, request, providerRequest.idempotencyKey, {
+      provider: charge?.provider ?? media.id,
+      model: charge?.model ?? media.resolveModel?.(request),
+      latencyMs: Date.now() - startedAt,
+      costCents: charge?.costCents ?? 0,
+      job: charge?.job,
+      error: toStudixError(err),
+    });
     // The provider charged before it failed (e.g. the finished job's result could not be collected).
     if (err instanceof MediaChargedError) {
-      throw new StageFailedAfterSpend(err, [mediaUsage(request, err.charge)]);
+      throw new StageFailedAfterSpend(err, [mediaUsage(request, err.charge, executionId)]);
     }
     throw err;
   }
-  // The provider call is paid from here on: whatever fails next still bills it.
-  const usage = mediaUsage(request, {
+  const executionId = await recordMediaExecution(s, stage, request, providerRequest.idempotencyKey, {
     provider: result.provider,
     model: result.model,
+    latencyMs: result.latencyMs,
     costCents: result.costCents,
-    costSource: result.costSource ?? "unknown",
-    ...(result.job ? { job: result.job } : {}),
+    job: result.job,
   });
+  // The provider call is paid from here on: whatever fails next still bills it.
+  const usage = mediaUsage(
+    request,
+    {
+      provider: result.provider,
+      model: result.model,
+      costCents: result.costCents,
+      costSource: result.costSource ?? "unknown",
+      ...(result.job ? { job: result.job } : {}),
+    },
+    executionId,
+  );
   try {
     const output = result.outputs[0];
     if (!output) {

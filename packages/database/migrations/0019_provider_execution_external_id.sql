@@ -1,0 +1,1 @@
+ALTER TABLE "provider_executions" ADD COLUMN "external_id" text;

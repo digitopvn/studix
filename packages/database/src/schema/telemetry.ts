@@ -26,6 +26,7 @@ export const providerExecutions = pgTable(
     attempt: integer("attempt").notNull(),
     error: jsonb("error").$type<StudixErrorPayload>(),
     funding: text("funding").$type<FundingSource>().notNull().default("operator"),
+    externalId: text("external_id"),
     createdAt: createdAt(),
   },
   (t) => [index("provider_executions_job_idx").on(t.jobId, t.id)],

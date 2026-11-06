@@ -1,5 +1,5 @@
 {
-  "id": "5434ad7a-123c-49af-be88-2557265d8b3d",
+  "id": "686f1a3c-4696-4b03-a44e-03b00d50df65",
   "prevId": "ef5d3d53-71db-466b-b404-4101f25e58a4",
   "version": "7",
   "dialect": "postgresql",
@@ -4360,6 +4360,12 @@
           "notNull": true,
           "default": "'operator'"
         },
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -5397,91 +5403,6 @@
         "workspaces_organization_id_organizations_id_fk": {
           "name": "workspaces_organization_id_organizations_id_fk",
           "tableFrom": "workspaces",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.workspace_settings": {
-      "name": "workspace_settings",
-      "schema": "",
-      "columns": {
-        "workspace_id": {
-          "name": "workspace_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "claude_planner": {
-          "name": "claude_planner",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "claude_subscription": {
-          "name": "claude_subscription",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "updated_by_type": {
-          "name": "updated_by_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_by_id": {
-          "name": "updated_by_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "workspace_settings_workspace_id_workspaces_id_fk": {
-          "name": "workspace_settings_workspace_id_workspaces_id_fk",
-          "tableFrom": "workspace_settings",
-          "tableTo": "workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "workspace_settings_organization_id_organizations_id_fk": {
-          "name": "workspace_settings_organization_id_organizations_id_fk",
-          "tableFrom": "workspace_settings",
           "tableTo": "organizations",
           "columnsFrom": [
             "organization_id"
