@@ -39,6 +39,27 @@ describe("zip archive reader", () => {
     expect(read.skipped).toEqual([{ path: "link", reason: expect.stringContaining("symbolic link") }]);
   });
 
+  it("reads Windows zips: backslash paths and folders stored as empty files", () => {
+    const read = readZipArchive(
+      makeZip([
+        { path: "assets", data: "" },
+        { path: "assets\\logo.svg", data: "<svg/>" },
+        { path: "SKILL.md", data: "hi" },
+      ]),
+      zipLimits,
+    );
+    expect(read.files.map((f) => f.path)).toEqual(["assets/logo.svg", "SKILL.md"]);
+    expect(() =>
+      readZipArchive(
+        makeZip([
+          { path: "assets", data: "x" },
+          { path: "assets/logo.svg", data: "<svg/>" },
+        ]),
+        zipLimits,
+      ),
+    ).toThrow(/same path as a folder/);
+  });
+
   it("rejects path traversal, absolute paths and drive letters", () => {
     for (const path of ["../evil.sh", "a/../../evil", "/etc/passwd", "C:/Windows/x", "a\\..\\..\\b"]) {
       expect(() => readZipArchive(makeZip([{ path, data: "x" }]), zipLimits)).toThrow(

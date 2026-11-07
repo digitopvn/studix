@@ -161,5 +161,17 @@ export function readZipArchive(data: Uint8Array, limits: ZipReadLimits): ZipRead
     total += bytes.length;
     files.push({ path, bytes: new Uint8Array(bytes), executable: (mode & 0o111) !== 0 });
   }
-  return { files, skipped };
+  // Some Windows zippers store a folder as an empty file next to its children (`assets` and `assets/x`).
+  const parents = new Set(
+    files.flatMap((f) =>
+      f.path
+        .split("/")
+        .slice(0, -1)
+        .map((_, i, parts) => parts.slice(0, i + 1).join("/")),
+    ),
+  );
+  const clashes = files.filter((f) => parents.has(f.path));
+  const nonEmpty = clashes.find((f) => f.bytes.length > 0);
+  if (nonEmpty) throw invalid("A file has the same path as a folder", { path: nonEmpty.path });
+  return { files: clashes.length ? files.filter((f) => !parents.has(f.path)) : files, skipped };
 }
