@@ -54,6 +54,34 @@ function saveThread(rootJobId: string, turns: Turn[]) {
   }
 }
 
+type ComposerPrefs = Partial<{
+  runtime: AgentRuntimeName;
+  connectionId: string;
+  model: string;
+  effort: ReasoningEffort | "";
+  aspectRatio: AspectRatio;
+  seconds: number;
+  language: string;
+}>;
+const PREFS_KEY = "studix.composer";
+
+/** The next video starts with the settings of the last one the user sent. */
+function loadComposerPrefs(): ComposerPrefs {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as ComposerPrefs;
+  } catch {
+    return {};
+  }
+}
+
+function saveComposerPrefs(prefs: ComposerPrefs): void {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Private mode or full storage: the defaults still work.
+  }
+}
+
 /** A follow-up is a new run; it carries the conversation so the agent revises instead of starting over. */
 function followUpPrompt(turns: Turn[], summaries: Record<string, string>, message: string): string {
   const history = turns
@@ -469,13 +497,14 @@ function Composer({
   useEffect(() => {
     if (seed) setMessage(seed.text);
   }, [seed]);
-  const [runtime, setRuntime] = useState<AgentRuntimeName | "">("");
-  const [connectionId, setConnectionId] = useState("");
-  const [model, setModel] = useState("");
-  const [effort, setEffort] = useState<ReasoningEffort | "">("");
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
-  const [seconds, setSeconds] = useState(10);
-  const [language, setLanguage] = useState("vi");
+  const [last] = useState(loadComposerPrefs);
+  const [runtime, setRuntime] = useState<AgentRuntimeName | "">(last.runtime ?? "");
+  const [connectionId, setConnectionId] = useState(last.connectionId ?? "");
+  const [model, setModel] = useState(last.model ?? "");
+  const [effort, setEffort] = useState<ReasoningEffort | "">(last.effort ?? "");
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>(last.aspectRatio ?? "16:9");
+  const [seconds, setSeconds] = useState(last.seconds ?? 10);
+  const [language, setLanguage] = useState(last.language ?? "vi");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<unknown>();
   const runtimes = useAsync(() => api.agentRuntimes());
@@ -483,10 +512,17 @@ function Composer({
 
   const list: AgentRuntimeInfo[] = runtimes.data?.runtimes ?? [];
   const usable = list.filter((r) => r.connections.length > 0);
-  // Default to the first runtime that can run now.
+  // Keep the last-used runtime while it can still run; otherwise fall back to the first one that can.
   useEffect(() => {
-    if (!runtime && usable[0]) setRuntime(usable[0].runtime);
-  }, [runtime, usable]);
+    if (!runtimes.data) return;
+    if (runtime && usable.some((r) => r.runtime === runtime)) return;
+    if (usable[0]) {
+      setRuntime(usable[0].runtime);
+      setConnectionId("");
+      setModel("");
+      setEffort("");
+    }
+  }, [runtime, usable, runtimes.data]);
   const info = list.find((r) => r.runtime === runtime);
   const connection =
     info?.connections.find((c) => c.providerConnectionId === connectionId) ?? info?.connections[0];
@@ -522,6 +558,15 @@ function Composer({
           ...(model ? { model } : {}),
           ...(effort && reasoning ? { reasoningEffort: effort } : {}),
         },
+      });
+      saveComposerPrefs({
+        runtime,
+        connectionId: connection.providerConnectionId,
+        model,
+        effort,
+        aspectRatio,
+        seconds,
+        language,
       });
       setMessage("");
       onStarted({ jobId: result.job.id, prompt: text, runtime });
@@ -559,6 +604,7 @@ function Composer({
         <details className="chat-options">
           <summary>
             {runtime ? RUNTIME_LABELS[runtime] : "Agent"} · {model || "default model"}
+            {effort && reasoning ? ` · ${effort}` : ""}
           </summary>
           <div className="chat-options-body">
             <fieldset className="chat-runtimes" aria-label="Agent runtime">
