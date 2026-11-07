@@ -27,6 +27,7 @@ import {
   createTenantDirectory,
   createWorkspaceRepository,
 } from "./tenancy-repositories.ts";
+import { createWorkspaceMultixSettingsRepository } from "./workspace-multix-settings-repository.ts";
 import { createWorkspaceSettingsRepository } from "./workspace-settings-repository.ts";
 
 export * from "./agent-handoff-repository.ts";
@@ -45,6 +46,7 @@ export * from "./revision-repositories.ts";
 export * from "./storyboard-repository.ts";
 export * from "./telemetry-repositories.ts";
 export * from "./tenancy-repositories.ts";
+export * from "./workspace-multix-settings-repository.ts";
 export * from "./workspace-settings-repository.ts";
 
 /** Every Postgres repository (plus the producer-side job queue) over one database handle. */
@@ -78,6 +80,7 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     platformCredentials: createPlatformCredentialRepository(db, clock),
     rateLimits: createRateLimitRepository(db),
     workspaceSettings: createWorkspaceSettingsRepository(db),
+    workspaceMultixSettings: createWorkspaceMultixSettingsRepository(db),
   };
 }
 

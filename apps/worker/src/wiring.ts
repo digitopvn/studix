@@ -8,6 +8,7 @@ import {
   type RendererAdapter,
   type StorageAdapter,
   storyboardStatus,
+  type TenantContext,
 } from "@studix/core";
 import { createRepositories, type StudixDb } from "@studix/database";
 import { type Clock, type Logger, systemClock } from "@studix/shared";
@@ -48,6 +49,8 @@ export interface WorkerPorts {
   publisher?: PublisherAdapter;
   /** Optional: paid media for pack stages (frames, clips, voice, music). Without it those stages fail UNAVAILABLE. */
   media?: MediaProvider;
+  /** Optional: the media provider of one workspace's dashboard settings; falls back to `media`. */
+  mediaFor?: (ctx: TenantContext) => Promise<MediaProvider | undefined>;
   /** Optional: the hard QA gate pack stages run on a render. Without it those stages fail UNAVAILABLE. */
   qa?: QaGate;
   /** Optional: detects a human voice in a generated sound effect. Without it effects are not checked. */
@@ -112,6 +115,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
     stageCache: repos.stageCache,
     storyboardStatus: (ctx, projectId) => storyboardStatus(repos, ctx, projectId),
     agents: { handoffs: repos.agentHandoffs, runtimeFor: deps.agentRuntimeFor },
+    ...(deps.mediaFor ? { mediaFor: deps.mediaFor } : {}),
     services: {
       media: deps.media,
       storage: deps.storage,

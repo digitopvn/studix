@@ -12,3 +12,4 @@ export * from "./provider-connection-service.ts";
 export * from "./secret-box.ts";
 export * from "./self-hosted-secrets-key.ts";
 export * from "./workspace-feature-service.ts";
+export * from "./workspace-multix-settings-service.ts";

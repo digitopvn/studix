@@ -17,7 +17,12 @@ import {
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
-import { createMultixProviderFromConfig, MULTIX_VENDOR_KEYS, MULTIX_VENDORS } from "@studix/providers";
+import {
+  createMultixProviderFromConfig,
+  createWorkspaceMultixProviders,
+  MULTIX_VENDOR_KEYS,
+  MULTIX_VENDORS,
+} from "@studix/providers";
 import {
   allowedHosts,
   createLogger,
@@ -44,6 +49,7 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
+import { createWorkspaceMultixApi } from "./workspace-multix.ts";
 
 /** App-role settings that are not part of the shared config schema. */
 export const AppEnvSchema = z.object({
@@ -267,6 +273,18 @@ export async function composeApp(
       ...(appEnv.STUDIX_WORKER_HEALTH_URL
         ? { worker: { media: () => fetchWorkerMedia(appEnv.STUDIX_WORKER_HEALTH_URL as string) } }
         : {}),
+    }),
+    multix: createWorkspaceMultixApi({
+      config,
+      repository: repos.workspaceMultixSettings,
+      audit: repos.audit,
+      env,
+      // The dashboard's check runs with the platform keys only, like the capability probe jobs use.
+      providers: createWorkspaceMultixProviders({
+        config,
+        options: { env, credentials: () => platformCredentials.loadValues() },
+        load: (ctx) => repos.workspaceMultixSettings.get(ctx),
+      }),
     }),
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
