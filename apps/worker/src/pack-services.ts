@@ -68,7 +68,7 @@ function platformCredentials(
 export async function loadPackServices(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
-): Promise<Pick<WorkerPorts, "media" | "qa" | "speech">> {
+): Promise<Pick<WorkerPorts, "media" | "qa" | "speech" | "mediaStatus">> {
   const { config } = settings;
   const credentials = platformCredentials(settings, runtime);
   const media = createMultixProviderFromConfig(config, {
@@ -125,6 +125,16 @@ export async function loadPackServices(
   }
   return {
     media,
+    mediaStatus: async () => {
+      const diagnosis = await media.diagnose();
+      return {
+        executable: config.MULTIX_BIN ? "configured" : "missing",
+        state: diagnosis.state,
+        ...(diagnosis.state === "ready" || !diagnosis.code ? {} : { code: diagnosis.code }),
+        secretsKey: Boolean(config.STUDIX_SECRETS_KEY),
+        vendors: { ...diagnosis.vendors },
+      };
+    },
     ...(speech ? { speech } : {}),
     qa: createHardQaGate({
       run: {

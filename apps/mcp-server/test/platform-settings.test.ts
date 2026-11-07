@@ -10,7 +10,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { platformRoutes } from "../src/api/platform-routes.ts";
 import type { AppDeps } from "../src/app-deps.ts";
 import { apiErrorHandler } from "../src/http/http-errors.ts";
-import { createPlatformSettingsService, storageDiagnosis } from "../src/platform-settings.ts";
+import {
+  createPlatformSettingsService,
+  fetchWorkerMedia,
+  storageDiagnosis,
+  type WorkerMediaReport,
+} from "../src/platform-settings.ts";
 
 const MASTER = Buffer.alloc(32, 5).toString("base64");
 const SECRET = "sk-live-0123456789abcdefWXYZ";
@@ -56,6 +61,7 @@ function memoryRepo(): PlatformCredentialRepository {
 interface SetupOptions {
   probe?: StorageProbeResult;
   diagnosis?: MultixDiagnosis;
+  worker?: { media(): Promise<WorkerMediaReport | undefined> };
   bucket?: string | undefined;
 }
 
@@ -107,6 +113,7 @@ function setup(options: SetupOptions = {}) {
         },
     },
     credentials,
+    ...(options.worker ? { worker: options.worker } : {}),
   });
   return { service, events, credentials };
 }
@@ -363,5 +370,68 @@ describe("platform routes", () => {
     });
     expect(outsideAllowlist.status).toBe(400);
     expect(JSON.stringify(await outsideAllowlist.json())).not.toContain(SECRET);
+  });
+});
+
+describe("worker media report", () => {
+  const workerReport = (over: Partial<WorkerMediaReport> = {}): WorkerMediaReport => ({
+    executable: "configured",
+    state: "ready",
+    secretsKey: true,
+    vendors: { sume: false, atlas: false, elevenlabs: false, fish: false, minimax: false, openrouter: false },
+    ...over,
+  });
+
+  it("lists where the worker disagrees with the app after a check", async () => {
+    const { service } = setup({
+      worker: { media: async () => workerReport({ secretsKey: false, executable: "missing" }) },
+    });
+    await service.testMedia(operator);
+    const { worker } = (await service.overview(operator)).media;
+    expect(worker?.reachable).toBe(true);
+    expect(worker?.mismatches).toEqual([
+      "MULTIX_BIN is set on the app but not on the worker.",
+      "STUDIX_SECRETS_KEY is missing on the worker, so it ignores keys set here.",
+      `${MULTIX_VENDOR_KEYS.sume} is found on the app but not on the worker.`,
+    ]);
+  });
+
+  it("reports no mismatch when they agree, and an unreachable worker as such", async () => {
+    const agree = setup({ worker: { media: async () => workerReport({ vendors: { sume: true } }) } });
+    await agree.service.testMedia(operator);
+    expect((await agree.service.overview(operator)).media.worker?.mismatches).toEqual([]);
+
+    const down = setup({ worker: { media: () => Promise.reject(new Error("ECONNREFUSED")) } });
+    expect((await down.service.overview(operator)).media.worker).toEqual({
+      reachable: false,
+      mismatches: [],
+    });
+    expect((await setup().service.overview(operator)).media.worker).toBeUndefined();
+  });
+
+  it("keeps only known presence fields from the worker's /readyz", async () => {
+    const fake = (async () =>
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          media: {
+            executable: "configured",
+            state: "ready",
+            secretsKey: true,
+            path: "/secret/path",
+            vendors: { sume: true, unknown: true, atlas: "yes" },
+          },
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    expect(await fetchWorkerMedia("http://worker:8081", fake)).toEqual({
+      executable: "configured",
+      state: "ready",
+      secretsKey: true,
+      vendors: { sume: true },
+    });
+    const noMedia = (async () =>
+      new Response(JSON.stringify({ status: "unavailable" }), { status: 503 })) as unknown as typeof fetch;
+    expect(await fetchWorkerMedia("http://worker:8081", noMedia)).toBeUndefined();
   });
 });

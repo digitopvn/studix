@@ -224,6 +224,30 @@ function MediaCard({ media, reload }: { media: PlatformSettings["media"]; reload
         </p>
       )}
       <p className="muted">{media.processNote}</p>
+      {media.worker && !media.worker.reachable && (
+        <p className="banner banner-error" role="status">
+          The worker health endpoint did not answer, so its media status is unknown.
+        </p>
+      )}
+      {media.worker?.reachable && !media.worker.report && (
+        <p className="muted">The worker has not reported its media status yet.</p>
+      )}
+      {media.worker && media.worker.mismatches.length > 0 && (
+        <div className="banner banner-error" role="status">
+          The app and the worker disagree:
+          <ul>
+            {media.worker.mismatches.map((m) => (
+              <li key={m}>{m}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {media.worker?.report && media.worker.mismatches.length === 0 && (
+        <p className="muted">
+          Worker: Multix {media.worker.report.executable}, check{" "}
+          {media.worker.report.state.replace(/_/g, " ")}; it matches the app.
+        </p>
+      )}
       {media.vendors.length === 0 ? (
         <Empty>No media providers.</Empty>
       ) : (

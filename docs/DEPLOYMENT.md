@@ -98,10 +98,15 @@ key and OAuth client.
   the key it started with. `MULTIX_BIN` is still deployment configuration.
 - **The safe check calls no paid provider.** It runs `multix check`, which only
   reports which keys exist, so it cannot tell a wrong key from a right one; a
-  bad key shows up on the first real job. The check runs in the app process, and
-  the worker's `/readyz` does not report media yet: the first media job confirms
-  the worker reads the key. A worker without `STUDIX_SECRETS_KEY` logs a warning
-  at startup when keys exist in the database.
+  bad key shows up on the first real job. The check runs in the app process. The
+  worker runs its own `multix check` (at most once a minute) and reports it under
+  `media` in `/readyz`: `executable`, `state`, `code`, `secretsKey` and, per
+  vendor, only whether a key exists. It never gates readiness. Set
+  `STUDIX_WORKER_HEALTH_URL` on the app (for example `http://studix-worker:8081`)
+  and the page lists where the app and the worker disagree (`MULTIX_BIN`,
+  `STUDIX_SECRETS_KEY`, a key found on one side only). A worker without
+  `STUDIX_SECRETS_KEY` also logs a warning at startup when keys exist in the
+  database.
 - **Rollback:** revoke the key on the page (the environment value applies again)
   and revoke it at the provider if it leaked. Losing `STUDIX_SECRETS_KEY` makes
   stored keys unreadable (they are skipped and logged); set them again.
