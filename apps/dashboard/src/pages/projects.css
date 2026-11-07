@@ -39,8 +39,9 @@
 
 .poster {
   display: grid;
+  grid-template-rows: 1fr auto;
   place-items: end start;
-  max-height: 320px;
+  aspect-ratio: 16 / 9;
   border-radius: var(--r2);
   overflow: hidden;
   padding: 0.85rem;
@@ -62,10 +63,19 @@
   gap: 0.35rem;
 }
 
+.poster-initial {
+  align-self: start;
+  color: oklch(0.97 0 0 / 0.85);
+  font-size: 2.25rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .new-card {
   place-content: center;
   justify-items: center;
-  min-height: 180px;
+  aspect-ratio: 16 / 9;
+  align-self: start;
   border: 1px dashed var(--line);
   color: var(--text-2);
 }
@@ -82,10 +92,6 @@
   }
   .project-card {
     padding: 0.25rem;
-  }
-  .new-card {
-    min-height: 0;
-    aspect-ratio: 16 / 9;
   }
   .page-head .row,
   .page-head input[type="search"] {

@@ -174,13 +174,13 @@ function ProviderKeysCard({
             onChange={(e) => setApiKey(e.target.value)}
           />
           <select
-            aria-label="Key owner"
+            aria-label="Who can use this key"
             value={owner}
             disabled={unavailable}
             onChange={(e) => setOwner(e.target.value as "workspace" | "user")}
           >
-            {list.canAddPersonalKey && <option value="user">Personal</option>}
-            {list.canAddWorkspaceKey && <option value="workspace">Workspace (shared)</option>}
+            {list.canAddPersonalKey && <option value="user">Only I can use it</option>}
+            {list.canAddWorkspaceKey && <option value="workspace">Everyone in the workspace</option>}
           </select>
           <input
             maxLength={80}
@@ -444,18 +444,18 @@ function CodexCard({ list, reload }: { list: ProviderConnectionList; reload: () 
   return (
     <Section title="ChatGPT sign-in">
       <p className="muted">
-        Use your ChatGPT plan for Codex tasks. Prefer paying by usage? Add an OpenAI key above and tick Codex.
+        Have a ChatGPT plan? Sign in and Studix's Codex agent runs on it, with no API key needed.
       </p>
       {(list.canAddWorkspaceKey || list.canAddPersonalKey) && !flow && (
         <div className="row">
           <select
-            aria-label="ChatGPT login owner"
+            aria-label="Who can use this sign-in"
             value={owner}
             disabled={unavailable}
             onChange={(e) => setOwner(e.target.value as "workspace" | "user")}
           >
-            {list.canAddPersonalKey && <option value="user">Personal — only you</option>}
-            {list.canAddWorkspaceKey && <option value="workspace">Workspace — shared with members</option>}
+            {list.canAddPersonalKey && <option value="user">Only I can use it</option>}
+            {list.canAddWorkspaceKey && <option value="workspace">Everyone in the workspace</option>}
           </select>
           <button type="button" disabled={unavailable || starting} onClick={start}>
             {starting ? "Starting…" : "Sign in with ChatGPT"}
@@ -524,7 +524,7 @@ function ModelsCard({
   const previewKey = preferences.map((p) => p.updatedAt).join();
   return (
     <Section title="AI model">
-      <p className="muted">The model that writes and plans your videos. Running jobs keep their model.</p>
+      <p className="muted">The model that writes and plans your videos.</p>
       <ErrorBanner error={error} />
       <StagePreview key={`default-${previewKey}`} stage="default" catalog={catalog} />
       {canEdit && (

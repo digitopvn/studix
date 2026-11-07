@@ -30,15 +30,15 @@ export function ProvidersPage() {
     <>
       <ErrorBanner error={error} />
       <ProviderModelsSection />
-      {subscription && (
-        <SubscriptionCard
-          method={subscription}
-          connection={data?.connections.find((c) => c.authMethod === "oauth_subscription" && c.ownedByMe)}
-          reload={reload}
-        />
-      )}
       <details className="advanced">
-        <summary>Advanced</summary>
+        <summary>Claude subscription and Claude options</summary>
+        {subscription && (
+          <SubscriptionCard
+            method={subscription}
+            connection={data?.connections.find((c) => c.authMethod === "oauth_subscription" && c.ownedByMe)}
+            reload={reload}
+          />
+        )}
         <ClaudeFeaturesSection onChange={reload} />
       </details>
     </>
@@ -46,7 +46,7 @@ export function ProvidersPage() {
 }
 
 const SUBSCRIPTION_BADGE: Record<SubscriptionMethodInfo["availability"], string> = {
-  restricted: "Restricted",
+  restricted: "Via Claude Code",
   unavailable: "Unavailable",
   available: "Self-hosted",
 };
@@ -109,7 +109,7 @@ function SubscriptionCard({
       title="Claude subscription"
       actions={
         <StatusBadge
-          status={method.availability === "available" ? (connection?.status ?? "available") : "restricted"}
+          status={method.availability === "available" ? (connection?.status ?? "available") : "default"}
           label={
             connection && method.availability === "available"
               ? (STATUS_LABELS[connection.status] ?? connection.status)

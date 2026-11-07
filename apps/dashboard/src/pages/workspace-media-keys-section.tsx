@@ -13,7 +13,8 @@ export const KEY_VERDICT: Record<WorkspaceMediaKeyTest["verdict"], string> = {
  * media calls only, and that spend is recorded as paid by the workspace. Keys are sent once and never shown.
  */
 /** "Cloudflare Workers AI (CLOUDFLARE_API_TOKEN)" -> "Cloudflare Workers AI API token": no env-var names. */
-export function vendorName(name: string): string {
+export function vendorName(raw: string): string {
+  const name = raw.charAt(0).toUpperCase() + raw.slice(1);
   const env = /\s*\(([A-Z0-9_]+)\)$/.exec(name);
   if (!env?.[1]) return name;
   const part = env[1]
@@ -26,24 +27,39 @@ export function vendorName(name: string): string {
   return `${name.slice(0, env.index)} ${part}`.trim();
 }
 
+function sorted(keys: WorkspaceMediaKey[]): WorkspaceMediaKey[] {
+  const label = (k: WorkspaceMediaKey) => vendorName(k.name ?? k.vendor).toLowerCase();
+  return [...keys].sort((a, b) => label(a).localeCompare(label(b)));
+}
+
 export function WorkspaceMediaKeysSection() {
   const { data, error, reload } = useAsync(() => api.workspaceMediaKeys());
   return (
-    <Section title="Media vendor keys">
+    <Section title="Who pays for media">
       <ErrorBanner error={error} />
       <p className="muted">
-        Studix pays for media by default. Add your own vendor key to bill this workspace's media to your
-        account instead.
+        Studix pays for every image, video and voice by default. Have your own account with a vendor? Add its
+        key and that vendor bills you instead.
       </p>
       {data?.storage === "unavailable" && (
         <p className="muted">Key storage is not set up on this server yet. Ask your admin.</p>
       )}
-      {data && (
+      {data?.keys.some((k) => k.source === "workspace") && (
         <ul className="key-list">
-          {data.keys.map((key) => (
+          {sorted(data.keys.filter((k) => k.source === "workspace")).map((key) => (
             <MediaKeyRow key={key.vendor} mediaKey={key} canManage={data.canManage} reload={reload} />
           ))}
         </ul>
+      )}
+      {data?.canManage && data.keys.some((k) => k.source !== "workspace") && (
+        <details className="advanced">
+          <summary>Use my own key for a vendor</summary>
+          <ul className="key-list">
+            {sorted(data.keys.filter((k) => k.source !== "workspace")).map((key) => (
+              <MediaKeyRow key={key.vendor} mediaKey={key} canManage={data.canManage} reload={reload} />
+            ))}
+          </ul>
+        </details>
       )}
     </Section>
   );

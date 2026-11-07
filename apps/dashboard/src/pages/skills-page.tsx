@@ -90,7 +90,9 @@ export function SkillsPage({ isOperator }: { isOperator: boolean }) {
         Skills teach the Studix agent a style or a workflow. Add one from GitHub or a zip.
       </p>
       <ErrorBanner error={error} />
-      {data && data.items.length === 0 && <Empty>No skills yet.</Empty>}
+      {data && data.items.length === 0 && (
+        <Empty>No skills yet. A skill teaches the agent something new, such as your brand style guide.</Empty>
+      )}
       {data && data.items.length > 0 && (
         <ul className="key-list">
           {data.items.map((s) => (
@@ -171,7 +173,7 @@ export function SkillsPage({ isOperator }: { isOperator: boolean }) {
           required
           type="url"
           aria-label="GitHub repository URL"
-          placeholder="https://github.com/owner/repo"
+          placeholder="GitHub link to a skill"
           value={repositoryUrl}
           onChange={(e) => setRepositoryUrl(e.target.value)}
         />

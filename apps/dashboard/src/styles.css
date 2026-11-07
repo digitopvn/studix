@@ -1788,3 +1788,37 @@ label.button.disabled {
   background: #000;
   object-fit: contain;
 }
+
+.empty-state {
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+a.button:hover {
+  text-decoration: none;
+}
+
+.button.small {
+  padding: 0.2rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.profile-list {
+  margin: 0;
+  border-top: 1px solid var(--line);
+}
+
+.profile-list > div {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

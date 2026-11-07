@@ -107,6 +107,7 @@ export function WorkspaceMultixSection() {
   const [actionError, setActionError] = useState<unknown>();
   const [check, setCheck] = useState<WorkspaceMultixCheck>();
   const [catalog, setCatalog] = useState<MultixCatalog>();
+  const [editing, setEditing] = useState(false);
   const canChange = data?.canChange === true;
 
   // Only people who may change the models need the list; a failed read leaves free-text entry working.
@@ -146,6 +147,7 @@ export function WorkspaceMultixSection() {
         models,
         voiceLanguageModels: formatVoiceRows(draft.voices) || null,
       });
+      setEditing(false);
       reload();
     });
   }
@@ -161,6 +163,7 @@ export function WorkspaceMultixSection() {
 
   /** The catalogue's friendly name for a model id, when it has one. */
   function friendly(role: string, id: string) {
+    if (!id.includes(":")) return "Auto";
     return catalog?.roles[role]?.find((e) => e.id === id)?.label ?? readableModel(id);
   }
 
@@ -176,17 +179,31 @@ export function WorkspaceMultixSection() {
       title="Image & video models"
       actions={
         data && (
-          <StatusBadge
-            status={data.effective.enabled.value ? "configured" : "missing"}
-            label={data.effective.enabled.value ? "On" : "Off"}
-          />
+          <div className="row">
+            {!data.effective.enabled.value && <StatusBadge status="missing" label="Media off" />}
+            {data.canChange && (
+              <button
+                type="button"
+                className="secondary small"
+                onClick={() => {
+                  if (editing) setDraft(draftOf(data));
+                  setEditing(!editing);
+                }}
+              >
+                {editing ? "Cancel" : "Change"}
+              </button>
+            )}
+          </div>
         )
       }
     >
       <ErrorBanner error={error} />
       <ErrorBanner error={actionError} />
       <p className="muted">
-        Pick the model for each kind of media. Leave one blank to use the Studix default.
+        Studix picks a good model for each kind of media.{" "}
+        {editing
+          ? "Leave a field blank to keep the Studix pick."
+          : "Change any of them if you prefer another."}
       </p>
       {data && !data.server.enabled && (
         <p className="muted">Media generation is not installed on this server, so these settings wait.</p>
@@ -202,164 +219,176 @@ export function WorkspaceMultixSection() {
                   <div className="key-main">
                     <strong>{ROLE_LABELS[role] ?? role}</strong>
                     <div className="key-meta">
-                      <span>
-                        In use: {friendly(role, effective.value)}
-                        {effective.source === "workspace" ? "" : " (Studix default)"}
-                      </span>
+                      <span>{friendly(role, effective.value)}</span>
                     </div>
                   </div>
-                  <MultixModelCombobox
-                    label={`${ROLE_LABELS[role] ?? role} model`}
-                    serverValue={data.server.models[role] ?? ""}
-                    value={draft.models[role] ?? ""}
-                    entries={catalog?.roles[role] ?? []}
-                    openVendors={catalog?.openVendors ?? []}
-                    disabled={readOnly}
-                    onChange={(value) => setDraft({ ...draft, models: { ...draft.models, [role]: value } })}
-                  />
+                  {effective.source === "workspace" ? (
+                    <StatusBadge status="configured" label="Your pick" />
+                  ) : (
+                    <span />
+                  )}
+                  {editing && (
+                    <MultixModelCombobox
+                      label={`${ROLE_LABELS[role] ?? role} model`}
+                      serverValue={data.server.models[role] ?? ""}
+                      value={draft.models[role] ?? ""}
+                      entries={catalog?.roles[role] ?? []}
+                      openVendors={catalog?.openVendors ?? []}
+                      disabled={readOnly}
+                      onChange={(value) => setDraft({ ...draft, models: { ...draft.models, [role]: value } })}
+                    />
+                  )}
                 </li>
               );
             })}
           </ul>
-          {catalog && catalog.errors.length > 0 && (
-            <p className="muted">Some models could not be listed right now; you can still type a model id.</p>
-          )}
-          <h3>Voice per language</h3>
-          <p className="muted">
-            Narration in these languages uses the model you set here; other languages use the Voice model
-            above.
-          </p>
-          {draft.voices.length === 0 && <p className="muted">No language has its own voice yet.</p>}
-          {draft.voices.map((row, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: rows have no id and are edited in place.
-            <div className="key-add voice-row" key={index}>
-              <input
-                aria-label="Language code"
-                placeholder="Language (e.g. vi)"
-                maxLength={3}
-                value={row.language}
-                disabled={readOnly}
-                onChange={(e) => setVoice(index, { language: e.target.value })}
-              />
-              <MultixModelCombobox
-                label="Speech model"
-                serverValue=""
-                value={row.model}
-                entries={catalog?.roles.voice ?? []}
-                openVendors={catalog?.openVendors ?? []}
-                disabled={readOnly}
-                onChange={(model) => setVoice(index, { model })}
-              />
-              <input
-                aria-label="Voice name"
-                placeholder="Voice (optional)"
-                value={row.voice}
-                disabled={readOnly}
-                onChange={(e) => setVoice(index, { voice: e.target.value })}
-              />
-              {data.canChange && (
-                <button
-                  type="button"
-                  className="ghost-danger small"
-                  disabled={busy}
-                  onClick={() => setDraft({ ...draft, voices: draft.voices.filter((_, i) => i !== index) })}
-                >
-                  Remove
-                </button>
+          {editing && (
+            <>
+              {catalog && catalog.errors.length > 0 && (
+                <p className="muted">
+                  Some models could not be listed right now; you can still type a model id.
+                </p>
               )}
-            </div>
-          ))}
-          {data.canChange && (
-            <button
-              type="button"
-              className="secondary small"
-              disabled={busy}
-              onClick={() =>
-                setDraft({ ...draft, voices: [...draft.voices, { language: "", model: "", voice: "" }] })
-              }
-            >
-              Add a language
-            </button>
-          )}
-          {data.canChange && (
-            <div className="row form-actions">
-              <button type="submit" disabled={busy}>
-                Save
-              </button>
-              {data.updatedAt && <span className="muted">Last changed {formatDate(data.updatedAt)}</span>}
-            </div>
-          )}
-          <details className="advanced">
-            <summary>Advanced</summary>
-            <div className="row">
-              <label>
-                Media generation{" "}
-                <select
-                  value={draft.enabled}
-                  disabled={readOnly}
-                  onChange={(e) => setDraft({ ...draft, enabled: e.target.value as Draft["enabled"] })}
-                >
-                  <option value="">Studix default ({data.server.enabled ? "on" : "off"})</option>
-                  <option value="on">On</option>
-                  <option value="off">Off for this workspace</option>
-                </select>
-              </label>
-            </div>
-            <div className="row">
-              <label>
-                Give up on a media job after (seconds){" "}
-                <input
-                  type="number"
-                  min={30}
-                  max={7200}
-                  placeholder={String(data.server.waitTimeoutSeconds)}
-                  value={draft.waitTimeoutSeconds}
-                  disabled={readOnly}
-                  onChange={(e) => setDraft({ ...draft, waitTimeoutSeconds: e.target.value })}
-                />
-              </label>
-            </div>
-            {data.canChange && (
-              <div className="row">
+              <h3>Voice per language</h3>
+              <p className="muted">
+                Narration in these languages uses the model you set here; other languages use the Voice model
+                above.
+              </p>
+              {draft.voices.length === 0 && <p className="muted">No language has its own voice yet.</p>}
+              {draft.voices.map((row, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: rows have no id and are edited in place.
+                <div className="key-add voice-row" key={index}>
+                  <input
+                    aria-label="Language code"
+                    placeholder="Language (e.g. vi)"
+                    maxLength={3}
+                    value={row.language}
+                    disabled={readOnly}
+                    onChange={(e) => setVoice(index, { language: e.target.value })}
+                  />
+                  <MultixModelCombobox
+                    label="Speech model"
+                    serverValue=""
+                    value={row.model}
+                    entries={catalog?.roles.voice ?? []}
+                    openVendors={catalog?.openVendors ?? []}
+                    disabled={readOnly}
+                    onChange={(model) => setVoice(index, { model })}
+                  />
+                  <input
+                    aria-label="Voice name"
+                    placeholder="Voice (optional)"
+                    value={row.voice}
+                    disabled={readOnly}
+                    onChange={(e) => setVoice(index, { voice: e.target.value })}
+                  />
+                  {data.canChange && (
+                    <button
+                      type="button"
+                      className="ghost-danger small"
+                      disabled={busy}
+                      onClick={() =>
+                        setDraft({ ...draft, voices: draft.voices.filter((_, i) => i !== index) })
+                      }
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+              {data.canChange && (
                 <button
                   type="button"
                   className="secondary small"
                   disabled={busy}
-                  onClick={() => act(async () => setCheck(await api.checkWorkspaceMultix()))}
+                  onClick={() =>
+                    setDraft({ ...draft, voices: [...draft.voices, { language: "", model: "", voice: "" }] })
+                  }
                 >
-                  Check media engine
+                  Add a language
                 </button>
-                <button
-                  type="button"
-                  className="ghost-danger small"
-                  disabled={busy || !data.workspace}
-                  onClick={reset}
-                >
-                  Reset to Studix defaults
-                </button>
-              </div>
-            )}
-            {check && (
-              <p>
-                Media engine {check.version ?? ""}{" "}
-                <StatusBadge
-                  status={check.diagnosis.state === "ready" ? "configured" : "missing"}
-                  label={STATE_LABELS[check.diagnosis.state] ?? check.diagnosis.state}
-                />
-                {check.diagnosis.reason && <span className="muted"> {check.diagnosis.reason}</span>}
-                {check.diagnosis.state === "ready" && (
-                  <span className="muted">
-                    {" "}
-                    Billed by Studix for:{" "}
-                    {Object.entries(check.diagnosis.vendors)
-                      .filter(([, has]) => has)
-                      .map(([vendor]) => vendor)
-                      .join(", ") || "none"}
-                  </span>
+              )}
+              {data.canChange && (
+                <div className="row form-actions">
+                  <button type="submit" disabled={busy}>
+                    Save
+                  </button>
+                  {data.updatedAt && <span className="muted">Last changed {formatDate(data.updatedAt)}</span>}
+                </div>
+              )}
+              <details className="advanced">
+                <summary>Advanced</summary>
+                <div className="row">
+                  <label>
+                    Media generation{" "}
+                    <select
+                      value={draft.enabled}
+                      disabled={readOnly}
+                      onChange={(e) => setDraft({ ...draft, enabled: e.target.value as Draft["enabled"] })}
+                    >
+                      <option value="">Studix default ({data.server.enabled ? "on" : "off"})</option>
+                      <option value="on">On</option>
+                      <option value="off">Off for this workspace</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="row">
+                  <label>
+                    Give up on a media job after (seconds){" "}
+                    <input
+                      type="number"
+                      min={30}
+                      max={7200}
+                      placeholder={String(data.server.waitTimeoutSeconds)}
+                      value={draft.waitTimeoutSeconds}
+                      disabled={readOnly}
+                      onChange={(e) => setDraft({ ...draft, waitTimeoutSeconds: e.target.value })}
+                    />
+                  </label>
+                </div>
+                {data.canChange && (
+                  <div className="row">
+                    <button
+                      type="button"
+                      className="secondary small"
+                      disabled={busy}
+                      onClick={() => act(async () => setCheck(await api.checkWorkspaceMultix()))}
+                    >
+                      Check media engine
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-danger small"
+                      disabled={busy || !data.workspace}
+                      onClick={reset}
+                    >
+                      Reset to Studix defaults
+                    </button>
+                  </div>
                 )}
-              </p>
-            )}
-          </details>
+                {check && (
+                  <p>
+                    Media engine {check.version ?? ""}{" "}
+                    <StatusBadge
+                      status={check.diagnosis.state === "ready" ? "configured" : "missing"}
+                      label={STATE_LABELS[check.diagnosis.state] ?? check.diagnosis.state}
+                    />
+                    {check.diagnosis.reason && <span className="muted"> {check.diagnosis.reason}</span>}
+                    {check.diagnosis.state === "ready" && (
+                      <span className="muted">
+                        {" "}
+                        Billed by Studix for:{" "}
+                        {Object.entries(check.diagnosis.vendors)
+                          .filter(([, has]) => has)
+                          .map(([vendor]) => vendor)
+                          .join(", ") || "none"}
+                      </span>
+                    )}
+                  </p>
+                )}
+              </details>
+            </>
+          )}
         </form>
       )}
     </Section>

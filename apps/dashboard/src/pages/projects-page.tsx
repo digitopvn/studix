@@ -1,5 +1,5 @@
 import { type CSSProperties, useState } from "react";
-import { api, type Project } from "../api-client.ts";
+import { api } from "../api-client.ts";
 import { ErrorBanner, formatDate, Link, StatusBadge, useAsync } from "../ui.tsx";
 import { ProjectThumbnail } from "./project-thumbnail.tsx";
 import "./projects.css";
@@ -7,20 +7,16 @@ import "./projects.css";
 const FILTERS = [
   { id: "all", label: "All", match: () => true },
   { id: "running", label: "Running", match: (s: string) => /queued|running|render|planning|draft/.test(s) },
-  { id: "review", label: "Review", match: (s: string) => /review|awaiting|storyboard/.test(s) },
+  { id: "review", label: "Ready to review", match: (s: string) => /review|awaiting|storyboard/.test(s) },
   { id: "failed", label: "Failed", match: (s: string) => /fail|error/.test(s) },
 ] as const;
 
 /** A stable hue per project, so each card frame is recognizable before a poster exists. */
 function hue(id: string): number {
   let h = 0;
-  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return h;
-}
-
-function ratio(project: Project): string {
-  const [w, h] = (project.brief.aspectRatio ?? "16:9").split(":").map(Number);
-  return w && h ? `${w} / ${h}` : "16 / 9";
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  // Spread neighbouring ids (same prefix, last character differs) far apart on the colour wheel.
+  return (h * 137) % 360;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -84,7 +80,10 @@ export function ProjectsPage() {
         </Link>
         {items.map((p) => (
           <Link key={p.id} to={`/projects/${p.id}`} className="project-card">
-            <span className="poster" style={{ "--h": hue(p.id), aspectRatio: ratio(p) } as CSSProperties}>
+            <span className="poster" style={{ "--h": hue(p.id) } as CSSProperties}>
+              <span className="poster-initial" aria-hidden="true">
+                {(p.title.trim() || "U").charAt(0).toUpperCase()}
+              </span>
               <ProjectThumbnail projectId={p.id} />
               <span className="poster-format">
                 {p.brief.aspectRatio ?? "16:9"}

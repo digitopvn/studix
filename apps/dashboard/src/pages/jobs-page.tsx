@@ -101,6 +101,7 @@ export function JobsPage() {
   );
 
   const table = query.get("view") === "table";
+  const empty = !loading && items.length === 0 && !hasFilters(query);
   const statuses = listParam(query, "status");
   const tab = TABS.find((t) => t.statuses.join() === statuses.join())?.id ?? (statuses.length ? "" : "all");
   const toggleView = () => {
@@ -128,27 +129,31 @@ export function JobsPage() {
               </button>
             ))}
           </div>
-          <button type="button" className="secondary" onClick={toggleView}>
-            {table ? "List view" : "Table view"}
-          </button>
+          {!empty && (
+            <button type="button" className="secondary small" onClick={toggleView}>
+              {table ? "List view" : "Table view"}
+            </button>
+          )}
           {table && (
             <button
               type="button"
-              className="secondary"
+              className="secondary small"
               onClick={() => set(clearFilters(query))}
               disabled={!hasFilters(query)}
             >
               Clear filters
             </button>
           )}
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setTick((t) => t + 1)}
-            disabled={loading}
-          >
-            Refresh
-          </button>
+          {!empty && (
+            <button
+              type="button"
+              className="secondary small"
+              onClick={() => setTick((t) => t + 1)}
+              disabled={loading}
+            >
+              Refresh
+            </button>
+          )}
         </>
       }
     >
@@ -297,9 +302,22 @@ export function JobsPage() {
           </table>
         </div>
       )}
-      {!loading && !error && items.length === 0 && (
-        <Empty>{hasFilters(query) ? "No jobs match these filters." : "No jobs yet."}</Empty>
-      )}
+      {!loading &&
+        !error &&
+        items.length === 0 &&
+        (hasFilters(query) ? (
+          <Empty>Nothing matches these filters.</Empty>
+        ) : (
+          <div className="empty-state">
+            <p className="muted">
+              Every step of your videos shows up here while it runs: planning, images, voice and the final
+              render.
+            </p>
+            <Link to="/" className="button">
+              Make a video
+            </Link>
+          </div>
+        ))}
       {nextCursor && (
         <button type="button" className="secondary" onClick={loadMore} disabled={loading}>
           Load more

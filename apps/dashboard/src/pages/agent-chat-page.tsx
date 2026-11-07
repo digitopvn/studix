@@ -97,9 +97,9 @@ function followUpPrompt(turns: Turn[], summaries: Record<string, string>, messag
 }
 
 const STARTERS = [
-  "A 15s product teaser for a coffee app, upbeat, 9:16",
-  "Explain how solar panels work in 30s, clean motion graphics",
-  "A 10s logo reveal with a warm cinematic look",
+  "A 15 s product teaser for a coffee app, upbeat, 9:16",
+  "Explain how solar panels work in 30 s, clean motion graphics",
+  "A 10 s logo reveal with a warm cinematic look",
 ];
 
 function takeReviseDraft(): string {
@@ -184,6 +184,7 @@ export function AgentChatPage({ threadId }: { threadId?: string }) {
       {turns.length === 0 && (
         <div className="chat-after">
           <div className="starters">
+            <span className="muted small-text">Try</span>
             {STARTERS.map((s) => (
               <button key={s} type="button" className="secondary small" onClick={() => setSeed({ text: s })}>
                 {s}
@@ -662,7 +663,8 @@ function Composer({
         {/* The agent and model are for people who care; everyone else just writes and presses Make video. */}
         <details className="chat-options">
           <summary>
-            {runtime ? RUNTIME_LABELS[runtime] : "Agent"} · {model || "default model"}
+            AI: {runtime ? RUNTIME_LABELS[runtime] : "Auto"}
+            {model ? ` · ${model}` : ""}
             {effort && reasoning ? ` · ${effort}` : ""}
           </summary>
           <div className="chat-options-body">
@@ -760,9 +762,13 @@ function Composer({
             </button>
           ))}
         </fieldset>
-        <select aria-label="Language" value={language} onChange={(e) => setLanguage(e.target.value)}>
-          <option value="vi">Tiếng Việt</option>
-          <option value="en">English</option>
+        <select
+          aria-label="Narration language"
+          value={language}
+          onChange={(e) => setLanguage(e.target.value)}
+        >
+          <option value="vi">Voice: Tiếng Việt</option>
+          <option value="en">Voice: English</option>
         </select>
         <button type="submit" disabled={sending || busy || !message.trim() || !connection}>
           {sending ? "Starting..." : busy ? "Agent is working…" : followUp ? "Send" : "Make video"}
@@ -770,8 +776,10 @@ function Composer({
       </div>
       {runtimes.data && usable.length === 0 && (
         <p className="banner banner-warning">
-          No agent runtime can run yet. Connect Anthropic (Claude), OpenAI or ChatGPT (Codex) or another AI
-          key in <Link to="/settings/models">Settings → Models &amp; keys</Link>.
+          Add an AI key once to start making videos.{" "}
+          <Link to="/settings/models" className="button small">
+            Add an AI key
+          </Link>
         </p>
       )}
     </form>

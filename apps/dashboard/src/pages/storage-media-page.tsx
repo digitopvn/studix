@@ -7,6 +7,7 @@ import {
   type PlatformMediaVendor,
   type PlatformSettings,
   type PlatformStorageTest,
+  type StorageProfile,
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
 import { StorageProfilesCard } from "./storage-profiles-card.tsx";
@@ -57,13 +58,27 @@ export function StorageMediaPage({ isOperator }: { isOperator: boolean }) {
   );
 }
 
+/** True once the workspace keeps files in a bucket of its own rather than the Studix default. */
+function ownStorage(profiles: StorageProfile[]): boolean {
+  return profiles.some((p) => p.active && p.providerType !== "platform" && p.providerType !== "environment");
+}
+
 /** This workspace's own storage (owners and admins); its active profile overrides the platform choice. */
 function WorkspaceStorageCard() {
   const { data, error, reload } = useAsync(() => api.listStorageProfiles("workspace"));
   return (
     <>
       <ErrorBanner error={error} />
-      {data && <StorageProfilesCard profiles={data} reload={reload} scope="workspace" />}
+      {data && ownStorage(data) && <StorageProfilesCard profiles={data} reload={reload} scope="workspace" />}
+      {data && !ownStorage(data) && (
+        <Section title="File storage">
+          <p className="muted">Studix stores your videos and uploads for you. Nothing to set up.</p>
+          <details className="advanced">
+            <summary>Use my own storage (S3 or R2)</summary>
+            <StorageProfilesCard profiles={data} reload={reload} scope="workspace" />
+          </details>
+        </Section>
+      )}
     </>
   );
 }

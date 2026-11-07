@@ -1,7 +1,7 @@
 import type { Me } from "../api-client.ts";
 import { Link } from "../ui.tsx";
 import { AccountPage } from "./account-page.tsx";
-import { ApiKeysPage } from "./api-keys-page.tsx";
+import { ApiKeysPage, ConnectAgentCard } from "./api-keys-page.tsx";
 import { ConnectedAppsPage } from "./connected-apps-page.tsx";
 import { ConnectorsPage } from "./connectors-page.tsx";
 import { ProvidersPage } from "./providers-page.tsx";
@@ -45,9 +45,13 @@ function body(me: Me, section: string, id?: string) {
     case "agents":
       return (
         <>
-          <ApiKeysPage mcpUrl={me.mcpUrl} />
+          <ConnectAgentCard mcpUrl={me.mcpUrl} />
           <ConnectedAppsPage />
-          <ConnectorsPage />
+          <details className="advanced">
+            <summary>For developers: API keys and tools from other apps</summary>
+            <ApiKeysPage />
+            <ConnectorsPage />
+          </details>
         </>
       );
     case "models":
