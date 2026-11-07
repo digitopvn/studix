@@ -35,6 +35,7 @@ import {
   type ResolvedModelSnapshot,
   resolveModelSelection,
   sameModelRoute,
+  stageAgentSelection,
   type TenantContext,
   type UsageRepository,
 } from "@studix/core";
@@ -182,7 +183,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       preferences: deps.preferences,
       requestedBy: stage.job.createdBy,
       ...(snapshot ? { snapshot } : {}),
-      ...jobModelRequest(stage.job.payload),
+      ...jobModelRequest(stage.job.payload, name),
     }).resolve(stage.ctx, { stage: name });
     if (snapshot || !resolved.snapshot) return { runtime: "pi", resolved };
     // A concurrent attempt pinned first: run what it stored so every attempt of the job uses one route.
@@ -192,7 +193,10 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
 
   async function choose(stage: StageContext, name: string): Promise<Choice> {
     const { ctx, job } = stage;
-    const agent = JobAgentSelection.safeParse(job.payload.agent);
+    // A role agent (director, builder, qa) wins over the job's agent for its own stage.
+    const selected = stageAgentSelection(job.payload, name);
+    const ownRole = selected !== undefined && !sameSelection(selected, job.payload.agent);
+    const agent = selected ? { success: true as const, data: selected } : { success: false as const };
     if (agent.success && agent.data.runtime === "codex") {
       if (!deps.codex || !deps.piWorkspace) throw codexOff(name);
       return {
@@ -202,6 +206,16 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         ...(agent.data.reasoningEffort ? { reasoningEffort: agent.data.reasoningEffort } : {}),
       };
     }
+    if (agent.success && ownRole && agent.data.runtime === "claude") {
+      if (!deps.claude) throw claudeOff(name);
+      return {
+        runtime: "claude",
+        connectionId: agent.data.connectionId,
+        model: agent.data.modelId ?? deps.claude.plannerModel,
+        ...(agent.data.reasoningEffort ? { reasoningEffort: agent.data.reasoningEffort } : {}),
+      };
+    }
+    if (agent.success && ownRole && agent.data.runtime === "pi") return resolvePi(stage, name);
     const planner = PlannerSelection.safeParse(job.payload.planner);
     if (planner.success) {
       if (!deps.claude) throw claudeOff(name);
@@ -581,6 +595,11 @@ function filesOf(output: unknown): string[] {
     : [];
 }
 
+function sameSelection(a: JobAgentSelection, b: unknown): boolean {
+  const parsed = JobAgentSelection.safeParse(b);
+  return parsed.success && JSON.stringify(parsed.data) === JSON.stringify(a);
+}
+
 const RequestedModel = z
   .object({
     agentModel: z.object({ connectionId: z.string(), provider: z.string(), modelId: z.string() }).optional(),
@@ -590,12 +609,15 @@ const RequestedModel = z
   .passthrough();
 
 /** The Pi agent model and effort `studix_create_video` checked and stored on the job, if any. */
-export function jobModelRequest(payload: unknown): {
+export function jobModelRequest(
+  payload: unknown,
+  stage?: string,
+): {
   request?: { choice?: ModelChoice; reasoningEffort?: ReasoningEffort };
 } {
   const parsed = RequestedModel.safeParse(payload ?? {});
   if (!parsed.success) return {};
-  const { agent } = parsed.data;
+  const agent = stage ? stageAgentSelection(payload, stage) : parsed.data.agent;
   // `agent` is the current field; top-level agentModel/reasoningEffort are kept for jobs queued before it.
   const agentModel =
     agent?.runtime === "pi" && agent.modelId

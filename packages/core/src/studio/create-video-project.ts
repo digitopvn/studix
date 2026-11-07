@@ -80,6 +80,13 @@ export async function createVideoProject(
   // An agent authoring the whole video needs longer than a pack run, and its default window starts at
   // the first claim so time spent queued behind other jobs does not eat it.
   const agentAuthored = workflowTemplate === "skill-agent" && input.deadlineAt === undefined;
+  const roles = input.roles && Object.keys(input.roles).length > 0 ? input.roles : undefined;
+  if (roles && workflowTemplate !== "skill-agent") {
+    throw new StudixError("VALIDATION", "roles need workflowTemplate skill-agent", {
+      retryable: false,
+      suggestedAction: "Set workflowTemplate to skill-agent, or drop roles.",
+    });
+  }
   const deadlineAt =
     input.deadlineAt ??
     new Date(now.getTime() + (agentAuthored ? SKILL_AGENT_DEADLINE_MS : defaults.jobDeadlineMs));
@@ -126,6 +133,7 @@ export async function createVideoProject(
       workflowTemplate,
       ...(input.agentMode ? { agentMode: input.agentMode } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
+      ...(roles ? { roles } : {}),
     },
     idempotencyKey: input.idempotencyKey,
     budgetCents,

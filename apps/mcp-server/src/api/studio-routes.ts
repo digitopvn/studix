@@ -13,7 +13,12 @@ import { packRegistry } from "@studix/skills";
 import { AspectRatio, LanguageTag, RenderPreset } from "@studix/video-ir";
 import { Router } from "express";
 import { z } from "zod";
-import { AgentInput, resolveAgentSelection } from "../agent-model-selection.ts";
+import {
+  AgentInput,
+  AgentRolesInput,
+  resolveAgentRoles,
+  resolveAgentSelection,
+} from "../agent-model-selection.ts";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, playbackForRender, signRender } from "../artifact-urls.ts";
 import { withMediaExecUrls } from "../mcp/media-exec-tool.ts";
@@ -45,6 +50,7 @@ const CreateVideoBody = z
     planner: PlannerSelection.optional(),
     agent: AgentInput.optional(),
     workflowTemplate: WorkflowTemplateId.optional(),
+    roles: AgentRolesInput.optional(),
     renderPreset: RenderPreset.optional(),
   })
   .strict();
@@ -115,6 +121,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     await assertPlannerSelection(deps, ctx, planner);
     const agent = body.agent ? await resolveAgentSelection(deps, ctx, body.agent) : undefined;
     const result = await deps.studio.createVideoProject(ctx, {
+    const roles = await resolveAgentRoles(deps, ctx, body.roles);
       brief: {
         prompt: body.prompt,
         ...(body.aspectRatio ? { aspectRatio: body.aspectRatio } : {}),
@@ -129,6 +136,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       ...(body.renderPreset ? { renderPreset: body.renderPreset } : {}),
       ...(agent ? { agent } : {}),
     });
+      ...(roles ? { roles } : {}),
     await deps.activity?.record(ctx, {
       name: "dashboard.create_video",
       scope: { projectId: result.project.id, jobId: result.job.id },

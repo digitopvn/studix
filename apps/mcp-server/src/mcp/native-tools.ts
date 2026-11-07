@@ -13,7 +13,12 @@ import { StudixError } from "@studix/shared";
 import { packRegistry } from "@studix/skills";
 import { RenderPreset } from "@studix/video-ir";
 import { z } from "zod";
-import { AgentInput, resolveAgentSelection } from "../agent-model-selection.ts";
+import {
+  AgentInput,
+  AgentRolesInput,
+  resolveAgentRoles,
+  resolveAgentSelection,
+} from "../agent-model-selection.ts";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
@@ -146,6 +151,9 @@ const IdempotencyKey = z
   .regex(/^[A-Za-z0-9._:-]{1,200}$/)
   .optional();
 const Ms = z.number().int().min(0).max(600_000).optional();
+    roles: AgentRolesInput.optional().describe(
+      "skill-agent only: director (script), builder (makes it; default agent), qa (scores, may send back); each an agent.",
+    ),
 
 /**
  * Compact wire schema for feedback: the tool list stays small, and StudioService re-validates the call
@@ -299,6 +307,7 @@ export const NATIVE_TOOLS = [
     },
   }),
   tool({
+      const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles);
     name: NATIVE_TOOL_NAMES.retryJob,
     title: "Retry failed job",
     description:
@@ -311,6 +320,7 @@ export const NATIVE_TOOLS = [
       return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
     },
   }),
+        ...(roles ? { roles } : {}),
   tool({
     name: NATIVE_TOOL_NAMES.attachMediaJob,
     title: "Attach Atlas prediction",

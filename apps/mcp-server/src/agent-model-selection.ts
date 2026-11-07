@@ -1,6 +1,8 @@
 import { claudeModelReasoning, findPiModel, listCodexModels } from "@studix/agent-runtime";
 import {
+  AGENT_ROLES,
   AGENT_RUNTIMES,
+  type JobAgentRoles,
   type JobAgentSelection,
   REASONING_EFFORTS,
   type ReasoningEffort,
@@ -125,4 +127,24 @@ export function assertReportedModel(model: string | undefined, effort: Reasoning
   if (!model) return;
   const { model: entry } = catalogModel(model);
   assertEffort(model, entry.reasoning, effort);
+}
+
+/** Optional role agents of a skill-agent job; each is checked like `agent`. */
+export const AgentRolesInput = z
+  .object({ director: AgentInput.optional(), builder: AgentInput.optional(), qa: AgentInput.optional() })
+  .strict();
+export type AgentRolesInput = z.infer<typeof AgentRolesInput>;
+
+export async function resolveAgentRoles(
+  deps: Pick<AppDeps, "providers">,
+  ctx: TenantContext,
+  roles: AgentRolesInput | undefined,
+): Promise<JobAgentRoles | undefined> {
+  if (!roles) return undefined;
+  const out: JobAgentRoles = {};
+  for (const role of AGENT_ROLES) {
+    const agent = roles[role];
+    if (agent) out[role] = await resolveAgentSelection(deps, ctx, agent);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
