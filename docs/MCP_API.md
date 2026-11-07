@@ -132,6 +132,12 @@ Behavior notes:
 - A `claude` agent runs a stage that asks for tools (the `skill-agent` pack's
   run stage) with the Claude Code CLI inside the same sandbox, with its full
   tool set and the stage's caps; other stages stay tool-less on the worker.
+- `skill-agent` output contract ([ADR-0022](decisions/0022-agentic-video-authoring.md)): 1080p at the
+  brief's aspect ratio, duration within 0.5 s of the brief, audible voice-over, -16 LUFS +/-2 with
+  true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
+  each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
+- A stage that finished on its template instead of its agent shows `stages[].fallback` with the
+  reason on `studix_get_job`; it is never silent.
 - Time spent parked is not counted against the deadline. While a job waits at a human gate
   (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
   is paused: what is left of it is kept and starts counting again when a worker

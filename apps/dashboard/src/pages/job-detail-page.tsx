@@ -29,6 +29,9 @@ function StageTimeline({ job }: { job: Job }) {
               {s.error.code}: {s.error.message} {s.error.suggestedAction}
             </p>
           )}
+          {s.fallback && (
+            <p className="banner banner-warning">Agent did not run, used the template: {s.fallback}</p>
+          )}
         </li>
       ))}
     </ol>

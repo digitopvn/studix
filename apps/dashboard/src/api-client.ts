@@ -197,6 +197,8 @@ export interface Stage {
   startedAt?: string;
   finishedAt?: string;
   error?: StudixErrorPayload;
+  /** The stage used its template because the agent did not run, with the reason. */
+  fallback?: string;
 }
 
 export interface Job {

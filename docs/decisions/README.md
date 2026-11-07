@@ -25,5 +25,6 @@ supersedes the old one; accepted ADRs are not rewritten.
 | [0019](0019-full-skill-store-uploads-and-risk-gate.md)              | Full skill store: zip uploads, risk reports, platform skills                                | Accepted |
 | [0020](0020-storage-profiles.md)                                    | Storage profiles: operator-managed buckets with live switch and SSRF guard                  | Accepted |
 | [0021](0021-codex-agent-runtime-and-chatgpt-login.md)               | Codex agent runtime in the sandbox, ChatGPT sign-in and per-job agent selection             | Accepted |
+| [0022](0022-agentic-video-authoring.md)                             | Agentic video authoring is the main path, with a hard delivery post-check                   | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.

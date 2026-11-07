@@ -364,6 +364,10 @@ th {
   border-color: var(--success);
 }
 
+.banner-warning {
+  border-color: #c08a1e;
+}
+
 .secret {
   display: block;
   word-break: break-all;

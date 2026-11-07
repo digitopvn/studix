@@ -87,6 +87,13 @@ export function nextActionsForJob(job: Job, approval?: Approval): NextAction[] {
   }
 }
 
+/** A stage output of `{ source: "template", fallbackReason }` means the agent did not run; surface why. */
+function fallbackOf(stage: Stage): { fallback?: string } {
+  const out = stage.output;
+  if (out?.source !== "template") return {};
+  return { fallback: typeof out.fallbackReason === "string" ? out.fallbackReason : "agent unavailable" };
+}
+
 export function toJobView(job: Job, stages: Stage[], approval?: Approval): JobView {
   return {
     id: job.id,
@@ -114,6 +121,7 @@ export function toJobView(job: Job, stages: Stage[], approval?: Approval): JobVi
       startedAt: s.startedAt,
       finishedAt: s.finishedAt,
       error: s.error,
+      ...fallbackOf(s),
     })),
     approval: approval ? toApprovalView(approval) : undefined,
     next: nextActionsForJob(job, approval),

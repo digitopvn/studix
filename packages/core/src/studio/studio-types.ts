@@ -262,6 +262,8 @@ export interface StageView {
   startedAt?: Date;
   finishedAt?: Date;
   error?: StudixErrorPayload;
+  /** Set when the stage finished on a fallback instead of its agent, with the reason. Never silent. */
+  fallback?: string;
 }
 
 export interface ApprovalView {
