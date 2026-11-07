@@ -26,7 +26,7 @@ import { z } from "zod";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
 
 /*
- * Skill agent: the workspace's Pi agent makes the whole video itself in the skill sandbox, following the
+ * Skill agent: the job's agent (Pi or Claude Code) makes the whole video itself in the skill sandbox, following the
  * enabled skills (for example an imported motion-video skill), and leaves an MP4 in /work/out. Studix then
  * stores that file, wraps it in a one-shot VideoIR and ships it like any other render.
  */
@@ -218,7 +218,7 @@ export const skillAgentSkill: Skill = {
   id: SKILL_AGENT_PACK,
   title: "Skill agent",
   description:
-    "The workspace's Pi agent makes the video in the skill sandbox with the enabled skills (for example an " +
+    "The job's agent (Pi or Claude Code) makes the video in the skill sandbox with the enabled skills (for example an " +
     "imported motion-video skill): composition, voice-over and render. Needs STUDIX_SANDBOX on the worker.",
   version: 1,
   get inputSchema() {

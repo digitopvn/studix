@@ -6,7 +6,7 @@ import { navigate } from "../use-hash-route.ts";
 type AspectRatio = NonNullable<CreateVideoRequest["aspectRatio"]>;
 
 const RUNTIME_LABELS: Record<AgentRuntimeName, string> = { claude: "Claude", codex: "Codex", pi: "Pi" };
-const EFFORTS: ReasoningEffort[] = ["off", "minimal", "low", "medium", "high"];
+const EFFORTS: ReasoningEffort[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
 export function CreateVideoPage() {
   const [prompt, setPrompt] = useState("");

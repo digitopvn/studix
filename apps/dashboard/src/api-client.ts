@@ -591,7 +591,7 @@ export interface CreateVideoRequest {
   renderPreset?: "preview" | "final";
 }
 
-export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high";
+export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface WorkflowPackInfo {
   id: string;
