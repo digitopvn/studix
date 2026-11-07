@@ -68,6 +68,11 @@ export const QaVerdict = z.object({
   verdict: z.enum(["pass", "revise"]),
   notes: z.string().max(4000).describe("Concrete fixes for the builder, by timestamp; or what works"),
   checked: z.string().max(500).optional().describe("What was looked at, e.g. a 16-frame contact sheet"),
+  inspected: z
+    .boolean()
+    .describe(
+      "true only when you had the video file and looked at its frames and audio; scores mean nothing otherwise",
+    ),
 });
 export type QaVerdict = z.infer<typeof QaVerdict>;
 
@@ -142,12 +147,30 @@ export function skillAgentLimits(job: { payload?: unknown }) {
   };
 }
 
-/** What the agent must deliver: 1080p at the brief's aspect ratio and length (16:9, 10 s by default). */
+/**
+ * What the agent must deliver: 1080p at the brief's aspect ratio and length. The length is the brief's
+ * `durationMs`, else one the prompt states ("5-second", "15 s", "30 giây", "1 minute"), else 10 s.
+ */
 export function deliveryOf(brief: CreativeBrief): { width: number; height: number; durationMs: number } {
   const size = { "16:9": [1920, 1080], "9:16": [1080, 1920], "1:1": [1080, 1080] }[
     brief.aspectRatio ?? "16:9"
   ] as [number, number];
-  return { width: size[0], height: size[1], durationMs: brief.durationMs ?? 10_000 };
+  return {
+    width: size[0],
+    height: size[1],
+    durationMs: brief.durationMs ?? promptDurationMs(brief.prompt) ?? 10_000,
+  };
+}
+
+const PROMPT_DURATION = /(\d+(?:[.,]\d+)?)\s*-?\s*(seconds?|secs?|s|giây|minutes?|mins?|phút)(?![\p{L}\d])/iu;
+
+/** The first video length a prompt states, in ms, when it is within what a brief allows (1 s to 10 min). */
+export function promptDurationMs(prompt: string): number | undefined {
+  const m = PROMPT_DURATION.exec(prompt);
+  if (!m?.[1] || !m[2]) return undefined;
+  const minutes = /^(m|phút)/iu.test(m[2]);
+  const ms = Math.round(Number(m[1].replace(",", ".")) * (minutes ? 60_000 : 1000));
+  return ms >= 1000 && ms <= 600_000 ? ms : undefined;
 }
 
 export const DELIVERY_LOUDNESS = { integratedLufs: -16, toleranceLu: 2, truePeakDbtp: -1 } as const;
@@ -259,7 +282,9 @@ const qaStage = createAgentStage({
     "polish), motion (easing, pacing, transitions, nothing static or janky), brief (says what the brief and " +
     "`direction` ask, facts intact), audio (voice clear, music and SFX balanced). `overall` is your " +
     `judgement. verdict "pass" when overall >= ${QA_PASS_SCORE} and nothing is broken, else "revise" with ` +
-    "concrete fixes by timestamp in `notes`. Be a strict, tasteful reviewer. Answer with JSON only.",
+    "concrete fixes by timestamp in `notes`. Be a strict, tasteful reviewer. If you could not get or open " +
+    "the video, set `inspected` false and say why in `notes`; never score what you did not see. Answer " +
+    "with JSON only.",
   taskInput: (input: QaInput) => input,
   limits: { maxTurns: 60, maxTokens: 800_000, maxCostCents: 150, timeoutMs: 15 * 60_000 },
   tools: SANDBOX_TOOLS,
@@ -273,6 +298,24 @@ function failedAfter(err: unknown, usage: StageUsage[]): unknown {
   }
   if (err instanceof StageSuspended) return new StageSuspended(err.suspension, [...usage, ...err.usage]);
   return new StageFailedAfterSpend(toStudixError(err), usage);
+}
+
+/**
+ * QA's verdict when QA actually saw the render. A verdict without every score, or one QA gave without the
+ * file, fails the stage: sending the builder back on it would pay for a rebuild nobody reviewed.
+ */
+function qaVerdictOf(output: unknown, round: number): QaVerdict {
+  const parsed = QaVerdict.safeParse(output);
+  const reason = !parsed.success
+    ? `its answer is incomplete (${parsed.error.issues.map((i) => i.path.join(".") || i.message).join(", ")})`
+    : !parsed.data.inspected
+      ? `it could not inspect the video: ${parsed.data.notes.slice(0, 500)}`
+      : undefined;
+  if (parsed.success && !reason) return parsed.data;
+  throw new StudixError("UNAVAILABLE", `QA round ${round} has no usable verdict: ${reason}`, {
+    retryable: false,
+    suggestedAction: "Check that QA can reach the render, then submit the job again.",
+  });
 }
 
 /**
@@ -308,7 +351,7 @@ export const skillAgentReviewedRunStage: StageDefinition = {
           input: { brief, delivery: deliveryOf(brief), ...(direction ? { direction } : {}), videoUrl, round },
         });
         usage.push(...(qa.usage ?? []));
-        const verdict = QaVerdict.parse(qa.output);
+        const verdict = qaVerdictOf(qa.output, round);
         rounds.push({ ...verdict, round });
         if (verdict.verdict === "pass" || round >= QA_MAX_ROUNDS) {
           return { output: { ...out, review: { rounds, final: verdict } }, usage };
