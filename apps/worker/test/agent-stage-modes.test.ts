@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import {
   type ClaudeAgentEvent,
   type ClaudeSessionRequest,
+  claudeOutputSchema,
   createClaudeAgentRuntime,
   createFakeClaudeTransport,
 } from "@studix/agent-runtime";
@@ -270,7 +271,8 @@ describe("one agent stage, two modes", () => {
       limits: { maxTurns: 4, maxTokens: 20_000, maxCostCents: 25, timeoutMs: 120_000, tools: [] },
     });
     expect(task.input).toMatchObject({ brief: { brand: { name: brief.brand.name } } });
-    expect(task.outputSchema).toEqual(request.outputSchema);
+    // The host gets the stage schema as is; Claude gets it without the meta-schema key it rejects.
+    expect(claudeOutputSchema(task.outputSchema)).toEqual(request.outputSchema);
 
     const submitted = await world.service.submit(world.ctx, {
       taskId: task.id,
