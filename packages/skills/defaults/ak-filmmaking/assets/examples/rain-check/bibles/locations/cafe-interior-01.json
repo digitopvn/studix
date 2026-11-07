@@ -1,0 +1,22 @@
+{
+  "id": "CAFE_INTERIOR_01",
+  "kind": "location",
+  "name": "cafe interior",
+  "description": "Small cafe, window table for two, wooden chairs, condensation on the window.",
+  "references": [
+    {
+      "id": "LOC_CAFE_INTERIOR_WIDE",
+      "view": "wide",
+      "path": "bibles/locations/cafe-interior-01/wide.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "LOC_CAFE_TABLE",
+      "view": "angle",
+      "path": "bibles/locations/cafe-interior-01/table.png",
+      "status": "canonical",
+      "version": 1
+    }
+  ]
+}

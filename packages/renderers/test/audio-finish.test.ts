@@ -6,6 +6,7 @@ import {
   gradeFilter,
   isGradeLook,
   loudnessProblems,
+  nextLimiterDrive,
   parseLoudnormJson,
   phoneVideoKbps,
   planAudioClips,
@@ -208,5 +209,31 @@ describe("finish helpers", () => {
     expect(isGradeLook("warm")).toBe(true);
     expect(isGradeLook("eq=contrast=9")).toBe(false);
     expect(gradeFilter("neutral")).toBe("format=gbrp,eq=contrast=1.02:saturation=1.02,format=yuv420p");
+  });
+});
+
+describe("nextLimiterDrive", () => {
+  const start = { gainDb: 0, ceilingDb: 0 };
+
+  it("lowers the limiter ceiling below a true-peak overshoot and keeps the gain", () => {
+    const next = nextLimiterDrive({ integratedLufs: -14.01, truePeakDbtp: -1.28 }, start);
+    expect(next?.gainDb).toBe(0);
+    expect(next?.ceilingDb).toBeCloseTo(-0.52, 5);
+  });
+
+  it("drives the missing gain into the limiter when the file is too quiet", () => {
+    expect(nextLimiterDrive({ integratedLufs: -16.5, truePeakDbtp: -3 }, start)).toEqual({
+      gainDb: 2.5,
+      ceilingDb: 0,
+    });
+  });
+
+  it("gives up once the ceiling or the gain is at its bound", () => {
+    expect(
+      nextLimiterDrive({ integratedLufs: -14, truePeakDbtp: 0 }, { gainDb: 0, ceilingDb: -6 }),
+    ).toBeNull();
+    expect(
+      nextLimiterDrive({ integratedLufs: -30, truePeakDbtp: -3 }, { gainDb: 9, ceilingDb: 0 }),
+    ).toBeNull();
   });
 });

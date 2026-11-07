@@ -15,6 +15,8 @@ export interface EnqueueJobInput {
   idempotencyKey?: string;
   budgetCents?: number;
   deadlineAt?: Date;
+  /** Pause the deadline until the job is first claimed, so queue time does not count against it. */
+  deadlineFromClaim?: boolean;
   maxAttempts?: number;
   runAfter?: Date;
   /** Jobs gated by an approval start in waiting_approval and are resumed by approve(). */

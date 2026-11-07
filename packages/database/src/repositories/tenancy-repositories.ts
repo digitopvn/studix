@@ -130,6 +130,19 @@ export function createTenantDirectory(db: StudixDb, clock: Clock): TenantDirecto
         workspace: toWorkspace(r.workspace),
       }));
     },
+
+    async findWorkspace(workspaceId) {
+      const rows = await db
+        .select({ organization: organizations, workspace: workspaces })
+        .from(workspaces)
+        .innerJoin(organizations, eq(organizations.id, workspaces.organizationId))
+        .where(eq(workspaces.id, workspaceId))
+        .limit(1);
+      const row = rows[0];
+      return row
+        ? { organization: toOrganization(row.organization), workspace: toWorkspace(row.workspace) }
+        : undefined;
+    },
   };
 }
 

@@ -1,0 +1,16 @@
+{
+  "skill": "ak-dogfood",
+  "cases": [
+    {"id": "pos-dogfood", "expect": "positive", "prompt": "dogfood this session"},
+    {"id": "pos-review-improve", "expect": "positive", "prompt": "review this session and improve the skills it used"},
+    {"id": "pos-what-went-wrong", "expect": "positive", "prompt": "what went wrong in this session, propose fixes to the skills we used"},
+    {"id": "pos-learn-mistakes", "expect": "positive", "prompt": "learn from the mistakes in this session so the skills do better next time"},
+    {"id": "pos-all-sessions", "expect": "positive", "prompt": "dogfood all my sessions on this machine and propose skill improvements"},
+    {"id": "neg-skill-audit", "expect": "negative", "adjacent": "ak-skill-creator", "prompt": "audit the ak-plan skill across my past sessions"},
+    {"id": "neg-retro", "expect": "negative", "adjacent": "ak-retro", "prompt": "write a sprint retrospective from git history"},
+    {"id": "neg-sumup", "expect": "negative", "adjacent": "ak-sumup", "prompt": "summarize what we implemented today"},
+    {"id": "neg-journal", "expect": "negative", "adjacent": "ak-journal", "prompt": "write a journal entry about today's debugging"},
+    {"id": "neg-create-skill", "expect": "negative", "adjacent": "ak-skill-creator", "prompt": "create a new skill for release notes"},
+    {"id": "neg-handoff", "expect": "negative", "adjacent": "ak-handoff", "prompt": "hand this session off to a fresh agent"}
+  ]
+}

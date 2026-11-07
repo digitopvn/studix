@@ -18,6 +18,7 @@ import { type CreateVideoProjectResult, createVideoProject } from "./create-vide
 import {
   decideStoryboard,
   type FeedbackResult,
+  getFeedbackImage,
   getProjectReview,
   type ProjectReview,
   type RenderResult,
@@ -232,8 +233,16 @@ export class StudioService {
   }
 
   /** Script, storyboard with review state, shots, timeline, versions, renders, cost and comments. */
-  getProjectReview(ctx: TenantContext, projectId: string): Promise<ProjectReview> {
-    return getProjectReview(this.deps, ctx, projectId);
+  getFeedbackImage(ctx: TenantContext, projectId: string, feedbackId: string, n: number) {
+    return getFeedbackImage(this.deps, ctx, projectId, feedbackId, n);
+  }
+
+  getProjectReview(
+    ctx: TenantContext,
+    projectId: string,
+    opts?: { images?: boolean },
+  ): Promise<ProjectReview> {
+    return getProjectReview(this.deps, ctx, projectId, opts);
   }
 
   /** Approve or request changes on the storyboard, a scene or a shot (signed-in reviewers only). */

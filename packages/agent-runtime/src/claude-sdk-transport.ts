@@ -8,6 +8,7 @@ import type {
   ClaudeAgentEvent,
   ClaudeAgentSession,
   ClaudeAgentTransport,
+  ClaudeEffort,
   ClaudeSessionRequest,
 } from "./claude-agent-runtime.ts";
 
@@ -15,6 +16,7 @@ import type {
 export interface ClaudeQueryOptions {
   model: string;
   maxTurns: number;
+  effort?: ClaudeEffort;
   maxBudgetUsd: number;
   cwd: string;
   /** Replaces the subprocess environment entirely; nothing is inherited from the worker. */
@@ -46,6 +48,8 @@ export interface ClaudeSpawnOptions {
 export interface ClaudeSpawnedProcess {
   stdin: NodeJS.WritableStream;
   stdout: NodeJS.ReadableStream;
+  /** Read for a bounded tail that explains a crash; the SDK itself never reads it. */
+  stderr?: NodeJS.ReadableStream | null;
   readonly killed: boolean;
   readonly exitCode: number | null;
   readonly signalCode?: NodeJS.Signals | null;
@@ -131,7 +135,7 @@ function defaultSpawn(options: ClaudeSpawnOptions): ClaudeSpawnedProcess {
   return spawn(options.command, options.args, {
     cwd: options.cwd,
     env: options.env,
-    stdio: ["pipe", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", "pipe"],
   }) as unknown as ClaudeSpawnedProcess;
 }
 
@@ -226,6 +230,9 @@ function inputTokensOf(usage: ClaudeUsage | undefined): number {
   );
 }
 
+/** Bytes of the Claude process stderr kept to explain a failed run. */
+const STDERR_TAIL = 2000;
+
 function exited(child: ClaudeSpawnedProcess): boolean {
   return child.exitCode !== null || (child.signalCode ?? null) !== null;
 }
@@ -287,6 +294,7 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
         }
       };
 
+      let stderrTail = "";
       const env: Record<string, string> = {
         PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
         HOME: sandbox,
@@ -302,6 +310,7 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
       const queryOptions: ClaudeQueryOptions = {
         model: request.model,
         maxTurns: request.maxTurns,
+        ...(request.effort ? { effort: request.effort } : {}),
         maxBudgetUsd: request.maxBudgetUsd,
         cwd: sandbox,
         env,
@@ -326,6 +335,9 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
           child = spawnProcess({ ...spawnOptions, cwd: sandbox });
           // Liveness is exitCode/signalCode only: Node sets exitCode before reporting a failed spawn,
           // and an error from a failed kill leaves a live process open.
+          child.stderr?.on("data", (chunk: unknown) => {
+            stderrTail = (stderrTail + String(chunk)).slice(-STDERR_TAIL);
+          });
           child.once("exit", maybeClose);
           child.once("error", maybeClose);
           return child;
@@ -388,7 +400,9 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
           }
         } catch (err) {
           if (err instanceof StudixError) throw err;
-          throw classifyClaudeThrown(err instanceof Error ? err.message : String(err), request.credential);
+          const message = err instanceof Error ? err.message : String(err);
+          const stderr = stderrTail.trim();
+          throw classifyClaudeThrown(stderr ? `${message}; stderr: ${stderr}` : message, request.credential);
         } finally {
           // The stream is over either way; make sure the SDK ends the process it started.
           streamDone = true;

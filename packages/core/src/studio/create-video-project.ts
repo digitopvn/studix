@@ -15,6 +15,9 @@ import {
   type NextAction,
 } from "./studio-types.ts";
 
+/** Default window for a skill-agent job, counted from its first claim. */
+export const SKILL_AGENT_DEADLINE_MS = 60 * 60_000;
+
 export interface CreateVideoProjectResult {
   project: VideoProject;
   job: JobView;
@@ -46,7 +49,18 @@ export async function createVideoProject(
   rawInput: CreateVideoProjectInput,
 ): Promise<CreateVideoProjectResult> {
   assertPermission(ctx, "project:write");
-  const input = parseInput(CreateVideoProjectInput, rawInput, "createVideoProject input");
+  const parsed = parseInput(CreateVideoProjectInput, rawInput, "createVideoProject input");
+  if (parsed.planner && parsed.agent) {
+    throw new StudixError("VALIDATION", "planner is an alias of agent: pass one of them, not both");
+  }
+  // A Claude agent runs the Claude planner path, so it keeps the legacy planner field the worker reads.
+  const input =
+    parsed.agent?.runtime === "claude"
+      ? {
+          ...parsed,
+          planner: { runtime: "claude" as const, providerConnectionId: parsed.agent.connectionId },
+        }
+      : parsed;
   if (input.planner && input.spec !== undefined) {
     // A client spec skips planning, so a planner choice would be silently ignored.
     throw new StudixError(
@@ -54,23 +68,30 @@ export async function createVideoProject(
       "planner cannot be combined with spec: a supplied spec is not planned",
     );
   }
-  if (input.planner && input.workflowTemplate && input.workflowTemplate !== DEFAULT_WORKFLOW_TEMPLATE) {
-    // The Claude planner writes the VideoIR itself and does not run a pack's template.
-    throw new StudixError(
-      "VALIDATION",
-      `planner cannot be combined with workflowTemplate "${input.workflowTemplate}": the planner does not use pack templates`,
-    );
-  }
+  // A planner with a pack is valid: the pack's pipeline runs and its agent stages run on the planner's
+  // Claude connection (the worker's agent harness), while the default pack plans with the Claude planner.
   const spec: VideoIR | undefined =
     input.spec === undefined
       ? undefined
       : unwrapValidation(validateVideoIR(input.spec) as ValidationResult<VideoIR>, "spec (VideoIR)");
   const { projects, jobs, queue, clock, defaults } = deps;
   const now = clock.now();
-  const deadlineAt = input.deadlineAt ?? new Date(now.getTime() + defaults.jobDeadlineMs);
+  const workflowTemplate = input.workflowTemplate ?? DEFAULT_WORKFLOW_TEMPLATE;
+  // An agent authoring the whole video needs longer than a pack run, and its default window starts at
+  // the first claim so time spent queued behind other jobs does not eat it.
+  const agentAuthored = workflowTemplate === "skill-agent" && input.deadlineAt === undefined;
+  const roles = input.roles && Object.keys(input.roles).length > 0 ? input.roles : undefined;
+  if (roles && workflowTemplate !== "skill-agent") {
+    throw new StudixError("VALIDATION", "roles need workflowTemplate skill-agent", {
+      retryable: false,
+      suggestedAction: "Set workflowTemplate to skill-agent, or drop roles.",
+    });
+  }
+  const deadlineAt =
+    input.deadlineAt ??
+    new Date(now.getTime() + (agentAuthored ? SKILL_AGENT_DEADLINE_MS : defaults.jobDeadlineMs));
   if (deadlineAt <= now) throw new StudixError("VALIDATION", "deadlineAt must be in the future");
   const budgetCents = input.budgetCents ?? defaults.jobBudgetCents;
-  const workflowTemplate = input.workflowTemplate ?? DEFAULT_WORKFLOW_TEMPLATE;
 
   if (input.idempotencyKey) {
     const existing = await jobs.findByIdempotencyKey(ctx, input.idempotencyKey);
@@ -111,10 +132,13 @@ export async function createVideoProject(
       planner: input.planner,
       workflowTemplate,
       ...(input.agentMode ? { agentMode: input.agentMode } : {}),
+      ...(input.agent ? { agent: input.agent } : {}),
+      ...(roles ? { roles } : {}),
     },
     idempotencyKey: input.idempotencyKey,
     budgetCents,
     deadlineAt,
+    ...(agentAuthored ? { deadlineFromClaim: true } : {}),
     maxAttempts: defaults.jobMaxAttempts,
     initialStatus: requirement.required ? "waiting_approval" : "queued",
     createdBy,

@@ -10,9 +10,15 @@ import type { z } from "zod";
 import { type AppDeps, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
+import { jobResourceUri, startJobChangeFeed } from "../job-change-feed.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
+import { COMPOSITION_MCP_TOOLS } from "./composition-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
-import { NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
+import { registerJobResource, WEBHOOK_MCP_TOOLS } from "./job-notifications.ts";
+import { MEDIA_EXEC_MCP_TOOLS } from "./media-exec-tool.ts";
+import { NATIVE_TOOL_NAMES, NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
+import { REVIEW_APP_TOOL_META, REVIEW_APP_TOOLS, registerReviewApp } from "./review-app.ts";
+import { SKILL_MCP_TOOLS } from "./skill-tools.ts";
 import { errorEnvelope, okEnvelope, ToolEnvelopeSchema } from "./tool-envelope.ts";
 
 /** Upper bound for one JSON-RPC request body (a host-authored VideoIR spec fits comfortably). */
@@ -21,7 +27,14 @@ export const MCP_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const INSTRUCTIONS =
   "Studix produces videos. Call studix_inspect first. studix_create_video returns a jobId at once; " +
   "poll studix_get_job (respect next[].pollAfterMs) until it succeeds, then use its signed MP4 URL. Revise with studix_feedback, re-render with " +
-  "studix_render; a person reviews and approves the storyboard at the returned reviewUrl.";
+  "studix_render; a person reviews and approves the storyboard at the returned reviewUrl. studix_get_job waitSeconds " +
+  "waits for the next status change; subscribe to the studix://jobs/{jobId} resource for push updates.";
+
+/** Tools whose result the review MCP App renders. */
+const APP_TOOL_META: Record<string, Record<string, unknown>> = {
+  [NATIVE_TOOL_NAMES.createVideo]: REVIEW_APP_TOOL_META,
+  [NATIVE_TOOL_NAMES.getJob]: REVIEW_APP_TOOL_META,
+};
 
 /** `gatewayDepth`: inbound gateway hop count, so a call relayed through another gateway cannot execute tools. */
 type StudixAuthInfo = AuthInfo & { extra: { tenant: ToolContext["tenant"]; gatewayDepth: number } };
@@ -41,10 +54,18 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
   const { tenant, gatewayDepth } = authFrom(authInfo);
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { instructions: INSTRUCTIONS },
+    { instructions: INSTRUCTIONS, capabilities: { resources: { subscribe: true } } },
   );
   const requestTraceId = newTraceId();
-  const tools: readonly NativeTool[] = [...NATIVE_TOOLS, ...AGENT_HANDOFF_MCP_TOOLS] as readonly NativeTool[];
+  const tools: readonly NativeTool[] = [
+    ...NATIVE_TOOLS,
+    ...AGENT_HANDOFF_MCP_TOOLS,
+    ...SKILL_MCP_TOOLS,
+    ...MEDIA_EXEC_MCP_TOOLS,
+    ...COMPOSITION_MCP_TOOLS,
+    ...REVIEW_APP_TOOLS,
+    ...WEBHOOK_MCP_TOOLS,
+  ] as readonly NativeTool[];
   const toolNames = tools.map((t) => t.name);
 
   for (const def of tools) {
@@ -58,11 +79,12 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
         annotations: {
           readOnlyHint: def.readOnly,
           destructiveHint: def.destructive ?? false,
-          idempotentHint: def.readOnly,
-          openWorldHint: false,
+          idempotentHint: def.idempotent ?? def.readOnly,
+          openWorldHint: def.openWorld ?? false,
         },
+        ...(def.meta || APP_TOOL_META[def.name] ? { _meta: def.meta ?? APP_TOOL_META[def.name] } : {}),
       },
-      async (args: unknown) =>
+      async (args: unknown, extra) =>
         withSpan(`mcp.tool ${def.name}`, { attributes: { "studix.tool": def.name } }, async () => {
           const traceId = activeTraceIds()?.traceId ?? requestTraceId;
           const ctx: ToolContext = {
@@ -71,6 +93,8 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
             tenant,
             traceId,
             toolNames: listedToolNames(deps, toolNames),
+            signal: extra.mcpReq.signal,
+            ...progressSender(extra.mcpReq),
           };
           try {
             const outcome = await def.run(ctx, args);
@@ -82,7 +106,7 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
                 attributes: { tool: def.name, actorType: tenant.actor.type, actorId: tenant.actor.id },
               });
             }
-            return okEnvelope(outcome.data, outcome.next, traceId);
+            return okEnvelope(outcome.data, outcome.next, traceId, outcome.images);
           } catch (err) {
             const error = toStudixError(err);
             deps.logger[error.code === "INTERNAL" ? "error" : "warn"]("mcp tool failed", {
@@ -98,8 +122,28 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     );
   }
 
+  registerReviewApp(server, deps);
+  registerJobResource(server, deps, artifacts, tenant);
   deps.metaTools?.(server, { tenant, gatewayDepth, logger: deps.logger, traceId: requestTraceId });
   return server;
+}
+
+/** Progress for a call that carried `_meta.progressToken`; nothing when the client did not ask. */
+function progressSender(req: {
+  _meta?: { progressToken?: string | number };
+  notify: (n: { method: "notifications/progress"; params: Record<string, unknown> }) => Promise<void>;
+}): Pick<ToolContext, "progress"> {
+  const token = req._meta?.progressToken;
+  if (token === undefined) return {};
+  return {
+    progress: (progress, total, message) =>
+      req
+        .notify({
+          method: "notifications/progress",
+          params: { progressToken: token, progress, total, message },
+        })
+        .catch(() => undefined),
+  };
 }
 
 function listedToolNames(deps: AppDeps, native: string[]): string[] {
@@ -161,6 +205,17 @@ export function mountMcpEndpoint(
     maxRequestBodySize: MCP_MAX_BODY_BYTES,
   });
   const node = toNodeHandler(handler, { onerror, maxRequestBodySize: MCP_MAX_BODY_BYTES });
+  // Job status changes become `notifications/resources/updated` on open subscriptions, and webhook posts.
+  if (deps.jobChanges) {
+    startJobChangeFeed({
+      changes: deps.jobChanges,
+      logger: deps.logger,
+      onChanges: async (changes) => {
+        for (const change of changes) handler.notify.resourceUpdated(jobResourceUri(change.id));
+        await deps.webhooks?.deliver(changes);
+      },
+    });
+  }
 
   const authenticate = async (req: Request, res: Response, next: NextFunction) => {
     try {

@@ -1,0 +1,40 @@
+{
+  "beats": [
+    {
+      "id": "B01",
+      "scenes": [
+        "S01"
+      ],
+      "purpose": "Establish Mai's hesitation and the rain motif.",
+      "dramatic_question": "Will Mai actually go in?",
+      "emotional_state": "nervous resolve",
+      "change": "Mai closes the umbrella and commits.",
+      "sound_intent": "Heavy rain bed, distant traffic.",
+      "music_theme": "THEME_A_MAIN"
+    },
+    {
+      "id": "B02",
+      "scenes": [
+        "S02"
+      ],
+      "purpose": "Confront three years of absence.",
+      "dramatic_question": "Can Linh forgive Mai?",
+      "emotional_state": "guarded warmth turning to hurt",
+      "change": "Linh names the hurt; Mai offers a concrete next step.",
+      "sound_intent": "Cafe murmur ducks under dialogue; silence after 'warm the whole time'.",
+      "music_theme": "THEME_A_TENSION"
+    },
+    {
+      "id": "B03",
+      "scenes": [
+        "S03"
+      ],
+      "purpose": "Tentative reconciliation.",
+      "dramatic_question": "Will they meet again?",
+      "emotional_state": "fragile hope",
+      "change": "A standing date is set.",
+      "sound_intent": "Rain stops; drips and a single motif statement.",
+      "music_theme": "THEME_A_EMOTIONAL"
+    }
+  ]
+}

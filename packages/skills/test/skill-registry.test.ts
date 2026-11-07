@@ -11,6 +11,7 @@ describe("skill registry", () => {
       "motion-graphic",
       "anime",
       "long-form-film",
+      "skill-agent",
     ]);
     const meta = skills[0]!;
     expect(meta).toMatchObject({ id: "brand-intro", pack: "brand-intro", version: 1, output: "video-ir" });

@@ -1,0 +1,48 @@
+id: punk-zine
+name: Punk Zine
+family: aesthetic
+aliases: [zine, diy zine, ransom note, photocopy punk, xerox]
+summary: Photocopied DIY zine; ransom-note letters, black and white plus one fluorescent, staples, hard jump cuts.
+energy: 5
+best_for: [counterculture-story, music-promo, manifesto, community-promo]
+character: >-
+  A 90s photocopied zine: high-contrast black and white, one fluorescent spot
+  colour, ransom-note headlines cut from mixed magazines, staples, marker
+  scrawl and heavy photocopy grain. Motion is loud and abrupt: slaps, hard
+  cuts on beats and stop-motion jitter, never smooth corporate easing.
+dimensions:
+  palette:
+    mode: mixed
+    colors: {bg: "#f2f0ea", ink: "#0d0d0d", accent: "#ff2e88", acid: "#c6ff00", grey: "#8c8c8c"}
+    rule: "Black and white everywhere; one fluorescent (pink or acid) per scene for a sticker, a word or a scribble. Inverse scenes swap paper and ink."
+  typography:
+    - "Ransom-note headlines: each letter a separate tile mixing Anton, Abril Fatface, Special Elite and Rubik Mono One, rotated -8 to 8 deg"
+    - "Special Elite 30 px typewriter body; Permanent Marker 60 px scrawl"
+  layout: ["Cramped, overlapping cut-ups; asymmetric and off-grid", "Hero photo cut-out with a thick white border, stapled"]
+  material: ["Photocopied paper, staples, sticky tape, marker", "Hard 0 4px 0 rgba(0,0,0,0.6) shadows"]
+  texture: ["Baked photocopy noise, toner streaks and heavy grain", "Misregistered fluorescent overprint"]
+  camera: ["Locked-off with abrupt 2-4 deg rotation jumps on cuts", "Handheld shake on drops (seeded, decaying over 6 frames)"]
+  transitions: ["jump-cut on the beat (no ease)", "slap-in (tiles slam from scale 1.5 in 3 frames)", "photocopy-flash (1 frame of white overexposure)"]
+  pacing:
+    bpm: [150, 180]
+    rhythm: "Fast and aggressive: cuts every 1-2 bars, letters assemble one per eighth note, short holds."
+  beat_response: ["Letters jitter on every beat at 12 fps (seeded)", "Fluorescent sticker slaps on kicks", "Frame shake on drops"]
+  ui_choreography: ["UI screenshots photocopied in black and white and taped on", "Marker circles and arrows scrawled with draw() around features"]
+  diagrams: ["Hand-drawn marker arrows and boxes", "Bars as torn strips taped in a row"]
+  character_motion: ["Cut-out photo figures animated on threes with boil"]
+  captions: ["Black tape strip, 42 px Be Vietnam Pro 800 white, current word fluorescent; bottom band"]
+  sound: ["Punk, garage rock or drum-and-bass 150-180 BPM", "SFX: staple gun, tape rip, photocopier, feedback hits; high density"]
+scene_types:
+  prefer: [cover, hook, title, quote, montage, cta]
+  avoid: [spec, chart, ui-demo]
+signature_moves:
+  - "Ransom-note headline assembling letter by letter on eighth notes"
+  - "Photocopy flash on the drop"
+  - "Marker scrawl circling the key word"
+strengths: ["Maximum attitude and energy", "Cheap, raw and authentic feel", "Stands out from polished brand videos"]
+constraints:
+  - "Grain, toner and misregistration baked to PNG"
+  - "Only one fluorescent colour per scene"
+  - "Jitter and shake use seeded rng"
+avoid: ["Smooth eases or soft fades", "Gradients, glass or clean vector", "Centred tidy layouts"]
+pairs_well_with: [neo-brutalist-web, community-chaos, manga-ink, paper-cut-collage]

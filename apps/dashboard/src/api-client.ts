@@ -26,6 +26,89 @@ export function selectWorkspace(id: string | null): void {
   else localStorage.removeItem(WORKSPACE_KEY);
 }
 
+/** A workspace's own media vendor key (BYOK); `platform` means media calls use the platform key. */
+export interface WorkspaceMediaKey {
+  vendor: string;
+  name?: string;
+  /** The variable Multix reads the key from; a name, never a value. */
+  keyName: string;
+  /** The vendor has a free account lookup. */
+  testable: boolean;
+  source: "workspace" | "platform";
+  keyHint?: string;
+  version?: number;
+  updatedAt?: string;
+}
+
+export interface WorkspaceMediaKeys {
+  storage: "available" | "unavailable";
+  canManage: boolean;
+  keys: WorkspaceMediaKey[];
+}
+
+/** What a workspace overrides; null (or a role left out) keeps the server's MULTIX_* value. */
+export interface WorkspaceMultixValues {
+  enabled: boolean | null;
+  waitTimeoutSeconds: number | null;
+  models: Record<string, string>;
+  voiceLanguageModels: string | null;
+}
+
+export interface MultixEffective<T> {
+  value: T;
+  source: "workspace" | "server";
+}
+
+export interface WorkspaceMultixSettings {
+  canChange: boolean;
+  server: {
+    enabled: boolean;
+    waitTimeoutSeconds: number;
+    models: Record<string, string>;
+    voiceLanguageModels: string | null;
+  };
+  workspace: WorkspaceMultixValues | null;
+  effective: {
+    enabled: MultixEffective<boolean>;
+    waitTimeoutSeconds: MultixEffective<number>;
+    models: Record<string, MultixEffective<string>>;
+    voiceLanguageModels: MultixEffective<string | null>;
+  };
+  updatedAt?: string;
+}
+
+/** The models each Multix role can be set to (GET /api/providers/multix/catalog). */
+export interface MultixCatalogEntry {
+  id: string;
+  vendor: string;
+  model: string;
+  label?: string;
+  capabilities?: string[];
+  /** No platform or workspace key for the vendor yet. */
+  needsKey?: boolean;
+  /** The most one call is reserved at (per image or per output second). */
+  priceCeiling?: { usdPerUnit: number; unit: "image" | "second" };
+  /** No trusted price: a job refuses this model. */
+  unpriced?: boolean;
+}
+
+export interface MultixCatalog {
+  roles: Record<string, MultixCatalogEntry[]>;
+  openVendors: string[];
+  fetchedAt: string;
+  errors: string[];
+}
+
+export interface WorkspaceMultixCheck {
+  version: string | null;
+  diagnosis: {
+    state: "ready" | "missing_executable" | "check_failed";
+    vendors: Record<string, boolean>;
+    reason?: string;
+    code?: string;
+  };
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };
   const workspace = selectedWorkspace();
@@ -109,6 +192,26 @@ export interface Stage {
   startedAt?: string;
   finishedAt?: string;
   error?: StudixErrorPayload;
+  /** The stage used its template because the agent did not run, with the reason. */
+  fallback?: string;
+  /** QA rounds when the job has a `qa` role. */
+  review?: {
+    rounds: { scores: Record<string, number>; overall: number; verdict: string; notes: string }[];
+  };
+  /** What the attempt ran on and spent; absent while it runs and has booked nothing yet. */
+  run?: StageRun;
+}
+
+/** `runtime` is `function` for a stage that ran no agent. The connection is named by its label only. */
+export interface StageRun {
+  runtime: string;
+  model?: string;
+  reasoningEffort?: string;
+  connectionLabel?: string;
+  costCents: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  turns?: number;
 }
 
 export interface Job {
@@ -118,6 +221,9 @@ export interface Job {
   projectId?: string;
   stage?: string;
   progress: number;
+  spentCents?: number;
+  /** Runtime, model and effort the job's creative stages run on. */
+  agent?: JobAgent;
   attempts?: number;
   maxAttempts?: number;
   createdAt: string;
@@ -129,6 +235,13 @@ export interface Job {
   budget?: { limitCents?: number; spentCents: number };
   video?: { renderId: string; url: string; expiresAt: string; preset: string };
   videoUnavailableReason?: string;
+}
+
+export interface JobAgent {
+  runtime: "claude" | "codex" | "pi" | "host" | "planner" | "none";
+  provider?: string;
+  model?: string;
+  reasoningEffort?: string;
 }
 
 export interface ActivityEvent {
@@ -217,7 +330,7 @@ export interface ProviderConnectionTest {
   error?: StudixErrorPayload & { retryable: boolean };
 }
 
-export type AgentRuntimeName = "claude" | "pi";
+export type AgentRuntimeName = "claude" | "codex" | "pi";
 
 /** A stored provider API key binding; the secret itself never leaves the server, only `keyHint`. */
 export interface ProviderConnection {
@@ -247,6 +360,156 @@ export interface AnthropicProvider {
   claudePlanner: boolean;
 }
 
+export type PlatformSecretStatus = "configured" | "missing" | "invalid" | "unverified";
+
+export interface PlatformStorageTest {
+  ok: boolean;
+  at: string;
+  failedStep?: string;
+  httpStatus?: number;
+  s3Code?: string;
+  diagnosis:
+    | "ok"
+    | "missing_credential"
+    | "bad_credential"
+    | "missing_permission"
+    | "missing_bucket"
+    | "remote_unavailable";
+  message?: string;
+  suggestedAction?: string;
+}
+
+export interface PlatformCredential {
+  name: string;
+  source: "dashboard" | "environment" | "missing";
+  keyHint?: string;
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: { type: string; id: string };
+  lastTest?: { ok: boolean; at: string; detail?: string };
+}
+
+export interface WorkspaceMediaKeyTest {
+  vendor: string;
+  at: string;
+  verdict: "available" | "invalid" | "unverified";
+  httpStatus?: number;
+  note?: string;
+}
+
+export interface PlatformMediaKeyTest {
+  name: string;
+  at: string;
+  verdict: "available" | "invalid" | "unverified";
+  httpStatus?: number;
+  note?: string;
+}
+
+export interface PlatformMediaVendor {
+  vendor: string;
+  name: string;
+  keyName: string;
+  kinds: string[];
+  credential: PlatformCredential;
+  status: "configured" | "missing" | "unverified";
+}
+
+export type StorageProviderType = "cloudflare-r2" | "aws-s3" | "s3-compatible";
+
+/** `platform`: the operator's profiles; `workspace`: the session workspace's own (owners and admins). */
+export type StorageProfileScope = "platform" | "workspace";
+
+const profilesPath = (scope: StorageProfileScope, id?: string) =>
+  `${scope === "platform" ? "/api/platform" : "/api/workspace-storage"}/storage/profiles${
+    id === undefined ? "" : `/${encodeURIComponent(id)}`
+  }`;
+
+export interface StorageProfile {
+  id: string;
+  name: string;
+  /** `environment`: the S3_* settings; `platform`: a workspace following the platform choice. */
+  providerType: StorageProviderType | "environment" | "platform";
+  endpointHost?: string;
+  bucket?: string;
+  region: string;
+  forcePathStyle: boolean;
+  keyPrefix: string;
+  active: boolean;
+  accessKeyHint?: string;
+  secretHint?: string;
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: { type: string; id: string };
+  lastTest?: { ok: boolean; at: string; detail?: string };
+  references?: number;
+}
+
+export interface StorageProfileInput {
+  name: string;
+  providerType: StorageProviderType;
+  endpoint?: string;
+  bucket: string;
+  region: string;
+  forcePathStyle?: boolean;
+  keyPrefix?: string;
+  /** Required on create; on update both or neither (keep the stored pair). */
+  accessKeyId?: string;
+  secretAccessKey?: string;
+}
+
+export interface PlatformSettings {
+  /** Absent when profiles cannot be stored (no STUDIX_SECRETS_KEY). */
+  storageProfiles?: StorageProfile[];
+  storage: {
+    configured: boolean;
+    source: "dashboard" | "environment";
+    credentialStorage: "available" | "unavailable";
+    credential?: PlatformCredential;
+    endpointHost?: string;
+    bucket?: string;
+    region: string;
+    pathStyle: boolean;
+    signedUrlTtlSeconds: number;
+    accessKeyId?: string;
+    secretAccessKey: PlatformSecretStatus;
+    lastTest?: PlatformStorageTest;
+    changeNeedsRedeploy: boolean;
+  };
+  media: {
+    executable: "configured" | "missing";
+    path?: string;
+    homeEnvDisabled: boolean;
+    credentialStorage: "available" | "unavailable";
+    vendors: PlatformMediaVendor[];
+    lastCheck?: { at: string; state: string; reason?: string; code?: string };
+    apply: { keyChange: string; executableChange: string };
+    processNote: string;
+    /** The worker's own media report; absent when the app has no STUDIX_WORKER_HEALTH_URL. */
+    worker?: {
+      reachable: boolean;
+      report?: {
+        executable: "configured" | "missing";
+        state: string;
+        code?: string;
+        secretsKey: boolean;
+        vendors: Record<string, boolean>;
+      };
+      mismatches: string[];
+    };
+  };
+}
+
+export interface PlatformMediaTest {
+  ok: boolean;
+  at: string;
+  state: "ready" | "missing_executable" | "check_failed";
+  diagnosis: "ok" | "missing_executable" | "missing_credential" | "check_failed";
+  vendors: Array<{ vendor: string; keyName: string; hasKey: boolean }>;
+  reason?: string;
+  code?: string;
+  paidCalls: false;
+}
+
 export interface FeatureSwitch {
   enabled: boolean;
   /** `operator`: forced on by env; `workspace`: the owner's switch here; `off`. */
@@ -267,6 +530,19 @@ export interface ProviderConnectionList {
   canAddPersonalKey: boolean;
   connections: ProviderConnection[];
 }
+
+/** A ChatGPT device-code sign-in in progress: the user enters `userCode` at `verificationUrl`. */
+export interface ChatGptLoginStart {
+  flowToken: string;
+  userCode: string;
+  verificationUrl: string;
+  intervalSeconds: number;
+  expiresAt: string;
+}
+
+export type ChatGptLoginPoll =
+  | { status: "pending"; intervalSeconds: number }
+  | { status: "connected"; connection: ProviderConnection };
 
 export interface CatalogModel {
   id: string;
@@ -345,6 +621,23 @@ export interface CreateVideoRequest {
   budgetCents?: number;
   idempotencyKey?: string;
   planner?: PlannerSelection;
+  /** Runtime, paying connection, model and reasoning effort of the job's agent stages. */
+  agent?: {
+    runtime: AgentRuntimeName;
+    providerConnectionId: string;
+    model?: string;
+    reasoningEffort?: ReasoningEffort;
+  };
+  /** A workflow pack id (GET /api/workflow-packs); defaults to brand-intro. */
+  workflowTemplate?: string;
+  renderPreset?: "preview" | "final";
+}
+
+export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export interface WorkflowPackInfo {
+  id: string;
+  title: string;
 }
 
 export type ReviewStatus = "draft" | "in_review" | "approved" | "changes_requested";
@@ -404,6 +697,9 @@ export interface ReviewComment {
   targetId?: string;
   atMs?: number;
   endMs?: number;
+  annotation?: ReviewAnnotation;
+  /** Stored images left out of the review; image 0 is the snapshot. */
+  images?: number;
   createdAt: string;
 }
 
@@ -449,13 +745,129 @@ export interface StoryboardDecisionRequest {
   expectedRevision?: number;
 }
 
+export interface FramePoint {
+  x: number;
+  y: number;
+}
+
+/** Marks on a paused frame, as fractions (0 to 1) of its width and height. */
+export interface ReviewAnnotation {
+  intent?: "change" | "fix" | "remove" | "add" | "keep";
+  priority?: "must" | "should" | "nice";
+  frameMs?: number;
+  region?: FramePoint & { w: number; h: number };
+  pins?: Array<FramePoint & { label?: string }>;
+  strokes?: Array<{ tool: "pen" | "arrow"; points: FramePoint[] }>;
+  snapshot?: string;
+  references?: Array<{ url: string; note?: string }>;
+}
+
 export interface FeedbackRequest {
+  annotation?: ReviewAnnotation;
   shotId?: string;
   sceneId?: string;
   assetId?: string;
   startMs?: number;
   endMs?: number;
   comment: string;
+  /** Same key returns the stored comment, so a retried send never duplicates a note. */
+  idempotencyKey?: string;
+}
+
+export type SkillScope = "workspace" | "platform";
+export type SkillRiskLevel = "low" | "medium" | "high";
+
+export type SkillSource =
+  | { kind: "default" }
+  | { kind: "upload"; fileName: string | null }
+  | { kind: "github"; owner: string; repo: string; path: string; ref: string | null; url: string };
+
+export interface SkillListItem {
+  id: string;
+  name: string;
+  description: string;
+  status: "enabled" | "disabled";
+  scope: SkillScope;
+  activeVersionId: string | null;
+  source: SkillSource;
+  upstreamStatus: string;
+  activeRiskLevel: SkillRiskLevel | null;
+  manageable: boolean;
+  /** A platform skill this workspace turned off for itself. */
+  turnedOffHere?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillRiskFinding {
+  rule: string;
+  severity: SkillRiskLevel;
+  path: string;
+  excerpt: string;
+  line?: number;
+}
+
+export interface SkillVersionSummary {
+  id: string;
+  commitSha: string;
+  contentHash: string;
+  createdAt: string;
+  active: boolean;
+  riskLevel: SkillRiskLevel;
+}
+
+export interface SkillDetail {
+  skill: Omit<SkillListItem, "activeRiskLevel">;
+  version: SkillVersionSummary;
+  risk: { level: SkillRiskLevel; findings: SkillRiskFinding[]; truncated?: boolean; scannedAt: string };
+  content: { path: string; text?: string; binary?: true; bytes?: number; nextOffset?: number };
+  files: Array<{
+    path: string;
+    kind: string;
+    bytes: number;
+    stored: boolean;
+    binary?: boolean;
+    executable?: boolean;
+  }>;
+  license: { status: string; declared?: string; notice: string };
+  versions?: SkillVersionSummary[];
+}
+
+export interface SkillImportItem {
+  path: string;
+  outcome: string;
+  name?: string;
+  skillId?: string;
+  versionId?: string;
+  risk?: { level: SkillRiskLevel; findings: number };
+  riskConfirmationRequired?: boolean;
+  activationRequired?: boolean;
+  error?: { code: string; message: string };
+}
+
+async function uploadZip<T>(path: string, file: Blob): Promise<T> {
+  const headers: Record<string, string> = { accept: "application/json", "content-type": "application/zip" };
+  const workspace = selectedWorkspace();
+  if (workspace) headers[WORKSPACE_HEADER] = workspace;
+  let res: Response;
+  try {
+    res = await fetch(path, { method: "POST", headers, credentials: "same-origin", body: file });
+  } catch {
+    throw new ApiError(0, "NETWORK", "Cannot reach the Studix server. Check your connection and retry.");
+  }
+  const payload = (await res.json().catch(() => undefined)) as
+    | { error?: { code?: string; message?: string; suggestedAction?: string } }
+    | undefined;
+  if (!res.ok) {
+    const error = payload?.error ?? {};
+    throw new ApiError(
+      res.status,
+      error.code ?? `HTTP_${res.status}`,
+      error.message ?? res.statusText,
+      error.suggestedAction,
+    );
+  }
+  return payload as T;
 }
 
 const enc = encodeURIComponent;
@@ -510,6 +922,36 @@ export interface OAuthRedirect {
 }
 
 export const api = {
+  skills: (scope: SkillScope | "visible" = "visible") =>
+    request<{ items: SkillListItem[]; nextCursor?: string }>(
+      "GET",
+      `/api/skills?status=all&limit=100&scope=${scope}`,
+    ),
+  skill: (id: string, versionId?: string) =>
+    request<SkillDetail>("GET", `/api/skills/${enc(id)}${versionId ? `?versionId=${enc(versionId)}` : ""}`),
+  importSkills: (input: { repositoryUrl: string; ref?: string; path?: string; scope?: SkillScope }) =>
+    request<{ results: SkillImportItem[] }>("POST", "/api/skills/import", input),
+  uploadSkill: (
+    file: File,
+    options: { scope?: SkillScope; activate?: boolean; confirmHighRisk?: boolean },
+  ) => {
+    const query = new URLSearchParams({ fileName: file.name.slice(0, 200) });
+    if (options.scope) query.set("scope", options.scope);
+    if (options.activate) query.set("activate", "true");
+    if (options.confirmHighRisk) query.set("confirmHighRisk", "true");
+    return uploadZip<{ result: SkillImportItem }>(`/api/skills/upload?${query}`, file);
+  },
+  updateSkill: (
+    id: string,
+    input:
+      | { action: "check" }
+      | { action: "import"; activate?: boolean; confirmHighRisk?: boolean }
+      | { action: "activate"; versionId: string; confirmHighRisk?: boolean }
+      | { action: "enable"; confirmHighRisk?: boolean; workspaceOnly?: boolean },
+  ) => request<Record<string, unknown>>("POST", `/api/skills/${enc(id)}/update`, input),
+  disableSkill: (id: string, options: { workspaceOnly?: boolean } = {}) =>
+    request("POST", `/api/skills/${enc(id)}/disable`, options),
+  deleteSkill: (id: string) => request("DELETE", `/api/skills/${enc(id)}`),
   signIn: (email: string, password: string) =>
     request("POST", "/api/auth/sign-in/email", { email, password }),
   signUp: (name: string, email: string, password: string) =>
@@ -540,12 +982,21 @@ export const api = {
   decideStoryboard: (id: string, input: StoryboardDecisionRequest) =>
     request("POST", `/api/projects/${enc(id)}/storyboard/decision`, input),
   sendFeedback: (id: string, input: FeedbackRequest) =>
-    request("POST", `/api/projects/${enc(id)}/feedback`, input),
+    request<{ feedbackId: string; replayed: boolean }>("POST", `/api/projects/${enc(id)}/feedback`, input),
+  webmcpTools: <T>() => request<T>("GET", "/api/webmcp/tools"),
+  callWebmcpTool: <T>(name: string, args: unknown) =>
+    request<T>("POST", `/api/webmcp/tools/${enc(name)}`, args),
   renderProject: (id: string, input: { versionId?: string; renderPreset?: "preview" | "final" }) =>
     request<{ job: Job }>("POST", `/api/projects/${enc(id)}/render`, input),
   createVideo: (input: CreateVideoRequest) =>
     request<{ project: Project; job: Job; replayed: boolean }>("POST", "/api/projects", input),
-  jobs: () => request<Page<Job>>("GET", "/api/jobs?limit=50"),
+  /** `query` holds the `GET /api/jobs` sort/filter params (see JOB_LIST_PARAMS); `cursor` pages on. */
+  jobs: (query: URLSearchParams = new URLSearchParams(), cursor?: string) => {
+    const params = new URLSearchParams(query);
+    params.set("limit", "50");
+    if (cursor) params.set("cursor", cursor);
+    return request<Page<Job>>("GET", `/api/jobs?${params}`);
+  },
   job: (id: string) => request<{ job: Job; activity: ActivityEvent[] }>("GET", `/api/jobs/${enc(id)}`),
   cancelJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/cancel`, {}),
   retryJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/retry`, {}),
@@ -570,6 +1021,43 @@ export const api = {
     ),
   disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
   anthropicProvider: () => request<AnthropicProvider>("GET", "/api/providers/anthropic"),
+  platformSettings: () => request<PlatformSettings>("GET", "/api/platform/storage-media"),
+  testPlatformStorage: () => request<PlatformStorageTest>("POST", "/api/platform/storage/test", {}),
+  setPlatformStorageKey: (accessKeyId: string, secretAccessKey: string) =>
+    request<PlatformStorageTest>("PUT", "/api/platform/storage/key", { accessKeyId, secretAccessKey }),
+  revokePlatformStorageKey: () => request<void>("DELETE", "/api/platform/storage/key"),
+  listStorageProfiles: (scope: StorageProfileScope = "platform") =>
+    request<StorageProfile[]>("GET", profilesPath(scope)),
+  createStorageProfile: (input: StorageProfileInput, scope: StorageProfileScope = "platform") =>
+    request<StorageProfile>("POST", profilesPath(scope), input),
+  updateStorageProfile: (id: string, input: StorageProfileInput, scope: StorageProfileScope = "platform") =>
+    request<StorageProfile>("PUT", profilesPath(scope, id), input),
+  activateStorageProfile: (id: string, scope: StorageProfileScope = "platform") =>
+    request<StorageProfile>("POST", `${profilesPath(scope, id)}/activate`, {}),
+  testStorageProfile: (id: string, scope: StorageProfileScope = "platform") =>
+    request<PlatformStorageTest>("POST", `${profilesPath(scope, id)}/test`, {}),
+  deleteStorageProfile: (id: string, scope: StorageProfileScope = "platform") =>
+    request<void>("DELETE", profilesPath(scope, id)),
+  testPlatformMediaKey: (name: string) =>
+    request<PlatformMediaKeyTest>("POST", `/api/platform/media-keys/${enc(name)}/test`, {}),
+  testPlatformMedia: () => request<PlatformMediaTest>("POST", "/api/platform/media/test", {}),
+  setPlatformMediaKey: (name: string, value: string) =>
+    request<PlatformCredential>("PUT", `/api/platform/media-keys/${enc(name)}`, { value }),
+  revokePlatformMediaKey: (name: string) =>
+    request<PlatformCredential>("DELETE", `/api/platform/media-keys/${enc(name)}`),
+  workspaceMediaKeys: () => request<WorkspaceMediaKeys>("GET", "/api/providers/media-keys"),
+  setWorkspaceMediaKey: (vendor: string, apiKey: string) =>
+    request<WorkspaceMediaKey>("PUT", `/api/providers/media-keys/${enc(vendor)}`, { apiKey }),
+  removeWorkspaceMediaKey: (vendor: string) =>
+    request<WorkspaceMediaKey>("DELETE", `/api/providers/media-keys/${enc(vendor)}`),
+  testWorkspaceMediaKey: (vendor: string) =>
+    request<WorkspaceMediaKeyTest>("POST", `/api/providers/media-keys/${enc(vendor)}/test`, {}),
+  workspaceMultix: () => request<WorkspaceMultixSettings>("GET", "/api/providers/multix"),
+  updateWorkspaceMultix: (values: WorkspaceMultixValues) =>
+    request<WorkspaceMultixSettings>("PUT", "/api/providers/multix", values),
+  resetWorkspaceMultix: () => request<WorkspaceMultixSettings>("DELETE", "/api/providers/multix"),
+  checkWorkspaceMultix: () => request<WorkspaceMultixCheck>("POST", "/api/providers/multix/check", {}),
+  multixCatalog: () => request<MultixCatalog>("GET", "/api/providers/multix/catalog"),
   workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
   updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
     request<WorkspaceFeatures>("PUT", "/api/providers/features", patch),
@@ -583,6 +1071,7 @@ export const api = {
     request<ProviderConnection>("POST", `/api/providers/anthropic/api-keys/${enc(id)}/test`, {}),
   removeAnthropicKey: (id: string) =>
     request<ProviderConnection>("DELETE", `/api/providers/anthropic/api-keys/${enc(id)}`),
+  workflowPacks: () => request<{ packs: WorkflowPackInfo[] }>("GET", "/api/workflow-packs"),
   providerCatalog: () => request<{ providers: CatalogProvider[] }>("GET", "/api/providers/catalog"),
   providerConnections: () => request<ProviderConnectionList>("GET", "/api/providers/connections"),
   addProviderKey: (input: {
@@ -593,6 +1082,12 @@ export const api = {
   }) => request<ProviderConnection>("POST", "/api/providers/connections", input),
   replaceProviderKey: (id: string, apiKey: string) =>
     request<ProviderConnection>("PUT", `/api/providers/connections/${enc(id)}`, { apiKey }),
+  renameProviderConnection: (id: string, label: string) =>
+    request<ProviderConnection>("PATCH", `/api/providers/connections/${enc(id)}`, { label }),
+  startChatGptLogin: (owner: "workspace" | "user") =>
+    request<ChatGptLoginStart>("POST", "/api/providers/connections/chatgpt/start", { owner }),
+  pollChatGptLogin: (flowToken: string) =>
+    request<ChatGptLoginPoll>("POST", "/api/providers/connections/chatgpt/poll", { flowToken }),
   setProviderRuntimes: (id: string, runtimes: AgentRuntimeName[]) =>
     request<ProviderConnection>("PUT", `/api/providers/connections/${enc(id)}/runtimes`, { runtimes }),
   testProviderKey: (id: string) =>
@@ -605,4 +1100,101 @@ export const api = {
   removeModelPreference: (id: string) => request<void>("DELETE", `/api/providers/models/${enc(id)}`),
   modelPreview: (stage: string) =>
     request<ModelPreview>("GET", `/api/providers/models/preview?stage=${enc(stage)}`),
+  agentRuntimes: () => request<{ runtimes: AgentRuntimeInfo[] }>("GET", "/api/agent-runtimes"),
 };
+
+export interface AgentRuntimeInfo {
+  runtime: AgentRuntimeName;
+  connections: Array<{
+    providerConnectionId: string;
+    provider: string;
+    label: string;
+    owner: "workspace" | "user";
+    authMethod: string;
+    status: ProviderConnectionStatus;
+    models: Array<{ id: string; reasoning: boolean }>;
+  }>;
+}
+
+/** One live event of an agent run (`GET /api/jobs/:id/events`, `event: agent`). */
+export type AgentChatEvent = { stage: string | null; at: string } & (
+  | { type: "message" | "reasoning"; delta: string }
+  | { type: "tool_start"; id: string; name: string; args?: unknown }
+  | { type: "tool_end"; id: string; name: string; ok: boolean; result?: string }
+  | {
+      type: "usage";
+      turns: number;
+      inputTokens: number;
+      outputTokens: number;
+      costCents: number;
+      model?: string;
+    }
+  | {
+      type: "status";
+      status: "running" | "succeeded" | "failed";
+      runtime: string;
+      model?: string;
+      error?: string;
+    }
+  | { type: "artifact"; name: string; url?: string; contentType?: string }
+);
+
+export interface AgentJobStatus {
+  status: string;
+  stage: string | null;
+  progress: number;
+  spentCents: number;
+  budgetCents: number | null;
+  error: { code: string; message: string } | null;
+}
+
+export type AgentStreamMessage =
+  | { kind: "agent"; eventId: string; event: AgentChatEvent }
+  | { kind: "job"; job: AgentJobStatus }
+  | { kind: "end"; status: string };
+
+/**
+ * Follows a job's agent events over SSE with fetch (EventSource cannot send the workspace header). Resumes
+ * after `after`, the id of the last event already shown; resolves when the job ends or `signal` aborts.
+ */
+export async function streamAgentEvents(
+  jobId: string,
+  after: string | undefined,
+  onMessage: (message: AgentStreamMessage) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = { accept: "text/event-stream" };
+  const workspace = selectedWorkspace();
+  if (workspace) headers[WORKSPACE_HEADER] = workspace;
+  const query = after ? `?after=${enc(after)}` : "";
+  const res = await fetch(`/api/jobs/${enc(jobId)}/events${query}`, {
+    headers,
+    credentials: "same-origin",
+    signal,
+  });
+  if (!res.ok || !res.body) throw new ApiError(res.status, `HTTP_${res.status}`, "Cannot follow this run.");
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += value;
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let id = "";
+      let name = "message";
+      let data = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("id: ")) id = line.slice(4);
+        else if (line.startsWith("event: ")) name = line.slice(7);
+        else if (line.startsWith("data: ")) data += line.slice(6);
+      }
+      if (!data) continue;
+      const payload = JSON.parse(data);
+      if (name === "agent") onMessage({ kind: "agent", eventId: id, event: payload as AgentChatEvent });
+      else if (name === "job") onMessage({ kind: "job", job: payload as AgentJobStatus });
+      else if (name === "end") onMessage({ kind: "end", status: String(payload.status) });
+    }
+  }
+}

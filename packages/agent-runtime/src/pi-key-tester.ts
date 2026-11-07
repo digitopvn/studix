@@ -54,7 +54,10 @@ export function createPiKeyTester(options: PiKeyTesterOptions = {}) {
   const runtimeFor =
     options.runtimeFor ??
     ((binding: PiRunBinding) =>
-      createPiSdkAgentRuntime({ resolver: { resolve: async () => ({ bindings: [binding] }) } }));
+      createPiSdkAgentRuntime({
+        resolver: { resolve: async () => ({ bindings: [binding] }) },
+        turnRetry: false,
+      }));
   return {
     async test(apiKey: string, provider: string): Promise<PiKeyTestResult> {
       const started = Date.now();

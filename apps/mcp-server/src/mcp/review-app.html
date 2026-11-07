@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Studix review</title>
+<style>
+  :root { --bg: #fff; --fg: #16161a; --muted: #6b6b76; --line: #e3e3e8; --accent: #4f46e5; --chip: #f3f3f6; --bad: #b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141417; --fg: #ececf1; --muted: #9a9aa6; --line: #2c2c33; --chip: #1f1f25; --accent: #8b85ff; --bad: #ff8a80; } }
+  :root[data-theme="light"] { --bg: #fff; --fg: #16161a; --muted: #6b6b76; --line: #e3e3e8; --accent: #4f46e5; --chip: #f3f3f6; --bad: #b42318; }
+  :root[data-theme="dark"] { --bg: #141417; --fg: #ececf1; --muted: #9a9aa6; --line: #2c2c33; --chip: #1f1f25; --accent: #8b85ff; --bad: #ff8a80; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+  main { padding: 12px; display: grid; gap: 10px; }
+  header { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  h1 { font-size: 15px; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 2px 8px; font-size: 12px; color: var(--muted); }
+  .stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9; }
+  video { width: 100%; height: 100%; display: block; object-fit: contain; }
+  .overlay { position: absolute; inset: 0; cursor: crosshair; display: none; }
+  .marking .overlay { display: block; }
+  .box { position: absolute; border: 2px solid #ffd400; background: rgb(255 212 0 / 0.15); pointer-events: none; }
+  .empty { color: #bbb; display: grid; place-items: center; height: 100%; text-align: center; padding: 16px; }
+  .timeline { position: relative; height: 26px; display: flex; gap: 2px; }
+  .timeline button { flex: var(--w) 1 0; border: 0; border-radius: 4px; background: var(--chip); color: var(--muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 4px; cursor: pointer; }
+  .timeline button.on { background: var(--accent); color: #fff; }
+  .shots { display: grid; gap: 4px; max-height: 180px; overflow: auto; }
+  .shot { display: grid; grid-template-columns: 70px 1fr auto; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; background: none; color: inherit; text-align: left; font: inherit; }
+  .shot.on { border-color: var(--accent); }
+  .shot small { color: var(--muted); }
+  form { display: grid; gap: 6px; }
+  textarea { width: 100%; min-height: 56px; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .row .grow { flex: 1; color: var(--muted); font-size: 12px; min-width: 120px; }
+  button.act { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .notes { display: grid; gap: 4px; }
+  .note { font-size: 12px; padding: 4px 8px; background: var(--chip); border-radius: 6px; }
+  #status { font-size: 12px; color: var(--muted); min-height: 1em; }
+  #status.err { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <header><h1 id="title">Studix review</h1><span class="chip" id="jobStatus">waiting for result</span></header>
+  <div class="stage" id="stage">
+    <div class="empty" id="empty">The video appears here once the job has rendered.</div>
+    <video id="video" controls playsinline preload="metadata" hidden></video>
+    <div class="overlay" id="overlay"><div class="box" id="box" hidden></div></div>
+  </div>
+  <div class="timeline" id="timeline" aria-label="Storyboard timeline"></div>
+  <div class="shots" id="shots"></div>
+  <form id="noteForm">
+    <textarea id="comment" placeholder="Note at the current time: what should change?" maxlength="2000"></textarea>
+    <div class="row">
+      <span class="grow" id="target">At 0:00</span>
+      <button type="button" class="act" id="markBtn" title="Drag on the video to mark a region">Mark region</button>
+      <button type="button" class="act" id="rangeBtn" title="End the note's time range at the current time">Set end</button>
+      <button type="submit" class="act primary" id="addBtn">Send note</button>
+    </div>
+  </form>
+  <div class="notes" id="notes"></div>
+  <div class="row">
+    <button class="act" id="approveBtn" disabled>Approve</button>
+    <button class="act" id="renderBtn" disabled>Re-render</button>
+    <button class="act" id="refreshBtn" disabled>Refresh</button>
+    <button class="act" id="openBtn" disabled>Open in Studix</button>
+  </div>
+  <div id="status" role="status"></div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { projectId: null, jobId: null, review: null, shot: null, region: null, endMs: null, approval: null, reviewUrl: null };
+  const fmt = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  const say = (text, err) => { $("status").textContent = text || ""; $("status").className = err ? "err" : ""; };
+
+  // Host bridge: MCP Apps (postMessage JSON-RPC) or the OpenAI Apps SDK (window.openai).
+  let rpcId = 0;
+  const pending = new Map();
+  const post = (msg) => window.parent.postMessage({ jsonrpc: "2.0", ...msg }, "*");
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = ++rpcId;
+    pending.set(id, { resolve, reject });
+    post({ id, method, params });
+  });
+  const notify = (method, params) => post({ method, params });
+  const openai = () => window.openai;
+
+  async function callTool(name, args) {
+    const res = openai()?.callTool ? await openai().callTool(name, args) : await request("tools/call", { name, arguments: args });
+    const env = res?.structuredContent ?? (res?.content?.[0]?.text ? JSON.parse(res.content[0].text) : res);
+    if (!env || env.status === "error") throw Object.assign(new Error(env?.error?.message || "Tool call failed"), { code: env?.error?.code });
+    return env;
+  }
+  function openLink(url) {
+    if (openai()?.openExternal) openai().openExternal({ href: url });
+    else request("ui/open-link", { url }).catch(() => window.open(url, "_blank", "noopener"));
+  }
+
+  // Tool results: studix_create_video / studix_get_job envelopes (or the bare data).
+  async function onToolResult(result) {
+    const env = result?.structuredContent ?? result;
+    const data = env?.data ?? env;
+    if (!data) return;
+    state.jobId = data.jobId ?? data.id ?? state.jobId;
+    state.projectId = data.projectId ?? state.projectId;
+    state.reviewUrl = data.reviewUrl ?? state.reviewUrl;
+    const approve = (env?.next || []).find((n) => n.tool === "studix_approve");
+    state.approval = approve?.arguments?.approvalId ?? data.approval?.id ?? null;
+    $("jobStatus").textContent = [data.status, data.stage].filter(Boolean).join(" · ") || "unknown";
+    if (data.video?.url) showVideo(data.video.url);
+    await loadReview();
+  }
+
+  function showVideo(url) {
+    const v = $("video");
+    if (v.getAttribute("src") !== url) v.src = url;
+    v.hidden = false;
+    $("empty").hidden = true;
+  }
+
+  async function loadReview() {
+    if (!state.projectId) return;
+    ["approveBtn", "renderBtn", "refreshBtn", "openBtn"].forEach((id) => ($(id).disabled = false));
+    try {
+      const env = await callTool("studix_review", { projectId: state.projectId });
+      state.review = env.data;
+      state.reviewUrl = env.data.reviewUrl ?? state.reviewUrl;
+      if (!state.approval) state.approval = env.data.pendingApprovalId ?? null;
+      $("title").textContent = env.data.title || "Studix review";
+      if (env.data.video?.url) showVideo(env.data.video.url);
+      renderStoryboard();
+      renderNotes(env.data.notes || []);
+      say("");
+    } catch (e) { say(e.message, true); }
+  }
+
+  function shots() {
+    return (state.review?.storyboard?.scenes || []).flatMap((sc) => sc.shots.map((s) => ({ ...s, scene: sc.title })));
+  }
+  function renderStoryboard() {
+    const list = shots();
+    const total = state.review?.timeline?.durationMs || list.reduce((m, s) => Math.max(m, s.endMs), 1);
+    $("timeline").replaceChildren(...list.map((s) => {
+      const b = document.createElement("button");
+      b.style.setProperty("--w", String(Math.max(1, Math.round(((s.endMs - s.startMs) / total) * 100))));
+      b.textContent = s.description || s.id;
+      b.title = `${fmt(s.startMs)}–${fmt(s.endMs)} ${s.description || ""}`;
+      b.className = state.shot?.id === s.id ? "on" : "";
+      b.onclick = () => pickShot(s);
+      return b;
+    }));
+    $("shots").replaceChildren(...list.map((s) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = `shot${state.shot?.id === s.id ? " on" : ""}`;
+      b.innerHTML = `<small></small><span></span><small></small>`;
+      b.children[0].textContent = `${fmt(s.startMs)}–${fmt(s.endMs)}`;
+      b.children[1].textContent = s.description || s.script || s.id;
+      b.children[2].textContent = s.approval?.status || s.approval || "";
+      b.onclick = () => pickShot(s);
+      return b;
+    }));
+  }
+  function pickShot(s) {
+    state.shot = state.shot?.id === s.id ? null : s;
+    if (state.shot) { const v = $("video"); if (!v.hidden) v.currentTime = s.startMs / 1000; }
+    renderStoryboard();
+    updateTarget();
+  }
+  function renderNotes(notes) {
+    $("notes").replaceChildren(...notes.slice(0, 20).map((n) => {
+      const d = document.createElement("div");
+      d.className = "note";
+      d.textContent = `${n.startMs != null ? fmt(n.startMs) + " " : ""}${n.target ? "[" + n.target + "] " : ""}${n.comment}`;
+      return d;
+    }));
+  }
+
+  const nowMs = () => Math.round(($("video").currentTime || 0) * 1000);
+  function updateTarget() {
+    const parts = [state.shot ? `Shot ${state.shot.description || state.shot.id}` : `At ${fmt(nowMs())}${state.endMs != null ? "–" + fmt(state.endMs) : ""}`];
+    if (state.region) parts.push("region marked");
+    $("target").textContent = parts.join(" · ");
+  }
+  $("video").addEventListener("timeupdate", updateTarget);
+  $("rangeBtn").onclick = () => { state.endMs = nowMs(); updateTarget(); };
+
+  // Region marking: drag on the paused frame; coordinates are fractions of the frame.
+  $("markBtn").onclick = () => { $("video").pause(); $("stage").classList.toggle("marking"); };
+  let drag = null;
+  $("overlay").addEventListener("pointerdown", (e) => {
+    const r = $("overlay").getBoundingClientRect();
+    drag = { r, x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+    $("overlay").setPointerCapture(e.pointerId);
+  });
+  $("overlay").addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const x2 = Math.min(1, Math.max(0, (e.clientX - drag.r.left) / drag.r.width));
+    const y2 = Math.min(1, Math.max(0, (e.clientY - drag.r.top) / drag.r.height));
+    state.region = { x: Math.min(drag.x, x2), y: Math.min(drag.y, y2), w: Math.abs(x2 - drag.x), h: Math.abs(y2 - drag.y) };
+    const box = $("box");
+    Object.assign(box.style, { left: `${state.region.x * 100}%`, top: `${state.region.y * 100}%`, width: `${state.region.w * 100}%`, height: `${state.region.h * 100}%` });
+    box.hidden = false;
+  });
+  $("overlay").addEventListener("pointerup", () => { drag = null; $("stage").classList.remove("marking"); updateTarget(); });
+
+  $("noteForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const comment = $("comment").value.trim();
+    if (!comment || !state.projectId) return say(state.projectId ? "Write a note first." : "No project yet.", true);
+    const at = nowMs();
+    const args = { projectId: state.projectId, comment };
+    if (state.shot) args.shotId = state.shot.id;
+    else { args.startMs = state.endMs != null ? Math.min(at, state.endMs) : at; args.endMs = state.endMs != null ? Math.max(at, state.endMs) : at + 1000; }
+    const annotation = { frameMs: at };
+    if (state.region && state.region.w > 0.01 && state.region.h > 0.01) annotation.region = state.region;
+    args.annotation = annotation;
+    $("addBtn").disabled = true;
+    try {
+      await callTool("studix_feedback", args);
+      $("comment").value = ""; state.region = null; state.endMs = null; $("box").hidden = true;
+      say("Note sent.");
+      await loadReview();
+    } catch (err) { say(err.message, true); } finally { $("addBtn").disabled = false; }
+  };
+
+  $("approveBtn").onclick = async () => {
+    if (!state.approval) { say("Nothing is waiting for approval here; approve the storyboard in Studix."); return openLink(state.reviewUrl); }
+    try { await callTool("studix_approve", { approvalId: state.approval, decision: "approved" }); say("Approved."); state.approval = null; }
+    catch (err) {
+      if (err.code === "FORBIDDEN") { say("Only a signed-in person can approve: opening Studix."); openLink(state.reviewUrl); }
+      else say(err.message, true);
+    }
+  };
+  $("renderBtn").onclick = async () => {
+    try {
+      const env = await callTool("studix_render", { projectId: state.projectId });
+      state.jobId = env.data?.jobId ?? state.jobId;
+      $("jobStatus").textContent = "render queued";
+      say("Re-render queued. Use Refresh to see it.");
+      if (!openai()) request("ui/update-model-context", { content: [{ type: "text", text: `The user queued a re-render: job ${state.jobId}.` }] }).catch(() => {});
+    } catch (err) { say(err.message, true); }
+  };
+  $("refreshBtn").onclick = async () => {
+    if (!state.jobId) return loadReview();
+    try { await onToolResult(await callTool("studix_get_job", { jobId: state.jobId })); } catch (err) { say(err.message, true); }
+  };
+  $("openBtn").onclick = () => state.reviewUrl && openLink(state.reviewUrl);
+
+  function applyTheme(ctx) { if (ctx?.theme) document.documentElement.dataset.theme = ctx.theme; }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id != null && pending.has(msg.id) && !msg.method) {
+      const p = pending.get(msg.id); pending.delete(msg.id);
+      msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result);
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-result") onToolResult(msg.params);
+    else if (msg.method === "ui/notifications/host-context-changed") applyTheme(msg.params);
+    else if (msg.method === "ui/resource-teardown" && msg.id != null) post({ id: msg.id, result: {} });
+  });
+
+  new ResizeObserver(() => notify("ui/notifications/size-changed", { width: document.body.scrollWidth, height: document.body.scrollHeight })).observe(document.body);
+
+  if (openai()) {
+    applyTheme({ theme: openai().theme });
+    if (openai().toolOutput) onToolResult({ structuredContent: openai().toolOutput });
+    window.addEventListener("openai:set_globals", () => openai().toolOutput && onToolResult({ structuredContent: openai().toolOutput }));
+  } else {
+    request("ui/initialize", {
+      protocolVersion: "2026-01-26",
+      clientInfo: { name: "studix-review", version: "1" },
+      appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+    }).then((res) => { applyTheme(res?.hostContext); notify("ui/notifications/initialized", {}); })
+      .catch((err) => say(`Host did not answer: ${err.message}`, true));
+  }
+})();
+</script>
+</body>
+</html>

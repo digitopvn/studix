@@ -1,0 +1,10 @@
+{
+  "id": "peach-garden",
+  "description": "an endless peach-blossom garden on terraced hills, gnarled trunks, a pink canopy, misty mountains far away",
+  "light": "golden afternoon sun at upper right, warm rim light, soft blue sky fill",
+  "ground": "thick peach branches and grassy terraces",
+  "refs": ["bible/refs/peach-garden-establishing.png"],
+  "camera": "low-angle and three-quarter views with real perspective; never a flat side-on stage",
+  "layers": {"L1-base": "sky and far hills", "L2-mid": "middle trees", "L3-fg": "near branches"},
+  "weather": "petal"
+}

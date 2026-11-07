@@ -2,8 +2,9 @@ import { StudixError } from "@studix/shared";
 import type { z } from "zod";
 import { JOB_KINDS, type Job } from "../entities/job.ts";
 import type { ApprovalAction } from "../entities/review.ts";
+import type { UsageEvent } from "../entities/telemetry.ts";
 import type { TenantContext } from "../tenant.ts";
-import { toJobView } from "./job-view.ts";
+import { type JobSpendDetail, toJobView } from "./job-view.ts";
 import type { JobView, StudioDefaults, StudioServiceDeps } from "./studio-types.ts";
 
 /** Service dependencies with defaults resolved. */
@@ -45,5 +46,29 @@ export async function loadJobView(deps: ResolvedStudioDeps, ctx: TenantContext, 
       ? ((await deps.approvals.list(ctx, { subject, status: "pending", limit: 1 })).items[0] ??
         (await deps.approvals.findLatest(ctx, subject, gatingAction(job))))
       : undefined;
-  return toJobView(job, stages, approval);
+  return toJobView(job, stages, approval, await spendDetail(deps, ctx, job.id));
+}
+
+async function spendDetail(
+  deps: ResolvedStudioDeps,
+  ctx: TenantContext,
+  jobId: string,
+): Promise<JobSpendDetail | undefined> {
+  if (!deps.usage) return undefined;
+  const usage: UsageEvent[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await deps.usage.list(ctx, { jobId, limit: 100, cursor });
+    usage.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor);
+  const ids = new Set(
+    usage.flatMap((u) => (typeof u.metadata?.connectionId === "string" ? [u.metadata.connectionId] : [])),
+  );
+  const connectionLabels = new Map<string, string>();
+  for (const id of ids) {
+    const connection = await deps.providerConnections?.get(ctx, id).catch(() => undefined);
+    if (connection) connectionLabels.set(id, connection.label);
+  }
+  return { usage, connectionLabels };
 }

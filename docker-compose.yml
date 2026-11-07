@@ -109,6 +109,17 @@ services:
       app:
         condition: service_healthy
 
+  # Builds the skill sandbox image the worker starts per tool-using agent task (STUDIX_SANDBOX=docker).
+  # It is never run as a service: `docker compose --profile sandbox build sandbox-image`.
+  # See docs/decisions/0018-skill-sandbox.md.
+  sandbox-image:
+    profiles: ["sandbox"]
+    build:
+      context: .
+      dockerfile: docker/sandbox.Dockerfile
+    image: studix-sandbox:local
+    command: ["true"]
+
 volumes:
   postgres-data:
   minio-data:

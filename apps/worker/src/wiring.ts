@@ -8,17 +8,22 @@ import {
   type RendererAdapter,
   type StorageAdapter,
   storyboardStatus,
+  type TenantContext,
 } from "@studix/core";
 import { createRepositories, type StudixDb } from "@studix/database";
 import { type Clock, type Logger, systemClock } from "@studix/shared";
 import { packPipelines, packRegistry } from "@studix/skills";
 import {
+  type CompositionRunner,
+  createCompositionRunWorkflow,
   createJobExecutor,
+  createMediaExecWorkflow,
   createVideoCreateWorkflow,
   createVideoPublishWorkflow,
   createWorkerJobQueue,
   createWorkerPool,
   type JobOutcome,
+  type MediaExecRunner,
   type Planner,
   type QaGate,
   type SpeechProbe,
@@ -26,6 +31,18 @@ import {
   type WorkerPool,
   type WorkerPoolStatus,
 } from "@studix/workflow";
+
+/** What `/readyz` reports about media: presence only, never a key value, path or provider message. */
+export interface WorkerMediaStatus {
+  executable: "configured" | "missing";
+  state: "ready" | "missing_executable" | "check_failed";
+  /** Stable failure code (`ENOENT`, `NOT_SET`, a StudixError code) when `state` is not `ready`. */
+  code?: string;
+  /** Whether this worker can open dashboard-stored keys (STUDIX_SECRETS_KEY is set). */
+  secretsKey: boolean;
+  /** Per vendor: a key is present. All false unless `state` is `ready`. */
+  vendors: Record<string, boolean>;
+}
 
 /** Concrete adapters the worker runs stages with; supplied by the process entry (or tests). */
 export interface WorkerPorts {
@@ -36,15 +53,23 @@ export interface WorkerPorts {
   publisher?: PublisherAdapter;
   /** Optional: paid media for pack stages (frames, clips, voice, music). Without it those stages fail UNAVAILABLE. */
   media?: MediaProvider;
+  /** Optional: the media provider of one workspace's dashboard settings; falls back to `media`. */
+  mediaFor?: (ctx: TenantContext) => Promise<MediaProvider | undefined>;
   /** Optional: the hard QA gate pack stages run on a render. Without it those stages fail UNAVAILABLE. */
   qa?: QaGate;
   /** Optional: detects a human voice in a generated sound effect. Without it effects are not checked. */
   speech?: SpeechProbe;
+  /** Optional: safe media readiness (Multix executable and which vendor keys exist) reported by `/readyz`. */
+  mediaStatus?(): Promise<WorkerMediaStatus>;
   /**
    * Optional: the in-worker agent harness for an agent stage of a job. Without it agent stages run only in
    * host mode (the MCP client's agent completes them).
    */
   agentRuntimeFor?(stage: StageContext): AgentRuntime | undefined;
+  /** Optional: the sandbox of `media.exec` jobs (studix_media_exec). Without it those jobs fail UNAVAILABLE. */
+  mediaExec?: { runner: MediaExecRunner; centsPerMinute: number };
+  /** Optional: the skill sandbox of `composition.run` jobs. Without it those jobs fail UNAVAILABLE. */
+  compositionRun?: { runner: CompositionRunner; centsPerMinute: number };
   /** Release adapter resources (HTTP agents, clients) after the pool has drained. */
   close?(): Promise<void>;
 }
@@ -98,6 +123,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
     stageCache: repos.stageCache,
     storyboardStatus: (ctx, projectId) => storyboardStatus(repos, ctx, projectId),
     agents: { handoffs: repos.agentHandoffs, runtimeFor: deps.agentRuntimeFor },
+    ...(deps.mediaFor ? { mediaFor: deps.mediaFor } : {}),
     services: {
       media: deps.media,
       storage: deps.storage,
@@ -124,6 +150,14 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
         pipelines: packPipelines(packRegistry),
       }),
       createVideoPublishWorkflow({ renders: repos.renders, publisher: deps.publisher }),
+      createMediaExecWorkflow({
+        ...(deps.mediaExec ? { runner: deps.mediaExec.runner } : {}),
+        centsPerMinute: deps.mediaExec?.centsPerMinute ?? 0,
+      }),
+      createCompositionRunWorkflow({
+        ...(deps.compositionRun ? { runner: deps.compositionRun.runner } : {}),
+        centsPerMinute: deps.compositionRun?.centsPerMinute ?? 0,
+      }),
     ],
   });
   const pool: WorkerPool = createWorkerPool({

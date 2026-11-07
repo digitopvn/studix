@@ -7,11 +7,19 @@ import {
   type JobQueue,
   refersToProviderJob,
 } from "../ports/job-queue.ts";
+import {
+  compareJobs,
+  decodeJobCursor,
+  isAfterJobCursor,
+  jobMatches,
+  toJobPage,
+} from "../repositories/job-list-query.ts";
 import type {
   JobRepository,
   RenderRepository,
   WorkflowRunRepository,
 } from "../repositories/job-repository.ts";
+import { pageLimit } from "../repositories/pagination.ts";
 import { InMemoryTenantTable } from "./in-memory-table.ts";
 
 /** In-memory jobs: implements both the read/update repository and the producer-side queue. */
@@ -27,13 +35,16 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
       return jobs.filter(ctx, (j) => j.idempotencyKey === key)[0];
     },
     async list(ctx, query = {}) {
-      return jobs.page(
-        ctx,
-        query,
-        (j) =>
-          (query.projectId === undefined || j.projectId === query.projectId) &&
-          (query.status === undefined || j.status === query.status),
-      );
+      const limit = pageLimit(query.limit);
+      const sort = query.sort ?? "createdAt";
+      const order = query.order ?? "desc";
+      const compare = compareJobs(sort, order);
+      const after = query.cursor === undefined ? undefined : decodeJobCursor(query.cursor, sort);
+      const rows = jobs
+        .filter(ctx, (j) => jobMatches(j, query))
+        .sort(compare)
+        .filter((j) => !after || isAfterJobCursor(j, sort, order, after));
+      return toJobPage(rows.slice(0, limit + 1), limit, sort);
     },
     async update(ctx, id, patch, options = {}) {
       const current = jobs.require(ctx, id);
@@ -80,7 +91,7 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         runAfter: input.runAfter ?? clock.now(),
         idempotencyKey: input.idempotencyKey,
         cancelRequested: false,
-        ...(input.initialStatus === "waiting_approval" && input.deadlineAt
+        ...((input.initialStatus === "waiting_approval" || input.deadlineFromClaim) && input.deadlineAt
           ? { deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - clock.now().getTime()) }
           : { deadlineAt: input.deadlineAt }),
         deadlineWindowMs: input.deadlineAt

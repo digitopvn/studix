@@ -1,3 +1,4 @@
+import type { TenantContext } from "@studix/core";
 import {
   type AgentHandoffService,
   type AgentOutputValidator,
@@ -8,20 +9,33 @@ import type { createRepositories } from "@studix/database";
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import type { ActivityRecorder } from "@studix/observability";
 import { type Logger, type StudixConfig, StudixError } from "@studix/shared";
-import { listSkills, type PackRegistry, packRegistry } from "@studix/skills";
-import { createS3StorageAdapterFromConfig, type S3StorageAdapter } from "@studix/storage";
+import {
+  createExternalSkillService,
+  type ExternalSkillService,
+  listSkills,
+  type PackRegistry,
+  packRegistry,
+} from "@studix/skills";
+import {
+  createProfileStorageRouterFromConfig,
+  type ProfileStorageRouter,
+  type S3CredentialSource,
+  type StorageProfileEntry,
+} from "@studix/storage";
 import { createConnectorAdminAdapter } from "./connector-admin-adapter.ts";
 import { createGatewayMetaTools } from "./mcp/gateway-meta-tools.ts";
 import type { ConnectorAdmin, RegisterMetaTools, SkillSummary } from "./ports.ts";
 
 export interface Integrations {
-  /** Present when S3_BUCKET is configured; signs playback URLs. */
-  storage?: S3StorageAdapter;
+  /** Present when S3_BUCKET or storage profiles are configured; routes objects to their storage profile. */
+  storage?: ProfileStorageRouter;
   connectors: ConnectorAdmin;
   metaTools: RegisterMetaTools;
   skills: SkillSummary[];
   /** Host-agent handoff of agent stages (the studix_*_agent_task tools). */
   agentHandoffs: AgentHandoffService;
+  /** Imported GitHub skills (the studix_skill_* tools). */
+  externalSkills: ExternalSkillService;
 }
 
 /** Workflow templates from the skills registry, as advertised by `studix_inspect`. */
@@ -74,9 +88,24 @@ export function composeIntegrations(input: {
   approvalPolicy: ApprovalPolicy;
   activity: ActivityRecorder;
   logger: Logger;
+  /** The storage key pair to use right now (a dashboard-stored pair or the environment's), read live. */
+  storageCredentials?: S3CredentialSource;
+  /** Maps an operator context to the platform workspace, where platform skills live. */
+  platformContext?: (ctx: TenantContext) => Promise<TenantContext>;
+  /** Dashboard-managed storage profiles (needs STUDIX_SECRETS_KEY). */
+  storageProfiles?: { snapshot(): Promise<{ activeId: string; profiles: readonly StorageProfileEntry[] }> };
 }): Integrations {
   const { config, repos, logger } = input;
   const gatewayConfig = loadGatewayConfig(input.env);
+  const storage =
+    config.S3_BUCKET || input.storageProfiles
+      ? createProfileStorageRouterFromConfig(config, {
+          ...(input.storageCredentials ? { credentials: input.storageCredentials } : {}),
+          ...(input.storageProfiles ? { profiles: input.storageProfiles } : {}),
+          locate: (ctx, key) => repos.storageProfiles.locate(ctx, key),
+          logger: logger.child({ component: "storage" }),
+        })
+      : undefined;
   // The resolved public/app URLs (with their localhost defaults) are self origins too.
   const selfOrigins = [config.STUDIX_PUBLIC_URL, config.STUDIX_APP_URL].map((u) => new URL(u).origin);
   const gateway = createMcpGateway({
@@ -90,13 +119,20 @@ export function composeIntegrations(input: {
     logger: logger.child({ component: "mcp-gateway" }),
   });
   return {
-    ...(config.S3_BUCKET ? { storage: createS3StorageAdapterFromConfig(config) } : {}),
+    ...(storage ? { storage } : {}),
     connectors: createConnectorAdminAdapter({ admin: gateway.connectors, connectors: repos.connectors }),
     metaTools: createGatewayMetaTools(gateway),
     skills: skillSummaries(),
     agentHandoffs: createAgentHandoffService({
       handoffs: repos.agentHandoffs,
       validateOutput: packStageOutputValidator(),
+    }),
+    externalSkills: createExternalSkillService({
+      repository: repos.externalSkills,
+      storage,
+      githubToken: config.STUDIX_GITHUB_TOKEN,
+      ...(input.platformContext ? { platformContext: input.platformContext } : {}),
+      logger: logger.child({ component: "external-skills" }),
     }),
   };
 }

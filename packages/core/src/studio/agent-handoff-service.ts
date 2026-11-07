@@ -2,6 +2,7 @@ import { redactDeep, StudixError } from "@studix/shared";
 import { contentDigest } from "@studix/video-ir";
 import { z } from "zod";
 import type { AgentHandoff, AgentHandoffStatus, AgentStageLimits } from "../entities/agent-handoff.ts";
+import { REASONING_EFFORTS } from "../entities/model-preference.ts";
 import type {
   AgentHandoffRejection,
   AgentHandoffRepository,
@@ -71,6 +72,8 @@ const ReportedUsage = z
       .string()
       .regex(/^[\w.:@/-]{1,100}$/)
       .optional(),
+    /** Thinking level the host ran the model at; the MCP tool checks it against the model's catalog entry. */
+    reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
   })
   .strict();
 

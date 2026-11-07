@@ -41,13 +41,18 @@ const UNAVAILABLE_HTML = `<!doctype html>
  * a CSP, and the SPA shell for any other browser navigation outside the reserved prefixes. When the build is
  * missing, navigations get a small 503 page instead of "Cannot GET /".
  */
-export function mountDashboardStatic(app: Express, options: { dist?: string; mediaOrigins: string[] }): void {
+export function mountDashboardStatic(
+  app: Express,
+  options: { dist?: string; mediaOrigins: string[] | (() => string[]) },
+): void {
   const dist = options.dist;
   const indexPath = dist ? join(dist, "index.html") : undefined;
-  const csp = dashboardCsp(options.mediaOrigins);
+  // Storage profiles can change while the app runs, so their media origins are read per response.
+  const origins = options.mediaOrigins;
+  const csp = () => dashboardCsp(typeof origins === "function" ? origins() : origins);
   const hasBuild = () => indexPath !== undefined && existsSync(indexPath);
   const htmlHeaders = (res: Response) => {
-    res.set({ "Cache-Control": "no-cache", "Content-Security-Policy": csp });
+    res.set({ "Cache-Control": "no-cache", "Content-Security-Policy": csp() });
   };
 
   const assets = dist

@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
   },
   "dependencies": {
     "@studix/billing": "workspace:*",
@@ -13,10 +14,12 @@
     "@studix/shared": "workspace:*",
     "@studix/video-ir": "workspace:*",
     "@studix/workflow": "workspace:*",
+    "yaml": "2.9.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@studix/providers": "workspace:*",
+    "@studix/storage": "workspace:*",
     "vitest": "5.0.5"
   }
 }

@@ -38,6 +38,10 @@ export interface TenantDirectory {
   listMemberships(
     userId: string,
   ): Promise<Array<{ member: Member; organization: Organization; workspace: Workspace }>>;
+  /** A workspace and its organization by id (the operator's platform workspace at startup). */
+  findWorkspace(
+    workspaceId: string,
+  ): Promise<{ organization: Organization; workspace: Workspace } | undefined>;
 }
 
 export interface NewApiKeyInput {

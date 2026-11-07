@@ -349,6 +349,17 @@ người ký trên dashboard.
 Script smoke [`smoke-video.ts`](../apps/mcp-server/scripts/smoke-video.ts) chỉ gọi pack mặc định
 (`brand-intro`) với một prompt; nó không thay cho ba mẫu trên.
 
+## Pack `skill-agent`
+
+Agent của job (Claude Code, Pi hoặc Codex) tự dựng và render video trong skill sandbox, theo đúng
+SKILL.md của skill được bật. Studix chỉ đặt contract đầu ra (1080p, thời lượng ±0.5 s, có voice-over,
+-16 LUFS ±2, true peak ≤ -1 dBTP) và kiểm lại file trước khi lưu; file sai contract làm job lỗi
+`VALIDATION`. Cần `STUDIX_SANDBOX=docker`. Stage chỉ giữ trước tối đa phần budget còn lại của job (cap 800¢), nên
+budget nhỏ hơn chỉ giới hạn lượt chạy chứ không làm job fail. Deadline mặc định là 60 phút, tính từ lúc worker
+nhận job. Model không có vision được gợi ý soát khung hình bằng `multix gemini analyze` khi sandbox có
+`GEMINI_API_KEY`. Quyết định ở
+[ADR-0022](decisions/0022-agentic-video-authoring.md).
+
 ## Giới hạn của QA gate
 
 Stage `<pack>.qa` chỉ đo thông số kỹ thuật của file render và không chấm thẩm mỹ. Phạm vi và giới hạn

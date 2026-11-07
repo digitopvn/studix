@@ -1,0 +1,276 @@
+{
+  "cues": [
+    {
+      "id": "FX_UMBRELLA_SNAP",
+      "stem": "FX",
+      "scene_id": "S01",
+      "start": 9.2,
+      "duration": 0.6,
+      "status": "temp",
+      "file": "audio/sfx/FX_UMBRELLA_SNAP.wav",
+      "sync_event": {
+        "shot_id": "S01_SH002",
+        "description": "umbrella canopy snaps shut at the door"
+      }
+    },
+    {
+      "id": "AMB_RAIN_STREET",
+      "stem": "AMB",
+      "scene_id": "S01",
+      "start": 0,
+      "duration": 11,
+      "status": "temp",
+      "file": "audio/ambience/AMB_RAIN_STREET.wav",
+      "loop": true
+    },
+    {
+      "id": "MX_01_MAIN",
+      "stem": "MX",
+      "scene_id": "S01",
+      "start": 0,
+      "duration": 11,
+      "status": "temp",
+      "file": "audio/music/MX_01_MAIN.wav",
+      "theme": "THEME_A_MAIN",
+      "direction": "solo piano, sparse"
+    },
+    {
+      "id": "DX_LINH_001",
+      "stem": "DX",
+      "scene_id": "S02",
+      "start": 2.5,
+      "duration": 1.2,
+      "status": "master",
+      "file": "audio/dialogue/DX_LINH_001.wav",
+      "character": "LINH_01",
+      "text": "You came.",
+      "alignment": "audio/alignment/DX_LINH_001.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "DX_MAI_001",
+      "stem": "DX",
+      "scene_id": "S02",
+      "start": 5.6,
+      "duration": 4.8,
+      "status": "master",
+      "file": "audio/dialogue/DX_MAI_001.wav",
+      "character": "MAI_01",
+      "text": "I said I would. I always do, eventually.",
+      "alignment": "audio/alignment/DX_MAI_001.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "DX_MAI_002",
+      "stem": "DX",
+      "scene_id": "S02",
+      "start": 12.3,
+      "duration": 1.5,
+      "status": "master",
+      "file": "audio/dialogue/DX_MAI_002.wav",
+      "character": "MAI_01",
+      "text": "Even when it rains.",
+      "alignment": "audio/alignment/DX_MAI_002.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "DX_LINH_002",
+      "stem": "DX",
+      "scene_id": "S02",
+      "start": 16.4,
+      "duration": 4.2,
+      "status": "master",
+      "file": "audio/dialogue/DX_LINH_002.wav",
+      "character": "LINH_01",
+      "text": "Three years, Mai. Three years of eventually.",
+      "alignment": "audio/alignment/DX_LINH_002.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "DX_LINH_003",
+      "stem": "DX",
+      "scene_id": "S02",
+      "start": 21.6,
+      "duration": 3.0,
+      "status": "master",
+      "file": "audio/dialogue/DX_LINH_003.wav",
+      "character": "LINH_01",
+      "text": "I kept your seat warm the whole time.",
+      "alignment": "audio/alignment/DX_LINH_003.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "DX_MAI_003",
+      "stem": "DX",
+      "scene_id": "S02",
+      "start": 29.8,
+      "duration": 2.4,
+      "status": "master",
+      "file": "audio/dialogue/DX_MAI_003.wav",
+      "character": "MAI_01",
+      "text": "Then let me buy the next one.",
+      "alignment": "audio/alignment/DX_MAI_003.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "FX_CUP_LIFT",
+      "stem": "FX",
+      "scene_id": "S02",
+      "start": 23.0,
+      "duration": 0.5,
+      "status": "temp",
+      "file": "audio/sfx/FX_CUP_LIFT.wav",
+      "sync_event": {
+        "shot_id": "S02_SH005",
+        "description": "cup separates from the saucer"
+      }
+    },
+    {
+      "id": "AMB_CAFE_ROOM",
+      "stem": "AMB",
+      "scene_id": "S02",
+      "start": 0,
+      "duration": 35,
+      "status": "temp",
+      "file": "audio/ambience/AMB_CAFE_ROOM.wav",
+      "loop": true
+    },
+    {
+      "id": "MX_02_TENSION",
+      "stem": "MX",
+      "scene_id": "S02",
+      "start": 14.0,
+      "duration": 11.0,
+      "status": "temp",
+      "file": "audio/music/MX_02_TENSION.wav",
+      "theme": "THEME_A_TENSION",
+      "direction": "low strings under Linh's lines; out before 'warm the whole time' ends"
+    },
+    {
+      "id": "DX_LINH_004",
+      "stem": "DX",
+      "scene_id": "S03",
+      "start": 1.0,
+      "duration": 1.6,
+      "status": "master",
+      "file": "audio/dialogue/DX_LINH_004.wav",
+      "character": "LINH_01",
+      "text": "It stopped raining.",
+      "alignment": "audio/alignment/DX_LINH_004.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "DX_MAI_004",
+      "stem": "DX",
+      "scene_id": "S03",
+      "start": 6.5,
+      "duration": 1.4,
+      "status": "master",
+      "file": "audio/dialogue/DX_MAI_004.wav",
+      "character": "MAI_01",
+      "text": "It always does.",
+      "alignment": "audio/alignment/DX_MAI_004.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "DX_MAI_005",
+      "stem": "DX",
+      "scene_id": "S03",
+      "start": 10.0,
+      "duration": 1.8,
+      "status": "master",
+      "file": "audio/dialogue/DX_MAI_005.wav",
+      "character": "MAI_01",
+      "text": "Same time next week?",
+      "alignment": "audio/alignment/DX_MAI_005.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "DX_LINH_005",
+      "stem": "DX",
+      "scene_id": "S03",
+      "start": 12.4,
+      "duration": 2.2,
+      "status": "master",
+      "file": "audio/dialogue/DX_LINH_005.wav",
+      "character": "LINH_01",
+      "text": "Don't make me wait three years.",
+      "alignment": "audio/alignment/DX_LINH_005.json",
+      "cost": {
+        "amount": 0.05,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "FX_FOOTSTEPS_WET",
+      "stem": "FX",
+      "scene_id": "S03",
+      "start": 6.0,
+      "duration": 3.0,
+      "status": "temp",
+      "file": "audio/sfx/FX_FOOTSTEPS_WET.wav",
+      "sync_event": {
+        "shot_id": "S03_SH002",
+        "description": "first footstep lands beside the puddle"
+      }
+    },
+    {
+      "id": "AMB_STREET_DRIPS",
+      "stem": "AMB",
+      "scene_id": "S03",
+      "start": 0,
+      "duration": 22,
+      "status": "temp",
+      "file": "audio/ambience/AMB_STREET_DRIPS.wav",
+      "loop": true
+    },
+    {
+      "id": "MX_03_EMOTIONAL",
+      "stem": "MX",
+      "scene_id": "S03",
+      "start": 9.0,
+      "duration": 13.0,
+      "status": "temp",
+      "file": "audio/music/MX_03_EMOTIONAL.wav",
+      "theme": "THEME_A_EMOTIONAL",
+      "direction": "main motif restated, warmer"
+    }
+  ]
+}

@@ -1,5 +1,12 @@
 import { join } from "node:path";
-import { createMultixProviderFromConfig } from "@studix/providers";
+import {
+  createPlatformCredentialService,
+  createSecretBox,
+  type PlatformCredentialService,
+  parseSecretKey,
+} from "@studix/auth";
+import { createRepositories } from "@studix/database";
+import { createWorkspaceMultixProviders, MULTIX_KEY_NAMES } from "@studix/providers";
 import {
   assertSpeechProbeReady,
   createHardQaGate,
@@ -10,6 +17,7 @@ import {
 import { StudixError, toStudixError } from "@studix/shared";
 import { knowledgeCatalog } from "@studix/skills";
 import type { WorkerPorts } from "./wiring.ts";
+import { providerConnections } from "./worker-ports.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
 
@@ -17,6 +25,41 @@ import type { WorkerSettings } from "./worker-settings.ts";
 const QA_TOOL_TIMEOUT_MS = 120_000;
 /** Longest the speech check may take on one sound effect (a few seconds of audio plus loading the model). */
 const SPEECH_TOOL_TIMEOUT_MS = 60_000;
+
+/** The dashboard-managed vendor keys, or undefined without STUDIX_SECRETS_KEY (nothing can be stored then). */
+export function platformCredentials(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+): PlatformCredentialService | undefined {
+  const { config } = settings;
+  const repos = createRepositories(runtime.db);
+  if (!config.STUDIX_SECRETS_KEY) {
+    // The app may hold keys an operator set in the dashboard; without the master key this worker cannot open them.
+    void repos.platformCredentials.list().then(
+      (rows) => {
+        if (rows.length > 0) {
+          runtime.logger.warn(
+            "dashboard-stored media keys exist but STUDIX_SECRETS_KEY is not set on the worker; they are ignored here",
+            { count: rows.length },
+          );
+        }
+      },
+      () => {},
+    );
+    return undefined;
+  }
+  return createPlatformCredentialService({
+    credentials: repos.platformCredentials,
+    audit: repos.audit,
+    secrets: createSecretBox(
+      parseSecretKey(config.STUDIX_SECRETS_KEY),
+      config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+    ),
+    allowedNames: Object.values(MULTIX_KEY_NAMES),
+    env: runtime.env,
+    logger: runtime.logger,
+  });
+}
 
 /**
  * The media provider and QA gate pack stages run with. Multix stays disabled (every paid stage fails
@@ -26,9 +69,24 @@ const SPEECH_TOOL_TIMEOUT_MS = 60_000;
 export async function loadPackServices(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
-): Promise<Pick<WorkerPorts, "media" | "qa" | "speech">> {
+): Promise<Pick<WorkerPorts, "media" | "mediaFor" | "qa" | "speech" | "mediaStatus">> {
   const { config } = settings;
-  const media = createMultixProviderFromConfig(config, { env: runtime.env });
+  const credentials = platformCredentials(settings, runtime);
+  const workspaceKeys = providerConnections(settings, runtime);
+  const multixSettings = createRepositories(runtime.db).workspaceMultixSettings;
+  const providers = createWorkspaceMultixProviders({
+    config,
+    options: {
+      env: runtime.env,
+      // Vendor keys an operator set in the dashboard apply to the next Multix call, with no restart.
+      ...(credentials ? { credentials: () => credentials.loadValues() } : {}),
+      // A workspace's own vendor keys (BYOK) win for that workspace's media calls only.
+      ...(workspaceKeys ? { workspaceCredentials: (ctx) => workspaceKeys.resolveMediaKeys(ctx) } : {}),
+    },
+    // Models, voice routes, the switch and the timeout a workspace saved in the dashboard win over MULTIX_*.
+    load: (ctx) => multixSettings.get(ctx),
+  });
+  const media = providers.server;
   const toolchain = resolveQaToolchain(runtime.env);
   const qaStatus = qaToolchainStatus(toolchain, runtime.env);
   if (!qaStatus.ok) {
@@ -78,6 +136,17 @@ export async function loadPackServices(
   }
   return {
     media,
+    mediaStatus: async () => {
+      const diagnosis = await media.diagnose();
+      return {
+        executable: config.MULTIX_BIN ? "configured" : "missing",
+        state: diagnosis.state,
+        ...(diagnosis.state === "ready" || !diagnosis.code ? {} : { code: diagnosis.code }),
+        secretsKey: Boolean(config.STUDIX_SECRETS_KEY),
+        vendors: { ...diagnosis.vendors },
+      };
+    },
+    mediaFor: (ctx) => providers.forWorkspace(ctx),
     ...(speech ? { speech } : {}),
     qa: createHardQaGate({
       run: {

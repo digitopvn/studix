@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "common.schema.json",
+  "title": "Shared production-graph definitions",
+  "$defs": {
+    "asset_id": {
+      "description": "Stable canonical ID: uppercase letters, digits and underscores.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*[A-Z0-9]$"
+    },
+    "scene_id": {"type": "string", "pattern": "^S[0-9]{2,3}$"},
+    "shot_id": {"type": "string", "pattern": "^S[0-9]{2,3}_SH[0-9]{3}$"},
+    "relative_path": {
+      "description": "Path relative to the film root; never absolute and never climbing out of it.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!.*[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029])(?![/\\\\])(?![A-Za-z]:)(?!.*(^|[/\\\\])\\.\\.([/\\\\]|$)).+$"
+    },
+    "seconds": {"type": "number", "minimum": 0},
+    "cost": {
+      "description": "Observed or estimated spend. The source names the evidence (invoice, usage export, dated pricing page); never a remembered price.",
+      "type": "object",
+      "required": ["amount", "currency", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "reference_image": {
+      "description": "One image in a bible reference pack. Only canonical images may condition production shots.",
+      "type": "object",
+      "required": ["id", "view", "path", "status", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/asset_id"},
+        "view": {
+          "type": "string",
+          "enum": ["front", "three_quarter_left", "three_quarter_right", "profile", "full_body", "back", "expression", "detail", "wide", "angle"]
+        },
+        "expression": {"type": "string", "minLength": 1},
+        "path": {"$ref": "#/$defs/relative_path"},
+        "status": {"type": "string", "enum": ["canonical", "candidate", "retired"]},
+        "version": {"type": "integer", "minimum": 1},
+        "promoted_from": {
+          "description": "Generation or candidate this canonical image was promoted from, recorded by the explicit promotion step.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

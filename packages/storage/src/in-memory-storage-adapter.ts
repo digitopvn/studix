@@ -1,5 +1,6 @@
 import type {
   PutObjectOptions,
+  SignedUploadUrlOptions,
   SignedUrlOptions,
   StorageAdapter,
   StorageBody,
@@ -105,6 +106,16 @@ export class InMemoryStorageAdapter implements StorageAdapter {
     const url = new URL(`memory://storage/${objectKey}`);
     url.searchParams.set("expires", String(expires));
     if (options.downloadName) url.searchParams.set("download", options.downloadName);
+    return url.toString();
+  }
+
+  async signedUploadUrl(ctx: TenantContext, key: string, options: SignedUploadUrlOptions): Promise<string> {
+    const objectKey = resolveTenantKey(ctx, key);
+    assertContentType(options.contentType);
+    const ttl = resolveSignedUrlTtl(options.expiresInSeconds, this.policy);
+    const expires = Math.floor(this.clock.now().getTime() / 1000) + ttl;
+    const url = new URL(`memory://upload/${objectKey}`);
+    url.searchParams.set("expires", String(expires));
     return url.toString();
   }
 

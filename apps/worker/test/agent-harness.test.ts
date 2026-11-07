@@ -32,6 +32,18 @@ const stage = createAgentStage({
   limits: { maxTurns: 4, maxTokens: 400_000, maxCostCents: 80, timeoutMs: 30_000 },
 });
 
+/** The same stage asking for sandbox tools, as the skill-agent run stage does. */
+const toolStage = createAgentStage({
+  name: STAGE,
+  version: 1,
+  inputSchema: z.object({ topic: z.string() }),
+  outputSchema: z.object({ title: z.string() }),
+  instructions: "Write a title for the topic.",
+  taskInput: (input) => ({ topic: input.topic }),
+  limits: { maxTurns: 4, maxTokens: 400_000, maxCostCents: 80, timeoutMs: 30_000 },
+  tools: [{ name: "bash", description: "Sandbox bash", inputSchema: { type: "object" } }],
+});
+
 let server: Server;
 let baseUrl = "";
 const seenAuth: Array<string | undefined> = [];
@@ -104,6 +116,7 @@ function createWorld(
     payload?: Record<string, unknown>;
     spentCents?: number;
     executionsDown?: boolean;
+    tools?: boolean;
   } = {},
 ) {
   const ctx: TenantContext = testTenant();
@@ -148,6 +161,7 @@ function createWorld(
     },
   };
   const transport = createFakeClaudeTransport(() => options.transcript ?? []);
+  const sandboxRuns: Array<{ model: string; reasoningEffort?: string }> = [];
   const harness = createWorkerAgentHarness({
     credentials,
     preferences: {
@@ -167,7 +181,30 @@ function createWorld(
           },
         }
       : usage,
-    ...(options.claude === false ? {} : { claude: { transport, plannerModel: "claude-planner-model" } }),
+    ...(options.claude === false
+      ? {}
+      : {
+          claude: {
+            transport,
+            plannerModel: "claude-planner-model",
+            sandboxRuntimeFor: (o) => {
+              sandboxRuns.push(o);
+              return {
+                id: "claude-code-sandbox",
+                async run() {
+                  return {
+                    output: { title: "Cà phê" },
+                    turns: 1,
+                    inputTokens: 1,
+                    outputTokens: 1,
+                    costCents: 3,
+                  };
+                },
+              };
+            },
+          },
+        }),
+    piWorkspace: () => ({ open: async () => ({}) }) as never,
     logger,
     // The real Pi SDK runtime, pointed at the fake endpoint with a declared price ($1/M in, $2/M out).
     piRuntimeFor: (resolved: PiResolvedRun) =>
@@ -224,10 +261,10 @@ function createWorld(
       grantedOverruns: async () => 0,
       consumeOverrun: async () => {},
     };
-    return stage.run(sctx);
+    return (options.tools ? toolStage : stage).run(sctx);
   };
   const executions = async () => (await usage.listProviderExecutions(ctx, { jobId: job.id })).items;
-  return { run, executions, transport, pinned, preferences, rejected, harness };
+  return { run, executions, transport, pinned, preferences, rejected, harness, sandboxRuns };
 }
 
 const claudeTurn = (costUsd: number): ClaudeAgentEvent[] => [
@@ -383,6 +420,27 @@ describe("worker agent harness", () => {
       credential: ANTHROPIC_KEY,
       model: "claude-planner-model",
     });
+  });
+
+  it("forwards a Claude agent's model and effort, and runs a tool-using task in the sandbox", async () => {
+    const agent = {
+      runtime: "claude",
+      connectionId: "pcon_claude",
+      provider: "anthropic",
+      modelId: "claude-opus-test",
+      reasoningEffort: "xhigh",
+    };
+    const payload = { planner: { runtime: "claude", providerConnectionId: "pcon_claude" }, agent };
+    const plain = createWorld({ payload, transcript: claudeTurn(0.02) });
+    await plain.run();
+    expect(plain.transport.requests[0]).toMatchObject({ model: "claude-opus-test", effort: "xhigh" });
+    expect(plain.sandboxRuns).toEqual([]);
+
+    const tools = createWorld({ payload, tools: true });
+    const result = await tools.run();
+    expect(agentLine(result.usage).costCents).toBeCloseTo(3);
+    expect(tools.sandboxRuns[0]).toMatchObject({ model: "claude-opus-test", reasoningEffort: "xhigh" });
+    expect(tools.transport.requests).toEqual([]);
   });
 
   it("fails UNAVAILABLE without a chosen model, and never pays for anything", async () => {

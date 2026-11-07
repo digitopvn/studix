@@ -1,0 +1,10 @@
+{
+ "mode": "recording",
+ "scenes": [
+  { "id": "s001-hook", "type": "title", "shot": "close · push-in", "title": "Ba lỗi khiến video tốn gấp đôi", "from": "g001", "to": "g002" },
+  { "id": "s002-problem", "type": "list", "shot": "wide · hold", "title": "Quay trước, nghĩ sau", "from": "g003", "to": "g006" },
+  { "id": "s003-cost", "type": "stat", "shot": "medium · slow zoom", "title": "Gấp đôi thời gian dựng", "from": "g007", "to": "g009" },
+  { "id": "s004-fix", "type": "steps", "title": "Viết kịch bản theo cảnh", "from": "g010", "to": "g014" },
+  { "id": "s005-cta", "type": "outro", "shot": "close · hold", "from": "g016", "to": "g018" }
+ ]
+}

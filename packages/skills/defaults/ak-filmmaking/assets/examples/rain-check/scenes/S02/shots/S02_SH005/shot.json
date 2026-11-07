@@ -1,0 +1,74 @@
+{
+  "shot_id": "S02_SH005",
+  "scene_id": "S02",
+  "shot_type": "insert",
+  "lens": "100mm macro",
+  "camera": "static",
+  "action": "Linh's hand lifts the chipped cup off its saucer and holds it, not drinking.",
+  "emotion": "restraint",
+  "duration_target": 3,
+  "characters": [],
+  "location": "CAFE_INTERIOR_01",
+  "wardrobe": {},
+  "props": [
+    "COFFEE_CUP_01"
+  ],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "PROP_COFFEE_CUP_01",
+    "LOC_CAFE_TABLE"
+  ],
+  "continuity_from": "S02_SH004",
+  "continuity_to": "S02_SH006",
+  "continuity": {
+    "screen_positions": {},
+    "prop_states": {
+      "COFFEE_CUP_01": "LINH_01:right_hand"
+    },
+    "conditions": {},
+    "screen_direction": "static"
+  },
+  "continuity_changes": [
+    {
+      "field": "prop_states.COFFEE_CUP_01",
+      "reason": "Linh lifts the cup as she speaks the last line."
+    }
+  ],
+  "render_class": "CHEAP_BROLL",
+  "retry_budget": 1,
+  "estimate": {
+    "generation_seconds": 6,
+    "cost": {
+      "amount": 1.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "APPROVED",
+  "storyboard": {
+    "path": "storyboard/S02_SH005.png",
+    "status": "approved"
+  },
+  "generations": [
+    {
+      "id": "GEN_S02_SH005_01",
+      "prompt_version": 1,
+      "provider": "example-provider",
+      "model": "example-video-model",
+      "seed": 1001,
+      "output": "scenes/S02/shots/S02_SH005/generations/01.mp4",
+      "seconds": 3,
+      "status": "selected",
+      "cost": {
+        "amount": 0.6,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    }
+  ],
+  "qc": {
+    "status": "passed",
+    "failures": []
+  }
+}

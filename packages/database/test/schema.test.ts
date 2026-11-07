@@ -11,6 +11,10 @@ const GLOBAL_TABLES = new Set([
   "auth_accounts",
   "auth_verifications",
   "rate_limit_buckets",
+  // Platform operator credentials are deployment-wide, not owned by a workspace.
+  "platform_credentials",
+  // Storage profiles are deployment-wide; assets record which one holds their bytes.
+  "storage_profiles",
   // OAuth authorization server state belongs to identities and clients; a grant's workspace is `reference_id`.
   "auth_jwks",
   "oauth_clients",

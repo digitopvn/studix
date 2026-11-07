@@ -11,6 +11,7 @@ import {
   type JobRepository,
   type MediaJobJournal,
   type MediaJobRecord,
+  type MediaProvider,
   type Stage,
   type StageCacheRepository,
   type TenantContext,
@@ -64,6 +65,11 @@ export interface StageRunnerDeps extends ApprovalGateDeps {
   storyboardStatus?(ctx: TenantContext, projectId: string): Promise<StoryboardReviewStatus | undefined>;
   /** Ports handed to every stage as `StageContext.services`. */
   services?: StageServices;
+  /**
+   * The media provider of one tenant's jobs (its dashboard settings), read once per job run. Undefined, or
+   * an undefined result, keeps `services.media`.
+   */
+  mediaFor?(ctx: TenantContext): Promise<MediaProvider | undefined>;
   agents?: AgentStageWiring;
 }
 
@@ -369,7 +375,9 @@ export async function runStages(
   const outputs: Record<string, StageOutput> = {};
   let spentCents = job.spentCents;
   const total = route.stages.length;
-  const services = deps.services ?? {};
+  const base = deps.services ?? {};
+  const tenantMedia = await deps.mediaFor?.(ctx);
+  const services: StageServices = tenantMedia ? { ...base, media: tenantMedia } : base;
 
   for (const [index, stage] of route.stages.entries()) {
     signal.throwIfAborted();
@@ -391,7 +399,8 @@ export async function runStages(
     );
     const sctx: StageContext = {
       ctx,
-      job,
+      // Earlier stages of this run have spent since the claim; estimates and caps read what is left now.
+      job: { ...job, spentCents },
       attempt: job.attempts,
       signal,
       outputs,

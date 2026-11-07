@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bible-asset.schema.json",
+  "title": "Location, prop or wardrobe bible entry (bibles/<locations|props|wardrobe>/<id>.json)",
+  "type": "object",
+  "required": ["id", "kind", "name", "description", "references"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"$ref": "common.schema.json#/$defs/asset_id"},
+    "kind": {"type": "string", "enum": ["location", "prop", "wardrobe"]},
+    "name": {"type": "string", "minLength": 1},
+    "description": {"type": "string", "minLength": 1},
+    "character": {
+      "description": "Owner of a wardrobe state; required for kind=wardrobe.",
+      "$ref": "common.schema.json#/$defs/asset_id"
+    },
+    "references": {
+      "type": "array",
+      "items": {"$ref": "common.schema.json#/$defs/reference_image"}
+    }
+  }
+}

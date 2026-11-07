@@ -2,6 +2,7 @@ import { createManualClock, StudixError } from "@studix/shared";
 import brandIntro from "@studix/video-ir/fixtures/brand-intro-9x16.json" with { type: "json" };
 import { describe, expect, it } from "vitest";
 import { STUDIX_TOOLS } from "../src/index.ts";
+import { toJobView } from "../src/studio/job-view.ts";
 import { createInMemoryStudio, testTenant, withActor } from "../src/testing/index.ts";
 
 const brief = { prompt: "Video giới thiệu thương hiệu cà phê Sương Mai, 15 giây, dọc", language: "vi" };
@@ -34,6 +35,46 @@ describe("StudioService.createVideoProject", () => {
       }),
     );
     expect(unknownRuntime.code).toBe("VALIDATION");
+  });
+
+  it("combines a Claude agent with a workflow pack, keeping both on the job", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const agent = {
+      runtime: "claude" as const,
+      connectionId: "pcn_1",
+      provider: "anthropic",
+      modelId: "claude-opus-5-5",
+    };
+    const out = await studio.createVideoProject(ctx, { brief, agent, workflowTemplate: "motion-graphic" });
+    const job = await repos.jobs.get(ctx, out.job.id);
+    expect(job?.payload).toMatchObject({
+      workflowTemplate: "motion-graphic",
+      agent,
+      planner: { runtime: "claude", providerConnectionId: "pcn_1" },
+    });
+  });
+
+  it("shows a stage that fell back to its template on the job view", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const out = await studio.createVideoProject(ctx, { brief });
+    const job = await repos.jobs.get(ctx, out.job.id);
+    const stage = (output: Record<string, unknown>) => ({
+      name: "motion-graphic.storyboard",
+      status: "succeeded",
+      attempt: 1,
+      output,
+    });
+    const view = toJobView(
+      job as never,
+      [
+        stage({ source: "template", fallbackReason: "The Claude agent process failed on the worker" }),
+        stage({ source: "agent" }),
+      ] as never,
+    );
+    expect(view.stages[0]?.fallback).toBe("The Claude agent process failed on the worker");
+    expect(view.stages[1]).not.toHaveProperty("fallback");
   });
 
   it("carries the agent mode into the job payload and rejects unknown modes", async () => {
@@ -117,6 +158,17 @@ describe("StudioService.createVideoProject", () => {
     expect((await rejects(studio.createVideoProject(viewer, { brief }))).code).toBe("FORBIDDEN");
     const readOnlyKey = testTenant({ scopes: ["project:read"] });
     expect((await rejects(studio.createVideoProject(readOnlyKey, { brief }))).code).toBe("FORBIDDEN");
+  });
+
+  it("gives a skill-agent job an hour that starts when the job is claimed", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const out = await studio.createVideoProject(ctx, { brief, workflowTemplate: "skill-agent" });
+    const job = await repos.jobs.get(ctx, out.job.id);
+    expect(job?.deadlineAt).toBeUndefined();
+    expect(job?.deadlineRemainingMs).toBe(60 * 60_000);
+    const plain = await repos.jobs.get(ctx, (await studio.createVideoProject(ctx, { brief })).job.id);
+    expect(plain?.deadlineAt).toBeInstanceOf(Date);
   });
 
   it("rejects deadlines in the past", async () => {

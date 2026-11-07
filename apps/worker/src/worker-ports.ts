@@ -4,18 +4,23 @@ import {
   createClaudeCodeCliTransport,
   createClaudeRoutingTransport,
   createClaudeSdkTransport,
+  createFilesystemSkillBundleSource,
   createPiKeyTester,
   isRuntimeKeyProvider,
   preflightClaudeRuntime,
 } from "@studix/agent-runtime";
 import {
   createAnthropicKeyTester,
+  createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
+  createStorageProfileService,
   createWorkspaceFeatureService,
+  liveStorageCredentials,
   type ProviderConnectionService,
   parseSecretKey,
   routeKeyTester,
+  STORAGE_KEY_NAMES,
   type WorkspaceFeatureService,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy } from "@studix/core";
@@ -28,10 +33,17 @@ import {
 } from "@studix/decision-routing";
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import { createActivityRecorder } from "@studix/observability";
+import { MULTIX_KEY_NAMES } from "@studix/providers";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { StudixError } from "@studix/shared";
-import { createS3StorageAdapterFromConfig } from "@studix/storage";
+import { createExternalSkillService, createSkillBundleSource } from "@studix/skills";
+import { createProfileStorageRouterFromConfig } from "@studix/storage";
+import { createAgentArtifactStore } from "./agent-artifact-store.ts";
+import { AGENT_EVENT_ACTIVITY } from "./agent-event-sink.ts";
 import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
+import { createCompositionRunner } from "./composition-runner.ts";
+import { createMediaExecRunner, loadMediaExecSettings } from "./media-exec-runner.ts";
+import { platformCredentials } from "./pack-services.ts";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
 import { registerBriefRule } from "./planner/brief-decision.ts";
 import { type ClaudePlanner, createClaudePlanner, createPlannerRouter } from "./planner/claude-planner.ts";
@@ -39,6 +51,7 @@ import { prepareClaudeSandboxRoot } from "./planner/claude-sandbox.ts";
 import { createExecutionSink } from "./planner/execution-sink.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
 import { createWorkspaceModelDecisions } from "./planner/workspace-model-decisions.ts";
+import { createSkillSandbox, loadSandboxSettings, type SkillSandbox } from "./skill-sandbox.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
@@ -74,7 +87,7 @@ function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntim
  * STUDIX_SECRETS_KEY (then no workspace can have stored a key). A run re-tests a rejected key with the
  * provider's own tester before marking it invalid.
  */
-function providerConnections(
+export function providerConnections(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
 ): ProviderConnectionService | undefined {
@@ -95,6 +108,7 @@ function providerConnections(
     ),
     claudeSubscription: async (ctx) =>
       (await workspaceFeatures(settings, runtime).effective(ctx)).claudeSubscription,
+    mediaKeyNames: MULTIX_KEY_NAMES,
     logger: runtime.logger,
   });
 }
@@ -199,6 +213,8 @@ function agentHarness(
   runtime: WorkerPortsRuntime,
   providers: ProviderConnectionService | undefined,
   transport: ClaudeAgentTransport | undefined,
+  storage: ReturnType<typeof createProfileStorageRouterFromConfig>,
+  sandbox?: SkillSandbox,
 ): WorkerAgentHarness | undefined {
   if (!providers) return undefined;
   const repos = createRepositories(runtime.db);
@@ -207,11 +223,108 @@ function agentHarness(
     preferences: repos.modelPreferences,
     snapshots: repos.modelSnapshots,
     executions: repos.usage,
+    events: repos.activity,
     ...(transport && settings.claudePlanner
       ? { claude: { transport, plannerModel: settings.claudePlanner.model } }
       : {}),
     logger: runtime.logger,
+    ...(sandbox
+      ? {
+          piWorkspace: (stage) => sandbox.forStage(stage),
+          codex: { defaultModel: settings.codexModel },
+          storeArtifact: createAgentArtifactStore({ storage, assets: repos.assets }),
+        }
+      : {}),
   });
+}
+
+/**
+ * The skill sandbox (STUDIX_SANDBOX=docker) with the enabled skills of each tenant: from a local directory
+ * when STUDIX_SANDBOX_SKILLS_DIR is set, else from the skill store.
+ */
+async function skillSandbox(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+  providers: ProviderConnectionService | undefined,
+  storage: ReturnType<typeof createProfileStorageRouterFromConfig>,
+): Promise<SkillSandbox | undefined> {
+  const sandbox = loadSandboxSettings(runtime.env);
+  if (!sandbox) return undefined;
+  const repos = createRepositories(runtime.db);
+  const service = createExternalSkillService({ repository: repos.externalSkills, storage });
+  const skills = sandbox.skillsDir
+    ? createFilesystemSkillBundleSource(sandbox.skillsDir)
+    : createSkillBundleSource({ repository: repos.externalSkills, service, logger: runtime.logger });
+  const credentials = platformCredentials(settings, runtime);
+  return createSkillSandbox({
+    settings: sandbox,
+    workDir: settings.workDir,
+    skills,
+    storage,
+    ...(sandbox.skillsDir
+      ? {}
+      : {
+          // An agent's edit of a mounted skill becomes a new workspace version, announced in the job's chat.
+          skillEdits: async (ctx, stage, edits) => {
+            for (const edit of edits) {
+              try {
+                const { result, risk } = await service.storeAgentEdit(ctx, {
+                  files: edit.files.map((f) => ({
+                    path: f.path,
+                    bytes: f.content,
+                    ...(f.executable ? { executable: true } : {}),
+                  })),
+                  taskLabel: stage.job.id,
+                });
+                const held = result.riskConfirmationRequired || !result.activated;
+                await repos.activity.append(ctx, {
+                  name: AGENT_EVENT_ACTIVITY,
+                  level: "info",
+                  jobId: stage.job.id,
+                  ...(stage.job.projectId ? { projectId: stage.job.projectId } : {}),
+                  stage: "skill-edit",
+                  attributes: {
+                    type: "artifact",
+                    name: `skill ${edit.name} updated (version ${result.versionId ?? "?"})${held ? `, ${risk} risk: disabled until an admin confirms` : ""}`,
+                  },
+                });
+              } catch (error) {
+                runtime.logger.warn("agent skill edit not stored", {
+                  skill: edit.name,
+                  error: String(error),
+                });
+              }
+            }
+          },
+        }),
+    keys: {
+      ...(providers ? { workspace: (ctx) => providers.resolveMediaKeys(ctx) } : {}),
+      ...(credentials ? { platform: async () => (await credentials.loadValues()).values } : {}),
+      env: runtime.env,
+    },
+    logger: runtime.logger,
+  });
+}
+
+/** The sandbox of `media.exec` jobs: the skill sandbox image with no network, on when STUDIX_SANDBOX=docker. */
+function mediaExecPort(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+  storage: ReturnType<typeof createProfileStorageRouterFromConfig>,
+  logger: WorkerPortsRuntime["logger"],
+) {
+  const sandbox = loadSandboxSettings(runtime.env);
+  if (!sandbox) return undefined;
+  const exec = loadMediaExecSettings(runtime.env);
+  const runner = createMediaExecRunner({
+    sandbox,
+    settings: exec,
+    workDir: settings.workDir,
+    storage,
+    assets: createRepositories(runtime.db).assets,
+    logger: logger.child({ component: "media-exec" }),
+  });
+  return { runner, centsPerMinute: exec.centsPerMinute };
 }
 
 /**
@@ -251,6 +364,51 @@ async function assertClaudeRuntime(
 }
 
 /**
+ * A storage key pair an operator stored in the dashboard wins over S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY and
+ * is followed live. Without STUDIX_SECRETS_KEY nothing stored can be opened, so the environment pair is used.
+ */
+function storageCredentialOverride(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+): { credentials?: ReturnType<typeof liveStorageCredentials> } {
+  const { config } = settings;
+  if (!config.STUDIX_SECRETS_KEY) return {};
+  const repos = createRepositories(runtime.db);
+  const store = createPlatformCredentialService({
+    credentials: repos.platformCredentials,
+    audit: repos.audit,
+    secrets: createSecretBox(
+      parseSecretKey(config.STUDIX_SECRETS_KEY),
+      config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+    ),
+    allowedNames: STORAGE_KEY_NAMES,
+    env: runtime.env,
+    logger: runtime.logger,
+  });
+  return { credentials: liveStorageCredentials(store, config) };
+}
+
+/** Storage profiles an operator manages from the dashboard, read with the app's master key. */
+function storageProfiles(settings: WorkerSettings, runtime: WorkerPortsRuntime) {
+  const { config } = settings;
+  if (!config.STUDIX_SECRETS_KEY) return {};
+  const repos = createRepositories(runtime.db);
+  const profiles = createStorageProfileService({
+    profiles: repos.storageProfiles,
+    audit: repos.audit,
+    secrets: createSecretBox(
+      parseSecretKey(config.STUDIX_SECRETS_KEY),
+      config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+    ),
+    // The worker never saves a profile; these only guard writes made through the app.
+    checkEndpoint: () => Promise.reject(new Error("read only")),
+    checkKeyPrefix: () => {},
+    logger: runtime.logger,
+  });
+  return { profiles, locate: repos.storageProfiles.locate };
+}
+
+/**
  * Production adapters for the standalone worker: S3-compatible storage, the HyperFrames renderer and
  * the brief planner (DecisionRouter for `video.brief` with a deterministic rules fallback, optional
  * connector brand lookup). Misconfiguration (no bucket, bad decision routes) fails startup loudly.
@@ -261,7 +419,11 @@ export async function loadWorkerPorts(
 ): Promise<WorkerPorts> {
   const { config } = settings;
   const { logger } = runtime;
-  const storage = createS3StorageAdapterFromConfig(config);
+  const storage = createProfileStorageRouterFromConfig(config, {
+    ...storageCredentialOverride(settings, runtime),
+    ...storageProfiles(settings, runtime),
+    logger: logger.child({ component: "storage" }),
+  });
   const toolchain = renderToolchain(runtime.env);
   if (!toolchain.ok) {
     logger.warn("render toolchain incomplete; render stages will fail until it is installed", {
@@ -296,7 +458,16 @@ export async function loadWorkerPorts(
   });
   const transport = claudeTransport(settings, runtime, claudeExecutable);
   const claude = claudePlanner(settings, runtime, providers, transport);
-  const harness = agentHarness(settings, runtime, providers, transport);
+  const sandbox = await skillSandbox(settings, runtime, providers, storage);
+  const harness = agentHarness(settings, runtime, providers, transport, storage, sandbox);
+  const mediaExec = mediaExecPort(settings, runtime, storage, logger);
+  // Composition runs share the skill sandbox (open network, vendor keys, skills) and the media exec price.
+  const compositionRun = sandbox
+    ? {
+        runner: createCompositionRunner({ sandbox, storage, workDir: settings.workDir, logger }),
+        centsPerMinute: loadMediaExecSettings(runtime.env).centsPerMinute,
+      }
+    : undefined;
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),
@@ -311,6 +482,8 @@ export async function loadWorkerPorts(
     renderer,
     storage,
     ...(harness ? { agentRuntimeFor: (stage) => harness.runtimeFor(stage) } : {}),
+    ...(mediaExec ? { mediaExec } : {}),
+    ...(compositionRun ? { compositionRun } : {}),
     close: async () => {
       // Shutdown stops waiting on stages at once; let aborted agent runs finish killing their process.
       const idle = await Promise.all([

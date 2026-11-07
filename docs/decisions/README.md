@@ -3,22 +3,30 @@
 Short MADR-style records. A decision changes by adding a new ADR that
 supersedes the old one; accepted ADRs are not rewritten.
 
-| ADR                                                                 | Decision                                                                   | Status   |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------- |
-| [0001](0001-monorepo-and-package-boundaries.md)                     | Monorepo and package boundaries (assets + review in core, search deferred) | Accepted |
-| [0002](0002-video-ir-and-domain-contracts.md)                       | VideoIR and domain contracts                                               | Accepted |
-| [0003](0003-jev-decision-provider-adapter-and-routing-fallback.md)  | Jev `DecisionProviderAdapter`, routing and fallback                        | Accepted |
-| [0004](0004-mcp-in-mcp-gateway-trust-boundary.md)                   | MCP-in-MCP gateway and trust boundary                                      | Accepted |
-| [0005](0005-durable-jobs-on-postgres.md)                            | Durable jobs on PostgreSQL                                                 | Accepted |
-| [0006](0006-auth-and-oauth-client-compatibility.md)                 | Auth and OAuth client compatibility                                        | Accepted |
-| [0007](0007-tenancy-isolation.md)                                   | Tenancy isolation                                                          | Accepted |
-| [0008](0008-billing-usage-ledger.md)                                | Billing usage ledger                                                       | Accepted |
-| [0009](0009-deployment-cloudflare-and-tose.md)                      | Deployment on Cloudflare and TOSE                                          | Accepted |
-| [0010](0010-renderer-and-media-provider-adapters.md)                | Renderer and media provider adapters                                       | Accepted |
-| [0011](0011-claude-agent-runtime-and-provider-auth.md)              | Claude Agent SDK runtime and provider authentication                       | Accepted |
-| [0013](0013-hybrid-port-and-workflow-packs.md)                      | Port lai (lõi TS, Python tool trong sandbox worker) và port theo pack      | Accepted |
-| [0014](0014-storyboard-revisions-and-stage-cache.md)                | Storyboard, revision scene/shot, stage cache và pack registry              | Accepted |
-| [0015](0015-agent-stage-caps-and-host-handoff.md)                   | Agent stage: cap cứng trong harness và handoff cho host agent              | Accepted |
-| [0016](0016-provider-connections-runtimes-and-model-preferences.md) | Provider connections per runtime and per-stage model preferences           | Accepted |
+| ADR                                                                 | Decision                                                                                    | Status   |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------- |
+| [0001](0001-monorepo-and-package-boundaries.md)                     | Monorepo and package boundaries (assets + review in core, search deferred)                  | Accepted |
+| [0002](0002-video-ir-and-domain-contracts.md)                       | VideoIR and domain contracts                                                                | Accepted |
+| [0003](0003-jev-decision-provider-adapter-and-routing-fallback.md)  | Jev `DecisionProviderAdapter`, routing and fallback                                         | Accepted |
+| [0004](0004-mcp-in-mcp-gateway-trust-boundary.md)                   | MCP-in-MCP gateway and trust boundary                                                       | Accepted |
+| [0005](0005-durable-jobs-on-postgres.md)                            | Durable jobs on PostgreSQL                                                                  | Accepted |
+| [0006](0006-auth-and-oauth-client-compatibility.md)                 | Auth and OAuth client compatibility                                                         | Accepted |
+| [0007](0007-tenancy-isolation.md)                                   | Tenancy isolation                                                                           | Accepted |
+| [0008](0008-billing-usage-ledger.md)                                | Billing usage ledger                                                                        | Accepted |
+| [0009](0009-deployment-cloudflare-and-tose.md)                      | Deployment on Cloudflare and TOSE                                                           | Accepted |
+| [0010](0010-renderer-and-media-provider-adapters.md)                | Renderer and media provider adapters                                                        | Accepted |
+| [0011](0011-claude-agent-runtime-and-provider-auth.md)              | Claude Agent SDK runtime and provider authentication                                        | Accepted |
+| [0013](0013-hybrid-port-and-workflow-packs.md)                      | Port lai (lõi TS, Python tool trong sandbox worker) và port theo pack                       | Accepted |
+| [0014](0014-storyboard-revisions-and-stage-cache.md)                | Storyboard, revision scene/shot, stage cache và pack registry                               | Accepted |
+| [0015](0015-agent-stage-caps-and-host-handoff.md)                   | Agent stage: cap cứng trong harness và handoff cho host agent                               | Accepted |
+| [0016](0016-provider-connections-runtimes-and-model-preferences.md) | Provider connections per runtime and per-stage model preferences                            | Accepted |
+| [0017](0017-external-github-skill-store.md)                         | External GitHub skill store: pinned, immutable versions (data-only part superseded by 0019) | Accepted |
+| [0018](0018-skill-sandbox.md)                                       | Skill sandbox for tool-using Pi tasks                                                       | Accepted |
+| [0019](0019-full-skill-store-uploads-and-risk-gate.md)              | Full skill store: zip uploads, risk reports, platform skills                                | Accepted |
+| [0020](0020-storage-profiles.md)                                    | Storage profiles: operator-managed buckets with live switch and SSRF guard                  | Accepted |
+| [0021](0021-codex-agent-runtime-and-chatgpt-login.md)               | Codex agent runtime in the sandbox, ChatGPT sign-in and per-job agent selection             | Accepted |
+| [0022](0022-agentic-video-authoring.md)                             | Agentic video authoring is the main path, with a hard delivery post-check                   | Accepted |
+| [0023](0023-workspace-storage-profiles.md)                          | Workspace storage profiles override the platform choice                                     | Accepted |
+| [0024](0024-client-authoring-and-agent-roles.md)                    | Client-authored compositions and director/builder/QA agent roles                            | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.

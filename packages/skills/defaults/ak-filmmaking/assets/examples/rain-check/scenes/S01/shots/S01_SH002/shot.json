@@ -1,0 +1,103 @@
+{
+  "shot_id": "S01_SH002",
+  "scene_id": "S01",
+  "shot_type": "tracking",
+  "lens": "35mm",
+  "camera": "lateral track left to right",
+  "action": "Mai hurries along the pavement and snaps the umbrella shut at the door.",
+  "emotion": "nervous resolve",
+  "duration_target": 6,
+  "characters": [
+    "MAI_01"
+  ],
+  "location": "CAFE_STREET_01",
+  "wardrobe": {
+    "MAI_01": "MAI_RAINCOAT_01"
+  },
+  "props": [
+    "UMBRELLA_01"
+  ],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "CHAR_MAI_FRONT",
+    "CHAR_MAI_3QL",
+    "WARDROBE_MAI_RAINCOAT_01",
+    "LOC_CAFE_STREET_WIDE",
+    "PROP_UMBRELLA_01"
+  ],
+  "continuity_from": "S01_SH001",
+  "continuity_to": "S02_SH001",
+  "continuity": {
+    "screen_positions": {
+      "MAI_01": "center"
+    },
+    "prop_states": {
+      "UMBRELLA_01": "MAI_01:right_hand"
+    },
+    "conditions": {
+      "MAI_01": [
+        "damp_hair"
+      ]
+    },
+    "screen_direction": "left_to_right"
+  },
+  "render_class": "STANDARD",
+  "model_requirements": [
+    "start_frame"
+  ],
+  "retry_budget": 2,
+  "estimate": {
+    "generation_seconds": 12,
+    "cost": {
+      "amount": 3.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "APPROVED",
+  "storyboard": {
+    "path": "storyboard/S01_SH002.png",
+    "status": "approved"
+  },
+  "keyframe": {
+    "path": "scenes/S01/shots/S01_SH002/approved/keyframe.png",
+    "status": "approved"
+  },
+  "generations": [
+    {
+      "id": "GEN_S01_SH002_01",
+      "prompt_version": 1,
+      "provider": "example-provider",
+      "model": "example-video-model",
+      "seed": 1001,
+      "output": "scenes/S01/shots/S01_SH002/generations/01.mp4",
+      "seconds": 6,
+      "status": "discarded",
+      "cost": {
+        "amount": 1.4,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    },
+    {
+      "id": "GEN_S01_SH002_02",
+      "prompt_version": 2,
+      "provider": "example-provider",
+      "model": "example-video-model",
+      "seed": 1002,
+      "output": "scenes/S01/shots/S01_SH002/generations/02.mp4",
+      "seconds": 6,
+      "status": "selected",
+      "cost": {
+        "amount": 1.4,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    }
+  ],
+  "qc": {
+    "status": "passed",
+    "failures": []
+  }
+}

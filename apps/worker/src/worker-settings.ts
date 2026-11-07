@@ -43,6 +43,11 @@ const WorkerEnv = z.object({
   /** Per-plan cost cap; the job's remaining budget lowers it further. */
   STUDIX_CLAUDE_PLANNER_MAX_COST_CENTS: z.coerce.number().int().min(1).max(100_000).default(200),
   STUDIX_CLAUDE_PLANNER_TIMEOUT_SECONDS: z.coerce.number().int().min(10).max(3600).default(300),
+  /** Model of a Codex job that named none (Codex runs in the skill sandbox). */
+  STUDIX_CODEX_MODEL: z
+    .string()
+    .regex(/^[\w.:@-]{1,100}$/, "a model id")
+    .default("gpt-5.5"),
 });
 
 export interface ClaudePlannerSettings {
@@ -74,6 +79,7 @@ export interface WorkerSettings {
    * with UNAVAILABLE. On a self-hosted worker each workspace's switch still decides.
    */
   claudePlanner?: ClaudePlannerSettings;
+  codexModel: string;
 }
 
 /** Parse worker settings; throws a VALIDATION StudixError naming bad variables (values never echoed). */
@@ -119,6 +125,7 @@ export function loadWorkerSettings(env: NodeJS.ProcessEnv = process.env): Worker
     workDirRetentionMs: w.WORKER_WORK_DIR_RETENTION_HOURS * 3_600_000,
     approvalCostThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
     renderCentsPerSecond: w.RENDER_COST_CENTS_PER_SECOND,
+    codexModel: w.STUDIX_CODEX_MODEL,
     ...(w.STUDIX_BRAND_LOOKUP_TOOL ? { brandLookupTool: w.STUDIX_BRAND_LOOKUP_TOOL } : {}),
     // A self-hosted worker keeps the Claude planner ready; each workspace owner decides whether it runs.
     ...(config.STUDIX_CLAUDE_PLANNER || config.STUDIX_SELF_HOSTED

@@ -1,0 +1,88 @@
+{
+  "shot_id": "S02_SH004",
+  "scene_id": "S02",
+  "shot_type": "close_up",
+  "lens": "85mm",
+  "camera": "locked off, shallow focus",
+  "action": "Linh finally says it, voice steady, eyes wet.",
+  "emotion": "contained hurt",
+  "duration_target": 6,
+  "characters": [
+    "LINH_01"
+  ],
+  "location": "CAFE_INTERIOR_01",
+  "wardrobe": {
+    "LINH_01": "LINH_KNIT_01"
+  },
+  "props": [],
+  "visible_speakers": [
+    "LINH_01"
+  ],
+  "lipsync": "dedicated",
+  "references": [
+    "CHAR_LINH_FRONT",
+    "CHAR_LINH_3QR",
+    "WARDROBE_LINH_KNIT_01",
+    "CHAR_LINH_HURT",
+    "LOC_CAFE_TABLE"
+  ],
+  "continuity_from": "S02_SH003",
+  "continuity_to": "S02_SH005",
+  "continuity": {
+    "screen_positions": {
+      "LINH_01": "center"
+    },
+    "prop_states": {},
+    "conditions": {},
+    "screen_direction": "static"
+  },
+  "render_class": "CHARACTER_CRITICAL",
+  "model_requirements": [
+    "audio_reference"
+  ],
+  "retry_budget": 2,
+  "estimate": {
+    "generation_seconds": 12,
+    "cost": {
+      "amount": 6.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "LIPSYNCED",
+  "storyboard": {
+    "path": "storyboard/S02_SH004.png",
+    "status": "approved"
+  },
+  "keyframe": {
+    "path": "scenes/S02/shots/S02_SH004/approved/keyframe.png",
+    "status": "approved"
+  },
+  "generations": [
+    {
+      "id": "GEN_S02_SH004_01",
+      "prompt_version": 1,
+      "provider": "example-provider",
+      "model": "example-video-model",
+      "seed": 1001,
+      "output": "scenes/S02/shots/S02_SH004/generations/01.mp4",
+      "seconds": 6,
+      "status": "selected",
+      "cost": {
+        "amount": 2.4,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    }
+  ],
+  "lipsync_pass": {
+    "tool": "example-lipsync-tool",
+    "output": "scenes/S02/shots/S02_SH004/approved/lipsync.mp4",
+    "status": "done",
+    "cost": {
+      "amount": 0.8,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  }
+}

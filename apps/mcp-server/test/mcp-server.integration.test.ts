@@ -76,23 +76,38 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
       "studix_approve",
       "studix_attach_media_job",
       "studix_cancel_job",
+      "studix_composition_read",
+      "studix_composition_run",
+      "studix_composition_write",
       "studix_create_video",
       "studix_feedback",
       "studix_get_agent_task",
       "studix_get_job",
       "studix_get_project",
       "studix_inspect",
+      "studix_list_agent_runtimes",
       "studix_list_agent_tasks",
+      "studix_media_exec",
       "studix_render",
       "studix_retry_job",
+      "studix_review",
+      "studix_skill_delete",
+      "studix_skill_disable",
+      "studix_skill_discover",
+      "studix_skill_get",
+      "studix_skill_import",
+      "studix_skill_list",
+      "studix_skill_update",
+      "studix_skill_upload",
       "studix_submit_agent_task",
+      "studix_webhook",
     ]);
     for (const tool of tools) {
       expect(tool.description?.length ?? 0).toBeLessThanOrEqual(200);
       expect(tool.outputSchema).toBeDefined();
     }
-    // Every tool repeats the shared envelope output schema (~1.2k chars), so the budget is ~2k per tool.
-    expect(JSON.stringify(tools).length).toBeLessThan(tools.length * 2_000);
+    // Every tool repeats the shared envelope output schema (~1.2k chars), so the budget is ~2.3k per tool (create_video, feedback and media_exec carry larger inputs).
+    expect(JSON.stringify(tools).length).toBeLessThan(tools.length * 2_300);
   });
 
   it("inspect reports the caller's workspace and the tool list", async () => {

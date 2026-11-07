@@ -25,6 +25,7 @@ export {
 } from "./brand-intro/brief-draft.ts";
 export { draftBriefFromPrompt } from "./brand-intro/brief-draft-from-prompt.ts";
 export { captionCues, chunkCaption, MAX_CAPTION_WORDS, wordCount } from "./caption-chunks.ts";
+export * from "./external/index.ts";
 export { BUILTIN_KNOWLEDGE_PACKS } from "./knowledge/builtin-knowledge-packs.ts";
 export {
   createKnowledgeCatalog,
@@ -65,6 +66,7 @@ export * from "./marketing-video/marketing-video-pack.ts";
 export * from "./marketing-video/marketing-video-template.ts";
 export * from "./marketing-video/marketing-video-variants.ts";
 export * from "./motion-graphic/motion-graphic-pack.ts";
+export * from "./motion-graphic/motion-graphic-storyboard.ts";
 export * from "./motion-graphic/motion-graphic-template.ts";
 export * from "./motion-graphic/motion-style-profiles.ts";
 export * from "./narrative-film/anime-pack.ts";
@@ -83,6 +85,12 @@ export {
   type SkillRunOptions,
   type WorkflowPack,
 } from "./pack-registry.ts";
+export {
+  SKILL_AGENT_PACK,
+  SKILL_AGENT_STAGES,
+  SkillAgentRunOutput,
+  skillAgentPack,
+} from "./skill-agent/skill-agent-pack.ts";
 export {
   getSkill,
   knowledgeCatalog,

@@ -17,9 +17,12 @@ import {
   type PiCredentialSource,
   type PiRunBinding,
 } from "../src/index.ts";
+import { OPENCODE_GO_ENDPOINT, pinnedPiEndpoint } from "../src/opencode-go-catalog.ts";
 
 interface Seen {
   auth: string | undefined;
+  session: string | string[] | undefined;
+  userAgent: string | undefined;
   body: { model?: string };
 }
 
@@ -41,7 +44,12 @@ function readBody(req: IncomingMessage): Promise<string> {
 /** An OpenAI-compatible streaming endpoint: every reply bills 1M prompt tokens. */
 beforeAll(async () => {
   server = createServer(async (req, res) => {
-    const entry: Seen = { auth: req.headers.authorization, body: JSON.parse((await readBody(req)) || "{}") };
+    const entry: Seen = {
+      auth: req.headers.authorization,
+      session: req.headers["x-opencode-session"],
+      userAgent: req.headers["user-agent"],
+      body: JSON.parse((await readBody(req)) || "{}"),
+    };
     seen.push(entry);
     const plan = respond(entry);
     if (plan.status !== 200) {
@@ -111,6 +119,19 @@ describe("Pi SDK runtime", () => {
     expect(seen[0]!.body.model).toBe("acme-1");
   });
 
+  it("names the conversation and the client on OpenCode Go requests only", async () => {
+    seen.length = 0;
+    respond = () => ({ status: 200, text: '{"ok":true}' });
+    await createPiSdkAgentRuntime({ resolver: staticResolver(binding()) }).run(testTenant(), task());
+    expect(seen[0]!.session).toBeUndefined();
+    await createPiSdkAgentRuntime({ resolver: staticResolver(binding({ provider: "opencode-go" })) }).run(
+      testTenant(),
+      task(),
+    );
+    expect(seen[1]!.session).toMatch(/^[0-9a-f-]{36}$/);
+    expect(seen[1]!.userAgent).toBe("studix-agent/1.0");
+  });
+
   it("stops at the bounded runtime's cost cap and carries the spend", async () => {
     respond = () => ({ status: 200, text: "x" });
     const runtime = createPiSdkAgentRuntime({ resolver: staticResolver(binding()) });
@@ -143,6 +164,7 @@ describe("Pi SDK runtime", () => {
     respond = (s) => (s.auth?.includes("bad-key") ? { status: 500 } : { status: 200, text: '{"ok":1}' });
     const snapshot = { connectionId: "pcon_1" } as ResolvedModelSnapshot;
     const runtime = createPiSdkAgentRuntime({
+      turnRetry: false,
       resolver: {
         async resolve() {
           return {
@@ -224,7 +246,7 @@ describe("Pi SDK runtime", () => {
 
 describe("Pi key tester", () => {
   const runtimeFor = () => (b: PiRunBinding) =>
-    createPiSdkAgentRuntime({ resolver: staticResolver(binding({ apiKey: b.apiKey })) });
+    createPiSdkAgentRuntime({ resolver: staticResolver(binding({ apiKey: b.apiKey })), turnRetry: false });
 
   it("counts a reply stopped only by the one-cent cap as a working key", async () => {
     respond = () => ({ status: 200, text: "OK" });
@@ -448,5 +470,16 @@ describe("Pi catalog", () => {
     expect(opencodeGo?.models.every((m) => m.cost.input > 0)).toBe(true);
     expect(isRuntimeKeyProvider("opencode-go")).toBe(true);
     expect(cheapestPiModel("opencode-go")).toBeDefined();
+  });
+
+  it("lists the OpenCode Go models Studix pins, not the SDK's retired ones", () => {
+    const ids = listPiCatalog()
+      .find((p) => p.id === "opencode-go")
+      ?.models.map((m) => m.id);
+    expect(ids).toEqual(OPENCODE_GO_ENDPOINT.models?.map((m) => m.id));
+    expect(ids).toContain("deepseek-v4.1-flash");
+    expect(ids).not.toContain("deepseek-v4-flash");
+    expect(pinnedPiEndpoint("opencode-go")?.baseUrl).toMatch(/^https:\/\/opencode\.ai\//);
+    expect(pinnedPiEndpoint("openai")).toBeUndefined();
   });
 });

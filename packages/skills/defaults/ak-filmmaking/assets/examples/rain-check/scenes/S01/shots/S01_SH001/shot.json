@@ -1,0 +1,63 @@
+{
+  "shot_id": "S01_SH001",
+  "scene_id": "S01",
+  "shot_type": "establishing",
+  "lens": "24mm",
+  "camera": "static, slight rain-drip foreground",
+  "action": "Rain hammers the green awning; the cafe glows.",
+  "emotion": "lonely anticipation",
+  "duration_target": 5,
+  "characters": [],
+  "location": "CAFE_STREET_01",
+  "wardrobe": {},
+  "props": [],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "LOC_CAFE_STREET_WIDE"
+  ],
+  "continuity_from": null,
+  "continuity_to": "S01_SH002",
+  "continuity": {
+    "screen_positions": {},
+    "prop_states": {},
+    "conditions": {},
+    "screen_direction": "static"
+  },
+  "render_class": "CHEAP_BROLL",
+  "retry_budget": 1,
+  "estimate": {
+    "generation_seconds": 10,
+    "cost": {
+      "amount": 1.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "APPROVED",
+  "storyboard": {
+    "path": "storyboard/S01_SH001.png",
+    "status": "approved"
+  },
+  "generations": [
+    {
+      "id": "GEN_S01_SH001_01",
+      "prompt_version": 1,
+      "provider": "example-provider",
+      "model": "example-video-model",
+      "seed": 1001,
+      "output": "scenes/S01/shots/S01_SH001/generations/01.mp4",
+      "seconds": 5,
+      "status": "selected",
+      "cost": {
+        "amount": 0.9,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    }
+  ],
+  "qc": {
+    "status": "passed",
+    "failures": []
+  }
+}

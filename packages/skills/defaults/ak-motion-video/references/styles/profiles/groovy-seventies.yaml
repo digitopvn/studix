@@ -1,0 +1,48 @@
+id: groovy-seventies
+name: Groovy Seventies
+family: aesthetic
+aliases: [70s groovy, seventies, retro 70s, disco print, funky retro]
+summary: 1970s groovy print; mustard, rust and avocado, bulbous display serifs, wavy stripes, warm riso grain.
+energy: 3
+best_for: [culture-story, food-promo, lifestyle-promo, nostalgia-campaign]
+character: >-
+  Warm 1970s print culture: mustard, rust and avocado stripes that bend into
+  waves and rainbows, fat display serifs with soft curves, sunbursts and riso
+  grain. Motion is funky and loose: stripes wave on the groove, type wobbles
+  with a lazy swing and shapes roll in on smooth arcs.
+dimensions:
+  palette:
+    mode: light
+    colors: {bg: "#f5e6c8", ink: "#3b2416", accent: "#d35f1f", mustard: "#e3a52b", avocado: "#7d8a3c", brown: "#7a4a2a", cream: "#fbf1dc"}
+    rule: "Warm earth palette only; stripes always run mustard → orange → rust → brown; avocado as the cool counterpoint."
+  typography:
+    - "Shrikhand 150-230 px headlines with a 3-stripe offset outline"
+    - "DM Serif Display 64 px subheads; Nunito 600 30 px body"
+  layout: ["Rainbow stripe bands sweeping across the frame", "Rounded frames and arches around the hero", "Centred or arched headline"]
+  material: ["Flat riso ink shapes with rounded ends", "Soft 0 6px 0 brown offset shadows"]
+  texture: ["Baked riso grain and slight misregistration", "Paper fibre on cream backgrounds"]
+  camera: ["Smooth pans following stripe flow", "Gentle push_in on holds"]
+  transitions: ["stripe-sweep (rainbow band sweeps across on an arc, power2.inOut 0.6 s)", "roll-in (circles roll in from the side with rotation)", "wave-wipe (wavy edge mask sweeps across)"]
+  pacing:
+    bpm: [96, 116]
+    rhythm: "Groove: swing-feel reveals on the 2 and 4, holds 4-6 beats, loose overlapping entrances."
+  beat_response: ["Stripes wave 4-8 px on every beat (sine, seeded phase)", "Sunburst rotates slowly and pulses on downbeats", "Type wobbles 1-2 deg on the backbeat"]
+  ui_choreography: ["UI in a rounded TV or arch frame with a stripe border", "Panels roll in with back.out(1.3)"]
+  diagrams: ["Pie and donut charts in stripe colours", "Flows as wavy ribbon paths drawn with draw()"]
+  character_motion: ["Loose cartoon figures with bouncy walk cycles on twos"]
+  captions: ["Cream rounded pill with brown border, 42 px Be Vietnam Pro 700 brown, current word rust; bottom band"]
+  sound: ["Funk, disco or soul 96-116 BPM", "SFX: vinyl scratch, wah stab, cowbell; medium density"]
+scene_types:
+  prefer: [cover, title, feature, montage, quote, cta, outro]
+  avoid: [terminal, code, spec]
+signature_moves:
+  - "Rainbow stripe sweep between scenes"
+  - "Headline rolling in with a lazy wobble"
+  - "Stripes waving on the groove during holds"
+strengths: ["Warm, fun and inviting", "Great for food, culture and lifestyle", "Strong recognisable palette"]
+constraints:
+  - "Earth palette only"
+  - "Grain and misregistration baked to PNG"
+  - "Wave and wobble use seeded phases with finite repeats"
+avoid: ["Cold blues or neon", "Sharp geometric grids", "Hard cuts without motion"]
+pairs_well_with: [joyful-pop, vaporwave-memphis, music-editorial, mid-century-retro]

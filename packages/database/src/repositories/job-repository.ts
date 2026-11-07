@@ -1,18 +1,58 @@
 import {
   attachToSubmittingRecord,
+  decodeJobCursor,
   JOB_RESUME_ATTEMPTS,
   type Job,
   type JobPatch,
   type JobQueue,
   type JobRepository,
+  type JobSortField,
   type Stage,
   type TenantContext,
+  toJobPage,
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { asc, desc, eq, gte, ilike, inArray, lte, type SQL, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
-import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
+import { actorFrom, first, opt, pageLimit, scoped, tenantValues } from "./helpers.ts";
+
+/** SQL form of `jobAgent(job).runtime`; keep the two in step. */
+const jobAgentRuntimeSql = sql<string>`(case
+  when ${jobs.payload}->>'agentMode' = 'host' then 'host'
+  when ${jobs.payload}->'agent'->>'runtime' in ('claude', 'codex', 'pi') then ${jobs.payload}->'agent'->>'runtime'
+  when jsonb_typeof(${jobs.payload}->'planner') = 'object' then 'planner'
+  else 'none' end)`;
+/** SQL form of `jobAgent(job).model ?? ""`. */
+const jobAgentModelSql = sql<string>`(case
+  when ${jobAgentRuntimeSql} in ('claude', 'codex', 'pi') then coalesce(${jobs.payload}->'agent'->>'modelId', '')
+  else '' end)`;
+
+/**
+ * Sort expressions, keyed by the allowlisted field. Text sorts in byte order (collate "C"), nullable
+ * text as "", and timestamps truncated to milliseconds, matching the cursor value (see jobSortValue), so
+ * keyset pages never skip or repeat a row.
+ */
+const JOB_SORT_SQL: Record<JobSortField, SQL> = {
+  createdAt: sql`date_trunc('milliseconds', ${jobs.createdAt})`,
+  updatedAt: sql`date_trunc('milliseconds', ${jobs.updatedAt})`,
+  status: sql`${jobs.status} collate "C"`,
+  kind: sql`${jobs.kind} collate "C"`,
+  stage: sql`coalesce(${jobs.stage}, '') collate "C"`,
+  projectId: sql`coalesce(${jobs.projectId}, '') collate "C"`,
+  progress: sql`${jobs.progress}`,
+  spentCents: sql`${jobs.spentCents}`,
+  agent: sql`${jobAgentRuntimeSql} collate "C"`,
+  model: sql`${jobAgentModelSql} collate "C"`,
+};
+
+/** Id tie-break in byte order, like the in-memory comparator. */
+const JOB_ID_SQL = sql`${jobs.id} collate "C"`;
+
+/** ILIKE pattern for a literal substring. */
+function containsPattern(text: string): string {
+  return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
 
 type JobRow = typeof jobs.$inferSelect;
 type StageRow = typeof stages.$inferSelect;
@@ -147,6 +187,20 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
 
     async list(ctx, query = {}) {
       const limit = pageLimit(query.limit);
+      const sort = query.sort ?? "createdAt";
+      const order = query.order ?? "desc";
+      const expr = JOB_SORT_SQL[sort];
+      const after = query.cursor === undefined ? undefined : decodeJobCursor(query.cursor, sort);
+      const cursorValue =
+        after === undefined
+          ? undefined
+          : sort === "createdAt" || sort === "updatedAt"
+            ? sql`${new Date(after.value as number).toISOString()}::timestamptz`
+            : sort === "progress"
+              ? sql`${after.value}::real`
+              : sort === "spentCents"
+                ? sql`${after.value}::integer`
+                : sql`${after.value}::text`;
       const rows = await db
         .select()
         .from(jobs)
@@ -154,14 +208,32 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           scoped(
             jobs,
             ctx,
-            beforeCursor(jobs.id, query.cursor),
+            after && cursorValue
+              ? order === "desc"
+                ? sql`(${expr}, ${JOB_ID_SQL}) < (${cursorValue}, ${after.id})`
+                : sql`(${expr}, ${JOB_ID_SQL}) > (${cursorValue}, ${after.id})`
+              : undefined,
             query.projectId ? eq(jobs.projectId, query.projectId) : undefined,
-            query.status ? eq(jobs.status, query.status) : undefined,
+            query.status?.length ? inArray(jobs.status, query.status) : undefined,
+            query.kind?.length ? inArray(jobs.kind, query.kind) : undefined,
+            query.stage?.length ? inArray(sql`coalesce(${jobs.stage}, '')`, query.stage) : undefined,
+            query.agent?.length ? inArray(jobAgentRuntimeSql, query.agent) : undefined,
+            query.modelContains ? ilike(jobAgentModelSql, containsPattern(query.modelContains)) : undefined,
+            query.idContains ? ilike(jobs.id, containsPattern(query.idContains)) : undefined,
+            query.projectContains ? ilike(jobs.projectId, containsPattern(query.projectContains)) : undefined,
+            query.createdFrom ? gte(jobs.createdAt, query.createdFrom) : undefined,
+            query.createdTo ? lte(jobs.createdAt, query.createdTo) : undefined,
+            query.updatedFrom ? gte(jobs.updatedAt, query.updatedFrom) : undefined,
+            query.updatedTo ? lte(jobs.updatedAt, query.updatedTo) : undefined,
+            query.progressMin !== undefined ? gte(jobs.progress, query.progressMin) : undefined,
+            query.progressMax !== undefined ? lte(jobs.progress, query.progressMax) : undefined,
+            query.spentMin !== undefined ? gte(jobs.spentCents, query.spentMin) : undefined,
+            query.spentMax !== undefined ? lte(jobs.spentCents, query.spentMax) : undefined,
           ),
         )
-        .orderBy(desc(jobs.id))
+        .orderBy(...(order === "desc" ? [desc(expr), desc(JOB_ID_SQL)] : [asc(expr), asc(JOB_ID_SQL)]))
         .limit(limit + 1);
-      return toPage(rows.map(toJob), limit);
+      return toJobPage(rows.map(toJob), limit, sort);
     },
 
     async update(ctx, id, patch: JobPatch, options = {}) {
@@ -217,7 +289,7 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           runAfter: input.runAfter ?? now,
           idempotencyKey: input.idempotencyKey ?? null,
           // A job born at a gate has no active execution yet: its deadline starts when it is first claimed.
-          ...(input.initialStatus === "waiting_approval" && input.deadlineAt
+          ...((input.initialStatus === "waiting_approval" || input.deadlineFromClaim) && input.deadlineAt
             ? {
                 deadlineAt: null,
                 deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - now.getTime()),

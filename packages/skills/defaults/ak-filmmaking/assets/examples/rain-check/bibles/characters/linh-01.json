@@ -1,0 +1,59 @@
+{
+  "id": "LINH_01",
+  "name": "Linh",
+  "identity_version": 1,
+  "description": "Round face, freckles across the nose, dark brown eyes.",
+  "age": "early 30s",
+  "canonical_hair": "long black hair in a low ponytail",
+  "accessories": [
+    "round tortoiseshell glasses"
+  ],
+  "voice": {
+    "direction": "dry, controlled"
+  },
+  "references": [
+    {
+      "id": "CHAR_LINH_FRONT",
+      "view": "front",
+      "path": "bibles/characters/linh-01/front.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_LINH_3QL",
+      "view": "three_quarter_left",
+      "path": "bibles/characters/linh-01/three_quarter_left.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_LINH_3QR",
+      "view": "three_quarter_right",
+      "path": "bibles/characters/linh-01/three_quarter_right.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_LINH_PROFILE",
+      "view": "profile",
+      "path": "bibles/characters/linh-01/profile.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_LINH_FULL",
+      "view": "full_body",
+      "path": "bibles/characters/linh-01/full_body.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_LINH_HURT",
+      "view": "expression",
+      "path": "bibles/characters/linh-01/expressions/hurt.png",
+      "status": "canonical",
+      "version": 1,
+      "expression": "contained hurt"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
-import { getModels, getProviders } from "@mariozechner/pi-ai";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { builtinProviders, getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
+import { findLivePiModel } from "./pi-live-models.ts";
 
 /*
  * What the Pi runtime can talk to, derived from the SDK's own catalog so it never drifts from the pinned
@@ -45,7 +46,7 @@ const RUNTIME_KEY_PROVIDERS: ReadonlySet<string> = new Set([
   "huggingface",
   "zai",
   "moonshotai",
-  // OpenCode Go subscription: one key for the OpenAI-compatible endpoint the SDK pins per model.
+  // OpenCode Go subscription: one key for its OpenAI-compatible endpoint; Studix pins the model list.
   "opencode-go",
 ]);
 
@@ -65,11 +66,11 @@ let cached: PiCatalogProvider[] | undefined;
 export function listPiCatalog(): PiCatalogProvider[] {
   if (cached) return cached;
   const oauth = new Map(
-    AuthStorage.inMemory({})
-      .getOAuthProviders()
+    builtinProviders()
+      .filter((p) => p.auth.oauth)
       .map((p) => [p.id, p.name] as const),
   );
-  const sdkProviders = new Set<string>(getProviders());
+  const sdkProviders = new Set<string>(getBuiltinProviders());
   cached = [...RUNTIME_KEY_PROVIDERS]
     .filter((id) => sdkProviders.has(id))
     .sort()
@@ -78,22 +79,27 @@ export function listPiCatalog(): PiCatalogProvider[] {
       name: PROVIDER_NAMES[id] ?? oauth.get(id)?.replace(/\s*\(.*\)$/, "") ?? id,
       authMethods: ["api_key"],
       ...(oauth.has(id) ? { oauthRestriction: OAUTH_RESTRICTION } : {}),
-      models: getModels(id as Parameters<typeof getModels>[0]).map((m) => ({
+      models: (
+        pinnedPiEndpoint(id)?.models ?? getBuiltinModels(id as Parameters<typeof getBuiltinModels>[0])
+      ).map((m) => ({
         id: m.id,
-        name: m.name,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        cost: { input: m.cost.input, output: m.cost.output },
+        name: m.name ?? m.id,
+        reasoning: m.reasoning ?? false,
+        contextWindow: m.contextWindow ?? 0,
+        maxTokens: m.maxTokens ?? 0,
+        cost: { input: m.cost?.input ?? 0, output: m.cost?.output ?? 0 },
       })),
     }));
   return cached;
 }
 
+/** A catalog model, or one a live key listing found this process (pi-live-models). */
 export function findPiModel(provider: string, modelId: string): PiCatalogModel | undefined {
-  return listPiCatalog()
-    .find((p) => p.id === provider)
-    ?.models.find((m) => m.id === modelId);
+  return (
+    listPiCatalog()
+      .find((p) => p.id === provider)
+      ?.models.find((m) => m.id === modelId) ?? findLivePiModel(provider, modelId)
+  );
 }
 
 /** The catalog model with the lowest list price, used for the one-cent key test. */

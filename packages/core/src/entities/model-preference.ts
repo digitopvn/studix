@@ -7,7 +7,7 @@ import type { TenantOwned } from "./common.ts";
  */
 
 /** Agent runtimes a provider connection can be enabled for. Matches `PlannerSelection.runtime`. */
-export const AGENT_RUNTIMES = ["claude", "pi"] as const;
+export const AGENT_RUNTIMES = ["claude", "codex", "pi"] as const;
 export type AgentRuntimeName = (typeof AGENT_RUNTIMES)[number];
 
 /**
@@ -44,6 +44,13 @@ export interface ModelPreference extends TenantOwned, ModelChoice {
 
 /** Why a model was chosen; shown in the dashboard preview and recorded in the job snapshot. */
 export type ModelSelectionSource = "user-stage" | "workspace-stage" | "user-default" | "workspace-default";
+
+/** `job-request`: the job named its model itself (studix_create_video `model`), outranking every preference. */
+export type ModelSnapshotSource = ModelSelectionSource | "job-request";
+
+/** Thinking levels a caller may ask a reasoning model for; `off` disables thinking. */
+export const REASONING_EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export interface ModelSelectionQuery {
   runtime: AgentRuntimeName;
@@ -96,7 +103,9 @@ export function resolveModelSelection(
 export interface ResolvedModelSnapshot extends ModelChoice {
   runtime: AgentRuntimeName;
   stage: string;
-  source: ModelSelectionSource;
+  source: ModelSnapshotSource;
+  /** Thinking level the job asked for; absent means the runtime's default. */
+  reasoningEffort?: ReasoningEffort;
   /** The connection's version when the snapshot was taken (bumped on key rotation or runtime changes). */
   connectionVersion: number;
   billingSource: BillingSource;

@@ -280,7 +280,10 @@ describe("MultixProvider capabilities", () => {
     // Fish has no key and OpenAI is not an audio route, so neither is offered.
     expect(byKind.voice).toEqual(["elevenlabs:eleven_multilingual_v2", "elevenlabs:eleven_v3"]);
     expect(byKind.sfx).toEqual(["elevenlabs:sound-effects"]);
-    expect(await multix.readiness()).toEqual({
+    // Readiness covers every key multix reads, not only the routed vendors.
+    expect(await multix.readiness()).toMatchObject({
+      gemini: true,
+      "cloudflare-api-token": false,
       sume: true,
       atlas: false,
       elevenlabs: true,
@@ -323,6 +326,122 @@ describe("MultixProvider capabilities", () => {
       const other = new MultixProvider({ bin: "multix", runner: scriptedCli(() => reply).runner });
       expect((await other.readiness()).sume).toBe(false);
     }
+  });
+
+  describe("dashboard-stored vendor keys", () => {
+    const checkOnly = (seen: Array<Record<string, string>>) =>
+      scriptedCli((argv, options) => {
+        seen.push({ ...options.env });
+        if (argv[0] === "check") return { envelope: { text: CHECK_TEXT } };
+        return { envelope: { data: [] } };
+      });
+
+    it("overlays stored keys on the child env and falls back to the process env", async () => {
+      const seen: Array<Record<string, string>> = [];
+      const cli = checkOnly(seen);
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: cli.runner,
+        env: { SUME_API_KEY: "from-process-env", FISH_API_KEY: "fish-from-env" },
+        credentials: async () => ({ values: { SUME_API_KEY: "from-dashboard" }, revision: "r1" }),
+      });
+      await multix.capabilities();
+      expect(seen[0]?.SUME_API_KEY).toBe("from-dashboard");
+      expect(seen[0]?.FISH_API_KEY).toBe("fish-from-env");
+      expect(seen[0]?.MULTIX_DISABLE_HOME_ENV).toBe("1");
+    });
+
+    it("ignores stored names that are not Multix vendor keys", async () => {
+      const seen: Array<Record<string, string>> = [];
+      const cli = checkOnly(seen);
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: cli.runner,
+        env: {},
+        credentials: async () => ({
+          values: { PATH: "/evil", LD_PRELOAD: "/evil.so", NODE_OPTIONS: "--require /evil.js" },
+          revision: "r1",
+        }),
+      });
+      await multix.capabilities();
+      expect(seen[0]?.PATH).not.toBe("/evil");
+      expect(seen[0]).not.toHaveProperty("LD_PRELOAD");
+      expect(seen[0]).not.toHaveProperty("NODE_OPTIONS");
+    });
+
+    it("drops the cached check when the stored revision changes", async () => {
+      const cli = checkOnly([]);
+      let revision = "r1";
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: cli.runner,
+        env: {},
+        credentials: async () => ({ values: {}, revision }),
+      });
+      await multix.capabilities();
+      await multix.capabilities();
+      expect(cli.commands().filter((c) => c.startsWith("check"))).toHaveLength(1);
+      revision = "r2";
+      await multix.capabilities();
+      expect(cli.commands().filter((c) => c.startsWith("check"))).toHaveLength(2);
+    });
+
+    it("keeps working when the loader throws", async () => {
+      const cli = checkOnly([]);
+      const multix = new MultixProvider({
+        bin: "multix",
+        runner: cli.runner,
+        env: {},
+        credentials: async () => {
+          throw new Error("db down");
+        },
+      });
+      expect((await multix.readiness()).sume).toBe(true);
+    });
+  });
+
+  describe("diagnose", () => {
+    it("reports ready with the vendors that have a key, without a paid call", async () => {
+      const cli = scriptedCli((argv) => {
+        if (argv[0] === "check") return { envelope: { text: CHECK_TEXT } };
+        throw new Error(`unexpected argv ${argv.join(" ")}`);
+      });
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+      const result = await multix.diagnose();
+      expect(result.state).toBe("ready");
+      expect(result.vendors).toMatchObject({ sume: true, atlas: false, elevenlabs: true, fish: false });
+      expect(cli.commands()).toEqual(["check --json"]);
+    });
+
+    it("reports check_failed when the CLI answers with an error", async () => {
+      const cli = scriptedCli(() => ({
+        exitCode: 3,
+        envelope: { error: { code: "CONFIG", message: "no keys" } },
+      }));
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+      const result = await multix.diagnose();
+      expect(result.state).toBe("check_failed");
+      expect(Object.values(result.vendors).every((v) => v === false)).toBe(true);
+    });
+
+    it("reports missing_executable when the binary cannot be started", async () => {
+      const runner: MultixRunner = async () => {
+        throw Object.assign(new Error("spawn multix ENOENT"), { code: "ENOENT" });
+      };
+      const multix = new MultixProvider({ bin: "multix", runner });
+      const result = await multix.diagnose();
+      expect(["missing_executable", "check_failed"]).toContain(result.state);
+      expect(result.state).not.toBe("ready");
+    });
+
+    it("reports missing_executable without MULTIX_BIN", async () => {
+      const multix = createMultixProviderFromConfig({
+        MULTIX_BIN: undefined,
+        MULTIX_ALLOW_HOME_ENV: false,
+        MULTIX_WAIT_TIMEOUT_SECONDS: 900,
+      });
+      expect(await multix.diagnose()).toMatchObject({ state: "missing_executable", code: "NOT_SET" });
+    });
   });
 
   it("is disabled without MULTIX_BIN", async () => {
@@ -1344,5 +1463,113 @@ describe("MultixProvider.inspectJob", () => {
     await expect(
       new MultixProvider().inspectJob({ provider: "atlas", id: "pred_42" }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("MultixProvider workspace keys (BYOK)", () => {
+  const platformEnv = { PATH: "/usr/bin", SUME_API_KEY: "platform-sume" };
+
+  it("runs a workspace's calls on its own key and reports them as workspace-funded", async () => {
+    const cli = sumeImageCli();
+    const asked: string[] = [];
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      env: platformEnv,
+      workspaceCredentials: async (tenant) => {
+        asked.push(tenant.workspaceId);
+        return { SUME_API_KEY: "workspace-sume" };
+      },
+    });
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result).toMatchObject({ costCents: 3, funding: "workspace" });
+    expect(asked).toEqual([ctx.workspaceId]);
+    expect(cli.calls.map((c) => c.options.env.SUME_API_KEY)).toEqual([
+      "workspace-sume",
+      "workspace-sume",
+      "workspace-sume",
+    ]);
+  });
+
+  it("keeps the platform key and funding when the workspace has no key for the call's vendor", async () => {
+    const cli = sumeImageCli();
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      env: platformEnv,
+      workspaceCredentials: async () => ({ ATLASCLOUD_API_KEY: "workspace-atlas" }),
+    });
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result.funding).toBeUndefined();
+    expect(cli.calls.every((c) => c.options.env.SUME_API_KEY === "platform-sume")).toBe(true);
+  });
+
+  it("never lets a workspace key reach the shared capability probe, even when a call starts it", async () => {
+    const seen: string[] = [];
+    const sume = sumeImageCli();
+    let multix: MultixProvider | undefined;
+    const runner: MultixRunner = async (argv, options) => {
+      const reply = (envelope: object) => ({
+        exitCode: 0,
+        stdout: `${JSON.stringify({ schema: "multix.result/v1", ok: true, ...envelope })}\n`,
+      });
+      if (argv[0] === "check") {
+        seen.push(options.env.SUME_API_KEY ?? "");
+        return reply({ text: CHECK_TEXT });
+      }
+      if (argv[0] !== "sume") return reply({ data: [] });
+      // A probe started while a workspace call runs must still use the platform key.
+      if (argv.includes("--estimate")) await multix?.capabilities();
+      return sume.runner(argv, options);
+    };
+    multix = new MultixProvider({
+      bin: "multix",
+      runner,
+      env: platformEnv,
+      workspaceCredentials: async () => ({ SUME_API_KEY: "workspace-sume" }),
+    });
+    await multix.generate(ctx, imageRequest());
+    expect(seen).toEqual(["platform-sume"]);
+  });
+
+  it("tags the charge of a failed workspace-funded call", async () => {
+    const cli = sumeImageCli(() => ({
+      exitCode: 5,
+      envelope: {
+        ok: false,
+        error: { code: "DOWNLOAD_FAILED", message: "could not save output", retryable: false },
+        usage: {
+          cost_usd: 0.03,
+          metrics: {
+            "data.job.usage_summary.reserved_usd_cents": 3,
+            "data.job.usage_summary.captured_usd_cents": 3,
+          },
+        },
+      },
+    }));
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      env: platformEnv,
+      workspaceCredentials: async () => ({ SUME_API_KEY: "workspace-sume" }),
+    });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MediaChargedError);
+    expect((error as MediaChargedError).charge).toMatchObject({ costCents: 3, funding: "workspace" });
+  });
+
+  it("falls back to the platform key when the workspace source fails", async () => {
+    const cli = sumeImageCli();
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      env: platformEnv,
+      workspaceCredentials: async () => {
+        throw new Error("db down");
+      },
+    });
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result.funding).toBeUndefined();
+    expect(cli.calls[0]?.options.env.SUME_API_KEY).toBe("platform-sume");
   });
 });

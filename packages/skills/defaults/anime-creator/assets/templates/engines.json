@@ -1,0 +1,125 @@
+{
+  "_comment": "Engine routing: a role (what the pipeline needs) -> adapters (engines that can fill it). Scripts read this file through scripts/studio/engine_routing.py; a series overrides it with <series>/engines.json (merged per role and per adapter), and every script takes --engine <adapter> to pick a non-default one. Numbers under `measured` come from FRONTIER runs on one machine (RTX 5060 Ti 16 GB, Windows 11); treat them as examples to re-measure on yours, not as limits.",
+  "_how_to_add": "To add an engine: add an adapter under its role with a `kind` the scripts already run, then set `default` or pass --engine. Kinds: `cli` (any command; `cmd` is an argv list whose {placeholders} the script fills, listed per role in `placeholders`; `output` says where the result is: `stdout`, `stdout-json` or `file` for {out}), `comfyui` (a ComfyUI API-format workflow in assets/comfyui-workflows/ that carries `_slots`; see generate-video-via-comfyui.py), `atlas-async` (a multix Atlas model run with upload, submit and fetch). A new kind is the only change that needs code. Record status (`chosen`, `rejected`, `untested`, `template`) and what you measured. Set `local: true` on an adapter that runs on this machine with no bill (`comfyui` is local already): only those may record cost_usd 0 in an engine A/B.",
+  "roles": {
+    "i2v-local": {
+      "what": "image-to-video on a local GPU: free per clip, slower, bounded by VRAM. Used for physical action inserts and retakes when the cash budget is tight.",
+      "default": "minimax-h3-comfyui",
+      "adapters": {
+        "minimax-h3-comfyui": {
+          "kind": "comfyui",
+          "workflow": "minimax-h3-i2v-api.json",
+          "status": "chosen (FRONTIER ep02 sc02 retake)",
+          "measured": {"wall_s": 307, "clip_s": 4, "size": "1344x768", "turbo": true, "usd": 0},
+          "notes": "4 s or more; snaps toward its end frame; MiniMaxH3AddGuide anchors an approved TTS take on the lips"
+        },
+        "ltx-2.5-comfyui": {
+          "kind": "comfyui",
+          "workflow": "ltx-2.5-i2v-api.json",
+          "params": {"unet": "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors", "lora": "", "lora_strength": 1.0, "crf": 12},
+          "status": "rejected by the user: acting and camera control below H3 (FRONTIER ep02 sc02)",
+          "measured": {"wall_s": [80, 145], "vram_peak_gb": 15.7, "clip_s": [3, 4], "size": ["1344x768", "1920x1088"], "usd": 0},
+          "notes": "about 3x faster than H3 on the same GPU; without an anime style LoRA on both stages the look is semi-realistic; the template's default encode (~2.8 Mbps) smeared small faces, so set crf before judging"
+        }
+      }
+    },
+    "i2v-cloud": {
+      "what": "image-to-video through a paid API: fast and parallel, billed per second or per clip. Routed per job by gen-plan.json `model` with prices in price-table.json (generate-media-via-multix.py), not by this table.",
+      "default": "gemini-omni",
+      "adapters": {
+        "gemini-omni": {"kind": "atlas-async", "model": "google/gemini-omni-1.1-flash/image-to-video", "status": "chosen for dialogue and acting", "measured": {"usd_per_s": 0.099, "res": "720p"}},
+        "minimax-h3": {"kind": "atlas-async", "model": "minimax/h3/image-to-video", "status": "chosen for physical action", "measured": {"usd_per_s": 0.13, "res": "720p", "source": "frontier blind A/B 2026-10-27"}},
+        "seedance-2.5": {"kind": "atlas-async", "model": "bytedance/seedance-2.5/image-to-video", "status": "one sakuga shot per scene at most", "measured": {"usd_per_s": 0.30, "res": "720p"}},
+        "seedance-2.0-mini-ref2v": {"kind": "atlas-async", "model": "bytedance/seedance-2.0-mini/reference-to-video", "status": "chosen for blockout-guided action: cheapest ref2v, followed the keyframe's blocking as a reference image", "measured": {"usd_per_clip": 0.4088, "clip_s": 4, "res": "720p", "date": "2026-10-26"},
+          "refs": {"images": 3, "videos": 1, "image_key": "reference_images", "video_key": "reference_videos", "image_tag": "image {n}", "video_tag": "video {n}", "_note": "keys verified against the Atlas schema and a billed run 2026-10-26 (schema allows 9 images, 3 videos of 2-15 s, 15 s total). No first-frame field: `image` next to reference media is refused (HTTP 400), so the keyframe travels as a reference image"}},
+        "kling-v4.0-ref2v": {"kind": "atlas-async", "model": "kwaivgi/kling-v4.0/reference-to-video", "status": "alternative: most polished frames and a true first frame; 67% dearer than Seedance mini and drifted from the intent (ran at the drone instead of backing off)", "measured": {"usd_per_clip": 0.6843, "clip_s": 4, "res": "720p", "date": "2026-10-26"},
+          "refs": {"images": 3, "videos": 1, "image_key": "reference_images", "video_key": "reference_videos", "image_tag": "@image_{n}", "video_tag": "@video_{n}", "image_tag_offset": 1, "_note": "keys verified against the Atlas schema and a billed run 2026-10-26: `image` is the first frame and is @image_1, references number after it (image_tag_offset). Reference videos bill as input seconds; resolution defaults to 1080p, so set 720p; no seed field"}}
+      }
+    },
+    "tts": {
+      "what": "speech for every line. Routed per job by gen-plan.json (`tts` jobs and the character file's voice); takes are gated by gate-tts-takes.py, whichever provider made them.",
+      "default": "gemini-flash-tts",
+      "adapters": {
+        "gemini-flash-tts": {"kind": "cli", "cmd": ["multix", "gemini", "generate-speech", "--model", "gemini-3.8-flash-tts", "--voice", "{voice}", "--text", "{text}", "--style", "{style}", "--output-format", "wav", "--output", "{out}"], "output": "file", "status": "chosen by the user's ear for FRONTIER", "measured": {"usd_per_call": 0.005}},
+        "elevenlabs-v3": {"kind": "cli", "cmd": ["multix", "elevenlabs", "tts", "--text", "{text}", "--voice", "{voice}", "--model", "eleven_v3", "--output", "{out}"], "output": "file", "status": "alternative; an AI judge preferred a clone the user rejected"},
+        "fish-drama3-openrouter": {"kind": "cli", "cmd": ["multix", "openrouter", "tts", "--model", "fish-audio/drama-3", "--voice", "{voice}", "--text-file", "{text_file}", "--format", "mp3", "--output", "{out}", "--json"], "output": "file", "provider": "openrouter", "price_key": "openrouter/fish-audio/drama-3", "status": "candidate: better Vietnamese acting than Gemini 3.8 TTS by the user's ear, costs more; not the default until the FRONTIER benchmark and user approval", "notes": "billed per UTF-8 byte of directed_text (tags included); receipt has generation_id and cost_usd. See references/fish-drama3-voice-direction.md"},
+        "fish-drama3-native": {"kind": "cli", "cmd": ["multix", "fish", "tts", "--model", "drama-3", "--voice", "{voice}", "--text-file", "{text_file}", "--language", "{language}", "--format", "mp3", "--output", "{out}", "--json"], "output": "file", "provider": "fish", "price_key": "fish/drama-3", "status": "candidate; needs multix >= 1.22.0-beta (native Fish provider) and FISH_API_KEY", "notes": "the response does not confirm the model that ran (model_confirmed false); voice design, cloning and pronunciation dictionaries are native only"}
+      },
+      "placeholders": ["text", "text_file", "voice", "style", "language", "out"]
+    },
+    "asr": {
+      "what": "transcribe a take or a clip to diff it against the script.",
+      "default": "elevenlabs-scribe",
+      "adapters": {
+        "elevenlabs-scribe": {"kind": "cli", "cmd": ["multix", "elevenlabs", "transcribe", "--input", "{in}", "--language", "{lang}", "--format", "text", "--output", "{out}"], "output": "file", "status": "chosen"},
+        "seed-asr": {"kind": "cli", "cmd": ["multix", "atlas", "audio", "--input", "{in}"], "output": "stdout", "status": "template: untested here and cheapest per call; check the flags with `multix atlas audio --help` first"}
+      },
+      "placeholders": ["in", "lang", "out"]
+    },
+    "upscaler": {
+      "what": "720p to 1080p of finished scene renders or trimmed clips; frame counts must match the source exactly.",
+      "default": "byteplus-standard",
+      "adapters": {
+        "byteplus-standard": {
+          "kind": "atlas-async",
+          "model": "byteplus/video/upscaler",
+          "payload": {"tool_version": "standard", "scene": "aigc", "resolution": "1080p", "fps": 24, "bitrate_level": "high"},
+          "status": "chosen (FRONTIER ep02 1080 master)",
+          "measured": {"usd_per_s": 0.0069, "frames_match": true, "captions_kept": true},
+          "notes": "the professional tier cost 10x for a near-identical result"
+        },
+        "local-cli": {
+          "kind": "cli",
+          "local": true,
+          "cmd": ["your-upscaler", "-i", "{in}", "-o", "{out}", "--width", "{width}", "--height", "{height}"],
+          "output": "file",
+          "status": "template: replace cmd with a local upscaler (an ESRGAN-family CLI, a ComfyUI wrapper, ...)"
+        }
+      },
+      "placeholders": ["in", "out", "width", "height"]
+    },
+    "ai-judge": {
+      "what": "a multimodal model that watches and listens to a short clip with the beat and the dialogue and returns JSON findings. A pointer to verify, never a verdict.",
+      "default": "gemini-analyze",
+      "adapters": {
+        "gemini-analyze": {"kind": "cli", "cmd": ["multix", "gemini", "analyze", "--files", "{clip}", "--prompt", "{prompt}", "--format", "json"], "output": "stdout-json", "status": "chosen; found a stray rustle, a stray yell and an unprocessed robot line, plus a clip-boundary false positive (FRONTIER ep02)", "measured": {"usd": "negligible", "samples_fps": 1}}
+      },
+      "placeholders": ["clip", "prompt"]
+    },
+    "audio-aesthetic": {
+      "what": "a learned quality scorer for SFX and music assets (for example Audiobox Aesthetics: CE, CU, PC, PQ). A regression gate between versions of one asset only; it cannot tell whether a sound fits the shot.",
+      "default": null,
+      "adapters": {
+        "audiobox-aesthetics": {"kind": "cli", "local": true, "cmd": ["audio-aes", "{in}"], "output": "stdout-json", "status": "untested: researched for FRONTIER ep02, not run; fix cmd to the installed tool before use"}
+      },
+      "placeholders": ["in"]
+    },
+    "sound-generation": {
+      "what": "SFX and Foley by capability. text-to-audio is the legacy ElevenLabs SFX path (a gen-plan `sfx` job with no `mode`). video-to-audio (`mode: video-to-audio`) hears the picture and writes synced Foley: fal endpoints through `multix fal`, never a fal client in this skill. `engine: auto` takes the first eligible adapter in `order` (capability, duration_s, license policy, not rejected). input_map is {model input: job field}; the result MP4 is reduced to a 48 kHz PCM WAV plus a sidecar. Output feeds only the hits or beds bus through a mix-add proposal. Prices measured and ear-reviewed on Windows 2026-10-26 (5 approved ep01 clips): the user picked Hunyuan on every clip, so `auto` tries it first; MMAudio is 10x cheaper and the fallback.",
+      "default": "elevenlabs-sfx",
+      "order": ["hunyuan-foley-fal", "mmaudio-v2-fal"],
+      "adapters": {
+        "elevenlabs-sfx": {"kind": "multix-elevenlabs", "capabilities": ["text-to-audio"], "status": "chosen: the FRONTIER ep01-02 SFX path", "license": {"commercial": true, "note": "ElevenLabs paid plan terms"}},
+        "mmaudio-v2-fal": {"kind": "fal-queue", "provider": "fal", "model": "fal-ai/mmaudio-v2", "capabilities": ["video-to-audio", "text-to-audio"],
+          "input_map": {"video_url": "video_url", "prompt": "text", "negative_prompt": "negative_prompt", "seed": "seed", "num_steps": "steps", "duration": "duration", "cfg_strength": "cfg", "mask_away_clip": "mask_away_clip"},
+          "required": ["video_url", "prompt"], "defaults": {"steps": 25, "cfg": 4.5}, "duration_s": {"min": 1, "max": 30}, "data_uri_max_bytes": 8000000, "wait_ms": 600000,
+          "status": "fallback: 5 paid runs, $0.00100/s measured; good on big impacts and footsteps, misses fine multi-event Foley; lost every clip to Hunyuan by ear", "measured": {"usd_per_s": 0.001, "s_per_job": [20, 36]},
+          "license": {"commercial": true, "note": "fal model page lists licenseType commercial (read 2026-10-26); that covers the hosted endpoint only. The open MMAudio weights are CC BY-NC 4.0, so a local run is non-commercial"}},
+        "hunyuan-foley-fal": {"kind": "fal-queue", "provider": "fal", "model": "fal-ai/hunyuan-video-foley", "capabilities": ["video-to-audio"],
+          "input_map": {"video_url": "video_url", "text_prompt": "text", "negative_prompt": "negative_prompt", "seed": "seed", "num_inference_steps": "steps", "guidance_scale": "cfg"},
+          "required": ["video_url", "text_prompt"], "defaults": {"steps": 50, "cfg": 4.5, "negative_prompt": "noisy, harsh"}, "duration_s": {"min": 1, "max": 30}, "data_uri_max_bytes": 8000000, "wait_ms": 900000,
+          "status": "chosen by the user's ear: best on all 5 benchmark clips; $0.00996/s billed per real second (no 10 s minimum)", "measured": {"usd_per_s": 0.00996, "s_per_job": [20, 150]},
+          "license": {"commercial": true, "note": "fal model page lists licenseType commercial (read 2026-10-26) for the hosted endpoint; the weights carry the Tencent Hunyuan community license (territory and scale limits) for local runs"}}
+      }
+    },
+    "audio-separation": {
+      "what": "split a mixed take into dialogue, effects and music stems (salvage a clip whose native audio has a usable hit, or strip music under a line). Runs as a gen-plan `isolate` job today; a stem adapter is a candidate only.",
+      "default": "elevenlabs-isolate",
+      "adapters": {
+        "elevenlabs-isolate": {"kind": "multix-elevenlabs", "outputs": ["voice"], "status": "chosen: the existing `isolate` job (voice only)"},
+        "demucs-local": {"kind": "cli", "local": true, "cmd": ["demucs", "-n", "htdemucs", "-o", "{out}", "{in}"], "output": "file", "outputs": ["vocals", "drums", "bass", "other"], "status": "untested: fix cmd to the installed tool before use", "license": {"commercial": true, "note": "MIT code; check the weights you load"}}
+      },
+      "placeholders": ["in", "out"]
+    }
+  }
+}

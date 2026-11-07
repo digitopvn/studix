@@ -55,6 +55,13 @@ export const ConfigSchema = z
     S3_SECRET_ACCESS_KEY: optionalString,
     S3_FORCE_PATH_STYLE: bool.default(false),
     S3_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(604_800).default(3600),
+    /**
+     * Local development only: storage profiles saved from the dashboard may use http:// and loopback or
+     * private hosts (a MinIO on localhost). Off in every deployed environment: the SSRF guard then refuses them.
+     */
+    STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS: bool.default(false),
+    /** Local development only: job webhooks may target http:// and loopback or private hosts. */
+    STUDIX_WEBHOOK_ALLOW_LOCAL: bool.default(false),
 
     STUDIX_API_KEY_ENV: z
       .string()
@@ -68,9 +75,13 @@ export const ConfigSchema = z
     GOOGLE_CLIENT_SECRET: optionalString,
     /** 32 random bytes (base64) sealing stored provider credentials; without it none can be saved. */
     STUDIX_SECRETS_KEY: optionalString,
+    /** Operators' workspace (wsp_...): platform credential audit events go there instead of a tenant's. */
+    STUDIX_PLATFORM_WORKSPACE_ID: optionalString,
     /** Earlier STUDIX_SECRETS_KEY values that may still open stored credentials during a rotation. */
     STUDIX_SECRETS_KEYS_PREVIOUS: csv.default([]),
     ANTHROPIC_BASE_URL: origin.default("https://api.anthropic.com"),
+    /** Optional token for importing GitHub skills (raises the API rate limit); sent to api.github.com only. */
+    STUDIX_GITHUB_TOKEN: optionalString,
     /** Jobs may select `planner: {runtime: "claude"}` (Claude Agent SDK on the worker). Off by default. */
     STUDIX_CLAUDE_PLANNER: bool.default(false),
     /**

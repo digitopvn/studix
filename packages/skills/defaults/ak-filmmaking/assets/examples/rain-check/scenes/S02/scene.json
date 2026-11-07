@@ -1,0 +1,31 @@
+{
+  "scene_id": "S02",
+  "title": "Three years of eventually",
+  "location": "CAFE_INTERIOR_01",
+  "time_of_day": "dusk",
+  "weather": "rain outside",
+  "lighting": "warm tungsten practicals, cool window fill",
+  "characters": [
+    "MAI_01",
+    "LINH_01"
+  ],
+  "wardrobe": {
+    "MAI_01": "MAI_RAINCOAT_01",
+    "LINH_01": "LINH_KNIT_01"
+  },
+  "props": [
+    "UMBRELLA_01",
+    "COFFEE_CUP_01"
+  ],
+  "purpose": "Confrontation and first offer of repair.",
+  "audio_context": "Low cafe murmur, espresso machine, rain on glass.",
+  "shots": [
+    "S02_SH001",
+    "S02_SH002",
+    "S02_SH003",
+    "S02_SH004",
+    "S02_SH005",
+    "S02_SH006",
+    "S02_SH007"
+  ]
+}

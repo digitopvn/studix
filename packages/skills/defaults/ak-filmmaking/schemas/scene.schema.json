@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scene.schema.json",
+  "title": "Scene (scenes/<scene_id>/scene.json)",
+  "type": "object",
+  "required": ["scene_id", "title", "location", "time_of_day", "characters", "wardrobe", "props", "purpose", "shots"],
+  "additionalProperties": false,
+  "properties": {
+    "scene_id": {"$ref": "common.schema.json#/$defs/scene_id"},
+    "title": {"type": "string", "minLength": 1},
+    "location": {"$ref": "common.schema.json#/$defs/asset_id"},
+    "time_of_day": {"type": "string", "enum": ["dawn", "morning", "day", "afternoon", "golden_hour", "dusk", "night"]},
+    "weather": {"type": "string"},
+    "lighting": {"type": "string"},
+    "characters": {"type": "array", "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/asset_id"}},
+    "wardrobe": {
+      "description": "Wardrobe state per active character for the whole scene.",
+      "type": "object",
+      "additionalProperties": {"$ref": "common.schema.json#/$defs/asset_id"}
+    },
+    "props": {"type": "array", "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/asset_id"}},
+    "identity_versions": {
+      "description": "Identity version per character for this scene when it differs from the bible's latest (flashback, before a time jump).",
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 1}
+    },
+    "purpose": {"type": "string", "minLength": 1},
+    "audio_context": {"type": "string"},
+    "shots": {
+      "description": "Shot order in the cut. Each ID has scenes/<scene_id>/shots/<shot_id>/shot.json.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "common.schema.json#/$defs/shot_id"}
+    }
+  }
+}

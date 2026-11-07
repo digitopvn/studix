@@ -26,6 +26,7 @@ afterAll(() => rmSync(sandboxRoot, { recursive: true, force: true }));
 class FakeChild extends EventEmitter {
   stdin = new PassThrough();
   stdout = new PassThrough();
+  stderr = new PassThrough();
   killed = false;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
@@ -398,6 +399,25 @@ describe("claude SDK transport", () => {
     await draining;
     expect(spawned).toEqual([]);
     expect(spawnError).toBeInstanceOf(Error);
+  });
+
+  it("explains a crashed process with its redacted stderr tail", async () => {
+    const { h, transport } = harness(async function* (h) {
+      const child = h.children[0]! as FakeChild & { stderr: PassThrough };
+      child.stderr.write(`Error: --json-schema is not a valid JSON Schema (key ${KEY})\n`);
+      await new Promise((r) => setImmediate(r));
+      child.exit(1);
+      yield* [];
+      throw new Error("Claude Code process exited with code 1");
+    });
+    void h;
+    const session = transport.start(request());
+    const error = (await collect(session.events).catch((e: unknown) => e)) as StudixError;
+    expect(error.code).toBe("UNAVAILABLE");
+    const reason = String((error.details as { reason: string }).reason);
+    expect(reason).toContain("exited with code 1; stderr: Error: --json-schema is not a valid JSON Schema");
+    expect(reason).not.toContain(KEY);
+    await session.closed;
   });
 
   it("closes when the process never started", async () => {

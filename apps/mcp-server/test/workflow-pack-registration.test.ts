@@ -26,7 +26,14 @@ afterEach(() => {
   unregister = undefined;
 });
 
-const BUILT_IN = ["brand-intro", "marketing-video", "motion-graphic", "anime", "long-form-film"];
+const BUILT_IN = [
+  "brand-intro",
+  "marketing-video",
+  "motion-graphic",
+  "anime",
+  "long-form-film",
+  "skill-agent",
+];
 
 describe("workflow packs on the MCP server", () => {
   it("advertises a newly registered pack through studix_inspect without code changes", () => {

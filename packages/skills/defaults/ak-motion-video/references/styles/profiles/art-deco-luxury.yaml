@@ -1,0 +1,49 @@
+id: art-deco-luxury
+name: Art Deco Luxury
+family: aesthetic
+aliases: [art deco, gilded deco, 1920s luxury, gatsby, gilded age]
+summary: 1920s art-deco advertisement; champagne gold on charcoal and cream, didone serifs, fan and sunray geometry, slow glints.
+energy: 2
+best_for: [luxury-product, perfume-watch-promo, heritage-brand, gala-event]
+character: >-
+  A 1920s luxury advertisement: symmetric fan and sunray geometry, stepped
+  frames, champagne-gold foil lines on charcoal or aged cream, high-contrast
+  didone serifs with wide tracking. Motion is poised and expensive: lines
+  draw symmetrically from the centre, frames unfold like a fan and a slow
+  light glint crosses the gold.
+dimensions:
+  palette:
+    mode: mixed
+    colors: {bg: "#1c1b19", ink: "#f3ead6", accent: "#c9a45c", gold-deep: "#9c7a3c", cream: "#efe5cf", charcoal: "#2a2825"}
+    rule: "Charcoal or cream grounds with champagne gold lines and type; no other hues."
+  typography:
+    - "Bodoni Moda 600 140-220 px headlines, tracking 0.12em, all caps"
+    - "Poiret One 48 px subheads; Josefin Sans 400 28 px body, tracking 0.08em"
+  layout: ["Strict bilateral symmetry around a centre axis", "Stepped and arched frames around the hero product", "Fan and sunray patterns radiating from the hero"]
+  material: ["Gold foil linework 2-4 px, flat charcoal or cream ground", "No soft shadows; depth through nested frames"]
+  texture: ["Baked fine halftone and aged paper grain on cream scenes", "Foil sheen as a baked gradient strip used by the light sweep"]
+  camera: ["Locked-off symmetric framing", "Very slow push_in toward the centre on holds"]
+  transitions: ["fan-unfold (radiating panels open from the centre, expo.inOut 0.7 s)", "symmetric-draw (frame lines draw outward from the axis with draw())", "iris-step (stepped arch reveal)"]
+  pacing:
+    bpm: [84, 104]
+    rhythm: "Poised: long holds of 8 beats, reveals on bar lines, nothing hurried."
+  beat_response: ["Light glint crosses the gold every 2 bars", "Sunray lines extend one step per bar", "No pulse or shake"]
+  ui_choreography: ["UI framed in a stepped gold frame like a display case", "Panels unfold symmetrically"]
+  diagrams: ["Symmetric gold linework, fan charts, stepped bars"]
+  character_motion: ["Elegant silhouettes with minimal motion; products rotate slowly on a plinth"]
+  captions: ["No pill; 40 px Be Vietnam Pro 500 cream with 0.04em tracking over a charcoal fade, current word gold; bottom band"]
+  sound: ["Jazz-age swing, string quartet or lounge 84-104 BPM", "SFX: glass chime, soft piano accent; low density"]
+scene_types:
+  prefer: [cover, product-hero, title, quote, testimonial, outro]
+  avoid: [terminal, code, chart]
+signature_moves:
+  - "Gold frame drawing outward symmetrically from the centre"
+  - "Fan unfolding to reveal the product"
+  - "Slow glint across gold type"
+strengths: ["Instant luxury and heritage", "Elegant for perfume, watches and events", "Very strong symmetry"]
+constraints:
+  - "Gold, charcoal and cream only"
+  - "Symmetric layouts; no bounce or shake"
+  - "Textures and foil sheen baked to PNG"
+avoid: ["Bright colours or neon", "Casual rounded UI", "Fast cuts"]
+pairs_well_with: [monochrome-luxury, cinematic-product-launch, keynote-stage, ink-woodblock]

@@ -1,0 +1,25 @@
+ak-skill-creator
+Copyright (c) 2026 AgentKit. All Rights Reserved.
+
+This skill is part of a proprietary AgentKit kit. It contains material
+derived from third-party work licensed under the Apache License, Version 2.0:
+
+  skill-creator skill (https://github.com/anthropics/skills, skills/skill-creator)
+  by Anthropic, PBC
+
+Derived material in this directory:
+  - scripts/package_skill.py: modified version of the upstream script.
+
+This skill also contains MIT-licensed material from a pinned source archive
+(Copyright (c) 2026 David Ondrej). Its license text is LICENSE-MIT.txt in
+this directory.
+
+AgentKit changed the upstream material listed above: it was restructured,
+rewritten in part and extended for AgentKit. Files listed as modified versions
+or adapted portions differ from upstream; a file listed as copied is unchanged.
+The upstream project does not distribute a NOTICE file of its own.
+
+The Apache License, Version 2.0 (LICENSE.txt in this directory) applies to the
+upstream material. Everything else in this directory is AgentKit-authored and
+distributed under the AgentKit proprietary license terms, not under the
+Apache License.

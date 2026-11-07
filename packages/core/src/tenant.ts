@@ -21,6 +21,14 @@ export const PERMISSIONS = [
   "job:recover",
   "asset:read",
   "asset:write",
+  /**
+   * Imported external Agent Skills (third-party instruction text kept in the workspace). Reading never
+   * leaves Studix; writing contacts public GitHub and stores what it finds, so it is a separate grant.
+   */
+  "skill:read",
+  "skill:write",
+  /** Run ffmpeg/ffprobe with raw arguments in the worker sandbox (studix_media_exec); costs compute time. */
+  "media:exec",
   "approval:request",
   "approval:decide",
   "publish",
@@ -30,13 +38,15 @@ export const PERMISSIONS = [
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-const READ: Permission[] = ["workspace:read", "project:read", "asset:read"];
+const READ: Permission[] = ["workspace:read", "project:read", "asset:read", "skill:read"];
 const EDIT: Permission[] = [
   ...READ,
   "project:write",
   "job:cancel",
   "job:retry",
   "asset:write",
+  "skill:write",
+  "media:exec",
   "approval:request",
 ];
 
@@ -120,6 +130,25 @@ export function assertPermission(ctx: TenantContext, permission: Permission): vo
           : ctx.actor.type === "oauth"
             ? "Reconnect the app with a broader scope, or ask a workspace admin for a role that grants this action."
             : "Ask a workspace admin for a role that grants this action.",
+    });
+  }
+}
+
+/**
+ * Platform-wide settings (object storage, media provider keys) belong to the platform's own staff acting in
+ * a dashboard session. Workspace owners and admins do not hold them, and neither do API keys, OAuth-delegated
+ * agents or system actors, so an agent can never change or reveal platform credentials.
+ */
+export function isPlatformOperator(actor: Actor): boolean {
+  return actor.type === "user" && actor.role === "operator";
+}
+
+/** Throw FORBIDDEN unless the context is a platform operator's own dashboard session. */
+export function assertPlatformOperator(ctx: TenantContext): void {
+  if (!isPlatformOperator(ctx.actor)) {
+    throw new StudixError("FORBIDDEN", "Only a platform operator can manage platform settings", {
+      details: { actorType: ctx.actor.type },
+      suggestedAction: "Ask the platform operator to change this setting.",
     });
   }
 }

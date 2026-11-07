@@ -1,0 +1,48 @@
+id: wpa-screenprint
+name: WPA Screenprint
+family: aesthetic
+aliases: [wpa poster, vintage travel poster, national park poster, 1930s silkscreen]
+summary: 1930s silkscreen poster; muted 3-colour flat layers, stencil caps, slow layered parallax landscapes.
+energy: 2
+best_for: [history-story, public-service, travel-promo, civic-explainer]
+character: >-
+  1930s WPA and vintage travel posters: flat silkscreen layers in three muted
+  inks, simplified landscapes and figures, stencil or gothic caps in a solid title
+  panel low in the frame. Motion is calm and stately: layers drift in parallax like a diorama,
+  ink layers print on one after another and the light shifts slowly.
+dimensions:
+  palette:
+    mode: light
+    colors: {bg: "#eadfc6", ink: "#2b2a28", accent: "#c4572f", sage: "#6f8a6a", slate: "#3f5a6b", sand: "#d8b77a"}
+    rule: "Three inks plus paper per scene; each layer one flat ink; accent for the sun, a sign or one key word."
+  typography:
+    - "Big Shoulders Display 800 caps 140-220 px in a solid title panel above the caption band"
+    - "Stardos Stencil 64 px for slogans; Libre Franklin 500 30 px body"
+  layout: ["Poster frame with a solid title panel low in the frame, kept above the caption band", "Landscape built of 4-6 flat depth layers", "Strong central subject, symmetric or rule-of-thirds"]
+  material: ["Flat silkscreen ink layers, no shadows", "Thin paper border around the poster"]
+  texture: ["Baked screenprint grain and slight ink overlap at layer edges"]
+  camera: ["Slow parallax push_in through landscape layers (0.2 : 0.5 : 1 : 1.4)", "Gentle tilt from sky to ground"]
+  transitions: ["ink-layer print (the next scene prints layer by layer, each 0.3 s power2.out from opacity 0 with 4 px offset)", "cross-dissolve on a bar line", "panel slide (title panel slides up)"]
+  pacing:
+    bpm: [76, 96]
+    rhythm: "Stately: long 8-beat holds, layers print on beats, one change per bar."
+  beat_response: ["Sun rays rotate 2 deg per bar", "Layers print on downbeats", "No flashes or shake"]
+  ui_choreography: ["UI framed as a poster inset with a stencil caption", "Panels print in layer by layer"]
+  diagrams: ["Flat pictograms and simple bar layers in the three inks", "Route maps as dashed lines drawn with draw()"]
+  character_motion: ["Silhouette figures with minimal on-twos motion: a wave, a step"]
+  captions: ["Solid ink panel, 42 px Be Vietnam Pro 600 paper colour, current word accent; bottom band"]
+  sound: ["Americana, folk, brass or warm orchestral 76-96 BPM", "SFX: low density; wind, birds, a soft print thump"]
+scene_types:
+  prefer: [cover, title, timeline, quote, testimonial, outro]
+  avoid: [terminal, code, ui-demo]
+signature_moves:
+  - "Landscape printing on layer by layer"
+  - "Slow diorama parallax push through the layers"
+  - "Title panel rising with stencil caps"
+strengths: ["Calm, trustworthy and timeless", "Great for history and public messages", "Readable with very few colours"]
+constraints:
+  - "Three inks per scene"
+  - "No bounce, shake or fast cuts"
+  - "Grain baked to PNG"
+avoid: ["Neon or gradients", "Busy layouts", "Fast juicy motion"]
+pairs_well_with: [documentary-purpose, human-storytelling, editorial-collage-explainer, mid-century-retro]

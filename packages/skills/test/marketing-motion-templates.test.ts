@@ -18,6 +18,8 @@ import {
   voiceoverWordBudget,
   wordCount,
 } from "../src/index.ts";
+import { VO_WORDS_PER_SECOND } from "../src/marketing-video/marketing-script.ts";
+import { voiceLines } from "../src/voice-lines.ts";
 
 const brief = {
   prompt: "Ba quảng cáo dọc cho tiệm trà Lá Mây",
@@ -330,6 +332,23 @@ describe("motion graphic", () => {
     expect(ink("message-2", "message-2-text")).toBe("foreground");
   });
 
+  it("lifts near-black scene fills off black so the QA gate does not count them as black frames", () => {
+    const ir = motionGraphicTemplate({
+      prompt: "Lá Mây",
+      brand: {
+        ...brief.brand,
+        palette: { primary: "#000000", background: "#0e0e0e", foreground: "#ffffff" },
+      },
+    });
+    const luma = (hex: string) =>
+      0.299 * Number.parseInt(hex.slice(1, 3), 16) +
+      0.587 * Number.parseInt(hex.slice(3, 5), 16) +
+      0.114 * Number.parseInt(hex.slice(5, 7), 16);
+    expect(luma(ir.brand?.palette.background ?? "")).toBeGreaterThanOrEqual(28);
+    expect(luma(ir.brand?.palette.primary ?? "")).toBeGreaterThanOrEqual(28);
+    expect(ir.brand?.palette.foreground).toBe("#ffffff");
+  });
+
   it("builds a valid captioned IR with its voice-over script and rejects one that cannot fit", () => {
     const ir = motionGraphicTemplate({
       prompt: "Lá Mây",
@@ -345,6 +364,23 @@ describe("motion graphic", () => {
     expect(codeOf(() => motionGraphicTemplate({ prompt: "x", durationMs: 6_000, keyMessages: [long] }))).toBe(
       "VALIDATION",
     );
+  });
+
+  it("gives a long hook the time it takes to say, not an even split with a short call to action", () => {
+    const hook = "Motion graphic intro for Studix: kinetic title, videos made by agents in minutes";
+    const ir = motionGraphicTemplate({
+      prompt: hook,
+      title: hook,
+      durationMs: 10_000,
+      callToAction: "Try Studix",
+    });
+    const [first, cta] = ir.scenes;
+    expect(ir.scenes).toHaveLength(2);
+    expect((first?.durationMs ?? 0) + (cta?.durationMs ?? 0)).toBe(10_000);
+    expect(first?.durationMs).toBeGreaterThan(cta?.durationMs ?? 0);
+    for (const line of voiceLines(ir)) {
+      expect(line.roomMs).toBeGreaterThanOrEqual((wordCount(line.text) / VO_WORDS_PER_SECOND) * 1000);
+    }
   });
 });
 

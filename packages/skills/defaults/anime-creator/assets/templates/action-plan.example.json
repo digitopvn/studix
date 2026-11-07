@@ -1,0 +1,38 @@
+{
+  "_note": "One file per action scene: scenes/<sc>/action-plan.json. Beats follow anticipation -> execution -> contact -> reaction -> recovery (skip what the beat does not need). positions are screen sides against the 180-degree axis; an actor changes side only with axis_cross {reason}. props start in actors[].props (prop -> hand) and change through state_after (\"<actor>.<prop>\": hand, or \"dropped\"). visibility: show | imply (cut around the contact) | hybrid. A shot's event_frame is 0-based inside the shot; fx names a preset from impact-fx-presets.json. Validate with `anime-studio.py validate-action <scene>`; `plan-action` writes proposals, never edl.json. An original fight: characters and moves are this series' own.",
+  "schema_version": 1,
+  "scene": "sc04",
+  "fps": 24,
+  "axis": {"mira": "left", "warden": "right"},
+  "actors": {
+    "mira": {"hand": "right", "props": {"pipe": "right"}},
+    "warden": {"hand": "right", "props": {}}
+  },
+  "beats": [
+    {"id": "b01", "phase": "anticipation", "intent": "Mira plants her feet and raises the pipe; the Warden's visor locks on",
+     "actors": ["mira", "warden"], "positions": {"mira": "left", "warden": "right"}, "screen_direction": "left-to-right",
+     "visibility": "show", "emphasis": "support", "tier": "T1",
+     "shots": [{"id": "s01", "role": "anticipation", "framing": "low medium close-up, over Mira's shoulder", "camera": "slow push-in", "duration": 0.75, "cut": "on-action"}],
+     "refs": [{"path": "bible/characters/mira-sheet.png", "role": "identity"}, {"path": "bible/sets/yard.png", "role": "environment"}]},
+    {"id": "b02", "phase": "execution", "intent": "she lunges across the yard, pipe swinging from her right",
+     "actors": ["mira"], "positions": {"mira": "left", "warden": "right"}, "screen_direction": "left-to-right",
+     "visibility": "show", "emphasis": "support", "tier": "T2",
+     "shots": [{"id": "s02", "role": "execution", "framing": "wide, both on screen", "camera": "truck right with her", "duration": 1.0, "cut": "whip", "fx": "whip-into-cut", "event_frame": 20}]},
+    {"id": "b03", "phase": "contact", "intent": "the pipe meets the Warden's chest plate (hand contact is morph-prone, so cut around it)",
+     "actors": ["mira", "warden"], "positions": {"mira": "left", "warden": "right"},
+     "contact": {"by": "mira", "to": "warden", "with": "pipe", "at": "chest plate"},
+     "visibility": "imply", "concealment": "pipe-on-armour contact morphs in i2v; a silhouette flash carries it",
+     "emphasis": "signature", "tier": "T1", "sfx": ["heavy metal clang on armour, close"],
+     "shots": [{"id": "s03", "role": "occluder", "framing": "extreme close-up on the chest plate", "camera": "static", "duration": 0.25, "event_frame": 1, "fx": "silhouette-flash", "cut": "fx"}],
+     "end_positions": {"mira": "left", "warden": "right"}},
+    {"id": "b04", "phase": "reaction", "intent": "the Warden staggers back two steps, a dent glowing on its chest; Mira's pipe is bent",
+     "actors": ["mira", "warden"], "positions": {"mira": "left", "warden": "right"}, "screen_direction": "left-to-right",
+     "visibility": "show", "emphasis": "support", "tier": "T2", "sfx": ["armour scrape, servo whine"],
+     "state_after": {"mira.pipe": "right"},
+     "shots": [{"id": "s04", "role": "reaction", "framing": "medium wide", "camera": "shake settles", "duration": 1.25, "event_frame": 4, "fx": "hit-soft"}]},
+    {"id": "b05", "phase": "recovery", "intent": "Mira exhales, re-grips the bent pipe; the Warden rises",
+     "actors": ["mira", "warden"], "positions": {"mira": "left", "warden": "right"},
+     "visibility": "show", "emphasis": "support", "tier": "T1",
+     "shots": [{"id": "s05", "role": "aftermath", "framing": "two-shot, low angle", "camera": "slow dolly-out", "duration": 1.5}]}
+  ]
+}

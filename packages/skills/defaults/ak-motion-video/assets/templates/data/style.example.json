@@ -1,0 +1,15 @@
+{
+  "base": "cinematic-product-launch",
+  "layers": [
+    {
+      "style": "precision-dark-product",
+      "dimensions": ["ui_choreography", "material"],
+      "scenes": { "types": ["ui-demo"] }
+    },
+    {
+      "style": "athletic-impact",
+      "dimensions": ["transitions", "pacing", "beat_response", "typography"],
+      "scenes": { "ids": ["s09-outro"] }
+    }
+  ]
+}

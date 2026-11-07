@@ -1,0 +1,72 @@
+{
+  "shot_id": "S03_SH001",
+  "scene_id": "S03",
+  "shot_type": "two_shot",
+  "lens": "35mm",
+  "camera": "lateral track left to right",
+  "action": "They step out; Mai opens her hand to the sky.",
+  "emotion": "relief",
+  "duration_target": 6,
+  "characters": [
+    "MAI_01",
+    "LINH_01"
+  ],
+  "location": "CAFE_STREET_01",
+  "wardrobe": {
+    "MAI_01": "MAI_RAINCOAT_01",
+    "LINH_01": "LINH_KNIT_01"
+  },
+  "props": [
+    "UMBRELLA_01"
+  ],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "CHAR_MAI_FRONT",
+    "CHAR_MAI_3QL",
+    "WARDROBE_MAI_RAINCOAT_01",
+    "CHAR_LINH_FRONT",
+    "CHAR_LINH_3QR",
+    "WARDROBE_LINH_KNIT_01",
+    "LOC_CAFE_STREET_WIDE",
+    "PROP_UMBRELLA_01"
+  ],
+  "continuity_from": "S02_SH007",
+  "continuity_to": "S03_SH002",
+  "continuity": {
+    "screen_positions": {
+      "MAI_01": "left",
+      "LINH_01": "right"
+    },
+    "prop_states": {
+      "UMBRELLA_01": "MAI_01:right_hand"
+    },
+    "conditions": {
+      "MAI_01": [
+        "damp_hair"
+      ]
+    },
+    "screen_direction": "left_to_right"
+  },
+  "continuity_changes": [
+    {
+      "field": "prop_states.UMBRELLA_01",
+      "reason": "Mai takes the umbrella from the chair as they leave."
+    }
+  ],
+  "render_class": "STANDARD",
+  "retry_budget": 2,
+  "estimate": {
+    "generation_seconds": 12,
+    "cost": {
+      "amount": 3.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "STORYBOARDED",
+  "storyboard": {
+    "path": "storyboard/S03_SH001.png",
+    "status": "approved"
+  }
+}
