@@ -36,7 +36,7 @@ import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
-import { createPlatformSettingsService } from "./platform-settings.ts";
+import { createPlatformSettingsService, fetchWorkerMedia } from "./platform-settings.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -56,6 +56,8 @@ export const AppEnvSchema = z.object({
   STUDIX_DASHBOARD_DIST: z.string().min(1).optional(),
   /** Reverse-proxy hops to trust for the client IP (0 = none). Set 1 behind the TOSE ingress. */
   STUDIX_TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
+  /** Worker health base URL (`http://studix-worker:8081`); the Storage & Media page compares its media report. */
+  STUDIX_WORKER_HEALTH_URL: z.url().optional(),
   /** Serve OAuth 2.1 on /mcp (default on). `false` keeps workspace API keys as the only way in. */
   STUDIX_MCP_OAUTH: z
     .enum(["true", "false", "1", "0"])
@@ -261,6 +263,9 @@ export async function composeApp(
       storage: integrations.storage,
       multix,
       credentials: platformCredentials,
+      ...(appEnv.STUDIX_WORKER_HEALTH_URL
+        ? { worker: { media: () => fetchWorkerMedia(appEnv.STUDIX_WORKER_HEALTH_URL as string) } }
+        : {}),
     }),
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),

@@ -93,6 +93,26 @@ export interface MediaStatusView {
   /** The worker runs the jobs; this check ran in the app process. */
   process: "app";
   processNote: string;
+  /** The worker's own report from its `/readyz`; absent when STUDIX_WORKER_HEALTH_URL is not set. */
+  worker?: WorkerMediaView;
+}
+
+/** The `media` block of the worker's `/readyz`: presence only, never a key value or a path. */
+export interface WorkerMediaReport {
+  executable: "configured" | "missing";
+  state: MultixDiagnosis["state"];
+  code?: string;
+  /** The worker has STUDIX_SECRETS_KEY and can open dashboard-stored keys. */
+  secretsKey: boolean;
+  vendors: Partial<Record<MultixVendor, boolean>>;
+}
+
+export interface WorkerMediaView {
+  reachable: boolean;
+  /** Undefined while the worker is unreachable or has not run its first check. */
+  report?: WorkerMediaReport;
+  /** Where the app and the worker disagree, in the operator's words. Empty when they agree or nothing is known. */
+  mismatches: string[];
 }
 
 export interface PlatformSettingsView {
@@ -138,7 +158,75 @@ export interface PlatformSettingsDeps {
   /** Absent when MULTIX_BIN is not set in this process. */
   multix?: { diagnose(signal?: AbortSignal): Promise<MultixDiagnosis> };
   credentials: PlatformCredentialService;
+  /** Reads the worker's media report (STUDIX_WORKER_HEALTH_URL); rejects when the worker cannot be reached. */
+  worker?: { media(): Promise<WorkerMediaReport | undefined> };
   clock?: Clock;
+}
+
+/** Fetch `<base>/readyz` of a worker and keep its `media` block when it has the expected shape. */
+export async function fetchWorkerMedia(
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 3_000,
+): Promise<WorkerMediaReport | undefined> {
+  const res = await fetchImpl(new URL("/readyz", baseUrl), { signal: AbortSignal.timeout(timeoutMs) });
+  // A starting or stopping worker answers 503 with a body; only an unreadable answer means unreachable.
+  const body = (await res.json()) as { media?: unknown };
+  const media = body.media as Partial<WorkerMediaReport> | undefined;
+  if (!media || typeof media !== "object") return undefined;
+  if (media.executable !== "configured" && media.executable !== "missing") return undefined;
+  if (typeof media.secretsKey !== "boolean" || typeof media.vendors !== "object" || !media.vendors) {
+    return undefined;
+  }
+  const vendors: WorkerMediaReport["vendors"] = {};
+  for (const vendor of MULTIX_VENDORS) {
+    const has = (media.vendors as Record<string, unknown>)[vendor];
+    if (typeof has === "boolean") vendors[vendor] = has;
+  }
+  return {
+    executable: media.executable,
+    state: media.state === "ready" || media.state === "missing_executable" ? media.state : "check_failed",
+    ...(typeof media.code === "string" ? { code: media.code.slice(0, 40) } : {}),
+    secretsKey: media.secretsKey,
+    vendors,
+  };
+}
+
+/** Differences between the app's view of media and the worker's report. */
+export function mediaMismatches(
+  app: {
+    executable: MediaStatusView["executable"];
+    credentialStorage: MediaStatusView["credentialStorage"];
+    /** From the app's last ready `multix check`; without one, keys are not compared. */
+    vendors?: MultixDiagnosis["vendors"];
+  },
+  worker: WorkerMediaReport,
+): string[] {
+  const out: string[] = [];
+  if (app.executable !== worker.executable) {
+    out.push(
+      worker.executable === "missing"
+        ? "MULTIX_BIN is set on the app but not on the worker."
+        : "MULTIX_BIN is set on the worker but not on the app.",
+    );
+  }
+  if (app.credentialStorage === "available" && !worker.secretsKey) {
+    out.push("STUDIX_SECRETS_KEY is missing on the worker, so it ignores keys set here.");
+  } else if (app.credentialStorage === "unavailable" && worker.secretsKey) {
+    out.push("STUDIX_SECRETS_KEY is set on the worker but not on the app.");
+  }
+  if (app.vendors && worker.state === "ready") {
+    for (const vendor of MULTIX_VENDORS) {
+      const onWorker = worker.vendors[vendor];
+      if (onWorker === undefined || onWorker === app.vendors[vendor]) continue;
+      out.push(
+        onWorker
+          ? `${MULTIX_VENDOR_KEYS[vendor]} is found on the worker but not on the app.`
+          : `${MULTIX_VENDOR_KEYS[vendor]} is found on the app but not on the worker.`,
+      );
+    }
+  }
+  return out;
 }
 
 function maskAccessKeyId(id: string | undefined): string | undefined {
@@ -223,6 +311,25 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
       assertPlatformOperator(ctx);
       const stored = await deps.credentials.overview(ctx);
       const byName = new Map(stored.credentials.map((c) => [c.name, c]));
+      const executable: MediaStatusView["executable"] = config.MULTIX_BIN ? "configured" : "missing";
+      let worker: WorkerMediaView | undefined;
+      if (deps.worker) {
+        try {
+          const report = await deps.worker.media();
+          const app = {
+            executable,
+            credentialStorage: stored.storage,
+            ...(lastVendors ? { vendors: lastVendors } : {}),
+          };
+          worker = {
+            reachable: true,
+            ...(report ? { report } : {}),
+            mismatches: report ? mediaMismatches(app, report) : [],
+          };
+        } catch {
+          worker = { reachable: false, mismatches: [] };
+        }
+      }
       return {
         storage: {
           configured: Boolean(config.S3_BUCKET),
@@ -240,7 +347,7 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           changeNeedsRedeploy: true,
         },
         media: {
-          executable: config.MULTIX_BIN ? "configured" : "missing",
+          executable,
           ...(config.MULTIX_BIN ? { path: config.MULTIX_BIN } : {}),
           homeEnvDisabled: !config.MULTIX_ALLOW_HOME_ENV,
           credentialStorage: stored.storage,
@@ -265,6 +372,7 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           processNote: config.MULTIX_BIN
             ? "This check runs in the app process. The worker runs the jobs and needs the same STUDIX_SECRETS_KEY to read keys set here; the first media job confirms it."
             : "MULTIX_BIN is not set in the app process. Check the worker separately: it runs the jobs.",
+          ...(worker ? { worker } : {}),
         },
       };
     },

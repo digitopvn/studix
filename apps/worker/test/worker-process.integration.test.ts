@@ -112,4 +112,55 @@ describe("worker process", () => {
     await worker.shutdown();
     await expect(fetch(`${base}/healthz`)).rejects.toThrow();
   });
+
+  it("reports media presence in /readyz without gating readiness", async () => {
+    let checks = 0;
+    const ports = {
+      ...fakePorts(),
+      mediaStatus: async () => {
+        checks += 1;
+        return {
+          executable: "configured" as const,
+          state: "ready" as const,
+          secretsKey: false,
+          vendors: { fal: true, openrouter: false },
+        };
+      },
+    };
+    const worker = await runWorkerProcess({
+      env: {
+        NODE_ENV: "test",
+        DATABASE_URL: db.current.url,
+        WORKER_HEALTH_PORT: "0",
+        WORKER_HEALTH_HOST: "127.0.0.1",
+        WORKER_POLL_INTERVAL_MS: "20",
+        WORKER_ID: "media-worker",
+      },
+      resolvePorts: async () => ports,
+      logger: createLogger({}, { level: "error", write: () => {} }),
+      handleSignals: false,
+    });
+    try {
+      const base = `http://127.0.0.1:${worker.healthPort}`;
+      let body: Record<string, unknown> = {};
+      const until = Date.now() + 5_000;
+      while (!body.media && Date.now() < until) {
+        const res = await fetch(`${base}/readyz`);
+        expect(res.status).toBe(200);
+        body = (await res.json()) as Record<string, unknown>;
+        if (!body.media) await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(body.media).toEqual({
+        executable: "configured",
+        state: "ready",
+        secretsKey: false,
+        vendors: { fal: true, openrouter: false },
+      });
+      // Repeated probes reuse the cached check instead of spawning `multix check` each time.
+      await fetch(`${base}/readyz`);
+      expect(checks).toBe(1);
+    } finally {
+      await worker.shutdown();
+    }
+  });
 });
