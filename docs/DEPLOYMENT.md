@@ -184,8 +184,13 @@ ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
 plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the
 rejected-key test uses a made-up key and costs nothing.
 
-Paid media runs through the Multix provider (`packages/providers`), which is
-off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
+Paid media runs through the Multix provider (`packages/providers`). The image
+sets `MULTIX_BIN=/opt/multix/dist/cli.js`, so the provider is on in every
+deployment built from the root `Dockerfile`, even when the platform secrets
+omit the variable; an empty `MULTIX_BIN=` in the secrets turns it off. Before
+this default, a deployment whose secrets lacked the variable failed `motion-graphic` jobs
+with a voice-over with `UNAVAILABLE` ("The Multix provider is not
+configured") after compose. Routes: image,
 video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
 music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech.
 The worker passes only `SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
@@ -226,7 +231,7 @@ workflow stage fall back to an in-process journal, which a restart loses.
 Pack stages (`marketing-video`, `motion-graphic`) get the media provider, the
 storage, the renderer and the hard QA gate from the worker
 ([`pack-services.ts`](../apps/worker/src/pack-services.ts)). Without
-`MULTIX_BIN` their paid stages fail with `UNAVAILABLE`; without the QA
+`MULTIX_BIN` (set to empty) their paid stages fail with `UNAVAILABLE`; without the QA
 toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
 is never published.
 

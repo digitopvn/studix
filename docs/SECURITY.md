@@ -191,7 +191,7 @@ two auth methods are separate and are never used as each other's fallback:
 
 ### Keys for the Pi runtime and model preferences
 
-Keys for other providers (OpenAI, Google, OpenRouter and others) use the same
+Keys for other providers (OpenAI, Google, OpenRouter, OpenCode Go and others) use the same
 sealed storage, hints and permissions as Anthropic keys
 ([ADR-0016](decisions/0016-provider-connections-runtimes-and-model-preferences.md)).
 On top of that:
@@ -204,7 +204,10 @@ On top of that:
 - A workspace-wide model choice may only use workspace keys, so one member's
   personal key never becomes everyone's default.
 - Each Pi attempt runs in-process with an in-memory auth store that holds only
-  the resolved key. It has no tools, reads no `~/.pi` files, settings,
+  the resolved key. The allowed providers are listed in
+  `packages/agent-runtime/src/pi-catalog.ts`; OpenCode Go (`opencode-go`) uses
+  the endpoint and model prices pinned by the Pi SDK, never `OPENCODE_API_KEY`
+  from the server environment. It has no tools, reads no `~/.pi` files, settings,
   extensions or context files, and does not fall back to environment
   credentials (an empty key is refused). The key is registered for log
   redaction and cut out of provider error messages before they are kept.
