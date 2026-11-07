@@ -372,16 +372,35 @@ as zip archives, at `workspace` (default) or `platform` scope. Every file is
 stored and each version has a risk report; content stays untrusted. Guide:
 [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
 
-| Tool                    | Arguments                                                                                                                                         | Returns                                                                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `studix_skill_discover` | `repositoryUrl`, `ref?`, `path?`                                                                                                                  | Pinned `source.commitSha` and every `SKILL.md` found (valid or invalid, stored vs described files).                                   |
-| `studix_skill_import`   | `repositoryUrl`, `ref?`, `path?`, `skillPaths?`, `expectedCommit?`, `idempotencyKey?`, `activate?`, `scope?`                                      | Per skill: `imported`, `new_version`, `unchanged` or `rejected`, ids, license, `risk`, `riskConfirmationRequired`, `nameCollisions`.  |
-| `studix_skill_list`     | `limit?`, `cursor?`, `status?`, `q?`, `owner?`, `repo?`, `scope?` (`visible` default, `workspace`, `platform`)                                    | Skills (enabled by default) with `scope`, `activeVersionId`, `activeRiskLevel`, `manageable` and upstream status.                     |
-| `studix_skill_get`      | `skillId`, `versionId?`, `path?`, `offset?`, `limit?`, `includeVersions?`                                                                         | Metadata, license, notices, `risk` report, file list, a bounded text slice (size only for binaries) and a `trust` block.              |
-| `studix_skill_update`   | `skillId`, `action`: `check`, `import`, `activate` (`versionId`) or `enable`; `confirmHighRisk?`                                                  | Updated skill and, for `check`/`import`, the upstream result. Never changes the active version alone.                                 |
-| `studix_skill_disable`  | `skillId`                                                                                                                                         | The disabled skill; versions and files are kept.                                                                                      |
-| `studix_skill_upload`   | `action?` (`upload` default or `url`), `archiveBase64?` or `uploadId?`, `fileName?`, `activate?`, `idempotencyKey?`, `scope?`, `confirmHighRisk?` | `url`: `uploadId` and a presigned `uploadUrl` with headers. `upload`: the stored item (as `import`) with its `risk` report.           |
-| `studix_skill_delete`   | `skillId`                                                                                                                                         | `deleted`, `filesRemoved`. Removes every version and file; cannot be undone.                                                          |
+| Tool                    | Returns                                                         |
+| ----------------------- | --------------------------------------------------------------- |
+| `studix_skill_discover` | Pinned source.commitSha and every SKILL.md found.               |
+| `studix_skill_import`   | Per skill: outcome, ids, license, risk, nameCollisions.         |
+| `studix_skill_upload`   | An upload URL (action: "url") or the stored item and its risk.  |
+| `studix_skill_list`     | Skills with scope, activeRiskLevel and manageable.              |
+| `studix_skill_get`      | Metadata, license, risk report, files and a bounded text slice. |
+| `studix_skill_update`   | The updated skill and, for check/import, the upstream result.   |
+| `studix_skill_disable`  | The disabled skill; versions and files are kept.                |
+| `studix_skill_delete`   | deleted and filesRemoved. Cannot be undone.                     |
+
+Arguments:
+
+- `discover`: `repositoryUrl`, `ref?`, `path?`.
+- `import`: as `discover`, plus `skillPaths?`, `expectedCommit?`,
+  `idempotencyKey?`, `activate?`, `scope?`.
+- `upload`: `action?` (`upload` or `url`), `archiveBase64?` or `uploadId?`,
+  `fileName?`, `activate?`, `idempotencyKey?`, `scope?`, `confirmHighRisk?`.
+- `list`: `limit?`, `cursor?`, `status?`, `q?`, `owner?`, `repo?`, `scope?`
+  (`visible` by default, `workspace` or `platform`).
+- `get`: `skillId`, `versionId?`, `path?`, `offset?`, `limit?`,
+  `includeVersions?`. A binary file returns its size only.
+- `update`: `skillId`, `action` (`check`, `import`, `activate` with
+  `versionId`, or `enable`), `confirmHighRisk?`. It never changes the active
+  version on its own.
+- `disable` and `delete`: `skillId`.
+
+Rules:
+
 - `discover` and `import` read from GitHub (`openWorldHint`); nothing from a
   repository is executed. Only `github.com` repository URLs are accepted, other
   hosts, IPs and schemes are `VALIDATION`.
