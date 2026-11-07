@@ -89,6 +89,7 @@ describe("MCP workflow templates, feedback and render (Postgres)", () => {
           "motion-graphic",
           "anime",
           "long-form-film",
+          "skill-agent",
           "review-explainer",
         ],
       },

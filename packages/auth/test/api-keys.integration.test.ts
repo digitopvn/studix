@@ -16,6 +16,7 @@ import { hashApiKey } from "../src/api-key-format.ts";
 import { createApiKeyService } from "../src/api-key-service.ts";
 
 const SKILL_SCOPES: ReadonlySet<string> = new Set(["skill:read", "skill:write"]);
+const MEDIA_EXEC_MIGRATION = "0033_api_key_media_exec_scope.sql";
 
 const db = withTestDatabase();
 
@@ -130,7 +131,9 @@ describe("api key scopes after job:retry joined the role matrix", () => {
     // `job:recover` came later still; 0017 adds it below and 0020 takes it back for operators only.
     const admin = await issue(
       "old-admin",
-      PERMISSIONS.filter((p) => p !== "job:retry" && p !== "job:recover" && !SKILL_SCOPES.has(p)),
+      PERMISSIONS.filter(
+        (p) => p !== "job:retry" && p !== "job:recover" && !SKILL_SCOPES.has(p) && p !== "media:exec",
+      ),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
     const already = await issue("already", ["project:read", "job:retry"]);
@@ -148,6 +151,7 @@ describe("api key scopes after job:retry joined the role matrix", () => {
       "0017_api_key_job_recover.sql",
       "0020_api_key_operator_job_recover.sql",
       "0024_api_key_skill_scopes.sql",
+      MEDIA_EXEC_MIGRATION,
     ]) {
       await db.current.client.unsafe(readFileSync(join(MIGRATIONS_FOLDER, later), "utf8"));
     }
@@ -185,7 +189,9 @@ describe("api key scopes as job:recover joined the admin roles, then moved to op
       });
     const admin = await issue(
       "old-admin",
-      [...PERMISSIONS.filter((p) => p !== "job:recover" && !SKILL_SCOPES.has(p))].reverse(),
+      [
+        ...PERMISSIONS.filter((p) => p !== "job:recover" && !SKILL_SCOPES.has(p) && p !== "media:exec"),
+      ].reverse(),
     );
     const editor = await issue("editor", [
       "workspace:read",
@@ -215,6 +221,7 @@ describe("api key scopes as job:recover joined the admin roles, then moved to op
     await db.current.client.unsafe(
       readFileSync(join(MIGRATIONS_FOLDER, "0024_api_key_skill_scopes.sql"), "utf8"),
     );
+    await db.current.client.unsafe(readFileSync(join(MIGRATIONS_FOLDER, MEDIA_EXEC_MIGRATION), "utf8"));
 
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
     // The admin key is an owner/admin key again: owner and admin share one set, labelled by the first match.
@@ -251,13 +258,18 @@ describe("api key scopes as skill:read and skill:write joined the role matrix", 
     ]);
     const admin = await issue(
       "admin",
-      [...PERMISSIONS.filter((p) => p !== "job:recover" && !SKILL_SCOPES.has(p))].reverse(),
+      [
+        ...PERMISSIONS.filter((p) => p !== "job:recover" && !SKILL_SCOPES.has(p) && p !== "media:exec"),
+      ].reverse(),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
 
     const sql = readFileSync(join(MIGRATIONS_FOLDER, "0024_api_key_skill_scopes.sql"), "utf8");
     await db.current.client.unsafe(sql);
     await db.current.client.unsafe(sql);
+    const mediaExec = readFileSync(join(MIGRATIONS_FOLDER, MEDIA_EXEC_MIGRATION), "utf8");
+    await db.current.client.unsafe(mediaExec);
+    await db.current.client.unsafe(mediaExec);
 
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
     expect(byId.get(viewer.id)).toMatchObject({ role: "viewer" });

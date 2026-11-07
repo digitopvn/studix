@@ -12,7 +12,11 @@ import type { VideoIR } from "@studix/video-ir";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type ComposedApp, composeApp } from "../src/compose-app.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "../src/mcp/agent-handoff-tools.ts";
+import { COMPOSITION_MCP_TOOLS } from "../src/mcp/composition-tools.ts";
+import { WEBHOOK_MCP_TOOLS } from "../src/mcp/job-notifications.ts";
+import { MEDIA_EXEC_MCP_TOOLS } from "../src/mcp/media-exec-tool.ts";
 import { NATIVE_TOOLS } from "../src/mcp/native-tools.ts";
+import { REVIEW_APP_TOOLS } from "../src/mcp/review-app.ts";
 import { SKILL_MCP_TOOLS } from "../src/mcp/skill-tools.ts";
 import { freePort } from "./app-test-harness.ts";
 import { callTool, type JobData, pollJob, startWorker, type WorkerHandle } from "./e2e-video-harness.ts";
@@ -153,7 +157,15 @@ describe.skipIf(!toolchain.ok)("E2E video over MCP with a real worker process", 
   it("(f) lists only native, handoff, skill and meta tools, then searches, inspects and executes a connector tool", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect([...names].sort()).toEqual(
-      [...NATIVE_TOOLS, ...AGENT_HANDOFF_MCP_TOOLS, ...SKILL_MCP_TOOLS]
+      [
+        ...NATIVE_TOOLS,
+        ...AGENT_HANDOFF_MCP_TOOLS,
+        ...SKILL_MCP_TOOLS,
+        ...MEDIA_EXEC_MCP_TOOLS,
+        ...COMPOSITION_MCP_TOOLS,
+        ...REVIEW_APP_TOOLS,
+        ...WEBHOOK_MCP_TOOLS,
+      ]
         .map((t) => t.name)
         .concat(META)
         .sort(),

@@ -364,7 +364,7 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.getProject,
     title: "Get project",
     description:
-      "Project, current version, recent jobs and renders with signed URLs. includeIr adds the VideoIR. includeFeedback adds the open review notes of the current version (target, time, region, pins, sketches, references) and returns each note's marked frame as an image.",
+      "Project, version, recent jobs and renders with signed URLs. includeIr adds the VideoIR. includeFeedback adds the open review notes, each with its marked frame as an image.",
     input: z.object({
       projectId: Id,
       includeIr: z.boolean().optional(),
