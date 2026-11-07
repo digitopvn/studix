@@ -1,5 +1,6 @@
 import { type Clock, StudixError } from "@studix/shared";
 import type { Asset, AssetVersion } from "../entities/asset.ts";
+import { isInAssetFolder, normalizeAssetPath, organizeNewAsset } from "../entities/asset-organization.ts";
 import type { ProjectVersion, VideoProject } from "../entities/project.ts";
 import type { AssetRepository } from "../repositories/asset-repository.ts";
 import { pageLimit, toPage } from "../repositories/pagination.ts";
@@ -63,7 +64,8 @@ export function createInMemoryAssetRepository(clock: Clock): AssetRepository {
   const versions = new InMemoryTenantTable<AssetVersion>("astv", clock, false);
   return {
     async create(ctx, input) {
-      return assets.insert(ctx, input);
+      const { mime, ...rest } = input;
+      return assets.insert(ctx, { ...rest, ...organizeNewAsset({ ...input, ...(mime ? { mime } : {}) }) });
     },
     async get(ctx, id) {
       return assets.get(ctx, id);
@@ -76,6 +78,10 @@ export function createInMemoryAssetRepository(clock: Clock): AssetRepository {
           (a) =>
             (query.projectId === undefined || a.projectId === query.projectId) &&
             (query.kind === undefined || a.kind === query.kind) &&
+            (query.role === undefined || a.role === query.role) &&
+            (query.path === undefined || isInAssetFolder(a.path, normalizeAssetPath(query.path))) &&
+            (query.tag === undefined || a.tags.includes(query.tag.trim().toLowerCase())) &&
+            (query.search === undefined || a.name.toLowerCase().includes(query.search.toLowerCase())) &&
             (query.cursor === undefined || a.id < query.cursor),
         )
         .slice(0, limit + 1);

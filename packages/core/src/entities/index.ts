@@ -1,5 +1,6 @@
 export * from "./agent-handoff.ts";
 export * from "./asset.ts";
+export * from "./asset-organization.ts";
 export * from "./common.ts";
 export * from "./external-skill.ts";
 export * from "./job.ts";

@@ -276,4 +276,28 @@ describe("MCP workflow templates, feedback and render (Postgres)", () => {
     const project = await call(viewer, "studix_get_project", { projectId });
     expect(project.envelope.data?.reviewUrl).toBe(`${app.base}/#/projects/${projectId}/review`);
   });
+
+  it("studix_list_assets filters by role and folder and stays inside the workspace", async () => {
+    const by = { type: "system" as const, id: "t" };
+    await app.db.repos.assets.create(tenantA, {
+      kind: "audio",
+      name: "boom.wav",
+      role: "sfx",
+      path: "ep03/sc01",
+      createdBy: by,
+    });
+    await app.db.repos.assets.create(tenantA, {
+      kind: "audio",
+      name: "theme.mp3",
+      role: "bgm",
+      createdBy: by,
+    });
+    const sfx = await call(editor, "studix_list_assets", { role: "sfx", path: "ep03" });
+    const items = (sfx.envelope.data as { items: { name: string; role: string; path: string }[] }).items;
+    expect(items).toEqual([expect.objectContaining({ name: "boom.wav", role: "sfx", path: "ep03/sc01" })]);
+    const bad = await call(editor, "studix_list_assets", { role: "music" });
+    expect(bad.isError).toBe(true);
+    const foreign = await call(other, "studix_list_assets", { role: "sfx" });
+    expect((foreign.envelope.data as { items: unknown[] }).items).toEqual([]);
+  });
 });

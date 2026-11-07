@@ -1,5 +1,7 @@
 import { StudixError } from "@studix/shared";
 import { z } from "zod";
+import { ASSET_LIMITS, ASSET_ROLES, type AssetRole } from "../entities/asset.ts";
+import { normalizeAssetPath, normalizeAssetTags } from "../entities/asset-organization.ts";
 
 /*
  * `media.exec`: ffmpeg or ffprobe with caller-supplied arguments, run in the worker's sandbox container
@@ -57,7 +59,17 @@ export const MediaExecInputSource = z.union([
 ]);
 export type MediaExecInputSource = z.infer<typeof MediaExecInputSource>;
 
-export const MediaExecOutput = z.object({ name: FileName, contentType: ContentType.optional() }).strict();
+export const MediaExecOutput = z
+  .object({
+    name: FileName,
+    contentType: ContentType.optional(),
+    /** Library role; inferred from the file name and type when omitted. */
+    role: z.enum(ASSET_ROLES).optional(),
+    /** Library folder such as `ep03/sc01/s05`; defaults to the role folder. */
+    path: z.string().max(ASSET_LIMITS.pathChars).optional(),
+    tags: z.array(z.string().max(ASSET_LIMITS.tagChars)).max(ASSET_LIMITS.tags).optional(),
+  })
+  .strict();
 export type MediaExecOutput = z.infer<typeof MediaExecOutput>;
 
 export const MediaExecRequest = z
@@ -124,6 +136,10 @@ export interface PlaceholderRefs {
  */
 export function validateMediaExecArgs(request: MediaExecRequest): PlaceholderRefs {
   const declaredIn = new Set(Object.keys(request.inputs));
+  for (const o of request.outputs) {
+    if (o.path !== undefined) normalizeAssetPath(o.path);
+    normalizeAssetTags(o.tags);
+  }
   const declaredOut = new Set(request.outputs.map((o) => o.name));
   if (declaredOut.size !== request.outputs.length) {
     throw invalid("Output names must be unique", { field: "outputs" });
@@ -286,6 +302,8 @@ export interface MediaExecResult {
     name: string;
     assetId: string;
     assetVersionId: string;
+    role: AssetRole;
+    path: string;
     storageKey: string;
     contentType: string;
     bytes: number;

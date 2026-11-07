@@ -154,6 +154,30 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     );
   });
 
+  it("lists assets by role and folder over GET /api/assets and rejects an unknown role", async () => {
+    const me = await (await app.api("GET", "/api/me", { cookie: alice })).json();
+    await app.db.repos.assets.create(
+      {
+        organizationId: me.organization.id,
+        workspaceId: me.workspace.id,
+        actor: { type: "user", id: me.user.id, role: "owner" },
+      },
+      {
+        kind: "audio",
+        name: "whoosh.wav",
+        role: "sfx",
+        path: "ep03/sc01",
+        createdBy: { type: "system", id: "t" },
+      },
+    );
+    const list = async (cookie: string, query: string) =>
+      (await (await app.api("GET", `/api/assets?${query}`, { cookie })).json()).items as { name: string }[];
+    expect((await list(alice, "role=sfx&path=ep03")).map((a) => a.name)).toEqual(["whoosh.wav"]);
+    expect(await list(alice, "role=bgm")).toEqual([]);
+    expect(await list(bob, "role=sfx")).toEqual([]);
+    expect((await app.api("GET", "/api/assets?role=music", { cookie: alice })).status).toBe(400);
+  });
+
   it("validates input at the boundary", async () => {
     const res = await app.api("POST", "/api/projects", { cookie: alice, body: { prompt: "" } });
     expect(res.status).toBe(400);

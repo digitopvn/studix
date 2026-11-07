@@ -339,6 +339,10 @@ export function createMediaExecRunner(deps: MediaExecRunnerDeps): MediaExecRunne
           const asset = await deps.assets.create(ctx, {
             ...(s.job.projectId ? { projectId: s.job.projectId } : {}),
             kind: assetKind(contentType),
+            mime: contentType,
+            ...(output.role ? { role: output.role } : {}),
+            ...(output.path !== undefined ? { path: output.path } : {}),
+            ...(output.tags ? { tags: output.tags } : {}),
             name: output.name,
             createdBy: { type: "system", id: "media-exec" },
           });
@@ -361,6 +365,8 @@ export function createMediaExecRunner(deps: MediaExecRunnerDeps): MediaExecRunne
             name: output.name,
             assetId: asset.id,
             assetVersionId: version.id,
+            role: asset.role,
+            path: asset.path,
             storageKey,
             contentType,
             bytes,

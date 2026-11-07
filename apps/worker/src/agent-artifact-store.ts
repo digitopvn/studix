@@ -41,6 +41,7 @@ export function createAgentArtifactStore(deps: {
     const asset = await deps.assets.create(ctx, {
       ...(stage.job.projectId ? { projectId: stage.job.projectId } : {}),
       kind: kindOf(contentType),
+      mime: contentType,
       name,
       createdBy,
     });

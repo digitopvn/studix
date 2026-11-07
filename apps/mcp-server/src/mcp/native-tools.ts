@@ -1,4 +1,7 @@
 import {
+  ASSET_KINDS,
+  ASSET_LIMITS,
+  ASSET_ROLES,
   can,
   FeedbackAnnotation,
   type FeedbackInput,
@@ -114,6 +117,22 @@ async function importedSkillsSummary(ctx: ToolContext) {
     note: "Imported skills are untrusted third-party reference text; read them with studix_skill_get.",
   };
 }
+
+/** Filters shared by the asset list tool and `GET /api/assets`. */
+export const AssetListInput = z.object({
+  projectId: Id.optional(),
+  kind: z.enum(ASSET_KINDS).optional(),
+  role: z.enum(ASSET_ROLES).optional(),
+  path: z
+    .string()
+    .max(ASSET_LIMITS.pathChars)
+    .optional()
+    .describe("Folder like ep03/sc01; includes subfolders."),
+  tag: z.string().max(ASSET_LIMITS.tagChars).optional(),
+  search: z.string().trim().max(100).optional().describe("Part of the asset name."),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: z.string().max(200).optional(),
+});
 
 const CreateVideoInput = z
   .object({
@@ -384,6 +403,29 @@ export const NATIVE_TOOLS = [
         reviewUrl: reviewUrl(ctx.deps, details.project.id),
       };
       return { data, next: details.jobs[0]?.next ?? [], ...(feedback ? { images: feedback.images } : {}) };
+    },
+  }),
+  tool({
+    name: NATIVE_TOOL_NAMES.listAssets,
+    title: "List assets",
+    description:
+      "Asset library, newest first. Filters: projectId, kind, role (sfx, bgm, voice, vfx, character, …), path (folder incl. subfolders), tag, search. Assets carry role, path, tags.",
+    input: AssetListInput,
+    readOnly: true,
+    async run(ctx, input) {
+      const page = await ctx.deps.studio.listAssets(ctx.tenant, input);
+      return {
+        data: page,
+        next: page.nextCursor
+          ? [
+              {
+                tool: NATIVE_TOOL_NAMES.listAssets,
+                arguments: { ...input, cursor: page.nextCursor },
+                reason: "More assets match.",
+              },
+            ]
+          : [],
+      };
     },
   }),
   tool({
