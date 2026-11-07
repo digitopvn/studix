@@ -97,7 +97,7 @@ export function WorkspaceMultixSection() {
   }
 
   async function reset() {
-    if (!window.confirm("Drop every Multix setting of this workspace and use the server settings again?"))
+    if (!window.confirm("Drop every media setting of this workspace and use the server settings again?"))
       return;
     await act(async () => {
       await api.resetWorkspaceMultix();
@@ -107,18 +107,18 @@ export function WorkspaceMultixSection() {
 
   const readOnly = !data?.canChange || busy;
   return (
-    <Section title="Multix media settings">
+    <Section title="Image & video models">
       <ErrorBanner error={error} />
       <ErrorBanner error={actionError} />
       <p className="muted">
-        These settings apply to this workspace's media jobs and win over the server's MULTIX_* settings. Leave
-        a field blank to use the server value. Vendor keys are set below.
+        These settings apply to this workspace's media jobs and win over the server defaults. Leave a field
+        blank to use the server value. Vendor keys are set below.
       </p>
       {data && draft && (
         <form onSubmit={save}>
           <div className="row">
             <label>
-              Multix{" "}
+              Media generation{" "}
               <select
                 value={draft.enabled}
                 disabled={readOnly}
@@ -134,7 +134,7 @@ export function WorkspaceMultixSection() {
               label={data.effective.enabled.value ? "Enabled" : "Disabled"}
             />
             {!data.server.enabled && (
-              <span className="muted"> The server has no Multix CLI (MULTIX_BIN).</span>
+              <span className="muted"> Media generation is not installed on this server.</span>
             )}
           </div>
           <div className="row">
@@ -166,8 +166,8 @@ export function WorkspaceMultixSection() {
                   <td>
                     <span className="mono">{effective.value}</span>{" "}
                     <StatusBadge
-                      status={effective.source === "workspace" ? "configured" : "missing"}
-                      label={effective.source}
+                      status={effective.source === "workspace" ? "configured" : "default"}
+                      label={effective.source === "workspace" ? "workspace" : "default"}
                     />
                   </td>
                   <td>
@@ -212,7 +212,7 @@ export function WorkspaceMultixSection() {
                 disabled={busy}
                 onClick={() => act(async () => setCheck(await api.checkWorkspaceMultix()))}
               >
-                Check Multix
+                Check media engine
               </button>
             </div>
           )}
@@ -222,7 +222,7 @@ export function WorkspaceMultixSection() {
       {check && (
         <div>
           <p>
-            Multix CLI <span className="mono">{check.version ?? "unknown"}</span>{" "}
+            Media engine <span className="mono">{check.version ?? "unknown"}</span>{" "}
             <StatusBadge
               status={check.diagnosis.state === "ready" ? "configured" : "missing"}
               label={STATE_LABELS[check.diagnosis.state] ?? check.diagnosis.state}

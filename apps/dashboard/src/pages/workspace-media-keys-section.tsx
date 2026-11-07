@@ -15,14 +15,14 @@ export const KEY_VERDICT: Record<WorkspaceMediaKeyTest["verdict"], string> = {
 export function WorkspaceMediaKeysSection() {
   const { data, error, reload } = useAsync(() => api.workspaceMediaKeys());
   return (
-    <Section title="Media vendor keys · Bring your own key">
+    <Section title="Media keys">
       <ErrorBanner error={error} />
       <p className="muted">
         Without a key here, media jobs use the platform key. A workspace key is used only for this workspace's
         jobs; its spend is recorded but not charged by Studix.
       </p>
       {data?.storage === "unavailable" && (
-        <p className="muted">Encrypted key storage is not configured on this server (STUDIX_SECRETS_KEY).</p>
+        <p className="muted">Key storage is not set up on this server yet. Ask your admin.</p>
       )}
       {data && (
         <table>
@@ -132,7 +132,10 @@ function MediaKeyRow({
         )}
       </td>
       <td>
-        <StatusBadge status={own ? "configured" : "missing"} label={own ? "Workspace key" : "Platform key"} />
+        <StatusBadge
+          status={own ? "configured" : "platform"}
+          label={own ? "Workspace key" : "Platform key"}
+        />
         {mediaKey.keyHint && <div className="mono muted">{mediaKey.keyHint}</div>}
       </td>
       <td>{mediaKey.updatedAt ? formatDate(mediaKey.updatedAt) : "-"}</td>

@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { api } from "../api-client.ts";
-import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { ConnectSetup } from "../shell/connect-dialog.tsx";
+import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
 
 const ROLES = ["viewer", "editor", "admin"] as const;
 
@@ -44,23 +45,57 @@ export function ApiKeysPage({ mcpUrl }: { mcpUrl: string }) {
 
   return (
     <>
+      <Section title="Connect your agent">
+        <p className="muted">Every action in Studix is also a tool your agent can call over MCP.</p>
+        <ConnectSetup mcpUrl={mcpUrl} />
+      </Section>
       <Section title="API keys">
-        <p className="muted">
-          MCP endpoint: <code>{mcpUrl}</code>. Send the key as <code>Authorization: Bearer &lt;key&gt;</code>.
-        </p>
-        <p className="muted">
-          Claude, ChatGPT and other connectors that support OAuth can sign in without a key; manage them under{" "}
-          <Link to="/connected-apps">Connected apps</Link>.
-        </p>
-        <form className="row" onSubmit={create}>
+        <p className="muted">For scripts, CI and clients without sign-in. Apps that sign in need no key.</p>
+        <ErrorBanner error={error} />
+        {data && data.items.length === 0 && <Empty>No keys yet.</Empty>}
+        {data && data.items.length > 0 && (
+          <ul className="key-list">
+            {data.items.map((k) => (
+              <li key={k.id} className="key-row">
+                <div className="key-main">
+                  <div className="key-title">
+                    <strong>{k.name}</strong>
+                  </div>
+                  <div className="key-meta">
+                    <span className="mono">{k.prefix}…</span>
+                    <span>{k.role}</span>
+                    <span>{k.lastUsedAt ? `Used ${formatDate(k.lastUsedAt)}` : "Never used"}</span>
+                    {k.expiresAt && <span>Expires {formatDate(k.expiresAt)}</span>}
+                  </div>
+                </div>
+                <div className="key-state">
+                  <StatusBadge status={k.status} />
+                </div>
+                <div className="key-actions">
+                  {k.status === "active" && (
+                    <button type="button" className="ghost-danger small" onClick={() => revoke(k.id)}>
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form className="key-add" onSubmit={create}>
           <input
             required
             maxLength={100}
+            aria-label="Key name"
             placeholder="Key name"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <select value={role} onChange={(e) => setRole(e.target.value as (typeof ROLES)[number])}>
+          <select
+            aria-label="Role"
+            value={role}
+            onChange={(e) => setRole(e.target.value as (typeof ROLES)[number])}
+          >
             {ROLES.map((r) => (
               <option key={r} value={r}>
                 {r}
@@ -71,6 +106,7 @@ export function ApiKeysPage({ mcpUrl }: { mcpUrl: string }) {
             type="number"
             min={1}
             max={365}
+            aria-label="Expires in days"
             placeholder="Expires in days (optional)"
             value={expiresInDays}
             onChange={(e) => setExpiresInDays(e.target.value)}
@@ -96,46 +132,6 @@ export function ApiKeysPage({ mcpUrl }: { mcpUrl: string }) {
           </div>
         )}
         <ErrorBanner error={actionError} />
-      </Section>
-      <Section title="Existing keys">
-        <ErrorBanner error={error} />
-        {data && data.items.length === 0 && <Empty>No keys yet.</Empty>}
-        {data && data.items.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Prefix</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Last used</th>
-                <th>Expires</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((k) => (
-                <tr key={k.id}>
-                  <td>{k.name}</td>
-                  <td className="mono">{k.prefix}...</td>
-                  <td>{k.role}</td>
-                  <td>
-                    <StatusBadge status={k.status} />
-                  </td>
-                  <td>{formatDate(k.lastUsedAt)}</td>
-                  <td>{formatDate(k.expiresAt)}</td>
-                  <td>
-                    {k.status === "active" && (
-                      <button type="button" className="danger small" onClick={() => revoke(k.id)}>
-                        Revoke
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </Section>
     </>
   );

@@ -73,7 +73,6 @@ export function ProviderModelsSection() {
     <>
       <ErrorBanner error={catalog.error ?? connections.error ?? preferences.error} />
       {connections.data && <ProviderKeysCard catalog={providers} list={connections.data} reload={reload} />}
-      {connections.data && <CodexCard list={connections.data} reload={reload} />}
       {connections.data && preferences.data && (
         <ModelsCard
           catalog={providers}
@@ -85,6 +84,7 @@ export function ProviderModelsSection() {
           reload={reload}
         />
       )}
+      {connections.data && <CodexCard list={connections.data} reload={reload} />}
     </>
   );
 }
@@ -142,16 +142,16 @@ function ProviderKeysCard({
   }
 
   return (
-    <Section title="Provider keys · Pi runtime">
+    <Section title="AI keys">
       <p className="muted">
-        Keys for any provider the Pi runtime supports, billed by usage to the key's own account. A test sends
-        one short prompt to the provider's cheapest model (at most 1¢); Anthropic keys are tested for free.
+        Billed by usage to each key's own account. Test sends one tiny prompt (at most 1¢; free for
+        Anthropic).
       </p>
       {unavailable && (
         <p className="banner banner-error">Encrypted key storage is not configured on this server.</p>
       )}
       {(list.canAddWorkspaceKey || list.canAddPersonalKey) && (
-        <form className="row" onSubmit={add}>
+        <form className="key-add" onSubmit={add}>
           <select
             aria-label="Provider"
             value={provider}
@@ -180,10 +180,8 @@ function ProviderKeysCard({
             disabled={unavailable}
             onChange={(e) => setOwner(e.target.value as "workspace" | "user")}
           >
-            {list.canAddPersonalKey && <option value="user">Personal key — only you</option>}
-            {list.canAddWorkspaceKey && (
-              <option value="workspace">Workspace key — shared with members</option>
-            )}
+            {list.canAddPersonalKey && <option value="user">Personal</option>}
+            {list.canAddWorkspaceKey && <option value="workspace">Workspace (shared)</option>}
           </select>
           <input
             maxLength={80}
@@ -203,147 +201,115 @@ function ProviderKeysCard({
       <ErrorBanner error={error} />
       {list.connections.length === 0 && <Empty>No provider keys connected.</Empty>}
       {list.connections.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>Label</th>
-              <th>Owner</th>
-              <th>Key</th>
-              <th>Status</th>
-              <th>Runtimes</th>
-              <th>Last tested</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {list.connections.map((c) => (
-              <tr key={c.id}>
-                <td>{providerName(catalog, c.provider)}</td>
-                <td>
-                  <LabelCell
-                    connection={c}
-                    busy={busy.has(c.id)}
-                    onSave={(label) => act(c.id, () => api.renameProviderConnection(c.id, label))}
-                  />
-                </td>
-                <td>{c.owner === "workspace" ? "Workspace" : c.ownedByMe ? "Personal (you)" : "Personal"}</td>
-                <td className="mono">{c.keyHint ?? "-"}</td>
-                <td>
-                  <StatusBadge status={c.status} label={STATUS_LABELS[c.status] ?? c.status} />
-                </td>
-                <td>
-                  <label className="row">
-                    <input
-                      type="checkbox"
-                      checked={c.runtimes.includes("pi")}
-                      disabled={
-                        !c.canManage ||
-                        busy.has(c.id) ||
-                        c.authMethod === "oauth_subscription" ||
-                        (c.runtimes.length === 1 && c.runtimes[0] === "pi")
-                      }
-                      onChange={(e) => toggleRuntime(c, "pi", e.target.checked)}
+        <ul className="key-list">
+          {list.connections.map((c) => {
+            const runtimes: Array<{ id: AgentRuntimeName; name: string; locked?: boolean }> = [
+              { id: "pi", name: "Pi", locked: c.authMethod === "oauth_subscription" },
+              ...(c.provider === "openai"
+                ? [{ id: "codex" as const, name: "Codex", locked: c.authMethod === "oauth_subscription" }]
+                : []),
+              ...(c.provider === "anthropic" ? [{ id: "claude" as const, name: "Claude" }] : []),
+            ];
+            return (
+              <li key={c.id} className="key-row">
+                <div className="key-main">
+                  <div className="key-title">
+                    <strong>{providerName(catalog, c.provider)}</strong>
+                    <LabelCell
+                      connection={c}
+                      busy={busy.has(c.id)}
+                      onSave={(label) => act(c.id, () => api.renameProviderConnection(c.id, label))}
                     />
-                    Pi
-                  </label>
-                  {c.provider === "openai" && (
-                    <label className="row">
-                      <input
-                        type="checkbox"
-                        checked={c.runtimes.includes("codex")}
-                        disabled={
-                          !c.canManage ||
-                          busy.has(c.id) ||
-                          c.authMethod === "oauth_subscription" ||
-                          (c.runtimes.length === 1 && c.runtimes[0] === "codex")
-                        }
-                        onChange={(e) => toggleRuntime(c, "codex", e.target.checked)}
-                      />
-                      Codex
-                    </label>
-                  )}
-                  {c.provider === "anthropic" && (
-                    <label className="row">
-                      <input
-                        type="checkbox"
-                        checked={c.runtimes.includes("claude")}
-                        disabled={
-                          !c.canManage ||
-                          busy.has(c.id) ||
-                          (c.runtimes.length === 1 && c.runtimes[0] === "claude")
-                        }
-                        onChange={(e) => toggleRuntime(c, "claude", e.target.checked)}
-                      />
-                      Claude
-                    </label>
-                  )}
-                </td>
-                <td>
-                  {c.lastTest ? formatDate(c.lastTest.at) : "Never"}
+                  </div>
+                  <div className="key-meta">
+                    <span className="mono">{c.keyHint ?? "-"}</span>
+                    <span>
+                      {c.owner === "workspace" ? "Workspace" : c.ownedByMe ? "Personal (you)" : "Personal"}
+                    </span>
+                    <span>{c.lastTest ? `Tested ${formatDate(c.lastTest.at)}` : "Never tested"}</span>
+                  </div>
                   {c.lastTest && !c.lastTest.ok && c.lastTest.error && (
-                    <div className="muted">{c.lastTest.error.message}</div>
+                    <div className="key-error">{c.lastTest.error.message}</div>
                   )}
-                </td>
-                <td>
-                  {c.canManage && replacing?.id !== c.id && (
-                    <div className="row">
+                </div>
+                <div className="key-state">
+                  <StatusBadge status={c.status} label={STATUS_LABELS[c.status] ?? c.status} />
+                  <fieldset className="runtime-chips" aria-label="Runtimes that use this key">
+                    {runtimes.map((r) => {
+                      const on = c.runtimes.includes(r.id);
+                      return (
+                        <label key={r.id} className={`runtime-chip${on ? " on" : ""}`}>
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            disabled={
+                              !c.canManage ||
+                              busy.has(c.id) ||
+                              r.locked ||
+                              (c.runtimes.length === 1 && c.runtimes[0] === r.id)
+                            }
+                            onChange={(e) => toggleRuntime(c, r.id, e.target.checked)}
+                          />
+                          {r.name}
+                        </label>
+                      );
+                    })}
+                  </fieldset>
+                </div>
+                {c.canManage && replacing?.id !== c.id && (
+                  <div className="key-actions">
+                    <button
+                      type="button"
+                      className="secondary small"
+                      disabled={busy.has(c.id)}
+                      onClick={() => act(c.id, () => api.testProviderKey(c.id))}
+                    >
+                      {busy.has(c.id) ? "Testing…" : "Test"}
+                    </button>
+                    {c.authMethod === "api_key" && (
                       <button
                         type="button"
                         className="secondary small"
-                        disabled={busy.has(c.id)}
-                        onClick={() => act(c.id, () => api.testProviderKey(c.id))}
+                        disabled={unavailable || busy.has(c.id)}
+                        onClick={() => setReplacing({ id: c.id, apiKey: "" })}
                       >
-                        {busy.has(c.id) ? "Testing…" : "Test"}
+                        Replace
                       </button>
-                      {c.authMethod === "api_key" && (
-                        <button
-                          type="button"
-                          className="secondary small"
-                          disabled={unavailable || busy.has(c.id)}
-                          onClick={() => setReplacing({ id: c.id, apiKey: "" })}
-                        >
-                          Replace key
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="danger small"
-                        disabled={busy.has(c.id)}
-                        onClick={() => remove(c)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
-                  {c.canManage && replacing?.id === c.id && (
-                    <form className="row" onSubmit={replace}>
-                      <input
-                        required
-                        type="password"
-                        autoComplete="new-password"
-                        aria-label="New provider API key"
-                        value={replacing.apiKey}
-                        disabled={busy.has(c.id)}
-                        onChange={(e) => setReplacing({ id: c.id, apiKey: e.target.value })}
-                      />
-                      <button type="submit" className="small" disabled={busy.has(c.id)}>
-                        Test &amp; save
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary small"
-                        onClick={() => setReplacing(undefined)}
-                      >
-                        Cancel
-                      </button>
-                    </form>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                    )}
+                    <button
+                      type="button"
+                      className="ghost-danger small"
+                      disabled={busy.has(c.id)}
+                      onClick={() => remove(c)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+                {c.canManage && replacing?.id === c.id && (
+                  <form className="key-replace" onSubmit={replace}>
+                    <input
+                      required
+                      type="password"
+                      autoComplete="new-password"
+                      aria-label="New provider API key"
+                      placeholder="New API key"
+                      value={replacing.apiKey}
+                      disabled={busy.has(c.id)}
+                      onChange={(e) => setReplacing({ id: c.id, apiKey: e.target.value })}
+                    />
+                    <button type="submit" className="small" disabled={busy.has(c.id)}>
+                      Test &amp; save
+                    </button>
+                    <button type="button" className="secondary small" onClick={() => setReplacing(undefined)}>
+                      Cancel
+                    </button>
+                  </form>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
     </Section>
   );
@@ -367,12 +333,12 @@ function LabelCell({
   }, [editing]);
   if (!editing) {
     return (
-      <span className="row">
+      <span className="key-label">
         {connection.label}
         {connection.canManage && (
           <button
             type="button"
-            className="secondary small"
+            className="icon-btn"
             aria-label={`Rename ${connection.label}`}
             title="Rename"
             disabled={busy}
@@ -395,7 +361,7 @@ function LabelCell({
     if (event.key === "Escape") setDraft(undefined);
   }
   return (
-    <form className="row" onSubmit={commit}>
+    <form className="key-label" onSubmit={commit}>
       <input
         ref={input}
         aria-label="Connection label"
@@ -472,7 +438,7 @@ function CodexCard({ list, reload }: { list: ProviderConnectionList; reload: () 
   }
 
   return (
-    <Section title="Codex runtime">
+    <Section title="ChatGPT sign-in">
       <p className="muted">
         Codex runs agent tasks in the skill sandbox. Sign in with ChatGPT to use your ChatGPT plan, or add an
         OpenAI API key above and tick Codex to pay by usage. Test refreshes a ChatGPT login; Remove forgets
@@ -549,7 +515,7 @@ function ModelsCard({
     return c ? `${c.label} (${providerName(catalog, c.provider)})` : "Removed key";
   };
   return (
-    <Section title="Models per stage · Pi runtime">
+    <Section title="Model per step">
       <p className="muted">
         Most specific wins: your choice for a stage, then the workspace choice for it, then your default, then
         the workspace default. A job that selects the Claude planner ignores these. Each job keeps the model
@@ -688,7 +654,7 @@ function ChooseModelForm({
   }
 
   if (connections.length === 0) {
-    return <Empty>Enable a provider key for the Pi runtime above to choose a model.</Empty>;
+    return <Empty>Add an AI key above to choose a model.</Empty>;
   }
   return (
     <form onSubmit={save}>

@@ -49,7 +49,7 @@ export function ClaudeFeaturesSection({ onChange }: { onChange: () => void }) {
   }
 
   return (
-    <Section title="Self-hosted Claude features">
+    <Section title="Claude features (self-hosted)">
       <ErrorBanner error={actionError} />
       {FEATURES.map(({ key, title, detail }) => {
         const feature = (data as WorkspaceFeatures)[key];

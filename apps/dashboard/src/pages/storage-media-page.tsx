@@ -10,7 +10,7 @@ import {
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
 import { StorageProfilesCard } from "./storage-profiles-card.tsx";
-import { KEY_VERDICT, WorkspaceMediaKeysSection } from "./workspace-media-keys-section.tsx";
+import { KEY_VERDICT } from "./workspace-media-keys-section.tsx";
 
 const SECRET_LABELS: Record<PlatformSettings["storage"]["secretAccessKey"], string> = {
   configured: "Configured",
@@ -52,7 +52,6 @@ export function StorageMediaPage({ isOperator }: { isOperator: boolean }) {
   return (
     <>
       <WorkspaceStorageCard />
-      <WorkspaceMediaKeysSection />
       {isOperator && <PlatformSettingsCards />}
     </>
   );
@@ -131,7 +130,7 @@ function StorageCard({ storage, reload }: { storage: PlatformSettings["storage"]
   const last = storage.lastTest;
   return (
     <Section
-      title="Environment storage (S3_*)"
+      title="Server storage"
       actions={
         <button type="button" disabled={busy || !storage.configured} onClick={test}>
           {busy ? "Testing…" : "Test connection"}
@@ -139,12 +138,15 @@ function StorageCard({ storage, reload }: { storage: PlatformSettings["storage"]
       }
     >
       <p className="muted">
-        The bucket is shared by every workspace, each under its own prefix. Endpoint, bucket and region come
-        from the deployment settings. The access key pair can be stored here: it is tested with a write, read
-        and delete before it replaces the current one, overrides <code>S3_ACCESS_KEY_ID</code> /
-        <code> S3_SECRET_ACCESS_KEY</code>, reaches the app and the worker within seconds without a redeploy,
-        and is never shown again.
+        One bucket for every workspace. A key saved here is tested first and applies without a redeploy.
       </p>
+      <details className="why">
+        <summary>Details</summary>
+        <p className="muted">
+          Endpoint, bucket and region come from the deployment settings. A saved key pair overrides{" "}
+          <code>S3_ACCESS_KEY_ID</code> / <code>S3_SECRET_ACCESS_KEY</code> and is never shown again.
+        </p>
+      </details>
       <ErrorBanner error={actionError} />
       {storage.configured && storage.credentialStorage === "unavailable" && (
         <p className="banner banner-error">
@@ -286,7 +288,7 @@ function MediaCard({ media, reload }: { media: PlatformSettings["media"]; reload
 
   return (
     <Section
-      title="Media providers (Multix)"
+      title="Media check"
       actions={
         <button type="button" disabled={busy} onClick={check}>
           {busy ? "Checking…" : "Run safe check"}

@@ -48,7 +48,16 @@ export function StatusBadge({ status, label }: { status: string; label?: string 
 export function formatDate(value?: string): string {
   if (!value) return "-";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+  if (Number.isNaN(date.getTime())) return "-";
+  // Short and scannable: "Nov 7, 11:43"; the year only when it is not this year.
+  const thisYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(thisYear ? {} : { year: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export function Link({ to, children, className }: { to: string; children: ReactNode; className?: string }) {

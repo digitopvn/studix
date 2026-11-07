@@ -135,11 +135,8 @@ export function StorageProfilesCard({
       }
     >
       <p className="muted">
-        New renders and assets go to the active profile. Switching applies to the app and the worker within
-        about 20 seconds, without a redeploy; jobs already running finish on the profile they started with,
-        and everything stored before stays readable from its own profile. A profile is saved only after a
-        write, read and delete with its settings pass. Endpoints must be public HTTPS hosts (R2:{" "}
-        <code>https://&lt;account&gt;.r2.cloudflarestorage.com</code>).
+        New files go to the active profile; switching takes about 20 seconds and old files stay readable. A
+        profile is saved only after a test write, read and delete pass.
       </p>
       <ErrorBanner error={actionError} />
       {input && (

@@ -13,6 +13,7 @@ import {
 } from "../api-client.ts";
 import { ErrorBanner, errorText, Link, StatusBadge, useAsync } from "../ui.tsx";
 import { navigate } from "../use-hash-route.ts";
+import { REVISE_DRAFT_KEY } from "./project-view/project-view.tsx";
 
 /*
  * New video as a conversation: every message starts a skill-agent job on the chosen runtime, and the page shows
@@ -65,10 +66,44 @@ function followUpPrompt(turns: Turn[], summaries: Record<string, string>, messag
   return text.length <= PROMPT_MAX ? text : `${text.slice(0, 600)}\n…\n${text.slice(-(PROMPT_MAX - 610))}`;
 }
 
+const STARTERS = [
+  "A 15s product teaser for a coffee app, upbeat, 9:16",
+  "Explain how solar panels work in 30s, clean motion graphics",
+  "A 10s logo reveal with a warm cinematic look",
+];
+
+function takeReviseDraft(): string {
+  try {
+    const text = sessionStorage.getItem(REVISE_DRAFT_KEY) ?? "";
+    sessionStorage.removeItem(REVISE_DRAFT_KEY);
+    return text;
+  } catch {
+    return "";
+  }
+}
+
+/** The last few projects, so returning users jump back in without opening Projects. */
+function RecentStrip() {
+  const { data } = useAsync(() => api.projects());
+  const items = data?.items.slice(0, 4) ?? [];
+  if (!items.length) return null;
+  return (
+    <div className="recent-strip">
+      <span className="muted small-text">Recent</span>
+      {items.map((p) => (
+        <Link key={p.id} to={`/projects/${p.id}`} className="recent-chip">
+          {p.title}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 export function AgentChatPage({ threadId }: { threadId?: string }) {
   const [turns, setTurns] = useState<Turn[]>(() => (threadId ? loadThread(threadId) : []));
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [running, setRunning] = useState<Record<string, boolean>>({});
+  const [seed, setSeed] = useState<{ text: string }>();
   const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,15 +122,12 @@ export function AgentChatPage({ threadId }: { threadId?: string }) {
   }
 
   return (
-    <div className="chat">
+    <div className={turns.length === 0 ? "chat chat-start" : "chat"}>
       <div className="chat-thread">
         {turns.length === 0 && (
           <div className="chat-empty">
-            <h1>What video should we make?</h1>
-            <p className="muted">
-              Describe it. The agent you pick writes the motion, audio and edit itself in a sandbox, and you
-              see every step it takes. Reply to revise.
-            </p>
+            <h1>Make a video.</h1>
+            <p className="muted">Describe it. Watch every step. Reply to revise.</p>
           </div>
         )}
         {turns.map((turn) => (
@@ -114,7 +146,20 @@ export function AgentChatPage({ threadId }: { threadId?: string }) {
         followUp={turns.length > 0}
         buildPrompt={(message) => (turns.length > 0 ? followUpPrompt(turns, summaries, message) : message)}
         onStarted={started}
+        seed={seed}
       />
+      {turns.length === 0 && (
+        <div className="chat-after">
+          <div className="starters">
+            {STARTERS.map((s) => (
+              <button key={s} type="button" className="secondary small" onClick={() => setSeed({ text: s })}>
+                {s}
+              </button>
+            ))}
+          </div>
+          <RecentStrip />
+        </div>
+      )}
     </div>
   );
 }
@@ -411,13 +456,19 @@ function Composer({
   followUp,
   buildPrompt,
   onStarted,
+  seed,
 }: {
+  seed?: { text: string };
   busy: boolean;
   followUp: boolean;
   buildPrompt(message: string): string;
   onStarted(turn: Turn): void;
 }) {
-  const [message, setMessage] = useState("");
+  // A revision brief from a project review starts the composer prefilled, once.
+  const [message, setMessage] = useState(() => (followUp ? "" : takeReviseDraft()));
+  useEffect(() => {
+    if (seed) setMessage(seed.text);
+  }, [seed]);
   const [runtime, setRuntime] = useState<AgentRuntimeName | "">("");
   const [connectionId, setConnectionId] = useState("");
   const [model, setModel] = useState("");
@@ -488,7 +539,6 @@ function Composer({
     }
   }
 
-  const unavailable = list.filter((r) => r.connections.length === 0);
   return (
     <form className="chat-composer" onSubmit={(e) => void send(e)}>
       <ErrorBanner error={error ?? runtimes.error} />
@@ -505,72 +555,84 @@ function Composer({
         }
       />
       <div className="chat-controls">
-        <fieldset className="chat-runtimes" aria-label="Agent runtime">
-          {list.map((r) => {
-            const off = r.connections.length === 0;
-            return (
-              <button
-                key={r.runtime}
-                type="button"
-                aria-pressed={runtime === r.runtime}
-                className={`chat-runtime${runtime === r.runtime ? " active" : ""}`}
-                disabled={off}
-                title={off ? "No usable connection for this runtime. Add one in AI & Providers." : undefined}
-                onClick={() => {
-                  setRuntime(r.runtime);
-                  setConnectionId("");
+        {/* The agent and model are for people who care; everyone else just writes and presses Make video. */}
+        <details className="chat-options">
+          <summary>
+            {runtime ? RUNTIME_LABELS[runtime] : "Agent"} · {model || "default model"}
+          </summary>
+          <div className="chat-options-body">
+            <fieldset className="chat-runtimes" aria-label="Agent runtime">
+              {list.map((r) => {
+                const off = r.connections.length === 0;
+                return (
+                  <button
+                    key={r.runtime}
+                    type="button"
+                    aria-pressed={runtime === r.runtime}
+                    className={`chat-runtime${runtime === r.runtime ? " active" : ""}`}
+                    disabled={off}
+                    title={
+                      off
+                        ? "No usable connection for this runtime. Add one in Settings → Models & keys."
+                        : undefined
+                    }
+                    onClick={() => {
+                      setRuntime(r.runtime);
+                      setConnectionId("");
+                      setModel("");
+                      setEffort("");
+                    }}
+                  >
+                    {RUNTIME_LABELS[r.runtime]}
+                  </button>
+                );
+              })}
+            </fieldset>
+            {info && info.connections.length > 1 && (
+              <select
+                aria-label="Connection"
+                value={connection?.providerConnectionId ?? ""}
+                onChange={(e) => {
+                  setConnectionId(e.target.value);
                   setModel("");
-                  setEffort("");
                 }}
               >
-                {RUNTIME_LABELS[r.runtime]}
-              </button>
-            );
-          })}
-        </fieldset>
-        {info && info.connections.length > 1 && (
-          <select
-            aria-label="Connection"
-            value={connection?.providerConnectionId ?? ""}
-            onChange={(e) => {
-              setConnectionId(e.target.value);
-              setModel("");
-            }}
-          >
-            {info.connections.map((c) => (
-              <option key={c.providerConnectionId} value={c.providerConnectionId}>
-                {c.label} ({c.owner === "workspace" ? "workspace" : "personal"})
-              </option>
-            ))}
-          </select>
-        )}
-        {info && info.connections.length === 1 && connection && (
-          <span className="muted small-text">{connection.label}</span>
-        )}
-        {connection && (
-          <select aria-label="Model" value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="">Default model</option>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id}
-              </option>
-            ))}
-          </select>
-        )}
-        {connection && reasoning && (
-          <select
-            aria-label="Reasoning effort"
-            value={effort}
-            onChange={(e) => setEffort(e.target.value as ReasoningEffort | "")}
-          >
-            <option value="">Default effort</option>
-            {EFFORTS.map((x) => (
-              <option key={x} value={x}>
-                effort: {x}
-              </option>
-            ))}
-          </select>
-        )}
+                {info.connections.map((c) => (
+                  <option key={c.providerConnectionId} value={c.providerConnectionId}>
+                    {c.label} ({c.owner === "workspace" ? "workspace" : "personal"})
+                  </option>
+                ))}
+              </select>
+            )}
+            {info && info.connections.length === 1 && connection && (
+              <span className="muted small-text">{connection.label}</span>
+            )}
+            {connection && (
+              <select aria-label="Model" value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">Default model</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
+                ))}
+              </select>
+            )}
+            {connection && reasoning && (
+              <select
+                aria-label="Reasoning effort"
+                value={effort}
+                onChange={(e) => setEffort(e.target.value as ReasoningEffort | "")}
+              >
+                <option value="">Default effort</option>
+                {EFFORTS.map((x) => (
+                  <option key={x} value={x}>
+                    effort: {x}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </details>
         <select
           aria-label="Format"
           value={aspectRatio}
@@ -601,14 +663,8 @@ function Composer({
       </div>
       {runtimes.data && usable.length === 0 && (
         <p className="banner banner-warning">
-          No agent runtime can run yet. Connect Anthropic (Claude), OpenAI or ChatGPT (Codex) or a Pi provider
-          in <Link to="/providers">AI &amp; Providers</Link>.
-        </p>
-      )}
-      {unavailable.length > 0 && usable.length > 0 && (
-        <p className="muted small-text">
-          {unavailable.map((r) => RUNTIME_LABELS[r.runtime]).join(", ")} unavailable: no usable connection.{" "}
-          <Link to="/providers">Add one</Link>.
+          No agent runtime can run yet. Connect Anthropic (Claude), OpenAI or ChatGPT (Codex) or another AI
+          key in <Link to="/settings/models">Settings → Models &amp; keys</Link>.
         </p>
       )}
     </form>
