@@ -15,11 +15,13 @@ import { type Clock, type Logger, systemClock } from "@studix/shared";
 import { packPipelines, packRegistry } from "@studix/skills";
 import {
   createJobExecutor,
+  createMediaExecWorkflow,
   createVideoCreateWorkflow,
   createVideoPublishWorkflow,
   createWorkerJobQueue,
   createWorkerPool,
   type JobOutcome,
+  type MediaExecRunner,
   type Planner,
   type QaGate,
   type SpeechProbe,
@@ -62,6 +64,8 @@ export interface WorkerPorts {
    * host mode (the MCP client's agent completes them).
    */
   agentRuntimeFor?(stage: StageContext): AgentRuntime | undefined;
+  /** Optional: the sandbox of `media.exec` jobs (studix_media_exec). Without it those jobs fail UNAVAILABLE. */
+  mediaExec?: { runner: MediaExecRunner; centsPerMinute: number };
   /** Release adapter resources (HTTP agents, clients) after the pool has drained. */
   close?(): Promise<void>;
 }
@@ -142,6 +146,10 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
         pipelines: packPipelines(packRegistry),
       }),
       createVideoPublishWorkflow({ renders: repos.renders, publisher: deps.publisher }),
+      createMediaExecWorkflow({
+        ...(deps.mediaExec ? { runner: deps.mediaExec.runner } : {}),
+        centsPerMinute: deps.mediaExec?.centsPerMinute ?? 0,
+      }),
     ],
   });
   const pool: WorkerPool = createWorkerPool({

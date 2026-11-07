@@ -27,6 +27,8 @@ export const PERMISSIONS = [
    */
   "skill:read",
   "skill:write",
+  /** Run ffmpeg/ffprobe with raw arguments in the worker sandbox (studix_media_exec); costs compute time. */
+  "media:exec",
   "approval:request",
   "approval:decide",
   "publish",
@@ -44,6 +46,7 @@ const EDIT: Permission[] = [
   "job:retry",
   "asset:write",
   "skill:write",
+  "media:exec",
   "approval:request",
 ];
 

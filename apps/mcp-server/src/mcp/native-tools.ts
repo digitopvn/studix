@@ -19,6 +19,7 @@ import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.t
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
+import { withMediaExecUrls } from "./media-exec-tool.ts";
 
 /** Native tool names. `studix_cancel_job` is not referenced by core next-hints, so it is named here. */
 export const NATIVE_TOOL_NAMES = {
@@ -259,7 +260,11 @@ export const NATIVE_TOOLS = [
     readOnly: true,
     async run(ctx, input) {
       const job = await ctx.deps.studio.getJob(ctx.tenant, input.jobId);
-      const view = await jobWithVideo(ctx.artifacts, ctx.tenant, job);
+      const view = await jobWithVideo(
+        ctx.artifacts,
+        ctx.tenant,
+        await withMediaExecUrls(ctx.artifacts, ctx.tenant, job),
+      );
       const data = job.projectId ? { ...view, reviewUrl: reviewUrl(ctx.deps, job.projectId) } : view;
       return { data, next: job.next };
     },

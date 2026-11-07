@@ -12,6 +12,7 @@ import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
+import { MEDIA_EXEC_MCP_TOOLS } from "./media-exec-tool.ts";
 import { NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
 import { SKILL_MCP_TOOLS } from "./skill-tools.ts";
 import { errorEnvelope, okEnvelope, ToolEnvelopeSchema } from "./tool-envelope.ts";
@@ -49,6 +50,7 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     ...NATIVE_TOOLS,
     ...AGENT_HANDOFF_MCP_TOOLS,
     ...SKILL_MCP_TOOLS,
+    ...MEDIA_EXEC_MCP_TOOLS,
   ] as readonly NativeTool[];
   const toolNames = tools.map((t) => t.name);
 

@@ -20,7 +20,7 @@ import {
   type StorageProfileCandidate,
   withSelfHostedSecretsKey,
 } from "@studix/auth";
-import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
+import { createDefaultApprovalPolicy, createMediaExecService, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
 import {
@@ -327,6 +327,12 @@ export async function composeApp(
     ],
     skills: overrides.skills ?? integrations.skills,
     agentHandoffs: integrations.agentHandoffs,
+    mediaExec: createMediaExecService({
+      queue: repos.queue,
+      assets: repos.assets,
+      audit: repos.audit,
+      defaults: { jobBudgetCents: config.DEFAULT_JOB_BUDGET_CENTS },
+    }),
     externalSkills: overrides.externalSkills ?? integrations.externalSkills,
     platform: createPlatformSettingsService({
       config,

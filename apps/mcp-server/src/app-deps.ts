@@ -8,6 +8,7 @@ import type {
   ActivityRepository,
   AgentHandoffService,
   JobRepository,
+  MediaExecService,
   RenderRepository,
   StudioService,
   WorkspaceRepository,
@@ -82,6 +83,8 @@ export interface AppDeps {
   skills?: SkillSummary[];
   /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
   agentHandoffs?: AgentHandoffService;
+  /** studix_media_exec (ffmpeg/ffprobe jobs); without it the tool answers UNAVAILABLE. */
+  mediaExec?: MediaExecService;
   /** Imported GitHub skills; without it the skill tools answer UNAVAILABLE. */
   externalSkills?: ExternalSkillService;
   /** Storage & media settings for platform operators; without it the platform API answers UNAVAILABLE. */

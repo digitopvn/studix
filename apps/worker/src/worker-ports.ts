@@ -39,6 +39,7 @@ import { StudixError } from "@studix/shared";
 import { createExternalSkillService, createSkillBundleSource } from "@studix/skills";
 import { createProfileStorageRouterFromConfig } from "@studix/storage";
 import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
+import { createMediaExecRunner, loadMediaExecSettings } from "./media-exec-runner.ts";
 import { platformCredentials } from "./pack-services.ts";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
 import { registerBriefRule } from "./planner/brief-decision.ts";
@@ -262,6 +263,27 @@ async function skillSandbox(
   });
 }
 
+/** The sandbox of `media.exec` jobs: the skill sandbox image with no network, on when STUDIX_SANDBOX=docker. */
+function mediaExecPort(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+  storage: ReturnType<typeof createProfileStorageRouterFromConfig>,
+  logger: WorkerPortsRuntime["logger"],
+) {
+  const sandbox = loadSandboxSettings(runtime.env);
+  if (!sandbox) return undefined;
+  const exec = loadMediaExecSettings(runtime.env);
+  const runner = createMediaExecRunner({
+    sandbox,
+    settings: exec,
+    workDir: settings.workDir,
+    storage,
+    assets: createRepositories(runtime.db).assets,
+    logger: logger.child({ component: "media-exec" }),
+  });
+  return { runner, centsPerMinute: exec.centsPerMinute };
+}
+
 /**
  * With STUDIX_CLAUDE_PLANNER on, refuse to start when the Claude process cannot run on this host (no SDK
  * binary for the platform, a libc mismatch), instead of failing every Claude job until its attempts run out.
@@ -395,6 +417,7 @@ export async function loadWorkerPorts(
   const claude = claudePlanner(settings, runtime, providers, transport);
   const sandbox = await skillSandbox(settings, runtime, providers, storage);
   const harness = agentHarness(settings, runtime, providers, transport, sandbox);
+  const mediaExec = mediaExecPort(settings, runtime, storage, logger);
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),
@@ -409,6 +432,7 @@ export async function loadWorkerPorts(
     renderer,
     storage,
     ...(harness ? { agentRuntimeFor: (stage) => harness.runtimeFor(stage) } : {}),
+    ...(mediaExec ? { mediaExec } : {}),
     close: async () => {
       // Shutdown stops waiting on stages at once; let aborted agent runs finish killing their process.
       const idle = await Promise.all([

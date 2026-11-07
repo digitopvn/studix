@@ -2,6 +2,8 @@ export * from "./agent-handoff-service.ts";
 export { permissionForAction } from "./approval-operations.ts";
 export type { CreateVideoProjectResult } from "./create-video-project.ts";
 export * from "./job-view.ts";
+export * from "./media-exec.ts";
+export * from "./media-exec-service.ts";
 export * from "./project-review.ts";
 export * from "./storyboard-review.ts";
 export * from "./studio-service.ts";

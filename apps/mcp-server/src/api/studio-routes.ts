@@ -14,6 +14,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, playbackForRender, signRender } from "../artifact-urls.ts";
+import { withMediaExecUrls } from "../mcp/media-exec-tool.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
@@ -179,7 +180,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     const { ctx } = sessionOf(res);
     const job = await deps.studio.getJob(ctx, idParam(req, "jobId"));
     const [view, activity] = await Promise.all([
-      jobWithVideo(artifacts, ctx, job),
+      withMediaExecUrls(artifacts, ctx, job).then((j) => jobWithVideo(artifacts, ctx, j)),
       deps.repos.activity.list(ctx, { jobId: job.id, limit: 100 }),
     ]);
     res.json({ job: view, activity: activity.items });
