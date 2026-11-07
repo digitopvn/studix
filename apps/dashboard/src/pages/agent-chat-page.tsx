@@ -210,7 +210,7 @@ interface ToolCard {
 type Block =
   | { kind: "message" | "reasoning"; text: string }
   | ToolCard
-  | { kind: "artifact"; name: string; url?: string };
+  | { kind: "artifact"; name: string; url?: string; preview?: boolean };
 
 interface RunState {
   blocks: Block[];
@@ -249,7 +249,7 @@ function reduce(state: RunState, event: AgentChatEvent): RunState {
       return { ...state, blocks };
     }
     case "artifact":
-      blocks.push({ kind: "artifact", name: event.name, url: event.url });
+      blocks.push({ kind: "artifact", name: event.name, url: event.url, preview: event.preview });
       return { ...state, blocks };
     case "usage":
       return { ...state, usage: event };
@@ -513,6 +513,8 @@ export function BlockView({ block, stored }: { block: Block; stored?: ReadonlyMa
     );
   }
   if (block.kind === "artifact") {
+    // A preview plays where the agent named it, so it gets no row of its own.
+    if (block.preview) return null;
     // A stored artifact carries a signed URL; a bare name is only a path in the sandbox.
     const names = mediaNames(block.url ?? block.name);
     return names.length ? <MediaStrip names={names} /> : <div className="chat-artifact">📎 {block.name}</div>;

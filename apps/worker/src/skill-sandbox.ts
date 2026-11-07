@@ -110,6 +110,11 @@ export async function sandboxProviderKeys(
   return keys;
 }
 
+/** Where a stage run's previews land: media the agent left under /work outside /work/out. */
+export function sandboxPreviewDir(workDir: string, stage: StageContext): string {
+  return join(workDir, stage.job.id, `attempt-${stage.attempt}`, "sandbox-previews");
+}
+
 export interface SkillSandbox {
   /** The workspace provider of one stage run; its results land under the stage's attempt directory. */
   forStage(stage: StageContext): PiTaskWorkspaceProvider;
@@ -164,6 +169,7 @@ export async function createSkillSandbox(options: {
           : {}),
         limits: settings.limits,
         outputDir: join(options.workDir, stage.job.id, `attempt-${stage.attempt}`, "sandbox-out"),
+        previewDir: sandboxPreviewDir(options.workDir, stage),
         scratchRoot: join(options.workDir, "sandboxes"),
       });
     },

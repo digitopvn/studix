@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type ClaudeAgentTransport,
@@ -51,7 +52,12 @@ import { prepareClaudeSandboxRoot } from "./planner/claude-sandbox.ts";
 import { createExecutionSink } from "./planner/execution-sink.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
 import { createWorkspaceModelDecisions } from "./planner/workspace-model-decisions.ts";
-import { createSkillSandbox, loadSandboxSettings, type SkillSandbox } from "./skill-sandbox.ts";
+import {
+  createSkillSandbox,
+  loadSandboxSettings,
+  type SkillSandbox,
+  sandboxPreviewDir,
+} from "./skill-sandbox.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
@@ -233,6 +239,11 @@ function agentHarness(
           piWorkspace: (stage) => sandbox.forStage(stage),
           codex: { defaultModel: settings.codexModel },
           storeArtifact: createAgentArtifactStore({ storage, assets: repos.assets }),
+          previewFiles: async (stage) => {
+            const dir = sandboxPreviewDir(settings.workDir, stage);
+            const names = await readdir(dir).catch(() => []);
+            return names.map((n) => join(dir, n));
+          },
         }
       : {}),
   });

@@ -7,6 +7,7 @@ import {
   SANDBOX_INPUT_DIR,
   SANDBOX_OUTPUT_DIR,
   SANDBOX_SKILLS_DIR,
+  SANDBOX_WORK_DIR,
   type SandboxDriver,
   type SandboxLimits,
   type SandboxSession,
@@ -65,6 +66,11 @@ export interface PiTaskWorkspaceOptions {
   ): Promise<void>;
   /** Downloads one stored input file to a host path; without it a task with input files fails VALIDATION. */
   fetchInput?(ctx: TenantContext, storageKey: string, hostPath: string): Promise<void>;
+  /**
+   * Host directory that receives, by file name, the images, video and audio the agent left elsewhere under
+   * /work (for example /work/tmp/frame.png), so the run can be reviewed. They are previews, not results.
+   */
+  previewDir?: string;
   /** Caps on what `collect` copies out. */
   maxOutputFiles?: number;
 }
@@ -104,6 +110,39 @@ export function sandboxFilesNote(inputs: readonly string[]): string {
   if (inputs.length === 0) return kept;
   const list = inputs.map((p) => `- ${p}`).join("\n");
   return `Input files (already in the sandbox; read them there, never download them):\n${list}\n${kept}`;
+}
+
+const MAX_PREVIEW_FILES = 40;
+const PREVIEW_MEDIA = /\.(png|jpe?g|webp|gif|mp4|webm|mov|mp3|wav|m4a)$/i;
+
+/** The media files under /work outside /work/in and /work/out, copied by file name; a later path wins a clash. */
+async function copyPreviews(sandbox: SandboxSession, dir: string): Promise<void> {
+  const listing = await sandbox.run([
+    "find",
+    SANDBOX_WORK_DIR,
+    "-maxdepth",
+    "5",
+    "-type",
+    "f",
+    "-size",
+    "-512M",
+  ]);
+  const files = listing
+    .toString("utf8")
+    .split("\n")
+    .filter(
+      (f) =>
+        PREVIEW_MEDIA.test(f) &&
+        !f.startsWith(`${SANDBOX_OUTPUT_DIR}/`) &&
+        !f.startsWith(`${SANDBOX_INPUT_DIR}/`),
+    )
+    .slice(-MAX_PREVIEW_FILES);
+  if (files.length === 0) return;
+  await mkdir(dir, { recursive: true });
+  for (const file of files) {
+    const name = (posix.basename(file) || "file").replace(/[^\w.-]+/g, "_");
+    await sandbox.copyOut(file, join(dir, name));
+  }
 }
 
 export function createPiTaskWorkspaceProvider(options: PiTaskWorkspaceOptions): PiTaskWorkspaceProvider {
@@ -177,6 +216,7 @@ export function createPiTaskWorkspaceProvider(options: PiTaskWorkspaceOptions): 
               await open.copyOut(file, target);
               copied.push(target);
             }
+            if (options.previewDir) await copyPreviews(open, options.previewDir);
             if (skillsDir && options.storeSkillEdits) {
               const changed = await changedSkillBundles(mounted, skillsDir);
               if (changed.length > 0) {
