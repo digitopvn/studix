@@ -1,4 +1,5 @@
 import { createSpawnMultixRunner, type MultixRunner, parseMultixEnvelope } from "./multix-cli-runner.ts";
+import { type GenerateTask, generatePriceCeiling } from "./multix-generate-prices.ts";
 import { MULTIX_ROLE_VENDORS, type MultixModelDefaults, type MultixRole } from "./multix-routes.ts";
 
 /** One model a role can be set to, as `<vendor>:<model>`. */
@@ -11,6 +12,10 @@ export interface MultixCatalogEntry {
   capabilities?: string[];
   /** Neither the platform nor the workspace has the vendor's key: listed, but it cannot run yet. */
   needsKey?: boolean;
+  /** The most a call is reserved at, for providers multix cannot price before the run. */
+  priceCeiling?: { usdPerUnit: number; unit: "image" | "second" };
+  /** No trusted price yet: listed, but a job refuses it before anything is paid. */
+  unpriced?: boolean;
 }
 
 export interface MultixCatalog {
@@ -139,11 +144,15 @@ export function buildMultixCatalog(
       // Sume media keeps its own route and catalogue.
       if (typeof row.provider !== "string" || row.provider === "sume") continue;
       if (role === "imageUpscale" && row.provider === "atlas") continue;
+      const ceiling = generatePriceCeiling(row.provider, task as GenerateTask);
+      const priced = ceiling
+        ? { priceCeiling: { usdPerUnit: ceiling.usdPerUnit, unit: ceiling.unit } }
+        : { unpriced: true };
       if (row.any_model && (MULTIX_ROLE_VENDORS[role] as readonly string[]).includes(row.provider)) {
         openVendors.add(row.provider);
       }
       if (row.default_model && !row.default_model.includes("*")) {
-        add(role, { vendor: row.provider, model: row.default_model });
+        add(role, { vendor: row.provider, model: row.default_model, ...priced });
       }
       for (const model of asArray<{ id?: string; label?: string; tasks?: string[] }>(row.models)) {
         if (typeof model.id !== "string" || model.id.includes("*")) continue;
@@ -152,6 +161,7 @@ export function buildMultixCatalog(
           model: model.id,
           ...(model.label ? { label: model.label } : {}),
           ...(model.tasks?.length ? { capabilities: model.tasks } : {}),
+          ...priced,
         });
       }
     }

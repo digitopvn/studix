@@ -122,6 +122,13 @@ export function MultixModelCombobox({
                       <span className="badge">needs key</span>
                     </>
                   )}
+                  {option.price && <span className="muted"> {option.price}</span>}
+                  {option.unpriced && (
+                    <>
+                      {" "}
+                      <span className="badge">no trusted price</span>
+                    </>
+                  )}
                   {option.capabilities && (
                     <span className="muted combobox-caps"> {option.capabilities.join(", ")}</span>
                   )}

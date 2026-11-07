@@ -6,6 +6,9 @@ export interface ModelOption {
   label?: string;
   capabilities?: string[];
   needsKey?: boolean;
+  /** "est. ≤ 4¢" or "est. ≤ 50¢/s": the reserved ceiling of a provider multix cannot price. */
+  price?: string;
+  unpriced?: boolean;
 }
 
 /**
@@ -27,10 +30,17 @@ export function modelOptions(
       ...(e.label ? { label: e.label } : {}),
       ...(e.capabilities ? { capabilities: e.capabilities } : {}),
       ...(e.needsKey ? { needsKey: true } : {}),
+      ...(e.priceCeiling ? { price: priceLabel(e.priceCeiling) } : {}),
+      ...(e.unpriced ? { unpriced: true } : {}),
     }));
   const extra =
     current !== "" && !entries.some((e) => e.id === current) && matches(current) ? [{ value: current }] : [];
   return [...(words.length === 0 ? [{ value: "" }] : []), ...extra, ...listed];
+}
+
+function priceLabel(ceiling: NonNullable<MultixCatalogEntry["priceCeiling"]>): string {
+  const cents = Math.ceil(ceiling.usdPerUnit * 100 * 100) / 100;
+  return `est. ≤ ${cents}¢${ceiling.unit === "second" ? "/s" : ""}`;
 }
 
 /** Why a typed model may not run, or undefined when the catalogue lists it (custom values stay allowed). */
@@ -43,6 +53,8 @@ export function modelWarning(
   const entry = entries.find((e) => e.id === id);
   if (entry?.needsKey)
     return `Needs a ${entry.vendor} key: add one under Media vendor keys before a job uses it.`;
+  if (entry?.unpriced)
+    return "No trusted price for this provider yet: a job refuses it before anything is paid.";
   if (id === "" || entry) return undefined;
   const vendor = id.includes(":") ? id.slice(0, id.indexOf(":")) : "";
   if (openVendors.includes(vendor))

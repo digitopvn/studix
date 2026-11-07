@@ -143,13 +143,13 @@ describe("speech routed by language", () => {
 describe("providers run through multix generate", () => {
   const context = { defaults: DEFAULT_MULTIX_MODELS, waitTimeoutMs: 900_000 };
 
-  it("runs a non-Sume image model as one priced generate call with the prompt after --", async () => {
+  it("runs a non-Sume image model as one generate call with the prompt after --", async () => {
     const plan = await planMultixRequest(
       { kind: "image", model: "fal:fal-ai/flux/schnell", params: { aspectRatio: "16:9" }, prompt: "a fox" },
       undefined,
       context,
     );
-    expect(plan).toMatchObject({ mode: "sync", priced: true, outputExt: ".png", operand: "a fox" });
+    expect(plan).toMatchObject({ mode: "sync", priced: false, outputExt: ".png", operand: "a fox" });
     expect(plan.argv).toEqual([
       "generate",
       "image",
@@ -200,5 +200,28 @@ describe("providers run through multix generate", () => {
         context,
       ),
     ).rejects.toThrow(/not served/);
+  });
+});
+
+describe("price ceilings of providers multix cannot price", () => {
+  const context = { defaults: DEFAULT_MULTIX_MODELS, waitTimeoutMs: 900_000 };
+
+  it("reserves the per-second ceiling for the stated length, or the default length", async () => {
+    const stated = await planMultixRequest(
+      { kind: "video", model: "runway:gen4.5", params: { durationMs: 5000 }, prompt: "waves" },
+      undefined,
+      context,
+    );
+    expect(stated.assumed).toMatchObject({ usdPerUnit: 0.4, unit: "second", defaultQuantity: 15 });
+  });
+
+  it("leaves a provider without a public price unpriced", async () => {
+    const plan = await planMultixRequest(
+      { kind: "image", model: "leonardo:some-model", params: {}, prompt: "a fox" },
+      undefined,
+      context,
+    );
+    expect(plan.assumed).toBeUndefined();
+    expect(plan.priced).toBe(false);
   });
 });

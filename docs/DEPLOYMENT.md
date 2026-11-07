@@ -244,7 +244,7 @@ HeyGen and TopView, listed in `GENERATE_VENDORS` in
 `multix generate <task> --model=<vendor>:<model>`; image upscale runs on Atlas Cloud or Leonardo; voice,
 music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech. The model pickers list
 every provider's models from `multix models --task <task> --live`, and mark a provider without all its keys
-"needs key". The worker passes only the key names multix reads (`MULTIX_ENV_KEY_NAMES`, plus PATH, HOME,
+"needs key". multix cannot price these providers before a run yet (mrgoonie/multix-cli#581), so a job reserves a ceiling rounded up from the public list price ([`multix-generate-prices.ts`](../packages/providers/src/multix-generate-prices.ts), shown as "est. ≤ X¢" in the picker). It books the receipt when multix reports one and the ceiling otherwise. A provider without a public price (Leonardo, HeyGen) is labelled "no trusted price" and refused. The worker passes only the key names multix reads (`MULTIX_ENV_KEY_NAMES`, plus PATH, HOME,
 temp and proxy variables) to the CLI, and
 sets `MULTIX_DISABLE_HOME_ENV=1` so `~/.multix/.env` is never read on servers
 (`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A model is

@@ -2,6 +2,11 @@ import type { MediaGenerationRequest, MediaKind } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import type { MediaBillingUnit } from "./media-price-book.ts";
 import { type MediaInput, numberParam, resolveMediaInput, stringParam } from "./media-request-guards.ts";
+import {
+  DEFAULT_GENERATED_VIDEO_SECONDS,
+  type GenerateTask,
+  generatePriceCeiling,
+} from "./multix-generate-prices.ts";
 import { MULTIX_KEY_NAMES } from "./multix-key-slots.ts";
 
 /**
@@ -154,6 +159,17 @@ export interface AssumedPrice {
 }
 
 export function assumedPrice(role: MultixRole, model: QualifiedModel): AssumedPrice | undefined {
+  const task = generateTask(role, model);
+  if (task) {
+    const ceiling = generatePriceCeiling(model.vendor, task);
+    if (!ceiling) return undefined;
+    return {
+      usdPerUnit: ceiling.usdPerUnit,
+      unit: ceiling.unit,
+      defaultQuantity: ceiling.unit === "second" ? DEFAULT_GENERATED_VIDEO_SECONDS : 1,
+      source: ceiling.source,
+    };
+  }
   if (role === "sfx" && model.vendor === "elevenlabs") {
     return {
       usdPerUnit: 0.01,
@@ -385,7 +401,8 @@ export async function planMultixRequest(
     return {
       ...base,
       mode: "sync",
-      priced: true,
+      // multix cannot price these yet (mrgoonie/multix-cli#581): the job reserves the ceiling instead.
+      priced: false,
       outputExt: generated === "video" || generated === "lipsync" ? ".mp4" : ".png",
       waitTimeoutMs: wait(generated === "image" || generated === "upscale" ? 300_000 : 900_000),
       argv: [
@@ -548,10 +565,7 @@ export async function planMultixRequest(
 }
 
 /** The `multix generate` task a role runs as on a non-Sume provider, if it runs there at all. */
-function generateTask(
-  role: MultixRole,
-  model: QualifiedModel,
-): "image" | "video" | "lipsync" | "upscale" | undefined {
+function generateTask(role: MultixRole, model: QualifiedModel): GenerateTask | undefined {
   if (model.vendor === "sume") return undefined;
   if (role === "image" || role === "video" || role === "lipsync") return role;
   if (role === "imageUpscale" && model.vendor === "leonardo") return "upscale";

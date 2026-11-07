@@ -86,6 +86,10 @@ export interface MultixCatalogEntry {
   capabilities?: string[];
   /** No platform or workspace key for the vendor yet. */
   needsKey?: boolean;
+  /** The most one call is reserved at (per image or per output second). */
+  priceCeiling?: { usdPerUnit: number; unit: "image" | "second" };
+  /** No trusted price: a job refuses this model. */
+  unpriced?: boolean;
 }
 
 export interface MultixCatalog {
