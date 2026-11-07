@@ -24,17 +24,31 @@ const SECRET = "s3cr3t-value-that-must-never-leak-9876";
 const VENDOR_KEY = "vendor-key-abcdefghijkl-7777";
 const ENV_KEY = "deployment-key-0000-1111";
 
-async function actors(slug: string) {
-  const ownerId = `usr_${slug.replace(/-/g, "")}`;
-  await insertTestUser(db.current, { id: ownerId, email: `${slug}@example.test` });
-  const { organization, workspace } = await db.current.repos.directory.provisionWorkspace({
+// Workspace that build() reports as STUDIX_PLATFORM_WORKSPACE_ID; actors() points it at its own workspace.
+let platformWorkspaceId: string | undefined;
+
+async function provision(slug: string, ownerId: string) {
+  return db.current.repos.directory.provisionWorkspace({
     organization: { name: slug, slug },
     workspace: { name: "Main", slug: "main" },
     ownerUserId: ownerId,
   });
+}
+
+async function actors(slug: string) {
+  const ownerId = `usr_${slug.replace(/-/g, "")}`;
+  await insertTestUser(db.current, { id: ownerId, email: `${slug}@example.test` });
+  const { organization, workspace } = await provision(slug, ownerId);
+  // The operator role is never granted through the product: it is set directly in the database.
+  await db.current.db
+    .update(schema.members)
+    .set({ role: "operator" })
+    .where(eq(schema.members.workspaceId, workspace.id));
+  platformWorkspaceId = workspace.id;
   const base = { organizationId: organization.id, workspaceId: workspace.id };
   const as = (actor: TenantContext["actor"]): TenantContext => ({ ...base, actor });
   return {
+    ownerId,
     operator: as({ type: "user", id: ownerId, role: "operator" }),
     owner: as({ type: "user", id: ownerId, role: "owner" }),
     admin: as({ type: "user", id: ownerId, role: "admin" }),
@@ -69,6 +83,10 @@ function build(opts: BuildOptions = {}) {
     secrets: db.current.repos.platformSecrets,
     box,
     audit: db.current.repos.audit,
+    directory: db.current.repos.directory,
+    get platformWorkspaceId() {
+      return platformWorkspaceId;
+    },
     env: deployment,
     storage: storage.port,
     vendorTester: async (_name, value) => ({
@@ -90,6 +108,50 @@ const vendorOf = (view: { media: { vendors: Array<{ name: string }> } }, name: s
   view.media.vendors.find((v) => v.name === name);
 
 describe("platform credential service over Postgres", () => {
+  it("writes platform events to the platform workspace, not the operator's current one", async () => {
+    const { svc } = build();
+    const t = await actors("ps-scope");
+    // The operator also belongs to a tenant workspace and has it selected while changing a key.
+    const tenant = await provision("ps-scope-tenant", t.ownerId);
+    const inTenant: TenantContext = {
+      organizationId: tenant.organization.id,
+      workspaceId: tenant.workspace.id,
+      actor: t.operator.actor,
+    };
+    await svc.saveMediaKey(inTenant, "SUME_API_KEY", { apiKey: VENDOR_KEY });
+    await svc.testMediaKey(inTenant, "SUME_API_KEY");
+    const tenantOwner: TenantContext = { ...inTenant, actor: t.owner.actor };
+    expect(
+      (await db.current.repos.audit.list(tenantOwner, { subjectType: "platform_secret" })).items,
+    ).toEqual([]);
+    const platform = await db.current.repos.audit.list(t.operator, { subjectType: "platform_secret" });
+    expect(platform.items.map((e) => e.action).sort()).toEqual([
+      "platform_secret.created",
+      "platform_secret.tested",
+    ]);
+  });
+
+  it("changes nothing without a platform workspace to record it in", async () => {
+    const { svc } = build();
+    const t = await actors("ps-noplatform");
+    platformWorkspaceId = undefined;
+    expect(await codeOf(svc.saveMediaKey(t.operator, "SUME_API_KEY", { apiKey: VENDOR_KEY }))).toBe(
+      "UNAVAILABLE",
+    );
+    expect(await db.current.db.select().from(schema.platformSecrets)).toEqual([]);
+  });
+
+  it("refuses an operator who is not an operator of the platform workspace", async () => {
+    const { svc } = build();
+    const t = await actors("ps-elsewhere");
+    const other = await actors("ps-elsewhere-platform");
+    platformWorkspaceId = other.operator.workspaceId;
+    expect(await codeOf(svc.saveMediaKey(t.operator, "SUME_API_KEY", { apiKey: VENDOR_KEY }))).toBe(
+      "FORBIDDEN",
+    );
+    expect(await db.current.db.select().from(schema.platformSecrets)).toEqual([]);
+  });
+
   it("is operator only: tenant roles, keys and system actors are refused", async () => {
     const { svc } = build();
     const t = await actors("ps-rbac");

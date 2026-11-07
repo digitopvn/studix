@@ -4,6 +4,7 @@ import {
   actorRef,
   assertPermission,
   type TenantContext,
+  type TenantDirectory,
 } from "@studix/core";
 import type {
   PlatformSecretRecord,
@@ -151,6 +152,10 @@ export interface PlatformCredentialServiceDeps {
   secrets: PlatformSecretRepository;
   box?: SecretBox;
   audit: AuditRepository;
+  /** Finds the operator's membership in the platform workspace. */
+  directory: Pick<TenantDirectory, "listMemberships">;
+  /** Workspace that receives platform_secret.* audit events (STUDIX_PLATFORM_WORKSPACE_ID). */
+  platformWorkspaceId?: string;
   /** The deployment environment, read only to learn which variables it defines (and the storage key's hint). */
   env: Readonly<Record<string, string | undefined>>;
   storage?: PlatformStoragePort;
@@ -307,6 +312,34 @@ export function createPlatformCredentialService(
     };
   }
 
+  /*
+   * Platform events belong to the platform, not to whichever tenant workspace the operator has selected:
+   * they are written to the workspace named by STUDIX_PLATFORM_WORKSPACE_ID, where the operator must hold
+   * the operator role. It is resolved before any change, so nothing is changed without a place to record it.
+   */
+  async function platformContext(ctx: TenantContext): Promise<TenantContext> {
+    assertPermission(ctx, "platform:manage");
+    const workspaceId = deps.platformWorkspaceId;
+    if (!workspaceId) {
+      throw new StudixError("UNAVAILABLE", "No platform workspace is configured for platform audit events", {
+        retryable: false,
+        suggestedAction:
+          "Set STUDIX_PLATFORM_WORKSPACE_ID to the operators' workspace on the app, then reload this page.",
+      });
+    }
+    const memberships = await deps.directory.listMemberships(ctx.actor.id);
+    const platform = memberships.find((m) => m.workspace.id === workspaceId && m.member.role === "operator");
+    if (!platform) {
+      throw new StudixError("FORBIDDEN", "Platform credentials are managed from the platform workspace", {
+        retryable: false,
+        details: { permission: "platform:manage" },
+        suggestedAction:
+          "Ask for the operator role in the platform workspace (STUDIX_PLATFORM_WORKSPACE_ID).",
+      });
+    }
+    return { organizationId: platform.organization.id, workspaceId, actor: ctx.actor };
+  }
+
   const audit = (ctx: TenantContext, action: string, name: string, data: Record<string, unknown>) =>
     deps.audit.append(ctx, {
       actor: actorRef(ctx.actor),
@@ -357,14 +390,14 @@ export function createPlatformCredentialService(
     overview,
 
     async saveStorageCredentials(ctx, input) {
-      assertPermission(ctx, "platform:manage");
+      const auditCtx = await platformContext(ctx);
       const box = requireBox();
       const pair = parse(StorageInput, input, "storage credentials");
       const storage = requireStorage();
       // The pair must work before it replaces the active one, so a typo cannot take storage down.
       const outcome = await storage.probe(pair);
       if (!outcome.ok) {
-        await audit(ctx, "rejected", STORAGE_CREDENTIALS_NAME, {
+        await audit(auditCtx, "rejected", STORAGE_CREDENTIALS_NAME, {
           step: outcome.step,
           status: outcome.status,
           s3Code: outcome.s3Code,
@@ -387,7 +420,7 @@ export function createPlatformCredentialService(
         },
         actorRef(ctx.actor),
       );
-      await audit(ctx, row.version > 1 ? "rotated" : "created", STORAGE_CREDENTIALS_NAME, {
+      await audit(auditCtx, row.version > 1 ? "rotated" : "created", STORAGE_CREDENTIALS_NAME, {
         hint: row.secretHint,
         version: row.version,
       });
@@ -396,7 +429,7 @@ export function createPlatformCredentialService(
     },
 
     async saveMediaKey(ctx, name, input) {
-      assertPermission(ctx, "platform:manage");
+      const auditCtx = await platformContext(ctx);
       const spec = specOf(name, "media");
       const box = requireBox();
       const { apiKey } = parse(MediaKeyInput, input, "API key");
@@ -424,7 +457,7 @@ export function createPlatformCredentialService(
         },
         actorRef(ctx.actor),
       );
-      await audit(ctx, row.version > 1 ? "rotated" : "created", spec.name, {
+      await audit(auditCtx, row.version > 1 ? "rotated" : "created", spec.name, {
         hint: row.secretHint,
         version: row.version,
         status,
@@ -434,7 +467,7 @@ export function createPlatformCredentialService(
     },
 
     async revoke(ctx, name) {
-      assertPermission(ctx, "platform:manage");
+      const auditCtx = await platformContext(ctx);
       const spec = platformSecretSpec(name) ?? specOf(name, "media");
       if (spec.name === STORAGE_CREDENTIALS_NAME && !envHas(spec.name)) {
         throw new StudixError("CONFLICT", "Revoking would leave object storage without credentials", {
@@ -449,13 +482,13 @@ export function createPlatformCredentialService(
           retryable: false,
         });
       envTests.delete(spec.name);
-      await audit(ctx, "revoked", spec.name, { environmentFallback: envHas(spec.name) });
+      await audit(auditCtx, "revoked", spec.name, { environmentFallback: envHas(spec.name) });
       await changed();
       return overview(ctx);
     },
 
     async testStorage(ctx) {
-      assertPermission(ctx, "platform:manage");
+      const auditCtx = await platformContext(ctx);
       const outcome = await requireStorage().probe();
       const result = storageView(outcome);
       const row = await deps.secrets.get(STORAGE_CREDENTIALS_NAME);
@@ -466,7 +499,7 @@ export function createPlatformCredentialService(
           toRecord(result),
         );
       } else envTests.set(STORAGE_CREDENTIALS_NAME, result);
-      await audit(ctx, "tested", STORAGE_CREDENTIALS_NAME, {
+      await audit(auditCtx, "tested", STORAGE_CREDENTIALS_NAME, {
         ok: result.ok,
         step: result.step,
         status: result.httpStatus,
@@ -475,7 +508,7 @@ export function createPlatformCredentialService(
     },
 
     async testMediaKey(ctx, name) {
-      assertPermission(ctx, "platform:manage");
+      const auditCtx = await platformContext(ctx);
       const spec = specOf(name, "media");
       const row = await deps.secrets.get(spec.name);
       const value = row
@@ -532,12 +565,12 @@ export function createPlatformCredentialService(
       }
       if (row) await deps.secrets.recordTest(spec.name, status, toRecord(result));
       else envTests.set(spec.name, result);
-      await audit(ctx, "tested", spec.name, { status, httpStatus: result.httpStatus });
+      await audit(auditCtx, "tested", spec.name, { status, httpStatus: result.httpStatus });
       return result;
     },
 
     async checkMultix(ctx) {
-      assertPermission(ctx, "platform:manage");
+      const auditCtx = await platformContext(ctx);
       const media = deps.media;
       const started = Date.now();
       let result: PlatformTestView & { found: string[] };
@@ -578,6 +611,7 @@ export function createPlatformCredentialService(
         }
       }
       lastCheck = result;
+      await audit(auditCtx, "checked", "MULTIX_BIN", { ok: result.ok, found: result.found });
       return result;
     },
   };

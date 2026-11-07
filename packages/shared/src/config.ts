@@ -89,6 +89,8 @@ export const ConfigSchema = z
     STUDIX_SELF_HOSTED: bool.default(false),
     /** Where a self-hosted server keeps its generated master key (default `.studix/secrets.key`). */
     STUDIX_SECRETS_KEY_FILE: optionalString,
+    /** Operators' workspace: platform credential audit events are written there, never to a tenant's. */
+    STUDIX_PLATFORM_WORKSPACE_ID: optionalString,
 
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(1),
     JOB_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),

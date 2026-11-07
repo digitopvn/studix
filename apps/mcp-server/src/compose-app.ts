@@ -231,6 +231,10 @@ export async function composeApp(
     secrets: repos.platformSecrets,
     box: secretBox,
     audit: repos.audit,
+    directory: repos.directory,
+    ...(config.STUDIX_PLATFORM_WORKSPACE_ID
+      ? { platformWorkspaceId: config.STUDIX_PLATFORM_WORKSPACE_ID }
+      : {}),
     env,
     ...(integrations.storage ? { storage: createPlatformStoragePort(config, integrations.storage) } : {}),
     media: createPlatformMediaPort(multix),

@@ -15,10 +15,21 @@ describe("platform credential API (Better Auth session, Postgres)", () => {
 
   beforeAll(async () => {
     app = await startTestApp();
+    operator = await app.signUp(`pl-operator-${Date.now()}@example.test`);
+    member = await app.signUp(`pl-member-${Date.now()}@example.test`);
+    // The operator role is never granted through the product: it is set directly in the database.
+    const operatorId = await userIdOf(operator);
+    await app.db.client`update members set role = 'operator' where user_id = ${operatorId}`;
+    const [row] = await app.db.client<
+      { workspace_id: string }[]
+    >`select workspace_id from members where user_id = ${operatorId}`;
+    const platformWorkspace = row?.workspace_id as string;
     const platformCredentials = createPlatformCredentialService({
       secrets: app.db.repos.platformSecrets,
       box: createSecretBox(randomBytes(32)),
       audit: app.db.repos.audit,
+      directory: app.db.repos.directory,
+      platformWorkspaceId: platformWorkspace,
       env: {},
       storage: {
         describe: () => ({ bucket: "b", region: "auto", forcePathStyle: true, signedUrlTtlSeconds: 60 }),
@@ -30,11 +41,6 @@ describe("platform credential API (Better Auth session, Postgres)", () => {
       vendorTester: async () => ({ verdict: "available", httpStatus: 200 }),
     });
     Object.assign(app.deps, { platformCredentials });
-    operator = await app.signUp(`pl-operator-${Date.now()}@example.test`);
-    member = await app.signUp(`pl-member-${Date.now()}@example.test`);
-    // The operator role is never granted through the product: it is set directly in the database.
-    const operatorId = await userIdOf(operator);
-    await app.db.client`update members set role = 'operator' where user_id = ${operatorId}`;
   });
   afterAll(async () => {
     await app?.close();

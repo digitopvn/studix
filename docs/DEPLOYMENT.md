@@ -184,7 +184,12 @@ read-only and the environment variables keep working.
   authentication request where the vendor offers one, otherwise the key stays
   `unverified`.
 - Credential values are accepted in request bodies only, never returned, never
-  logged, and every change is audited (`platform_secret.*`) without the value.
+  logged, and every change, test and Multix check is audited (`platform_secret.*`)
+  without the value. These events go to the operators' workspace named by
+  `STUDIX_PLATFORM_WORKSPACE_ID` on the app, never to the workspace the operator
+  has selected, so tenant admins cannot read them. Without that variable, or for
+  an operator who lacks the `operator` role in that workspace, every change and
+  test is refused before anything is touched.
   Every `/api/platform/*` response is `no-store`.
 
 Paid media runs through the Multix provider (`packages/providers`), which is
