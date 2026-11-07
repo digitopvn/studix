@@ -8,6 +8,8 @@ import {
   type MultixCatalog,
   type MultixConfig,
   type MultixDiagnosis,
+  markNeedsKey,
+  providerReadiness,
   readMultixVersion,
   type WorkspaceMultixProviders,
 } from "@studix/providers";
@@ -32,6 +34,8 @@ export interface WorkspaceMultixApiDeps {
   providers: WorkspaceMultixProviders;
   audit?: Parameters<typeof createWorkspaceMultixSettingsService>[0]["audit"];
   env?: Readonly<Record<string, string | undefined>>;
+  /** Key slots the workspace stored its own key for (BYOK); they make a vendor usable as well. */
+  workspaceKeySlots?: (ctx: TenantContext) => Promise<readonly string[]>;
 }
 
 export function createWorkspaceMultixApi(deps: WorkspaceMultixApiDeps): WorkspaceMultixApi {
@@ -66,7 +70,14 @@ export function createWorkspaceMultixApi(deps: WorkspaceMultixApiDeps): Workspac
     async catalog(ctx) {
       // Same audience as the settings form it fills.
       assertPermission(ctx, "member:manage");
-      return catalog();
+      const [models, platform, own] = await Promise.all([
+        catalog(),
+        deps.providers.forWorkspace(ctx).then((p) => p.readiness()),
+        deps.workspaceKeySlots?.(ctx) ?? [],
+      ]);
+      const slots: Record<string, boolean> = { ...platform };
+      for (const id of own) slots[id] = true;
+      return markNeedsKey(models, providerReadiness(slots));
     },
   };
 }

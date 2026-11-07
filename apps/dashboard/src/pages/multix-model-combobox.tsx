@@ -116,6 +116,12 @@ export function MultixModelCombobox({
                 <>
                   <span className="mono">{option.value}</span>
                   {option.label && <span className="muted"> {option.label}</span>}
+                  {option.needsKey && (
+                    <>
+                      {" "}
+                      <span className="badge">needs key</span>
+                    </>
+                  )}
                   {option.capabilities && (
                     <span className="muted combobox-caps"> {option.capabilities.join(", ")}</span>
                   )}

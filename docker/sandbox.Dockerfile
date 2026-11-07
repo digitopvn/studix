@@ -8,7 +8,7 @@
 # The multix CLI at the same pinned commit as the Studix image (MULTIX_COMMIT in Dockerfile).
 FROM node:22-bookworm-slim AS multix
 ARG MULTIX_REPO=https://github.com/mrgoonie/multix-cli.git
-ARG MULTIX_COMMIT=40fab6e2118457d9801e313a2dc7b7db58d53e97
+ARG MULTIX_COMMIT=187c668c778ab8ec6e211101fbc965d60b89e816
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*

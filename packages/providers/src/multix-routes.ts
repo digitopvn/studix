@@ -4,8 +4,28 @@ import type { MediaBillingUnit } from "./media-price-book.ts";
 import { type MediaInput, numberParam, resolveMediaInput, stringParam } from "./media-request-guards.ts";
 import { MULTIX_KEY_NAMES } from "./multix-key-slots.ts";
 
-/** Upstream routes Studix drives through multix. Media runs on Sume; audio and image upscale do not. */
-export const MULTIX_VENDORS = ["sume", "atlas", "elevenlabs", "fish", "minimax", "openrouter"] as const;
+/**
+ * Providers `multix generate` runs image, video, lip-sync and upscale on (multix's generate adapters). Studix
+ * drives them all through that one command, so a provider multix adds needs only its id here.
+ */
+export const GENERATE_VENDORS = [
+  "gemini",
+  "minimax",
+  "openai",
+  "openrouter",
+  "leonardo",
+  "byteplus",
+  "cloudflare",
+  "fal",
+  "atlas",
+  "replicate",
+  "runway",
+  "heygen",
+  "topview",
+] as const;
+
+/** Upstream routes Studix drives through multix. Sume media keeps its own job route; the rest run on generate. */
+export const MULTIX_VENDORS = ["sume", ...GENERATE_VENDORS, "elevenlabs", "fish"] as const;
 export type MultixVendor = (typeof MULTIX_VENDORS)[number];
 
 /** The key `multix check` must report for a vendor before its kinds are advertised (from multix's own list). */
@@ -29,11 +49,11 @@ export type MultixRole =
   | "videoUpscale";
 
 export const MULTIX_ROLE_VENDORS: Readonly<Record<MultixRole, readonly MultixVendor[]>> = {
-  image: ["sume"],
-  video: ["sume"],
-  lipsync: ["sume"],
+  image: ["sume", ...GENERATE_VENDORS.filter((v) => v !== "heygen")],
+  video: ["sume", ...GENERATE_VENDORS.filter((v) => v !== "openai")],
+  lipsync: ["sume", "heygen"],
   videoUpscale: ["sume"],
-  imageUpscale: ["atlas"],
+  imageUpscale: ["atlas", "leonardo"],
   voice: ["elevenlabs", "fish", "minimax", "openrouter"],
   music: ["elevenlabs", "minimax"],
   sfx: ["elevenlabs"],
@@ -355,6 +375,38 @@ export async function planMultixRequest(
   const base = { role, model, assumed: assumedPrice(role, model) };
   const wait = (ms: number) => Math.min(ms, context.waitTimeoutMs);
 
+  const generated = generateTask(role, model);
+  if (generated) {
+    const image = await input("image");
+    const audio = boolParam(params, "generateAudio");
+    const video = role === "lipsync" ? await input("video") : undefined;
+    if (role === "lipsync" && !video && !image)
+      throw new StudixError("VALIDATION", "lip-sync needs params.video or params.image");
+    return {
+      ...base,
+      mode: "sync",
+      priced: true,
+      outputExt: generated === "video" || generated === "lipsync" ? ".mp4" : ".png",
+      waitTimeoutMs: wait(generated === "image" || generated === "upscale" ? 300_000 : 900_000),
+      argv: [
+        "generate",
+        generated,
+        `--model=${model.id}`,
+        ...inputFlag("image", image),
+        ...inputFlag("end-image", generated === "video" ? await input("endImage") : undefined),
+        ...inputFlag("video", video),
+        ...inputFlag("audio", role === "lipsync" ? await input("audio") : undefined),
+        ...flag("aspect-ratio", stringParam(params, "aspectRatio", ASPECT)),
+        ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
+        ...(generated === "video" ? flag("duration", seconds(params)) : []),
+        ...(audio === undefined || generated !== "video"
+          ? []
+          : [audio ? "--generate-audio" : "--no-generate-audio"]),
+      ],
+      ...(generated === "image" || generated === "video" ? { operand: request.prompt } : {}),
+    };
+  }
+
   switch (role) {
     case "image": {
       const image = await input("image");
@@ -493,6 +545,17 @@ export async function planMultixRequest(
       };
     }
   }
+}
+
+/** The `multix generate` task a role runs as on a non-Sume provider, if it runs there at all. */
+function generateTask(
+  role: MultixRole,
+  model: QualifiedModel,
+): "image" | "video" | "lipsync" | "upscale" | undefined {
+  if (model.vendor === "sume") return undefined;
+  if (role === "image" || role === "video" || role === "lipsync") return role;
+  if (role === "imageUpscale" && model.vendor === "leonardo") return "upscale";
+  return undefined;
 }
 
 /** OpenRouter speech models that return raw PCM only; multix wraps it in a WAV header (per multix 1.26). */

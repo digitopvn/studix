@@ -9,6 +9,8 @@ export interface MultixCatalogEntry {
   label?: string;
   /** Modes or capabilities the catalogue states (text-to-video, image-edit, ...). */
   capabilities?: string[];
+  /** Neither the platform nor the workspace has the vendor's key: listed, but it cannot run yet. */
+  needsKey?: boolean;
 }
 
 export interface MultixCatalog {
@@ -37,6 +39,22 @@ interface SumeModel {
   modes?: string[];
   capabilities?: { routes?: string[] };
 }
+
+/** A provider of `multix models --task <t> --live --json` (`providers[]`); only the fields read here. */
+interface GenerateProvider {
+  provider?: string;
+  default_model?: string;
+  any_model?: boolean;
+  models?: { id?: string; label?: string; tasks?: string[] }[];
+}
+
+/** `multix generate` tasks by the Studix role they fill. */
+export const GENERATE_ROLE_TASKS: Readonly<Partial<Record<MultixRole, string>>> = {
+  image: "image",
+  video: "video",
+  lipsync: "lipsync",
+  imageUpscale: "upscale",
+};
 
 const ROLE_TASKS: Partial<Record<MultixRole, string>> = { voice: "speech", music: "music", sfx: "sfx" };
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
@@ -67,7 +85,14 @@ function sumeRoles(model: SumeModel): MultixRole[] {
  * server default is listed even when no catalogue names it.
  */
 export function buildMultixCatalog(
-  input: { models?: unknown; sume?: unknown; defaults: MultixModelDefaults; errors?: string[] },
+  input: {
+    models?: unknown;
+    sume?: unknown;
+    /** `multix models --task <t> --live` data, by generate task. */
+    generate?: Readonly<Record<string, unknown>>;
+    defaults: MultixModelDefaults;
+    errors?: string[];
+  },
   now: Date = new Date(),
 ): MultixCatalog {
   const roles = Object.fromEntries(
@@ -108,14 +133,51 @@ export function buildMultixCatalog(
       for (const model of ids) if (!model.includes("*")) add(role, { vendor: row.provider, model });
     }
   }
+  for (const [role, task] of Object.entries(GENERATE_ROLE_TASKS) as [MultixRole, string][]) {
+    const providers = (input.generate?.[task] as { providers?: unknown } | undefined)?.providers;
+    for (const row of asArray<GenerateProvider>(providers)) {
+      // Sume media keeps its own route and catalogue.
+      if (typeof row.provider !== "string" || row.provider === "sume") continue;
+      if (role === "imageUpscale" && row.provider === "atlas") continue;
+      if (row.any_model && (MULTIX_ROLE_VENDORS[role] as readonly string[]).includes(row.provider)) {
+        openVendors.add(row.provider);
+      }
+      if (row.default_model && !row.default_model.includes("*")) {
+        add(role, { vendor: row.provider, model: row.default_model });
+      }
+      for (const model of asArray<{ id?: string; label?: string; tasks?: string[] }>(row.models)) {
+        if (typeof model.id !== "string" || model.id.includes("*")) continue;
+        add(role, {
+          vendor: row.provider,
+          model: model.id,
+          ...(model.label ? { label: model.label } : {}),
+          ...(model.tasks?.length ? { capabilities: model.tasks } : {}),
+        });
+      }
+    }
+  }
   // Image upscale runs any Atlas model id; multix lists none of them.
-  for (const vendor of MULTIX_ROLE_VENDORS.imageUpscale) openVendors.add(vendor);
+  openVendors.add("atlas");
   return {
     roles,
     openVendors: [...openVendors].sort(),
     fetchedAt: now.toISOString(),
     errors: input.errors ?? [],
   };
+}
+
+/** Mark every entry whose vendor cannot run with the keys at hand (`ready` per provider id). */
+export function markNeedsKey(
+  catalog: MultixCatalog,
+  ready: Readonly<Record<string, boolean>>,
+): MultixCatalog {
+  const roles = Object.fromEntries(
+    Object.entries(catalog.roles).map(([role, entries]) => [
+      role,
+      entries.map((e) => (ready[e.vendor] ? e : { ...e, needsKey: true })),
+    ]),
+  ) as MultixCatalog["roles"];
+  return { ...catalog, roles };
 }
 
 function asArray<T>(value: unknown): T[] {
@@ -136,8 +198,8 @@ const DEFAULT_TTL_MS = 10 * 60_000;
 const CATALOG_TIMEOUT_MS = 30_000;
 
 /**
- * Read the catalogue from the multix CLI and keep it for a short while. Both commands are free: `models`
- * reads multix's own tables and `sume models` Sume's public catalogue (no key, cached by multix too).
+ * Read the catalogue from the multix CLI and keep it for a short while. Every command is free: `models`
+ * reads multix's own tables (per generate task too) and `sume models` Sume's public catalogue (no key).
  */
 export function createMultixCatalogLoader(options: MultixCatalogLoaderOptions): () => Promise<MultixCatalog> {
   const ttl = options.ttlMs ?? DEFAULT_TTL_MS;
@@ -170,8 +232,18 @@ export function createMultixCatalogLoader(options: MultixCatalogLoaderOptions): 
       }
       return undefined;
     };
-    const [models, sume] = await Promise.all([read(["models"]), read(["sume", "models"])]);
-    return buildMultixCatalog({ models, sume, defaults: options.defaults, errors }, new Date(now()));
+    const tasks = [...new Set(Object.values(GENERATE_ROLE_TASKS))];
+    const [models, sume, ...live] = await Promise.all([
+      read(["models"]),
+      read(["sume", "models"]),
+      // No key reaches this process, so --live falls back to multix's static lists; it never pays.
+      ...tasks.map((task) => read(["models", `--task=${task}`, "--live"])),
+    ]);
+    const generate = Object.fromEntries(tasks.map((task, i) => [task, live[i]]));
+    return buildMultixCatalog(
+      { models, sume, generate, defaults: options.defaults, errors },
+      new Date(now()),
+    );
   }
 
   return () => {

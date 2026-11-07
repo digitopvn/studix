@@ -139,3 +139,66 @@ describe("speech routed by language", () => {
     expect(parseVoiceLanguageRoutes(undefined, DEFAULT_MULTIX_MODELS)).toEqual({});
   });
 });
+
+describe("providers run through multix generate", () => {
+  const context = { defaults: DEFAULT_MULTIX_MODELS, waitTimeoutMs: 900_000 };
+
+  it("runs a non-Sume image model as one priced generate call with the prompt after --", async () => {
+    const plan = await planMultixRequest(
+      { kind: "image", model: "fal:fal-ai/flux/schnell", params: { aspectRatio: "16:9" }, prompt: "a fox" },
+      undefined,
+      context,
+    );
+    expect(plan).toMatchObject({ mode: "sync", priced: true, outputExt: ".png", operand: "a fox" });
+    expect(plan.argv).toEqual([
+      "generate",
+      "image",
+      "--model=fal:fal-ai/flux/schnell",
+      "--aspect-ratio=16:9",
+    ]);
+  });
+
+  it("passes video inputs and lip-sync sources, and keeps Sume on its job route", async () => {
+    const video = await planMultixRequest(
+      {
+        kind: "video",
+        model: "runway:gen4_turbo",
+        params: { image: "https://x.test/a.png", durationMs: 5000 },
+        prompt: "waves",
+      },
+      undefined,
+      context,
+    );
+    expect(video.argv).toEqual([
+      "generate",
+      "video",
+      "--model=runway:gen4_turbo",
+      "--image=https://x.test/a.png",
+      "--duration=5",
+    ]);
+    const lipsync = await planMultixRequest(
+      {
+        kind: "video",
+        model: "heygen:avatar-iv",
+        params: { image: "https://x.test/a.png", audio: "https://x.test/a.wav" },
+        prompt: "",
+      },
+      undefined,
+      context,
+    );
+    expect(lipsync.argv.slice(0, 2)).toEqual(["generate", "lipsync"]);
+    expect(lipsync.operand).toBeUndefined();
+    const sume = await planMultixRequest({ kind: "image", params: {}, prompt: "a fox" }, undefined, context);
+    expect(sume.mode).toBe("sume-job");
+  });
+
+  it("refuses a provider that does not serve the role", async () => {
+    await expect(
+      planMultixRequest(
+        { kind: "video", model: "openai:sora-2", params: {}, prompt: "x" },
+        undefined,
+        context,
+      ),
+    ).rejects.toThrow(/not served/);
+  });
+});

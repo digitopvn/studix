@@ -42,3 +42,11 @@ export function keyReadiness(found: ReadonlySet<string>): Record<string, boolean
     MULTIX_KEY_SLOTS.map((slot) => [slot.id, [slot.keyName, ...slot.aliases].some((n) => found.has(n))]),
   );
 }
+
+/** Which providers can run: every key slot of the provider is ready. */
+export function providerReadiness(slots: Readonly<Record<string, boolean>>): Record<string, boolean> {
+  const ready: Record<string, boolean> = {};
+  for (const slot of MULTIX_KEY_SLOTS)
+    ready[slot.provider] = (ready[slot.provider] ?? true) && Boolean(slots[slot.id]);
+  return ready;
+}

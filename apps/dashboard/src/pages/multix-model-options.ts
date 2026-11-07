@@ -5,6 +5,7 @@ export interface ModelOption {
   value: string;
   label?: string;
   capabilities?: string[];
+  needsKey?: boolean;
 }
 
 /**
@@ -25,6 +26,7 @@ export function modelOptions(
       value: e.id,
       ...(e.label ? { label: e.label } : {}),
       ...(e.capabilities ? { capabilities: e.capabilities } : {}),
+      ...(e.needsKey ? { needsKey: true } : {}),
     }));
   const extra =
     current !== "" && !entries.some((e) => e.id === current) && matches(current) ? [{ value: current }] : [];
@@ -38,7 +40,10 @@ export function modelWarning(
   openVendors: readonly string[],
 ): string | undefined {
   const id = value.trim();
-  if (id === "" || entries.some((e) => e.id === id)) return undefined;
+  const entry = entries.find((e) => e.id === id);
+  if (entry?.needsKey)
+    return `Needs a ${entry.vendor} key: add one under Media vendor keys before a job uses it.`;
+  if (id === "" || entry) return undefined;
   const vendor = id.includes(":") ? id.slice(0, id.indexOf(":")) : "";
   if (openVendors.includes(vendor))
     return `Not in the Multix catalogue; ${vendor} accepts any of its model ids.`;

@@ -4,11 +4,11 @@
 # Node + FFmpeg + chrome-headless-shell for rendering, the multix CLI, and Python for the
 # QA measurement tools.
 
-# The multix CLI, built from the commit tagged v1.27.0-beta.2 in mrgoonie/multix-cli. Pinning the commit is
+# The multix CLI, built from the commit tagged v1.27.0-beta.3 in mrgoonie/multix-cli. Pinning the commit is
 # stricter than pinning the npm version, which has no lockfile integrity hash in this image.
 FROM node:22-bookworm-slim AS multix
 ARG MULTIX_REPO=https://github.com/mrgoonie/multix-cli.git
-ARG MULTIX_COMMIT=40fab6e2118457d9801e313a2dc7b7db58d53e97
+ARG MULTIX_COMMIT=187c668c778ab8ec6e211101fbc965d60b89e816
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*

@@ -84,6 +84,8 @@ export interface MultixCatalogEntry {
   model: string;
   label?: string;
   capabilities?: string[];
+  /** No platform or workspace key for the vendor yet. */
+  needsKey?: boolean;
 }
 
 export interface MultixCatalog {

@@ -386,6 +386,10 @@ export async function composeApp(
       repository: repos.workspaceMultixSettings,
       audit: repos.audit,
       env,
+      workspaceKeySlots: async (ctx) =>
+        (await providers.listMediaKeys(ctx)).keys
+          .filter((k) => k.source === "workspace")
+          .map((k) => k.vendor),
       // The dashboard's check runs with the platform keys only, like the capability probe jobs use.
       providers: createWorkspaceMultixProviders({
         config,

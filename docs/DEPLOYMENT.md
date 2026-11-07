@@ -33,7 +33,7 @@ layers on an ordinary commit.
 
 multix is built in a separate stage from a pinned commit of
 `mrgoonie/multix-cli` (`MULTIX_COMMIT` in the `Dockerfile` owns the value). The
-stage fails if the fetched HEAD is not that commit. The pin is v1.27.0-beta.2:
+stage fails if the fetched HEAD is not that commit. The pin is v1.27.0-beta.3:
 it counts Sume cost once per job (since v1.26.0) and lists each provider's key
 names in `multix catalog providers`, which `pnpm multix:keys` turns into the
 keys Studix stores and injects (`packages/providers/src/multix-key-providers.generated.ts`).
@@ -236,14 +236,19 @@ deployment built from the root `Dockerfile`, even when the platform secrets
 omit the variable; an empty `MULTIX_BIN=` in the secrets turns it off. Before
 this default, a deployment whose secrets lacked the variable failed `motion-graphic` jobs
 with a voice-over with `UNAVAILABLE` ("The Multix provider is not
-configured") after compose. Routes: image,
-video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
-music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech.
-The worker passes only `SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
-`FISH_API_KEY`, `MINIMAX_API_KEY` and `OPENROUTER_API_KEY` (plus PATH, HOME, temp and proxy variables) to the CLI, and
+configured") after compose. Routes: Sume models
+run image, video, lip-sync and video upscale as Sume jobs; every other provider `multix generate` serves
+(Gemini, MiniMax, OpenAI, OpenRouter, Leonardo, BytePlus, Cloudflare, fal, Atlas Cloud, Replicate, Runway,
+HeyGen and TopView, listed in `GENERATE_VENDORS` in
+[`multix-routes.ts`](../packages/providers/src/multix-routes.ts)) runs them through
+`multix generate <task> --model=<vendor>:<model>`; image upscale runs on Atlas Cloud or Leonardo; voice,
+music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech. The model pickers list
+every provider's models from `multix models --task <task> --live`, and mark a provider without all its keys
+"needs key". The worker passes only the key names multix reads (`MULTIX_ENV_KEY_NAMES`, plus PATH, HOME,
+temp and proxy variables) to the CLI, and
 sets `MULTIX_DISABLE_HOME_ENV=1` so `~/.multix/.env` is never read on servers
-(`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A kind is
-advertised only when `multix check` reports its vendor key. Default models per
+(`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A model is
+advertised only when `multix check` reports every key of its vendor. Default models per
 role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`, and voice per language from
 `MULTIX_VOICE_LANGUAGE_MODELS` (`vi=openrouter:fish-audio/drama-3`, optionally
 `@<voice>`), which also carries the packs' delivery direction to models that take it;
