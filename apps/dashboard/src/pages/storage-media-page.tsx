@@ -2,6 +2,7 @@ import { type FormEvent, useState } from "react";
 import {
   api,
   type PlatformCredential,
+  type PlatformMediaKeyTest,
   type PlatformMediaTest,
   type PlatformMediaVendor,
   type PlatformSettings,
@@ -38,6 +39,12 @@ const MEDIA_DIAGNOSIS: Record<PlatformMediaTest["diagnosis"], string> = {
   check_failed: "Check failed",
 };
 
+const KEY_VERDICT: Record<PlatformMediaKeyTest["verdict"], string> = {
+  available: "Key accepted",
+  invalid: "Key rejected",
+  unverified: "Not verified",
+};
+
 /**
  * Platform operator settings: object storage (R2) status and a real read/write check, and the media vendor
  * keys the Multix CLI uses. Keys are typed into a password field, sent once and never shown again: after
@@ -57,18 +64,46 @@ export function StorageMediaPage() {
 function StorageCard({ storage, reload }: { storage: PlatformSettings["storage"]; reload: () => void }) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
+  const [editing, setEditing] = useState(false);
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretAccessKey, setSecretAccessKey] = useState("");
+  const stored = storage.source === "dashboard";
+  const canStore = storage.configured && storage.credentialStorage === "available";
 
-  async function test() {
+  async function act(action: () => Promise<unknown>) {
     setActionError(undefined);
     setBusy(true);
     try {
-      await api.testPlatformStorage();
+      await action();
       reload();
     } catch (e) {
       setActionError(e);
     } finally {
       setBusy(false);
     }
+  }
+
+  const test = () => act(() => api.testPlatformStorage());
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    const pair = [accessKeyId.trim(), secretAccessKey.trim()] as const;
+    // The secret leaves component state as soon as it is sent, whether or not the server accepts it.
+    setSecretAccessKey("");
+    await act(async () => {
+      await api.setPlatformStorageKey(...pair);
+      setAccessKeyId("");
+      setEditing(false);
+    });
+  }
+
+  async function revoke() {
+    if (
+      !window.confirm("Remove the stored key pair and use S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY again?")
+    ) {
+      return;
+    }
+    await act(() => api.revokePlatformStorageKey());
   }
 
   const last = storage.lastTest;
@@ -82,12 +117,55 @@ function StorageCard({ storage, reload }: { storage: PlatformSettings["storage"]
       }
     >
       <p className="muted">
-        The bucket is shared by every workspace, each under its own prefix. The values below come from the
-        deployment settings; the secret key is never stored or shown here. To rotate it, update
-        <code> S3_ACCESS_KEY_ID</code> and <code>S3_SECRET_ACCESS_KEY</code> in the deployment and redeploy
-        the app and the worker, then run the test.
+        The bucket is shared by every workspace, each under its own prefix. Endpoint, bucket and region come
+        from the deployment settings. The access key pair can be stored here: it is tested with a write, read
+        and delete before it replaces the current one, overrides <code>S3_ACCESS_KEY_ID</code> /
+        <code> S3_SECRET_ACCESS_KEY</code>, reaches the app and the worker within seconds without a redeploy,
+        and is never shown again.
       </p>
       <ErrorBanner error={actionError} />
+      {storage.configured && storage.credentialStorage === "unavailable" && (
+        <p className="banner banner-error">
+          Keys cannot be stored until STUDIX_SECRETS_KEY is set on the app and the worker.
+        </p>
+      )}
+      {editing && (
+        <form className="row" onSubmit={save}>
+          <input
+            required
+            autoComplete="off"
+            aria-label="Access key ID"
+            placeholder="Access key ID"
+            value={accessKeyId}
+            disabled={busy}
+            onChange={(e) => setAccessKeyId(e.target.value)}
+          />
+          <input
+            required
+            type="password"
+            autoComplete="new-password"
+            aria-label="Secret access key"
+            placeholder="Secret access key"
+            value={secretAccessKey}
+            disabled={busy}
+            onChange={(e) => setSecretAccessKey(e.target.value)}
+          />
+          <button type="submit" disabled={busy}>
+            {busy ? "Testing…" : "Test and save"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setAccessKeyId("");
+              setSecretAccessKey("");
+              setEditing(false);
+            }}
+          >
+            Cancel
+          </button>
+        </form>
+      )}
       <table>
         <tbody>
           <tr>
@@ -110,6 +188,26 @@ function StorageCard({ storage, reload }: { storage: PlatformSettings["storage"]
             <th>Secret access key</th>
             <td>
               <StatusBadge status={storage.secretAccessKey} label={SECRET_LABELS[storage.secretAccessKey]} />
+              {storage.credential?.keyHint && <span className="mono"> {storage.credential.keyHint}</span>}
+            </td>
+          </tr>
+          <tr>
+            <th>Key source</th>
+            <td>
+              {stored ? "Set here" : "From the environment"}
+              {storage.credential?.version ? ` · v${storage.credential.version}` : ""}
+              {storage.credential?.updatedAt && ` · ${formatDate(storage.credential.updatedAt)}`}
+              {storage.credential?.updatedBy && ` by ${storage.credential.updatedBy.id}`}{" "}
+              {canStore && !editing && (
+                <button type="button" disabled={busy} onClick={() => setEditing(true)}>
+                  {stored ? "Rotate" : "Set key"}
+                </button>
+              )}{" "}
+              {stored && (
+                <button type="button" disabled={busy} onClick={revoke}>
+                  Revoke
+                </button>
+              )}
             </td>
           </tr>
           <tr>
@@ -291,6 +389,7 @@ function VendorRow({
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
+  const [keyTest, setKeyTest] = useState<PlatformMediaKeyTest>();
   const credential = vendor.credential;
 
   async function act(action: () => Promise<unknown>) {
@@ -385,10 +484,27 @@ function VendorRow({
             {credential.source === "dashboard" ? "Rotate" : "Set key"}
           </button>
         )}{" "}
+        {credential.source !== "missing" && (
+          <button
+            type="button"
+            disabled={busy}
+            title="A free account lookup at the vendor; no paid call is made"
+            onClick={() => act(async () => setKeyTest(await api.testPlatformMediaKey(vendor.keyName)))}
+          >
+            Test
+          </button>
+        )}{" "}
         {credential.source === "dashboard" && (
           <button type="button" disabled={busy} onClick={revoke}>
             Revoke
           </button>
+        )}
+        {keyTest && (
+          <div className="muted" role="status">
+            {KEY_VERDICT[keyTest.verdict]}
+            {keyTest.httpStatus ? ` · HTTP ${keyTest.httpStatus}` : ""}
+            {keyTest.note ? ` — ${keyTest.note}` : ""}
+          </div>
         )}
       </td>
     </tr>

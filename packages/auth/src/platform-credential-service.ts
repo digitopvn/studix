@@ -71,6 +71,12 @@ export interface PlatformCredentialServiceDeps {
   allowedNames: readonly string[];
   /** The process environment, consulted only to say whether a variable is set. */
   env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Where platform_credential.* audit events go. Platform events belong to the platform, not to the tenant
+   * workspace the operator happens to have selected; resolved before any change, so a change it refuses
+   * never happens. Without it events go to the session's workspace.
+   */
+  auditContext?: (ctx: TenantContext) => Promise<TenantContext>;
   /** How long `loadValues` reuses the database read. */
   cacheMs?: number;
   clock?: Clock;
@@ -141,6 +147,9 @@ export function createPlatformCredentialService(
     };
   };
 
+  const auditTarget = (ctx: TenantContext): Promise<TenantContext> =>
+    deps.auditContext ? deps.auditContext(ctx) : Promise.resolve(ctx);
+
   const audit = (ctx: TenantContext, action: string, name: string, extra: Record<string, unknown> = {}) =>
     deps.audit.append(ctx, {
       actor: actorRef(ctx.actor),
@@ -170,6 +179,7 @@ export function createPlatformCredentialService(
       assertPlatformOperator(ctx);
       assertManaged(name);
       const box = secretsOrThrow();
+      const target = await auditTarget(ctx);
       const trimmed = value.trim();
       if (!VALUE_PATTERN.test(trimmed)) {
         throw new StudixError("VALIDATION", "The key must be 8-512 visible characters without spaces", {
@@ -183,7 +193,7 @@ export function createPlatformCredentialService(
         actorRef(ctx.actor),
       );
       invalidate();
-      await audit(ctx, row.version > 1 ? "rotated" : "created", name, {
+      await audit(target, row.version > 1 ? "rotated" : "created", name, {
         keyHint: row.secretHint,
         version: row.version,
         masterKeyId: box.keyId,
@@ -194,6 +204,7 @@ export function createPlatformCredentialService(
     async revoke(ctx, name) {
       assertPlatformOperator(ctx);
       assertManaged(name);
+      const target = await auditTarget(ctx);
       if (!(await deps.credentials.delete(name))) {
         throw new StudixError("NOT_FOUND", "No dashboard-stored credential with that name", {
           retryable: false,
@@ -201,19 +212,20 @@ export function createPlatformCredentialService(
         });
       }
       invalidate();
-      await audit(ctx, "revoked", name);
+      await audit(target, "revoked", name);
       return view(name, undefined);
     },
 
     async recordTest(ctx, name, result) {
       assertPlatformOperator(ctx);
       assertManaged(name);
+      const target = await auditTarget(ctx);
       const stored = await deps.credentials.recordTest(name, {
         ok: result.ok,
         at: clock.now(),
         ...(result.detail ? { detail: redact(result.detail).slice(0, 300) } : {}),
       });
-      if (stored) await audit(ctx, "tested", name, { ok: result.ok });
+      if (stored) await audit(target, "tested", name, { ok: result.ok });
     },
 
     async loadValues() {
@@ -255,5 +267,31 @@ export function createPlatformCredentialService(
       cached = { at: now, value };
       return value;
     },
+  };
+}
+
+/** The object-storage key pair, stored under the same names as its environment variables. */
+export const STORAGE_KEY_NAMES = ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const;
+
+/**
+ * The key pair the live storage adapter uses: a dashboard-stored pair wins, otherwise S3_ACCESS_KEY_ID /
+ * S3_SECRET_ACCESS_KEY. The adapter calls it again every few seconds, so a rotation needs no restart.
+ */
+export function liveStorageCredentials(
+  store: Pick<PlatformCredentialService, "loadValues">,
+  env: { S3_ACCESS_KEY_ID?: string | undefined; S3_SECRET_ACCESS_KEY?: string | undefined },
+): () => Promise<{ accessKeyId: string; secretAccessKey: string }> {
+  return async () => {
+    const { values } = await store.loadValues();
+    const [id, secret] = STORAGE_KEY_NAMES.map((name) => values[name]);
+    if (id && secret) return { accessKeyId: id, secretAccessKey: secret };
+    if (env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY) {
+      return { accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY };
+    }
+    throw new StudixError("UNAVAILABLE", "No object storage key is configured", {
+      retryable: false,
+      suggestedAction:
+        "Store a key under Settings > Storage & Media, or set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY.",
+    });
   };
 }

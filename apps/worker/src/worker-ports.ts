@@ -10,12 +10,15 @@ import {
 } from "@studix/agent-runtime";
 import {
   createAnthropicKeyTester,
+  createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
   createWorkspaceFeatureService,
+  liveStorageCredentials,
   type ProviderConnectionService,
   parseSecretKey,
   routeKeyTester,
+  STORAGE_KEY_NAMES,
   type WorkspaceFeatureService,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy } from "@studix/core";
@@ -253,6 +256,31 @@ async function assertClaudeRuntime(
 }
 
 /**
+ * A storage key pair an operator stored in the dashboard wins over S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY and
+ * is followed live. Without STUDIX_SECRETS_KEY nothing stored can be opened, so the environment pair is used.
+ */
+function storageCredentialOverride(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+): { credentials?: ReturnType<typeof liveStorageCredentials> } {
+  const { config } = settings;
+  if (!config.STUDIX_SECRETS_KEY) return {};
+  const repos = createRepositories(runtime.db);
+  const store = createPlatformCredentialService({
+    credentials: repos.platformCredentials,
+    audit: repos.audit,
+    secrets: createSecretBox(
+      parseSecretKey(config.STUDIX_SECRETS_KEY),
+      config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+    ),
+    allowedNames: STORAGE_KEY_NAMES,
+    env: runtime.env,
+    logger: runtime.logger,
+  });
+  return { credentials: liveStorageCredentials(store, config) };
+}
+
+/**
  * Production adapters for the standalone worker: S3-compatible storage, the HyperFrames renderer and
  * the brief planner (DecisionRouter for `video.brief` with a deterministic rules fallback, optional
  * connector brand lookup). Misconfiguration (no bucket, bad decision routes) fails startup loudly.
@@ -263,7 +291,7 @@ export async function loadWorkerPorts(
 ): Promise<WorkerPorts> {
   const { config } = settings;
   const { logger } = runtime;
-  const storage = createS3StorageAdapterFromConfig(config);
+  const storage = createS3StorageAdapterFromConfig(config, storageCredentialOverride(settings, runtime));
   const toolchain = renderToolchain(runtime.env);
   if (!toolchain.ok) {
     logger.warn("render toolchain incomplete; render stages will fail until it is installed", {

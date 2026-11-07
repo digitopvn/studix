@@ -9,9 +9,12 @@ import {
   createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
+  createVendorKeyTester,
   createWorkspaceFeatureService,
+  liveStorageCredentials,
   parseSecretKey,
   routeKeyTester,
+  STORAGE_KEY_NAMES,
   withSelfHostedSecretsKey,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
@@ -36,11 +39,13 @@ import {
   systemClock,
 } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
+import { createS3StorageAdapterFromConfig, type S3Credentials } from "@studix/storage";
 import type { Express } from "express";
 import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
+import { platformAuditContext } from "./platform-audit-context.ts";
 import { createPlatformSettingsService, fetchWorkerMedia } from "./platform-settings.ts";
 import type {
   ArtifactUrlSigner,
@@ -149,13 +154,13 @@ export async function composeApp(
     costThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
   });
   const activity = createActivityRecorder(repos.activity, { logger });
-  const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
   const secretBox = config.STUDIX_SECRETS_KEY
     ? createSecretBox(
         parseSecretKey(config.STUDIX_SECRETS_KEY),
         config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
       )
     : undefined;
+  const auditContext = platformAuditContext(config.STUDIX_PLATFORM_WORKSPACE_ID, repos.directory);
   // Vendor keys an operator set in the dashboard; the worker reads the same rows with the same master key.
   const platformCredentials = createPlatformCredentialService({
     credentials: repos.platformCredentials,
@@ -164,6 +169,30 @@ export async function composeApp(
     allowedNames: MULTIX_VENDORS.map((vendor) => MULTIX_VENDOR_KEYS[vendor]),
     env,
     logger,
+    ...(auditContext ? { auditContext } : {}),
+  });
+  // The object-storage key pair an operator stored in the dashboard; it overrides S3_ACCESS_KEY_ID/SECRET.
+  const storageCredentials = config.S3_BUCKET
+    ? createPlatformCredentialService({
+        credentials: repos.platformCredentials,
+        audit: repos.audit,
+        secrets: secretBox,
+        allowedNames: STORAGE_KEY_NAMES,
+        env,
+        logger,
+        ...(auditContext ? { auditContext } : {}),
+      })
+    : undefined;
+  const integrations = composeIntegrations({
+    env,
+    config,
+    repos,
+    approvalPolicy,
+    activity,
+    logger,
+    ...(storageCredentials && secretBox
+      ? { storageCredentials: liveStorageCredentials(storageCredentials, config) }
+      : {}),
   });
   const multix = config.MULTIX_BIN
     ? createMultixProviderFromConfig(config, { env, credentials: () => platformCredentials.loadValues() })
@@ -270,6 +299,21 @@ export async function composeApp(
       storage: integrations.storage,
       multix,
       credentials: platformCredentials,
+      ...(storageCredentials ? { storageCredentials } : {}),
+      ...(config.S3_BUCKET
+        ? {
+            probeCandidate: async (pair: S3Credentials) => {
+              const probe = createS3StorageAdapterFromConfig(config, { credentials: pair });
+              try {
+                return await probe.probeWrite();
+              } finally {
+                probe.destroy();
+              }
+            },
+          }
+        : {}),
+      vendorTester: createVendorKeyTester(),
+      env,
       ...(appEnv.STUDIX_WORKER_HEALTH_URL
         ? { worker: { media: () => fetchWorkerMedia(appEnv.STUDIX_WORKER_HEALTH_URL as string) } }
         : {}),

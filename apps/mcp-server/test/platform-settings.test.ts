@@ -1,5 +1,11 @@
 import type { AddressInfo } from "node:net";
-import { createPlatformCredentialService, createSecretBox, parseSecretKey } from "@studix/auth";
+import {
+  createPlatformCredentialService,
+  createSecretBox,
+  parseSecretKey,
+  STORAGE_KEY_NAMES,
+  type VendorKeyTester,
+} from "@studix/auth";
 import type { Actor, AuditEvent, AuditRepository, TenantContext } from "@studix/core";
 import type { PlatformCredentialRecord, PlatformCredentialRepository } from "@studix/database";
 import { MULTIX_VENDOR_KEYS, type MultixDiagnosis } from "@studix/providers";
@@ -63,6 +69,9 @@ interface SetupOptions {
   diagnosis?: MultixDiagnosis;
   worker?: { media(): Promise<WorkerMediaReport | undefined> };
   bucket?: string | undefined;
+  candidate?: StorageProbeResult;
+  vendorTester?: VendorKeyTester;
+  env?: Record<string, string>;
 }
 
 function setup(options: SetupOptions = {}) {
@@ -77,14 +86,25 @@ function setup(options: SetupOptions = {}) {
       return { items: events };
     },
   };
+  const repo = memoryRepo();
+  const box = createSecretBox(parseSecretKey(MASTER));
   const credentials = createPlatformCredentialService({
-    credentials: memoryRepo(),
+    credentials: repo,
     audit,
-    secrets: createSecretBox(parseSecretKey(MASTER)),
+    secrets: box,
     allowedNames: Object.values(MULTIX_VENDOR_KEYS),
     env: {},
     cacheMs: 0,
   });
+  const storageCredentials = createPlatformCredentialService({
+    credentials: repo,
+    audit,
+    secrets: box,
+    allowedNames: STORAGE_KEY_NAMES,
+    env: {},
+    cacheMs: 0,
+  });
+  const probed: Array<{ accessKeyId: string; secretAccessKey: string }> = [];
   const service = createPlatformSettingsService({
     config: {
       S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com",
@@ -113,9 +133,16 @@ function setup(options: SetupOptions = {}) {
         },
     },
     credentials,
+    storageCredentials,
+    probeCandidate: async (pair) => {
+      probed.push(pair);
+      return options.candidate ?? { ok: true };
+    },
+    ...(options.vendorTester ? { vendorTester: options.vendorTester } : {}),
+    env: options.env ?? {},
     ...(options.worker ? { worker: options.worker } : {}),
   });
-  return { service, events, credentials };
+  return { service, events, credentials, storageCredentials, probed };
 }
 
 describe("storageDiagnosis", () => {
@@ -201,6 +228,72 @@ describe("platform settings service", () => {
     await service.revokeMediaKey(operator, "SUME_API_KEY");
     const after = await service.overview(operator);
     expect(after.media.vendors.find((v) => v.keyName === "SUME_API_KEY")?.credential.source).toBe("missing");
+  });
+
+  it("stores a storage key pair only after it passes the probe, and never returns it", async () => {
+    const newSecret = "r2-rotated-secret-0123456789";
+    const failing = setup({ candidate: { ok: false, step: "put", status: 403, s3Code: "AccessDenied" } });
+    await expect(
+      failing.service.setStorageKey(operator, {
+        accessKeyId: "NEWKEYID12345678",
+        secretAccessKey: newSecret,
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION", details: { diagnosis: "missing_permission" } });
+    expect((await failing.storageCredentials.loadValues()).values).toEqual({});
+    expect((await failing.service.overview(operator)).storage.source).toBe("environment");
+
+    const { service, events, probed, storageCredentials } = setup();
+    await service.setStorageKey(operator, { accessKeyId: " NEWKEYID12345678 ", secretAccessKey: newSecret });
+    expect(probed).toEqual([{ accessKeyId: "NEWKEYID12345678", secretAccessKey: newSecret }]);
+    const view = await service.overview(operator);
+    expect(view.storage).toMatchObject({
+      source: "dashboard",
+      credentialStorage: "available",
+      accessKeyId: "NEWK…5678",
+      secretAccessKey: "configured",
+      changeNeedsRedeploy: false,
+      credential: { keyHint: "…6789", version: 1 },
+    });
+    expect(JSON.stringify(view)).not.toContain(newSecret);
+    expect(JSON.stringify(events)).not.toContain(newSecret);
+    // The stored pair stays out of the values handed to Multix.
+    expect(Object.keys((await storageCredentials.loadValues()).values).sort()).toEqual([
+      ...STORAGE_KEY_NAMES,
+    ]);
+    await service.revokeStorageKey(operator);
+    expect((await service.overview(operator)).storage).toMatchObject({
+      source: "environment",
+      changeNeedsRedeploy: true,
+    });
+    await expect(service.revokeStorageKey(operator)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      service.setStorageKey(owner, { accessKeyId: "NEWKEYID12345678", secretAccessKey: newSecret }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("tests the media key in use with the vendor and records the outcome on a stored key", async () => {
+    const seen: string[] = [];
+    const { service } = setup({
+      env: { OPENROUTER_API_KEY: "sk-or-env-0123456789" },
+      vendorTester: async (name, value) => {
+        seen.push(`${name}=${value}`);
+        return name === "OPENROUTER_API_KEY" ? { verdict: "invalid", httpStatus: 401 } : undefined;
+      },
+    });
+    await expect(service.testMediaKey(operator, "OPENROUTER_API_KEY")).resolves.toMatchObject({
+      verdict: "invalid",
+      httpStatus: 401,
+    });
+    await service.setMediaKey(operator, "SUME_API_KEY", SECRET);
+    const sume = await service.testMediaKey(operator, "SUME_API_KEY");
+    expect(sume.verdict).toBe("unverified");
+    expect(seen).toEqual(["OPENROUTER_API_KEY=sk-or-env-0123456789", `SUME_API_KEY=${SECRET}`]);
+    const view = await service.overview(operator);
+    expect(view.media.vendors.find((v) => v.keyName === "SUME_API_KEY")?.credential.lastTest?.ok).toBe(false);
+    await expect(service.testMediaKey(operator, "FISH_API_KEY")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.testMediaKey(operator, "S3_SECRET_ACCESS_KEY")).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
   });
 
   it("refuses a name outside the vendor allowlist", async () => {

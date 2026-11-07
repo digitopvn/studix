@@ -1,4 +1,9 @@
-import type { PlatformCredentialService, PlatformCredentialView } from "@studix/auth";
+import {
+  type PlatformCredentialService,
+  type PlatformCredentialView,
+  STORAGE_KEY_NAMES,
+  type VendorKeyTester,
+} from "@studix/auth";
 import { assertPlatformOperator, type TenantContext } from "@studix/core";
 import {
   MULTIX_ROLE_VENDORS,
@@ -8,15 +13,16 @@ import {
   type MultixRole,
   type MultixVendor,
 } from "@studix/providers";
-import { type Clock, redact, systemClock } from "@studix/shared";
-import type { StorageProbeResult } from "@studix/storage";
+import { type Clock, redact, StudixError, systemClock } from "@studix/shared";
+import type { S3Credentials, StorageProbeResult } from "@studix/storage";
 
 /*
- * What a platform operator sees and changes under Settings > Storage & Media. Object storage (R2) keeps
- * its source of truth in the deployment environment (S3_*): the dashboard shows redacted status and runs a
- * real put/get/head/delete check against the active configuration, but never holds the secret key. Media
- * vendor keys are stored sealed by the platform credential service and override the environment. Nothing
- * here returns a secret, and every call is limited to platform operators in a dashboard session.
+ * What a platform operator sees and changes under Settings > Storage & Media. The bucket, endpoint and
+ * region of object storage (R2) stay in the deployment environment (S3_*); its access key pair may also be
+ * stored from the dashboard, sealed like the media vendor keys, and then overrides S3_ACCESS_KEY_ID /
+ * S3_SECRET_ACCESS_KEY without a redeploy. A new pair is saved only after a real put/get/head/delete with it
+ * passes. Nothing here returns a secret, and every call is limited to platform operators in a dashboard
+ * session.
  */
 
 /** Which kinds of media each vendor key serves, from the routes the worker actually uses. */
@@ -55,8 +61,12 @@ export type SecretStatus = "configured" | "missing" | "invalid" | "unverified";
 
 export interface StorageStatusView {
   configured: boolean;
-  /** Where the values come from: R2 settings are managed in the deployment, not stored by Studix. */
-  source: "environment";
+  /** Where the key pair comes from: stored here (overrides the environment) or the deployment settings. */
+  source: "dashboard" | "environment";
+  /** `unavailable` without STUDIX_SECRETS_KEY or a bucket: the key pair can then only come from the environment. */
+  credentialStorage: "available" | "unavailable";
+  /** The stored secret key's metadata (hint, version, who changed it); absent while the environment is used. */
+  credential?: PlatformCredentialView;
   endpointHost?: string;
   bucket?: string;
   region: string;
@@ -66,8 +76,8 @@ export interface StorageStatusView {
   accessKeyId?: string;
   secretAccessKey: SecretStatus;
   lastTest?: StorageTestView;
-  /** True: a change is made in the deployment settings and needs a redeploy of the app and the worker. */
-  changeNeedsRedeploy: true;
+  /** True while the key pair comes from the deployment settings, where a change needs a redeploy. */
+  changeNeedsRedeploy: boolean;
 }
 
 export interface MediaVendorView {
@@ -133,12 +143,27 @@ export interface MediaTestView {
   paidCalls: false;
 }
 
+export interface MediaKeyTestView {
+  name: string;
+  at: Date;
+  /** `unverified` when the vendor offers no free check or did not answer; no paid call is made. */
+  verdict: "available" | "invalid" | "unverified";
+  httpStatus?: number;
+  note?: string;
+}
+
 export interface PlatformSettingsService {
   overview(ctx: TenantContext): Promise<PlatformSettingsView>;
   testStorage(ctx: TenantContext): Promise<StorageTestView>;
   testMedia(ctx: TenantContext): Promise<MediaTestView>;
   setMediaKey(ctx: TenantContext, name: string, value: string): Promise<PlatformCredentialView>;
   revokeMediaKey(ctx: TenantContext, name: string): Promise<PlatformCredentialView>;
+  /** A free, read-only account lookup at the vendor with the key in use (stored or from the environment). */
+  testMediaKey(ctx: TenantContext, name: string): Promise<MediaKeyTestView>;
+  /** Probe the pair against the bucket, then store it; nothing is saved when the probe fails. */
+  setStorageKey(ctx: TenantContext, pair: S3Credentials): Promise<StorageTestView>;
+  /** Remove the stored pair; S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY from the environment apply again. */
+  revokeStorageKey(ctx: TenantContext): Promise<void>;
 }
 
 export interface PlatformSettingsDeps {
@@ -158,6 +183,13 @@ export interface PlatformSettingsDeps {
   /** Absent when MULTIX_BIN is not set in this process. */
   multix?: { diagnose(signal?: AbortSignal): Promise<MultixDiagnosis> };
   credentials: PlatformCredentialService;
+  /** Stores the storage key pair (STORAGE_KEY_NAMES); absent when no bucket is configured. */
+  storageCredentials?: PlatformCredentialService;
+  /** Put/get/head/delete with a candidate pair before it is stored. */
+  probeCandidate?: (pair: S3Credentials) => Promise<StorageProbeResult>;
+  vendorTester?: VendorKeyTester;
+  /** The process environment, for testing a vendor key that is not stored here. */
+  env?: Readonly<Record<string, string | undefined>>;
   /** Reads the worker's media report (STUDIX_WORKER_HEALTH_URL); rejects when the worker cannot be reached. */
   worker?: { media(): Promise<WorkerMediaReport | undefined> };
   clock?: Clock;
@@ -265,12 +297,33 @@ const DIAGNOSIS_ACTION: Record<Exclude<StorageDiagnosis, "ok">, string> = {
   missing_credential:
     "Set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY in the deployment settings, then redeploy.",
   bad_credential:
-    "The access key or secret was rejected. Create a new R2 API token, update S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY in the deployment settings, then redeploy the app and the worker.",
+    "The access key or secret was rejected. Create a new R2 API token and store it with Set key on this page (or update S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY in the deployment settings and redeploy).",
   missing_permission:
     "The token can reach the bucket but may not write it. Give it Object Read & Write on this bucket (not only Read), and check the bucket policy.",
   missing_bucket: "Check S3_BUCKET and S3_ENDPOINT: the bucket was not found at this endpoint.",
   remote_unavailable: "The storage endpoint did not answer. Check S3_ENDPOINT and the network, then retry.",
 };
+
+function storageView(probe: StorageProbeResult, at: Date): StorageTestView {
+  const diagnosis = storageDiagnosis(probe);
+  return {
+    ok: probe.ok,
+    at,
+    diagnosis,
+    ...(probe.step ? { failedStep: probe.step } : {}),
+    ...(probe.status === undefined ? {} : { httpStatus: probe.status }),
+    ...(probe.s3Code ? { s3Code: probe.s3Code } : {}),
+    ...(probe.message ? { message: redact(probe.message).slice(0, 300) } : {}),
+    ...(diagnosis === "ok"
+      ? {}
+      : {
+          suggestedAction:
+            probe.s3Code === "BodyMismatch"
+              ? "The endpoint answered, but with different content than was written. Check that S3_ENDPOINT is the bucket's S3 API and that no proxy rewrites responses."
+              : DIAGNOSIS_ACTION[diagnosis],
+        }),
+  };
+}
 
 export function createPlatformSettingsService(deps: PlatformSettingsDeps): PlatformSettingsService {
   const clock = deps.clock ?? systemClock;
@@ -279,8 +332,16 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
   let mediaCheck: MediaStatusView["lastCheck"];
   let lastVendors: MultixDiagnosis["vendors"] | undefined;
 
-  const secretStatus = (): SecretStatus => {
-    if (!config.S3_SECRET_ACCESS_KEY || !config.S3_ACCESS_KEY_ID) return "missing";
+  /** The pair stored here, when both halves are; it wins over the environment. */
+  const storedPair = async (): Promise<S3Credentials | undefined> => {
+    if (!deps.storageCredentials) return undefined;
+    const { values } = await deps.storageCredentials.loadValues();
+    const [id, secret] = STORAGE_KEY_NAMES.map((name) => values[name]);
+    return id && secret ? { accessKeyId: id, secretAccessKey: secret } : undefined;
+  };
+
+  const secretStatus = (stored: boolean): SecretStatus => {
+    if (!stored && (!config.S3_SECRET_ACCESS_KEY || !config.S3_ACCESS_KEY_ID)) return "missing";
     if (!storageTest) return "unverified";
     if (storageTest.ok) return "configured";
     return storageTest.diagnosis === "bad_credential" || storageTest.diagnosis === "missing_permission"
@@ -310,6 +371,10 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
     async overview(ctx) {
       assertPlatformOperator(ctx);
       const stored = await deps.credentials.overview(ctx);
+      const pair = await storedPair();
+      const storageStored = deps.storageCredentials ? await deps.storageCredentials.overview(ctx) : undefined;
+      const storageCredential = storageStored?.credentials.find((c) => c.name === "S3_SECRET_ACCESS_KEY");
+      const accessKeyId = maskAccessKeyId(pair?.accessKeyId ?? config.S3_ACCESS_KEY_ID);
       const byName = new Map(stored.credentials.map((c) => [c.name, c]));
       const executable: MediaStatusView["executable"] = config.MULTIX_BIN ? "configured" : "missing";
       let worker: WorkerMediaView | undefined;
@@ -333,18 +398,18 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
       return {
         storage: {
           configured: Boolean(config.S3_BUCKET),
-          source: "environment",
+          source: pair ? "dashboard" : "environment",
+          credentialStorage: storageStored?.storage ?? "unavailable",
+          ...(pair && storageCredential ? { credential: storageCredential } : {}),
           ...(endpointHost(config.S3_ENDPOINT) ? { endpointHost: endpointHost(config.S3_ENDPOINT) } : {}),
           ...(config.S3_BUCKET ? { bucket: config.S3_BUCKET } : {}),
           region: config.S3_REGION,
           pathStyle: config.S3_FORCE_PATH_STYLE,
           signedUrlTtlSeconds: config.S3_SIGNED_URL_TTL_SECONDS,
-          ...(maskAccessKeyId(config.S3_ACCESS_KEY_ID)
-            ? { accessKeyId: maskAccessKeyId(config.S3_ACCESS_KEY_ID) }
-            : {}),
-          secretAccessKey: secretStatus(),
+          ...(accessKeyId ? { accessKeyId } : {}),
+          secretAccessKey: secretStatus(Boolean(pair)),
           ...(storageTest ? { lastTest: storageTest } : {}),
-          changeNeedsRedeploy: true,
+          changeNeedsRedeploy: !pair,
         },
         media: {
           executable,
@@ -390,28 +455,93 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           suggestedAction: DIAGNOSIS_ACTION.missing_credential,
         };
       } else {
-        const probe = await deps.storage.probeWrite();
-        const diagnosis = storageDiagnosis(probe);
-        view = {
-          ok: probe.ok,
-          at,
-          diagnosis,
-          ...(probe.step ? { failedStep: probe.step } : {}),
-          ...(probe.status === undefined ? {} : { httpStatus: probe.status }),
-          ...(probe.s3Code ? { s3Code: probe.s3Code } : {}),
-          ...(probe.message ? { message: redact(probe.message).slice(0, 300) } : {}),
-          ...(diagnosis === "ok"
-            ? {}
-            : {
-                suggestedAction:
-                  probe.s3Code === "BodyMismatch"
-                    ? "The endpoint answered, but with different content than was written. Check that S3_ENDPOINT is the bucket's S3 API and that no proxy rewrites responses."
-                    : DIAGNOSIS_ACTION[diagnosis],
-              }),
-        };
+        view = storageView(await deps.storage.probeWrite(), at);
       }
       storageTest = view;
       return view;
+    },
+
+    async setStorageKey(ctx, pair) {
+      assertPlatformOperator(ctx);
+      const store = deps.storageCredentials;
+      if (!config.S3_BUCKET || !store || !deps.probeCandidate) {
+        throw new StudixError("UNAVAILABLE", "No bucket is configured on this server", {
+          retryable: false,
+          suggestedAction: "Set S3_BUCKET (and S3_ENDPOINT for R2) in the deployment settings first.",
+        });
+      }
+      const candidate = {
+        accessKeyId: pair.accessKeyId.trim(),
+        secretAccessKey: pair.secretAccessKey.trim(),
+      };
+      const view = storageView(await deps.probeCandidate(candidate), clock.now());
+      if (!view.ok) {
+        throw new StudixError("VALIDATION", "The new key pair failed the storage check; nothing was saved", {
+          retryable: false,
+          details: {
+            diagnosis: view.diagnosis,
+            ...(view.failedStep ? { failedStep: view.failedStep } : {}),
+            ...(view.httpStatus === undefined ? {} : { httpStatus: view.httpStatus }),
+            ...(view.s3Code ? { s3Code: view.s3Code } : {}),
+          },
+          ...(view.suggestedAction ? { suggestedAction: view.suggestedAction } : {}),
+        });
+      }
+      await store.set(ctx, "S3_ACCESS_KEY_ID", candidate.accessKeyId);
+      await store.set(ctx, "S3_SECRET_ACCESS_KEY", candidate.secretAccessKey);
+      await store.recordTest(ctx, "S3_SECRET_ACCESS_KEY", {
+        ok: true,
+        detail: "Write, read and delete passed",
+      });
+      storageTest = view;
+      return view;
+    },
+
+    async revokeStorageKey(ctx) {
+      assertPlatformOperator(ctx);
+      const store = deps.storageCredentials;
+      if (!store || !(await storedPair())) {
+        throw new StudixError("NOT_FOUND", "No storage key is stored here", {
+          retryable: false,
+          suggestedAction: "A key from the environment is changed in the deployment settings.",
+        });
+      }
+      for (const name of STORAGE_KEY_NAMES) {
+        await store.revoke(ctx, name).catch((err: unknown) => {
+          if (!(err instanceof StudixError && err.code === "NOT_FOUND")) throw err;
+        });
+      }
+      storageTest = undefined;
+    },
+
+    async testMediaKey(ctx, name) {
+      assertPlatformOperator(ctx);
+      if (!deps.credentials.isManaged(name)) {
+        throw new StudixError("VALIDATION", "Unknown credential name", { retryable: false });
+      }
+      const value = (await deps.credentials.loadValues()).values[name] ?? deps.env?.[name];
+      if (!value) {
+        throw new StudixError("NOT_FOUND", `${name} is not set here or in the environment`, {
+          retryable: false,
+        });
+      }
+      const verdict = (await deps.vendorTester?.(name, value)) ?? {
+        verdict: "unverified" as const,
+        note: "This vendor offers no free key check; the first media job that uses it confirms the key.",
+      };
+      const at = clock.now();
+      const note =
+        verdict.note ?? (verdict.verdict === "available" ? "The vendor accepted the key" : undefined);
+      await deps.credentials
+        .recordTest(ctx, name, { ok: verdict.verdict === "available", ...(note ? { detail: note } : {}) })
+        .catch(() => {});
+      return {
+        name,
+        at,
+        verdict: verdict.verdict,
+        ...(verdict.httpStatus === undefined ? {} : { httpStatus: verdict.httpStatus }),
+        ...(note ? { note } : {}),
+      };
     },
 
     async testMedia(ctx) {
