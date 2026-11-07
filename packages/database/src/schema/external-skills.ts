@@ -7,7 +7,7 @@ import type {
   SkillRiskReport,
 } from "@studix/core";
 import { sql } from "drizzle-orm";
-import { index, jsonb, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, primaryKey, text, uniqueIndex } from "drizzle-orm/pg-core";
 import { type ActorType, createdAt, id, ts, updatedAt } from "./columns.ts";
 import { tenantColumns } from "./tenancy.ts";
 
@@ -77,4 +77,21 @@ export const externalSkillVersions = pgTable(
       .where(sql`${t.importKey} is not null`),
     index("external_skill_versions_skill_idx").on(t.skillId, t.id),
   ],
+);
+
+/**
+ * Platform skills a workspace turned off for itself. Platform skills are on in every workspace by default;
+ * a row here hides one from that workspace's agents. No FK to the skill: platform rows live in another
+ * workspace, and a stale row for a deleted skill is harmless.
+ */
+export const workspaceSkillOptOuts = pgTable(
+  "workspace_skill_opt_outs",
+  {
+    ...tenantColumns(),
+    skillId: text("skill_id").notNull(),
+    createdByType: text("created_by_type").$type<ActorType>().notNull(),
+    createdById: text("created_by_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.skillId] })],
 );

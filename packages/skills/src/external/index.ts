@@ -1,3 +1,4 @@
+export { DEFAULT_SKILLS_DIR, type DefaultSkillSource, loadDefaultSkills } from "./default-skills.ts";
 export {
   createExternalSkillService,
   type ExternalSkillService,
@@ -26,5 +27,5 @@ export {
   type StoredSkillBundleSource,
 } from "./skill-bundle-source.ts";
 export { legacyRiskReport, SKILL_RISK_SCANNER_VERSION, SkillRiskScanner } from "./skill-risk-scan.ts";
-export { bundleFromArchive } from "./skill-upload.ts";
+export { bundleFromArchive, bundleFromFiles, type SkillSourceFile } from "./skill-upload.ts";
 export { readZipArchive, safeArchivePath } from "./zip-archive.ts";

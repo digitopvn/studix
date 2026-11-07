@@ -225,6 +225,13 @@
       "when": 1794037755605,
       "tag": "0031_ancient_trish_tilby",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794041674928,
+      "tag": "0032_majestic_reptil",
+      "breakpoints": true
     }
   ]
 }

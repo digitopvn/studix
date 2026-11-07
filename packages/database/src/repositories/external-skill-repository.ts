@@ -7,7 +7,7 @@ import type {
 import { type Clock, StudixError } from "@studix/shared";
 import { and, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
-import { externalSkills, externalSkillVersions } from "../schema/external-skills.ts";
+import { externalSkills, externalSkillVersions, workspaceSkillOptOuts } from "../schema/external-skills.ts";
 import { createAuditRepository } from "./governance-repositories.ts";
 import {
   actorFrom,
@@ -447,6 +447,36 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
         });
       }
       return toSkill(updated[0]!);
+    },
+
+    async listOptOuts(ctx) {
+      const rows = await db
+        .select({ skillId: workspaceSkillOptOuts.skillId })
+        .from(workspaceSkillOptOuts)
+        .where(scoped(workspaceSkillOptOuts, ctx));
+      return rows.map((r) => r.skillId);
+    },
+
+    async setOptOut(ctx, skillId, optedOut, actor) {
+      await db.transaction(async (tx) => {
+        const changed = optedOut
+          ? await tx
+              .insert(workspaceSkillOptOuts)
+              .values({ ...tenantValues(ctx), skillId, createdByType: actor.type, createdById: actor.id })
+              .onConflictDoNothing()
+              .returning({ skillId: workspaceSkillOptOuts.skillId })
+          : await tx
+              .delete(workspaceSkillOptOuts)
+              .where(scoped(workspaceSkillOptOuts, ctx, eq(workspaceSkillOptOuts.skillId, skillId)))
+              .returning({ skillId: workspaceSkillOptOuts.skillId });
+        if (changed.length === 0) return;
+        await createAuditRepository(tx, clock).append(ctx, {
+          actor,
+          action: optedOut ? "external_skill.workspace_off" : "external_skill.workspace_on",
+          subjectType: "external_skill",
+          subjectId: skillId,
+        });
+      });
     },
   };
 }

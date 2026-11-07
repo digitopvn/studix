@@ -75,6 +75,11 @@ export function createInMemoryTenancy(clock: Clock): {
       }
       return out;
     },
+    async findWorkspace(workspaceId) {
+      const workspace = spaces.get(workspaceId);
+      const organization = workspace ? orgs.get(workspace.organizationId) : undefined;
+      return workspace && organization ? { organization, workspace } : undefined;
+    },
   };
 
   const workspaces: WorkspaceRepository = {

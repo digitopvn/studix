@@ -88,6 +88,36 @@ event carries `highRiskConfirmed`, the level and the version.
 - `platform`: visible to every workspace. Only platform operators import,
   upload, enable, disable, activate or delete platform skills; they are stored
   in the platform workspace (`STUDIX_PLATFORM_WORKSPACE_ID`) when it is set.
+- A workspace member with `skill:write` can turn a platform skill off (or back
+  on) for their own workspace only: `studix_skill_disable` /
+  `studix_skill_update` `action: "enable"`, or `POST /api/skills/:id/disable` and
+  `/update`. That is the default for non-operators; operators pass
+  `workspaceOnly: true`. Listings show it as `turnedOffHere`, and the agent
+  runtime does not mount the skill in that workspace
+  (`workspace_skill_opt_outs`).
+
+## Default skills
+
+Studix ships video skills as platform skills that are on in every workspace.
+They live in `packages/skills/defaults/<name>/` (each with its `SKILL.md`,
+references, scripts and assets) and are copied into the image with the source.
+At API startup, when `STUDIX_PLATFORM_WORKSPACE_ID` and object storage are set,
+`seedDefaultSkills` stores each one as a platform skill with source kind
+`default` (`sourceKey` `default/<name>`). The seed is idempotent: unchanged
+content writes nothing, changed content becomes the new active version. It runs
+the same risk scan as an upload; the skills are reviewed with the source, so a
+high-risk finding does not block enabling them. An operator can disable one for
+everyone (it stays disabled across restarts); deleting one only lasts until the
+next start.
+
+Bundled: `ak-ai-multimodal`, `ak-dogfood`, `ak-elevenlabs`, `ak-filmmaking`,
+`ak-hyperframes`, `ak-media-processing`, `ak-motion-design`,
+`ak-motion-graphics`, `ak-motion-video`, `ak-remotion`, `ak-video`,
+`ak-youtube`, `ak-youtube-thumbnail-design`, `anime-creator`, `motion-video`.
+
+To add or update one, copy the skill directory there without `.env` files,
+caches or machine-specific paths, then restart the API. The directory is
+excluded from Biome so its files stay byte-identical to the reviewed copy.
 
 ## Agent runtime
 

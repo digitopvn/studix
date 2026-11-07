@@ -27,10 +27,11 @@ export type ExternalSkillScope = (typeof EXTERNAL_SKILL_SCOPES)[number];
 /**
  * Where a skill came from. GitHub: a public repository, a directory in it and the ref it was read at.
  * Upload: a zip archive; `owner` and `repo` are empty and `path` is the skill name (rows written before
- * uploads existed have no `kind` and are GitHub).
+ * uploads existed have no `kind` and are GitHub). Default: a skill bundled with Studix and seeded at startup;
+ * `owner` and `repo` are empty and `path` is the skill name.
  */
 export interface ExternalSkillSource {
-  kind?: "github" | "upload";
+  kind?: "github" | "upload" | "default";
   /** Upload only: the archive's file name as given by the uploader. */
   fileName?: string;
   owner: string;

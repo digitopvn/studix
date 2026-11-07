@@ -485,7 +485,7 @@ stored and each version has a risk report; content stays untrusted. Guide:
 | `studix_skill_list`     | Skills with scope, activeRiskLevel and manageable.              |
 | `studix_skill_get`      | Metadata, license, risk report, files and a bounded text slice. |
 | `studix_skill_update`   | The updated skill and, for check/import, the upstream result.   |
-| `studix_skill_disable`  | The disabled skill; versions and files are kept.                |
+| `studix_skill_disable`  | The disabled skill, or `turnedOffHere` for a platform skill.    |
 | `studix_skill_delete`   | deleted and filesRemoved. Cannot be undone.                     |
 
 Arguments:

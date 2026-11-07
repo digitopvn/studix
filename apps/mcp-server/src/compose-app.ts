@@ -70,6 +70,7 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
+import { seedDefaultSkills } from "./seed-default-skills.ts";
 import { createWorkspaceMultixApi } from "./workspace-multix.ts";
 
 /** App-role settings that are not part of the shared config schema. */
@@ -441,6 +442,16 @@ export async function composeApp(
           s3Code: probe.s3Code,
         });
       }
+    });
+  }
+  if (deps.storage) {
+    void seedDefaultSkills({
+      platformWorkspaceId: config.STUDIX_PLATFORM_WORKSPACE_ID,
+      directory: repos.directory,
+      skills: deps.externalSkills,
+      logger,
+    }).catch((error: unknown) => {
+      if (!closed) logger.error("default skills seed failed", { error: String(error) });
     });
   }
 

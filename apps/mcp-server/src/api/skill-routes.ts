@@ -61,8 +61,16 @@ const UpdateBody = z.discriminatedUnion("action", [
       confirmHighRisk: ConfirmHighRisk,
     })
     .strict(),
-  z.object({ action: z.literal("enable"), confirmHighRisk: ConfirmHighRisk }).strict(),
+  z
+    .object({
+      action: z.literal("enable"),
+      confirmHighRisk: ConfirmHighRisk,
+      workspaceOnly: z.boolean().optional(),
+    })
+    .strict(),
 ]);
+
+const DisableBody = z.object({ workspaceOnly: z.boolean().optional() }).strict();
 
 function requireSkills(deps: AppDeps): ExternalSkillService {
   if (!deps.externalSkills) {
@@ -131,7 +139,10 @@ export function skillRoutes(deps: AppDeps): Router {
     );
   });
   router.post("/:skillId/disable", async (req, res) => {
-    res.json(await requireSkills(deps).disable(sessionOf(res).ctx, { skillId: idParam(req, "skillId") }));
+    const body = parseBody(DisableBody, req.body ?? {}, "skill disable");
+    res.json(
+      await requireSkills(deps).disable(sessionOf(res).ctx, { skillId: idParam(req, "skillId"), ...body }),
+    );
   });
   router.delete("/:skillId", async (req, res) => {
     res.json(await requireSkills(deps).delete(sessionOf(res).ctx, { skillId: idParam(req, "skillId") }));

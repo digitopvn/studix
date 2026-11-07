@@ -103,4 +103,8 @@ export interface ExternalSkillRepository {
     status: ExternalSkillUpstreamStatus,
     actor: ActorRef,
   ): Promise<ExternalSkill>;
+  /** Ids of the platform skills the context's workspace turned off for itself. */
+  listOptOuts(ctx: TenantContext): Promise<string[]>;
+  /** Turn a platform skill off (`optedOut`) or back on for the context's workspace only. */
+  setOptOut(ctx: TenantContext, skillId: string, optedOut: boolean, actor: ActorRef): Promise<void>;
 }

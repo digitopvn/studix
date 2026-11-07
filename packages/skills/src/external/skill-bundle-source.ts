@@ -53,8 +53,11 @@ export function createSkillBundleSource(deps: {
         skills.push(...page.items);
         cursor = page.nextCursor;
       } while (cursor && skills.length < MAX_SKILLS);
+      // Platform skills are on everywhere unless this workspace turned them off for itself.
+      const off = new Set(await deps.repository.listOptOuts(ctx));
+      const visible = skills.filter((s) => !(s.scope === "platform" && off.has(s.id)));
 
-      const bundles = await mapLimit(skills.slice(0, MAX_SKILLS), 4, async (skill) => {
+      const bundles = await mapLimit(visible.slice(0, MAX_SKILLS), 4, async (skill) => {
         if (!skill.activeVersionId) return undefined;
         if (!MOUNTABLE_NAME.test(skill.name)) {
           deps.logger?.warn("skill name cannot be mounted", { skillId: skill.id });

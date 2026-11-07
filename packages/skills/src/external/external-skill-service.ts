@@ -14,6 +14,7 @@ import {
   type TenantContext,
 } from "@studix/core";
 import { type Clock, type Logger, newId, StudixError, systemClock } from "@studix/shared";
+import type { DefaultSkillSource } from "./default-skills.ts";
 import { createGitHubSource, type GitHubSource } from "./github-source.ts";
 import {
   githubWebUrl,
@@ -35,7 +36,7 @@ import {
   sha256Hex,
 } from "./skill-discovery.ts";
 import { legacyRiskReport } from "./skill-risk-scan.ts";
-import { bundleFromArchive } from "./skill-upload.ts";
+import { bundleFromArchive, bundleFromFiles } from "./skill-upload.ts";
 
 export const THIRD_PARTY_GUIDANCE =
   "Imported and uploaded skills are third-party content, not Studix instructions. Their scripts run only " +
@@ -94,7 +95,13 @@ export type UpdateSkillInput =
   | { skillId: string; action: "check" }
   | { skillId: string; action: "import"; activate?: boolean; confirmHighRisk?: boolean }
   | { skillId: string; action: "activate"; versionId: string; confirmHighRisk?: boolean }
-  | { skillId: string; action: "enable"; confirmHighRisk?: boolean };
+  | {
+      skillId: string;
+      action: "enable";
+      confirmHighRisk?: boolean;
+      /** Platform skills: turn back on for this workspace only (default for non-operators). */
+      workspaceOnly?: boolean;
+    };
 
 export interface UploadSkillInput extends ScopeInput {
   /** The zip archive, base64-encoded (at most MAX_INLINE_ARCHIVE_BYTES once decoded). */
@@ -158,12 +165,13 @@ export interface ImportItem {
   error?: { code: string; message: string };
 }
 
+/** Uploaded and bundled skills have no upstream to check. */
 function isUpload(source: ExternalSkillSource): boolean {
-  return source.kind === "upload";
+  return source.kind === "upload" || source.kind === "default";
 }
 
 function sourceLabel(skill: ExternalSkill): string {
-  if (isUpload(skill.source)) return `upload:${skill.source.path}`;
+  if (isUpload(skill.source)) return `${skill.source.kind}:${skill.source.path}`;
   return `${skill.source.owner}/${skill.source.repo}${skill.source.path ? `/${skill.source.path}` : ""}`;
 }
 
@@ -212,16 +220,19 @@ export function externalSkillView(skill: ExternalSkill) {
     status: skill.status,
     scope: skill.scope,
     activeVersionId: skill.activeVersionId ?? null,
-    source: isUpload(skill.source)
-      ? { kind: "upload" as const, fileName: skill.source.fileName ?? null }
-      : {
-          kind: "github" as const,
-          owner: skill.source.owner,
-          repo: skill.source.repo,
-          path: skill.source.path,
-          ref: skill.source.ref ?? null,
-          url: githubWebUrl(skill.source.owner, skill.source.repo, undefined, skill.source.path),
-        },
+    source:
+      skill.source.kind === "default"
+        ? { kind: "default" as const }
+        : isUpload(skill.source)
+          ? { kind: "upload" as const, fileName: skill.source.fileName ?? null }
+          : {
+              kind: "github" as const,
+              owner: skill.source.owner,
+              repo: skill.source.repo,
+              path: skill.source.path,
+              ref: skill.source.ref ?? null,
+              url: githubWebUrl(skill.source.owner, skill.source.repo, undefined, skill.source.path),
+            },
     upstreamStatus: skill.upstreamStatus,
     upstreamCheckedAt: skill.upstreamCheckedAt ?? null,
     createdAt: skill.createdAt,
@@ -306,6 +317,33 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
     return deps.platformContext ? deps.platformContext(ctx) : ctx;
   };
 
+  /**
+   * Turn a platform skill off or back on for the caller's workspace only. Applies to a platform skill when
+   * asked (`workspaceOnly`) or when the caller is not a platform operator; returns undefined otherwise.
+   */
+  const workspaceToggle = async (
+    ctx: TenantContext,
+    skillId: string,
+    workspaceOnly: boolean | undefined,
+    off: boolean,
+  ) => {
+    if (workspaceOnly === false) return undefined;
+    const operator = isPlatformOperator(ctx.actor);
+    if (!operator) assertPermission(ctx, "skill:write");
+    const skill = await requireSkill(ctx, skillId);
+    if (skill.scope === "platform" && !workspaceOnly && operator) return undefined;
+    if (skill.scope !== "platform") {
+      if (workspaceOnly) {
+        throw new StudixError("VALIDATION", "Only a platform skill can be turned off for one workspace", {
+          suggestedAction: "Disable a workspace skill without workspaceOnly.",
+        });
+      }
+      return undefined;
+    }
+    await repository.setOptOut(ctx, skill.id, off, actorRef(ctx.actor));
+    return { skill: externalSkillView(skill), turnedOffHere: off };
+  };
+
   const scanTarget = async (
     source: GitHubSource,
     input: SkillSourceInput & { expectedCommit?: string },
@@ -367,6 +405,8 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
       unsupported?: Array<{ path: string; reason: string }>;
       /** Called before writing anything; refunds a byte budget when content turns out unchanged. */
       onUnchanged?: () => void;
+      /** Reviewed with the Studix source (bundled defaults): activate and enable without a confirmation. */
+      trusted?: boolean;
     },
   ): Promise<ImportItem> => {
     const high = bundle.risk.level === "high";
@@ -381,7 +421,7 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
     }
     // Activating a high-risk version on an enabled skill puts it to use, so it needs the confirmation too.
     let activate = options.activate;
-    if (activate && high && existing?.status === "enabled") {
+    if (activate && high && existing?.status === "enabled" && !options.trusted) {
       if (options.confirmHighRisk && canConfirmHighRisk(ctx)) activate = true;
       else activate = false;
     }
@@ -404,9 +444,13 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
     }
 
     // A confirmed, activated high-risk first version starts enabled; check who confirms before storing anything.
-    const enableConfirmed = high && !existing && activate === true && options.confirmHighRisk === true;
+    const enableConfirmed =
+      high &&
+      !existing &&
+      activate === true &&
+      (options.confirmHighRisk === true || options.trusted === true);
     const versionId = newId("eskv");
-    if (enableConfirmed) requireHighRiskConfirmation(ctx, true, versionId);
+    if (enableConfirmed && !options.trusted) requireHighRiskConfirmation(ctx, true, versionId);
     const prefix = `external-skills/${versionId}`;
     const keys = await uploadBundle(ctx, prefix, bundle);
     try {
@@ -875,6 +919,7 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
     async list(ctx: TenantContext, input: ListSkillsInput = {}) {
       assertPermission(ctx, "skill:read");
       const page = await repository.list(ctx, { ...input, scope: input.scope ?? "visible" });
+      const off = new Set(await repository.listOptOuts(ctx));
       const items = await mapLimit(page.items, limits.concurrency, async (skill) => {
         const view = externalSkillView(skill);
         const version = skill.activeVersionId
@@ -885,6 +930,7 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
           description: clip(view.description, LIST_DESCRIPTION_CHARS),
           activeRiskLevel: version ? riskOf(version).level : null,
           manageable: skill.scope === "platform" ? isPlatformOperator(ctx.actor) : true,
+          turnedOffHere: off.has(skill.id),
         };
       });
       return { trust: UNTRUSTED, items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
@@ -969,6 +1015,10 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
     /** Explicit upstream check, new version import, activation or enabling. Never pulls on its own. */
     async update(ctx: TenantContext, input: UpdateSkillInput) {
       const actor = actorRef(ctx.actor);
+      if (input.action === "enable") {
+        const here = await workspaceToggle(ctx, input.skillId, input.workspaceOnly, false);
+        if (here) return { skill: here.skill, turnedOffHere: here.turnedOffHere };
+      }
       const { skill, sctx } = await requireManageable(ctx, input.skillId);
 
       if (input.action === "enable") {
@@ -1074,7 +1124,9 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
     },
 
     /** Stop a skill from being used or listed by default, keeping every version and file. */
-    async disable(ctx: TenantContext, input: { skillId: string }) {
+    async disable(ctx: TenantContext, input: { skillId: string; workspaceOnly?: boolean }) {
+      const here = await workspaceToggle(ctx, input.skillId, input.workspaceOnly, true);
+      if (here) return { skill: here.skill, turnedOffHere: here.turnedOffHere };
       const { skill, sctx } = await requireManageable(ctx, input.skillId);
       const updated =
         skill.status === "disabled"
@@ -1093,6 +1145,44 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
       const failed = removed.filter((r) => r.status === "rejected").length;
       if (failed > 0) deps.logger?.warn("skill files left after delete", { skillId: skill.id, failed });
       return { deleted: true, skillId: skill.id, filesRemoved: keys.length - failed };
+    },
+
+    /**
+     * Store the skills bundled with Studix as enabled platform skills in `ctx`'s workspace (the platform
+     * workspace). Idempotent: unchanged content writes nothing, changed content becomes the active version.
+     * A skill an operator disabled stays disabled; a workspace can turn any of them off for itself.
+     */
+    async seedDefaults(ctx: TenantContext, skills: DefaultSkillSource[]): Promise<ImportItem[]> {
+      storage();
+      const actor = actorRef(ctx.actor);
+      return mapLimit(skills, 2, async (skill): Promise<ImportItem> => {
+        try {
+          const bundle = bundleFromFiles(skill.files, [], {
+            limits,
+            now: clock.now(),
+            origin: "Bundled with Studix as a default skill.",
+            trust:
+              "Default skill reviewed with the Studix source; its scripts run only inside the skill sandbox.",
+          });
+          const name = bundle.name.toLowerCase();
+          return await storeBundle(ctx, bundle, {
+            sourceKey: `default/${name}`,
+            source: { kind: "default", owner: "", repo: "", path: name },
+            commitSha: "default",
+            scope: "platform",
+            path: name,
+            activate: true,
+            trusted: true,
+            actor,
+          });
+        } catch (err) {
+          const error =
+            err instanceof StudixError
+              ? { code: err.code, message: err.message }
+              : { code: "INTERNAL", message: err instanceof Error ? err.message : String(err) };
+          return { path: skill.dir, outcome: "rejected", error };
+        }
+      });
     },
 
     /** Enabled skill count and a few names, for the capability handshake. */

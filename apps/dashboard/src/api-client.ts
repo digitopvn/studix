@@ -778,6 +778,7 @@ export type SkillScope = "workspace" | "platform";
 export type SkillRiskLevel = "low" | "medium" | "high";
 
 export type SkillSource =
+  | { kind: "default" }
   | { kind: "upload"; fileName: string | null }
   | { kind: "github"; owner: string; repo: string; path: string; ref: string | null; url: string };
 
@@ -792,6 +793,8 @@ export interface SkillListItem {
   upstreamStatus: string;
   activeRiskLevel: SkillRiskLevel | null;
   manageable: boolean;
+  /** A platform skill this workspace turned off for itself. */
+  turnedOffHere?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -944,9 +947,10 @@ export const api = {
       | { action: "check" }
       | { action: "import"; activate?: boolean; confirmHighRisk?: boolean }
       | { action: "activate"; versionId: string; confirmHighRisk?: boolean }
-      | { action: "enable"; confirmHighRisk?: boolean },
+      | { action: "enable"; confirmHighRisk?: boolean; workspaceOnly?: boolean },
   ) => request<Record<string, unknown>>("POST", `/api/skills/${enc(id)}/update`, input),
-  disableSkill: (id: string) => request("POST", `/api/skills/${enc(id)}/disable`, {}),
+  disableSkill: (id: string, options: { workspaceOnly?: boolean } = {}) =>
+    request("POST", `/api/skills/${enc(id)}/disable`, options),
   deleteSkill: (id: string) => request("DELETE", `/api/skills/${enc(id)}`),
   signIn: (email: string, password: string) =>
     request("POST", "/api/auth/sign-in/email", { email, password }),

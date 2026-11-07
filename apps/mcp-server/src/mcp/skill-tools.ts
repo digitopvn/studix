@@ -207,7 +207,15 @@ export const SKILL_MCP_TOOLS = [
         versionId: Id,
         confirmHighRisk: ConfirmHighRisk,
       }),
-      z.object({ skillId: Id, action: z.literal("enable"), confirmHighRisk: ConfirmHighRisk }),
+      z.object({
+        skillId: Id,
+        action: z.literal("enable"),
+        confirmHighRisk: ConfirmHighRisk,
+        workspaceOnly: z
+          .boolean()
+          .optional()
+          .describe("Platform skill: this workspace only. Default for non-operators."),
+      }),
     ]),
     readOnly: false,
     openWorld: true,
@@ -220,8 +228,15 @@ export const SKILL_MCP_TOOLS = [
   tool({
     name: SKILL_TOOL_NAMES.disable,
     title: "Disable skill",
-    description: "Stop serving a skill; versions and files stay. Re-enable with studix_skill_update.",
-    input: z.object({ skillId: Id }),
+    description:
+      "Stop serving a skill; versions and files stay. A platform default can be turned off for this workspace only. Re-enable with studix_skill_update.",
+    input: z.object({
+      skillId: Id,
+      workspaceOnly: z
+        .boolean()
+        .optional()
+        .describe("Platform skill: this workspace only. Default for non-operators."),
+    }),
     readOnly: false,
     destructive: true,
     idempotent: true,

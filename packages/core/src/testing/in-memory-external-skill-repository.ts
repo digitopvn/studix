@@ -13,6 +13,8 @@ export function createInMemoryExternalSkillRepository(
 ): ExternalSkillRepository {
   const skills = new InMemoryTenantTable<ExternalSkill>("esk", clock);
   const versions = new InMemoryTenantTable<ExternalSkillVersion>("eskv", clock, false);
+  const optOuts = new Set<string>();
+  const optOutKey = (ctx: TenantContext, skillId: string) => `${ctx.workspaceId}:${skillId}`;
 
   const record = async (
     ctx: TenantContext,
@@ -206,6 +208,22 @@ export function createInMemoryExternalSkillRepository(
         await record(ctx, actor, "external_skill.upstream_flagged", skillId, { upstreamStatus: status });
       }
       return skill;
+    },
+    async listOptOuts(ctx) {
+      const prefix = `${ctx.workspaceId}:`;
+      return [...optOuts].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+    },
+    async setOptOut(ctx, skillId, optedOut, actor) {
+      const key = optOutKey(ctx, skillId);
+      if (optOuts.has(key) === optedOut) return;
+      if (optedOut) optOuts.add(key);
+      else optOuts.delete(key);
+      await record(
+        ctx,
+        actor,
+        optedOut ? "external_skill.workspace_off" : "external_skill.workspace_on",
+        skillId,
+      );
     },
   };
 }

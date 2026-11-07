@@ -257,9 +257,9 @@ describe("zip upload", () => {
     expect(listed.items).toEqual([
       expect.objectContaining({ id: result.skillId, scope: "platform", manageable: false }),
     ]);
-    await expect(service.disable(other, { skillId: result.skillId! })).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
+    // A workspace cannot disable a platform skill for everyone, only turn it off for itself.
+    expect(await service.disable(other, { skillId: result.skillId! })).toMatchObject({ turnedOffHere: true });
+    expect((await service.get(other, { skillId: result.skillId! })).skill.status).toBe("enabled");
 
     await service.delete(operator, { skillId: result.skillId! });
     expect((await service.list(other)).items).toHaveLength(0);
