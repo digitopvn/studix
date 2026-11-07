@@ -52,7 +52,7 @@ export function corsAndOriginGuard(allowedOrigins: string[]) {
       if (req.method === "OPTIONS") {
         res
           .set({
-            "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": CORS_ALLOW_HEADERS,
             "Access-Control-Max-Age": "600",
           })

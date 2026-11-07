@@ -12,6 +12,7 @@ import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
 import { jobResourceUri, startJobChangeFeed } from "../job-change-feed.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
+import { ASSET_MCP_TOOLS } from "./asset-tools.ts";
 import { COMPOSITION_MCP_TOOLS } from "./composition-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
 import { registerJobResource, WEBHOOK_MCP_TOOLS } from "./job-notifications.ts";
@@ -60,6 +61,7 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
   const tools: readonly NativeTool[] = [
     ...NATIVE_TOOLS,
     ...AGENT_HANDOFF_MCP_TOOLS,
+    ...ASSET_MCP_TOOLS,
     ...SKILL_MCP_TOOLS,
     ...MEDIA_EXEC_MCP_TOOLS,
     ...COMPOSITION_MCP_TOOLS,

@@ -76,10 +76,26 @@ export function createInMemoryAssetRepository(clock: Clock): AssetRepository {
           (a) =>
             (query.projectId === undefined || a.projectId === query.projectId) &&
             (query.kind === undefined || a.kind === query.kind) &&
+            (query.q === undefined || a.name.toLowerCase().includes(query.q.toLowerCase())) &&
+            (query.state === "all" || (query.state === "deleted") === (a.deletedAt !== undefined)) &&
             (query.cursor === undefined || a.id < query.cursor),
         )
         .slice(0, limit + 1);
       return toPage(rows, limit);
+    },
+    async update(ctx, id, patch) {
+      if (!assets.get(ctx, id)) throw new StudixError("NOT_FOUND", `asset ${id} not found`);
+      const { projectId, ...rest } = patch;
+      return assets.update(ctx, id, {
+        ...rest,
+        ...(projectId === undefined ? {} : { projectId: projectId ?? undefined }),
+      });
+    },
+    async setDeleted(ctx, id, deleted) {
+      const current = assets.get(ctx, id);
+      if (!current) throw new StudixError("NOT_FOUND", `asset ${id} not found`);
+      if (Boolean(current.deletedAt) === deleted) return current;
+      return assets.update(ctx, id, { deletedAt: deleted ? new Date() : undefined });
     },
     async addVersion(ctx, input) {
       if (!assets.get(ctx, input.assetId))

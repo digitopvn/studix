@@ -1,6 +1,7 @@
 export * from "./endpoint-guard.ts";
 export * from "./in-memory-storage-adapter.ts";
 export * from "./profile-storage-router.ts";
+export * from "./public-url-fetch.ts";
 export * from "./s3-storage-adapter.ts";
 export {
   attachmentDisposition,

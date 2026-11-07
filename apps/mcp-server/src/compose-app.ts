@@ -21,6 +21,7 @@ import {
   withSelfHostedSecretsKey,
 } from "@studix/auth";
 import {
+  createAssetService,
   createCompositionService,
   createDefaultApprovalPolicy,
   createMediaExecService,
@@ -51,6 +52,7 @@ import {
   assertKeyPrefix,
   assertSafeStorageEndpoint,
   createS3StorageAdapterFromConfig,
+  fetchPublicUrlWithType,
   type S3Credentials,
   S3StorageAdapter,
   storageProfileOptions,
@@ -344,6 +346,14 @@ export async function composeApp(
       allowLocal: config.STUDIX_WEBHOOK_ALLOW_LOCAL,
     }),
     agentHandoffs: integrations.agentHandoffs,
+    assets: createAssetService({
+      assets: repos.assets,
+      projects: repos.projects,
+      audit: repos.audit,
+      revisions: repos.revisions,
+      ...(integrations.storage ? { storage: integrations.storage } : {}),
+      fetchUrl: fetchPublicUrlWithType,
+    }),
     mediaExec: createMediaExecService({
       queue: repos.queue,
       assets: repos.assets,
