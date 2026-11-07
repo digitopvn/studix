@@ -405,6 +405,92 @@ stored and each version has a risk report; content stays untrusted. Guide:
   with the active version only and may report `unknown`; reading a non-active
   `versionId` needs `skill:write`. `list`/`discover` results carry `trust`.
 
+### Media exec (ffmpeg / ffprobe)
+
+`studix_media_exec` runs `ffmpeg` or `ffprobe` with raw arguments as an async
+worker job in an offline sandbox container. It needs the `media:exec` permission
+(editor role and up; OAuth scope `studix:write`) and `STUDIX_SANDBOX=docker` on
+the worker. Threat model: [SECURITY.md](SECURITY.md#media-exec).
+
+| Argument         | Notes                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `tool`           | `ffmpeg` or `ffprobe`.                                                                           |
+| `args`           | argv, no shell (max 500, 8000 chars each). Files only as `{in:<name>}` and `{out:<name>}`.       |
+| `inputs`         | `name -> {assetId}`, `{url}` (public https, SSRF-guarded) or `{base64}` (2 MB each, 4 MB total). |
+| `outputs`        | `[{name, contentType?}]`; every output must be referenced. ffmpeg needs at least one.            |
+| `timeoutSeconds` | Default 300, max 1800.                                                                           |
+| `budgetCents`    | Job budget; compute time is metered per started minute.                                          |
+| `idempotencyKey` | The same key returns the earlier job (`replayed: true`).                                         |
+
+Names match `[A-Za-z0-9][A-Za-z0-9_.-]*`. Absolute, Windows, home and `..`
+paths, URLs, protocol prefixes (`concat:`, `file:`, `subfile,`) and the options
+`-protocol_whitelist`, `-protocol_blacklist` and `-safe` are `VALIDATION`.
+Studix adds `-hide_banner -nostdin` and `-protocol_whitelist file,pipe` itself.
+
+The tool returns `{jobId, status, replayed}`; poll `studix_get_job`. A finished
+job's `result` holds `exitCode`, `durationMs`, truncated `stdout` / `stderr`,
+`json` (parsed ffprobe output when stdout is JSON) and `outputs` with
+`assetId`, `name`, `contentType`, `bytes`, `sha256` and a signed `url`. A
+non-zero exit fails the job with `VALIDATION` and the stderr tail in
+`error.message` (`details.exitCode`, `details.stderrTail`); the time is still
+billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
+
+```json
+{
+  "tool": "ffmpeg",
+  "args": ["-i", "{in:a.mp4}", "-vf", "scale=iw/2:-2", "-c:a", "copy", "{out:small.mp4}"],
+  "inputs": { "a.mp4": { "assetId": "ast_..." } },
+  "outputs": [{ "name": "small.mp4" }]
+}
+```
+
+```json
+{
+  "tool": "ffmpeg",
+  "args": [
+    "-i",
+    "{in:one.mp4}",
+    "-i",
+    "{in:two.mp4}",
+    "-filter_complex",
+    "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]",
+    "-map",
+    "[v]",
+    "-map",
+    "[a]",
+    "{out:joined.mp4}"
+  ],
+  "inputs": { "one.mp4": { "assetId": "ast_1" }, "two.mp4": { "url": "https://example.com/two.mp4" } },
+  "outputs": [{ "name": "joined.mp4" }]
+}
+```
+
+```json
+{
+  "tool": "ffmpeg",
+  "args": ["-i", "{in:v.mp4}", "-vn", "-c:a", "libmp3lame", "{out:audio.mp3}"],
+  "inputs": { "v.mp4": { "assetId": "ast_..." } },
+  "outputs": [{ "name": "audio.mp3" }]
+}
+```
+
+```json
+{
+  "tool": "ffmpeg",
+  "args": ["-ss", "0.5", "-i", "{in:v.mp4}", "-frames:v", "1", "{out:thumb.png}"],
+  "inputs": { "v.mp4": { "assetId": "ast_..." } },
+  "outputs": [{ "name": "thumb.png" }]
+}
+```
+
+```json
+{
+  "tool": "ffprobe",
+  "args": ["-v", "error", "-of", "json", "-show_format", "-show_streams", "{in:v.mp4}"],
+  "inputs": { "v.mp4": { "assetId": "ast_..." } }
+}
+```
+
 ## P0 meta-tools (MCP-in-MCP)
 
 Third-party tools registered in the workspace are reached only through these
