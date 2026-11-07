@@ -141,6 +141,25 @@ another name does not open). Rules:
 - Every change is audited (`platform_credential.created`, `rotated`, `revoked`,
   `tested`) in the operator's workspace.
 
+### Workspace media keys (BYOK)
+
+A workspace admin may store the workspace's own key for a Multix vendor under
+**AI & Providers → Media vendor keys**. Rules:
+
+- Stored as a `provider_connections` row (`provider: media-<vendor>`, owner
+  `workspace`), sealed like other provider keys and bound to the organization,
+  workspace and row id. The row has no agent runtime, and the generic
+  connection calls refuse it, so Claude or Pi can never be handed a media key.
+- The worker reads the keys of the job's own workspace only, right before each
+  media generate or resume, and layers them over the platform keys for that
+  call. The shared `multix check` capability probe never sees them.
+- Spend on a workspace key is recorded with `funding: "workspace"` on the
+  provider execution and the usage line: recorded, not charged (ADR-0016). A
+  call whose vendor has no workspace key keeps the platform key and funding.
+- Removing a key revokes the row in Studix, not at the vendor.
+- Audit events: `provider_connection.created`, `rotated`, `revoked`, in the
+  workspace that owns the key.
+
 ### Anthropic provider credentials
 
 Workspaces connect Claude through **AI & Providers** in the dashboard

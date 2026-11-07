@@ -210,6 +210,7 @@ export async function composeApp(
     isSupportedProvider: isRuntimeKeyProvider,
     secrets: secretBox,
     claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
+    mediaKeyNames: MULTIX_VENDOR_KEYS,
     logger,
   });
   if (!config.STUDIX_SECRETS_KEY)

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -76,6 +77,12 @@ export interface MultixProviderOptions {
    * the cached `multix check` result. A throwing source leaves the environment keys in place.
    */
   credentials?: () => Promise<{ values: Readonly<Record<string, string>>; revision: string }>;
+  /**
+   * A workspace's own vendor keys (BYOK) by variable name, read before each generate or resume of that
+   * workspace. They win over the platform keys for that call only and never reach another workspace's
+   * calls or the shared capability probe. Spend on such a key is reported with `funding: "workspace"`.
+   */
+  workspaceCredentials?: (ctx: TenantContext) => Promise<Readonly<Record<string, string>>>;
   /** Let multix read ~/.multix/.env (local development only). */
   allowHomeEnv?: boolean;
   /** Longest wait for one upstream job. */
@@ -228,6 +235,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   private lastReadiness: MultixReadiness | undefined;
   private readonly credentialSource: MultixProviderOptions["credentials"];
   private credentialRevision: string | undefined;
+  private readonly workspaceCredentialSource: MultixProviderOptions["workspaceCredentials"];
+  /** The workspace keys of the generate or resume call in progress; empty outside one. */
+  private readonly workspaceKeys = new AsyncLocalStorage<Readonly<Record<string, string>>>();
 
   constructor(options: MultixProviderOptions = {}) {
     const bin = options.bin?.trim();
@@ -244,6 +254,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     this.sourceEnv = options.env ?? process.env;
     this.allowHomeEnv = options.allowHomeEnv ?? false;
     this.credentialSource = options.credentials;
+    this.workspaceCredentialSource = options.workspaceCredentials;
     this.waitTimeoutMs = options.waitTimeoutMs ?? DEFAULT_WAIT_MS;
     this.journal = options.journal ?? new InMemoryMediaJobJournal();
     this.clock = options.clock ?? systemClock;
@@ -374,6 +385,19 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   }
 
   async generate(ctx: TenantContext, request: MediaGenerationRequest): Promise<MediaGenerationResult> {
+    let vendor: MultixVendor | undefined;
+    try {
+      vendor = resolveMultixModel(request, this.defaults, this.voiceRoutes).model.vendor;
+    } catch {
+      // An invalid request fails with its own error below.
+    }
+    return this.withWorkspaceKeys(ctx, vendor, () => this.generateWithKeys(ctx, request));
+  }
+
+  private async generateWithKeys(
+    ctx: TenantContext,
+    request: MediaGenerationRequest,
+  ): Promise<MediaGenerationResult> {
     const started = this.clock.now().getTime();
     assertGenerationRequest(request);
     this.assertEnabled();
@@ -455,7 +479,43 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   }
 
   /** Collect an upstream job by id without submitting anything (no new charge). */
-  async resume(_ctx: TenantContext, request: MediaResumeRequest): Promise<MediaGenerationResult> {
+  async resume(ctx: TenantContext, request: MediaResumeRequest): Promise<MediaGenerationResult> {
+    const vendor = (MULTIX_VENDORS as readonly string[]).includes(request.job?.provider)
+      ? (request.job.provider as MultixVendor)
+      : undefined;
+    return this.withWorkspaceKeys(ctx, vendor, () => this.resumeWithKeys(request));
+  }
+
+  /**
+   * Run one call with the workspace's own keys layered over the platform keys, and say who paid: the
+   * workspace when its key for the call's vendor was used. A failing source falls back to platform keys.
+   */
+  private async withWorkspaceKeys(
+    ctx: TenantContext,
+    vendor: MultixVendor | undefined,
+    run: () => Promise<MediaGenerationResult>,
+  ): Promise<MediaGenerationResult> {
+    let keys: Readonly<Record<string, string>> = {};
+    if (this.workspaceCredentialSource) {
+      try {
+        keys = await this.workspaceCredentialSource(ctx);
+      } catch {
+        keys = {};
+      }
+    }
+    const own = vendor !== undefined && Boolean(keys[MULTIX_VENDOR_KEYS[vendor]]);
+    if (!own) return this.workspaceKeys.run(keys, run);
+    try {
+      return { ...(await this.workspaceKeys.run(keys, run)), funding: "workspace" };
+    } catch (err) {
+      if (err instanceof MediaChargedError) {
+        throw new MediaChargedError(err, { ...err.charge, funding: "workspace" });
+      }
+      throw err;
+    }
+  }
+
+  private async resumeWithKeys(request: MediaResumeRequest): Promise<MediaGenerationResult> {
     const started = this.clock.now().getTime();
     this.assertEnabled();
     const { job } = request;
@@ -513,7 +573,10 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     const env: Record<string, string> = {};
     const vendorKeys: readonly string[] = Object.values(MULTIX_VENDOR_KEYS);
     for (const name of [...PASSTHROUGH_ENV, ...vendorKeys]) {
-      const value = (vendorKeys.includes(name) ? stored[name] : undefined) ?? this.sourceEnv[name];
+      const own = this.workspaceKeys.getStore() ?? {};
+      const value = vendorKeys.includes(name)
+        ? own[name] || stored[name] || this.sourceEnv[name]
+        : this.sourceEnv[name];
       if (value !== undefined && value !== "") env[name] = value;
     }
     env.MULTIX_OUTPUT_DIR = cacheDir;
@@ -976,7 +1039,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   }
 
   private probeCapabilities(): Promise<MediaCapability[]> {
-    return this.inScratchDir((cwd) => this.probeCapabilitiesIn(cwd));
+    // The probe is shared by every workspace, so it never runs on one workspace's own keys.
+    return this.workspaceKeys.exit(() => this.inScratchDir((cwd) => this.probeCapabilitiesIn(cwd)));
   }
 
   private async probeCapabilitiesIn(cwd: string): Promise<MediaCapability[]> {

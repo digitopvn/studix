@@ -17,6 +17,7 @@ import {
 import { StudixError, toStudixError } from "@studix/shared";
 import { knowledgeCatalog } from "@studix/skills";
 import type { WorkerPorts } from "./wiring.ts";
+import { providerConnections } from "./worker-ports.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
 
@@ -71,10 +72,13 @@ export async function loadPackServices(
 ): Promise<Pick<WorkerPorts, "media" | "qa" | "speech">> {
   const { config } = settings;
   const credentials = platformCredentials(settings, runtime);
+  const workspaceKeys = providerConnections(settings, runtime);
   const media = createMultixProviderFromConfig(config, {
     env: runtime.env,
     // Vendor keys an operator set in the dashboard apply to the next Multix call, with no restart.
     ...(credentials ? { credentials: () => credentials.loadValues() } : {}),
+    // A workspace's own vendor keys (BYOK) win for that workspace's media calls only.
+    ...(workspaceKeys ? { workspaceCredentials: (ctx) => workspaceKeys.resolveMediaKeys(ctx) } : {}),
   });
   const toolchain = resolveQaToolchain(runtime.env);
   const qaStatus = qaToolchainStatus(toolchain, runtime.env);
