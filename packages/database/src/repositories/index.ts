@@ -3,6 +3,7 @@ import type { StudixDb } from "../client.ts";
 import { createAgentHandoffRepository } from "./agent-handoff-repository.ts";
 import { createAssetRepository } from "./asset-repository.ts";
 import { createConnectorRepository } from "./connector-repository.ts";
+import { createExternalSkillRepository } from "./external-skill-repository.ts";
 import {
   createApprovalRepository,
   createAuditRepository,
@@ -13,6 +14,7 @@ import {
   createModelPreferenceRepository,
   createModelSnapshotRepository,
 } from "./model-preference-repository.ts";
+import { createPlatformCredentialRepository } from "./platform-credential-repository.ts";
 import { createProjectRepository } from "./project-repository.ts";
 import { createProviderConnectionRepository } from "./provider-connection-repository.ts";
 import { createRateLimitRepository } from "./rate-limit-repository.ts";
@@ -25,14 +27,17 @@ import {
   createTenantDirectory,
   createWorkspaceRepository,
 } from "./tenancy-repositories.ts";
+import { createWorkspaceMultixSettingsRepository } from "./workspace-multix-settings-repository.ts";
 import { createWorkspaceSettingsRepository } from "./workspace-settings-repository.ts";
 
 export * from "./agent-handoff-repository.ts";
 export * from "./asset-repository.ts";
 export * from "./connector-repository.ts";
+export * from "./external-skill-repository.ts";
 export * from "./governance-repositories.ts";
 export * from "./job-repository.ts";
 export * from "./model-preference-repository.ts";
+export * from "./platform-credential-repository.ts";
 export * from "./project-repository.ts";
 export * from "./provider-connection-repository.ts";
 export * from "./rate-limit-repository.ts";
@@ -41,6 +46,7 @@ export * from "./revision-repositories.ts";
 export * from "./storyboard-repository.ts";
 export * from "./telemetry-repositories.ts";
 export * from "./tenancy-repositories.ts";
+export * from "./workspace-multix-settings-repository.ts";
 export * from "./workspace-settings-repository.ts";
 
 /** Every Postgres repository (plus the producer-side job queue) over one database handle. */
@@ -67,11 +73,14 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     usage: createUsageRepository(db, clock),
     activity: createActivityRepository(db, clock),
     connectors: createConnectorRepository(db, clock),
+    externalSkills: createExternalSkillRepository(db, clock),
     providerConnections: createProviderConnectionRepository(db, clock),
     modelPreferences: createModelPreferenceRepository(db, clock),
     modelSnapshots: createModelSnapshotRepository(db, clock),
+    platformCredentials: createPlatformCredentialRepository(db, clock),
     rateLimits: createRateLimitRepository(db),
     workspaceSettings: createWorkspaceSettingsRepository(db),
+    workspaceMultixSettings: createWorkspaceMultixSettingsRepository(db),
   };
 }
 

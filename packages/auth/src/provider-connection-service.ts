@@ -231,6 +231,40 @@ export interface ProviderConnectionService {
     connectionId: string,
     runtime: AgentRuntimeName,
   ): Promise<ProviderConnectionView>;
+  /** The workspace's own media vendor keys (BYOK), one entry per vendor the server accepts. */
+  listMediaKeys(ctx: TenantContext): Promise<WorkspaceMediaKeysOverview>;
+  /** Store or replace the workspace's key for one media vendor (workspace admins only). */
+  saveMediaKey(ctx: TenantContext, vendor: string, input: RotateApiKeyInput): Promise<WorkspaceMediaKeyView>;
+  /** Remove the workspace's key; the vendor falls back to the platform key. */
+  removeMediaKey(ctx: TenantContext, vendor: string): Promise<WorkspaceMediaKeyView>;
+  /**
+   * Plaintext media keys of the caller's workspace, by environment variable name, for the process that
+   * runs its media calls. Never throws: an unreadable row is skipped and logged.
+   */
+  resolveMediaKeys(ctx: TenantContext): Promise<Readonly<Record<string, string>>>;
+}
+
+/** One media vendor as a workspace admin sees it; the key itself never leaves the service. */
+export interface WorkspaceMediaKeyView {
+  vendor: string;
+  /** `workspace` when the workspace has its own key, else media calls use the platform key. */
+  source: "workspace" | "platform";
+  keyHint?: string;
+  version?: number;
+  updatedAt?: Date;
+}
+
+export interface WorkspaceMediaKeysOverview {
+  storage: "available" | "unavailable";
+  canManage: boolean;
+  keys: WorkspaceMediaKeyView[];
+}
+
+/** Provider id of a workspace media key row; agent runtimes never resolve these rows. */
+export const MEDIA_PROVIDER_PREFIX = "media-";
+
+export function isMediaProvider(provider: string): boolean {
+  return provider.startsWith(MEDIA_PROVIDER_PREFIX);
 }
 
 export interface ProviderConnectionServiceDeps {
@@ -250,6 +284,11 @@ export interface ProviderConnectionServiceDeps {
    * or the owner's switch on a self-hosted server (`WorkspaceFeatureService.effective`).
    */
   claudeSubscription?: boolean | ((ctx: TenantContext) => Promise<boolean>);
+  /**
+   * Media vendors a workspace may bring its own key for, vendor id to the environment variable the media
+   * CLI reads (the Multix vendor keys). Without it no media key can be stored.
+   */
+  mediaKeyNames?: Readonly<Record<string, string>>;
   logger?: Logger;
 }
 
@@ -462,9 +501,32 @@ export function createProviderConnectionService(
     }
   };
 
+  const mediaKeyNames = deps.mediaKeyNames ?? {};
+
+  const requireMediaVendor = (vendor: string) => {
+    if (!Object.hasOwn(mediaKeyNames, vendor)) {
+      throw new StudixError("VALIDATION", `Media vendor ${vendor} is not supported`, {
+        retryable: false,
+        details: { supported: Object.keys(mediaKeyNames) },
+      });
+    }
+  };
+
+  /** The caller's workspace media key rows with a key, by vendor; the repository scopes by workspace. */
+  const mediaRows = async (ctx: TenantContext): Promise<Map<string, ProviderConnectionRecord>> => {
+    const rows = new Map<string, ProviderConnectionRecord>();
+    for (const row of await deps.connections.listActive(ctx)) {
+      if (!isMediaProvider(row.provider) || row.ownerType !== "workspace" || !row.secretCiphertext) continue;
+      const vendor = row.provider.slice(MEDIA_PROVIDER_PREFIX.length);
+      if (Object.hasOwn(mediaKeyNames, vendor)) rows.set(vendor, row);
+    }
+    return rows;
+  };
+
   const load = async (ctx: TenantContext, id: string): Promise<ProviderConnectionRecord> => {
     const row = await deps.connections.get(ctx, id);
-    if (!row || row.revokedAt || !canSee(ctx, row)) {
+    // Media keys have their own calls: the generic ones could enable them for an agent runtime.
+    if (!row || row.revokedAt || isMediaProvider(row.provider) || !canSee(ctx, row)) {
       throw new StudixError("NOT_FOUND", `provider connection ${id} not found`);
     }
     return row;
@@ -517,6 +579,7 @@ export function createProviderConnectionService(
       !row ||
       row.revokedAt ||
       !row.secretCiphertext ||
+      isMediaProvider(row.provider) ||
       (row.authMethod !== "api_key" && !(subscription && (await subscriptionOn(ctx))))
     ) {
       throw new StudixError("UNAVAILABLE", "The selected provider connection no longer exists", {
@@ -591,7 +654,7 @@ export function createProviderConnectionService(
         canAddWorkspaceKey: Boolean(deps.secrets) && can(ctx.actor, "member:manage"),
         canAddPersonalKey: Boolean(deps.secrets) && canAddPersonal(ctx),
         connections: rows
-          .filter((row) => visible(row, subscriptions) && canSee(ctx, row))
+          .filter((row) => !isMediaProvider(row.provider) && visible(row, subscriptions) && canSee(ctx, row))
           .map((row) => toView(ctx, row)),
       };
     },
@@ -827,5 +890,106 @@ export function createProviderConnectionService(
     async assertUsable(ctx, connectionId, runtime) {
       return toView(ctx, await usableRow(ctx, connectionId, actorRef(ctx.actor), runtime));
     },
+
+    async listMediaKeys(ctx) {
+      assertPermission(ctx, "workspace:read");
+      const rows = await mediaRows(ctx);
+      return {
+        storage: deps.secrets ? "available" : "unavailable",
+        canManage: Boolean(deps.secrets) && can(ctx.actor, "member:manage"),
+        keys: Object.keys(mediaKeyNames).map((vendor) => mediaView(vendor, rows.get(vendor))),
+      };
+    },
+
+    async saveMediaKey(ctx, vendor, rawInput) {
+      assertPermission(ctx, "member:manage");
+      requireMediaVendor(vendor);
+      const { apiKey } = parse(RotateApiKeyInput, rawInput);
+      assertKeyShape(mediaProvider(vendor), apiKey);
+      const secrets = requireSecrets();
+      const existing = (await mediaRows(ctx)).get(vendor);
+      if (existing) {
+        const row = await deps.connections.update(ctx, existing.id, {
+          status: "unverified",
+          secretCiphertext: secrets.seal(apiKey, associatedData(ctx, existing.id)),
+          secretHint: apiKeyHint(existing.provider, apiKey),
+        });
+        await audit(ctx, "rotated", row);
+        return mediaView(vendor, row);
+      }
+      const id = newId("pcon");
+      const row = await deps.connections.create(ctx, {
+        id,
+        provider: mediaProvider(vendor),
+        authMethod: "api_key",
+        ownerType: "workspace",
+        label: "Workspace media key",
+        // Vendors differ too much for a free check; the first media call is the test.
+        status: "unverified",
+        secretCiphertext: secrets.seal(apiKey, associatedData(ctx, id)),
+        secretHint: apiKeyHint(mediaProvider(vendor), apiKey),
+        // No agent runtime may ever spend a media key.
+        runtimes: [],
+        billingSource: "usage_based",
+        createdBy: actorRef(ctx.actor),
+      });
+      await audit(ctx, "created", row);
+      deps.logger?.info("workspace media key stored", {
+        connectionId: id,
+        vendor,
+        workspaceId: ctx.workspaceId,
+      });
+      return mediaView(vendor, row);
+    },
+
+    async removeMediaKey(ctx, vendor) {
+      assertPermission(ctx, "member:manage");
+      requireMediaVendor(vendor);
+      const existing = (await mediaRows(ctx)).get(vendor);
+      if (!existing) throw new StudixError("NOT_FOUND", `This workspace has no ${vendor} key`);
+      const row = await deps.connections.revoke(ctx, existing.id);
+      await audit(ctx, "revoked", row);
+      return mediaView(vendor, undefined);
+    },
+
+    async resolveMediaKeys(ctx) {
+      if (!deps.secrets) return {};
+      const values: Record<string, string> = {};
+      let rows: Map<string, ProviderConnectionRecord>;
+      try {
+        rows = await mediaRows(ctx);
+      } catch {
+        return {};
+      }
+      for (const [vendor, row] of rows) {
+        try {
+          values[mediaKeyNames[vendor] as string] = deps.secrets.open(
+            row.secretCiphertext as string,
+            associatedData(ctx, row.id),
+          );
+        } catch {
+          deps.logger?.error("workspace media key could not be decrypted", {
+            connectionId: row.id,
+            workspaceId: ctx.workspaceId,
+          });
+        }
+      }
+      return values;
+    },
+  };
+}
+
+function mediaProvider(vendor: string): string {
+  return `${MEDIA_PROVIDER_PREFIX}${vendor}`;
+}
+
+function mediaView(vendor: string, row: ProviderConnectionRecord | undefined): WorkspaceMediaKeyView {
+  if (!row) return { vendor, source: "platform" };
+  return {
+    vendor,
+    source: "workspace",
+    ...(row.secretHint ? { keyHint: row.secretHint } : {}),
+    version: row.version,
+    updatedAt: row.updatedAt,
   };
 }

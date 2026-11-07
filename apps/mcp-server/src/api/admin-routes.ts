@@ -13,6 +13,7 @@ import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
 import { claudePlannerOn } from "../planner-selection.ts";
 import type { ConnectorAdmin } from "../ports.ts";
+import type { WorkspaceMultixApi } from "../workspace-multix.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
 
 const AddConnectorBody = z
@@ -110,6 +111,15 @@ function requireProviders(deps: AppDeps): ProviderConnectionService {
   return deps.providers;
 }
 
+function requireMultix(deps: AppDeps): WorkspaceMultixApi {
+  if (!deps.multix) {
+    throw new StudixError("UNAVAILABLE", "Multix settings are not enabled on this server", {
+      retryable: false,
+    });
+  }
+  return deps.multix;
+}
+
 function requireModels(deps: AppDeps): ModelPreferenceService {
   if (!deps.modelPreferences) {
     throw new StudixError("UNAVAILABLE", "Model selection is not enabled on this server", {
@@ -200,6 +210,32 @@ export function providerRoutes(deps: AppDeps): Router {
   });
   router.delete("/connections/:connectionId", async (req, res) => {
     res.json(await requireProviders(deps).remove(sessionOf(res).ctx, idParam(req, "connectionId")));
+  });
+
+  // The workspace's own media vendor keys (BYOK); the service accepts only the Multix vendors.
+  router.get("/media-keys", async (_req, res) => {
+    res.json(await requireProviders(deps).listMediaKeys(sessionOf(res).ctx));
+  });
+  router.put("/media-keys/:vendor", async (req, res) => {
+    const vendor = String(req.params.vendor);
+    res.json(await requireProviders(deps).saveMediaKey(sessionOf(res).ctx, vendor, req.body ?? {}));
+  });
+  router.delete("/media-keys/:vendor", async (req, res) => {
+    res.json(await requireProviders(deps).removeMediaKey(sessionOf(res).ctx, String(req.params.vendor)));
+  });
+
+  // The workspace's Multix settings (models, voice routes, switch, timeout); they win over MULTIX_* env.
+  router.get("/multix", async (_req, res) => {
+    res.json(await requireMultix(deps).settings.view(sessionOf(res).ctx));
+  });
+  router.put("/multix", async (req, res) => {
+    res.json(await requireMultix(deps).settings.update(sessionOf(res).ctx, req.body ?? {}));
+  });
+  router.delete("/multix", async (_req, res) => {
+    res.json(await requireMultix(deps).settings.reset(sessionOf(res).ctx));
+  });
+  router.post("/multix/check", async (_req, res) => {
+    res.json(await requireMultix(deps).check(sessionOf(res).ctx));
   });
 
   router.get("/models", async (_req, res) => {

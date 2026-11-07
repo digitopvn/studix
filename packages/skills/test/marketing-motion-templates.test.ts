@@ -18,6 +18,8 @@ import {
   voiceoverWordBudget,
   wordCount,
 } from "../src/index.ts";
+import { VO_WORDS_PER_SECOND } from "../src/marketing-video/marketing-script.ts";
+import { voiceLines } from "../src/voice-lines.ts";
 
 const brief = {
   prompt: "Ba quảng cáo dọc cho tiệm trà Lá Mây",
@@ -345,6 +347,23 @@ describe("motion graphic", () => {
     expect(codeOf(() => motionGraphicTemplate({ prompt: "x", durationMs: 6_000, keyMessages: [long] }))).toBe(
       "VALIDATION",
     );
+  });
+
+  it("gives a long hook the time it takes to say, not an even split with a short call to action", () => {
+    const hook = "Motion graphic intro for Studix: kinetic title, videos made by agents in minutes";
+    const ir = motionGraphicTemplate({
+      prompt: hook,
+      title: hook,
+      durationMs: 10_000,
+      callToAction: "Try Studix",
+    });
+    const [first, cta] = ir.scenes;
+    expect(ir.scenes).toHaveLength(2);
+    expect((first?.durationMs ?? 0) + (cta?.durationMs ?? 0)).toBe(10_000);
+    expect(first?.durationMs).toBeGreaterThan(cta?.durationMs ?? 0);
+    for (const line of voiceLines(ir)) {
+      expect(line.roomMs).toBeGreaterThanOrEqual((wordCount(line.text) / VO_WORDS_PER_SECOND) * 1000);
+    }
   });
 });
 

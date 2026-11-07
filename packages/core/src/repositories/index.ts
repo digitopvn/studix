@@ -1,5 +1,6 @@
 export * from "./agent-handoff-repository.ts";
 export * from "./asset-repository.ts";
+export * from "./external-skill-repository.ts";
 export * from "./governance-repositories.ts";
 export * from "./job-repository.ts";
 export * from "./pagination.ts";

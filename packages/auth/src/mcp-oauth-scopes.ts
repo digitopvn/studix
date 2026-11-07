@@ -6,8 +6,15 @@ import { isPermission, type Permission } from "@studix/core";
  * it. Approvals, publishing, API-key and member administration are not reachable through OAuth.
  */
 export const MCP_OAUTH_SCOPES = {
-  "studix:read": ["workspace:read", "project:read", "asset:read"],
-  "studix:write": ["project:write", "job:cancel", "job:retry", "asset:write", "approval:request"],
+  "studix:read": ["workspace:read", "project:read", "asset:read", "skill:read"],
+  "studix:write": [
+    "project:write",
+    "job:cancel",
+    "job:retry",
+    "asset:write",
+    "skill:write",
+    "approval:request",
+  ],
 } as const satisfies Record<string, readonly Permission[]>;
 
 export type McpOAuthScope = keyof typeof MCP_OAUTH_SCOPES;

@@ -15,7 +15,9 @@ import type {
 import type { RateLimitRepository } from "@studix/database";
 import type { ActivityRecorder } from "@studix/observability";
 import type { Logger } from "@studix/shared";
+import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
+import type { PlatformSettingsService } from "./platform-settings.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -24,6 +26,7 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
+import type { WorkspaceMultixApi } from "./workspace-multix.ts";
 
 /** Product limits and defaults advertised by `studix_inspect` (values come from configuration). */
 export interface AppLimits {
@@ -79,6 +82,12 @@ export interface AppDeps {
   skills?: SkillSummary[];
   /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
   agentHandoffs?: AgentHandoffService;
+  /** Imported GitHub skills; without it the skill tools answer UNAVAILABLE. */
+  externalSkills?: ExternalSkillService;
+  /** Storage & media settings for platform operators; without it the platform API answers UNAVAILABLE. */
+  platform?: PlatformSettingsService;
+  /** A workspace's Multix settings and status; without it the Multix API answers UNAVAILABLE. */
+  multix?: WorkspaceMultixApi;
 
   /** Built dashboard directory; when missing, browser navigations get a 503 page. */
   dashboardDist?: string;

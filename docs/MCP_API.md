@@ -338,6 +338,33 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   more run with every limit doubled; rejecting it fails the job with
   `FORBIDDEN`.
 
+### Imported GitHub skills
+
+Public GitHub Agent Skills (`SKILL.md`) imported into the workspace and read
+back as untrusted reference text. Guide: [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
+
+| Tool                    | Arguments                                                                                          | Returns                                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `studix_skill_discover` | `repositoryUrl`, `ref?`, `path?`                                                                   | Pinned `source.commitSha` and every `SKILL.md` found (valid or invalid, stored vs described files).   |
+| `studix_skill_import`   | `repositoryUrl`, `ref?`, `path?`, `skillPaths?`, `expectedCommit?`, `idempotencyKey?`, `activate?` | Per skill: `imported`, `new_version`, `unchanged` or `rejected`, ids, license, `nameCollisions`.      |
+| `studix_skill_list`     | `limit?`, `cursor?`, `status?`, `q?`, `owner?`, `repo?`                                            | Skills (enabled by default) with `activeVersionId` and upstream status.                               |
+| `studix_skill_get`      | `skillId`, `versionId?`, `path?`, `offset?`, `limit?`, `includeVersions?`                          | Metadata, license, notices, `securityNotes`, file list, a bounded text slice and a `trust` block.     |
+| `studix_skill_update`   | `skillId`, `action`: `check`, `import`, `activate` (`versionId`) or `enable`                       | Updated skill and, for `check`/`import`, the upstream result. Never changes the active version alone. |
+| `studix_skill_disable`  | `skillId`                                                                                          | The disabled skill; versions and files are kept.                                                      |
+- `discover` and `import` read from GitHub (`openWorldHint`); nothing from a
+  repository is executed. Only `github.com` repository URLs are accepted, other
+  hosts, IPs and schemes are `VALIDATION`.
+- Reading needs `skill:read`; `discover`, `import`, `update` and `disable` need
+  `skill:write`. Other workspaces' skills are `NOT_FOUND`; a disabled skill is
+  `CONFLICT` on `get`.
+- Errors: `NOT_FOUND` (repository not public, path or skill missing),
+  `CONFLICT` (`expectedCommit` mismatch), `RATE_LIMITED` (with the reset time),
+  `UNAVAILABLE` (no object storage).
+- `studix_inspect` returns `importedSkills` (`shown` names) when the caller may read them.
+- A full commit SHA `ref` must be on the default branch. `update` `check` compares
+  with the active version only and may report `unknown`; reading a non-active
+  `versionId` needs `skill:write`. `list`/`discover` results carry `trust`.
+
 ## P0 meta-tools (MCP-in-MCP)
 
 Third-party tools registered in the workspace are reached only through these
@@ -351,6 +378,34 @@ three tools; they never appear in `tools/list`.
 
 Every execute is re-authorized at call time; a grant revoked after search
 returns `FORBIDDEN`. See [SECURITY.md](SECURITY.md#mcp-in-mcp-connectors).
+
+## Platform settings (dashboard API only)
+
+Storage and media settings are not MCP tools: agents and API keys cannot read
+or change them. They are dashboard session routes for the `operator` role
+(anything else gets `403 FORBIDDEN`; no session gets `401`). Responses are
+`Cache-Control: no-store` and never carry a key value.
+
+| Route                                   | Body        | Returns                                                              |
+| --------------------------------------- | ----------- | -------------------------------------------------------------------- |
+| `GET /api/platform/storage-media`       | none        | Redacted R2 status, media executable status, vendor key metadata.    |
+| `POST /api/platform/storage/test`       | `{}`        | Put/get/head/delete result with a diagnosis and a suggested action.  |
+| `POST /api/platform/media/test`         | `{}`        | Safe `multix check` result; `paidCalls` is always `false`.           |
+| `PUT /api/platform/media-keys/:name`    | `{ value }` | Credential metadata with a last-four hint. Name must be allowlisted. |
+| `DELETE /api/platform/media-keys/:name` | none        | Metadata after removal; the environment value, if any, applies.      |
+
+### Workspace media keys (BYOK)
+
+A workspace may bring its own key for each Multix vendor (`sume`, `atlas`,
+`elevenlabs`, `fish`, `minimax`, `openrouter`). These are dashboard session
+routes too, `Cache-Control: no-store`, and never return the key. Any member
+may read; only workspace admins (`member:manage`) may write.
+
+| Route                                      | Body         | Returns                                                        |
+| ------------------------------------------ | ------------ | -------------------------------------------------------------- |
+| `GET /api/providers/media-keys`            | none         | `{ storage, canManage, keys: [{ vendor, source, keyHint? }] }` |
+| `PUT /api/providers/media-keys/:vendor`    | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.        |
+| `DELETE /api/providers/media-keys/:vendor` | none         | `source: "platform"`: media calls use the platform key again.  |
 
 ## Roadmap tools
 

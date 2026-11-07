@@ -1,5 +1,6 @@
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
 
 /*
  * What the Pi runtime can talk to, derived from the SDK's own catalog so it never drifts from the pinned
@@ -45,7 +46,7 @@ const RUNTIME_KEY_PROVIDERS: ReadonlySet<string> = new Set([
   "huggingface",
   "zai",
   "moonshotai",
-  // OpenCode Go subscription: one key for the OpenAI-compatible endpoint the SDK pins per model.
+  // OpenCode Go subscription: one key for its OpenAI-compatible endpoint; Studix pins the model list.
   "opencode-go",
 ]);
 
@@ -78,13 +79,13 @@ export function listPiCatalog(): PiCatalogProvider[] {
       name: PROVIDER_NAMES[id] ?? oauth.get(id)?.replace(/\s*\(.*\)$/, "") ?? id,
       authMethods: ["api_key"],
       ...(oauth.has(id) ? { oauthRestriction: OAUTH_RESTRICTION } : {}),
-      models: getModels(id as Parameters<typeof getModels>[0]).map((m) => ({
+      models: (pinnedPiEndpoint(id)?.models ?? getModels(id as Parameters<typeof getModels>[0])).map((m) => ({
         id: m.id,
-        name: m.name,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        cost: { input: m.cost.input, output: m.cost.output },
+        name: m.name ?? m.id,
+        reasoning: m.reasoning ?? false,
+        contextWindow: m.contextWindow ?? 0,
+        maxTokens: m.maxTokens ?? 0,
+        cost: { input: m.cost?.input ?? 0, output: m.cost?.output ?? 0 },
       })),
     }));
   return cached;

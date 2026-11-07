@@ -21,6 +21,7 @@ import {
 } from "@studix/core";
 import { createTestDatabase, insertTestUser, type TestDatabase } from "@studix/database/testing";
 import { createActivityRecorder } from "@studix/observability";
+import { MULTIX_VENDOR_KEYS } from "@studix/providers";
 import { createLogger, newId, systemClock } from "@studix/shared";
 import type { AppDeps } from "../src/app-deps.ts";
 import { packStageOutputValidator } from "../src/compose-integrations.ts";
@@ -105,6 +106,7 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
     tester: fakeKeyTester,
     isSupportedProvider: isRuntimeKeyProvider,
     secrets: createSecretBox(randomBytes(32)),
+    mediaKeyNames: MULTIX_VENDOR_KEYS,
   });
   const deps: AppDeps = {
     logger,

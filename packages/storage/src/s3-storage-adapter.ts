@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import {
   DeleteObjectCommand,
@@ -53,17 +54,41 @@ function isNotFound(err: unknown): boolean {
   );
 }
 
+const DENIED_HINT =
+  "The store rejected the credentials or the bucket policy (HTTP 401/403). Check that S3_ACCESS_KEY_ID / " +
+  "S3_SECRET_ACCESS_KEY belong to this bucket, were not rotated, and may write under orgs/*; also check " +
+  "S3_ENDPOINT, S3_REGION and S3_FORCE_PATH_STYLE. Restart the worker to re-run the startup write probe (its result is in the logs and in the worker /readyz), then retry the job.";
+
 function storageError(action: string, err: unknown): StudixError {
   if (err instanceof StudixError) return err;
   const status = err instanceof S3ServiceException ? err.$metadata.httpStatusCode : undefined;
+  const s3Code = err instanceof S3ServiceException ? err.name : undefined;
   const message = err instanceof Error ? err.message : String(err);
+  const denied = status === 401 || status === 403;
   return new StudixError("UNAVAILABLE", `Object storage ${action} failed: ${redact(message)}`, {
     cause: err,
     retryable: status === undefined || status >= 500 || status === 429,
-    details: { action, status },
-    suggestedAction: "Check S3_ENDPOINT, S3_BUCKET and credentials, then retry.",
+    details: { action, status, ...(s3Code ? { s3Code } : {}) },
+    suggestedAction: denied ? DENIED_HINT : "Check S3_ENDPOINT, S3_BUCKET and credentials, then retry.",
   });
 }
+
+export interface StorageProbeResult {
+  ok: boolean;
+  /** Step that failed: `put`, `get`, `head` or `delete`. */
+  step?: "put" | "get" | "head" | "delete";
+  status?: number;
+  s3Code?: string;
+  /** True when the failure is a definitive refusal (4xx other than 429) rather than a transient outage. */
+  denied?: boolean;
+  message?: string;
+}
+
+/**
+ * Tenant-shaped prefix for probe objects, so a bucket policy that only allows `orgs/*` is exercised the same
+ * way real renders are.
+ */
+const PROBE_TENANT = { organizationId: "healthcheck", workspaceId: "probe" };
 
 function buildClient(options: S3StorageOptions, endpoint: string | undefined): S3Client {
   return new S3Client({
@@ -78,6 +103,13 @@ function buildClient(options: S3StorageOptions, endpoint: string | undefined): S
 }
 
 /** StorageAdapter over the S3 API (Cloudflare R2, MinIO, AWS S3). Buckets stay private; reads use signed URLs. */
+/** The object read back is not what the probe wrote: something between us and the bucket changed it. */
+class ProbeBodyMismatch extends Error {
+  constructor() {
+    super("The object read back differs from what was written");
+  }
+}
+
 export class S3StorageAdapter implements StorageAdapter {
   readonly bucket: string;
   private readonly client: S3Client;
@@ -198,6 +230,45 @@ export class S3StorageAdapter implements StorageAdapter {
     }
   }
 
+  /**
+   * Write, read (get and head) and delete one tiny temporary object under a tenant-shaped prefix. Never throws; the
+   * result carries only the failing step, HTTP status and S3 error code (no credentials or bucket names).
+   */
+  async probeWrite(): Promise<StorageProbeResult> {
+    const key = resolveTenantKey(PROBE_TENANT, `probe/${randomUUID()}.txt`);
+    const body = new TextEncoder().encode("studix storage probe");
+    let step: "put" | "get" | "head" | "delete" = "put";
+    try {
+      await this.client.send(
+        new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: "text/plain" }),
+      );
+      step = "get";
+      const read = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      const echoed = (await read.Body?.transformToString()) ?? "";
+      if (echoed !== "studix storage probe") throw new ProbeBodyMismatch();
+      step = "head";
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      step = "delete";
+      await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+      return { ok: true };
+    } catch (err) {
+      const status = err instanceof S3ServiceException ? err.$metadata.httpStatusCode : undefined;
+      if (step !== "put") {
+        // Best effort: do not leave the probe object behind when only a later step failed.
+        await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key })).catch(() => {});
+      }
+      return {
+        ok: false,
+        step,
+        ...(status === undefined ? {} : { status }),
+        ...(err instanceof S3ServiceException ? { s3Code: err.name } : {}),
+        ...(err instanceof ProbeBodyMismatch ? { s3Code: "BodyMismatch" } : {}),
+        denied: status !== undefined && status >= 400 && status < 500 && status !== 429,
+        message: redact(err instanceof Error ? err.message : String(err)),
+      };
+    }
+  }
+
   /** Release sockets held by the SDK clients. */
   destroy(): void {
     this.client.destroy();
@@ -244,4 +315,32 @@ export function createS3StorageAdapterFromConfig(
     signedUrlPolicy: overrides.signedUrlPolicy ?? { defaultTtlSeconds: ttl, maxTtlSeconds: ttl },
     publicEndpoint: overrides.publicEndpoint ?? config.S3_PUBLIC_ENDPOINT,
   });
+}
+
+/**
+ * Cached storage write probe for readiness endpoints. A healthy result is reused for `ttlMs`; a failure is
+ * re-probed after `failureTtlMs` so a fixed configuration recovers quickly without hammering the store.
+ */
+export function createStorageWriteCheck(
+  adapter: Pick<S3StorageAdapter, "probeWrite">,
+  options: { ttlMs?: number; failureTtlMs?: number; now?: () => number } = {},
+): () => Promise<StorageProbeResult> {
+  const ttlMs = options.ttlMs ?? 60_000;
+  const failureTtlMs = options.failureTtlMs ?? 10_000;
+  const now = options.now ?? Date.now;
+  let cached: { at: number; result: StorageProbeResult } | undefined;
+  let inflight: Promise<StorageProbeResult> | undefined;
+  return async () => {
+    if (cached && now() - cached.at < (cached.result.ok ? ttlMs : failureTtlMs)) return cached.result;
+    inflight ??= adapter
+      .probeWrite()
+      .then((result) => {
+        cached = { at: now(), result };
+        return result;
+      })
+      .finally(() => {
+        inflight = undefined;
+      });
+    return inflight;
+  };
 }
