@@ -6,7 +6,7 @@ import {
   parseSecretKey,
 } from "@studix/auth";
 import { createRepositories } from "@studix/database";
-import { createWorkspaceMultixProviders, MULTIX_VENDOR_KEYS, MULTIX_VENDORS } from "@studix/providers";
+import { createWorkspaceMultixProviders, MULTIX_KEY_NAMES } from "@studix/providers";
 import {
   assertSpeechProbeReady,
   createHardQaGate,
@@ -55,7 +55,7 @@ export function platformCredentials(
       parseSecretKey(config.STUDIX_SECRETS_KEY),
       config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
     ),
-    allowedNames: MULTIX_VENDORS.map((vendor) => MULTIX_VENDOR_KEYS[vendor]),
+    allowedNames: Object.values(MULTIX_KEY_NAMES),
     env: runtime.env,
     logger: runtime.logger,
   });

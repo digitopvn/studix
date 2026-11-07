@@ -621,16 +621,19 @@ workspace follow the platform choice again, and it cannot be tested.
 
 ### Workspace media keys (BYOK)
 
-A workspace may bring its own key for each Multix vendor (`sume`, `atlas`,
-`elevenlabs`, `fish`, `minimax`, `openrouter`). These are dashboard session
+A workspace may bring its own key for every key Multix reads: one `vendor` per
+provider (`sume`, `atlas`, `gemini`, `openai`, `fal`, ...), plus one per further
+required key (`cloudflare-api-token`). The list is generated from Multix
+(`multix catalog providers`). These are dashboard session
 routes too, `Cache-Control: no-store`, and never return the key. Any member
 may read; only workspace admins (`member:manage`) may write.
 
-| Route                                      | Body         | Returns                                                        |
-| ------------------------------------------ | ------------ | -------------------------------------------------------------- |
-| `GET /api/providers/media-keys`            | none         | `{ storage, canManage, keys: [{ vendor, source, keyHint? }] }` |
-| `PUT /api/providers/media-keys/:vendor`    | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.        |
-| `DELETE /api/providers/media-keys/:vendor` | none         | `source: "platform"`: media calls use the platform key again.  |
+| Route                                         | Body         | Returns                                                                                                                          |
+| --------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/providers/media-keys`               | none         | `{ storage, canManage, keys: [{ vendor, name?, keyName, testable, source, keyHint? }] }`                                         |
+| `PUT /api/providers/media-keys/:vendor`       | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.                                                                          |
+| `DELETE /api/providers/media-keys/:vendor`    | none         | `source: "platform"`: media calls use the platform key again.                                                                    |
+| `POST /api/providers/media-keys/:vendor/test` | `{}`         | `{ vendor, at, verdict, httpStatus?, note? }`: a free account lookup at the vendor (admins only); `unverified` when it has none. |
 
 ### Provider connections: rename and ChatGPT sign-in
 

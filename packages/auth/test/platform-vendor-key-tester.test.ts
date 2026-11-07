@@ -33,5 +33,19 @@ describe("vendor key tester", () => {
     const test = createVendorKeyTester({ fetch: fakeFetch(200, calls) });
     await expect(test("SUME_API_KEY", "k")).resolves.toBeUndefined();
     expect(calls).toEqual([]);
+    expect(test.supports?.("SUME_API_KEY")).toBe(false);
+    expect(test.supports?.("REPLICATE_API_TOKEN")).toBe(true);
+  });
+
+  it("checks Cloudflare tokens and Gemini keys at their free endpoints", async () => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    const test = createVendorKeyTester({ fetch: fakeFetch(200, calls) });
+    await expect(test("CLOUDFLARE_API_TOKEN", "cf-1")).resolves.toMatchObject({ verdict: "available" });
+    await test("GEMINI_API_KEY", "g-1");
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.cloudflare.com/client/v4/user/tokens/verify",
+      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+    ]);
+    expect(calls[1]?.headers).toEqual({ "x-goog-api-key": "g-1" });
   });
 });

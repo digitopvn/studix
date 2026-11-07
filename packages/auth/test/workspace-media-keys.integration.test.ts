@@ -65,7 +65,7 @@ describe("workspace media keys (BYOK)", () => {
     expect(listed).toMatchObject({ storage: "available", canManage: false });
     expect(listed.keys).toEqual([
       expect.objectContaining({ vendor: "sume", source: "workspace" }),
-      { vendor: "atlas", source: "platform" },
+      { vendor: "atlas", keyName: "ATLASCLOUD_API_KEY", testable: false, source: "platform" },
     ]);
     expect(await providers.resolveMediaKeys(t.worker)).toEqual({ SUME_API_KEY: SUME_KEY });
 
@@ -73,9 +73,45 @@ describe("workspace media keys (BYOK)", () => {
     expect(rotated).toMatchObject({ keyHint: "…9999", version: 2 });
     expect(await providers.resolveMediaKeys(t.worker)).toEqual({ SUME_API_KEY: "sume-rotated-key-9999" });
 
-    expect(await providers.removeMediaKey(t.admin, "sume")).toEqual({ vendor: "sume", source: "platform" });
+    expect(await providers.removeMediaKey(t.admin, "sume")).toEqual({
+      vendor: "sume",
+      keyName: "SUME_API_KEY",
+      testable: false,
+      source: "platform",
+    });
     expect(await providers.resolveMediaKeys(t.worker)).toEqual({});
     expect(await codeOf(providers.removeMediaKey(t.admin, "sume"))).toBe("NOT_FOUND");
+  });
+
+  it("tests a stored key with the vendor's free lookup and names the vendor", async () => {
+    const seen: string[] = [];
+    const mediaKeyTester = Object.assign(
+      async (name: string, value: string) => {
+        seen.push(`${name}=${value}`);
+        return { verdict: "invalid" as const, httpStatus: 401 };
+      },
+      { supports: (name: string) => name === "SUME_API_KEY" },
+    );
+    const providers = createProviderConnectionService({
+      connections: db.current.repos.providerConnections,
+      audit: db.current.repos.audit,
+      tester,
+      secrets: createSecretBox(randomBytes(32)),
+      mediaKeyNames: MEDIA_KEYS,
+      mediaKeyLabels: { sume: "Sume" },
+      mediaKeyTester,
+    });
+    const t = await workspace("mk-test");
+    expect(await codeOf(providers.testMediaKey(t.admin, "sume"))).toBe("NOT_FOUND");
+    await providers.saveMediaKey(t.admin, "sume", { apiKey: SUME_KEY });
+    await providers.saveMediaKey(t.admin, "atlas", { apiKey: ATLAS_KEY });
+    expect((await providers.listMediaKeys(t.admin)).keys[0]).toMatchObject({ name: "Sume", testable: true });
+
+    const result = await providers.testMediaKey(t.admin, "sume");
+    expect(result).toMatchObject({ vendor: "sume", verdict: "invalid", httpStatus: 401 });
+    expect(JSON.stringify(result)).not.toContain(SUME_KEY);
+    expect(seen).toEqual([`SUME_API_KEY=${SUME_KEY}`]);
+    expect(await codeOf(providers.testMediaKey(t.editor, "sume"))).toBe("FORBIDDEN");
   });
 
   it("lets only workspace admins write, and only listed vendors", async () => {
@@ -98,7 +134,10 @@ describe("workspace media keys (BYOK)", () => {
     await providers.saveMediaKey(b.admin, "atlas", { apiKey: ATLAS_KEY });
     expect(await providers.resolveMediaKeys(a.worker)).toEqual({ SUME_API_KEY: SUME_KEY });
     expect(await providers.resolveMediaKeys(b.worker)).toEqual({ ATLASCLOUD_API_KEY: ATLAS_KEY });
-    expect((await providers.listMediaKeys(b.admin)).keys[0]).toEqual({ vendor: "sume", source: "platform" });
+    expect((await providers.listMediaKeys(b.admin)).keys[0]).toMatchObject({
+      vendor: "sume",
+      source: "platform",
+    });
     expect(await codeOf(providers.removeMediaKey(b.admin, "sume"))).toBe("NOT_FOUND");
   });
 

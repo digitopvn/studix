@@ -36,7 +36,7 @@ skill files are untrusted ([ADR-0017](0017-external-github-skill-store.md)).
   directory are removed when the task ends, and leftovers of a crashed worker are
   swept at start (label `studix.sandbox=1`).
 - The container's environment holds only the task's media vendor keys
-  (`MULTIX_VENDOR_KEYS` names: the workspace's own key first, then the platform
+  (`MULTIX_ENV_KEY_NAMES`, every key Multix reads: the workspace's own key first, then the platform
   key, then the worker's variable). Values are passed by name (`--env NAME`), never
   on the command line. Model keys stay in the worker with the Pi session.
 - Skills reach the sandbox through the `SkillBundleSource` port: the skill store

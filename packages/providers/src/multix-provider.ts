@@ -39,6 +39,7 @@ import {
   parseMultixEnvelope,
   UNTRUSTED_OUTPUT_WARNINGS,
 } from "./multix-cli-runner.ts";
+import { keyReadiness, MULTIX_ENV_KEY_NAMES } from "./multix-key-slots.ts";
 import {
   DEFAULT_MULTIX_MODELS,
   MULTIX_VENDOR_KEYS,
@@ -97,7 +98,7 @@ export interface MultixProviderOptions {
   capabilityTtlMs?: number;
 }
 
-export type MultixReadiness = Readonly<Record<MultixVendor, boolean>>;
+export type MultixReadiness = Readonly<Record<string, boolean>>;
 
 /**
  * Outcome of one safe `multix check` (it reads key presence and calls no paid API). `missing_executable` is
@@ -105,7 +106,7 @@ export type MultixReadiness = Readonly<Record<MultixVendor, boolean>>;
  */
 export interface MultixDiagnosis {
   state: "ready" | "missing_executable" | "check_failed";
-  /** Per vendor: has a key. Empty of truth (all false) unless `state` is `ready`. */
+  /** Per key slot (MULTIX_KEY_SLOTS id): has a key. Empty of truth (all false) unless `state` is `ready`. */
   vendors: MultixReadiness;
   /** Redacted reason for any state other than `ready`. */
   reason?: string;
@@ -294,11 +295,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
 
   /** Which vendors have a key, per the last `multix check` (names only, never values). */
   async readiness(): Promise<MultixReadiness> {
-    if (!this.enabled) return Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixReadiness;
+    if (!this.enabled) return keyReadiness(new Set());
     await this.capabilities();
-    return (
-      this.lastReadiness ?? (Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixReadiness)
-    );
+    return this.lastReadiness ?? keyReadiness(new Set());
   }
 
   /**
@@ -306,7 +305,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
    * refreshes the capability cache, so what the dashboard shows and what jobs use agree.
    */
   async diagnose(signal?: AbortSignal): Promise<MultixDiagnosis> {
-    const none = Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixReadiness;
+    const none = keyReadiness(new Set());
     if (!this.enabled) {
       return { state: "missing_executable", vendors: none, reason: "MULTIX_BIN is not set", code: "NOT_SET" };
     }
@@ -317,9 +316,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
         )
       ).text;
       const keys = parseCheckKeys(text);
-      const vendors = Object.fromEntries(
-        MULTIX_VENDORS.map((v) => [v, keys.has(MULTIX_VENDOR_KEYS[v])]),
-      ) as MultixReadiness;
+      const vendors = keyReadiness(keys);
+
       this.lastReadiness = vendors;
       this.probe = undefined;
       return { state: "ready", vendors };
@@ -571,7 +569,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
 
   private childEnv(cacheDir: string, stored: Readonly<Record<string, string>> = {}): Record<string, string> {
     const env: Record<string, string> = {};
-    const vendorKeys: readonly string[] = Object.values(MULTIX_VENDOR_KEYS);
+    const vendorKeys = MULTIX_ENV_KEY_NAMES;
     for (const name of [...PASSTHROUGH_ENV, ...vendorKeys]) {
       const own = this.workspaceKeys.getStore() ?? {};
       const value = vendorKeys.includes(name)
@@ -1051,9 +1049,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
       this.lastReadiness = undefined;
       return [];
     }
-    const ready = Object.fromEntries(
-      MULTIX_VENDORS.map((v) => [v, keys.has(MULTIX_VENDOR_KEYS[v])]),
-    ) as Record<MultixVendor, boolean>;
+    const ready = keyReadiness(keys) as Record<MultixVendor, boolean>;
+
     this.lastReadiness = ready;
     const catalog = await this.catalogModels(ready, cwd);
     const d = (role: MultixRole) =>

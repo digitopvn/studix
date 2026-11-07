@@ -33,7 +33,7 @@ import {
 } from "@studix/decision-routing";
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import { createActivityRecorder } from "@studix/observability";
-import { MULTIX_VENDOR_KEYS } from "@studix/providers";
+import { MULTIX_KEY_NAMES } from "@studix/providers";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { StudixError } from "@studix/shared";
 import { createExternalSkillService, createSkillBundleSource } from "@studix/skills";
@@ -105,7 +105,7 @@ export function providerConnections(
     ),
     claudeSubscription: async (ctx) =>
       (await workspaceFeatures(settings, runtime).effective(ctx)).claudeSubscription,
-    mediaKeyNames: MULTIX_VENDOR_KEYS,
+    mediaKeyNames: MULTIX_KEY_NAMES,
     logger: runtime.logger,
   });
 }

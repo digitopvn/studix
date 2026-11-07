@@ -29,6 +29,11 @@ export function selectWorkspace(id: string | null): void {
 /** A workspace's own media vendor key (BYOK); `platform` means media calls use the platform key. */
 export interface WorkspaceMediaKey {
   vendor: string;
+  name?: string;
+  /** The variable Multix reads the key from; a name, never a value. */
+  keyName: string;
+  /** The vendor has a free account lookup. */
+  testable: boolean;
   source: "workspace" | "platform";
   keyHint?: string;
   version?: number;
@@ -374,6 +379,14 @@ export interface PlatformCredential {
   lastTest?: { ok: boolean; at: string; detail?: string };
 }
 
+export interface WorkspaceMediaKeyTest {
+  vendor: string;
+  at: string;
+  verdict: "available" | "invalid" | "unverified";
+  httpStatus?: number;
+  note?: string;
+}
+
 export interface PlatformMediaKeyTest {
   name: string;
   at: string;
@@ -384,6 +397,7 @@ export interface PlatformMediaKeyTest {
 
 export interface PlatformMediaVendor {
   vendor: string;
+  name: string;
   keyName: string;
   kinds: string[];
   credential: PlatformCredential;
@@ -996,6 +1010,8 @@ export const api = {
     request<WorkspaceMediaKey>("PUT", `/api/providers/media-keys/${enc(vendor)}`, { apiKey }),
   removeWorkspaceMediaKey: (vendor: string) =>
     request<WorkspaceMediaKey>("DELETE", `/api/providers/media-keys/${enc(vendor)}`),
+  testWorkspaceMediaKey: (vendor: string) =>
+    request<WorkspaceMediaKeyTest>("POST", `/api/providers/media-keys/${enc(vendor)}/test`, {}),
   workspaceMultix: () => request<WorkspaceMultixSettings>("GET", "/api/providers/multix"),
   updateWorkspaceMultix: (values: WorkspaceMultixValues) =>
     request<WorkspaceMultixSettings>("PUT", "/api/providers/multix", values),

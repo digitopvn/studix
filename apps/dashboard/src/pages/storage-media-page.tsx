@@ -10,7 +10,7 @@ import {
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
 import { StorageProfilesCard } from "./storage-profiles-card.tsx";
-import { WorkspaceMediaKeysSection } from "./workspace-media-keys-section.tsx";
+import { KEY_VERDICT, WorkspaceMediaKeysSection } from "./workspace-media-keys-section.tsx";
 
 const SECRET_LABELS: Record<PlatformSettings["storage"]["secretAccessKey"], string> = {
   configured: "Configured",
@@ -39,12 +39,6 @@ const MEDIA_DIAGNOSIS: Record<PlatformMediaTest["diagnosis"], string> = {
   missing_executable: "Missing executable",
   missing_credential: "Missing credential",
   check_failed: "Check failed",
-};
-
-const KEY_VERDICT: Record<PlatformMediaKeyTest["verdict"], string> = {
-  available: "Key accepted",
-  invalid: "Key rejected",
-  unverified: "Not verified",
 };
 
 /**
@@ -458,7 +452,8 @@ function VendorRow({
   return (
     <tr>
       <td>
-        <span className="mono">{vendor.keyName}</span>
+        {vendor.name}
+        <div className="mono muted">{vendor.keyName}</div>
         {credential.keyHint && <div className="mono muted">{credential.keyHint}</div>}
         <ErrorBanner error={actionError} />
         {editing && (
@@ -489,7 +484,9 @@ function VendorRow({
           </form>
         )}
       </td>
-      <td>{vendor.kinds.join(", ")}</td>
+      <td>
+        {vendor.kinds.length > 0 ? vendor.kinds.join(", ") : <span className="muted">Multix only</span>}
+      </td>
       <td>
         <StatusBadge
           status={credential.source === "missing" ? "missing" : "configured"}

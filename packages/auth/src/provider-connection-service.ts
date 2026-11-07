@@ -30,6 +30,7 @@ import {
   codexAuthJson,
   tokensFromCodexAuthJson,
 } from "./chatgpt-auth.ts";
+import type { VendorKeyTester } from "./platform-vendor-key-tester.ts";
 import type { SecretBox } from "./secret-box.ts";
 
 /*
@@ -307,6 +308,8 @@ export interface ProviderConnectionService {
   saveMediaKey(ctx: TenantContext, vendor: string, input: RotateApiKeyInput): Promise<WorkspaceMediaKeyView>;
   /** Remove the workspace's key; the vendor falls back to the platform key. */
   removeMediaKey(ctx: TenantContext, vendor: string): Promise<WorkspaceMediaKeyView>;
+  /** Check the workspace's stored key with the vendor's free account lookup; nothing is paid. */
+  testMediaKey(ctx: TenantContext, vendor: string): Promise<WorkspaceMediaKeyTestView>;
   /**
    * Plaintext media keys of the caller's workspace, by environment variable name, for the process that
    * runs its media calls. Never throws: an unreadable row is skipped and logged.
@@ -317,11 +320,26 @@ export interface ProviderConnectionService {
 /** One media vendor as a workspace admin sees it; the key itself never leaves the service. */
 export interface WorkspaceMediaKeyView {
   vendor: string;
+  /** The vendor's display name, when the server knows it. */
+  name?: string;
+  /** The environment variable the media CLI reads the key from; a name, never a value. */
+  keyName: string;
+  /** The vendor has a free account lookup, so `testMediaKey` can say more than `unverified`. */
+  testable: boolean;
   /** `workspace` when the workspace has its own key, else media calls use the platform key. */
   source: "workspace" | "platform";
   keyHint?: string;
   version?: number;
   updatedAt?: Date;
+}
+
+export interface WorkspaceMediaKeyTestView {
+  vendor: string;
+  at: Date;
+  /** `unverified` when the vendor offers no free check or did not answer; no paid call is made. */
+  verdict: "available" | "invalid" | "unverified";
+  httpStatus?: number;
+  note?: string;
 }
 
 export interface WorkspaceMediaKeysOverview {
@@ -359,6 +377,10 @@ export interface ProviderConnectionServiceDeps {
    * CLI reads (the Multix vendor keys). Without it no media key can be stored.
    */
   mediaKeyNames?: Readonly<Record<string, string>>;
+  /** Display names of those vendors, by vendor id. */
+  mediaKeyLabels?: Readonly<Record<string, string>>;
+  /** The free account lookup of a media key, by environment variable name; without it keys stay unverified. */
+  mediaKeyTester?: VendorKeyTester;
   /** The ChatGPT device-code client of the Codex runtime; without it ChatGPT sign-in is unavailable. */
   chatgpt?: ChatGptAuthClient;
   logger?: Logger;
@@ -574,6 +596,17 @@ export function createProviderConnectionService(
   };
 
   const mediaKeyNames = deps.mediaKeyNames ?? {};
+  const mediaKeyLabels = deps.mediaKeyLabels ?? {};
+
+  const mediaKeyView = (vendor: string, row: ProviderConnectionRecord | undefined): WorkspaceMediaKeyView => {
+    const keyName = mediaKeyNames[vendor] as string;
+    return {
+      ...mediaView(vendor, row),
+      ...(mediaKeyLabels[vendor] ? { name: mediaKeyLabels[vendor] } : {}),
+      keyName,
+      testable: deps.mediaKeyTester?.supports?.(keyName) ?? false,
+    };
+  };
 
   const requireMediaVendor = (vendor: string) => {
     if (!Object.hasOwn(mediaKeyNames, vendor)) {
@@ -1139,7 +1172,7 @@ export function createProviderConnectionService(
       return {
         storage: deps.secrets ? "available" : "unavailable",
         canManage: Boolean(deps.secrets) && can(ctx.actor, "member:manage"),
-        keys: Object.keys(mediaKeyNames).map((vendor) => mediaView(vendor, rows.get(vendor))),
+        keys: Object.keys(mediaKeyNames).map((vendor) => mediaKeyView(vendor, rows.get(vendor))),
       };
     },
 
@@ -1157,7 +1190,7 @@ export function createProviderConnectionService(
           secretHint: apiKeyHint(existing.provider, apiKey),
         });
         await audit(ctx, "rotated", row);
-        return mediaView(vendor, row);
+        return mediaKeyView(vendor, row);
       }
       const id = newId("pcon");
       const row = await deps.connections.create(ctx, {
@@ -1181,7 +1214,7 @@ export function createProviderConnectionService(
         vendor,
         workspaceId: ctx.workspaceId,
       });
-      return mediaView(vendor, row);
+      return mediaKeyView(vendor, row);
     },
 
     async removeMediaKey(ctx, vendor) {
@@ -1191,7 +1224,28 @@ export function createProviderConnectionService(
       if (!existing) throw new StudixError("NOT_FOUND", `This workspace has no ${vendor} key`);
       const row = await deps.connections.revoke(ctx, existing.id);
       await audit(ctx, "revoked", row);
-      return mediaView(vendor, undefined);
+      return mediaKeyView(vendor, undefined);
+    },
+
+    async testMediaKey(ctx, vendor) {
+      assertPermission(ctx, "member:manage");
+      requireMediaVendor(vendor);
+      const existing = (await mediaRows(ctx)).get(vendor);
+      if (!existing) throw new StudixError("NOT_FOUND", `This workspace has no ${vendor} key`);
+      const at = new Date();
+      const verdict = await deps.mediaKeyTester?.(
+        mediaKeyNames[vendor] as string,
+        requireSecrets().open(existing.secretCiphertext as string, associatedData(ctx, existing.id)),
+      );
+      if (!verdict) {
+        return {
+          vendor,
+          at,
+          verdict: "unverified",
+          note: "This vendor has no free key check; the first media call tests it",
+        };
+      }
+      return { vendor, at, ...verdict };
     },
 
     async resolveMediaKeys(ctx) {
@@ -1225,7 +1279,10 @@ function mediaProvider(vendor: string): string {
   return `${MEDIA_PROVIDER_PREFIX}${vendor}`;
 }
 
-function mediaView(vendor: string, row: ProviderConnectionRecord | undefined): WorkspaceMediaKeyView {
+function mediaView(
+  vendor: string,
+  row: ProviderConnectionRecord | undefined,
+): Omit<WorkspaceMediaKeyView, "keyName" | "testable"> {
   if (!row) return { vendor, source: "platform" };
   return {
     vendor,

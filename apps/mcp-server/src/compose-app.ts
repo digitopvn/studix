@@ -26,8 +26,8 @@ import { createActivityRecorder } from "@studix/observability";
 import {
   createMultixProviderFromConfig,
   createWorkspaceMultixProviders,
-  MULTIX_VENDOR_KEYS,
-  MULTIX_VENDORS,
+  MULTIX_KEY_NAMES,
+  MULTIX_KEY_SLOTS,
 } from "@studix/providers";
 import {
   allowedHosts,
@@ -176,7 +176,7 @@ export async function composeApp(
     credentials: repos.platformCredentials,
     audit: repos.audit,
     secrets: secretBox,
-    allowedNames: MULTIX_VENDORS.map((vendor) => MULTIX_VENDOR_KEYS[vendor]),
+    allowedNames: Object.values(MULTIX_KEY_NAMES),
     env,
     logger,
     ...(auditContext ? { auditContext } : {}),
@@ -269,6 +269,7 @@ export async function composeApp(
       claudeSubscription: config.STUDIX_CLAUDE_SUBSCRIPTION,
     },
   });
+  const vendorTester = createVendorKeyTester();
   const providers = createProviderConnectionService({
     connections: repos.providerConnections,
     audit: repos.audit,
@@ -281,7 +282,9 @@ export async function composeApp(
     chatgpt: createChatGptAuthClient(),
     secrets: secretBox,
     claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
-    mediaKeyNames: MULTIX_VENDOR_KEYS,
+    mediaKeyNames: MULTIX_KEY_NAMES,
+    mediaKeyLabels: Object.fromEntries(MULTIX_KEY_SLOTS.map((slot) => [slot.id, slot.name])),
+    mediaKeyTester: vendorTester,
     logger,
   });
   if (!config.STUDIX_SECRETS_KEY)
@@ -372,7 +375,7 @@ export async function composeApp(
             },
           }
         : {}),
-      vendorTester: createVendorKeyTester(),
+      vendorTester,
       env,
       ...(appEnv.STUDIX_WORKER_HEALTH_URL
         ? { worker: { media: () => fetchWorkerMedia(appEnv.STUDIX_WORKER_HEALTH_URL as string) } }

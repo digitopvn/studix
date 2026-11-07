@@ -2,20 +2,20 @@ import type { MediaGenerationRequest, MediaKind } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import type { MediaBillingUnit } from "./media-price-book.ts";
 import { type MediaInput, numberParam, resolveMediaInput, stringParam } from "./media-request-guards.ts";
+import { MULTIX_KEY_NAMES } from "./multix-key-slots.ts";
 
 /** Upstream routes Studix drives through multix. Media runs on Sume; audio and image upscale do not. */
 export const MULTIX_VENDORS = ["sume", "atlas", "elevenlabs", "fish", "minimax", "openrouter"] as const;
 export type MultixVendor = (typeof MULTIX_VENDORS)[number];
 
-/** The key `multix check` must report for a vendor before its kinds are advertised. */
-export const MULTIX_VENDOR_KEYS: Readonly<Record<MultixVendor, string>> = {
-  sume: "SUME_API_KEY",
-  atlas: "ATLASCLOUD_API_KEY",
-  elevenlabs: "ELEVENLABS_API_KEY",
-  fish: "FISH_API_KEY",
-  minimax: "MINIMAX_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
-};
+/** The key `multix check` must report for a vendor before its kinds are advertised (from multix's own list). */
+export const MULTIX_VENDOR_KEYS: Readonly<Record<MultixVendor, string>> = Object.fromEntries(
+  MULTIX_VENDORS.map((vendor) => {
+    const keyName = MULTIX_KEY_NAMES[vendor];
+    if (!keyName) throw new Error(`multix lists no key for ${vendor}; regenerate with pnpm multix:keys`);
+    return [vendor, keyName];
+  }),
+) as Record<MultixVendor, string>;
 
 /** A media role is a kind refined by its inputs (lip-sync is video with audio; upscale splits by input). */
 export type MultixRole =

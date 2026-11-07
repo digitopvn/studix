@@ -1,14 +1,11 @@
 import { type FormEvent, useState } from "react";
-import { api, type WorkspaceMediaKey } from "../api-client.ts";
+import { api, type WorkspaceMediaKey, type WorkspaceMediaKeyTest } from "../api-client.ts";
 import { ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
 
-const VENDOR_NAMES: Record<string, string> = {
-  sume: "Sume",
-  atlas: "Atlas Cloud",
-  elevenlabs: "ElevenLabs",
-  fish: "Fish Audio",
-  minimax: "MiniMax",
-  openrouter: "OpenRouter",
+export const KEY_VERDICT: Record<WorkspaceMediaKeyTest["verdict"], string> = {
+  available: "Key accepted",
+  invalid: "Key rejected",
+  unverified: "Not verified",
 };
 
 /**
@@ -61,7 +58,8 @@ function MediaKeyRow({
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
-  const name = VENDOR_NAMES[mediaKey.vendor] ?? mediaKey.vendor;
+  const [keyTest, setKeyTest] = useState<WorkspaceMediaKeyTest>();
+  const name = mediaKey.name ?? mediaKey.vendor;
   const own = mediaKey.source === "workspace";
 
   async function act(action: () => Promise<unknown>) {
@@ -103,6 +101,7 @@ function MediaKeyRow({
     <tr>
       <td>
         {name}
+        <div className="mono muted">{mediaKey.keyName}</div>
         <ErrorBanner error={actionError} />
         {editing && (
           <form className="row" onSubmit={save}>
@@ -143,10 +142,27 @@ function MediaKeyRow({
             {own ? "Rotate" : "Add key"}
           </button>
         )}{" "}
+        {canManage && own && mediaKey.testable && (
+          <button
+            type="button"
+            disabled={busy}
+            title="A free account lookup at the vendor; no paid call is made"
+            onClick={() => act(async () => setKeyTest(await api.testWorkspaceMediaKey(mediaKey.vendor)))}
+          >
+            Test
+          </button>
+        )}{" "}
         {canManage && own && (
           <button type="button" disabled={busy} onClick={remove}>
             Remove
           </button>
+        )}
+        {keyTest && (
+          <div className="muted" role="status">
+            {KEY_VERDICT[keyTest.verdict]}
+            {keyTest.httpStatus ? ` · HTTP ${keyTest.httpStatus}` : ""}
+            {keyTest.note ? ` — ${keyTest.note}` : ""}
+          </div>
         )}
       </td>
     </tr>

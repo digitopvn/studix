@@ -8,7 +8,7 @@ import {
   sweepDockerSandboxes,
 } from "@studix/agent-runtime";
 import type { TenantContext } from "@studix/core";
-import { MULTIX_VENDOR_KEYS, MULTIX_VENDORS } from "@studix/providers";
+import { MULTIX_ENV_KEY_NAMES } from "@studix/providers";
 import { type Logger, StudixError } from "@studix/shared";
 import type { StageContext } from "@studix/workflow";
 import { z } from "zod";
@@ -81,7 +81,7 @@ export function loadSandboxSettings(env: NodeJS.ProcessEnv): SandboxSettings | u
   };
 }
 
-const VENDOR_KEY_NAMES: readonly string[] = MULTIX_VENDORS.map((v) => MULTIX_VENDOR_KEYS[v]);
+const VENDOR_KEY_NAMES = MULTIX_ENV_KEY_NAMES;
 
 export interface SandboxKeySources {
   /** The workspace's own media vendor keys (BYOK); they win. */

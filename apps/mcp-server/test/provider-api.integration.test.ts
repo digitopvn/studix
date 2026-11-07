@@ -128,11 +128,20 @@ describe("provider and model API (Better Auth session, Postgres)", () => {
     const theirs = await (await app.api("GET", "/api/providers/media-keys", { cookie: bob })).json();
     expect(theirs.keys.find((k: { vendor: string }) => k.vendor === "sume")).toEqual({
       vendor: "sume",
+      name: "Sume",
+      keyName: "SUME_API_KEY",
+      testable: false,
       source: "platform",
     });
+    // Every key Multix reads is offered, not only the routed vendors.
+    expect(theirs.keys.find((k: { vendor: string }) => k.vendor === "cloudflare-api-token")).toMatchObject({
+      keyName: "CLOUDFLARE_API_TOKEN",
+      testable: true,
+    });
     expect((await app.api("DELETE", "/api/providers/media-keys/sume", { cookie: bob })).status).toBe(404);
+    expect((await app.api("POST", "/api/providers/media-keys/sume/test", { cookie: bob })).status).toBe(404);
     expect(
-      (await app.api("PUT", "/api/providers/media-keys/openai", { cookie: alice, body: { apiKey } })).status,
+      (await app.api("PUT", "/api/providers/media-keys/acme", { cookie: alice, body: { apiKey } })).status,
     ).toBe(400);
     expect((await app.api("DELETE", "/api/providers/media-keys/sume", { cookie: alice })).status).toBe(200);
   });

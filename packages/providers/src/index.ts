@@ -49,6 +49,13 @@ export {
   parseMultixEnvelope,
 } from "./multix-cli-runner.ts";
 export {
+  keyReadiness,
+  MULTIX_ENV_KEY_NAMES,
+  MULTIX_KEY_NAMES,
+  MULTIX_KEY_SLOTS,
+  type MultixKeySlot,
+} from "./multix-key-slots.ts";
+export {
   createMultixProviderFromConfig,
   MULTIX_PROVIDER_ID,
   type MultixDiagnosis,

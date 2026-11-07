@@ -33,9 +33,11 @@ layers on an ordinary commit.
 
 multix is built in a separate stage from a pinned commit of
 `mrgoonie/multix-cli` (`MULTIX_COMMIT` in the `Dockerfile` owns the value). The
-stage fails if the fetched HEAD is not that commit. The pin must be v1.26.0 or
-later: the first stable release with the Sume commands that counts Sume cost
-once per job.
+stage fails if the fetched HEAD is not that commit. The pin is v1.27.0-beta.2:
+it counts Sume cost once per job (since v1.26.0) and lists each provider's key
+names in `multix catalog providers`, which `pnpm multix:keys` turns into the
+keys Studix stores and injects (`packages/providers/src/multix-key-providers.generated.ts`).
+After a bump, rerun `MULTIX_BIN=<multix dist/cli.js> pnpm multix:keys` and commit the result.
 The image keeps the git build instead of `npm install -g @mrgoonie/multix`,
 because a commit pin is checked and an npm install here has no lockfile
 integrity hash. To upgrade, set `MULTIX_COMMIT` to the new release tag's commit
@@ -311,7 +313,7 @@ tool-using stages run the Claude Code CLI there too, pinned by `CLAUDE_CODE_VERS
 
 Build the image with `docker compose --profile sandbox build sandbox-image`. It pins the same multix
 commit and chrome-headless-shell as the Studix image; bump both together. The container receives only
-the task's media vendor keys (`MULTIX_VENDOR_KEYS` names). The self-host `worker` service does not mount
+the task's media vendor keys (every name in `MULTIX_ENV_KEY_NAMES`). The self-host `worker` service does not mount
 the Docker socket, so run a sandboxed worker on a host with Docker until that wiring exists.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,

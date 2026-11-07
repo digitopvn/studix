@@ -12,12 +12,11 @@ import {
 } from "@studix/auth";
 import { assertPlatformOperator, type TenantContext } from "@studix/core";
 import {
+  keyReadiness,
+  MULTIX_KEY_SLOTS,
   MULTIX_ROLE_VENDORS,
-  MULTIX_VENDOR_KEYS,
-  MULTIX_VENDORS,
   type MultixDiagnosis,
   type MultixRole,
-  type MultixVendor,
 } from "@studix/providers";
 import { type Clock, redact, StudixError, systemClock } from "@studix/shared";
 import type { S3Credentials, StorageProbeResult } from "@studix/storage";
@@ -88,7 +87,9 @@ export interface StorageStatusView {
 }
 
 export interface MediaVendorView {
-  vendor: MultixVendor;
+  /** A Multix key slot id (MULTIX_KEY_SLOTS): the provider, or `<provider>-<key>` for its further keys. */
+  vendor: string;
+  name: string;
   /** The variable name the CLI reads; a name, never a value. */
   keyName: string;
   kinds: string[];
@@ -121,7 +122,7 @@ export interface WorkerMediaReport {
   code?: string;
   /** The worker has STUDIX_SECRETS_KEY and can open dashboard-stored keys. */
   secretsKey: boolean;
-  vendors: Partial<Record<MultixVendor, boolean>>;
+  vendors: Partial<Record<string, boolean>>;
 }
 
 export interface WorkerMediaView {
@@ -145,7 +146,7 @@ export interface MediaTestView {
   state: MultixDiagnosis["state"];
   /** `missing credential` etc.; the operator's wording for a failed check. */
   diagnosis: "ok" | "missing_executable" | "missing_credential" | "check_failed";
-  vendors: Array<{ vendor: MultixVendor; keyName: string; hasKey: boolean }>;
+  vendors: Array<{ vendor: string; keyName: string; hasKey: boolean }>;
   reason?: string;
   code?: string;
   /** The check reads which keys exist; it calls no paid API. */
@@ -256,9 +257,9 @@ export async function fetchWorkerMedia(
     return undefined;
   }
   const vendors: WorkerMediaReport["vendors"] = {};
-  for (const vendor of MULTIX_VENDORS) {
-    const has = (media.vendors as Record<string, unknown>)[vendor];
-    if (typeof has === "boolean") vendors[vendor] = has;
+  for (const { id } of MULTIX_KEY_SLOTS) {
+    const has = (media.vendors as Record<string, unknown>)[id];
+    if (typeof has === "boolean") vendors[id] = has;
   }
   return {
     executable: media.executable,
@@ -293,13 +294,13 @@ export function mediaMismatches(
     out.push("STUDIX_SECRETS_KEY is set on the worker but not on the app.");
   }
   if (app.vendors && worker.state === "ready") {
-    for (const vendor of MULTIX_VENDORS) {
-      const onWorker = worker.vendors[vendor];
-      if (onWorker === undefined || onWorker === app.vendors[vendor]) continue;
+    for (const { id, keyName } of MULTIX_KEY_SLOTS) {
+      const onWorker = worker.vendors[id];
+      if (onWorker === undefined || onWorker === Boolean(app.vendors[id])) continue;
       out.push(
         onWorker
-          ? `${MULTIX_VENDOR_KEYS[vendor]} is found on the worker but not on the app.`
-          : `${MULTIX_VENDOR_KEYS[vendor]} is found on the app but not on the worker.`,
+          ? `${keyName} is found on the worker but not on the app.`
+          : `${keyName} is found on the app but not on the worker.`,
       );
     }
   }
@@ -412,10 +413,10 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
 
   /** Keep the outcome of the check next to each dashboard-stored key (a key from the environment has no row). */
   const recordVendorTests = async (ctx: TenantContext, diagnosis: MultixDiagnosis): Promise<void> => {
-    for (const vendor of MULTIX_VENDORS) {
-      const ok = diagnosis.state === "ready" && diagnosis.vendors[vendor];
+    for (const { id, keyName } of MULTIX_KEY_SLOTS) {
+      const ok = diagnosis.state === "ready" && Boolean(diagnosis.vendors[id]);
       await deps.credentials
-        .recordTest(ctx, MULTIX_VENDOR_KEYS[vendor], {
+        .recordTest(ctx, keyName, {
           ok,
           detail: ok ? "Key found by multix check" : (diagnosis.reason ?? "Key not found by multix check"),
         })
@@ -454,9 +455,9 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
     );
   };
 
-  const kindsOf = (vendor: MultixVendor): string[] =>
+  const kindsOf = (vendor: string): string[] =>
     (Object.keys(MULTIX_ROLE_VENDORS) as MultixRole[])
-      .filter((role) => MULTIX_ROLE_VENDORS[role].includes(vendor))
+      .filter((role) => (MULTIX_ROLE_VENDORS[role] as readonly string[]).includes(vendor))
       .map((role) => ROLE_LABELS[role]);
 
   return {
@@ -510,11 +511,11 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           ...(config.MULTIX_BIN ? { path: config.MULTIX_BIN } : {}),
           homeEnvDisabled: !config.MULTIX_ALLOW_HOME_ENV,
           credentialStorage: stored.storage,
-          vendors: MULTIX_VENDORS.map((vendor) => {
-            const keyName = MULTIX_VENDOR_KEYS[vendor];
+          vendors: MULTIX_KEY_SLOTS.map(({ id: vendor, name, keyName }) => {
             const credential = byName.get(keyName) ?? { name: keyName, source: "missing" as const };
             return {
               vendor,
+              name,
               keyName,
               kinds: kindsOf(vendor),
               credential,
@@ -687,14 +688,14 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
         ? await deps.multix.diagnose()
         : {
             state: "missing_executable",
-            vendors: Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixDiagnosis["vendors"],
+            vendors: keyReadiness(new Set()),
             reason: "MULTIX_BIN is not set in the app process",
             code: "NOT_SET",
           };
-      const vendors = MULTIX_VENDORS.map((vendor) => ({
-        vendor,
-        keyName: MULTIX_VENDOR_KEYS[vendor],
-        hasKey: diagnosis.vendors[vendor],
+      const vendors = MULTIX_KEY_SLOTS.map(({ id, keyName }) => ({
+        vendor: id,
+        keyName,
+        hasKey: Boolean(diagnosis.vendors[id]),
       }));
       const anyKey = vendors.some((v) => v.hasKey);
       lastVendors = diagnosis.state === "ready" ? diagnosis.vendors : undefined;
