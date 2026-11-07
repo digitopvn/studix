@@ -1,5 +1,12 @@
 import { type Clock, StudixError } from "@studix/shared";
-import type { Asset, AssetVersion } from "../entities/asset.ts";
+import {
+  type Asset,
+  type AssetVersion,
+  defaultAssetPath,
+  inferAssetRole,
+  normalizeAssetPath,
+  normalizeAssetTags,
+} from "../entities/asset.ts";
 import type { ProjectVersion, VideoProject } from "../entities/project.ts";
 import type { AssetRepository } from "../repositories/asset-repository.ts";
 import { pageLimit, toPage } from "../repositories/pagination.ts";
@@ -63,19 +70,38 @@ export function createInMemoryAssetRepository(clock: Clock): AssetRepository {
   const versions = new InMemoryTenantTable<AssetVersion>("astv", clock, false);
   return {
     async create(ctx, input) {
-      return assets.insert(ctx, input);
+      const role = input.role ?? inferAssetRole(input.kind, input.name);
+      return assets.insert(ctx, {
+        ...input,
+        role,
+        path: normalizeAssetPath(input.path ?? defaultAssetPath(role)),
+        tags: normalizeAssetTags(input.tags ?? []),
+      });
     },
     async get(ctx, id) {
       return assets.get(ctx, id);
     },
+    async update(ctx, id, patch) {
+      if (!assets.get(ctx, id)) throw new StudixError("NOT_FOUND", `asset ${id} not found`);
+      return assets.update(ctx, id, {
+        ...(patch.role !== undefined ? { role: patch.role } : {}),
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.path !== undefined ? { path: normalizeAssetPath(patch.path) } : {}),
+        ...(patch.tags !== undefined ? { tags: normalizeAssetTags(patch.tags) } : {}),
+      });
+    },
     async list(ctx, query = {}) {
       const limit = pageLimit(query.limit);
+      const prefix = query.pathPrefix === undefined ? undefined : normalizeAssetPath(query.pathPrefix);
       const rows = assets
         .filter(
           ctx,
           (a) =>
             (query.projectId === undefined || a.projectId === query.projectId) &&
             (query.kind === undefined || a.kind === query.kind) &&
+            (query.role === undefined || a.role === query.role) &&
+            (query.tag === undefined || a.tags.includes(query.tag.toLowerCase())) &&
+            (!prefix || a.path === prefix || a.path.startsWith(`${prefix}/`)) &&
             (query.cursor === undefined || a.id < query.cursor),
         )
         .slice(0, limit + 1);

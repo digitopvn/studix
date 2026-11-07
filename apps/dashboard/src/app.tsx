@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me, selectedWorkspace, selectWorkspace } from "./api-client.ts";
 import { AgentChatPage } from "./pages/agent-chat-page.tsx";
+import { AssetsPage } from "./pages/assets-page.tsx";
 import { AuthPage } from "./pages/auth-page.tsx";
 import { CreateVideoPage } from "./pages/create-video-page.tsx";
 import { JobDetailPage } from "./pages/job-detail-page.tsx";
@@ -21,6 +22,7 @@ import { registerWebMcpTools } from "./webmcp.ts";
 const NAV = [
   { to: "/", label: "Create", match: ["", "chat", "create"] },
   { to: "/projects", label: "Projects", match: ["projects"] },
+  { to: "/assets", label: "Assets", match: ["assets"] },
   { to: "/settings", label: "Settings", match: ["settings"] },
 ] as const;
 
@@ -54,6 +56,8 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
     case "projects":
       if (id && view === "review") return <ProjectReviewPage projectId={id} />;
       return id ? <ProjectView projectId={id} /> : <ProjectsPage />;
+    case "assets":
+      return <AssetsPage />;
     case "jobs":
     case "activity":
       return id ? <JobDetailPage jobId={id} /> : <JobsPage />;

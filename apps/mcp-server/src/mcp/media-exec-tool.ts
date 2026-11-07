@@ -29,7 +29,9 @@ const Input = z.object({
     .array(MediaExecOutput)
     .max(MEDIA_EXEC_LIMITS.outputs)
     .optional()
-    .describe("Files the run writes; stored as workspace assets."),
+    .describe(
+      "Files the run writes; stored as workspace assets. Set role (sfx, bgm, voice, vfx, ...) and path (e.g. ep03/sc01/s05) per output; omitted, both are inferred from the file name.",
+    ),
   timeoutSeconds: z.number().int().min(1).max(MEDIA_EXEC_LIMITS.maxTimeoutSeconds).optional(),
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),
   idempotencyKey: z

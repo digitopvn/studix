@@ -7,6 +7,7 @@ import type {
 import type {
   ActivityRepository,
   AgentHandoffService,
+  AssetRepository,
   CompositionService,
   JobRepository,
   MediaExecService,
@@ -51,6 +52,8 @@ export interface AppDeps {
 
   studio: StudioService;
   repos: {
+    /** Asset library listing and organizing (role, folder, tags). */
+    assets: AssetRepository;
     jobs: JobRepository;
     renders: RenderRepository;
     activity: ActivityRepository;

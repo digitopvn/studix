@@ -340,6 +340,9 @@ export function createMediaExecRunner(deps: MediaExecRunnerDeps): MediaExecRunne
             ...(s.job.projectId ? { projectId: s.job.projectId } : {}),
             kind: assetKind(contentType),
             name: output.name,
+            ...(output.role ? { role: output.role } : {}),
+            ...(output.path !== undefined ? { path: output.path } : {}),
+            ...(output.tags ? { tags: output.tags } : {}),
             createdBy: { type: "system", id: "media-exec" },
           });
           const storageKey = `assets/${asset.id}/v1/${output.name}`;

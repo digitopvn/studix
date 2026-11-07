@@ -1,5 +1,6 @@
 import { StudixError } from "@studix/shared";
 import { z } from "zod";
+import { ASSET_ROLES, MAX_ASSET_PATH_LENGTH, MAX_ASSET_TAGS, normalizeAssetPath } from "../entities/asset.ts";
 
 /*
  * `media.exec`: ffmpeg or ffprobe with caller-supplied arguments, run in the worker's sandbox container
@@ -57,7 +58,28 @@ export const MediaExecInputSource = z.union([
 ]);
 export type MediaExecInputSource = z.infer<typeof MediaExecInputSource>;
 
-export const MediaExecOutput = z.object({ name: FileName, contentType: ContentType.optional() }).strict();
+export const MediaExecOutput = z
+  .object({
+    name: FileName,
+    contentType: ContentType.optional(),
+    /** Library organization; omitted, the role is inferred from the media type and file name. */
+    role: z.enum(ASSET_ROLES).optional(),
+    /** Virtual folder such as `ep03/sc01/s05`; omitted, `<role>`. */
+    path: z
+      .string()
+      .max(MAX_ASSET_PATH_LENGTH)
+      .refine((p) => {
+        try {
+          normalizeAssetPath(p);
+          return true;
+        } catch {
+          return false;
+        }
+      }, "use letters, digits, '.', '_' or '-' in each folder name")
+      .optional(),
+    tags: z.array(z.string().max(40)).max(MAX_ASSET_TAGS).optional(),
+  })
+  .strict();
 export type MediaExecOutput = z.infer<typeof MediaExecOutput>;
 
 export const MediaExecRequest = z

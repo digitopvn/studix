@@ -1,6 +1,14 @@
-import type { Asset, AssetRepository, AssetVersion } from "@studix/core";
+import {
+  type Asset,
+  type AssetRepository,
+  type AssetVersion,
+  defaultAssetPath,
+  inferAssetRole,
+  normalizeAssetPath,
+  normalizeAssetTags,
+} from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { desc, eq, max } from "drizzle-orm";
+import { desc, eq, like, max, or, sql } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { assets, assetVersions } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -16,6 +24,9 @@ function toAsset(row: AssetRow): Asset {
     workspaceId: row.workspaceId,
     projectId: opt(row.projectId),
     kind: row.kind,
+    role: row.role,
+    path: row.path,
+    tags: row.tags,
     name: row.name,
     currentVersionId: opt(row.currentVersionId),
     createdBy: actorFrom(row.createdByType, row.createdById),
@@ -48,6 +59,7 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
   return {
     async create(ctx, input) {
       const now = clock.now();
+      const role = input.role ?? inferAssetRole(input.kind, input.name);
       const rows = await db
         .insert(assets)
         .values({
@@ -55,6 +67,9 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
           ...tenantValues(ctx),
           projectId: input.projectId ?? null,
           kind: input.kind,
+          role,
+          path: normalizeAssetPath(input.path ?? defaultAssetPath(role)),
+          tags: normalizeAssetTags(input.tags ?? []),
           name: input.name,
           createdByType: input.createdBy.type,
           createdById: input.createdBy.id,
@@ -73,8 +88,25 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
       return rows[0] ? toAsset(rows[0]) : undefined;
     },
 
+    async update(ctx, id, patch) {
+      const set = {
+        ...(patch.role !== undefined ? { role: patch.role } : {}),
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.path !== undefined ? { path: normalizeAssetPath(patch.path) } : {}),
+        ...(patch.tags !== undefined ? { tags: normalizeAssetTags(patch.tags) } : {}),
+      };
+      const rows = await db
+        .update(assets)
+        .set({ ...set, updatedAt: clock.now() })
+        .where(scoped(assets, ctx, eq(assets.id, id)))
+        .returning();
+      if (!rows[0]) throw new StudixError("NOT_FOUND", `asset ${id} not found`);
+      return toAsset(rows[0]);
+    },
+
     async list(ctx, query = {}) {
       const limit = pageLimit(query.limit);
+      const prefix = query.pathPrefix === undefined ? "" : normalizeAssetPath(query.pathPrefix);
       const rows = await db
         .select()
         .from(assets)
@@ -85,6 +117,11 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
             beforeCursor(assets.id, query.cursor),
             query.projectId ? eq(assets.projectId, query.projectId) : undefined,
             query.kind ? eq(assets.kind, query.kind) : undefined,
+            query.role ? eq(assets.role, query.role) : undefined,
+            query.tag ? sql`${assets.tags} @> ARRAY[${query.tag.trim().toLowerCase()}]::text[]` : undefined,
+            prefix
+              ? or(eq(assets.path, prefix), like(assets.path, `${prefix.replace(/[\\%_]/g, "\\$&")}/%`))
+              : undefined,
           ),
         )
         .orderBy(desc(assets.id))

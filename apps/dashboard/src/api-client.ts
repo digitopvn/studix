@@ -921,7 +921,44 @@ export interface OAuthRedirect {
   url: string;
 }
 
+export const ASSET_ROLES = [
+  "character",
+  "background",
+  "prop",
+  "vfx",
+  "sfx",
+  "bgm",
+  "voice",
+  "storyboard",
+  "keyframe",
+  "render",
+  "reference",
+  "other",
+] as const;
+export type AssetRole = (typeof ASSET_ROLES)[number];
+
+export interface AssetItem {
+  id: string;
+  name: string;
+  kind: string;
+  role: AssetRole;
+  path: string;
+  tags: string[];
+  projectId?: string;
+  mime?: string;
+  bytes?: number;
+  durationMs?: number;
+  updatedAt: string;
+}
+
 export const api = {
+  assets: (query: { role?: AssetRole; path?: string; tag?: string; cursor?: string }) => {
+    const params = new URLSearchParams({ limit: "50" });
+    for (const [key, value] of Object.entries(query)) if (value) params.set(key, value);
+    return request<{ assets: AssetItem[]; nextCursor?: string }>("GET", `/api/assets?${params}`);
+  },
+  updateAsset: (id: string, patch: { role?: AssetRole; path?: string; tags?: string[]; name?: string }) =>
+    request<AssetItem>("PATCH", `/api/assets/${enc(id)}`, patch),
   skills: (scope: SkillScope | "visible" = "visible") =>
     request<{ items: SkillListItem[]; nextCursor?: string }>(
       "GET",

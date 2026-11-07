@@ -78,6 +78,7 @@ Rules:
 The union is `ErrorCode` in `packages/shared`; the `retryable` column is a
 guide, the per-error value is authoritative.
 
+
 ## P0 native tools
 
 | Tool                      | Purpose                                                                                                                                                                                                                                                |
@@ -536,15 +537,15 @@ worker job in an offline sandbox container. It needs the `media:exec` permission
 (editor role and up; OAuth scope `studix:write`) and `STUDIX_SANDBOX=docker` on
 the worker. Threat model: [SECURITY.md](SECURITY.md#media-exec).
 
-| Argument         | Notes                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `tool`           | `ffmpeg` or `ffprobe`.                                                                           |
-| `args`           | argv, no shell (max 500, 8000 chars each). Files only as `{in:<name>}` and `{out:<name>}`.       |
-| `inputs`         | `name -> {assetId}`, `{url}` (public https, SSRF-guarded) or `{base64}` (2 MB each, 4 MB total). |
-| `outputs`        | `[{name, contentType?}]`; every output must be referenced. ffmpeg needs at least one.            |
-| `timeoutSeconds` | Default 300, max 1800.                                                                           |
-| `budgetCents`    | Job budget; compute time is metered per started minute.                                          |
-| `idempotencyKey` | The same key returns the earlier job (`replayed: true`).                                         |
+| Argument         | Notes                                                                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `tool`           | `ffmpeg` or `ffprobe`.                                                                                                            |
+| `args`           | argv, no shell (max 500, 8000 chars each). Files only as `{in:<name>}` and `{out:<name>}`.                                        |
+| `inputs`         | `name -> {assetId}`, `{url}` (public https, SSRF-guarded) or `{base64}` (2 MB each, 4 MB total).                                  |
+| `outputs`        | `[{name, contentType?, role?, path?, tags?}]`; every output must be referenced. ffmpeg needs at least one. See [Assets](#assets). |
+| `timeoutSeconds` | Default 300, max 1800.                                                                                                            |
+| `budgetCents`    | Job budget; compute time is metered per started minute.                                                                           |
+| `idempotencyKey` | The same key returns the earlier job (`replayed: true`).                                                                          |
 
 Names match `[A-Za-z0-9][A-Za-z0-9_.-]*`. Absolute, Windows, home and `..`
 paths, URLs, protocol prefixes (`concat:`, `file:`, `subfile,`) and the options
@@ -651,6 +652,35 @@ exit code, the tail of the combined log (`logTail`), changed files and the check
   }
 }
 ```
+
+## Assets
+
+Every asset has a `kind` (the media type: image, video, audio, font, document,
+code, render), a `role` (what it is for) and a virtual folder `path`. There is
+no folder table: a folder exists while an asset has it, and listing a folder
+includes its subfolders.
+
+- `role`: `character`, `background`, `prop`, `vfx`, `sfx`, `bgm`, `voice`,
+  `storyboard`, `keyframe`, `render`, `reference`, `other`.
+- `path`: lowercase segments joined by `/`, for example `ep03/sc01/s05`. Letters,
+  digits, `.`, `_` and `-` only; `..` is `VALIDATION`. Empty is the library root.
+- `tags`: up to 20 lowercase labels, optional.
+
+Defaults, so an agent that says nothing still saves tidy files: the role is
+inferred from the media type and file name (`whoosh.wav` is `sfx`,
+`narration-line2.mp3` is `voice`, anything unclear is `other`), and the folder
+is the role name (`sfx/`). Agents that know better set `role` and `path` on each
+`studix_media_exec` output, or change them afterwards.
+
+| Tool                  | Notes                                                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `studix_list_assets`  | Newest first. Filters: `role`, `kind`, `path` (folder and below), `tag`, `projectId`, `limit` (max 100), `cursor`.            |
+| `studix_update_asset` | `assetId` plus any of `role`, `path` (`""` moves to the root), `tags` (replaces all), `name`. The file and versions are kept. |
+
+Listing needs `asset:read`, updating needs `asset:write`. The dashboard Assets
+page (`GET /api/assets`, `PATCH /api/assets/:assetId`) offers the same filters
+and edits. Assets created before roles existed were backfilled by the same
+inference (a render is `render`) and placed in their role folder.
 
 ## P0 meta-tools (MCP-in-MCP)
 
@@ -782,13 +812,12 @@ a token.
 Not implemented; do not depend on them. Capabilities are added to the contract
 before new tools are created.
 
-| Tool                 | Intent                                                    | Phase        |
-| -------------------- | --------------------------------------------------------- | ------------ |
-| `studix_edit_video`  | Revise a version from free-form feedback without a patch  | P1           |
-| `studix_list_assets` | List workspace assets                                     | P1           |
-| `studix_search`      | Search projects, scenes, assets                           | P1-P2        |
-| `studix_publish`     | Publish an approved final; fails closed without approval  | P2           |
-| `studix_code`        | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
+| Tool                | Intent                                                    | Phase        |
+| ------------------- | --------------------------------------------------------- | ------------ |
+| `studix_edit_video` | Revise a version from free-form feedback without a patch  | P1           |
+| `studix_search`     | Search projects, scenes, assets                           | P1-P2        |
+| `studix_publish`    | Publish an approved final; fails closed without approval  | P2           |
+| `studix_code`       | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
 
 ## Connecting a client
 
