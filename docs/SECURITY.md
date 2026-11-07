@@ -144,6 +144,38 @@ another name does not open). Rules:
   when it is set. The R2 key pair is stored the same way, and only after a
   write/read/delete probe with it passes.
 
+### Storage profiles (operator)
+
+An operator can point new objects at another S3-compatible bucket
+([ADR-0020](decisions/0020-storage-profiles.md)). The server connects to that
+endpoint with stored credentials, so these rules apply:
+
+- **Who:** only the `operator` role on a dashboard session. Everyone else gets
+  `FORBIDDEN`: owners, admins, API keys, OAuth clients and the system actor.
+  There is no MCP tool for it.
+- **Probe first:** a profile is stored only after a write/read/head/delete probe
+  with the candidate settings passes.
+- **Sealed keys:** the key pair is sealed with `STUDIX_SECRETS_KEY` and bound to
+  `storage-profile:<id>:access|secret`. Views, errors, audit events and logs
+  carry only a last-four hint.
+- **Audit:** `storage_profile.created`, `updated`, `activated`, `revoked` and
+  `tested` are audited in the platform workspace, without secrets.
+- **SSRF guard** (`packages/storage/src/endpoint-guard.ts`):
+  - HTTPS only.
+  - No credentials, path or query in the URL.
+  - No IP literals, `localhost`, `.internal`, `.local` or `.localdomain` hosts.
+  - R2 endpoints must end in `.r2.cloudflarestorage.com`.
+  - Every address the host resolves to must be public. This is checked at save
+    time, and again on each connection through the socket `lookup` of the S3
+    client, so a DNS answer that changes after the check (rebinding) is still
+    refused.
+  - Link-local and cloud metadata addresses (`169.254.0.0/16`,
+    `100.100.100.200`, `fd00:ec2::254`) are always blocked.
+  - Private and loopback ranges are allowed only with
+    `STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS` (local development).
+  - The S3 SDK does not follow redirects.
+- **Media CSP:** the dashboard CSP media origins follow the configured profiles.
+
 ### Workspace media keys (BYOK)
 
 A workspace admin may store the workspace's own key for a Multix vendor under

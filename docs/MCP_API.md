@@ -439,6 +439,23 @@ or change them. They are dashboard session routes for the `operator` role
 - `PUT /api/platform/media-keys/:name` (body: `{ value }`): Credential metadata with a last-four hint. Name must be allowlisted.
 - `DELETE /api/platform/media-keys/:name`: Metadata after removal; the environment value, if any, applies.
 
+Storage profiles (same rules; the id is `env` or `stp_…`):
+
+- `GET /api/platform/storage/profiles`: The `env` profile, then stored profiles
+  with hints, reference counts and the last test.
+- `POST /api/platform/storage/profiles` (body: `{ name, providerType, endpoint?, bucket, region, forcePathStyle?, keyPrefix?, accessKeyId, secretAccessKey }`):
+  `201` with the profile. The probe runs first: a `VALIDATION` error for a
+  refused endpoint, or the probe's diagnosis when it fails. Nothing is stored
+  on failure.
+- `PUT /api/platform/storage/profiles/:id` (same body, key pair optional but
+  both or neither): Re-probes, with the stored pair when no pair is given.
+- `POST /api/platform/storage/profiles/:id/activate` (body: `{}`): New objects
+  go to this profile; `env` reverts to `S3_*`.
+- `POST /api/platform/storage/profiles/:id/test` (body: `{}`): Probe result,
+  recorded as the last test.
+- `DELETE /api/platform/storage/profiles/:id`: `204`. `CONFLICT` when the
+  profile is active or still referenced by assets.
+
 ### Workspace media keys (BYOK)
 
 A workspace may bring its own key for each Multix vendor (`sume`, `atlas`,

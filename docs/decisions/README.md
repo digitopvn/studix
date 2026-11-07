@@ -23,5 +23,6 @@ supersedes the old one; accepted ADRs are not rewritten.
 | [0017](0017-external-github-skill-store.md)                         | External GitHub skill store: pinned, immutable versions (data-only part superseded by 0019) | Accepted |
 | [0018](0018-skill-sandbox.md)                                       | Skill sandbox for tool-using Pi tasks                                                       | Accepted |
 | [0019](0019-full-skill-store-uploads-and-risk-gate.md)              | Full skill store: zip uploads, risk reports, platform skills                                | Accepted |
+| [0020](0020-storage-profiles.md)                                    | Storage profiles: operator-managed buckets with live switch and SSRF guard                  | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.

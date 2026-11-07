@@ -88,6 +88,27 @@ key and OAuth client.
   deletes one small object under a probe prefix. A failure is classified as
   missing credential, bad credential, missing permission (token can reach the
   bucket but not write it), bucket not found or remote unavailable.
+- **Storage profiles move new objects to another bucket without a redeploy.**
+  **Storage profiles** on the same page holds named profiles: provider
+  (`cloudflare-r2`, `aws-s3`, `s3-compatible`), endpoint, bucket, region,
+  path-style addressing, an optional key prefix and a key pair (sealed with
+  `STUDIX_SECRETS_KEY`, shown only as a hint). **Test and save** first runs the
+  write/read/head/delete probe with the typed settings, and stores nothing
+  when the probe fails. The endpoint must be a public HTTPS host. R2 endpoints
+  must be `https://<account>.r2.cloudflarestorage.com`. IP literals, private,
+  loopback, link-local and metadata addresses are refused, both at save time
+  and on every connection. `STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS=true` allows
+  `http` and private hosts, for a local MinIO only. Metadata addresses stay
+  blocked even then.
+  **Activate** makes one profile the target of new objects. The app and the
+  worker pick it up within about 20 seconds. A job keeps the profile of its
+  first write. The `S3_*` settings remain the `env` profile and the fallback.
+  Every asset version and render records the profile that holds its bytes
+  (`storage_profile_id`; rows written before the change record `env`).
+  Reads and signed URLs use that profile. If an object is not found there,
+  the other profiles are tried, so a deactivated profile stays readable.
+  A profile cannot be deleted while it is active or while any asset references
+  it.
 - **Media vendor keys can be set on the page.** `SUME_API_KEY`,
   `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`, `FISH_API_KEY`, `MINIMAX_API_KEY`
   and `OPENROUTER_API_KEY` are stored sealed with `STUDIX_SECRETS_KEY` in the
@@ -597,6 +618,11 @@ is running; the job must still end `succeeded`.
   schema until its own rollout.
 - Proxy Worker and marketing: `npx wrangler@4 rollback` in the Worker's
   directory, or pick the previous version in the Cloudflare dashboard.
+- Storage profile: activate the previous profile (or `env`) on **Storage &
+  Media**. New objects go there within about 20 seconds. Objects written in
+  the meantime stay readable from the profile they were written to. Migration
+  `0028` only adds a table and columns with a default, so the previous image
+  runs against it unchanged.
 - Configuration: `tose env push` the previous file, then `tose redeploy <project> -y`
   (redeploys without rebuilding).
 
