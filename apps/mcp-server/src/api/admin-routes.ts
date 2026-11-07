@@ -248,9 +248,6 @@ export function providerRoutes(deps: AppDeps): Router {
   router.get("/multix/catalog", async (_req, res) => {
     res.json(await requireMultix(deps).catalog(sessionOf(res).ctx));
   });
-  router.get("/multix/catalog", async (_req, res) => {
-    res.json(await requireMultix(deps).catalog(sessionOf(res).ctx));
-  });
   router.post("/multix/check", async (_req, res) => {
     res.json(await requireMultix(deps).check(sessionOf(res).ctx));
   });

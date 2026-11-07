@@ -88,22 +88,6 @@ export interface MultixCatalog {
   errors: string[];
 }
 
-/** The models each Multix role can be set to (GET /api/providers/multix/catalog). */
-export interface MultixCatalogEntry {
-  id: string;
-  vendor: string;
-  model: string;
-  label?: string;
-  capabilities?: string[];
-}
-
-export interface MultixCatalog {
-  roles: Record<string, MultixCatalogEntry[]>;
-  openVendors: string[];
-  fetchedAt: string;
-  errors: string[];
-}
-
 export interface WorkspaceMultixCheck {
   version: string | null;
   diagnosis: {
@@ -369,14 +353,6 @@ export interface PlatformCredential {
 
 export interface PlatformMediaKeyTest {
   name: string;
-/** `platform`: the operator's profiles; `workspace`: the session workspace's own (owners and admins). */
-export type StorageProfileScope = "platform" | "workspace";
-
-const profilesPath = (scope: StorageProfileScope, id?: string) =>
-  `${scope === "platform" ? "/api/platform" : "/api/workspace-storage"}/storage/profiles${
-    id === undefined ? "" : `/${encodeURIComponent(id)}`
-  }`;
-
   at: string;
   verdict: "available" | "invalid" | "unverified";
   httpStatus?: number;
@@ -392,6 +368,14 @@ export interface PlatformMediaVendor {
 }
 
 export type StorageProviderType = "cloudflare-r2" | "aws-s3" | "s3-compatible";
+
+/** `platform`: the operator's profiles; `workspace`: the session workspace's own (owners and admins). */
+export type StorageProfileScope = "platform" | "workspace";
+
+const profilesPath = (scope: StorageProfileScope, id?: string) =>
+  `${scope === "platform" ? "/api/platform" : "/api/workspace-storage"}/storage/profiles${
+    id === undefined ? "" : `/${encodeURIComponent(id)}`
+  }`;
 
 export interface StorageProfile {
   id: string;
@@ -994,7 +978,6 @@ export const api = {
     request<WorkspaceMultixSettings>("PUT", "/api/providers/multix", values),
   resetWorkspaceMultix: () => request<WorkspaceMultixSettings>("DELETE", "/api/providers/multix"),
   checkWorkspaceMultix: () => request<WorkspaceMultixCheck>("POST", "/api/providers/multix/check", {}),
-  multixCatalog: () => request<MultixCatalog>("GET", "/api/providers/multix/catalog"),
   multixCatalog: () => request<MultixCatalog>("GET", "/api/providers/multix/catalog"),
   workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
   updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
