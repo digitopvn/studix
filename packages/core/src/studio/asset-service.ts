@@ -14,6 +14,9 @@ import { parseInput } from "./studio-input.ts";
 export const ASSET_UPLOAD_LIMITS = {
   base64Bytes: 1_500_000,
   urlBytes: 100 * 1024 * 1024,
+  /** URL bodies are buffered in the web process: cap how many run at once and for how long. */
+  concurrentUrlImports: 4,
+  urlDeadlineMs: 120_000,
 } as const;
 
 const SIGNED_URL_SECONDS = 3600;
@@ -254,6 +257,7 @@ const actorLabel = (a: { type: string; id: string }) => `${a.type}:${a.id}`;
  * caller's workspace by the repositories, so a foreign asset or project id reads as NOT_FOUND.
  */
 export function createAssetService(deps: AssetServiceDeps) {
+  let urlImportsInFlight = 0;
   const now = () => (deps.clock ?? (() => new Date()))();
 
   const summarize = async (ctx: TenantContext, asset: Asset): Promise<AssetSummary> => {
@@ -342,7 +346,22 @@ export function createAssetService(deps: AssetServiceDeps) {
         suggestedAction: "Send the file as base64 instead.",
       });
     }
-    const fetched = await deps.fetchUrl(input.url as string, ASSET_UPLOAD_LIMITS.urlBytes, signal);
+    if (urlImportsInFlight >= ASSET_UPLOAD_LIMITS.concurrentUrlImports) {
+      throw new StudixError("RATE_LIMITED", "Too many URL imports are running; try again shortly", {
+        retryable: true,
+      });
+    }
+    urlImportsInFlight += 1;
+    let fetched: Awaited<ReturnType<NonNullable<typeof deps.fetchUrl>>>;
+    try {
+      fetched = await deps.fetchUrl(
+        input.url as string,
+        ASSET_UPLOAD_LIMITS.urlBytes,
+        AbortSignal.any([signal, AbortSignal.timeout(ASSET_UPLOAD_LIMITS.urlDeadlineMs)]),
+      );
+    } finally {
+      urlImportsInFlight -= 1;
+    }
     const type = input.contentType ?? fetched.contentType;
     return {
       bytes: fetched.body,
@@ -476,7 +495,7 @@ export function createAssetService(deps: AssetServiceDeps) {
 
       const source = await readBytes(input, signal ?? new AbortController().signal);
       if (source.bytes.byteLength === 0) throw new StudixError("VALIDATION", "The file is empty");
-      const name = input.name ?? existing?.name ?? nameFromUrl(input.url ?? "") ?? "file";
+      const name = input.name ?? existing?.name ?? nameFromUrl(input.url ?? "")?.slice(0, 200) ?? "file";
       const mime =
         source.contentType && source.contentType !== "application/octet-stream"
           ? source.contentType
@@ -487,6 +506,18 @@ export function createAssetService(deps: AssetServiceDeps) {
         const versions = await deps.assets.listVersions(ctx, existing.id);
         const current = versions.find((v) => v.id === existing.currentVersionId);
         if (current?.sha256 === sha256) {
+          // A retry after a partial failure still records the lineage (idempotent).
+          if (input.derivedFrom?.length) {
+            await deps.revisions.addLineage(
+              ctx,
+              input.derivedFrom.map((inputId) => ({
+                assetVersionId: current.id,
+                inputKind: "asset_version" as const,
+                inputId,
+                role: "derived",
+              })),
+            );
+          }
           return {
             asset: summaryOf(existing, current, versions.length),
             versionId: current.id,
@@ -506,6 +537,7 @@ export function createAssetService(deps: AssetServiceDeps) {
         }));
       const versionId = newId("astv");
       const storageKey = `assets/${asset.id}/${versionId}/${safeObjectName(name)}`;
+      let versionAdded = false;
       try {
         await deps.storage.put(ctx, storageKey, source.bytes, { contentType: mime, sha256 });
         const provenance: AssetProvenance = {
@@ -524,6 +556,7 @@ export function createAssetService(deps: AssetServiceDeps) {
           provenance,
           createdBy: actorRef(ctx.actor),
         });
+        versionAdded = true;
         if (input.derivedFrom?.length) {
           await deps.revisions.addLineage(
             ctx,
@@ -553,7 +586,8 @@ export function createAssetService(deps: AssetServiceDeps) {
         };
       } catch (err) {
         // A new asset whose first version failed would be an empty shell; move it to the trash.
-        if (!existing) await deps.assets.setDeleted(ctx, asset.id, true).catch(() => undefined);
+        if (!existing && !versionAdded)
+          await deps.assets.setDeleted(ctx, asset.id, true).catch(() => undefined);
         throw err;
       }
     },

@@ -26,6 +26,12 @@ import {
 import { corsAndOriginGuard, originOf, securityHeaders, uniqueHostnames } from "./http/request-guards.ts";
 import { mountMcpEndpoint } from "./mcp/mcp-endpoint.ts";
 
+/** Routes that read their own, larger JSON body (asset uploads, also through WebMCP). */
+const PARSES_OWN_BODY = /^\/(assets(\/|\?|$)|webmcp\/tools\/studix_upload_asset)/i;
+
+/** What `express.json` accepts by default; a `type` function replaces that check, so it is repeated here. */
+const JSON_CONTENT_TYPE = /^application\/(?:[\w.+-]+\+)?json\b/i;
+
 /** Dashboard JSON bodies are small; videos are never uploaded through /api in P0. */
 const API_BODY_LIMIT = "256kb";
 
@@ -91,7 +97,11 @@ export function createApp(deps: AppDeps): Express {
   api.use(
     rateLimit(apiLimiter, "api"),
     // Asset uploads carry base64 and parse their own, larger body (see assetRoutes).
-    express.json({ limit: API_BODY_LIMIT, type: (req) => !req.url?.startsWith("/assets") }),
+    express.json({
+      limit: API_BODY_LIMIT,
+      type: (req) =>
+        !PARSES_OWN_BODY.test(req.url ?? "") && JSON_CONTENT_TYPE.test(req.headers["content-type"] ?? ""),
+    }),
     requireSession(deps.dashboardAuth),
   );
   if (oauth) api.use("/oauth", oauthRoutes(oauth));

@@ -199,5 +199,28 @@ describe("project asset tools over MCP, WebMCP and /api/assets (Postgres)", () =
     expect((await app.api("GET", "/api/assets/ast_missing", { cookie })).status).toBe(404);
     expect((await app.api("POST", "/api/assets", { cookie, body: { name: "bad" } })).status).toBe(400);
     expect((await app.api("GET", "/api/assets")).status).toBe(401);
+
+    // A body above the 256kb dashboard cap still reaches WebMCP uploads (1.5 MB of file bytes).
+    const big = Buffer.alloc(600_000, 7).toString("base64");
+    const large = (await (
+      await app.api("POST", "/api/webmcp/tools/studix_upload_asset", {
+        cookie,
+        body: { name: "big.bin", base64: big, contentType: "application/octet-stream" },
+      })
+    ).json()) as { structuredContent: Envelope };
+    expect(large.structuredContent.status).toBe("ok");
+  });
+
+  it("leaves non-JSON bodies to their own route parsers", async () => {
+    const cookie = await app.signUp(`zip-${Date.now()}@example.test`);
+    // Not a valid archive, but it must reach the skill route's raw parser and fail there, not as a JSON error.
+    const res = await fetch(`${app.base}/api/skills/upload`, {
+      method: "POST",
+      headers: { origin: app.base, cookie, "content-type": "application/zip" },
+      body: Buffer.alloc(300_000, 1),
+    });
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(res.status).not.toBe(413);
+    expect(JSON.stringify(body)).not.toContain("entity.");
   });
 });

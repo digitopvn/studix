@@ -1,5 +1,5 @@
 import { StudixError, toStudixError } from "@studix/shared";
-import { Router } from "express";
+import express, { Router } from "express";
 import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
 import type { ArtifactUrlDeps } from "../artifact-urls.ts";
@@ -46,31 +46,39 @@ export function webmcpRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     });
   });
 
-  router.post("/webmcp/tools/:name", async (req, res) => {
-    const { ctx: tenant } = sessionOf(res);
-    const def = tools.find((t) => t.name === req.params.name);
-    if (!def) throw new StudixError("NOT_FOUND", "Unknown WebMCP tool");
-    const traceId = crypto.randomUUID().replaceAll("-", "");
-    // The reply is the same CallToolResult `/mcp` returns, so the browser hands it to the agent unchanged.
-    try {
-      const args = parseBody(def.input, req.body, def.name);
-      const outcome = await def.run(
-        { deps, artifacts, tenant, traceId, toolNames: [...WEBMCP_TOOL_NAMES] },
-        args,
-      );
-      if (def.audited) {
-        await deps.activity?.record(tenant, {
-          name: `webmcp.${def.name}`,
-          scope: outcome.scope,
-          traceId,
-          attributes: { tool: def.name, actorType: tenant.actor.type, actorId: tenant.actor.id },
-        });
+  // An upload carries base64 (1.5 MB of file bytes), so it gets the same body cap as /mcp.
+  const uploadBody = express.json({ limit: "2mb" });
+  router.post(
+    "/webmcp/tools/:name",
+    (req, res, next) => (req.params.name === ASSET_TOOL_NAMES.upload ? uploadBody(req, res, next) : next()),
+    async (req, res) => {
+      const { ctx: tenant } = sessionOf(res);
+      const abort = new AbortController();
+      res.once("close", () => abort.abort());
+      const def = tools.find((t) => t.name === req.params.name);
+      if (!def) throw new StudixError("NOT_FOUND", "Unknown WebMCP tool");
+      const traceId = crypto.randomUUID().replaceAll("-", "");
+      // The reply is the same CallToolResult `/mcp` returns, so the browser hands it to the agent unchanged.
+      try {
+        const args = parseBody(def.input, req.body, def.name);
+        const outcome = await def.run(
+          { deps, artifacts, tenant, traceId, toolNames: [...WEBMCP_TOOL_NAMES], signal: abort.signal },
+          args,
+        );
+        if (def.audited) {
+          await deps.activity?.record(tenant, {
+            name: `webmcp.${def.name}`,
+            scope: outcome.scope,
+            traceId,
+            attributes: { tool: def.name, actorType: tenant.actor.type, actorId: tenant.actor.id },
+          });
+        }
+        res.json(okEnvelope(outcome.data, outcome.next, traceId, outcome.images));
+      } catch (e) {
+        res.json(errorEnvelope(toStudixError(e), traceId));
       }
-      res.json(okEnvelope(outcome.data, outcome.next, traceId, outcome.images));
-    } catch (e) {
-      res.json(errorEnvelope(toStudixError(e), traceId));
-    }
-  });
+    },
+  );
 
   return router;
 }
