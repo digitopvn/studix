@@ -24,7 +24,7 @@ import { VO_PAD_MS, VO_WORDS_PER_SECOND, voiceoverWordBudget } from "../marketin
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 2;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 3;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -126,10 +126,22 @@ function inkOn(
     : "background";
 }
 
-function durations(totalMs: number, count: number): number[] {
-  const base = Math.floor(totalMs / count / 100) * 100;
-  const out = Array.from({ length: count }, () => base);
-  out[count - 1] = totalMs - base * (count - 1);
+/**
+ * Card lengths: each card gets the time its voice-over takes to say (with the lead-in and closing pads),
+ * and the rest of the length is shared equally, so a long hook never shares an even split with a two-word
+ * call to action and outruns its card.
+ */
+function durations(totalMs: number, lines: readonly Line[]): number[] {
+  const last = lines.length - 1;
+  const need = lines.map(
+    (l, i) =>
+      (l.voiceover ? (wordCount(l.voiceover) / VO_WORDS_PER_SECOND) * 1000 : 0) +
+      (i === 0 ? VO_PAD_MS : 0) +
+      (i === last ? VO_PAD_MS : 0),
+  );
+  const slack = Math.max(0, totalMs - need.reduce((a, b) => a + b, 0)) / lines.length;
+  const out = need.map((n) => Math.floor((n + slack) / 100) * 100);
+  out[last] = totalMs - out.slice(0, last).reduce((a, b) => a + b, 0);
   return out;
 }
 
@@ -185,7 +197,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     : undefined;
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
   const chars = LINE_CHARS[aspectRatio];
-  const spans = durations(totalMs, lines.length);
+  const spans = durations(totalMs, lines);
   const last = lines.length - 1;
   let cursor = 0;
   const cues: CaptionCue[] = [];
