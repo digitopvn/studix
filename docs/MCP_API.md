@@ -534,14 +534,12 @@ Rules:
 Six small tools manage the files of a workspace. `/api/assets` and the
 dashboard run the same service, and WebMCP serves these exact tool definitions.
 
-| Tool                   | Does                                                                                                                                                                                       |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `studix_list_assets`   | List and search: `projectId?`, `kind?`, `q?` (part of the name), `state?` (`active` default, `deleted`, `all`), `limit?`, `cursor?`. Needs `asset:read`.                                   |
-| `studix_get_asset`     | One asset with its versions, lineage (`derivedFrom`, `derivatives`) and a signed URL for the current or a given `versionId`. Needs `asset:read`.                                           |
-| `studix_upload_asset`  | Create an asset, or add a version with `assetId`. Exactly one of `base64` (1.5 MB) or `url` (public https, SSRF-guarded, 100 MB). Optional `derivedFrom` version ids. Needs `asset:write`. |
-| `studix_update_asset`  | Rename (`name`) or move (`projectId`, `null` detaches). Needs `asset:write`.                                                                                                               |
-| `studix_delete_asset`  | Move to the trash. Bytes and versions are kept; repeating it is a no-op.                                                                                                                   |
-| `studix_restore_asset` | Take an asset out of the trash.                                                                                                                                                            |
+- `studix_list_assets`: List and search: `projectId?`, `kind?`, `q?` (part of the name), `state?` (`active` default, `deleted`, `all`), `limit?`, `cursor?`. Needs `asset:read`.
+- `studix_get_asset`: One asset with its versions, lineage (`derivedFrom`, `derivatives`) and a signed URL for the current or a given `versionId`. Needs `asset:read`.
+- `studix_upload_asset`: Create an asset, or add a version with `assetId`. Exactly one of `base64` (1.5 MB) or `url` (public https, SSRF-guarded, 100 MB). Optional `derivedFrom`. Needs `asset:write`.
+- `studix_update_asset`: Rename (`name`) or move (`projectId`, `null` detaches). Needs `asset:write`.
+- `studix_delete_asset`: Move to the trash. Bytes and versions are kept; repeating it is a no-op.
+- `studix_restore_asset`: Take an asset out of the trash.
 
 Uploading identical bytes as the current version returns `unchanged: true`
 and writes nothing. A foreign workspace's id reads as `NOT_FOUND`. Every
