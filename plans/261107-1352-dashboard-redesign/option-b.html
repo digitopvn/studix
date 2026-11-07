@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studix — Option B · Agent Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ===== Design tokens: Agent Console (dark-first) ===== */
+:root{
+  --bg:#0b0c0e; --panel:#121418; --raised:#1a1d23; --line:#24282f; --text:#eceef2; --text-2:#a3a9b5; --text-3:#6b7280;
+  --accent:#c6f432; --accent-ink:#0b0c0e; --accent-dim:rgba(198,244,50,.12);
+  --info:#62a8ff; --ok:#3ddc97; --warn:#ffb547; --err:#ff5d5d;
+  --f-ui:Geist,Inter,system-ui,sans-serif; --f-mono:"Geist Mono",ui-monospace,monospace;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:28px;--s7:40px;
+  --r-xs:4px;--r-sm:6px;--r-md:8px;--r-lg:12px;
+  --ease:cubic-bezier(.16,1,.3,1); --t-fast:100ms; --t-med:180ms;
+}
+:root[data-theme=light]{
+  --bg:#f4f5f7; --panel:#ffffff; --raised:#f0f1f4; --line:#e1e4e9; --text:#0d0f12; --text-2:#4b5260; --text-3:#8a909c;
+  --accent:#4b5bff; --accent-ink:#fff; --accent-dim:rgba(75,91,255,.1); --ok:#0f9d63; --warn:#b86e00;
+}
+*{box-sizing:border-box} html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.5 var(--f-ui);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0}
+.mono{font-family:var(--f-mono);font-size:12px}
+.app{display:grid;grid-template-columns:260px 1fr 360px;height:100vh}
+/* left rail: projects are threads */
+.rail{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.brand{display:flex;align-items:center;gap:8px;padding:var(--s4);font-weight:700;letter-spacing:-.02em;font-size:16px}
+.brand b{width:22px;height:22px;border-radius:6px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-size:13px}
+.new{margin:0 var(--s3) var(--s3);padding:9px 12px;border-radius:var(--r-md);background:var(--accent);color:var(--accent-ink);font-weight:600;text-align:left;display:flex;justify-content:space-between}
+.search{margin:0 var(--s3) var(--s3);padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-md);color:var(--text-3)}
+.label{padding:var(--s3) var(--s4) 4px;color:var(--text-3);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.threads{overflow:auto;flex:1}
+.th{display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px var(--s4);border-left:2px solid transparent}
+.th:hover{background:var(--raised)}
+.th[aria-current=true]{background:var(--raised);border-left-color:var(--accent)}
+.th .thumb{width:36px;height:22px;border-radius:3px;background:linear-gradient(135deg,#2a2f3a,#c6f432);flex:none}
+.th small{display:block;color:var(--text-3);font-size:12px}
+.st{width:7px;height:7px;border-radius:50%;margin-left:auto;flex:none}
+.st.run{background:var(--warn);animation:p 1s infinite}.st.ok{background:var(--ok)}.st.rev{background:var(--info)}
+@keyframes p{50%{opacity:.3}}
+.railfoot{border-top:1px solid var(--line);padding:var(--s2)}
+.railfoot button{display:flex;width:100%;padding:8px 12px;border-radius:var(--r-sm);color:var(--text-2);gap:8px}
+.railfoot button:hover,.railfoot button[aria-current=true]{background:var(--raised);color:var(--text)}
+/* center */
+.center{display:flex;flex-direction:column;min-width:0;min-height:0}
+.bar{display:flex;align-items:center;gap:var(--s3);padding:10px var(--s5);border-bottom:1px solid var(--line);min-height:49px}
+.bar h1{font-size:15px;margin:0;font-weight:600}
+.sp{flex:1}
+.btn{padding:6px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);transition:transform var(--t-fast)}
+.btn:active{transform:scale(.97)} .btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.body{flex:1;overflow:auto;padding:var(--s6) var(--s5)}
+.view{display:none;max-width:860px;margin:0 auto;animation:in var(--t-med) var(--ease)} .view.on{display:block}
+@keyframes in{from{opacity:0;transform:translateY(4px)}}
+.hero{font-size:clamp(28px,4vw,44px);font-weight:600;letter-spacing:-.035em;line-height:1.05;margin:8vh 0 var(--s3)}
+.hero span{color:var(--accent)}
+.sub{color:var(--text-2);margin:0 0 var(--s6)}
+.box{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-lg);padding:var(--s3)}
+.box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+textarea{width:100%;border:0;outline:0;resize:none;background:none;color:var(--text);font:15px/1.5 var(--f-ui);min-height:72px}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pill{border:1px solid var(--line);border-radius:var(--r-sm);padding:3px 8px;font-size:12.5px;color:var(--text-2);background:var(--raised)}
+.kbd{font-family:var(--f-mono);font-size:11px;border:1px solid var(--line);border-radius:3px;padding:0 4px;color:var(--text-3)}
+.tpl{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--s2);margin-top:var(--s4)}
+.tpl button{text-align:left;border:1px solid var(--line);border-radius:var(--r-md);padding:var(--s3);color:var(--text-2)}
+.tpl button:hover{border-color:var(--text-3);color:var(--text)}
+.tpl b{display:block;color:var(--text);font-weight:500;margin-bottom:2px}
+.player{aspect-ratio:16/9;border-radius:var(--r-lg);background:radial-gradient(circle at 70% 30%,#c6f43255,transparent 50%),linear-gradient(160deg,#151820,#2a3040);display:grid;place-items:center;font-size:40px;font-weight:700;letter-spacing:-.04em;color:#fff;position:relative}
+.scrub{position:absolute;left:16px;right:16px;bottom:14px;height:4px;background:rgba(255,255,255,.2);border-radius:2px}
+.scrub i{display:block;width:38%;height:100%;background:var(--accent);border-radius:2px}
+.vers{display:flex;gap:6px;margin:var(--s3) 0}
+.vers button{padding:5px 10px;border:1px solid var(--line);border-radius:var(--r-sm);font-family:var(--f-mono);font-size:12px;color:var(--text-2)}
+.vers button[aria-current=true]{border-color:var(--accent);color:var(--text);background:var(--accent-dim)}
+.ann{margin-top:var(--s4);display:grid;gap:6px}
+.ann div{display:flex;gap:10px;font-size:13px;color:var(--text-2)} .ann .mono{color:var(--accent);min-width:42px}
+/* settings */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:var(--s5);overflow-x:auto}
+.tabs button{padding:8px 12px;color:var(--text-3);border-bottom:2px solid transparent;white-space:nowrap}
+.tabs button[aria-current=true]{color:var(--text);border-bottom-color:var(--accent)}
+.list{border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+.li{display:flex;gap:var(--s3);align-items:center;padding:12px var(--s4);border-top:1px solid var(--line);background:var(--panel)}
+.li:first-child{border-top:0} .li .k{flex:1} .li small{display:block;color:var(--text-3)}
+.ok{color:var(--ok)} .warn{color:var(--warn)}
+/* right: live agent pane */
+.agent{background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.agent .bar{padding:10px var(--s4)}
+.feed{flex:1;overflow:auto;padding:var(--s3) var(--s4);font-size:13px}
+.ev{display:grid;grid-template-columns:14px 1fr auto;gap:8px;padding:6px 0;border-bottom:1px dashed var(--line)}
+.ev .ic{margin-top:6px;width:7px;height:7px;border-radius:50%;background:var(--ok)}
+.ev.run .ic{background:var(--warn);animation:p 1s infinite}
+.ev.think .ic{background:var(--text-3)} .ev.think .tx{color:var(--text-3);font-style:italic}
+.ev .tx .mono{color:var(--text)} .ev .tx small{display:block;color:var(--text-3)}
+.ev .r{color:var(--text-3);font-family:var(--f-mono);font-size:11px}
+.cost{display:flex;justify-content:space-between;padding:10px var(--s4);border-top:1px solid var(--line);font-family:var(--f-mono);font-size:12px;color:var(--text-2)}
+.mcp{margin:var(--s3) var(--s4);padding:var(--s3);border:1px solid var(--line);border-radius:var(--r-md);background:var(--raised)}
+.mcp code{display:block;font:12px var(--f-mono);margin:6px 0;color:var(--text);word-break:break-all}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--accent);color:var(--accent-ink);padding:6px 14px;border-radius:var(--r-sm);font-weight:600;opacity:0;transition:opacity var(--t-med)}
+.toast.on{opacity:1}
+.menu{display:none}
+@media (max-width:1100px){.app{grid-template-columns:220px 1fr}.agent{position:fixed;right:0;top:0;bottom:0;width:min(360px,100%);transform:translateX(100%);transition:transform var(--t-med) var(--ease);z-index:10}.agent.open{transform:none}}
+@media (max-width:720px){.app{grid-template-columns:1fr}.rail{position:fixed;inset:0 auto 0 0;width:260px;transform:translateX(-100%);transition:transform var(--t-med);z-index:11}.rail.open{transform:none}.menu{display:block}.hide-sm{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail" id="rail">
+    <div class="brand"><b>S</b>Studix</div>
+    <button class="new" data-go="home">New video <span class="kbd">N</span></button>
+    <div class="search">⌕ Search projects <span class="kbd" style="float:right">⌘K</span></div>
+    <div class="label">Projects</div>
+    <div class="threads">
+      <button class="th" data-go="project"><span class="thumb"></span><span>Notely 2.0 launch<small>v3 · rendering</small></span><span class="st run"></span></button>
+      <button class="th" data-go="project"><span class="thumb" style="background:linear-gradient(135deg,#1b2a3a,#62a8ff)"></span><span>API explainer<small>v2 · needs review</small></span><span class="st rev"></span></button>
+      <button class="th" data-go="project"><span class="thumb" style="background:linear-gradient(135deg,#222,#999)"></span><span>October changelog<small>v1 · done · 9:16</small></span><span class="st ok"></span></button>
+      <button class="th" data-go="project"><span class="thumb" style="background:linear-gradient(135deg,#3a1b2a,#ff5d5d)"></span><span>Tết promo 2027<small>v4 · done</small></span><span class="st ok"></span></button>
+    </div>
+    <div class="railfoot">
+      <button data-go="connect">⚡ Connect an agent</button>
+      <button data-go="settings">⚙ Settings</button>
+    </div>
+  </aside>
+
+  <section class="center">
+    <div class="bar">
+      <button class="btn menu" data-rail>☰</button>
+      <h1 id="crumb">New video</h1><div class="sp"></div>
+      <button class="btn" data-pane>Agent</button>
+      <button class="btn" id="theme" aria-label="Toggle theme">◐</button>
+    </div>
+    <div class="body">
+      <div class="view on" data-view="home">
+        <p class="hero">Describe it.<br><span>Your agent builds it.</span></p>
+        <p class="sub">Script, voice, motion and render. Every tool call streams on the right, so you always know what is happening and what it costs.</p>
+        <div class="box"><textarea placeholder="30s launch video for Notely 2.0, calm, Vietnamese voice-over…"></textarea>
+          <div class="row"><span class="pill">16:9</span><span class="pill">30s</span><span class="pill">vi · Linh</span><span class="pill">claude · opus</span><span class="pill">+ file</span><div class="sp"></div><span class="kbd hide-sm">⌘↵</span><button class="btn pri" data-go="project" data-stream>Generate</button></div></div>
+        <div class="tpl">
+          <button data-go="project"><b>Changelog → Reel</b>Paste a changelog, get 9:16 20s</button>
+          <button data-go="project"><b>Product explainer</b>Vox-like collage, 60s</button>
+          <button data-go="project"><b>Restyle a video</b>Same script, new look</button>
+        </div>
+      </div>
+
+      <div class="view" data-view="project">
+        <div class="player">Notely 2.0<div class="scrub"><i></i></div></div>
+        <div class="vers"><button>v1</button><button>v2</button><button aria-current="true">v3 · warmer music</button><div class="sp"></div><button>Compare</button></div>
+        <div class="box"><textarea style="min-height:40px" placeholder="Revise v3: tell the agent what to change, or press C at a timestamp to comment"></textarea>
+          <div class="row"><span class="pill">@ 00:04</span><div class="sp"></div><button class="btn" data-copy="studix_get_project id=prj_8f2k">Copy for agent</button><button class="btn">Download</button><button class="btn pri" data-stream>Revise</button></div></div>
+        <div class="ann">
+          <div><span class="mono">00:02</span>Hook feels long, cut to 1.5s</div>
+          <div><span class="mono">00:18</span>Logo should be larger on the end card</div>
+        </div>
+      </div>
+
+      <div class="view" data-view="connect">
+        <p class="hero" style="margin-top:2vh">Studix is a <span>tool</span><br>for your agent.</p>
+        <p class="sub">Every action in this app is an MCP tool, a WebMCP tool, an API call and a CLI command, with the same names.</p>
+        <div class="list">
+          <div class="li"><div class="k">Claude Code / Desktop<small class="mono">claude mcp add studix https://studix.app/mcp</small></div><button class="btn" data-copy="claude mcp add studix https://studix.app/mcp">Copy</button></div>
+          <div class="li"><div class="k">ChatGPT<small>Connectors → https://studix.app/mcp</small></div><button class="btn" data-copy="https://studix.app/mcp">Copy URL</button></div>
+          <div class="li"><div class="k">Cursor / any MCP client<small class="mono">mcp.json snippet</small></div><button class="btn" data-copy='{"studix":{"url":"https://studix.app/mcp"}}'>Copy JSON</button></div>
+          <div class="li"><div class="k">API key<small>For CLI and scripts</small></div><button class="btn pri">Create key</button></div>
+        </div>
+        <p class="label" style="padding-left:0;margin-top:24px">Connected</p>
+        <div class="list"><div class="li"><div class="k">Claude Desktop<small>last call 2m ago · studix_render</small></div><span class="ok">● active</span></div></div>
+      </div>
+
+      <div class="view" data-view="settings">
+        <div class="tabs"><button aria-current="true">Models</button><button>Media</button><button>Skills</button><button>Storage</button><button>Account</button></div>
+        <div class="list">
+          <div class="li"><div class="k">Agent runtime<small>claude · opus · high effort</small></div><button class="btn">Change</button></div>
+          <div class="li"><div class="k">Fallback runtimes<small>codex, pi</small></div><button class="btn">Edit</button></div>
+          <div class="li"><div class="k">Multix media keys<small>image, video, voice, lip-sync, upscale</small></div><span class="ok">Connected</span></div>
+          <div class="li"><div class="k">Storage<small>studix-media · S3 · 78% used</small></div><span class="warn">Check</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="agent" id="agent">
+    <div class="bar"><b>Agent</b><span class="pill mono">claude · opus · high</span><div class="sp"></div><button class="btn" data-pane>✕</button></div>
+    <div class="feed" id="feed">
+      <div class="ev think"><span class="ic"></span><span class="tx">Planning 5 beats: hook, problem, three features, close. 96 bpm.</span><span class="r">2s</span></div>
+      <div class="ev"><span class="ic"></span><span class="tx"><span class="mono">studix_create_video</span><small>project prj_8f2k</small></span><span class="r">0.4s</span></div>
+      <div class="ev"><span class="ic"></span><span class="tx"><span class="mono">tts.generate</span><small>vi · Linh · 28.6s</small></span><span class="r">$0.02</span></div>
+      <div class="ev"><span class="ic"></span><span class="tx"><span class="mono">hyperframes.compose</span><small>5 scenes · 1080p</small></span><span class="r">41s</span></div>
+      <div class="ev run"><span class="ic"></span><span class="tx"><span class="mono">studix_render</span><small>62% · ETA 18s</small></span><span class="r">…</span></div>
+    </div>
+    <div class="cost"><span>4 stages · 1m 52s</span><span>$0.31</span></div>
+    <div class="mcp"><small style="color:var(--text-3)">Continue from your own agent</small><code>studix_get_job id=job_3hq9</code><button class="btn" data-copy="studix_get_job id=job_3hq9">Copy for agent</button></div>
+  </aside>
+</div>
+<div class="toast" id="toast">Copied</div>
+<script>
+const $=s=>document.querySelectorAll(s);
+const names={home:'New video',project:'Notely 2.0 launch',connect:'Connect an agent',settings:'Settings'};
+function go(v){$('.view').forEach(x=>x.classList.toggle('on',x.dataset.view===v));crumb.textContent=names[v];
+  $('.railfoot button,.th').forEach(b=>b.removeAttribute('aria-current'));
+  const cur=v==='project'?$('.th')[0]:document.querySelector('.railfoot [data-go='+v+']');cur&&cur.setAttribute('aria-current',true);rail.classList.remove('open')}
+document.addEventListener('click',e=>{const t=e.target.closest('[data-go],[data-pane],[data-rail],[data-copy],[data-stream]');if(!t)return;
+  if(t.dataset.go)go(t.dataset.go);
+  if(t.hasAttribute('data-pane'))agent.classList.toggle('open');
+  if(t.hasAttribute('data-rail'))rail.classList.toggle('open');
+  if(t.hasAttribute('data-stream')){const d=document.createElement('div');d.className='ev run';d.innerHTML='<span class="ic"></span><span class="tx"><span class="mono">studix_feedback</span><small>revising v3 → v4</small></span><span class="r">…</span>';feed.appendChild(d);feed.scrollTop=1e5}
+  if(t.dataset.copy){try{navigator.clipboard.writeText(t.dataset.copy)}catch{};toast.classList.add('on');setTimeout(()=>toast.classList.remove('on'),1200)}});
+addEventListener('keydown',e=>{if(e.key==='n'&&!/TEXTAREA|INPUT/.test(document.activeElement.tagName))go('home')});
+const root=document.documentElement;
+if(matchMedia('(prefers-color-scheme: light)').matches)root.dataset.theme='light';
+theme.onclick=()=>root.dataset.theme=root.dataset.theme==='light'?'dark':'light';
+</script>
+</body>
+</html>
