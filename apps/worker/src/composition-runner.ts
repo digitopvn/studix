@@ -149,8 +149,7 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
         const result: CompositionRunResult = {
           exitCode,
           durationMs,
-          stdout: output,
-          stderr: output,
+          log: output,
           changed,
         };
         if (request.check && exitCode === 0) result.check = await check(request.check, paths, host);

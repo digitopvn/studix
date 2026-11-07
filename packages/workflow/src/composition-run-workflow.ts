@@ -69,8 +69,7 @@ export function createCompositionRunWorkflow(deps: CompositionRunWorkflowDeps): 
                 retryable: false,
                 details: {
                   exitCode: result.exitCode,
-                  stderrTail: result.stderr.slice(-TAIL),
-                  stdoutTail: result.stdout.slice(-TAIL),
+                  logTail: result.log.slice(-TAIL),
                   changed: result.changed.map((f) => f.path),
                   ...(result.check ? { check: result.check } : {}),
                 },
@@ -80,7 +79,7 @@ export function createCompositionRunWorkflow(deps: CompositionRunWorkflowDeps): 
             );
           }
           return {
-            output: { ...result, stdout: result.stdout.slice(-TAIL), stderr: result.stderr.slice(-TAIL) },
+            output: { ...result, log: result.log.slice(-TAIL) },
             usage,
           };
         },

@@ -102,8 +102,8 @@ export type CompositionRunRequest = z.output<typeof CompositionRunRequest>;
 export interface CompositionRunResult {
   exitCode: number | null;
   durationMs: number;
-  stdout: string;
-  stderr: string;
+  /** stdout and stderr interleaved, as a terminal shows them (the tail). */
+  log: string;
   /** Files the command added or changed, now stored in the composition. */
   changed: CompositionFile[];
   check?: { path: string; passed: boolean; problems: string[]; probe?: Record<string, unknown> };
