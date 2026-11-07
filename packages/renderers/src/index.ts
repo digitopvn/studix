@@ -12,6 +12,8 @@ export {
   type FinishedFile,
   type FinishInput,
   finishDeliveries,
+  type LimiterDrive,
+  nextLimiterDrive,
   phoneVideoKbps,
 } from "./ffmpeg/ffmpeg-finish.ts";
 export {

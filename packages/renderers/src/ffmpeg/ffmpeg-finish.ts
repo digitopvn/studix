@@ -49,9 +49,36 @@ const PHONE_TARGET_MIB = 28;
 const PHONE_MAX_VIDEO_KBPS = 6000;
 const PHONE_WIDTH = 720;
 const PREVIEW_LONG_EDGE = 640;
-/** Corrective passes may raise the limiter drive this many times, by at most this much in total. */
-const MAX_GAIN_PASSES = 3;
+/** Corrective passes: at most this many re-encodes, this much added drive and this much lower ceiling. */
+const MAX_CORRECTION_PASSES = 4;
 const MAX_GAIN_CORRECTION_DB = 9;
+const MAX_CEILING_CUT_DB = 6;
+/** Extra headroom taken below a measured true-peak overshoot, so one pass usually lands under the limit. */
+const CEILING_MARGIN_DB = 0.3;
+
+/** How hard a delivery drives its limiter: added gain and a ceiling offset from the per-rate limit. */
+export interface LimiterDrive {
+  gainDb: number;
+  ceilingDb: number;
+}
+
+/**
+ * The drive for the next corrective encode, or null when nothing more can help. A true peak over the
+ * ceiling (AAC overshoot on peaky material, e.g. a music bed under voice) lowers the limiter ceiling by the
+ * overshoot plus a margin; a file too quiet drives the missing gain into the limiter.
+ */
+export function nextLimiterDrive(measured: LoudnessMeasurement, drive: LimiterDrive): LimiterDrive | null {
+  const overshoot = measured.truePeakDbtp - LOUDNESS_TARGET.truePeakDbtp;
+  if (overshoot > 0) {
+    const ceilingDb = Math.max(-MAX_CEILING_CUT_DB, drive.ceilingDb - overshoot - CEILING_MARGIN_DB);
+    return ceilingDb < drive.ceilingDb ? { ...drive, ceilingDb } : null;
+  }
+  const gainDb = Math.min(
+    MAX_GAIN_CORRECTION_DB,
+    drive.gainDb + LOUDNESS_TARGET.integratedLufs - measured.integratedLufs,
+  );
+  return Number.isFinite(gainDb) && gainDb > drive.gainDb ? { ...drive, gainDb } : null;
+}
 
 const SILENT_SOURCE = ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"];
 const MP4_TAIL = ["-movflags", "+faststart", "-n"];
@@ -64,9 +91,14 @@ export function phoneVideoKbps(durationMs: number, audioKbps: number, targetMib 
 }
 
 /** Audio arguments for input 1: the mix through the true-peak-safe chain, or silence. */
-function audioArgs(input: FinishInput, audio: { kbps: number; limit: number }, gainDb: number): string[] {
+function audioArgs(
+  input: FinishInput,
+  audio: { kbps: number; limit: number },
+  drive: LimiterDrive,
+): string[] {
   if (!input.audio) return ["-c:a", "aac", "-b:a", "128k", "-shortest"];
-  return ["-af", truePeakSafeFilter(audio.limit, gainDb), "-c:a", "aac", "-b:a", `${audio.kbps}k`];
+  const limit = audio.limit * 10 ** (drive.ceilingDb / 20);
+  return ["-af", truePeakSafeFilter(limit, drive.gainDb), "-c:a", "aac", "-b:a", `${audio.kbps}k`];
 }
 
 function audioInput(input: FinishInput): string[] {
@@ -78,8 +110,8 @@ async function removeQuietly(path: string): Promise<void> {
 }
 
 /**
- * Encodes one delivery and measures it. When the file is too quiet (the limiter cost level on peaky
- * material), the audio is encoded again with the missing gain driven into the limiter, a few times at
+ * Encodes one delivery and measures it. When the file overshoots the true-peak ceiling or is too quiet,
+ * the audio is encoded again with a lower limiter ceiling or more drive (nextLimiterDrive), a few times at
  * most; a delivery that still misses the target fails, so a file outside -14 LUFS +/-1 / -1.5 dBTP is
  * never returned.
  */
@@ -87,23 +119,20 @@ async function encodeMeasured(
   kind: DeliveryKind,
   input: FinishInput,
   out: string,
-  encode: (gainDb: number) => Promise<void>,
+  encode: (drive: LimiterDrive) => Promise<void>,
   options: RunFfmpegOptions,
 ): Promise<FinishedFile> {
+  let drive: LimiterDrive = { gainDb: 0, ceilingDb: 0 };
   await removeQuietly(out);
-  await encode(0);
+  await encode(drive);
   if (!input.audio) return { kind, filePath: out };
   let measured = await measureLoudness(out, options);
-  let gainDb = 0;
-  for (let pass = 0; pass < MAX_GAIN_PASSES && loudnessProblems(measured).length > 0; pass++) {
-    const next = Math.min(
-      MAX_GAIN_CORRECTION_DB,
-      gainDb + LOUDNESS_TARGET.integratedLufs - measured.integratedLufs,
-    );
-    if (!Number.isFinite(next) || next <= gainDb) break;
-    gainDb = next;
+  for (let pass = 0; pass < MAX_CORRECTION_PASSES && loudnessProblems(measured).length > 0; pass++) {
+    const next = nextLimiterDrive(measured, drive);
+    if (!next) break;
+    drive = next;
     await removeQuietly(out);
-    await encode(gainDb);
+    await encode(drive);
     measured = await measureLoudness(out, options);
   }
   const loudness = { integratedLufs: measured.integratedLufs, truePeakDbtp: measured.truePeakDbtp };
@@ -126,7 +155,7 @@ async function encodeMaster(input: FinishInput, options: RunFfmpegOptions): Prom
     "master",
     input,
     out,
-    (gainDb) =>
+    (drive) =>
       runFfmpeg(
         "master mux",
         [
@@ -138,7 +167,7 @@ async function encodeMaster(input: FinishInput, options: RunFfmpegOptions): Prom
           "-map",
           "1:a:0",
           ...video,
-          ...audioArgs(input, MASTER_AUDIO, gainDb),
+          ...audioArgs(input, MASTER_AUDIO, drive),
           ...MP4_TAIL,
           out,
         ],
@@ -227,7 +256,7 @@ async function encodePhone(
       "phone",
       input,
       out,
-      (gainDb) =>
+      (drive) =>
         runFfmpeg(
           "phone pass 2",
           [
@@ -241,7 +270,7 @@ async function encodePhone(
             ...video,
             "-pass",
             "2",
-            ...audioArgs(input, PHONE_AUDIO, gainDb),
+            ...audioArgs(input, PHONE_AUDIO, drive),
             ...MP4_TAIL,
             out,
           ],

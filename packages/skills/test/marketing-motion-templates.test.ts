@@ -332,6 +332,23 @@ describe("motion graphic", () => {
     expect(ink("message-2", "message-2-text")).toBe("foreground");
   });
 
+  it("lifts near-black scene fills off black so the QA gate does not count them as black frames", () => {
+    const ir = motionGraphicTemplate({
+      prompt: "Lá Mây",
+      brand: {
+        ...brief.brand,
+        palette: { primary: "#000000", background: "#0e0e0e", foreground: "#ffffff" },
+      },
+    });
+    const luma = (hex: string) =>
+      0.299 * Number.parseInt(hex.slice(1, 3), 16) +
+      0.587 * Number.parseInt(hex.slice(3, 5), 16) +
+      0.114 * Number.parseInt(hex.slice(5, 7), 16);
+    expect(luma(ir.brand?.palette.background ?? "")).toBeGreaterThanOrEqual(28);
+    expect(luma(ir.brand?.palette.primary ?? "")).toBeGreaterThanOrEqual(28);
+    expect(ir.brand?.palette.foreground).toBe("#ffffff");
+  });
+
   it("builds a valid captioned IR with its voice-over script and rejects one that cannot fit", () => {
     const ir = motionGraphicTemplate({
       prompt: "Lá Mây",
