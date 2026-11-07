@@ -407,3 +407,40 @@ fieldset.segment {
     height: 32px;
   }
 }
+
+.pv-progress {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.pv-run {
+  border-top: 1px solid var(--line);
+  padding: 0.5rem 0;
+}
+.pv-run > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.pv-run-title {
+  font-weight: 500;
+  flex: 1;
+}
+.pv-run-steps {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+.pv-progress {
+  overflow-x: hidden;
+}
+.pv-run-steps > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pv-run-steps summary {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

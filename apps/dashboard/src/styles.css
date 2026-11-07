@@ -56,6 +56,13 @@
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+/* Text fields show focus through the caret and a border tint, not a ring. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--text-3);
+}
 * {
   box-sizing: border-box;
 }
@@ -162,8 +169,13 @@ h2 {
   background: var(--text-3);
 }
 
-.tally-pill.live {
+.tally-pill.live,
+.tally-pill.active {
   color: var(--text);
+}
+
+.tally-pill.active {
+  border-color: var(--text-2);
 }
 
 .tally-pill.live .tally-dot {
@@ -1269,14 +1281,28 @@ th {
   color: var(--bg);
 }
 
-.chat-seconds {
+.chat-lengths {
   display: inline-flex;
-  align-items: center;
   gap: 0.25rem;
+  border: 0;
+  margin: 0;
+  padding: 0;
 }
 
-.chat-seconds input {
-  width: 4.5rem;
+.chat-length {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.85rem;
+  min-height: 32px;
+}
+
+.chat-length.active {
+  color: var(--text);
+  background: var(--raised);
+  border-color: var(--text-2);
 }
 
 .small-text {
@@ -1309,6 +1335,10 @@ th {
 }
 
 .recent-chip {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 0.25rem 0.7rem;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1646,4 +1676,115 @@ label.button.disabled {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.chat-composer {
+  position: relative;
+}
+.skill-suggest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.4rem);
+  z-index: 5;
+  display: grid;
+  padding: 0.3rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  box-shadow: var(--shadow);
+}
+.skill-suggest > button {
+  display: grid;
+  gap: 0.1rem;
+  text-align: left;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  border-radius: var(--r1);
+  background: transparent;
+  color: var(--text);
+}
+.skill-suggest > button[aria-selected="true"] {
+  background: var(--surface-2, rgba(255, 255, 255, 0.06));
+}
+.skill-suggest .muted {
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.4rem;
+}
+.skill-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.3rem 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--accent) 18%, transparent);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.skill-tag > button {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  padding: 0 0.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Phones: nothing may push the page wider than the screen. */
+@media (max-width: 560px) {
+  .card-header {
+    flex-wrap: wrap;
+  }
+  .subnav {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .starters button {
+    max-width: 100%;
+    white-space: normal;
+    text-align: center;
+  }
+  .chat-lengths {
+    flex-wrap: wrap;
+  }
+}
+
+/* Skill tags sit inline at the start of the message, like tokens in the text. */
+.composer-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+.composer-field > .skill-tag {
+  margin-top: 0.45rem;
+}
+.composer-field > textarea {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.chat-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.chat-media-item {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+  border-radius: var(--r1);
+  border: 1px solid var(--line);
+  background: #000;
+  object-fit: contain;
 }

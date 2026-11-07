@@ -65,7 +65,7 @@ function body(me: Me, section: string, id?: string) {
         <p className="muted">Media &amp; storage settings are managed by the workspace owners and admins.</p>
       );
     case "account":
-      return <AccountPage email={me.user.email} />;
+      return <AccountPage me={me} />;
     default:
       return <p className="muted">Page not found.</p>;
   }

@@ -236,84 +236,82 @@ export function StorageProfilesCard({
           </div>
         </form>
       )}
-      <table>
-        <thead>
-          <tr>
-            <th>Profile</th>
-            <th>Where</th>
-            <th>Key</th>
-            <th>Last test</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {profiles.map((p) => {
-            const result = tests[p.id];
-            const last = result
-              ? { ok: result.ok, at: result.at, detail: result.suggestedAction ?? result.diagnosis }
-              : p.lastTest;
-            return (
-              <tr key={p.id}>
-                <td>
-                  {p.name} {p.active && <StatusBadge status="available" label="Active" />}
-                  <div className="muted">
-                    {PROVIDER_LABELS[p.providerType]}
-                    {p.references !== undefined ? ` · ${p.references} stored objects` : ""}
-                  </div>
-                </td>
-                <td className="mono">
-                  {p.endpointHost ?? "-"}
-                  <div>
-                    {p.bucket ?? "not configured"}
+      <ul className="key-list">
+        {profiles.map((p) => {
+          const result = tests[p.id];
+          const last = result
+            ? { ok: result.ok, at: result.at, detail: result.suggestedAction ?? result.diagnosis }
+            : p.lastTest;
+          return (
+            <li key={p.id} className="key-row">
+              <div className="key-main">
+                <div className="key-title">
+                  <strong>{p.name}</strong>
+                  {p.active && <StatusBadge status="available" label="In use" />}
+                </div>
+                <div className="key-meta">
+                  <span>{PROVIDER_LABELS[p.providerType]}</span>
+                  {p.references !== undefined && <span>{p.references} files</span>}
+                  <span>{last ? `Tested ${formatDate(last.at)}` : "Never tested"}</span>
+                </div>
+                {last && !last.ok && last.detail && <div className="key-error">{last.detail}</div>}
+                <details className="why">
+                  <summary>Details</summary>
+                  <p className="muted mono">
+                    {p.endpointHost ?? "Default endpoint"} · {p.bucket ?? "no bucket set"}
                     {p.keyPrefix ? `/${p.keyPrefix}` : ""} · {p.region}
                     {p.forcePathStyle ? " · path-style" : ""}
-                  </div>
-                </td>
-                <td className="mono">
-                  {p.accessKeyHint ? `${p.accessKeyHint} / ${p.secretHint}` : "S3_* env"}
-                  {p.version ? <div className="muted">v{p.version}</div> : null}
-                </td>
-                <td>
-                  {last ? (
-                    <>
-                      <StatusBadge
-                        status={last.ok ? "available" : "failed"}
-                        label={last.ok ? "Passed" : "Failed"}
-                      />{" "}
-                      {formatDate(last.at)}
-                      {!last.ok && last.detail && <div className="muted">{last.detail}</div>}
-                    </>
-                  ) : (
-                    "Never"
-                  )}
-                </td>
-                <td>
-                  {(scope === "platform" || p.id !== "env") && (
-                    <button type="button" disabled={busy} onClick={() => test(p)}>
-                      Test
-                    </button>
-                  )}{" "}
-                  {!p.active && (
-                    <button type="button" disabled={busy} onClick={() => activate(p)}>
-                      Activate
-                    </button>
-                  )}{" "}
-                  {p.id !== "env" && (
-                    <button type="button" disabled={busy || Boolean(editing)} onClick={() => edit(p)}>
-                      Edit
-                    </button>
-                  )}{" "}
-                  {p.id !== "env" && !p.active && !p.references && (
-                    <button type="button" disabled={busy} onClick={() => remove(p)}>
-                      Delete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                    {p.accessKeyHint ? ` · key ${p.accessKeyHint}` : " · server key"}
+                    {p.version ? ` · v${p.version}` : ""}
+                  </p>
+                </details>
+              </div>
+              {last ? (
+                <StatusBadge status={last.ok ? "available" : "failed"} label={last.ok ? "Works" : "Failed"} />
+              ) : (
+                <span />
+              )}
+              <div className="key-actions">
+                {(scope === "platform" || p.id !== "env") && (
+                  <button type="button" className="secondary small" disabled={busy} onClick={() => test(p)}>
+                    Test
+                  </button>
+                )}
+                {!p.active && (
+                  <button
+                    type="button"
+                    className="secondary small"
+                    disabled={busy}
+                    onClick={() => activate(p)}
+                  >
+                    Use this
+                  </button>
+                )}
+                {p.id !== "env" && (
+                  <button
+                    type="button"
+                    className="secondary small"
+                    disabled={busy || Boolean(editing)}
+                    onClick={() => edit(p)}
+                  >
+                    Edit
+                  </button>
+                )}
+                {p.id !== "env" && !p.active && !p.references && (
+                  <button
+                    type="button"
+                    className="ghost-danger small"
+                    disabled={busy}
+                    onClick={() => remove(p)}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </Section>
   );
 }

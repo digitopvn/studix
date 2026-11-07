@@ -49,12 +49,12 @@
     linear-gradient(160deg, oklch(0.3 0.06 var(--h)), oklch(0.16 0.02 var(--h)));
 }
 
-.poster-title {
+.poster-format {
   color: oklch(0.97 0 0);
-  font-weight: 700;
-  font-size: 1.05rem;
-  line-height: 1.2;
-  text-shadow: 0 1px 8px oklch(0 0 0 / 0.4);
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: oklch(0 0 0 / 0.35);
 }
 
 .card-meta {
@@ -86,9 +86,6 @@
   .new-card {
     min-height: 0;
     aspect-ratio: 16 / 9;
-  }
-  .poster-title {
-    font-size: 0.9rem;
   }
   .page-head .row,
   .page-head input[type="search"] {

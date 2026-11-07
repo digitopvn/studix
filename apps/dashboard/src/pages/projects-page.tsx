@@ -22,6 +22,21 @@ function ratio(project: Project): string {
   return w && h ? `${w} / ${h}` : "16 / 9";
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  planning: "Planning",
+  rendering: "Rendering",
+  in_review: "Ready to review",
+  approved: "Approved",
+  published: "Published",
+  failed: "Failed",
+  archived: "Archived",
+};
+
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status.replace(/_/g, " ");
+}
+
 export function ProjectsPage() {
   const { data, error } = useAsync(() => api.projects());
   const [filter, setFilter] = useState<string>("all");
@@ -69,12 +84,15 @@ export function ProjectsPage() {
         {items.map((p) => (
           <Link key={p.id} to={`/projects/${p.id}`} className="project-card">
             <span className="poster" style={{ "--h": hue(p.id), aspectRatio: ratio(p) } as CSSProperties}>
-              <span className="poster-title">{p.title}</span>
+              <span className="poster-format">
+                {p.brief.aspectRatio ?? "16:9"}
+                {p.brief.durationMs ? ` · ${Math.round(p.brief.durationMs / 1000)} s` : ""}
+              </span>
             </span>
             <span className="card-meta">
-              <strong>{p.title}</strong>
+              <strong title={p.title}>{p.title.trim() || "Untitled video"}</strong>
               <span className="row">
-                <StatusBadge status={p.status} />
+                <StatusBadge status={p.status} label={statusLabel(p.status)} />
                 <span className="muted small-text">{formatDate(p.updatedAt)}</span>
               </span>
             </span>

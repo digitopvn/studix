@@ -16,7 +16,7 @@ import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "
  * so using one with Pi is an explicit opt-in by whoever manages the key.
  */
 
-const STAGE_LABELS: Record<string, string> = { default: "Default (every stage)", plan: "Planning" };
+const STAGE_LABELS: Record<string, string> = { default: "Every step", plan: "Planning" };
 const SOURCE_LABELS: Record<string, string> = {
   "user-stage": "your choice for this stage",
   "workspace-stage": "the workspace choice for this stage",
@@ -144,8 +144,7 @@ function ProviderKeysCard({
   return (
     <Section title="AI keys">
       <p className="muted">
-        Billed by usage to each key's own account. Test sends one tiny prompt (at most 1¢; free for
-        Anthropic).
+        Each key is billed by its own provider account. Test sends one tiny prompt (at most 1¢).
       </p>
       {unavailable && (
         <p className="banner banner-error">Encrypted key storage is not configured on this server.</p>
@@ -196,7 +195,12 @@ function ProviderKeysCard({
         </form>
       )}
       {catalog.find((p) => p.id === provider)?.oauthRestriction && (
-        <p className="muted">{catalog.find((p) => p.id === provider)?.oauthRestriction}</p>
+        <details className="why">
+          <summary>
+            Paste an API key: {providerName(catalog, provider)} subscription sign-ins can't be used here.
+          </summary>
+          <p className="muted">{catalog.find((p) => p.id === provider)?.oauthRestriction}</p>
+        </details>
       )}
       <ErrorBanner error={error} />
       {list.connections.length === 0 && <Empty>No provider keys connected.</Empty>}
@@ -440,9 +444,7 @@ function CodexCard({ list, reload }: { list: ProviderConnectionList; reload: () 
   return (
     <Section title="ChatGPT sign-in">
       <p className="muted">
-        Codex runs agent tasks in the skill sandbox. Sign in with ChatGPT to use your ChatGPT plan, or add an
-        OpenAI API key above and tick Codex to pay by usage. Test refreshes a ChatGPT login; Remove forgets
-        it.
+        Use your ChatGPT plan for Codex tasks. Prefer paying by usage? Add an OpenAI key above and tick Codex.
       </p>
       {(list.canAddWorkspaceKey || list.canAddPersonalKey) && !flow && (
         <div className="row">
@@ -491,6 +493,10 @@ function CodexCard({ list, reload }: { list: ProviderConnectionList; reload: () 
   );
 }
 
+function modelName(catalog: CatalogProvider[], provider: string, modelId: string) {
+  return modelsOf(catalog, provider).find((m) => m.id === modelId)?.name ?? modelId;
+}
+
 function ModelsCard({
   catalog,
   connections,
@@ -514,97 +520,165 @@ function ModelsCard({
     const c = connections.find((x) => x.id === id);
     return c ? `${c.label} (${providerName(catalog, c.provider)})` : "Removed key";
   };
+  const canEdit = canEditWorkspace || canEditPersonal;
+  const previewKey = preferences.map((p) => p.updatedAt).join();
   return (
-    <Section title="Model per step">
-      <p className="muted">
-        Most specific wins: your choice for a stage, then the workspace choice for it, then your default, then
-        the workspace default. A job that selects the Claude planner ignores these. Each job keeps the model
-        it started with, even if you change it here.
-      </p>
+    <Section title="AI model">
+      <p className="muted">The model that writes and plans your videos. Running jobs keep their model.</p>
       <ErrorBanner error={error} />
-      {stages.map((stage) => (
-        <StagePreview key={`${stage}-${preferences.map((p) => p.updatedAt).join()}`} stage={stage} />
-      ))}
-      {preferences.length === 0 && <Empty>No models chosen; jobs use the operator's default routing.</Empty>}
-      {preferences.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Stage</th>
-              <th>Scope</th>
-              <th>Key</th>
-              <th>Model</th>
-              <th>Fallback</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
+      <StagePreview key={`default-${previewKey}`} stage="default" catalog={catalog} />
+      {canEdit && (
+        <DefaultModelForm
+          catalog={catalog}
+          connections={piConnections}
+          scope={canEditPersonal ? "user" : "workspace"}
+          busy={busy.has("default")}
+          onSave={(input) => act("default", () => api.saveModelPreference(input))}
+        />
+      )}
+      <details className="advanced">
+        <summary>Advanced: a model per step, fallbacks and workspace choices</summary>
+        <p className="muted">
+          The most specific choice wins: yours for a step, the workspace's for it, your default, then the
+          workspace default.
+        </p>
+        {stages
+          .filter((stage) => stage !== "default")
+          .map((stage) => (
+            <StagePreview key={`${stage}-${previewKey}`} stage={stage} catalog={catalog} />
+          ))}
+        {preferences.length > 0 && (
+          <ul className="key-list">
             {preferences.map((p) => (
-              <tr key={p.id}>
-                <td>{STAGE_LABELS[p.stage] ?? p.stage}</td>
-                <td>{p.scope === "workspace" ? "Workspace" : "Personal (you)"}</td>
-                <td>{label(p.connectionId)}</td>
-                <td className="mono">{p.modelId}</td>
-                <td className="mono">
-                  {p.allowFallback && p.fallbacks.length > 0
-                    ? p.fallbacks.map((f) => `${f.provider} / ${f.modelId}`).join(", ")
-                    : "None"}
-                </td>
-                <td>
-                  {p.canManage && (
+              <li key={p.id} className="key-row">
+                <div className="key-main">
+                  <div className="key-title">
+                    <strong>{STAGE_LABELS[p.stage] ?? p.stage}</strong>
+                    <span>{modelName(catalog, p.provider, p.modelId)}</span>
+                  </div>
+                  <div className="key-meta">
+                    <span>{p.scope === "workspace" ? "Whole workspace" : "Just for you"}</span>
+                    <span>{label(p.connectionId)}</span>
+                    <span>
+                      {p.allowFallback && p.fallbacks.length > 0
+                        ? `Fallback: ${p.fallbacks.map((f) => modelName(catalog, f.provider, f.modelId)).join(", ")}`
+                        : "No fallback"}
+                    </span>
+                  </div>
+                </div>
+                <span />
+                {p.canManage && (
+                  <div className="key-actions">
                     <button
                       type="button"
-                      className="danger small"
+                      className="ghost-danger small"
                       disabled={busy.has(p.id)}
                       onClick={() => act(p.id, () => api.removeModelPreference(p.id))}
                     >
                       Remove
                     </button>
-                  )}
-                </td>
-              </tr>
+                  </div>
+                )}
+              </li>
             ))}
-          </tbody>
-        </table>
-      )}
-      {(canEditWorkspace || canEditPersonal) && (
-        <ChooseModelForm
-          catalog={catalog}
-          connections={piConnections}
-          stages={stages}
-          canEditWorkspace={canEditWorkspace}
-          canEditPersonal={canEditPersonal}
-          busy={busy.has("save")}
-          onSave={(input) => act("save", () => api.saveModelPreference(input))}
-        />
-      )}
+          </ul>
+        )}
+        {canEdit && (
+          <ChooseModelForm
+            catalog={catalog}
+            connections={piConnections}
+            stages={stages}
+            canEditWorkspace={canEditWorkspace}
+            canEditPersonal={canEditPersonal}
+            busy={busy.has("save")}
+            onSave={(input) => act("save", () => api.saveModelPreference(input))}
+          />
+        )}
+      </details>
     </Section>
   );
 }
 
-function StagePreview({ stage }: { stage: string }) {
+/** The everyday choice: one key and one model for every step. */
+function DefaultModelForm({
+  catalog,
+  connections,
+  scope,
+  busy,
+  onSave,
+}: {
+  catalog: CatalogProvider[];
+  connections: ProviderConnection[];
+  scope: "workspace" | "user";
+  busy: boolean;
+  onSave: (input: Parameters<typeof api.saveModelPreference>[0]) => Promise<void>;
+}) {
+  const usable = connections.filter((c) => c.owner === "workspace" || (scope === "user" && c.ownedByMe));
+  const [connectionId, setConnectionId] = useState("");
+  const [modelId, setModelId] = useState("");
+  const chosen = connectionId || usable[0]?.id || "";
+  const provider = connections.find((c) => c.id === chosen)?.provider;
+  if (usable.length === 0) return <Empty>Add an AI key above, then pick its model here.</Empty>;
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    await onSave({ scope, stage: "default", connectionId: chosen, modelId });
+    setModelId("");
+  }
+  return (
+    <form className="key-add" onSubmit={save}>
+      {usable.length > 1 && (
+        <select
+          aria-label="Key"
+          value={chosen}
+          onChange={(e) => {
+            setConnectionId(e.target.value);
+            setModelId("");
+          }}
+        >
+          {usable.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label} ({providerName(catalog, c.provider)})
+            </option>
+          ))}
+        </select>
+      )}
+      <select required aria-label="Model" value={modelId} onChange={(e) => setModelId(e.target.value)}>
+        <option value="">Choose a model…</option>
+        {modelsOf(catalog, provider).map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name} · ${m.cost.input}/${m.cost.output} per M tokens
+          </option>
+        ))}
+      </select>
+      <button type="submit" disabled={busy || !modelId}>
+        Use this model
+      </button>
+    </form>
+  );
+}
+
+function StagePreview({ stage, catalog }: { stage: string; catalog: CatalogProvider[] }) {
   const { data, error } = useAsync(() => api.modelPreview(stage), [stage]);
   if (error) return <ErrorBanner error={error} />;
   if (!data) return null;
   const selection = data.selection;
   return (
     <p>
-      <strong>{STAGE_LABELS[stage] ?? stage}:</strong>{" "}
+      <strong>{stage === "default" ? "In use" : (STAGE_LABELS[stage] ?? stage)}:</strong>{" "}
       {selection ? (
         <>
-          <span className="mono">
-            {selection.preference.provider} / {selection.preference.modelId}
-          </span>{" "}
-          from {SOURCE_LABELS[selection.source] ?? selection.source}
+          {modelName(catalog, selection.preference.provider, selection.preference.modelId)}{" "}
+          <span className="muted">
+            ({providerName(catalog, selection.preference.provider)},{" "}
+            {SOURCE_LABELS[selection.source] ?? selection.source})
+          </span>
           {!selection.usable && (
-            <span className="banner-error">
-              {" "}
-              · cannot run: {selection.problem ?? "the key is not usable"}
-            </span>
+            <span className="banner-error"> Cannot run: {selection.problem ?? "the key is not usable"}.</span>
           )}
         </>
       ) : (
-        <span className="muted">operator default routing</span>
+        <span className="muted">Studix picks a model for you</span>
       )}
     </p>
   );

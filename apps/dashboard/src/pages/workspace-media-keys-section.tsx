@@ -12,34 +12,38 @@ export const KEY_VERDICT: Record<WorkspaceMediaKeyTest["verdict"], string> = {
  * The workspace's own media vendor keys (BYOK). A stored key replaces the platform key for this workspace's
  * media calls only, and that spend is recorded as paid by the workspace. Keys are sent once and never shown.
  */
+/** "Cloudflare Workers AI (CLOUDFLARE_API_TOKEN)" -> "Cloudflare Workers AI API token": no env-var names. */
+export function vendorName(name: string): string {
+  const env = /\s*\(([A-Z0-9_]+)\)$/.exec(name);
+  if (!env?.[1]) return name;
+  const part = env[1]
+    .split("_")
+    .slice(1)
+    .join(" ")
+    .toLowerCase()
+    .replace(/\bid\b/, "ID")
+    .replace(/\bapi\b/, "API");
+  return `${name.slice(0, env.index)} ${part}`.trim();
+}
+
 export function WorkspaceMediaKeysSection() {
   const { data, error, reload } = useAsync(() => api.workspaceMediaKeys());
   return (
-    <Section title="Media keys">
+    <Section title="Media vendor keys">
       <ErrorBanner error={error} />
       <p className="muted">
-        Without a key here, media jobs use the platform key. A workspace key is used only for this workspace's
-        jobs; its spend is recorded but not charged by Studix.
+        Studix pays for media by default. Add your own vendor key to bill this workspace's media to your
+        account instead.
       </p>
       {data?.storage === "unavailable" && (
         <p className="muted">Key storage is not set up on this server yet. Ask your admin.</p>
       )}
       {data && (
-        <table>
-          <thead>
-            <tr>
-              <th>Vendor</th>
-              <th>Key</th>
-              <th>Updated</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {data.keys.map((key) => (
-              <MediaKeyRow key={key.vendor} mediaKey={key} canManage={data.canManage} reload={reload} />
-            ))}
-          </tbody>
-        </table>
+        <ul className="key-list">
+          {data.keys.map((key) => (
+            <MediaKeyRow key={key.vendor} mediaKey={key} canManage={data.canManage} reload={reload} />
+          ))}
+        </ul>
       )}
     </Section>
   );
@@ -59,7 +63,7 @@ function MediaKeyRow({
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
   const [keyTest, setKeyTest] = useState<WorkspaceMediaKeyTest>();
-  const name = mediaKey.name ?? mediaKey.vendor;
+  const name = vendorName(mediaKey.name ?? mediaKey.vendor);
   const own = mediaKey.source === "workspace";
 
   async function act(action: () => Promise<unknown>) {
@@ -89,7 +93,7 @@ function MediaKeyRow({
   async function remove() {
     if (
       !window.confirm(
-        `Remove this workspace's ${name} key? Media jobs go back to the platform key. The key is not revoked at ${name}.`,
+        `Remove this workspace's ${name} key? Studix pays for its media again. The key is not revoked at ${name}.`,
       )
     ) {
       return;
@@ -98,13 +102,22 @@ function MediaKeyRow({
   }
 
   return (
-    <tr>
-      <td>
-        {name}
-        <div className="mono muted">{mediaKey.keyName}</div>
+    <li className="key-row">
+      <div className="key-main">
+        <strong>{name}</strong>
+        <div className="key-meta">
+          {mediaKey.keyHint && <span className="mono">{mediaKey.keyHint}</span>}
+          {mediaKey.updatedAt && <span>Updated {formatDate(mediaKey.updatedAt)}</span>}
+        </div>
+        {keyTest && (
+          <div className="muted" role="status">
+            {KEY_VERDICT[keyTest.verdict]}
+            {keyTest.note ? `: ${keyTest.note}` : ""}
+          </div>
+        )}
         <ErrorBanner error={actionError} />
         {editing && (
-          <form className="row" onSubmit={save}>
+          <form className="key-replace" onSubmit={save}>
             <input
               required
               type="password"
@@ -115,11 +128,12 @@ function MediaKeyRow({
               disabled={busy}
               onChange={(e) => setValue(e.target.value)}
             />
-            <button type="submit" disabled={busy}>
+            <button type="submit" className="small" disabled={busy}>
               Save
             </button>
             <button
               type="button"
+              className="secondary small"
               disabled={busy}
               onClick={() => {
                 setValue("");
@@ -130,44 +144,31 @@ function MediaKeyRow({
             </button>
           </form>
         )}
-      </td>
-      <td>
-        <StatusBadge
-          status={own ? "configured" : "platform"}
-          label={own ? "Workspace key" : "Platform key"}
-        />
-        {mediaKey.keyHint && <div className="mono muted">{mediaKey.keyHint}</div>}
-      </td>
-      <td>{mediaKey.updatedAt ? formatDate(mediaKey.updatedAt) : "-"}</td>
-      <td>
-        {canManage && !editing && (
-          <button type="button" disabled={busy} onClick={() => setEditing(true)}>
-            {own ? "Rotate" : "Add key"}
+      </div>
+      <StatusBadge status={own ? "configured" : "platform"} label={own ? "Your key" : "Billed by Studix"} />
+      {canManage && !editing && (
+        <div className="key-actions">
+          <button type="button" className="secondary small" disabled={busy} onClick={() => setEditing(true)}>
+            {own ? "Replace" : "Use my key"}
           </button>
-        )}{" "}
-        {canManage && own && mediaKey.testable && (
-          <button
-            type="button"
-            disabled={busy}
-            title="A free account lookup at the vendor; no paid call is made"
-            onClick={() => act(async () => setKeyTest(await api.testWorkspaceMediaKey(mediaKey.vendor)))}
-          >
-            Test
-          </button>
-        )}{" "}
-        {canManage && own && (
-          <button type="button" disabled={busy} onClick={remove}>
-            Remove
-          </button>
-        )}
-        {keyTest && (
-          <div className="muted" role="status">
-            {KEY_VERDICT[keyTest.verdict]}
-            {keyTest.httpStatus ? ` · HTTP ${keyTest.httpStatus}` : ""}
-            {keyTest.note ? ` — ${keyTest.note}` : ""}
-          </div>
-        )}
-      </td>
-    </tr>
+          {own && mediaKey.testable && (
+            <button
+              type="button"
+              className="secondary small"
+              disabled={busy}
+              title="A free account check at the vendor; nothing is billed"
+              onClick={() => act(async () => setKeyTest(await api.testWorkspaceMediaKey(mediaKey.vendor)))}
+            >
+              Test
+            </button>
+          )}
+          {own && (
+            <button type="button" className="ghost-danger small" disabled={busy} onClick={remove}>
+              Remove
+            </button>
+          )}
+        </div>
+      )}
+    </li>
   );
 }

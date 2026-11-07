@@ -40,10 +40,13 @@ export function ConnectorsPage() {
   }
 
   return (
-    <Section title="Extra tools (MCP connectors)">
-      <p className="muted">Give the Studix agent tools from another MCP server, such as your brand assets.</p>
+    <Section title="Tools from other apps">
+      <p className="muted">
+        Let the Studix agent use another app, for example your brand asset library, so it can pull your logo
+        into a video. Paste the app's MCP link.
+      </p>
       <ErrorBanner error={error} />
-      {data && data.items.length === 0 && <Empty>No connectors yet.</Empty>}
+      {data && data.items.length === 0 && <Empty>No apps added yet.</Empty>}
       {data && data.items.length > 0 && (
         <ul className="key-list">
           {data.items.map((c) => (

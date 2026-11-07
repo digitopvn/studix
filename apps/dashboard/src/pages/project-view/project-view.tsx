@@ -4,6 +4,7 @@ import { CopyForAgent } from "../../copy-for-agent.tsx";
 import { ErrorBanner, formatDate, Link, StatusBadge, useAsync } from "../../ui.tsx";
 import { navigate } from "../../use-hash-route.ts";
 import { AnnotateLayer, imageFileToDataUrl, Marks, Pins, snapshot } from "./annotate-layer.tsx";
+import { ProgressPanel } from "./progress-panel.tsx";
 import {
   agentBrief,
   blankNote,
@@ -661,6 +662,7 @@ export function ProjectView({ projectId }: { projectId: string }) {
               <p className="muted small-text">No feedback on this version yet.</p>
             )}
           </section>
+          <ProgressPanel jobs={review.cost.jobs} />
         </aside>
       </div>
     </div>

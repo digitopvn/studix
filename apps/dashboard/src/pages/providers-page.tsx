@@ -106,7 +106,7 @@ function SubscriptionCard({
 
   return (
     <Section
-      title="Claude subscription (OAuth)"
+      title="Claude subscription"
       actions={
         <StatusBadge
           status={method.availability === "available" ? (connection?.status ?? "available") : "restricted"}
@@ -120,8 +120,8 @@ function SubscriptionCard({
     >
       {method.availability === "restricted" ? (
         <p className="muted">
-          Use an Anthropic API key above, or run Claude Code with your own subscription and connect it to
-          Studix as an MCP client (Connect agent).
+          To use your Claude subscription, run Claude Code yourself and link it with Connect agent (top
+          right).
         </p>
       ) : (
         <p className="muted">{method.alternative}</p>

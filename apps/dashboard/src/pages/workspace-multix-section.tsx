@@ -18,18 +18,72 @@ const ROLE_LABELS: Record<string, string> = {
   imageUpscale: "Image upscale",
   videoUpscale: "Video upscale",
 };
+/** Video first: it is the choice that matters most for a video project. */
+const ROLE_ORDER = ["video", "image", "voice", "lipsync", "music", "sfx", "videoUpscale", "imageUpscale"];
 
 const STATE_LABELS: Record<string, string> = {
   ready: "Ready",
-  missing_executable: "CLI missing",
+  missing_executable: "Not installed",
   check_failed: "Check failed",
 };
+
+function roleRank(role: string) {
+  const i = ROLE_ORDER.indexOf(role);
+  return i === -1 ? ROLE_ORDER.length : i;
+}
+
+/** "sume:seedance-2-mini" -> "Seedance 2 mini (Sume)", for ids the catalogue gives no name for. */
+export function readableModel(id: string): string {
+  const colon = id.indexOf(":");
+  if (colon === -1) return id;
+  const vendor = id.slice(0, colon);
+  const model =
+    id
+      .slice(colon + 1)
+      .split("/")
+      .pop() ?? "";
+  const words = model.replace(/[-_]+/g, " ").trim();
+  if (!words) return id;
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)} (${vendor.charAt(0).toUpperCase()}${vendor.slice(1)})`;
+}
+
+export interface VoiceRow {
+  language: string;
+  model: string;
+  voice: string;
+}
+
+/** `vi=vendor:model@voice,en=...` -> one row per language (the server validates the result on Save). */
+export function parseVoiceRows(value: string): VoiceRow[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const eq = entry.indexOf("=");
+      const target = eq === -1 ? entry : entry.slice(eq + 1).trim();
+      const at = target.lastIndexOf("@");
+      return {
+        language: eq === -1 ? "" : entry.slice(0, eq).trim(),
+        model: at === -1 ? target : target.slice(0, at),
+        voice: at === -1 ? "" : target.slice(at + 1),
+      };
+    });
+}
+
+export function formatVoiceRows(rows: readonly VoiceRow[]): string {
+  return rows
+    .map((r) => ({ language: r.language.trim().toLowerCase(), model: r.model.trim(), voice: r.voice.trim() }))
+    .filter((r) => r.language && r.model)
+    .map((r) => `${r.language}=${r.model}${r.voice ? `@${r.voice}` : ""}`)
+    .join(",");
+}
 
 interface Draft {
   enabled: "" | "on" | "off";
   waitTimeoutSeconds: string;
   models: Record<string, string>;
-  voiceLanguageModels: string;
+  voices: VoiceRow[];
 }
 
 function draftOf(data: WorkspaceMultixSettings): Draft {
@@ -38,13 +92,13 @@ function draftOf(data: WorkspaceMultixSettings): Draft {
     enabled: saved?.enabled === true ? "on" : saved?.enabled === false ? "off" : "",
     waitTimeoutSeconds: saved?.waitTimeoutSeconds ? String(saved.waitTimeoutSeconds) : "",
     models: { ...(saved?.models ?? {}) },
-    voiceLanguageModels: saved?.voiceLanguageModels ?? "",
+    voices: parseVoiceRows(saved?.voiceLanguageModels ?? ""),
   };
 }
 
 /**
- * The workspace's Multix settings: on/off, wait timeout, the model of each media role and the speech model per
- * language. A blank field keeps the server's MULTIX_* value. The Multix CLI version is fixed by the image.
+ * The workspace's media settings: on/off, the model of each media kind and the speech model per language.
+ * A blank field keeps the server's value. Timeouts and engine checks sit under Advanced.
  */
 export function WorkspaceMultixSection() {
   const { data, error, reload } = useAsync(() => api.workspaceMultix());
@@ -90,14 +144,14 @@ export function WorkspaceMultixSection() {
         enabled: draft.enabled === "" ? null : draft.enabled === "on",
         waitTimeoutSeconds: draft.waitTimeoutSeconds.trim() ? Number(draft.waitTimeoutSeconds) : null,
         models,
-        voiceLanguageModels: draft.voiceLanguageModels.trim() || null,
+        voiceLanguageModels: formatVoiceRows(draft.voices) || null,
       });
       reload();
     });
   }
 
   async function reset() {
-    if (!window.confirm("Drop every media setting of this workspace and use the server settings again?"))
+    if (!window.confirm("Drop every media setting of this workspace and use the Studix defaults again?"))
       return;
     await act(async () => {
       await api.resetWorkspaceMultix();
@@ -105,140 +159,208 @@ export function WorkspaceMultixSection() {
     });
   }
 
+  /** The catalogue's friendly name for a model id, when it has one. */
+  function friendly(role: string, id: string) {
+    return catalog?.roles[role]?.find((e) => e.id === id)?.label ?? readableModel(id);
+  }
+
+  function setVoice(index: number, patch: Partial<VoiceRow>) {
+    if (!draft) return;
+    setDraft({ ...draft, voices: draft.voices.map((r, i) => (i === index ? { ...r, ...patch } : r)) });
+  }
+
   const readOnly = !data?.canChange || busy;
+  const roles = data ? Object.keys(data.effective.models).sort((a, b) => roleRank(a) - roleRank(b)) : [];
   return (
-    <Section title="Image & video models">
+    <Section
+      title="Image & video models"
+      actions={
+        data && (
+          <StatusBadge
+            status={data.effective.enabled.value ? "configured" : "missing"}
+            label={data.effective.enabled.value ? "On" : "Off"}
+          />
+        )
+      }
+    >
       <ErrorBanner error={error} />
       <ErrorBanner error={actionError} />
       <p className="muted">
-        These settings apply to this workspace's media jobs and win over the server defaults. Leave a field
-        blank to use the server value. Vendor keys are set below.
+        Pick the model for each kind of media. Leave one blank to use the Studix default.
       </p>
+      {data && !data.server.enabled && (
+        <p className="muted">Media generation is not installed on this server, so these settings wait.</p>
+      )}
       {data && draft && (
         <form onSubmit={save}>
-          <div className="row">
-            <label>
-              Media generation{" "}
-              <select
-                value={draft.enabled}
-                disabled={readOnly}
-                onChange={(e) => setDraft({ ...draft, enabled: e.target.value as Draft["enabled"] })}
-              >
-                <option value="">Server default ({data.server.enabled ? "on" : "off"})</option>
-                <option value="on">On</option>
-                <option value="off">Off for this workspace</option>
-              </select>
-            </label>{" "}
-            <StatusBadge
-              status={data.effective.enabled.value ? "configured" : "missing"}
-              label={data.effective.enabled.value ? "Enabled" : "Disabled"}
-            />
-            {!data.server.enabled && (
-              <span className="muted"> Media generation is not installed on this server.</span>
-            )}
-          </div>
-          <div className="row">
-            <label>
-              Wait timeout (seconds){" "}
-              <input
-                type="number"
-                min={30}
-                max={7200}
-                placeholder={String(data.server.waitTimeoutSeconds)}
-                value={draft.waitTimeoutSeconds}
-                disabled={readOnly}
-                onChange={(e) => setDraft({ ...draft, waitTimeoutSeconds: e.target.value })}
-              />
-            </label>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th>Model in use</th>
-                <th>Workspace model</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(data.effective.models).map(([role, effective]) => (
-                <tr key={role}>
-                  <td>{ROLE_LABELS[role] ?? role}</td>
-                  <td>
-                    <span className="mono">{effective.value}</span>{" "}
-                    <StatusBadge
-                      status={effective.source === "workspace" ? "configured" : "default"}
-                      label={effective.source === "workspace" ? "workspace" : "default"}
-                    />
-                  </td>
-                  <td>
-                    <MultixModelCombobox
-                      label={`${ROLE_LABELS[role] ?? role} model`}
-                      serverValue={data.server.models[role] ?? ""}
-                      value={draft.models[role] ?? ""}
-                      entries={catalog?.roles[role] ?? []}
-                      openVendors={catalog?.openVendors ?? []}
-                      disabled={readOnly}
-                      onChange={(value) => setDraft({ ...draft, models: { ...draft.models, [role]: value } })}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ul className="key-list">
+            {roles.map((role) => {
+              const effective = data.effective.models[role];
+              if (!effective) return null;
+              return (
+                <li key={role} className="key-row media-role">
+                  <div className="key-main">
+                    <strong>{ROLE_LABELS[role] ?? role}</strong>
+                    <div className="key-meta">
+                      <span>
+                        In use: {friendly(role, effective.value)}
+                        {effective.source === "workspace" ? "" : " (Studix default)"}
+                      </span>
+                    </div>
+                  </div>
+                  <MultixModelCombobox
+                    label={`${ROLE_LABELS[role] ?? role} model`}
+                    serverValue={data.server.models[role] ?? ""}
+                    value={draft.models[role] ?? ""}
+                    entries={catalog?.roles[role] ?? []}
+                    openVendors={catalog?.openVendors ?? []}
+                    disabled={readOnly}
+                    onChange={(value) => setDraft({ ...draft, models: { ...draft.models, [role]: value } })}
+                  />
+                </li>
+              );
+            })}
+          </ul>
           {catalog && catalog.errors.length > 0 && (
-            <p className="muted">Model list incomplete: {catalog.errors.join("; ")}</p>
+            <p className="muted">Some models could not be listed right now; you can still type a model id.</p>
           )}
-          <label>
-            Speech model per language (<span className="mono">vi=vendor:model@voice,en=...</span>)
-            <textarea
-              className="mono"
-              rows={2}
-              placeholder={data.server.voiceLanguageModels ?? ""}
-              value={draft.voiceLanguageModels}
-              disabled={readOnly}
-              onChange={(e) => setDraft({ ...draft, voiceLanguageModels: e.target.value })}
-            />
-          </label>
+          <h3>Voice per language</h3>
+          <p className="muted">
+            Narration in these languages uses the model you set here; other languages use the Voice model
+            above.
+          </p>
+          {draft.voices.length === 0 && <p className="muted">No language has its own voice yet.</p>}
+          {draft.voices.map((row, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: rows have no id and are edited in place.
+            <div className="key-add voice-row" key={index}>
+              <input
+                aria-label="Language code"
+                placeholder="Language (e.g. vi)"
+                maxLength={3}
+                value={row.language}
+                disabled={readOnly}
+                onChange={(e) => setVoice(index, { language: e.target.value })}
+              />
+              <MultixModelCombobox
+                label="Speech model"
+                serverValue=""
+                value={row.model}
+                entries={catalog?.roles.voice ?? []}
+                openVendors={catalog?.openVendors ?? []}
+                disabled={readOnly}
+                onChange={(model) => setVoice(index, { model })}
+              />
+              <input
+                aria-label="Voice name"
+                placeholder="Voice (optional)"
+                value={row.voice}
+                disabled={readOnly}
+                onChange={(e) => setVoice(index, { voice: e.target.value })}
+              />
+              {data.canChange && (
+                <button
+                  type="button"
+                  className="ghost-danger small"
+                  disabled={busy}
+                  onClick={() => setDraft({ ...draft, voices: draft.voices.filter((_, i) => i !== index) })}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          ))}
           {data.canChange && (
-            <div className="row">
+            <button
+              type="button"
+              className="secondary small"
+              disabled={busy}
+              onClick={() =>
+                setDraft({ ...draft, voices: [...draft.voices, { language: "", model: "", voice: "" }] })
+              }
+            >
+              Add a language
+            </button>
+          )}
+          {data.canChange && (
+            <div className="row form-actions">
               <button type="submit" disabled={busy}>
                 Save
               </button>
-              <button type="button" disabled={busy || !data.workspace} onClick={reset}>
-                Use server settings
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => act(async () => setCheck(await api.checkWorkspaceMultix()))}
-              >
-                Check media engine
-              </button>
+              {data.updatedAt && <span className="muted">Last changed {formatDate(data.updatedAt)}</span>}
             </div>
           )}
-          {data.updatedAt && <p className="muted">Last changed {formatDate(data.updatedAt)}</p>}
+          <details className="advanced">
+            <summary>Advanced</summary>
+            <div className="row">
+              <label>
+                Media generation{" "}
+                <select
+                  value={draft.enabled}
+                  disabled={readOnly}
+                  onChange={(e) => setDraft({ ...draft, enabled: e.target.value as Draft["enabled"] })}
+                >
+                  <option value="">Studix default ({data.server.enabled ? "on" : "off"})</option>
+                  <option value="on">On</option>
+                  <option value="off">Off for this workspace</option>
+                </select>
+              </label>
+            </div>
+            <div className="row">
+              <label>
+                Give up on a media job after (seconds){" "}
+                <input
+                  type="number"
+                  min={30}
+                  max={7200}
+                  placeholder={String(data.server.waitTimeoutSeconds)}
+                  value={draft.waitTimeoutSeconds}
+                  disabled={readOnly}
+                  onChange={(e) => setDraft({ ...draft, waitTimeoutSeconds: e.target.value })}
+                />
+              </label>
+            </div>
+            {data.canChange && (
+              <div className="row">
+                <button
+                  type="button"
+                  className="secondary small"
+                  disabled={busy}
+                  onClick={() => act(async () => setCheck(await api.checkWorkspaceMultix()))}
+                >
+                  Check media engine
+                </button>
+                <button
+                  type="button"
+                  className="ghost-danger small"
+                  disabled={busy || !data.workspace}
+                  onClick={reset}
+                >
+                  Reset to Studix defaults
+                </button>
+              </div>
+            )}
+            {check && (
+              <p>
+                Media engine {check.version ?? ""}{" "}
+                <StatusBadge
+                  status={check.diagnosis.state === "ready" ? "configured" : "missing"}
+                  label={STATE_LABELS[check.diagnosis.state] ?? check.diagnosis.state}
+                />
+                {check.diagnosis.reason && <span className="muted"> {check.diagnosis.reason}</span>}
+                {check.diagnosis.state === "ready" && (
+                  <span className="muted">
+                    {" "}
+                    Billed by Studix for:{" "}
+                    {Object.entries(check.diagnosis.vendors)
+                      .filter(([, has]) => has)
+                      .map(([vendor]) => vendor)
+                      .join(", ") || "none"}
+                  </span>
+                )}
+              </p>
+            )}
+          </details>
         </form>
-      )}
-      {check && (
-        <div>
-          <p>
-            Media engine <span className="mono">{check.version ?? "unknown"}</span>{" "}
-            <StatusBadge
-              status={check.diagnosis.state === "ready" ? "configured" : "missing"}
-              label={STATE_LABELS[check.diagnosis.state] ?? check.diagnosis.state}
-            />
-            {check.diagnosis.reason && <span className="muted"> {check.diagnosis.reason}</span>}
-          </p>
-          {check.diagnosis.state === "ready" && (
-            <p className="muted">
-              Platform keys found:{" "}
-              {Object.entries(check.diagnosis.vendors)
-                .filter(([, has]) => has)
-                .map(([vendor]) => vendor)
-                .join(", ") || "none"}
-            </p>
-          )}
-        </div>
       )}
     </Section>
   );

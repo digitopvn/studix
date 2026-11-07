@@ -11,10 +11,20 @@ function sourceLabel(skill: Pick<SkillListItem, "source">): string {
     : `${skill.source.owner}/${skill.source.repo}${skill.source.path ? `/${skill.source.path}` : ""}`;
 }
 
+const RISK_HELP: Record<string, string> = {
+  high: "High risk: it can run commands, reach the internet, read secrets or hide code. Enable only skills you trust.",
+  medium: "Medium risk: it does something worth a look, such as running scripts. Check the risk report.",
+  low: "Low risk: no risky code was found.",
+};
+
 function RiskBadge({ level }: { level: string | null }) {
   if (!level) return <span className="muted">-</span>;
   const status = level === "high" ? "failed" : level === "medium" ? "pending" : "succeeded";
-  return <StatusBadge status={status} label={`${level} risk`} />;
+  return (
+    <span title={RISK_HELP[level] ?? ""}>
+      <StatusBadge status={status} label={`${level.charAt(0).toUpperCase()}${level.slice(1)} risk`} />
+    </span>
+  );
 }
 
 function resultText(item: SkillImportItem): string {
@@ -98,7 +108,10 @@ export function SkillsPage({ isOperator }: { isOperator: boolean }) {
               </div>
               <div className="key-state">
                 <RiskBadge level={s.activeRiskLevel} />
-                <StatusBadge status={s.status === "enabled" ? "succeeded" : "canceled"} label={s.status} />
+                <StatusBadge
+                  status={s.status === "enabled" ? "succeeded" : "canceled"}
+                  label={s.status === "enabled" ? "On" : "Off"}
+                />
               </div>
               {s.manageable && (
                 <div className="key-actions">
@@ -129,6 +142,9 @@ export function SkillsPage({ isOperator }: { isOperator: boolean }) {
             </li>
           ))}
         </ul>
+      )}
+      {data?.items.some((s) => s.activeRiskLevel === "high") && (
+        <p className="muted small-text">{RISK_HELP.high}</p>
       )}
       <form className="key-add" onSubmit={importRepo}>
         <input

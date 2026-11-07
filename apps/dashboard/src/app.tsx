@@ -20,7 +20,7 @@ import { registerWebMcpTools } from "./webmcp.ts";
 
 const NAV = [
   { to: "/", label: "Create", match: ["", "chat", "create"] },
-  { to: "/projects", label: "Projects", match: ["projects", "jobs", "activity"] },
+  { to: "/projects", label: "Projects", match: ["projects"] },
   { to: "/settings", label: "Settings", match: ["settings"] },
 ] as const;
 
@@ -107,7 +107,8 @@ function TopBar({
       <div className="row topbar-actions">
         <button
           type="button"
-          className={`tally-pill${running.length ? " live" : ""}`}
+          className={`tally-pill${running.length ? " live" : ""}${current === "activity" || current === "jobs" ? " active" : ""}`}
+          aria-current={current === "activity" || current === "jobs" ? "page" : undefined}
           onClick={() => setSheet(true)}
           aria-label={`Activity, ${running.length} running`}
         >

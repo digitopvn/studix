@@ -18,7 +18,7 @@ const STEP_LABELS: Record<string, string> = {
   render: "Rendering",
 };
 
-export function jobTitle(job: Job): string {
+export function jobTitle(job: Pick<Job, "kind">): string {
   return KIND_TITLES[job.kind] ?? job.kind.replace(/[._]/g, " ");
 }
 

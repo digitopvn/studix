@@ -14,6 +14,7 @@ import {
 import { ErrorBanner, errorText, Link, StatusBadge, useAsync } from "../ui.tsx";
 import { navigate } from "../use-hash-route.ts";
 import { REVISE_DRAFT_KEY } from "./project-view/project-view.tsx";
+import { useSkillSuggest } from "./skill-suggest.tsx";
 
 /*
  * New video as a conversation: every message starts a skill-agent job on the chosen runtime, and the page shows
@@ -23,7 +24,8 @@ import { REVISE_DRAFT_KEY } from "./project-view/project-view.tsx";
 const PACK = "skill-agent";
 const RUNTIME_LABELS: Record<AgentRuntimeName, string> = { claude: "Claude", codex: "Codex", pi: "Pi" };
 const EFFORTS: ReasoningEffort[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
-const MEDIA = /[\w./-]+\.(png|jpe?g|webp|gif|mp3|wav|m4a|mp4|webm|mov)\b/gi;
+const MEDIA =
+  /(?:https?:\/\/[^\s"'<>)]+?|[\w./-]+)\.(?:png|jpe?g|webp|gif|mp3|wav|m4a|mp4|webm|mov)(?:\?[^\s"'<>)]*)?(?=$|[\s"'<>),\]])/gi;
 const PROMPT_MAX = 4000;
 
 type AspectRatio = NonNullable<CreateVideoRequest["aspectRatio"]>;
@@ -110,6 +112,9 @@ function takeReviseDraft(): string {
   }
 }
 
+/** Video lengths offered as one-tap chips; a different saved length shows as an extra chip. */
+const LENGTHS = [6, 10, 15, 30];
+
 /** The last few projects, so returning users jump back in without opening Projects. */
 function RecentStrip() {
   const { data } = useAsync(() => api.projects());
@@ -119,9 +124,9 @@ function RecentStrip() {
     <div className="recent-strip">
       <span className="muted small-text">Recent</span>
       {items.map((p) => (
-        <Link key={p.id} to={`/projects/${p.id}`} className="recent-chip">
-          {p.title}
-        </Link>
+        <a key={p.id} href={`#/projects/${p.id}`} className="recent-chip" title={p.title}>
+          {p.title.trim() || "Untitled video"}
+        </a>
       ))}
     </div>
   );
@@ -422,8 +427,58 @@ function mediaNames(text: string): string[] {
   return [...new Set(text.match(MEDIA) ?? [])].slice(0, 8);
 }
 
+/** Images, video and audio the agent names: a URL plays inline; a sandbox path shows as a name until stored. */
+export function MediaStrip({ names }: { names: string[] }) {
+  if (!names.length) return null;
+  return (
+    <div className="chat-media">
+      {names.map((name) => {
+        const ext = /\.(\w+)(?:\?|$)/.exec(name)?.[1]?.toLowerCase() ?? "";
+        const label = name.split(/[?#]/)[0]?.split("/").pop() ?? name;
+        if (!/^https?:\/\//.test(name)) {
+          return (
+            <span key={name} className="badge" title={name}>
+              {label}
+            </span>
+          );
+        }
+        if (/^(mp4|webm|mov)$/.test(ext)) {
+          // biome-ignore lint/a11y/useMediaCaption: agent-made clips carry their own captions.
+          return (
+            <video
+              key={name}
+              className="chat-media-item"
+              src={name}
+              controls
+              muted
+              playsInline
+              preload="metadata"
+            />
+          );
+        }
+        if (/^(mp3|wav|m4a)$/.test(ext)) {
+          // biome-ignore lint/a11y/useMediaCaption: generated audio has no caption track.
+          return <audio key={name} src={name} controls preload="none" />;
+        }
+        return (
+          <a key={name} href={name} target="_blank" rel="noreferrer" title={label}>
+            <img className="chat-media-item" src={name} alt={label} loading="lazy" />
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 export function BlockView({ block }: { block: Block }) {
-  if (block.kind === "message") return <div className="chat-bubble chat-text">{block.text}</div>;
+  if (block.kind === "message") {
+    return (
+      <>
+        <div className="chat-bubble chat-text">{block.text}</div>
+        <MediaStrip names={mediaNames(block.text)} />
+      </>
+    );
+  }
   if (block.kind === "reasoning") {
     return (
       <details className="chat-reasoning" open>
@@ -432,40 +487,37 @@ export function BlockView({ block }: { block: Block }) {
       </details>
     );
   }
-  if (block.kind === "artifact") return <div className="chat-artifact">📎 {block.name}</div>;
+  if (block.kind === "artifact") {
+    const names = mediaNames(block.name);
+    return names.length ? <MediaStrip names={names} /> : <div className="chat-artifact">📎 {block.name}</div>;
+  }
   if (block.kind !== "tool") return null;
   const args = block.args === undefined ? "" : JSON.stringify(block.args, null, 2);
   const media = mediaNames(`${args}\n${block.result ?? ""}`);
   return (
-    <details className={`chat-tool chat-tool-${block.status}`}>
-      <summary>
-        <span className="chat-tool-dot" />
-        <code>{block.name}</code>
-        <span className="muted chat-tool-brief">{toolBrief(block.args)}</span>
-        <span className="muted">{block.status === "running" ? "running…" : block.status}</span>
-      </summary>
-      {args && (
-        <>
-          <div className="chat-tool-label">Arguments</div>
-          <pre>{args}</pre>
-        </>
-      )}
-      {block.result !== undefined && (
-        <>
-          <div className="chat-tool-label">Result</div>
-          <pre>{block.result}</pre>
-        </>
-      )}
-      {media.length > 0 && (
-        <div className="chat-media">
-          {media.map((name) => (
-            <span key={name} className="badge">
-              {name}
-            </span>
-          ))}
-        </div>
-      )}
-    </details>
+    <>
+      <details className={`chat-tool chat-tool-${block.status}`}>
+        <summary>
+          <span className="chat-tool-dot" />
+          <code>{block.name}</code>
+          <span className="muted chat-tool-brief">{toolBrief(block.args)}</span>
+          <span className="muted">{block.status === "running" ? "running…" : block.status}</span>
+        </summary>
+        {args && (
+          <>
+            <div className="chat-tool-label">Arguments</div>
+            <pre>{args}</pre>
+          </>
+        )}
+        {block.result !== undefined && (
+          <>
+            <div className="chat-tool-label">Result</div>
+            <pre>{block.result}</pre>
+          </>
+        )}
+      </details>
+      <MediaStrip names={media} />
+    </>
   );
 }
 
@@ -508,6 +560,7 @@ function Composer({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<unknown>();
   const runtimes = useAsync(() => api.agentRuntimes());
+  const suggest = useSkillSuggest(message, setMessage);
   const catalog = useAsync(() => api.providerCatalog());
 
   const list: AgentRuntimeInfo[] = runtimes.data?.runtimes ?? [];
@@ -545,7 +598,7 @@ function Composer({
     setError(undefined);
     try {
       const result = await api.createVideo({
-        prompt: buildPrompt(text),
+        prompt: buildPrompt(suggest.withSkills(text)),
         aspectRatio,
         durationMs: Math.round(seconds * 1000),
         language,
@@ -569,7 +622,8 @@ function Composer({
         language,
       });
       setMessage("");
-      onStarted({ jobId: result.job.id, prompt: text, runtime });
+      suggest.clear();
+      onStarted({ jobId: result.job.id, prompt: suggest.withSkills(text), runtime });
     } catch (e) {
       setError(e);
     } finally {
@@ -578,6 +632,7 @@ function Composer({
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.nativeEvent.isComposing || suggest.onKeyDown(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void send();
@@ -587,18 +642,22 @@ function Composer({
   return (
     <form className="chat-composer" onSubmit={(e) => void send(e)}>
       <ErrorBanner error={error ?? runtimes.error} />
-      <textarea
-        rows={3}
-        maxLength={PROMPT_MAX}
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-        onKeyDown={onKey}
-        placeholder={
-          followUp
-            ? "Ask for a change: slower intro, warmer colours, new voice-over…"
-            : "A 10 s launch video for Acme Coffee: logo reveal, slogan 'Wake up bold', warm palette, upbeat music."
-        }
-      />
+      {suggest.menu}
+      <div className="composer-field">
+        {suggest.tags}
+        <textarea
+          rows={3}
+          maxLength={PROMPT_MAX}
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={onKey}
+          placeholder={
+            followUp
+              ? "Ask for a change: slower intro, warmer colours, new voice-over…"
+              : "A 10 s launch video for Acme Coffee: logo reveal, slogan 'Wake up bold', warm palette, upbeat music."
+          }
+        />
+      </div>
       <div className="chat-controls">
         {/* The agent and model are for people who care; everyone else just writes and presses Make video. */}
         <details className="chat-options">
@@ -688,17 +747,19 @@ function Composer({
           <option value="9:16">9:16</option>
           <option value="1:1">1:1</option>
         </select>
-        <label className="chat-seconds">
-          <input
-            type="number"
-            min={1}
-            max={600}
-            value={seconds}
-            aria-label="Duration in seconds"
-            onChange={(e) => setSeconds(Number(e.target.value))}
-          />
-          s
-        </label>
+        <fieldset className="chat-lengths" aria-label="Video length">
+          {(LENGTHS.includes(seconds) ? LENGTHS : [...LENGTHS, seconds].sort((x, y) => x - y)).map((n) => (
+            <button
+              key={n}
+              type="button"
+              aria-pressed={seconds === n}
+              className={`chat-length${seconds === n ? " active" : ""}`}
+              onClick={() => setSeconds(n)}
+            >
+              {n} s
+            </button>
+          ))}
+        </fieldset>
         <select aria-label="Language" value={language} onChange={(e) => setLanguage(e.target.value)}>
           <option value="vi">Tiếng Việt</option>
           <option value="en">English</option>
