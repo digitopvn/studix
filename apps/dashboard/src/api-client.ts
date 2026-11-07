@@ -72,6 +72,22 @@ export interface WorkspaceMultixSettings {
   updatedAt?: string;
 }
 
+/** The models each Multix role can be set to (GET /api/providers/multix/catalog). */
+export interface MultixCatalogEntry {
+  id: string;
+  vendor: string;
+  model: string;
+  label?: string;
+  capabilities?: string[];
+}
+
+export interface MultixCatalog {
+  roles: Record<string, MultixCatalogEntry[]>;
+  openVendors: string[];
+  fetchedAt: string;
+  errors: string[];
+}
+
 export interface WorkspaceMultixCheck {
   version: string | null;
   diagnosis: {
@@ -349,7 +365,43 @@ export interface PlatformMediaVendor {
   status: "configured" | "missing" | "unverified";
 }
 
+export type StorageProviderType = "cloudflare-r2" | "aws-s3" | "s3-compatible";
+
+export interface StorageProfile {
+  id: string;
+  name: string;
+  providerType: StorageProviderType | "environment";
+  endpointHost?: string;
+  bucket?: string;
+  region: string;
+  forcePathStyle: boolean;
+  keyPrefix: string;
+  active: boolean;
+  accessKeyHint?: string;
+  secretHint?: string;
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: { type: string; id: string };
+  lastTest?: { ok: boolean; at: string; detail?: string };
+  references?: number;
+}
+
+export interface StorageProfileInput {
+  name: string;
+  providerType: StorageProviderType;
+  endpoint?: string;
+  bucket: string;
+  region: string;
+  forcePathStyle?: boolean;
+  keyPrefix?: string;
+  /** Required on create; on update both or neither (keep the stored pair). */
+  accessKeyId?: string;
+  secretAccessKey?: string;
+}
+
 export interface PlatformSettings {
+  /** Absent when profiles cannot be stored (no STUDIX_SECRETS_KEY). */
+  storageProfiles?: StorageProfile[];
   storage: {
     configured: boolean;
     source: "dashboard" | "environment";
@@ -856,6 +908,16 @@ export const api = {
   setPlatformStorageKey: (accessKeyId: string, secretAccessKey: string) =>
     request<PlatformStorageTest>("PUT", "/api/platform/storage/key", { accessKeyId, secretAccessKey }),
   revokePlatformStorageKey: () => request<void>("DELETE", "/api/platform/storage/key"),
+  createStorageProfile: (input: StorageProfileInput) =>
+    request<StorageProfile>("POST", "/api/platform/storage/profiles", input),
+  updateStorageProfile: (id: string, input: StorageProfileInput) =>
+    request<StorageProfile>("PUT", `/api/platform/storage/profiles/${encodeURIComponent(id)}`, input),
+  activateStorageProfile: (id: string) =>
+    request<StorageProfile>("POST", `/api/platform/storage/profiles/${encodeURIComponent(id)}/activate`, {}),
+  testStorageProfile: (id: string) =>
+    request<PlatformStorageTest>("POST", `/api/platform/storage/profiles/${encodeURIComponent(id)}/test`, {}),
+  deleteStorageProfile: (id: string) =>
+    request<void>("DELETE", `/api/platform/storage/profiles/${encodeURIComponent(id)}`),
   testPlatformMediaKey: (name: string) =>
     request<PlatformMediaKeyTest>("POST", `/api/platform/media-keys/${enc(name)}/test`, {}),
   testPlatformMedia: () => request<PlatformMediaTest>("POST", "/api/platform/media/test", {}),
@@ -873,6 +935,7 @@ export const api = {
     request<WorkspaceMultixSettings>("PUT", "/api/providers/multix", values),
   resetWorkspaceMultix: () => request<WorkspaceMultixSettings>("DELETE", "/api/providers/multix"),
   checkWorkspaceMultix: () => request<WorkspaceMultixCheck>("POST", "/api/providers/multix/check", {}),
+  multixCatalog: () => request<MultixCatalog>("GET", "/api/providers/multix/catalog"),
   workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
   updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
     request<WorkspaceFeatures>("PUT", "/api/providers/features", patch),

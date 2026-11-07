@@ -9,12 +9,14 @@ import {
   createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
+  createStorageProfileService,
   createVendorKeyTester,
   createWorkspaceFeatureService,
   liveStorageCredentials,
   parseSecretKey,
   routeKeyTester,
   STORAGE_KEY_NAMES,
+  type StorageProfileCandidate,
   withSelfHostedSecretsKey,
 } from "@studix/auth";
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
@@ -39,7 +41,14 @@ import {
   systemClock,
 } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
-import { createS3StorageAdapterFromConfig, type S3Credentials } from "@studix/storage";
+import {
+  assertKeyPrefix,
+  assertSafeStorageEndpoint,
+  createS3StorageAdapterFromConfig,
+  type S3Credentials,
+  S3StorageAdapter,
+  storageProfileOptions,
+} from "@studix/storage";
 import type { Express } from "express";
 import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
@@ -183,6 +192,27 @@ export async function composeApp(
         ...(auditContext ? { auditContext } : {}),
       })
     : undefined;
+  // Storage profiles an operator manages from the dashboard; the worker reads the same rows.
+  const storageProfiles = secretBox
+    ? createStorageProfileService({
+        profiles: repos.storageProfiles,
+        audit: repos.audit,
+        secrets: secretBox,
+        checkEndpoint: (endpoint, providerType) =>
+          assertSafeStorageEndpoint(endpoint, providerType, {
+            allowLocal: config.STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS,
+          }),
+        checkKeyPrefix: assertKeyPrefix,
+        environment: {
+          ...(config.S3_ENDPOINT ? { endpoint: config.S3_ENDPOINT } : {}),
+          ...(config.S3_BUCKET ? { bucket: config.S3_BUCKET } : {}),
+          region: config.S3_REGION,
+          forcePathStyle: config.S3_FORCE_PATH_STYLE,
+        },
+        logger,
+        ...(auditContext ? { auditContext } : {}),
+      })
+    : undefined;
   const integrations = composeIntegrations({
     env,
     config,
@@ -190,6 +220,7 @@ export async function composeApp(
     approvalPolicy,
     activity,
     logger,
+    ...(storageProfiles ? { storageProfiles } : {}),
     ...(auditContext ? { platformContext: auditContext } : {}),
     ...(storageCredentials && secretBox
       ? { storageCredentials: liveStorageCredentials(storageCredentials, config) }
@@ -313,6 +344,26 @@ export async function composeApp(
             },
           }
         : {}),
+      ...(storageProfiles
+        ? {
+            profiles: storageProfiles,
+            probeProfile: async (candidate: StorageProfileCandidate) => {
+              const probe = new S3StorageAdapter(
+                storageProfileOptions(candidate, {
+                  policy: { allowLocal: config.STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS },
+                }),
+              );
+              try {
+                return await probe.probeWrite();
+              } finally {
+                probe.destroy();
+              }
+            },
+            profilesChanged: async () => {
+              await integrations.storage?.refresh();
+            },
+          }
+        : {}),
       vendorTester: createVendorKeyTester(),
       env,
       ...(appEnv.STUDIX_WORKER_HEALTH_URL
@@ -332,7 +383,9 @@ export async function composeApp(
       }),
     }),
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
-    mediaOrigins: storageMediaOrigins(config),
+    mediaOrigins: integrations.storage
+      ? () => integrations.storage?.mediaOrigins() ?? []
+      : storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,
     rateLimitStore: repos.rateLimits,
   };

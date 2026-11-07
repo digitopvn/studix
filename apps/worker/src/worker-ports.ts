@@ -14,6 +14,7 @@ import {
   createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
+  createStorageProfileService,
   createWorkspaceFeatureService,
   liveStorageCredentials,
   type ProviderConnectionService,
@@ -36,7 +37,7 @@ import { MULTIX_VENDOR_KEYS } from "@studix/providers";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { StudixError } from "@studix/shared";
 import { createExternalSkillService, createSkillBundleSource } from "@studix/skills";
-import { createS3StorageAdapterFromConfig } from "@studix/storage";
+import { createProfileStorageRouterFromConfig } from "@studix/storage";
 import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
 import { platformCredentials } from "./pack-services.ts";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
@@ -233,7 +234,7 @@ async function skillSandbox(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
   providers: ProviderConnectionService | undefined,
-  storage: ReturnType<typeof createS3StorageAdapterFromConfig>,
+  storage: ReturnType<typeof createProfileStorageRouterFromConfig>,
 ): Promise<SkillSandbox | undefined> {
   const sandbox = loadSandboxSettings(runtime.env);
   if (!sandbox) return undefined;
@@ -320,6 +321,26 @@ function storageCredentialOverride(
   return { credentials: liveStorageCredentials(store, config) };
 }
 
+/** Storage profiles an operator manages from the dashboard, read with the app's master key. */
+function storageProfiles(settings: WorkerSettings, runtime: WorkerPortsRuntime) {
+  const { config } = settings;
+  if (!config.STUDIX_SECRETS_KEY) return {};
+  const repos = createRepositories(runtime.db);
+  const profiles = createStorageProfileService({
+    profiles: repos.storageProfiles,
+    audit: repos.audit,
+    secrets: createSecretBox(
+      parseSecretKey(config.STUDIX_SECRETS_KEY),
+      config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+    ),
+    // The worker never saves a profile; these only guard writes made through the app.
+    checkEndpoint: () => Promise.reject(new Error("read only")),
+    checkKeyPrefix: () => {},
+    logger: runtime.logger,
+  });
+  return { profiles, locate: repos.storageProfiles.locate };
+}
+
 /**
  * Production adapters for the standalone worker: S3-compatible storage, the HyperFrames renderer and
  * the brief planner (DecisionRouter for `video.brief` with a deterministic rules fallback, optional
@@ -331,7 +352,11 @@ export async function loadWorkerPorts(
 ): Promise<WorkerPorts> {
   const { config } = settings;
   const { logger } = runtime;
-  const storage = createS3StorageAdapterFromConfig(config, storageCredentialOverride(settings, runtime));
+  const storage = createProfileStorageRouterFromConfig(config, {
+    ...storageCredentialOverride(settings, runtime),
+    ...storageProfiles(settings, runtime),
+    logger: logger.child({ component: "storage" }),
+  });
   const toolchain = renderToolchain(runtime.env);
   if (!toolchain.ok) {
     logger.warn("render toolchain incomplete; render stages will fail until it is installed", {

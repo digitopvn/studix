@@ -2,14 +2,20 @@ import type { AddressInfo } from "node:net";
 import {
   createPlatformCredentialService,
   createSecretBox,
+  createStorageProfileService,
   parseSecretKey,
   STORAGE_KEY_NAMES,
   type VendorKeyTester,
 } from "@studix/auth";
 import type { Actor, AuditEvent, AuditRepository, TenantContext } from "@studix/core";
-import type { PlatformCredentialRecord, PlatformCredentialRepository } from "@studix/database";
+import type {
+  PlatformCredentialRecord,
+  PlatformCredentialRepository,
+  StorageProfileRecord,
+  StorageProfileRepository,
+} from "@studix/database";
 import { MULTIX_VENDOR_KEYS, type MultixDiagnosis } from "@studix/providers";
-import { createLogger } from "@studix/shared";
+import { createLogger, StudixError } from "@studix/shared";
 import type { StorageProbeResult } from "@studix/storage";
 import express from "express";
 import { afterEach, describe, expect, it } from "vitest";
@@ -64,7 +70,50 @@ function memoryRepo(): PlatformCredentialRepository {
   };
 }
 
+function memoryProfiles(): StorageProfileRepository {
+  const rows = new Map<string, StorageProfileRecord>();
+  return {
+    async list() {
+      return [...rows.values()];
+    },
+    async get(id) {
+      return rows.get(id);
+    },
+    async create(input, by) {
+      const now = new Date();
+      const row = { ...input, active: false, version: 1, updatedBy: by, createdAt: now, updatedAt: now };
+      rows.set(input.id, row);
+      return row;
+    },
+    async update(id, input, by) {
+      const prev = rows.get(id);
+      if (!prev) return undefined;
+      const row = { ...prev, ...input, version: prev.version + 1, updatedBy: by, updatedAt: new Date() };
+      rows.set(id, row);
+      return row;
+    },
+    async activate(id) {
+      for (const [k, r] of rows) rows.set(k, { ...r, active: k === id });
+    },
+    async delete(id) {
+      return Boolean(!rows.get(id)?.active && rows.delete(id));
+    },
+    async recordTest(id, result) {
+      const row = rows.get(id);
+      if (row) rows.set(id, { ...row, lastTest: result });
+      return Boolean(row);
+    },
+    async countReferences() {
+      return 0;
+    },
+    async locate() {
+      return undefined;
+    },
+  };
+}
+
 interface SetupOptions {
+  profileProbe?: StorageProbeResult;
   probe?: StorageProbeResult;
   diagnosis?: MultixDiagnosis;
   worker?: { media(): Promise<WorkerMediaReport | undefined> };
@@ -105,6 +154,23 @@ function setup(options: SetupOptions = {}) {
     cacheMs: 0,
   });
   const probed: Array<{ accessKeyId: string; secretAccessKey: string }> = [];
+  const profiles = createStorageProfileService({
+    profiles: memoryProfiles(),
+    audit,
+    secrets: box,
+    checkEndpoint: async (endpoint) => {
+      if (endpoint.includes("169.254")) {
+        throw new StudixError("VALIDATION", "The endpoint must be a hostname, not an IP address", {
+          retryable: false,
+          details: { field: "endpoint", reason: "ip" },
+        });
+      }
+      return { endpoint };
+    },
+    checkKeyPrefix: () => {},
+    cacheMs: 0,
+  });
+  let changes = 0;
   const service = createPlatformSettingsService({
     config: {
       S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com",
@@ -139,10 +205,18 @@ function setup(options: SetupOptions = {}) {
       return options.candidate ?? { ok: true };
     },
     ...(options.vendorTester ? { vendorTester: options.vendorTester } : {}),
+    profiles,
+    probeProfile: async (candidate) => {
+      probed.push(candidate.credentials);
+      return options.profileProbe ?? { ok: true };
+    },
+    profilesChanged: async () => {
+      changes += 1;
+    },
     env: options.env ?? {},
     ...(options.worker ? { worker: options.worker } : {}),
   });
-  return { service, events, credentials, storageCredentials, probed };
+  return { service, events, credentials, storageCredentials, probed, changes: () => changes };
 }
 
 describe("storageDiagnosis", () => {
@@ -423,6 +497,12 @@ describe("platform routes", () => {
       ["/media/test", "POST", {}],
       ["/media-keys/SUME_API_KEY", "PUT", { value: SECRET }],
       ["/media-keys/SUME_API_KEY", "DELETE"],
+      ["/storage/profiles", "GET"],
+      ["/storage/profiles", "POST", {}],
+      ["/storage/profiles/stp_abcdef12", "PUT", {}],
+      ["/storage/profiles/env/activate", "POST", {}],
+      ["/storage/profiles/env/test", "POST", {}],
+      ["/storage/profiles/stp_abcdef12", "DELETE"],
     ];
     for (const [path, method, body] of routes) {
       expect((await call(base, path, method, undefined, body)).status).toBe(401);
@@ -526,5 +606,81 @@ describe("worker media report", () => {
     const noMedia = (async () =>
       new Response(JSON.stringify({ status: "unavailable" }), { status: 503 })) as unknown as typeof fetch;
     expect(await fetchWorkerMedia("http://worker:8081", noMedia)).toBeUndefined();
+  });
+});
+
+describe("storage profiles", () => {
+  const fields = {
+    name: "Media R2",
+    providerType: "cloudflare-r2" as const,
+    endpoint: "https://acct.r2.cloudflarestorage.com",
+    bucket: "studix-media",
+    region: "auto",
+  };
+  const key = { accessKeyId: S3_KEY_ID, secretAccessKey: S3_SECRET };
+
+  it("refuses everyone but a platform operator", async () => {
+    const { service } = setup();
+    for (const ctx of [owner, ctxOf({ type: "system", id: "worker" })]) {
+      await expect(service.listStorageProfiles(ctx)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.createStorageProfile(ctx, fields, key)).rejects.toMatchObject({
+        code: "FORBIDDEN",
+      });
+      await expect(service.activateStorageProfile(ctx, "env")).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.testStorageProfile(ctx, "env")).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.deleteStorageProfile(ctx, "stp_x")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+  });
+
+  it("probes before saving and stores nothing when the key is invalid", async () => {
+    const { service, probed, changes } = setup({
+      profileProbe: { ok: false, step: "put", status: 403, s3Code: "InvalidAccessKeyId", message: "bad key" },
+    });
+    const err = await service.createStorageProfile(operator, fields, key).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StudixError);
+    expect(JSON.stringify({ message: String(err), details: (err as StudixError).details })).not.toContain(
+      S3_SECRET,
+    );
+    expect(probed).toHaveLength(1);
+    expect(changes()).toBe(0);
+    expect((await service.listStorageProfiles(operator)).map((p) => p.id)).toEqual(["env"]);
+  });
+
+  it("refuses a metadata endpoint without probing it", async () => {
+    const { service, probed } = setup();
+    await expect(
+      service.createStorageProfile(
+        operator,
+        { ...fields, providerType: "s3-compatible", endpoint: "https://169.254.169.254" },
+        key,
+      ),
+    ).rejects.toMatchObject({ code: "VALIDATION", details: { field: "endpoint" } });
+    expect(probed).toHaveLength(0);
+  });
+
+  it("creates, activates from another workspace, tests and deletes without leaking the key", async () => {
+    const { service, events, changes } = setup();
+    const created = await service.createStorageProfile(operator, fields, key);
+    await service.activateStorageProfile(otherWorkspaceOperator, created.id);
+    expect(changes()).toBe(2);
+    const list = await service.listStorageProfiles(operator);
+    expect(list.find((p) => p.active)?.id).toBe(created.id);
+    expect(await service.testStorageProfile(operator, created.id)).toMatchObject({ ok: true });
+    await expect(service.deleteStorageProfile(operator, created.id)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    await service.activateStorageProfile(operator, "env");
+    await service.deleteStorageProfile(operator, created.id);
+    const text = JSON.stringify([created, list, events]);
+    expect(text).not.toContain(S3_SECRET);
+    expect(text).not.toContain(S3_KEY_ID);
+    expect(events.map((e) => e.action)).toEqual(
+      expect.arrayContaining([
+        "storage_profile.created",
+        "storage_profile.activated",
+        "storage_profile.tested",
+        "storage_profile.revoked",
+      ]),
+    );
   });
 });

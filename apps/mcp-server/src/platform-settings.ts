@@ -2,6 +2,11 @@ import {
   type PlatformCredentialService,
   type PlatformCredentialView,
   STORAGE_KEY_NAMES,
+  type StorageKeyPair,
+  type StorageProfileCandidate,
+  type StorageProfileFields,
+  type StorageProfileService,
+  type StorageProfileView,
   type VendorKeyTester,
 } from "@studix/auth";
 import { assertPlatformOperator, type TenantContext } from "@studix/core";
@@ -17,12 +22,13 @@ import { type Clock, redact, StudixError, systemClock } from "@studix/shared";
 import type { S3Credentials, StorageProbeResult } from "@studix/storage";
 
 /*
- * What a platform operator sees and changes under Settings > Storage & Media. The bucket, endpoint and
- * region of object storage (R2) stay in the deployment environment (S3_*); its access key pair may also be
- * stored from the dashboard, sealed like the media vendor keys, and then overrides S3_ACCESS_KEY_ID /
- * S3_SECRET_ACCESS_KEY without a redeploy. A new pair is saved only after a real put/get/head/delete with it
- * passes. Nothing here returns a secret, and every call is limited to platform operators in a dashboard
- * session.
+ * What a platform operator sees and changes under Settings > Storage & Media. Object storage is a set of
+ * storage profiles (provider, endpoint, bucket, region, path style, key prefix and a sealed key pair); the
+ * S3_* deployment settings are the `env` profile, active while no stored profile is. The `env` key pair may
+ * also be stored from the dashboard, sealed like the media vendor keys. Anything new is saved only after a
+ * real put/get/head/delete with it passes. Switching the active profile changes where new objects go; old
+ * objects are read from the profile their rows record. Nothing here returns a secret, and every call is
+ * limited to platform operators in a dashboard session.
  */
 
 /** Which kinds of media each vendor key serves, from the routes the worker actually uses. */
@@ -127,6 +133,8 @@ export interface WorkerMediaView {
 
 export interface PlatformSettingsView {
   storage: StorageStatusView;
+  /** The `env` profile first, then stored ones; absent when profiles cannot be stored (no STUDIX_SECRETS_KEY). */
+  storageProfiles?: StorageProfileView[];
   media: MediaStatusView;
 }
 
@@ -164,6 +172,25 @@ export interface PlatformSettingsService {
   setStorageKey(ctx: TenantContext, pair: S3Credentials): Promise<StorageTestView>;
   /** Remove the stored pair; S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY from the environment apply again. */
   revokeStorageKey(ctx: TenantContext): Promise<void>;
+  listStorageProfiles(ctx: TenantContext): Promise<StorageProfileView[]>;
+  /** Probe the candidate profile, then store it (inactive); nothing is saved when the probe fails. */
+  createStorageProfile(
+    ctx: TenantContext,
+    fields: StorageProfileFields,
+    key: StorageKeyPair,
+  ): Promise<StorageProfileView>;
+  /** Without `key` the stored pair is kept; the probe runs with the new settings either way. */
+  updateStorageProfile(
+    ctx: TenantContext,
+    id: string,
+    fields: StorageProfileFields,
+    key?: StorageKeyPair,
+  ): Promise<StorageProfileView>;
+  /** New objects go to this profile (or `env`) from now on, on the app and, within seconds, on the worker. */
+  activateStorageProfile(ctx: TenantContext, id: string): Promise<StorageProfileView>;
+  testStorageProfile(ctx: TenantContext, id: string): Promise<StorageTestView>;
+  /** Refused while the profile is active or assets are stored in it. */
+  deleteStorageProfile(ctx: TenantContext, id: string): Promise<void>;
 }
 
 export interface PlatformSettingsDeps {
@@ -187,6 +214,12 @@ export interface PlatformSettingsDeps {
   storageCredentials?: PlatformCredentialService;
   /** Put/get/head/delete with a candidate pair before it is stored. */
   probeCandidate?: (pair: S3Credentials) => Promise<StorageProbeResult>;
+  /** Stored storage profiles; absent without STUDIX_SECRETS_KEY. */
+  profiles?: StorageProfileService;
+  /** Put/get/head/delete with a candidate profile (through the SSRF-guarded connection) before it is stored. */
+  probeProfile?: (candidate: StorageProfileCandidate) => Promise<StorageProbeResult>;
+  /** Called after a profile change so this process applies it at once instead of within the refresh period. */
+  profilesChanged?: () => Promise<void>;
   vendorTester?: VendorKeyTester;
   /** The process environment, for testing a vendor key that is not stored here. */
   env?: Readonly<Record<string, string | undefined>>;
@@ -325,6 +358,22 @@ function storageView(probe: StorageProbeResult, at: Date): StorageTestView {
   };
 }
 
+/** Refuse a candidate whose probe failed, with the diagnosis and no secret. */
+function assertProbePassed(view: StorageTestView, what: string): void {
+  if (view.ok) return;
+  throw new StudixError("VALIDATION", `${what} failed the storage check; nothing was saved`, {
+    retryable: false,
+    details: {
+      diagnosis: view.diagnosis,
+      ...(view.failedStep ? { failedStep: view.failedStep } : {}),
+      ...(view.httpStatus === undefined ? {} : { httpStatus: view.httpStatus }),
+      ...(view.s3Code ? { s3Code: view.s3Code } : {}),
+      ...(view.message ? { message: view.message } : {}),
+    },
+    ...(view.suggestedAction ? { suggestedAction: view.suggestedAction } : {}),
+  });
+}
+
 export function createPlatformSettingsService(deps: PlatformSettingsDeps): PlatformSettingsService {
   const clock = deps.clock ?? systemClock;
   const { config } = deps;
@@ -362,6 +411,33 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
     }
   };
 
+  const profilesOrThrow = (ctx: TenantContext): StorageProfileService => {
+    assertPlatformOperator(ctx);
+    if (!deps.profiles) {
+      throw new StudixError("UNAVAILABLE", "Storage profiles cannot be stored on this server", {
+        retryable: false,
+        suggestedAction: "Set STUDIX_SECRETS_KEY (32 random bytes, base64) on the app and the worker.",
+      });
+    }
+    return deps.profiles;
+  };
+
+  const probeProfileOrThrow = () => {
+    if (!deps.probeProfile) {
+      throw new StudixError("UNAVAILABLE", "Storage profiles cannot be checked on this server", {
+        retryable: false,
+      });
+    }
+    return deps.probeProfile;
+  };
+
+  const verifyProfile = async (candidate: StorageProfileCandidate): Promise<void> => {
+    assertProbePassed(
+      storageView(await probeProfileOrThrow()(candidate), clock.now()),
+      "The storage profile",
+    );
+  };
+
   const kindsOf = (vendor: MultixVendor): string[] =>
     (Object.keys(MULTIX_ROLE_VENDORS) as MultixRole[])
       .filter((role) => MULTIX_ROLE_VENDORS[role].includes(vendor))
@@ -395,9 +471,11 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           worker = { reachable: false, mismatches: [] };
         }
       }
+      const storageProfiles = deps.profiles ? await deps.profiles.list(ctx) : undefined;
       return {
+        ...(storageProfiles ? { storageProfiles } : {}),
         storage: {
-          configured: Boolean(config.S3_BUCKET),
+          configured: Boolean(config.S3_BUCKET) || Boolean(storageProfiles?.some((p) => p.id !== "env")),
           source: pair ? "dashboard" : "environment",
           credentialStorage: storageStored?.storage ?? "unavailable",
           ...(pair && storageCredential ? { credential: storageCredential } : {}),
@@ -446,7 +524,8 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
       assertPlatformOperator(ctx);
       const at = clock.now();
       let view: StorageTestView;
-      if (!config.S3_BUCKET || !deps.storage) {
+      const anyProfile = Boolean((await deps.profiles?.list(ctx))?.some((p) => p.active && p.id !== "env"));
+      if ((!config.S3_BUCKET && !anyProfile) || !deps.storage) {
         view = {
           ok: false,
           at,
@@ -475,18 +554,7 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
         secretAccessKey: pair.secretAccessKey.trim(),
       };
       const view = storageView(await deps.probeCandidate(candidate), clock.now());
-      if (!view.ok) {
-        throw new StudixError("VALIDATION", "The new key pair failed the storage check; nothing was saved", {
-          retryable: false,
-          details: {
-            diagnosis: view.diagnosis,
-            ...(view.failedStep ? { failedStep: view.failedStep } : {}),
-            ...(view.httpStatus === undefined ? {} : { httpStatus: view.httpStatus }),
-            ...(view.s3Code ? { s3Code: view.s3Code } : {}),
-          },
-          ...(view.suggestedAction ? { suggestedAction: view.suggestedAction } : {}),
-        });
-      }
+      assertProbePassed(view, "The new key pair");
       await store.set(ctx, "S3_ACCESS_KEY_ID", candidate.accessKeyId);
       await store.set(ctx, "S3_SECRET_ACCESS_KEY", candidate.secretAccessKey);
       await store.recordTest(ctx, "S3_SECRET_ACCESS_KEY", {
@@ -512,6 +580,48 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
         });
       }
       storageTest = undefined;
+    },
+
+    async listStorageProfiles(ctx) {
+      return profilesOrThrow(ctx).list(ctx);
+    },
+
+    async createStorageProfile(ctx, fields, key) {
+      const view = await profilesOrThrow(ctx).create(ctx, fields, key, verifyProfile);
+      await deps.profilesChanged?.();
+      return view;
+    },
+
+    async updateStorageProfile(ctx, id, fields, key) {
+      const view = await profilesOrThrow(ctx).update(ctx, id, fields, key, verifyProfile);
+      await deps.profilesChanged?.();
+      return view;
+    },
+
+    async activateStorageProfile(ctx, id) {
+      const view = await profilesOrThrow(ctx).activate(ctx, id);
+      storageTest = undefined;
+      await deps.profilesChanged?.();
+      return view;
+    },
+
+    async testStorageProfile(ctx, id) {
+      const profiles = profilesOrThrow(ctx);
+      if (id === "env") return this.testStorage(ctx);
+      const candidate = await profiles.candidate(ctx, id);
+      const view = storageView(await probeProfileOrThrow()(candidate), clock.now());
+      await profiles.recordTest(ctx, id, {
+        ok: view.ok,
+        detail: view.ok
+          ? "Write, read and delete passed"
+          : `${view.diagnosis}${view.failedStep ? ` at ${view.failedStep}` : ""}`,
+      });
+      return view;
+    },
+
+    async deleteStorageProfile(ctx, id) {
+      await profilesOrThrow(ctx).revoke(ctx, id);
+      await deps.profilesChanged?.();
     },
 
     async testMediaKey(ctx, name) {

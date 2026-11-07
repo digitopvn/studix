@@ -92,7 +92,8 @@ export interface AppDeps {
   /** Built dashboard directory; when missing, browser navigations get a 503 page. */
   dashboardDist?: string;
   /** Extra origins media may load from in the dashboard CSP (object storage). */
-  mediaOrigins?: string[];
+  /** Origins the dashboard may play media from; a function when storage profiles can change at runtime. */
+  mediaOrigins?: string[] | (() => string[]);
   /** Express `trust proxy` setting (hop count) so rate limits see the client IP behind an ingress. */
   trustProxy?: number | boolean;
   /** Shared token-bucket store so limits hold across replicas; without it each process keeps its own buckets. */
