@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -69,6 +70,19 @@ export interface MultixProviderOptions {
   voiceLanguageModels?: string;
   /** Source of PATH, HOME and provider keys for the child; defaults to process.env. */
   env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Vendor keys set from the dashboard, read before each CLI call so a rotation applies to the next call
+   * without a restart (a call already running keeps the key it started with). Only the vendor key names
+   * Multix reads are used; any other name is ignored. `revision` must change when a value changes: it drops
+   * the cached `multix check` result. A throwing source leaves the environment keys in place.
+   */
+  credentials?: () => Promise<{ values: Readonly<Record<string, string>>; revision: string }>;
+  /**
+   * A workspace's own vendor keys (BYOK) by variable name, read before each generate or resume of that
+   * workspace. They win over the platform keys for that call only and never reach another workspace's
+   * calls or the shared capability probe. Spend on such a key is reported with `funding: "workspace"`.
+   */
+  workspaceCredentials?: (ctx: TenantContext) => Promise<Readonly<Record<string, string>>>;
   /** Let multix read ~/.multix/.env (local development only). */
   allowHomeEnv?: boolean;
   /** Longest wait for one upstream job. */
@@ -84,6 +98,20 @@ export interface MultixProviderOptions {
 }
 
 export type MultixReadiness = Readonly<Record<MultixVendor, boolean>>;
+
+/**
+ * Outcome of one safe `multix check` (it reads key presence and calls no paid API). `missing_executable` is
+ * a configuration or image problem; `check_failed` means the CLI ran but did not answer.
+ */
+export interface MultixDiagnosis {
+  state: "ready" | "missing_executable" | "check_failed";
+  /** Per vendor: has a key. Empty of truth (all false) unless `state` is `ready`. */
+  vendors: MultixReadiness;
+  /** Redacted reason for any state other than `ready`. */
+  reason?: string;
+  /** Stable code of the failure (`ENOENT`, `EACCES`, a StudixError code), when known. */
+  code?: string;
+}
 
 export interface MultixProviderStatus {
   id: string;
@@ -205,6 +233,11 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   private readonly capabilityTtlMs: number;
   private probe: { at: number; value: Promise<MediaCapability[]> } | undefined;
   private lastReadiness: MultixReadiness | undefined;
+  private readonly credentialSource: MultixProviderOptions["credentials"];
+  private credentialRevision: string | undefined;
+  private readonly workspaceCredentialSource: MultixProviderOptions["workspaceCredentials"];
+  /** The workspace keys of the generate or resume call in progress; empty outside one. */
+  private readonly workspaceKeys = new AsyncLocalStorage<Readonly<Record<string, string>>>();
 
   constructor(options: MultixProviderOptions = {}) {
     const bin = options.bin?.trim();
@@ -220,6 +253,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     this.voiceRoutes = parseVoiceLanguageRoutes(options.voiceLanguageModels, this.defaults);
     this.sourceEnv = options.env ?? process.env;
     this.allowHomeEnv = options.allowHomeEnv ?? false;
+    this.credentialSource = options.credentials;
+    this.workspaceCredentialSource = options.workspaceCredentials;
     this.waitTimeoutMs = options.waitTimeoutMs ?? DEFAULT_WAIT_MS;
     this.journal = options.journal ?? new InMemoryMediaJobJournal();
     this.clock = options.clock ?? systemClock;
@@ -266,6 +301,42 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     );
   }
 
+  /**
+   * One uncached `multix check --json`, for the operator's Test button. It reuses no cached result and
+   * refreshes the capability cache, so what the dashboard shows and what jobs use agree.
+   */
+  async diagnose(signal?: AbortSignal): Promise<MultixDiagnosis> {
+    const none = Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixReadiness;
+    if (!this.enabled) {
+      return { state: "missing_executable", vendors: none, reason: "MULTIX_BIN is not set", code: "NOT_SET" };
+    }
+    try {
+      const text = (
+        await this.inScratchDir((cwd) =>
+          this.exec("check", ["check", "--json"], cwd, PROBE_TIMEOUT_MS, signal),
+        )
+      ).text;
+      const keys = parseCheckKeys(text);
+      const vendors = Object.fromEntries(
+        MULTIX_VENDORS.map((v) => [v, keys.has(MULTIX_VENDOR_KEYS[v])]),
+      ) as MultixReadiness;
+      this.lastReadiness = vendors;
+      this.probe = undefined;
+      return { state: "ready", vendors };
+    } catch (err) {
+      const cause = err instanceof StudixError ? err : undefined;
+      const code = (cause?.details as { code?: unknown } | undefined)?.code;
+      // The runner reports a spawn failure with the errno (ENOENT, EACCES) in `details.code`.
+      const startFailure = typeof code === "string" && /^E(NOENT|ACCES|PERM|NOTDIR|ISDIR|NOEXEC)$/.test(code);
+      return {
+        state: startFailure ? "missing_executable" : "check_failed",
+        vendors: none,
+        reason: cause?.message ?? "multix check failed",
+        code: typeof code === "string" ? code : (cause?.code ?? "UNKNOWN"),
+      };
+    }
+  }
+
   /** The "<vendor>:<model>" a request runs on; results report the same id. */
   resolveModel(request: Pick<MediaGenerationRequest, "kind" | "model" | "params">): string {
     return resolveMultixModel(request, this.defaults, this.voiceRoutes).model.id;
@@ -282,6 +353,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   /** Kinds whose vendor key `multix check --json` reports, with models from the live catalogs. */
   async capabilities(): Promise<MediaCapability[]> {
     if (!this.enabled) return [];
+    await this.storedCredentials();
     const now = this.clock.now().getTime();
     if (!this.probe || now - this.probe.at > this.capabilityTtlMs) {
       const value = this.probeCapabilities();
@@ -313,6 +385,19 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   }
 
   async generate(ctx: TenantContext, request: MediaGenerationRequest): Promise<MediaGenerationResult> {
+    let vendor: MultixVendor | undefined;
+    try {
+      vendor = resolveMultixModel(request, this.defaults, this.voiceRoutes).model.vendor;
+    } catch {
+      // An invalid request fails with its own error below.
+    }
+    return this.withWorkspaceKeys(ctx, vendor, () => this.generateWithKeys(ctx, request));
+  }
+
+  private async generateWithKeys(
+    ctx: TenantContext,
+    request: MediaGenerationRequest,
+  ): Promise<MediaGenerationResult> {
     const started = this.clock.now().getTime();
     assertGenerationRequest(request);
     this.assertEnabled();
@@ -394,7 +479,43 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   }
 
   /** Collect an upstream job by id without submitting anything (no new charge). */
-  async resume(_ctx: TenantContext, request: MediaResumeRequest): Promise<MediaGenerationResult> {
+  async resume(ctx: TenantContext, request: MediaResumeRequest): Promise<MediaGenerationResult> {
+    const vendor = (MULTIX_VENDORS as readonly string[]).includes(request.job?.provider)
+      ? (request.job.provider as MultixVendor)
+      : undefined;
+    return this.withWorkspaceKeys(ctx, vendor, () => this.resumeWithKeys(request));
+  }
+
+  /**
+   * Run one call with the workspace's own keys layered over the platform keys, and say who paid: the
+   * workspace when its key for the call's vendor was used. A failing source falls back to platform keys.
+   */
+  private async withWorkspaceKeys(
+    ctx: TenantContext,
+    vendor: MultixVendor | undefined,
+    run: () => Promise<MediaGenerationResult>,
+  ): Promise<MediaGenerationResult> {
+    let keys: Readonly<Record<string, string>> = {};
+    if (this.workspaceCredentialSource) {
+      try {
+        keys = await this.workspaceCredentialSource(ctx);
+      } catch {
+        keys = {};
+      }
+    }
+    const own = vendor !== undefined && Boolean(keys[MULTIX_VENDOR_KEYS[vendor]]);
+    if (!own) return this.workspaceKeys.run(keys, run);
+    try {
+      return { ...(await this.workspaceKeys.run(keys, run)), funding: "workspace" };
+    } catch (err) {
+      if (err instanceof MediaChargedError) {
+        throw new MediaChargedError(err, { ...err.charge, funding: "workspace" });
+      }
+      throw err;
+    }
+  }
+
+  private async resumeWithKeys(request: MediaResumeRequest): Promise<MediaGenerationResult> {
     const started = this.clock.now().getTime();
     this.assertEnabled();
     const { job } = request;
@@ -431,10 +552,31 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     return { defaults: this.defaults, voiceRoutes: this.voiceRoutes, waitTimeoutMs: this.waitTimeoutMs };
   }
 
-  private childEnv(cacheDir: string): Record<string, string> {
+  /** Dashboard-stored vendor keys; the child filter below keeps only the names Multix reads. Never throws. */
+  private async storedCredentials(): Promise<Readonly<Record<string, string>>> {
+    if (!this.credentialSource) return {};
+    try {
+      const { values, revision } = await this.credentialSource();
+      if (this.credentialRevision !== undefined && this.credentialRevision !== revision) {
+        // A key was added, rotated or revoked: what `multix check` reported no longer holds.
+        this.probe = undefined;
+        this.lastReadiness = undefined;
+      }
+      this.credentialRevision = revision;
+      return values;
+    } catch {
+      return {};
+    }
+  }
+
+  private childEnv(cacheDir: string, stored: Readonly<Record<string, string>> = {}): Record<string, string> {
     const env: Record<string, string> = {};
-    for (const name of [...PASSTHROUGH_ENV, ...Object.values(MULTIX_VENDOR_KEYS)]) {
-      const value = this.sourceEnv[name];
+    const vendorKeys: readonly string[] = Object.values(MULTIX_VENDOR_KEYS);
+    for (const name of [...PASSTHROUGH_ENV, ...vendorKeys]) {
+      const own = this.workspaceKeys.getStore() ?? {};
+      const value = vendorKeys.includes(name)
+        ? own[name] || stored[name] || this.sourceEnv[name]
+        : this.sourceEnv[name];
       if (value !== undefined && value !== "") env[name] = value;
     }
     env.MULTIX_OUTPUT_DIR = cacheDir;
@@ -465,9 +607,10 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     signal?: AbortSignal,
   ): Promise<{ result: Awaited<ReturnType<MultixRunner>>; envelope: MultixEnvelope | undefined }> {
     const cacheDir = join(cwd, `${CACHE_DIR}-${randomUUID()}`);
+    const stored = await this.storedCredentials();
     let result: Awaited<ReturnType<MultixRunner>>;
     try {
-      result = await this.runner!(argv, { cwd, env: this.childEnv(cacheDir), timeoutMs, signal });
+      result = await this.runner!(argv, { cwd, env: this.childEnv(cacheDir, stored), timeoutMs, signal });
     } finally {
       await rm(cacheDir, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -896,7 +1039,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   }
 
   private probeCapabilities(): Promise<MediaCapability[]> {
-    return this.inScratchDir((cwd) => this.probeCapabilitiesIn(cwd));
+    // The probe is shared by every workspace, so it never runs on one workspace's own keys.
+    return this.workspaceKeys.exit(() => this.inScratchDir((cwd) => this.probeCapabilitiesIn(cwd)));
   }
 
   private async probeCapabilitiesIn(cwd: string): Promise<MediaCapability[]> {

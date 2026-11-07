@@ -1,6 +1,7 @@
 import { extname } from "node:path";
 import { USAGE_KINDS } from "@studix/billing";
 import {
+  type FundingSource,
   type MediaCharge,
   MediaChargedError,
   type MediaGenerationRequest,
@@ -283,6 +284,7 @@ async function recordMediaExecution(
     costCents: number;
     job: ProviderJobRef | undefined;
     error?: StudixError;
+    funding?: FundingSource;
   },
 ): Promise<string | undefined> {
   const recorder = s.services.executions;
@@ -301,6 +303,7 @@ async function recordMediaExecution(
       attempt: journaled?.attempt ?? 1,
       ...(job ? { job } : {}),
       ...(call.error ? { error: call.error } : {}),
+      ...(call.funding ? { funding: call.funding } : {}),
     });
     await recorder.recordProviderExecution(s.ctx, record);
     return record.id;
@@ -324,6 +327,7 @@ function mediaUsage(
     costCents: charge.costCents,
     ...(upstreamJob ? { upstreamJob } : {}),
     ...(providerExecutionId ? { providerExecutionId } : {}),
+    ...(charge.funding ? { funding: charge.funding } : {}),
     metadata: {
       provider: charge.provider,
       model: charge.model,
@@ -446,6 +450,7 @@ export async function generateStoredMedia(
       costCents: charge?.costCents ?? 0,
       job: charge?.job,
       error: toStudixError(err),
+      ...(charge?.funding ? { funding: charge.funding } : {}),
     });
     // The provider charged before it failed (e.g. the finished job's result could not be collected).
     if (err instanceof MediaChargedError) {
@@ -459,6 +464,7 @@ export async function generateStoredMedia(
     latencyMs: result.latencyMs,
     costCents: result.costCents,
     job: result.job,
+    ...(result.funding ? { funding: result.funding } : {}),
   });
   // The provider call is paid from here on: whatever fails next still bills it.
   const usage = mediaUsage(
@@ -469,6 +475,7 @@ export async function generateStoredMedia(
       costCents: result.costCents,
       costSource: result.costSource ?? "unknown",
       ...(result.job ? { job: result.job } : {}),
+      ...(result.funding ? { funding: result.funding } : {}),
     },
     executionId,
   );

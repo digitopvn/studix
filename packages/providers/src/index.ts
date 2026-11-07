@@ -45,6 +45,7 @@ export {
 export {
   createMultixProviderFromConfig,
   MULTIX_PROVIDER_ID,
+  type MultixDiagnosis,
   MultixProvider,
   type MultixProviderOptions,
   type MultixProviderStatus,
@@ -60,3 +61,15 @@ export {
   type MultixRole,
   type MultixVendor,
 } from "./multix-routes.ts";
+export {
+  assertMultixOverrides,
+  createWorkspaceMultixProviders,
+  MULTIX_ROLE_ENV,
+  MULTIX_ROLES,
+  type MultixConfig,
+  type MultixWorkspaceOverrides,
+  multixConfigFor,
+  readMultixVersion,
+  type WorkspaceMultixProviders,
+  type WorkspaceMultixProvidersOptions,
+} from "./multix-workspace-settings.ts";

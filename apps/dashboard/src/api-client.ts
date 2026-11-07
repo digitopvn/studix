@@ -26,6 +26,62 @@ export function selectWorkspace(id: string | null): void {
   else localStorage.removeItem(WORKSPACE_KEY);
 }
 
+/** A workspace's own media vendor key (BYOK); `platform` means media calls use the platform key. */
+export interface WorkspaceMediaKey {
+  vendor: string;
+  source: "workspace" | "platform";
+  keyHint?: string;
+  version?: number;
+  updatedAt?: string;
+}
+
+export interface WorkspaceMediaKeys {
+  storage: "available" | "unavailable";
+  canManage: boolean;
+  keys: WorkspaceMediaKey[];
+}
+
+/** What a workspace overrides; null (or a role left out) keeps the server's MULTIX_* value. */
+export interface WorkspaceMultixValues {
+  enabled: boolean | null;
+  waitTimeoutSeconds: number | null;
+  models: Record<string, string>;
+  voiceLanguageModels: string | null;
+}
+
+export interface MultixEffective<T> {
+  value: T;
+  source: "workspace" | "server";
+}
+
+export interface WorkspaceMultixSettings {
+  canChange: boolean;
+  server: {
+    enabled: boolean;
+    waitTimeoutSeconds: number;
+    models: Record<string, string>;
+    voiceLanguageModels: string | null;
+  };
+  workspace: WorkspaceMultixValues | null;
+  effective: {
+    enabled: MultixEffective<boolean>;
+    waitTimeoutSeconds: MultixEffective<number>;
+    models: Record<string, MultixEffective<string>>;
+    voiceLanguageModels: MultixEffective<string | null>;
+  };
+  updatedAt?: string;
+}
+
+export interface WorkspaceMultixCheck {
+  version: string | null;
+  diagnosis: {
+    state: "ready" | "missing_executable" | "check_failed";
+    vendors: Record<string, boolean>;
+    reason?: string;
+    code?: string;
+  };
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };
   const workspace = selectedWorkspace();
@@ -245,6 +301,92 @@ export interface AnthropicProvider {
   connections: ProviderConnection[];
   /** Jobs may select the Claude planner on this server. */
   claudePlanner: boolean;
+}
+
+export type PlatformSecretStatus = "configured" | "missing" | "invalid" | "unverified";
+
+export interface PlatformStorageTest {
+  ok: boolean;
+  at: string;
+  failedStep?: string;
+  httpStatus?: number;
+  s3Code?: string;
+  diagnosis:
+    | "ok"
+    | "missing_credential"
+    | "bad_credential"
+    | "missing_permission"
+    | "missing_bucket"
+    | "remote_unavailable";
+  message?: string;
+  suggestedAction?: string;
+}
+
+export interface PlatformCredential {
+  name: string;
+  source: "dashboard" | "environment" | "missing";
+  keyHint?: string;
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: { type: string; id: string };
+  lastTest?: { ok: boolean; at: string; detail?: string };
+}
+
+export interface PlatformMediaVendor {
+  vendor: string;
+  keyName: string;
+  kinds: string[];
+  credential: PlatformCredential;
+  status: "configured" | "missing" | "unverified";
+}
+
+export interface PlatformSettings {
+  storage: {
+    configured: boolean;
+    source: "environment";
+    endpointHost?: string;
+    bucket?: string;
+    region: string;
+    pathStyle: boolean;
+    signedUrlTtlSeconds: number;
+    accessKeyId?: string;
+    secretAccessKey: PlatformSecretStatus;
+    lastTest?: PlatformStorageTest;
+    changeNeedsRedeploy: true;
+  };
+  media: {
+    executable: "configured" | "missing";
+    path?: string;
+    homeEnvDisabled: boolean;
+    credentialStorage: "available" | "unavailable";
+    vendors: PlatformMediaVendor[];
+    lastCheck?: { at: string; state: string; reason?: string; code?: string };
+    apply: { keyChange: string; executableChange: string };
+    processNote: string;
+    /** The worker's own media report; absent when the app has no STUDIX_WORKER_HEALTH_URL. */
+    worker?: {
+      reachable: boolean;
+      report?: {
+        executable: "configured" | "missing";
+        state: string;
+        code?: string;
+        secretsKey: boolean;
+        vendors: Record<string, boolean>;
+      };
+      mismatches: string[];
+    };
+  };
+}
+
+export interface PlatformMediaTest {
+  ok: boolean;
+  at: string;
+  state: "ready" | "missing_executable" | "check_failed";
+  diagnosis: "ok" | "missing_executable" | "missing_credential" | "check_failed";
+  vendors: Array<{ vendor: string; keyName: string; hasKey: boolean }>;
+  reason?: string;
+  code?: string;
+  paidCalls: false;
 }
 
 export interface FeatureSwitch {
@@ -570,6 +712,23 @@ export const api = {
     ),
   disableConnector: (id: string) => request<Connector>("POST", `/api/connectors/${enc(id)}/disable`, {}),
   anthropicProvider: () => request<AnthropicProvider>("GET", "/api/providers/anthropic"),
+  platformSettings: () => request<PlatformSettings>("GET", "/api/platform/storage-media"),
+  testPlatformStorage: () => request<PlatformStorageTest>("POST", "/api/platform/storage/test", {}),
+  testPlatformMedia: () => request<PlatformMediaTest>("POST", "/api/platform/media/test", {}),
+  setPlatformMediaKey: (name: string, value: string) =>
+    request<PlatformCredential>("PUT", `/api/platform/media-keys/${enc(name)}`, { value }),
+  revokePlatformMediaKey: (name: string) =>
+    request<PlatformCredential>("DELETE", `/api/platform/media-keys/${enc(name)}`),
+  workspaceMediaKeys: () => request<WorkspaceMediaKeys>("GET", "/api/providers/media-keys"),
+  setWorkspaceMediaKey: (vendor: string, apiKey: string) =>
+    request<WorkspaceMediaKey>("PUT", `/api/providers/media-keys/${enc(vendor)}`, { apiKey }),
+  removeWorkspaceMediaKey: (vendor: string) =>
+    request<WorkspaceMediaKey>("DELETE", `/api/providers/media-keys/${enc(vendor)}`),
+  workspaceMultix: () => request<WorkspaceMultixSettings>("GET", "/api/providers/multix"),
+  updateWorkspaceMultix: (values: WorkspaceMultixValues) =>
+    request<WorkspaceMultixSettings>("PUT", "/api/providers/multix", values),
+  resetWorkspaceMultix: () => request<WorkspaceMultixSettings>("DELETE", "/api/providers/multix"),
+  checkWorkspaceMultix: () => request<WorkspaceMultixCheck>("POST", "/api/providers/multix/check", {}),
   workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
   updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
     request<WorkspaceFeatures>("PUT", "/api/providers/features", patch),

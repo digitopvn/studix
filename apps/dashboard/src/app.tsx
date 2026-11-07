@@ -13,6 +13,7 @@ import { ProjectDetailPage } from "./pages/project-detail-page.tsx";
 import { ProjectReviewPage } from "./pages/project-review-page.tsx";
 import { ProjectsPage } from "./pages/projects-page.tsx";
 import { ProvidersPage } from "./pages/providers-page.tsx";
+import { StorageMediaPage } from "./pages/storage-media-page.tsx";
 import { takeSsoError } from "./sso-error.ts";
 import { ErrorBanner, Link } from "./ui.tsx";
 import { navigate, useHashRoute } from "./use-hash-route.ts";
@@ -25,6 +26,7 @@ const NAV = [
   { to: "/connectors", label: "Connectors" },
   { to: "/connected-apps", label: "Connected apps" },
   { to: "/providers", label: "AI & Providers" },
+  { to: "/storage-media", label: "Storage & Media", operatorOnly: true },
   { to: "/account", label: "Account" },
 ] as const;
 
@@ -49,6 +51,12 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
       return <ConnectedAppsPage />;
     case "providers":
       return <ProvidersPage />;
+    case "storage-media":
+      return me.role === "operator" ? (
+        <StorageMediaPage />
+      ) : (
+        <p className="muted">Storage &amp; Media settings are managed by the platform operator.</p>
+      );
     case "account":
       return <AccountPage email={me.user.email} />;
     default:
@@ -130,7 +138,7 @@ export function App() {
       <header className="topbar">
         <strong className="brand">Studix</strong>
         <nav>
-          {NAV.map((item) => (
+          {NAV.filter((item) => !("operatorOnly" in item) || me.role === "operator").map((item) => (
             <Link key={item.to} to={item.to} className={current === item.to.slice(1) ? "active" : undefined}>
               {item.label}
             </Link>

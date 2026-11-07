@@ -56,7 +56,7 @@ and export `./src/index.ts`.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `apps/mcp-server`           | HTTP app: `/mcp` (native + meta tools), `/api` for the dashboard, dashboard static files, `/healthz`, `/readyz`                                                                                                      | Contain pipeline or policy logic; it calls `core` and `mcp-gateway` |
 | `apps/worker`               | Worker process: claims jobs and runs workflow stages                                                                                                                                                                 | Expose public HTTP beyond health                                    |
-| `apps/dashboard`            | SPA for projects, storyboard review and approval, jobs, traces, playback, connectors                                                                                                                                 | Implement its own pipeline; it uses `/api` over `StudioService`     |
+| `apps/dashboard`            | SPA for projects, storyboard review and approval, jobs, traces, playback, connectors, operator Storage & Media                                                                                                       | Implement its own pipeline; it uses `/api` over `StudioService`     |
 | `apps/marketing`            | Static marketing site on Cloudflare                                                                                                                                                                                  | Import engine packages                                              |
 | `apps/mock-mcp`             | Third-party Streamable HTTP MCP fixture for gateway tests                                                                                                                                                            | Ship to production                                                  |
 | `packages/shared`           | `StudixError` + `ErrorCode`, `loadConfig()` (env only, zod), logger with redaction, `newId()`, `redact()`, `Clock`                                                                                                   | Depend on other `@studix/*` packages                                |
@@ -72,7 +72,7 @@ and export `./src/index.ts`.
 | `packages/qa`               | QA hard gate, evidence and human-review stages; typed wrappers that run the `tools/qa` Python measurement tools in a per-run sandbox ([QA.md](QA.md))                                                                | Let an AI verdict block or approve; pass worker secrets to a tool   |
 | `packages/skills`           | Pack registry: versioned workflow templates and stage templates per genre pack (brand-intro first); knowledge packs loaded per stage, with `hard`/`evidence` check contracts and pack lint                           | Hold tenant data                                                    |
 | `packages/mcp-gateway`      | Server registry, tool catalog, policy, URL policy, MCP client adapter, execution, invocation trace                                                                                                                   | Forward the inbound client credential downstream                    |
-| `packages/auth`             | Workspace API keys (hash, verify, revoke, scope), dashboard sessions to membership to workspace                                                                                                                      | Store plaintext keys                                                |
+| `packages/auth`             | Workspace API keys (hash, verify, revoke, scope), dashboard sessions to membership to workspace, sealed platform credentials (operator media keys)                                                                   | Store plaintext keys                                                |
 | `packages/billing`          | Usage ledger (COGS and price recorded separately), dedupe keys                                                                                                                                                       | Hardcode a credit conversion                                        |
 | `packages/observability`    | Trace/span model with org/workspace/project/job/stage/provider/model attributes, redacted                                                                                                                            | Record secrets or raw prompts by default                            |
 
@@ -277,6 +277,16 @@ AI client --(inbound credential: stx_ key)--> /mcp
   calls, the worker role lets a workflow stage call a bound capability.
 - Every execute re-authorizes against the current grant, not the search result.
 
+## Imported skills
+
+`packages/skills/src/external` imports public GitHub Agent Skills: URL parsing,
+a GitHub client with fixed hosts and size/time caps, discovery and bundling, and
+`createExternalSkillService`. Rows live in `external_skills` and
+`external_skill_versions` (`packages/database`), files in object storage under
+`external-skills/<versionId>/<sha256>`. `apps/mcp-server` exposes the six
+`studix_skill_*` tools and wires the service from `S3_BUCKET` and the optional
+`STUDIX_GITHUB_TOKEN`. See [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
+
 ## Trust boundaries
 
 | Boundary                      | Crossing                 | Control                                                                                                                         |
@@ -286,6 +296,7 @@ AI client --(inbound credential: stx_ key)--> /mcp
 | App/worker -> third-party MCP | Outbound connector call  | URL policy (SSRF, DNS rebinding, redirects), secretRef, caps, re-authorization                                                  |
 | Worker -> model providers     | Decision and media calls | Server-held credentials, redaction, budget, timeouts                                                                            |
 | Worker -> agent runtime       | Pi session               | Process/pod isolation, not a path guard; no shell, no secrets in prompt                                                         |
+| App -> GitHub                 | Skill discover/import    | Fixed hosts, parsed-only URL, byte and time caps, data-only storage, no execution                                               |
 | Storage -> client             | Artifact download        | Short-lived signed URLs, tenant-prefixed keys                                                                                   |
 
 Details and threat list: [SECURITY.md](SECURITY.md).

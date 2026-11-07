@@ -234,7 +234,8 @@ th {
 .badge-active,
 .badge-approved,
 .badge-ready,
-.badge-available {
+.badge-available,
+.badge-configured {
   background: color-mix(in srgb, var(--success) 20%, transparent);
   color: var(--success);
 }
@@ -243,7 +244,8 @@ th {
 .badge-revoked,
 .badge-error,
 .badge-rejected,
-.badge-invalid {
+.badge-invalid,
+.badge-missing {
   background: color-mix(in srgb, var(--danger) 18%, transparent);
   color: var(--danger);
 }

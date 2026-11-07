@@ -68,6 +68,49 @@ saving keys is disabled. Losing it makes every stored key unreadable, so back
 it up with the database secrets. To rotate it, move the old value to
 `STUDIX_SECRETS_KEYS_PREVIOUS` and set a new one.
 
+### Storage and media settings (platform operators)
+
+A platform operator (a user whose `role` is `operator`, set directly in the
+database) sees **Storage & Media** in the dashboard. Nobody else does, and the
+API behind it (`/api/platform/*`) answers `FORBIDDEN` to every other role, API
+key and OAuth client.
+
+- **Object storage (R2) stays in the deployment settings.** The page shows the
+  endpoint host, bucket, region, a masked access key id and whether the secret
+  key works, but never holds the secret. To rotate it, change `S3_ACCESS_KEY_ID`
+  and `S3_SECRET_ACCESS_KEY` in the deployment, redeploy the app and the
+  worker, then press **Test connection**. The test writes, reads, checks and
+  deletes one small object under a probe prefix. A failure is classified as
+  missing credential, bad credential, missing permission (token can reach the
+  bucket but not write it), bucket not found or remote unavailable.
+- **Media vendor keys can be set on the page.** `SUME_API_KEY`,
+  `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`, `FISH_API_KEY`, `MINIMAX_API_KEY`
+  and `OPENROUTER_API_KEY` are stored sealed with `STUDIX_SECRETS_KEY` in the
+  `platform_credentials` table (no second vault) and are never shown again,
+  only a hint of the last four characters. A stored key overrides the
+  environment variable of the same name; revoking it falls back to the
+  environment. The worker reads them with the same `STUDIX_SECRETS_KEY`, so set
+  that on the app **and** the worker, otherwise the page reports that keys
+  cannot be stored. The worker passes the Multix CLI only these allowlisted
+  names and keeps `MULTIX_DISABLE_HOME_ENV=1`.
+- **Applying a change needs no restart.** The next media call on the app and the
+  worker uses the new key (within a few seconds); a call already running keeps
+  the key it started with. `MULTIX_BIN` is still deployment configuration.
+- **The safe check calls no paid provider.** It runs `multix check`, which only
+  reports which keys exist, so it cannot tell a wrong key from a right one; a
+  bad key shows up on the first real job. The check runs in the app process. The
+  worker runs its own `multix check` (at most once a minute) and reports it under
+  `media` in `/readyz`: `executable`, `state`, `code`, `secretsKey` and, per
+  vendor, only whether a key exists. It never gates readiness. Set
+  `STUDIX_WORKER_HEALTH_URL` on the app (for example `http://studix-worker:8081`)
+  and the page lists where the app and the worker disagree (`MULTIX_BIN`,
+  `STUDIX_SECRETS_KEY`, a key found on one side only). A worker without
+  `STUDIX_SECRETS_KEY` also logs a warning at startup when keys exist in the
+  database.
+- **Rollback:** revoke the key on the page (the environment value applies again)
+  and revoke it at the provider if it leaked. Losing `STUDIX_SECRETS_KEY` makes
+  stored keys unreadable (they are skipped and logged); set them again.
+
 Dashboard sign-in with GitHub and Google is off until a provider's client id
 and secret are both set (`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`,
 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`); setting only one of a pair fails
@@ -146,8 +189,13 @@ ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
 plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the
 rejected-key test uses a made-up key and costs nothing.
 
-Paid media runs through the Multix provider (`packages/providers`), which is
-off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
+Paid media runs through the Multix provider (`packages/providers`). The image
+sets `MULTIX_BIN=/opt/multix/dist/cli.js`, so the provider is on in every
+deployment built from the root `Dockerfile`, even when the platform secrets
+omit the variable; an empty `MULTIX_BIN=` in the secrets turns it off. Before
+this default, a deployment whose secrets lacked the variable failed `motion-graphic` jobs
+with a voice-over with `UNAVAILABLE` ("The Multix provider is not
+configured") after compose. Routes: image,
 video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
 music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech.
 The worker passes only `SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
@@ -160,6 +208,13 @@ role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`, and voice per langua
 `@<voice>`), which also carries the packs' delivery direction to models that take it;
 `MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
 job. Every paid call is estimated first and refused above the request's cap.
+
+These env values are the server defaults. A workspace admin (`member:manage`) can override them on the
+dashboard's Providers page, or through `GET|PUT|DELETE /api/providers/multix`: turn Multix off for the
+workspace, change the wait timeout (30–7200 s), the model of each role and the voice routes. Saved values
+win over env field by field; a blank field keeps the env value, and a workspace cannot turn Multix on
+where the server has no `MULTIX_BIN`. `POST /api/providers/multix/check` reports the CLI version and
+`multix check`. The CLI version itself stays pinned in the image (`MULTIX_COMMIT`).
 A video request on `sume:seedance-2.5` runs at `480p` unless it passes
 `params.resolution`; a higher resolution is an explicit, separately estimated
 choice
@@ -188,7 +243,7 @@ workflow stage fall back to an in-process journal, which a restart loses.
 Pack stages (`marketing-video`, `motion-graphic`) get the media provider, the
 storage, the renderer and the hard QA gate from the worker
 ([`pack-services.ts`](../apps/worker/src/pack-services.ts)). Without
-`MULTIX_BIN` their paid stages fail with `UNAVAILABLE`; without the QA
+`MULTIX_BIN` (set to empty) their paid stages fail with `UNAVAILABLE`; without the QA
 toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
 is never published.
 
@@ -299,6 +354,14 @@ resources prefixed `studix-`.
   to both projects as `DATABASE_URL` (internal URL). The app applies migrations
   on start (`STUDIX_MIGRATE_ON_START=true` on the app only).
 - Each environment has its own R2 bucket, S3 API with path-style addressing.
+- Storage write probe: on start, the app and the worker each write, read back and delete one tiny object
+  under `orgs/healthcheck/workspaces/probe/` and log `object storage write probe failed` (with only the
+  step, HTTP status and S3 error code) when the store refuses it. The worker also reports the result under
+  `storage` in `/readyz`; it does not gate readiness, so the deploy that fixes a credential is never blocked.
+  The key must be allowed to write under `orgs/*`. A failed `upload` stage reports `status` and `s3Code` in
+  `error.details`; after fixing the credential, retry the job: the render checkpoint is reused while the
+  render file is still on that worker (otherwise the render stage runs again), and the upload key is
+  deterministic, so no duplicate object is created.
 - Secrets: set per project with `tose env push <file> --project <name>` from a
   file outside the repo (mode 600, deleted afterwards). App and worker of one
   environment share `BETTER_AUTH_SECRET`; environments never share it. Names

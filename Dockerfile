@@ -50,9 +50,12 @@ RUN apt-get update \
 
 RUN corepack enable
 
-# multix stays opt-in: the worker uses it only when MULTIX_BIN=/opt/multix/dist/cli.js is set.
+# The image ships multix and points MULTIX_BIN at it, so a deployment whose secrets omit the variable
+# still has the provider. Paid kinds stay off until `multix check` sees their vendor key; set
+# MULTIX_BIN to an empty value to disable the provider.
 COPY --from=multix /opt/multix /opt/multix
 RUN chmod +x /opt/multix/dist/cli.js && ln -s /opt/multix/dist/cli.js /usr/local/bin/multix
+ENV MULTIX_BIN=/opt/multix/dist/cli.js
 
 # Layers that change rarely come first so a builder with a layer cache reuses them across commits:
 # the browser, the QA venv (keyed on tools/qa) and the pnpm store (keyed on the lockfile).

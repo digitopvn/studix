@@ -1,4 +1,5 @@
 import { StudixError, type StudixErrorOptions } from "@studix/shared";
+import type { FundingSource } from "../entities/telemetry.ts";
 import type { TenantContext } from "../tenant.ts";
 
 /**
@@ -74,6 +75,8 @@ export interface MediaGenerationResult {
   costSource?: MediaCostSource;
   /** Present when the work ran as an upstream async job. */
   job?: ProviderJobRef;
+  /** Who paid the vendor; `operator` (the platform key) when omitted, `workspace` for its own key. */
+  funding?: FundingSource;
 }
 
 /** What the provider already charged for a call that then failed. */
@@ -84,6 +87,8 @@ export interface MediaCharge {
   costSource: MediaCostSource;
   /** Present when the work ran as an upstream async job. */
   job?: ProviderJobRef;
+  /** Who paid the vendor; `operator` (the platform key) when omitted, `workspace` for its own key. */
+  funding?: FundingSource;
 }
 
 /**

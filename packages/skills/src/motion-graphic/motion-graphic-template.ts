@@ -152,12 +152,24 @@ function inkOn(
     : "background";
 }
 
-/** Card lengths in 100ms steps, in proportion to the lines' weights (even when unweighted). */
+/**
+ * Card lengths in 100ms steps: each card gets the time its voice-over takes to say (with the lead-in and
+ * closing pads), and the rest of the length is shared in proportion to the lines' weights (even when
+ * unweighted), so a long hook never outruns its card.
+ */
 function durations(totalMs: number, lines: readonly Line[]): number[] {
+  const last = lines.length - 1;
+  const need = lines.map(
+    (l, i) =>
+      (l.voiceover ? (wordCount(l.voiceover) / VO_WORDS_PER_SECOND) * 1000 : 0) +
+      (i === 0 ? VO_PAD_MS : 0) +
+      (i === last ? VO_PAD_MS : 0),
+  );
   const weights = lines.map((l) => l.weight ?? 1);
   const sum = weights.reduce((a, b) => a + b, 0);
-  const out = weights.map((w) => Math.floor((totalMs * w) / sum / 100) * 100);
-  out[out.length - 1] = totalMs - out.slice(0, -1).reduce((a, b) => a + b, 0);
+  const slack = Math.max(0, totalMs - need.reduce((a, b) => a + b, 0));
+  const out = need.map((n, i) => Math.floor((n + (slack * (weights[i] ?? 1)) / sum) / 100) * 100);
+  out[last] = totalMs - out.slice(0, last).reduce((a, b) => a + b, 0);
   return out;
 }
 

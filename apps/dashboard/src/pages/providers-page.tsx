@@ -9,6 +9,8 @@ import {
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
 import { ClaudeFeaturesSection } from "./claude-features-section.tsx";
 import { ProviderModelsSection } from "./provider-models-section.tsx";
+import { WorkspaceMediaKeysSection } from "./workspace-media-keys-section.tsx";
+import { WorkspaceMultixSection } from "./workspace-multix-section.tsx";
 
 type Owner = ProviderConnection["owner"];
 
@@ -55,6 +57,8 @@ export function ProvidersPage() {
         />
       )}
       <ProviderModelsSection />
+      <WorkspaceMultixSection />
+      <WorkspaceMediaKeysSection />
     </>
   );
 }

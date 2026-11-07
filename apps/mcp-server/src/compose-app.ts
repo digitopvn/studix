@@ -6,6 +6,7 @@ import {
   createApiKeyService,
   createDashboardAuth,
   createModelPreferenceService,
+  createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
   createWorkspaceFeatureService,
@@ -16,7 +17,12 @@ import {
 import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
-import { createMultixProviderFromConfig } from "@studix/providers";
+import {
+  createMultixProviderFromConfig,
+  createWorkspaceMultixProviders,
+  MULTIX_VENDOR_KEYS,
+  MULTIX_VENDORS,
+} from "@studix/providers";
 import {
   allowedHosts,
   createLogger,
@@ -29,11 +35,13 @@ import {
   ssoClients,
   systemClock,
 } from "@studix/shared";
+import type { ExternalSkillService } from "@studix/skills";
 import type { Express } from "express";
 import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
+import { createPlatformSettingsService, fetchWorkerMedia } from "./platform-settings.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
@@ -41,6 +49,7 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
+import { createWorkspaceMultixApi } from "./workspace-multix.ts";
 
 /** App-role settings that are not part of the shared config schema. */
 export const AppEnvSchema = z.object({
@@ -53,6 +62,8 @@ export const AppEnvSchema = z.object({
   STUDIX_DASHBOARD_DIST: z.string().min(1).optional(),
   /** Reverse-proxy hops to trust for the client IP (0 = none). Set 1 behind the TOSE ingress. */
   STUDIX_TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
+  /** Worker health base URL (`http://studix-worker:8081`); the Storage & Media page compares its media report. */
+  STUDIX_WORKER_HEALTH_URL: z.url().optional(),
   /** Serve OAuth 2.1 on /mcp (default on). `false` keeps workspace API keys as the only way in. */
   STUDIX_MCP_OAUTH: z
     .enum(["true", "false", "1", "0"])
@@ -73,6 +84,7 @@ export interface ComposeOverrides {
   metaTools?: RegisterMetaTools;
   readiness?: ReadinessCheck[];
   skills?: SkillSummary[];
+  externalSkills?: ExternalSkillService;
   logger?: Logger;
 }
 
@@ -138,10 +150,28 @@ export async function composeApp(
   });
   const activity = createActivityRecorder(repos.activity, { logger });
   const integrations = composeIntegrations({ env, config, repos, approvalPolicy, activity, logger });
+  const secretBox = config.STUDIX_SECRETS_KEY
+    ? createSecretBox(
+        parseSecretKey(config.STUDIX_SECRETS_KEY),
+        config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
+      )
+    : undefined;
+  // Vendor keys an operator set in the dashboard; the worker reads the same rows with the same master key.
+  const platformCredentials = createPlatformCredentialService({
+    credentials: repos.platformCredentials,
+    audit: repos.audit,
+    secrets: secretBox,
+    allowedNames: MULTIX_VENDORS.map((vendor) => MULTIX_VENDOR_KEYS[vendor]),
+    env,
+    logger,
+  });
+  const multix = config.MULTIX_BIN
+    ? createMultixProviderFromConfig(config, { env, credentials: () => platformCredentials.loadValues() })
+    : undefined;
   const studio = new StudioService({
     ...repos,
     // Operators attach Atlas predictions by hand; each is checked with Atlas first, so this needs multix.
-    providerJobs: config.MULTIX_BIN ? createMultixProviderFromConfig(config, { env }) : undefined,
+    providerJobs: multix,
     approvalPolicy,
     clock: systemClock,
     logger,
@@ -186,13 +216,9 @@ export async function composeApp(
       createPiKeyTester(),
     ),
     isSupportedProvider: isRuntimeKeyProvider,
-    secrets: config.STUDIX_SECRETS_KEY
-      ? createSecretBox(
-          parseSecretKey(config.STUDIX_SECRETS_KEY),
-          config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
-        )
-      : undefined,
+    secrets: secretBox,
     claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
+    mediaKeyNames: MULTIX_VENDOR_KEYS,
     logger,
   });
   if (!config.STUDIX_SECRETS_KEY)
@@ -238,14 +264,52 @@ export async function composeApp(
     ],
     skills: overrides.skills ?? integrations.skills,
     agentHandoffs: integrations.agentHandoffs,
+    externalSkills: overrides.externalSkills ?? integrations.externalSkills,
+    platform: createPlatformSettingsService({
+      config,
+      storage: integrations.storage,
+      multix,
+      credentials: platformCredentials,
+      ...(appEnv.STUDIX_WORKER_HEALTH_URL
+        ? { worker: { media: () => fetchWorkerMedia(appEnv.STUDIX_WORKER_HEALTH_URL as string) } }
+        : {}),
+    }),
+    multix: createWorkspaceMultixApi({
+      config,
+      repository: repos.workspaceMultixSettings,
+      audit: repos.audit,
+      env,
+      // The dashboard's check runs with the platform keys only, like the capability probe jobs use.
+      providers: createWorkspaceMultixProviders({
+        config,
+        options: { env, credentials: () => platformCredentials.loadValues() },
+        load: (ctx) => repos.workspaceMultixSettings.get(ctx),
+      }),
+    }),
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
     mediaOrigins: storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,
     rateLimitStore: repos.rateLimits,
   };
+  let closed = false;
   if (!deps.storage) logger.warn("S3_BUCKET is not set; playback URLs are unavailable");
+  else if (!overrides.storage && integrations.storage) {
+    // Surface a rejected bucket credential at startup instead of when the first render fails to upload.
+    void integrations.storage.probeWrite().then((probe) => {
+      if (closed) return;
+      if (probe.ok) logger.info("object storage write probe passed");
+      else {
+        logger.error("object storage write probe failed; renders cannot be uploaded until it is fixed", {
+          step: probe.step,
+          status: probe.status,
+          s3Code: probe.s3Code,
+        });
+      }
+    });
+  }
 
   const close = async () => {
+    closed = true;
     integrations.storage?.destroy();
     await handle.close();
   };
