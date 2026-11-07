@@ -128,8 +128,8 @@ export const AssetListInput = z.object({
     .max(ASSET_LIMITS.pathChars)
     .optional()
     .describe("Folder like ep03/sc01; includes subfolders."),
-  tag: z.string().max(ASSET_LIMITS.tagChars).optional(),
-  search: z.string().trim().max(100).optional().describe("Part of the asset name."),
+  tag: z.string().trim().min(1).max(ASSET_LIMITS.tagChars).optional(),
+  search: z.string().trim().min(1).max(100).optional().describe("Part of the asset name."),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   cursor: z.string().max(200).optional(),
 });

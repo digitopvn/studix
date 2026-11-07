@@ -30,7 +30,6 @@ describe("asset roles, folders and tags", () => {
     const inferred = await assets.create(ctx, {
       kind: "audio",
       name: "bgm_main.mp3",
-      mime: "audio/mpeg",
       createdBy,
     });
     expect(inferred).toMatchObject({ role: "bgm", path: "bgm", tags: [] });
@@ -43,8 +42,11 @@ describe("asset roles, folders and tags", () => {
     expect(await names({ path: "ep030" })).toEqual(["hero.png"]);
     expect(await names({ tag: "hero" })).toEqual(["hero.png"]);
     expect(await names({ search: "HERO" })).toEqual(["hero.png"]);
-    expect(await names({ search: "100%_" })).toEqual([]);
     expect(await names({})).toHaveLength(3);
+    await assets.create(ctx, { kind: "image", name: "a_b.png", createdBy });
+    expect(await names({ search: "a_b" })).toEqual(["a_b.png"]);
+    expect(await names({ search: "a%b" })).toEqual([]);
+    expect(await names({ search: "x_b" })).toEqual([]);
   });
 
   it("keeps folders and tags inside the workspace", async () => {

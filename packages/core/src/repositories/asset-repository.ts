@@ -8,8 +8,6 @@ export type NewAsset = Omit<NewRecord<Asset>, "currentVersionId" | "role" | "pat
   role?: AssetRole;
   path?: string;
   tags?: string[];
-  /** Media type of the first version, used only to infer the role. */
-  mime?: string;
 };
 
 export interface AssetListQuery extends PageRequest {

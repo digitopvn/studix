@@ -64,8 +64,7 @@ export function createInMemoryAssetRepository(clock: Clock): AssetRepository {
   const versions = new InMemoryTenantTable<AssetVersion>("astv", clock, false);
   return {
     async create(ctx, input) {
-      const { mime, ...rest } = input;
-      return assets.insert(ctx, { ...rest, ...organizeNewAsset({ ...input, ...(mime ? { mime } : {}) }) });
+      return assets.insert(ctx, { ...input, ...organizeNewAsset(input) });
     },
     async get(ctx, id) {
       return assets.get(ctx, id);

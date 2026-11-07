@@ -542,14 +542,15 @@ Every asset has a `kind` (the media type: `image`, `video`, `audio`, `font`,
 | `tags` | Up to 16 lowercase tags of 40 characters.                                                                                                                               |
 
 When an agent saves an asset without them, Studix infers the `role` from the
-file name (`whoosh_01.wav` is `sfx`, `bgm-main.mp3` is `bgm`, `bg_city.png` is
-`background`) and falls back to `other`; a `render` kind keeps the `render`
-role. The `path` then defaults to the role folder (`sfx/`), so a library reads
+file name and the media kind (an audio file named `whoosh_01.wav` is `sfx`,
+`bgm-main.mp3` is `bgm`; an image named `bg_city.png` is `background`) and falls
+back to `other`; a `render` kind keeps the `render` role. The `path` then defaults to the role folder (`sfx/`), so a library reads
 `sfx/`, `bgm/`, … Pass `path: "ep03/sc01/s05"` to file under an episode, scene
 and shot instead. A malformed `path` fails with `VALIDATION` before any work
-starts. Existing assets were backfilled: audio placed on an IR audio track
-takes `bgm` (music), `sfx` or `voice` (dialogue and voice-over), and the rest
-is labelled from the file name; their `path` is the root.
+starts. Existing assets were backfilled with the same rules: audio placed on an
+IR audio track takes `bgm` (music), `sfx` or `voice` (dialogue and voice-over),
+and the rest is labelled from the file name. Their `path` is the role folder,
+or the root for `other`.
 
 `studix_list_assets` and `GET /api/assets` take the same filters. `path`
 matches the folder and everything below it (`ep03` matches `ep03/sc01`, not

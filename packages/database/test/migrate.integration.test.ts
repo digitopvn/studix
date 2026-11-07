@@ -96,7 +96,14 @@ describe("migrate", () => {
         ast_render: "render",
         ast_track: "bgm",
       });
-      expect(rows.every((r) => r.path === "" && Array.isArray(r.tags) && r.tags.length === 0)).toBe(true);
+      // Existing assets get the role folder new ones get; unlabelled ones stay at the root.
+      expect(Object.fromEntries(rows.map((r) => [r.id, r.path]))).toEqual({
+        ast_named: "sfx",
+        ast_plain: "",
+        ast_render: "render",
+        ast_track: "bgm",
+      });
+      expect(rows.every((r) => Array.isArray(r.tags) && r.tags.length === 0)).toBe(true);
     } finally {
       await sql.end({ timeout: 5 });
       rmSync(folder, { recursive: true, force: true });

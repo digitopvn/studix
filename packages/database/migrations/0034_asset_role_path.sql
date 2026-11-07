@@ -13,22 +13,26 @@ FROM (
   FROM "project_versions" pv
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(pv."ir"->'audio') = 'array' THEN pv."ir"->'audio' ELSE '[]'::jsonb END) AS track
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(pv."ir"->'assets') = 'array' THEN pv."ir"->'assets' ELSE '[]'::jsonb END) AS ref
-  JOIN "asset_versions" av ON av."id" = ref->>'assetVersionId'
+  JOIN "asset_versions" av ON av."id" = ref->>'assetVersionId' AND av."workspace_id" = pv."workspace_id"
   WHERE ref->>'id' = track->>'assetId'
   ORDER BY av.asset_id, pv."created_at" DESC
 ) AS t
 WHERE a."id" = t.asset_id AND a."kind" = 'audio' AND a."role" = 'other';--> statement-breakpoint
--- 3. What is left is labelled from the file name, the same words the application uses for new assets.
+-- 3. What is left is labelled from the file name, with the same words and media-kind rules as the application.
 UPDATE "assets" SET "role" = CASE
-  WHEN "name" ~* '(^|[^a-z])(sfx|foley|whoosh|impact|sound[-_ ]?effect)([^a-z]|$)' THEN 'sfx'
-  WHEN "name" ~* '(^|[^a-z])(bgm|music|soundtrack|theme[-_ ]?song)([^a-z]|$)' THEN 'bgm'
-  WHEN "name" ~* '(^|[^a-z])(voice|vo|voiceover|dialog(ue)?|narration|tts|speech)([^a-z]|$)' THEN 'voice'
-  WHEN "name" ~* '(^|[^a-z])(vfx|particles?|overlay|glitch|fx)([^a-z]|$)' THEN 'vfx'
-  WHEN "name" ~* '(^|[^a-z])storyboard([^a-z]|$)' THEN 'storyboard'
-  WHEN "name" ~* '(^|[^a-z])(keyframe|key[-_ ]?frame|kf)([^a-z]|$)' THEN 'keyframe'
-  WHEN "name" ~* '(^|[^a-z])(character|char|turnaround)([^a-z]|$)' THEN 'character'
-  WHEN "name" ~* '(^|[^a-z])(background|bg|backdrop|environment|location)([^a-z]|$)' THEN 'background'
-  WHEN "name" ~* '(^|[^a-z])(prop|props)([^a-z]|$)' THEN 'prop'
-  WHEN "name" ~* '(^|[^a-z])(reference|ref|moodboard)([^a-z]|$)' THEN 'reference'
+  WHEN "kind" = 'audio' AND "name" ~* '(^|[^a-z])(sfx|foley|whoosh|impact|sound[-_ ]?effect)s?([^a-z]|$)' THEN 'sfx'
+  WHEN "kind" = 'audio' AND "name" ~* '(^|[^a-z])(bgm|music|soundtrack|theme[-_ ]?song)s?([^a-z]|$)' THEN 'bgm'
+  WHEN "kind" = 'audio' AND "name" ~* '(^|[^a-z])(voice|vo|voiceover|dialog(ue)?|narration|tts|speech)s?([^a-z]|$)' THEN 'voice'
+  WHEN "kind" IN ('image', 'video') AND "name" ~* '(^|[^a-z])(vfx|particle|overlay|glitch)s?([^a-z]|$)' THEN 'vfx'
+  WHEN "kind" IN ('image', 'video') AND "name" ~* '(^|[^a-z])(storyboard)s?([^a-z]|$)' THEN 'storyboard'
+  WHEN "kind" IN ('image', 'video') AND "name" ~* '(^|[^a-z])(keyframe|key[-_ ]?frame|kf)s?([^a-z]|$)' THEN 'keyframe'
+  WHEN "kind" IN ('image', 'video') AND "name" ~* '(^|[^a-z])(character|char|turnaround)s?([^a-z]|$)' THEN 'character'
+  WHEN "kind" IN ('image', 'video') AND "name" ~* '(^|[^a-z])(background|bg|backdrop|environment)s?([^a-z]|$)' THEN 'background'
+  WHEN "kind" IN ('image', 'video') AND "name" ~* '(^|[^a-z])(prop)s?([^a-z]|$)' THEN 'prop'
+  WHEN "name" ~* '(^|[^a-z])(reference|ref|moodboard)s?([^a-z]|$)' THEN 'reference'
   ELSE "role" END
-WHERE "role" = 'other';
+WHERE "role" = 'other' AND (
+  "name" ~* '(^|[^a-z])(sfx|foley|whoosh|impact|sound[-_ ]?effect|bgm|music|soundtrack|theme[-_ ]?song|voice|vo|voiceover|dialog(ue)?|narration|tts|speech|vfx|particle|overlay|glitch|storyboard|keyframe|key[-_ ]?frame|kf|character|char|turnaround|background|bg|backdrop|environment|prop|reference|ref|moodboard)s?([^a-z]|$)'
+);--> statement-breakpoint
+-- 4. Existing assets get the default folder new ones get: their role.
+UPDATE "assets" SET "path" = "role" WHERE "path" = '' AND "role" <> 'other';

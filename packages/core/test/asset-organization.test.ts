@@ -30,14 +30,21 @@ describe("asset path and tags", () => {
 });
 
 describe("asset role", () => {
-  it("infers a role from the file name and leaves the unknown as other", () => {
-    expect(inferAssetRole({ name: "whoosh_01.wav", mime: "audio/wav" })).toBe("sfx");
-    expect(inferAssetRole({ name: "bgm-main.mp3" })).toBe("bgm");
-    expect(inferAssetRole({ name: "narration_vi.mp3" })).toBe("voice");
-    expect(inferAssetRole({ name: "bg_city.png" })).toBe("background");
-    expect(inferAssetRole({ name: "hero_character.png" })).toBe("character");
-    expect(inferAssetRole({ name: "clip.mp4", kind: "render" })).toBe("render");
-    expect(inferAssetRole({ name: "takeover.mp3", mime: "audio/mpeg" })).toBe("other");
+  it("infers a role from the file name within what the media kind can be", () => {
+    expect(inferAssetRole({ name: "whoosh_01.wav", kind: "audio" })).toBe("sfx");
+    expect(inferAssetRole({ name: "sound_effects.wav", kind: "audio" })).toBe("sfx");
+    expect(inferAssetRole({ name: "bgm-main.mp3", kind: "audio" })).toBe("bgm");
+    expect(inferAssetRole({ name: "narration_vi.mp3", kind: "audio" })).toBe("voice");
+    expect(inferAssetRole({ name: "bg_city.png", kind: "image" })).toBe("background");
+    expect(inferAssetRole({ name: "characters.png", kind: "image" })).toBe("character");
+    expect(inferAssetRole({ name: "refs.jpg", kind: "image" })).toBe("reference");
+    expect(inferAssetRole({ name: "takeover.mp3", kind: "audio" })).toBe("other");
+    // A hint for another media kind does not apply.
+    expect(inferAssetRole({ name: "final_music_video.mp4", kind: "video" })).toBe("other");
+    expect(inferAssetRole({ name: "Impact.ttf", kind: "font" })).toBe("other");
+    expect(inferAssetRole({ name: "fx-rate-chart.png", kind: "image" })).toBe("other");
+    // A render keeps its role whatever its name says.
+    expect(inferAssetRole({ name: "sfx_test.mp4", kind: "render" })).toBe("render");
   });
 
   it("defaults the folder to the role and keeps what the caller named", () => {

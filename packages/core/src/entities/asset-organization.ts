@@ -42,30 +42,40 @@ export function normalizeAssetTags(raw: readonly string[] | undefined): string[]
   return tags;
 }
 
-const NAME_HINTS: ReadonlyArray<readonly [RegExp, AssetRole]> = [
-  [/(^|[^a-z])(sfx|foley|whoosh|impact|sound[-_ ]?effect)([^a-z]|$)/, "sfx"],
-  [/(^|[^a-z])(bgm|music|soundtrack|theme[-_ ]?song)([^a-z]|$)/, "bgm"],
-  [/(^|[^a-z])(voice|vo|voiceover|dialog(ue)?|narration|tts|speech)([^a-z]|$)/, "voice"],
-  [/(^|[^a-z])(vfx|particles?|overlay|glitch|fx)([^a-z]|$)/, "vfx"],
-  [/(^|[^a-z])(storyboard)([^a-z]|$)/, "storyboard"],
-  [/(^|[^a-z])(keyframe|key[-_ ]?frame|kf)([^a-z]|$)/, "keyframe"],
-  [/(^|[^a-z])(character|char|turnaround)([^a-z]|$)/, "character"],
-  [/(^|[^a-z])(background|bg|backdrop|environment|location)([^a-z]|$)/, "background"],
-  [/(^|[^a-z])(prop|props)([^a-z]|$)/, "prop"],
-  [/(^|[^a-z])(reference|ref|moodboard)([^a-z]|$)/, "reference"],
+const hint = (words: string) => new RegExp(`(^|[^a-z])(${words})s?([^a-z]|$)`);
+
+/** Name words that suggest a role, checked only for the media kinds that role can have. */
+const AUDIO_HINTS: ReadonlyArray<readonly [RegExp, AssetRole]> = [
+  [hint("sfx|foley|whoosh|impact|sound[-_ ]?effect"), "sfx"],
+  [hint("bgm|music|soundtrack|theme[-_ ]?song"), "bgm"],
+  [hint("voice|vo|voiceover|dialog(ue)?|narration|tts|speech"), "voice"],
+];
+const VISUAL_HINTS: ReadonlyArray<readonly [RegExp, AssetRole]> = [
+  [hint("vfx|particle|overlay|glitch"), "vfx"],
+  [hint("storyboard"), "storyboard"],
+  [hint("keyframe|key[-_ ]?frame|kf"), "keyframe"],
+  [hint("character|char|turnaround"), "character"],
+  [hint("background|bg|backdrop|environment"), "background"],
+  [hint("prop"), "prop"],
+];
+const ANY_HINTS: ReadonlyArray<readonly [RegExp, AssetRole]> = [
+  [hint("reference|ref|moodboard"), "reference"],
 ];
 
 /**
- * Best-effort role for a file nobody labelled: the file name wins, then the media type. Audio and anything
- * unrecognized fall back to `other` rather than guessing a role the file may not have.
+ * Best-effort role for a file nobody labelled. A render keeps its role; otherwise the file name decides among
+ * the roles the media kind can have, and anything unrecognized is `other` rather than a guess.
  */
-export function inferAssetRole(input: { name: string; mime?: string; kind?: AssetKind }): AssetRole {
+export function inferAssetRole(input: { name: string; kind: AssetKind }): AssetRole {
+  if (input.kind === "render") return "render";
   const name = input.name.toLowerCase();
-  for (const [pattern, role] of NAME_HINTS) if (pattern.test(name)) return role;
-  const kind =
-    input.kind ??
-    (input.mime?.startsWith("video/") ? "video" : input.mime?.startsWith("audio/") ? "audio" : undefined);
-  if (kind === "render") return "render";
+  const hints =
+    input.kind === "audio"
+      ? AUDIO_HINTS
+      : input.kind === "image" || input.kind === "video"
+        ? VISUAL_HINTS
+        : [];
+  for (const [pattern, role] of [...hints, ...ANY_HINTS]) if (pattern.test(name)) return role;
   return "other";
 }
 
@@ -78,7 +88,6 @@ export function defaultAssetPath(role: AssetRole): string {
 export function organizeNewAsset(input: {
   name: string;
   kind: AssetKind;
-  mime?: string;
   role?: AssetRole;
   path?: string;
   tags?: readonly string[];

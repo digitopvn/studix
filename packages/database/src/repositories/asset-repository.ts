@@ -6,7 +6,7 @@ import {
   organizeNewAsset,
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { desc, eq, ilike, max, or, sql } from "drizzle-orm";
+import { desc, eq, ilike, like, max, or, sql } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { assets, assetVersions } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -17,7 +17,7 @@ const escapeLike = (text: string) => text.replace(/[\\%_]/g, "\\$&");
 /** The folder itself or anything below it; "" is every folder. */
 function folderFilter(folder: string) {
   if (folder === "") return undefined;
-  return or(eq(assets.path, folder), ilike(assets.path, `${escapeLike(folder)}/%`));
+  return or(eq(assets.path, folder), like(assets.path, `${escapeLike(folder)}/%`));
 }
 
 type AssetRow = typeof assets.$inferSelect;
