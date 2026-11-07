@@ -1,9 +1,10 @@
 # Dashboard redesign directions
 
-Design only. No dashboard code changes until the user picks one. Open the HTML files in a browser:
-each one is clickable, responsive, and switches between light and dark.
+**Decision (2026-11-07): the user chose Option C (Darkroom).** The implementation plan is in
+[plan.md](plan.md).
 
-Round 1 (`option-a.html`, `option-b.html`) was rejected. Round 2 is `option-c.html` and
+Open the HTML files in a browser: each one is clickable, responsive, and switches between light and
+dark. Round 1 (`option-a.html`, `option-b.html`) was rejected. Round 2 is `option-c.html` and
 `option-d.html`.
 
 ## Shared decisions
@@ -57,9 +58,10 @@ Round 1 (`option-a.html`, `option-b.html`) was rejected. Round 2 is `option-c.ht
 - Best for: teams and agent-heavy users. Text is what agents read and write best, so this direction
   gives the fewest tokens and mistakes per revision.
 
-## Recommendation
+## Recommendation before the decision
 
-**Option D (Script)**, borrowing C's developing storyboard frames for the preview while a take renders.
+The design recommendation was **Option D (Script)**, borrowing C's developing storyboard frames for
+the preview while a take renders. The user chose C instead.
 
 - It best fits the product philosophy. Editing words is something everyone already knows, so there is
   no video editor to learn, and per-scene re-render is the fastest and cheapest revision loop.
