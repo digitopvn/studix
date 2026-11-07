@@ -32,6 +32,11 @@ export interface AgentStageSpec<I extends z.ZodType, O extends z.ZodType<StageOu
   limits: Omit<AgentStageLimits, "tools">;
   /** Tools the agent may call (the allowlist); none by default. */
   tools?: AgentToolDefinition[];
+  /**
+   * False when the output points at files that live only for the job (a sandbox render), or when
+   * the same input should make a new result each run. Cached by input otherwise.
+   */
+  cacheable?: boolean;
 }
 
 const CAP_LABELS: Record<AgentCap, string> = {
@@ -180,7 +185,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
     inputSchema: spec.inputSchema,
     outputSchema: spec.outputSchema,
     retry: "never",
-    cacheKey: (s) => stageCacheKey(spec.name, spec.version, s.input),
+    cacheKey: (s) => (spec.cacheable === false ? undefined : stageCacheKey(spec.name, spec.version, s.input)),
     // Host work costs Studix nothing; an invalid mode is reported by `run`, so the estimate stays conservative.
     // The reservation never exceeds what is left of the job budget: `run` caps the agent at that amount.
     estimateCostCents: (s) =>

@@ -118,6 +118,8 @@ export function deliveryProblems(
 const runStage = createAgentStage({
   name: SKILL_AGENT_STAGES.run,
   version: 1,
+  // The output names files in this job's sandbox, which are gone once the job ends.
+  cacheable: false,
   inputSchema: RunInput,
   outputSchema: SkillAgentRunOutput,
   // Output contract only: how the video is made is the skill's job, so nothing here prescribes a method.

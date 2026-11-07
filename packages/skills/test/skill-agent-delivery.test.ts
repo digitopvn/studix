@@ -38,6 +38,7 @@ describe("skill-agent delivery contract", () => {
 describe("skill-agent run stage reservation", () => {
   const run = skillAgentPipeline.stages({} as never, {} as never)[1] as unknown as {
     estimateCostCents: (s: unknown) => number;
+    cacheKey: (s: unknown) => string | undefined;
   };
   const estimate = (job: Record<string, unknown>) => run.estimateCostCents({ job: { payload: {}, ...job } });
 
@@ -46,5 +47,9 @@ describe("skill-agent run stage reservation", () => {
     expect(estimate({ budgetCents: 5000, spentCents: 0 })).toBe(800);
     expect(estimate({ spentCents: 0 })).toBe(800);
     expect(estimate({ budgetCents: 100, spentCents: 200 })).toBe(0);
+  });
+
+  it("is never served from the stage cache, since its files live only for the job", () => {
+    expect(run.cacheKey({ input: { brief: { prompt: "x" } }, job: { payload: {} } })).toBeUndefined();
   });
 });
