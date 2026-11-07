@@ -52,20 +52,27 @@ interface StreamUsage {
 export function claudeStreamUsageOf(lines: readonly string[]) {
   const usage = { turns: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   let result: Record<string, unknown> | undefined;
+  // Claude Code prints one `assistant` line per content block, each repeating its message's id and usage, so a turn
+  // is one message id, not one line.
+  const turns = new Map<string, StreamUsage>();
+  let anonymous = 0;
   for (const line of lines) {
-    let event: { type?: string; message?: { usage?: StreamUsage } } & Record<string, unknown>;
+    let event: { type?: string; message?: { id?: string; usage?: StreamUsage } } & Record<string, unknown>;
     try {
       event = JSON.parse(line);
     } catch {
       continue;
     }
     if (event.type === "assistant") {
-      usage.turns += 1;
-      usage.inputTokens += event.message?.usage?.input_tokens ?? 0;
-      usage.outputTokens += event.message?.usage?.output_tokens ?? 0;
+      turns.set(event.message?.id ?? `anonymous-${anonymous++}`, event.message?.usage ?? {});
     } else if (event.type === "result") {
       result = event;
     }
+  }
+  usage.turns = turns.size;
+  for (const turn of turns.values()) {
+    usage.inputTokens += turn.input_tokens ?? 0;
+    usage.outputTokens += turn.output_tokens ?? 0;
   }
   if (result) {
     const total = result.usage as StreamUsage | undefined;

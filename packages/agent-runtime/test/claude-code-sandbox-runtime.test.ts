@@ -99,6 +99,56 @@ describe("claude code sandbox runtime", () => {
     });
   });
 
+  // Shape of a recorded stream-json run: Claude Code prints one assistant line per content block, each repeating the
+  // message id and usage, then a user line with the tool result, then the final result.
+  const recorded = [
+    JSON.stringify({ type: "system", subtype: "init", model: "claude-opus-5-5" }),
+    ...["thinking", "text", "tool_use"].map((type) =>
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          id: "msg_1",
+          content: [
+            type === "tool_use"
+              ? { type, id: "toolu_1", name: "Bash", input: { command: "ls" } }
+              : { type, [type]: "x" },
+          ],
+          usage: { input_tokens: 4, cache_read_input_tokens: 9000, output_tokens: 120 },
+        },
+      }),
+    ),
+    JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "index.html" }] },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        id: "msg_2",
+        content: [{ type: "text", text: "Done" }],
+        usage: { input_tokens: 2, output_tokens: 30 },
+      },
+    }),
+    result({ num_turns: 2, total_cost_usd: 5.1666, usage: { input_tokens: 6, output_tokens: 150 } }),
+  ];
+
+  it("counts a recorded stream's turns by message id and books the final result's usage and cost", async () => {
+    expect(claudeStreamUsageOf(recorded.slice(0, -1)).usage).toEqual({
+      turns: 2,
+      inputTokens: 6,
+      outputTokens: 150,
+      costUsd: 0,
+    });
+    const ws = fakeWorkspace(recorded);
+    const runtime = createClaudeCodeSandboxRuntime({
+      workspace: ws.provider,
+      model: "claude-opus-5-5",
+      credential: async () => ({ secret: "sk-ant-api03-test-key-not-real-0002", kind: "api_key" }),
+    });
+    const out = await runtime.run(testTenant(), task({ maxTurns: 2 }));
+    expect(out).toMatchObject({ turns: 2, inputTokens: 6, outputTokens: 150, costCents: 517 });
+  });
+
   it("runs claude --print with model, caps and effort, keeps the key off the command line and attaches files", async () => {
     const apiKey = "sk-ant-api03-test-key-not-real-0001";
     const ws = fakeWorkspace([assistant(10, 2), result()]);
