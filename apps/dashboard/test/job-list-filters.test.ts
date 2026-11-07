@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { formatJobAgent } from "../src/pages/job-agent.ts";
 import {
   clearFilters,
   currentSort,
@@ -50,5 +51,17 @@ describe("jobs page URL state", () => {
     expect(toApiNumber("1.5", 100, true)).toBe("150");
     expect(toDisplayNumber("150", 100, true)).toBe("1.5");
     expect(toApiNumber("-3", 100, true)).toBeUndefined();
+  });
+});
+
+describe("job agent label", () => {
+  it("shows runtime, model and effort, and names jobs without a Studix agent", () => {
+    expect(formatJobAgent({ runtime: "pi", model: "deepseek-v4.1-flash", reasoningEffort: "high" })).toBe(
+      "pi · deepseek-v4.1-flash · high",
+    );
+    expect(formatJobAgent({ runtime: "codex" })).toBe("codex · default model · default effort");
+    expect(formatJobAgent({ runtime: "none" })).toBe("none (MCP/external)");
+    expect(formatJobAgent({ runtime: "planner" })).toBe("legacy planner");
+    expect(formatJobAgent(undefined)).toBe("-");
   });
 });

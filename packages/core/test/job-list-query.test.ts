@@ -8,6 +8,7 @@ import {
   type Job,
   type JobListQuery,
   type JobRepository,
+  jobAgent,
   jobMatches,
   type TenantContext,
 } from "../src/index.ts";
@@ -30,6 +31,18 @@ async function pageAll(repo: JobRepository, query: JobListQuery): Promise<string
   return ids;
 }
 
+const agent = (runtime: string, modelId?: string, reasoningEffort?: string) => ({
+  agent: { runtime, connectionId: "pc_1", provider: "openrouter", modelId, reasoningEffort },
+});
+/** One payload per seeded job: each agent runtime kind, the legacy planner and a job with no agent. */
+const payloads: Array<Record<string, unknown>> = [
+  agent("pi", "deepseek-v4.1-flash", "high"),
+  { planner: { runtime: "claude", providerConnectionId: "pc_2" } },
+  agent("codex", "gpt-5.5-codex"),
+  {},
+  { agentMode: "host", ...agent("claude", "claude-opus-5-5") },
+];
+
 async function seed() {
   const clock = createManualClock(Date.UTC(2026, 10, 1));
   const { jobs, queue } = createInMemoryJobStore(clock);
@@ -46,7 +59,7 @@ async function seed() {
     if (i % 2 === 0) clock.advance(60_000);
     const { job } = await queue.enqueue(ctx, {
       kind: spec.kind,
-      payload: {},
+      payload: payloads[i]!,
       projectId: i < 3 ? `prj_alpha${i}` : undefined,
       createdBy: { type: "user", id: "usr_1" },
     });
@@ -87,6 +100,9 @@ describe("job list query", () => {
       { status: ["running", "failed"] },
       { kind: ["video.render"] },
       { stage: ["voice"] },
+      { agent: ["pi", "none"] },
+      { agent: ["planner", "host"] },
+      { modelContains: "DEEPSEEK" },
       { idContains: all[1]!.id.slice(-6).toUpperCase() },
       { projectContains: "ALPHA" },
       { createdFrom: t1 },
@@ -104,6 +120,17 @@ describe("job list query", () => {
       expect(expected.length, JSON.stringify(query)).toBeLessThan(all.length);
       expect(await pageAll(jobs, query), JSON.stringify(query)).toEqual(expected);
     }
+  });
+
+  it("reads the agent runtime, model and effort from the payload", async () => {
+    const { all } = await seed();
+    expect(all.map((j) => jobAgent(j))).toEqual([
+      { runtime: "pi", provider: "openrouter", model: "deepseek-v4.1-flash", reasoningEffort: "high" },
+      { runtime: "planner", provider: "anthropic" },
+      { runtime: "codex", provider: "openrouter", model: "gpt-5.5-codex" },
+      { runtime: "none" },
+      { runtime: "host" },
+    ]);
   });
 
   it("keeps tenants apart", async () => {

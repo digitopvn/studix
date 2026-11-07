@@ -21,6 +21,8 @@ describe("GET /api/jobs params", () => {
         status: "queued,running",
         kind: "video.create",
         stage: "voice,storyboard",
+        agent: "pi,none",
+        model: "deepseek",
         id: " abc ",
         project: "prj",
         createdFrom: "2026-11-01T00:00:00.000Z",
@@ -38,6 +40,8 @@ describe("GET /api/jobs params", () => {
       status: ["queued", "running"],
       kind: ["video.create"],
       stage: ["voice", "storyboard"],
+      agent: ["pi", "none"],
+      modelContains: "deepseek",
       idContains: "abc",
       projectContains: "prj",
       createdFrom: new Date("2026-11-01T00:00:00.000Z"),
@@ -50,7 +54,11 @@ describe("GET /api/jobs params", () => {
   });
 
   it("accepts an empty query", () => {
-    expect(parseJobListQuery({})).toEqual({ idContains: undefined, projectContains: undefined });
+    expect(parseJobListQuery({})).toEqual({
+      idContains: undefined,
+      projectContains: undefined,
+      modelContains: undefined,
+    });
   });
 
   it("rejects anything outside the allowlist with VALIDATION", () => {
@@ -58,6 +66,7 @@ describe("GET /api/jobs params", () => {
       { sort: "organization_id" },
       { sort: "createdAt; drop table jobs" },
       { order: "sideways" },
+      { agent: "gpt" },
       { status: "queued,exploded" },
       { kind: "video create" },
       { unknown: "1" },

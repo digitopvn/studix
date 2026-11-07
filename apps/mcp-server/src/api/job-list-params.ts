@@ -1,4 +1,4 @@
-import { JOB_SORT_FIELDS, JOB_STATUSES, type JobListQuery } from "@studix/core";
+import { JOB_AGENT_RUNTIMES, JOB_SORT_FIELDS, JOB_STATUSES, type JobListQuery } from "@studix/core";
 import { z } from "zod";
 import { parseBody } from "./api-context.ts";
 
@@ -35,6 +35,8 @@ const JobListParams = z
     status: csv(z.enum(JOB_STATUSES)).optional(),
     kind: csv(Token).optional(),
     stage: csv(Token).optional(),
+    agent: csv(z.enum(JOB_AGENT_RUNTIMES)).optional(),
+    model: Search.optional(),
     id: Search.optional(),
     project: Search.optional(),
     createdFrom: Instant.optional(),
@@ -49,6 +51,6 @@ const JobListParams = z
   .strict();
 
 export function parseJobListQuery(query: unknown): JobListQuery {
-  const { id, project, ...rest } = parseBody(JobListParams, query, "query");
-  return { ...rest, idContains: id, projectContains: project };
+  const { id, project, model, ...rest } = parseBody(JobListParams, query, "query");
+  return { ...rest, idContains: id, projectContains: project, modelContains: model };
 }

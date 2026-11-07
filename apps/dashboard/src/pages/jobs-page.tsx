@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Job } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge } from "../ui.tsx";
 import { useHashQuery } from "../use-hash-route.ts";
+import { formatJobAgent, JOB_AGENT_OPTIONS, jobAgentOptionLabel } from "./job-agent.ts";
 import {
   clearFilters,
   currentSort,
@@ -87,8 +88,8 @@ export function JobsPage() {
   };
 
   const set: SetQuery = (next) => setHash(jobListQuery(next));
-  const sortHeader = (field: JobSortField, label: string) => (
-    <SortHeader field={field} label={label} query={query} onChange={set} />
+  const sortHeader = (field: JobSortField, label: string, also?: { field: JobSortField; label: string }) => (
+    <SortHeader field={field} label={label} also={also} query={query} onChange={set} />
   );
 
   return (
@@ -124,6 +125,7 @@ export function JobsPage() {
               {sortHeader("status", "Status")}
               {sortHeader("stage", "Stage")}
               {sortHeader("projectId", "Project")}
+              {sortHeader("agent", "Agent", { field: "model", label: "model" })}
               {sortHeader("progress", "Progress")}
               {sortHeader("spentCents", "Spend")}
               {sortHeader("createdAt", "Created")}
@@ -154,6 +156,17 @@ export function JobsPage() {
               </th>
               <th>
                 <TextFilter label="Project id contains" name="project" query={query} onChange={set} />
+              </th>
+              <th>
+                <MultiSelect
+                  label="Runtime"
+                  name="agent"
+                  options={JOB_AGENT_OPTIONS}
+                  optionLabel={jobAgentOptionLabel}
+                  query={query}
+                  onChange={set}
+                />
+                <TextFilter label="Model contains" name="model" query={query} onChange={set} />
               </th>
               <th>
                 <RangeFilter
@@ -197,6 +210,7 @@ export function JobsPage() {
                 </td>
                 <td>{j.stage ?? "-"}</td>
                 <td>{j.projectId ? <Link to={`/projects/${j.projectId}`}>{j.projectId}</Link> : "-"}</td>
+                <td>{formatJobAgent(j.agent)}</td>
                 <td>{Math.round((j.progress ?? 0) * 100)}%</td>
                 <td>${((j.spentCents ?? 0) / 100).toFixed(2)}</td>
                 <td>{formatDate(j.createdAt)}</td>
@@ -218,30 +232,37 @@ export function JobsPage() {
   );
 }
 
+/** Column header that sorts by `field`; `also` adds a second sort key in the same column. */
 function SortHeader({
   field,
   label,
+  also,
   query,
   onChange,
 }: {
   field: JobSortField;
   label: string;
+  also?: { field: JobSortField; label: string };
   query: Query;
   onChange: SetQuery;
 }) {
   const { sort, order } = currentSort(query);
-  const active = sort === field;
+  const active = sort === field || sort === also?.field;
+  const button = (f: JobSortField, text: string) => (
+    <button
+      type="button"
+      className={sort === f ? "sort-header active" : "sort-header"}
+      title={`Sort by ${text}`}
+      onClick={() => onChange(toggleSort(query, f))}
+    >
+      {text}
+      <span aria-hidden="true">{sort === f ? (order === "asc" ? " ▲" : " ▼") : " ↕"}</span>
+    </button>
+  );
   return (
     <th aria-sort={active ? (order === "asc" ? "ascending" : "descending") : undefined}>
-      <button
-        type="button"
-        className={active ? "sort-header active" : "sort-header"}
-        title={`Sort by ${label}`}
-        onClick={() => onChange(toggleSort(query, field))}
-      >
-        {label}
-        <span aria-hidden="true">{active ? (order === "asc" ? " ▲" : " ▼") : " ↕"}</span>
-      </button>
+      {button(field, label)}
+      {also && <> {button(also.field, also.label)}</>}
     </th>
   );
 }
@@ -250,12 +271,14 @@ function MultiSelect({
   label,
   name,
   options,
+  optionLabel = (value) => value,
   query,
   onChange,
 }: {
   label: string;
   name: JobListParam;
   options: readonly string[];
+  optionLabel?: (value: string) => string;
   query: Query;
   onChange: SetQuery;
 }) {
@@ -279,7 +302,7 @@ function MultiSelect({
         {all.map((value) => (
           <label key={value}>
             <input type="checkbox" checked={selected.includes(value)} onChange={() => toggle(value)} />{" "}
-            {value}
+            {optionLabel(value)}
           </label>
         ))}
       </div>

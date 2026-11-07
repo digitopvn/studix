@@ -21,7 +21,9 @@ export type JobSortField =
   | "stage"
   | "projectId"
   | "progress"
-  | "spentCents";
+  | "spentCents"
+  | "agent"
+  | "model";
 export type SortOrder = "asc" | "desc";
 
 /** Every param the page writes; anything else in the hash is dropped before it reaches the API. */
@@ -31,6 +33,8 @@ export const JOB_LIST_PARAMS = [
   "status",
   "kind",
   "stage",
+  "agent",
+  "model",
   "id",
   "project",
   "createdFrom",
@@ -55,6 +59,8 @@ const SORT_FIELDS: ReadonlySet<string> = new Set<JobSortField>([
   "projectId",
   "progress",
   "spentCents",
+  "agent",
+  "model",
 ]);
 
 /** Keep only the page's own params, in a stable order. */
@@ -82,7 +88,7 @@ export function currentSort(query: URLSearchParams): { sort: JobSortField; order
  */
 export function toggleSort(query: URLSearchParams, field: JobSortField): URLSearchParams {
   const now = currentSort(query);
-  const textual = field === "status" || field === "kind" || field === "stage" || field === "projectId";
+  const textual = ["status", "kind", "stage", "projectId", "agent", "model"].includes(field);
   const order: SortOrder =
     now.sort === field ? (now.order === "asc" ? "desc" : "asc") : textual ? "asc" : "desc";
   const next = new URLSearchParams(query);

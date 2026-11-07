@@ -542,15 +542,20 @@ returns `FORBIDDEN`. See [SECURITY.md](SECURITY.md#mcp-in-mcp-connectors).
 It needs `project:read`. Every param is optional and checked against an allowlist; an unknown param,
 sort field or enum value fails with `VALIDATION`.
 
-| Param                                                  | Meaning                                                                                                                            |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `sort`, `order`                                        | `createdAt` (default), `updatedAt`, `status`, `kind`, `stage`, `projectId`, `progress` or `spentCents`; `asc` or `desc` (default). |
-| `status`, `kind`, `stage`                              | Comma-separated values; a job matches any of them.                                                                                 |
-| `id`, `project`                                        | Case-insensitive substring of the job id or project id. `projectId` matches one project exactly.                                   |
-| `createdFrom`, `createdTo`, `updatedFrom`, `updatedTo` | ISO 8601 instants with an offset, inclusive.                                                                                       |
-| `progressMin`, `progressMax`                           | Progress bounds from 0 to 1, inclusive.                                                                                            |
-| `spentMin`, `spentMax`                                 | Spend bounds in whole cents, inclusive.                                                                                            |
-| `limit`, `cursor`                                      | Page size (1-100, default 20) and the `nextCursor` of the previous page.                                                           |
+| Param                                                  | Meaning                                                                                                                                                        |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sort`, `order`                                        | `createdAt` (default), `updatedAt`, `status`, `kind`, `stage`, `projectId`, `progress`, `spentCents`, `agent` (runtime) or `model`; `asc` or `desc` (default). |
+| `status`, `kind`, `stage`                              | Comma-separated values; a job matches any of them.                                                                                                             |
+| `agent`, `model`                                       | Comma-separated agent runtimes (`claude`, `codex`, `pi`, `host`, `planner`, `none`); case-insensitive substring of the agent model id.                         |
+| `id`, `project`                                        | Case-insensitive substring of the job id or project id. `projectId` matches one project exactly.                                                               |
+| `createdFrom`, `createdTo`, `updatedFrom`, `updatedTo` | ISO 8601 instants with an offset, inclusive.                                                                                                                   |
+| `progressMin`, `progressMax`                           | Progress bounds from 0 to 1, inclusive.                                                                                                                        |
+| `spentMin`, `spentMax`                                 | Spend bounds in whole cents, inclusive.                                                                                                                        |
+| `limit`, `cursor`                                      | Page size (1-100, default 20) and the `nextCursor` of the previous page.                                                                                       |
+
+Each item, and the job returned by `studix_get_job`, carries `agent: { runtime, provider?, model?, reasoningEffort? }`, read from the job's payload.
+`host` means the MCP client's own agent (`agentMode: "host"`), `planner` the legacy fixed Claude planner, and `none` a job with no Studix agent, such as one driven over MCP by an external tool.
+It never carries a connection id or a secret.
 
 Pages are keyset on (sort column, id), so they neither skip nor repeat a job while the list is paged.
 A cursor is only valid with the sort it came from; reusing it under another sort fails with `VALIDATION`.

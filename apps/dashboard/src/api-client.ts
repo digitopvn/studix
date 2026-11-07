@@ -193,6 +193,8 @@ export interface Job {
   stage?: string;
   progress: number;
   spentCents?: number;
+  /** Runtime, model and effort the job's creative stages run on. */
+  agent?: JobAgent;
   attempts?: number;
   maxAttempts?: number;
   createdAt: string;
@@ -204,6 +206,13 @@ export interface Job {
   budget?: { limitCents?: number; spentCents: number };
   video?: { renderId: string; url: string; expiresAt: string; preset: string };
   videoUnavailableReason?: string;
+}
+
+export interface JobAgent {
+  runtime: "claude" | "codex" | "pi" | "host" | "planner" | "none";
+  provider?: string;
+  model?: string;
+  reasoningEffort?: string;
 }
 
 export interface ActivityEvent {

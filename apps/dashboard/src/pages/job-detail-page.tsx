@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Job } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
 import { BlockView, FINAL, useAgentRun } from "./agent-chat-page.tsx";
+import { formatJobAgent } from "./job-agent.ts";
 
 const ACTIVE = new Set(["queued", "running", "waiting_approval", "waiting_host"]);
 const POLL_MS = 3000;
@@ -163,6 +164,8 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
             </dd>
             <dt>Project</dt>
             <dd>{job.projectId ? <Link to={`/projects/${job.projectId}`}>{job.projectId}</Link> : "-"}</dd>
+            <dt>Agent</dt>
+            <dd>{formatJobAgent(job.agent)}</dd>
             <dt>Budget</dt>
             <dd>
               {job.budget

@@ -1,4 +1,5 @@
 import { JOB_KINDS, type Job, type Stage } from "../entities/job.ts";
+import { jobAgent } from "../entities/job-agent.ts";
 import type { Approval } from "../entities/review.ts";
 import { AGENT_HANDOFF_TOOLS } from "./agent-handoff-service.ts";
 import { type ApprovalView, type JobView, type NextAction, STUDIX_TOOLS } from "./studio-types.ts";
@@ -124,6 +125,7 @@ export function toJobView(job: Job, stages: Stage[], approval?: Approval): JobVi
       ...fallbackOf(s),
     })),
     approval: approval ? toApprovalView(approval) : undefined,
+    agent: jobAgent(job),
     next: nextActionsForJob(job, approval),
   };
 }

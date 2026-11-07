@@ -17,6 +17,17 @@ import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
 import { actorFrom, first, opt, pageLimit, scoped, tenantValues } from "./helpers.ts";
 
+/** SQL form of `jobAgent(job).runtime`; keep the two in step. */
+const jobAgentRuntimeSql = sql<string>`(case
+  when ${jobs.payload}->>'agentMode' = 'host' then 'host'
+  when ${jobs.payload}->'agent'->>'runtime' in ('claude', 'codex', 'pi') then ${jobs.payload}->'agent'->>'runtime'
+  when jsonb_typeof(${jobs.payload}->'planner') = 'object' then 'planner'
+  else 'none' end)`;
+/** SQL form of `jobAgent(job).model ?? ""`. */
+const jobAgentModelSql = sql<string>`(case
+  when ${jobAgentRuntimeSql} in ('claude', 'codex', 'pi') then coalesce(${jobs.payload}->'agent'->>'modelId', '')
+  else '' end)`;
+
 /**
  * Sort expressions, keyed by the allowlisted field. Text sorts in byte order (collate "C"), nullable
  * text as "", and timestamps truncated to milliseconds, matching the cursor value (see jobSortValue), so
@@ -31,6 +42,8 @@ const JOB_SORT_SQL: Record<JobSortField, SQL> = {
   projectId: sql`coalesce(${jobs.projectId}, '') collate "C"`,
   progress: sql`${jobs.progress}`,
   spentCents: sql`${jobs.spentCents}`,
+  agent: sql`${jobAgentRuntimeSql} collate "C"`,
+  model: sql`${jobAgentModelSql} collate "C"`,
 };
 
 /** Id tie-break in byte order, like the in-memory comparator. */
@@ -204,6 +217,8 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
             query.status?.length ? inArray(jobs.status, query.status) : undefined,
             query.kind?.length ? inArray(jobs.kind, query.kind) : undefined,
             query.stage?.length ? inArray(sql`coalesce(${jobs.stage}, '')`, query.stage) : undefined,
+            query.agent?.length ? inArray(jobAgentRuntimeSql, query.agent) : undefined,
+            query.modelContains ? ilike(jobAgentModelSql, containsPattern(query.modelContains)) : undefined,
             query.idContains ? ilike(jobs.id, containsPattern(query.idContains)) : undefined,
             query.projectContains ? ilike(jobs.projectId, containsPattern(query.projectContains)) : undefined,
             query.createdFrom ? gte(jobs.createdAt, query.createdFrom) : undefined,

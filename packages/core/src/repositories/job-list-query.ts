@@ -1,5 +1,6 @@
 import { StudixError } from "@studix/shared";
 import type { Job, JobStatus } from "../entities/job.ts";
+import { type JobAgentRuntime, jobAgent } from "../entities/job-agent.ts";
 import type { Page, PageRequest } from "./pagination.ts";
 
 /** Columns a job list can be sorted by. Anything else is rejected before it reaches a query. */
@@ -12,6 +13,8 @@ export const JOB_SORT_FIELDS = [
   "projectId",
   "progress",
   "spentCents",
+  "agent",
+  "model",
 ] as const;
 export type JobSortField = (typeof JOB_SORT_FIELDS)[number];
 export type SortOrder = "asc" | "desc";
@@ -29,6 +32,10 @@ export interface JobListQuery extends PageRequest {
   status?: JobStatus[];
   kind?: string[];
   stage?: string[];
+  /** Agent runtimes (see `jobAgent`). */
+  agent?: JobAgentRuntime[];
+  /** Case-insensitive substring of the agent model id. */
+  modelContains?: string;
   /** Case-insensitive substring of the job id. */
   idContains?: string;
   /** Case-insensitive substring of the project id. */
@@ -68,6 +75,10 @@ export function jobSortValue(job: Job, field: JobSortField): JobSortValue {
       return job.progress;
     case "spentCents":
       return job.spentCents;
+    case "agent":
+      return jobAgent(job).runtime;
+    case "model":
+      return jobAgent(job).model ?? "";
     default:
       return job[field];
   }
@@ -121,6 +132,17 @@ export function compareJobs(field: JobSortField, order: SortOrder): (a: Job, b: 
     sign * (compareValues(jobSortValue(a, field), jobSortValue(b, field)) || compareValues(a.id, b.id));
 }
 
+/** True when `job` comes strictly after the cursor row under (sort, id) in `order`. */
+export function isAfterJobCursor(
+  job: Job,
+  field: JobSortField,
+  order: SortOrder,
+  cursor: { value: JobSortValue; id: string },
+): boolean {
+  const cmp = compareValues(jobSortValue(job, field), cursor.value) || compareValues(job.id, cursor.id);
+  return order === "asc" ? cmp > 0 : cmp < 0;
+}
+
 /** In-memory form of every filter and the cursor; the reference behavior for the SQL query. */
 export function jobMatches(job: Job, query: JobListQuery): boolean {
   const has = (needle: string | undefined, hay: string | undefined) =>
@@ -133,6 +155,8 @@ export function jobMatches(job: Job, query: JobListQuery): boolean {
     (!query.status?.length || query.status.includes(job.status)) &&
     (!query.kind?.length || query.kind.includes(job.kind)) &&
     (!query.stage?.length || query.stage.includes(job.stage ?? "")) &&
+    (!query.agent?.length || query.agent.includes(jobAgent(job).runtime)) &&
+    has(query.modelContains, jobAgent(job).model) &&
     has(query.idContains, job.id) &&
     has(query.projectContains, job.projectId) &&
     time(job.createdAt, query.createdFrom, query.createdTo) &&

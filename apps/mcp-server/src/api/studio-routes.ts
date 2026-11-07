@@ -1,6 +1,7 @@
 import {
   assertPermission,
   FeedbackInput,
+  jobAgent,
   PlannerSelection,
   PROJECT_STATUSES,
   RenderVersionInput,
@@ -188,7 +189,8 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
   router.get("/jobs", async (req, res) => {
     const { ctx } = sessionOf(res);
     assertPermission(ctx, "project:read");
-    res.json(await deps.repos.jobs.list(ctx, parseJobListQuery(req.query)));
+    const page = await deps.repos.jobs.list(ctx, parseJobListQuery(req.query));
+    res.json({ ...page, items: page.items.map((job) => ({ ...job, agent: jobAgent(job) })) });
   });
 
   router.get("/jobs/:jobId", async (req, res) => {

@@ -9,6 +9,7 @@ import {
 } from "@studix/video-ir";
 import { z } from "zod";
 import type { Job, JobStatus, StageStatus } from "../entities/job.ts";
+import type { JobAgentView } from "../entities/job-agent.ts";
 import { AGENT_RUNTIMES, REASONING_EFFORTS } from "../entities/model-preference.ts";
 import type { Approval, ApprovalAction, ApprovalStatus, ApprovalSubjectType } from "../entities/review.ts";
 import type { ApprovalPolicy } from "../ports/approval-policy.ts";
@@ -299,6 +300,8 @@ export interface JobView {
   error?: StudixErrorPayload;
   stages: StageView[];
   approval?: ApprovalView;
+  /** Runtime, model and effort the job's creative stages run on (see `jobAgent`). */
+  agent: JobAgentView;
   next: NextAction[];
 }
 

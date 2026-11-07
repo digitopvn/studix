@@ -10,8 +10,7 @@ import {
 import {
   compareJobs,
   decodeJobCursor,
-  type JobSortField,
-  type JobSortValue,
+  isAfterJobCursor,
   jobMatches,
   toJobPage,
 } from "../repositories/job-list-query.ts";
@@ -22,17 +21,6 @@ import type {
 } from "../repositories/job-repository.ts";
 import { pageLimit } from "../repositories/pagination.ts";
 import { InMemoryTenantTable } from "./in-memory-table.ts";
-
-/** A copy of `job` whose sort value is `value`, so a cursor can be compared like a row. */
-function withSortValue(job: Job, field: JobSortField, value: JobSortValue): Job {
-  switch (field) {
-    case "createdAt":
-    case "updatedAt":
-      return { ...job, [field]: new Date(value as number) };
-    default:
-      return { ...job, [field]: value };
-  }
-}
 
 /** In-memory jobs: implements both the read/update repository and the producer-side queue. */
 export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; queue: JobQueue } {
@@ -55,12 +43,7 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
       const rows = jobs
         .filter(ctx, (j) => jobMatches(j, query))
         .sort(compare)
-        .filter((j) => {
-          if (!after) return true;
-          const anchor = { ...j, id: after.id } as Job;
-          // Strictly after the cursor row under (sort, id).
-          return compare(j, withSortValue(anchor, sort, after.value)) > 0;
-        });
+        .filter((j) => !after || isAfterJobCursor(j, sort, order, after));
       return toJobPage(rows.slice(0, limit + 1), limit, sort);
     },
     async update(ctx, id, patch, options = {}) {

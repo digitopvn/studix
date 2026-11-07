@@ -39,13 +39,25 @@ const specs = [
   { kind: "video_render", status: "running", stage: "voice", progress: 1 / 3, spentCents: 40 },
 ] as const;
 
+const agent = (runtime: string, modelId?: string, reasoningEffort?: string) => ({
+  agent: { runtime, connectionId: "pc_1", provider: "openrouter", modelId, reasoningEffort },
+});
+/** One payload per seeded job: each agent runtime kind, the legacy planner and a job with no agent. */
+const payloads: Array<Record<string, unknown>> = [
+  agent("pi", "deepseek-v4.1-flash", "high"),
+  { planner: { runtime: "claude", providerConnectionId: "pc_2" } },
+  agent("codex", "gpt-5.5-codex"),
+  {},
+  { agentMode: "host", ...agent("claude", "claude-opus-5-5") },
+];
+
 async function seed(ctx: TenantContext): Promise<Job[]> {
   const { queue, jobs } = db.current.repos;
   const all: Job[] = [];
-  for (const spec of specs) {
+  for (const [i, spec] of specs.entries()) {
     const { job } = await queue.enqueue(ctx, {
       kind: spec.kind,
-      payload: {},
+      payload: payloads[i]!,
       createdBy: { type: "user", id: "usr_1" },
     });
     all.push(
@@ -84,6 +96,9 @@ describe("Postgres job list query", () => {
       { status: ["running", "failed"] },
       { kind: ["video.render", "video_render"] },
       { stage: ["voice"] },
+      { agent: ["pi", "none"] },
+      { agent: ["planner", "host"] },
+      { modelContains: "DEEPSEEK" },
       { idContains: first.id.slice(-8).toUpperCase() },
       { createdFrom: all[2]!.createdAt },
       { createdTo: all[2]!.createdAt },
