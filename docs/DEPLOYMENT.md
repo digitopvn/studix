@@ -353,7 +353,12 @@ resources prefixed `studix-`.
 - Each environment has its own TOSE managed PostgreSQL (`tose db list`), given
   to both projects as `DATABASE_URL` (internal URL). The app applies migrations
   on start (`STUDIX_MIGRATE_ON_START=true` on the app only).
-- Each environment has its own R2 bucket, S3 API with path-style addressing.
+- Each environment has its own R2 bucket, S3 API with path-style addressing,
+  and its own R2 API token (Object Read & Write) scoped to that bucket only.
+  App and worker of one environment share the token; environments never share
+  it. A token scoped to another bucket fails every object call with 403
+  `AccessDenied`. Check a token with the worker's storage probe or the R2
+  `Test connection` on the operator Storage page.
 - Storage write probe: on start, the app and the worker each write, read back and delete one tiny object
   under `orgs/healthcheck/workspaces/probe/` and log `object storage write probe failed` (with only the
   step, HTTP status and S3 error code) when the store refuses it. The worker also reports the result under
