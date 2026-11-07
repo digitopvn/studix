@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
+import { Agent as HttpAgent } from "node:http";
+import { Agent as HttpsAgent } from "node:https";
+import type { LookupFunction } from "node:net";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -11,6 +14,7 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type {
   PutObjectOptions,
+  SignedUploadUrlOptions,
   SignedUrlOptions,
   StorageAdapter,
   StorageBody,
@@ -69,6 +73,28 @@ export interface S3StorageOptions {
   forcePathStyle?: boolean;
   credentials?: S3Credentials | S3CredentialSource;
   signedUrlPolicy?: SignedUrlPolicy;
+  /** Prepended to every object key (`studix/` ...), so one bucket can be shared with other data. */
+  keyPrefix?: string;
+  /** Socket address lookup; a guarded one refuses private addresses on every connection (see endpoint-guard). */
+  lookup?: LookupFunction;
+}
+
+const KEY_PREFIX_PATTERN = /^[A-Za-z0-9][\w\-.]*(\/[A-Za-z0-9][\w\-.]*)*\/$/;
+
+/** A key prefix is empty or relative segments ending in `/`, without `.`/`..` segments. */
+export function assertKeyPrefix(prefix: string): void {
+  const ok =
+    prefix === "" ||
+    (prefix.length <= 128 &&
+      KEY_PREFIX_PATTERN.test(prefix) &&
+      !prefix.split("/").some((segment) => segment === "." || segment === ".."));
+  if (!ok) {
+    throw new StudixError("VALIDATION", "Invalid key prefix", {
+      retryable: false,
+      details: { field: "keyPrefix" },
+      suggestedAction: "Use relative segments ending in a slash, e.g. studix/ or prod/media/.",
+    });
+  }
 }
 
 const DEFAULT_POLICY: SignedUrlPolicy = { defaultTtlSeconds: 3600, maxTtlSeconds: 86_400 };
@@ -124,6 +150,15 @@ function buildClient(options: S3StorageOptions, endpoint: string | undefined): S
     endpoint,
     forcePathStyle: options.forcePathStyle ?? false,
     credentials: credentialProvider(options.credentials),
+    // No redirects are followed by the SDK; the guarded lookup also refuses private addresses per connection.
+    ...(options.lookup
+      ? {
+          requestHandler: {
+            httpAgent: new HttpAgent({ keepAlive: true, lookup: options.lookup }),
+            httpsAgent: new HttpsAgent({ keepAlive: true, lookup: options.lookup }),
+          },
+        }
+      : {}),
     // S3-compatible stores (R2, older MinIO) do not all accept the SDK's default trailing CRC checksums.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
@@ -140,6 +175,7 @@ class ProbeBodyMismatch extends Error {
 
 export class S3StorageAdapter implements StorageAdapter {
   readonly bucket: string;
+  private readonly keyPrefix: string;
   private readonly client: S3Client;
   private readonly signer: S3Client;
   private readonly policy: SignedUrlPolicy;
@@ -148,9 +184,15 @@ export class S3StorageAdapter implements StorageAdapter {
     if (!options.bucket) throw new StudixError("VALIDATION", "S3 bucket is not configured");
     if (!options.region) throw new StudixError("VALIDATION", "S3 region is not configured");
     this.bucket = options.bucket;
+    this.keyPrefix = options.keyPrefix ?? "";
+    assertKeyPrefix(this.keyPrefix);
     this.policy = assertSignedUrlPolicy(options.signedUrlPolicy ?? DEFAULT_POLICY);
     this.client = buildClient(options, options.endpoint);
     this.signer = options.publicEndpoint ? buildClient(options, options.publicEndpoint) : this.client;
+  }
+
+  private objectKey(ctx: TenantContext, key: string): string {
+    return this.keyPrefix + resolveTenantKey(ctx, key);
   }
 
   async put(
@@ -159,7 +201,7 @@ export class S3StorageAdapter implements StorageAdapter {
     body: StorageBody,
     options: PutObjectOptions,
   ): Promise<StoredObject> {
-    const objectKey = resolveTenantKey(ctx, key);
+    const objectKey = this.objectKey(ctx, key);
     assertContentType(options.contentType);
     const material = await materializeBody(body);
     try {
@@ -187,7 +229,7 @@ export class S3StorageAdapter implements StorageAdapter {
     ctx: TenantContext,
     key: string,
   ): Promise<{ body: ReadableStream<Uint8Array>; contentType: string; bytes: number }> {
-    const objectKey = resolveTenantKey(ctx, key);
+    const objectKey = this.objectKey(ctx, key);
     try {
       const out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }));
       if (!out.Body) throw new StudixError("NOT_FOUND", "Object not found", { details: { key } });
@@ -216,7 +258,7 @@ export class S3StorageAdapter implements StorageAdapter {
   }
 
   async head(ctx: TenantContext, key: string): Promise<StoredObject | undefined> {
-    const objectKey = resolveTenantKey(ctx, key);
+    const objectKey = this.objectKey(ctx, key);
     try {
       const out = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: objectKey }));
       return {
@@ -233,7 +275,7 @@ export class S3StorageAdapter implements StorageAdapter {
   }
 
   async signedUrl(ctx: TenantContext, key: string, options: SignedUrlOptions = {}): Promise<string> {
-    const objectKey = resolveTenantKey(ctx, key);
+    const objectKey = this.objectKey(ctx, key);
     const expiresIn = resolveSignedUrlTtl(options.expiresInSeconds, this.policy);
     const command = new GetObjectCommand({
       Bucket: this.bucket,
@@ -248,8 +290,24 @@ export class S3StorageAdapter implements StorageAdapter {
     }
   }
 
+  async signedUploadUrl(ctx: TenantContext, key: string, options: SignedUploadUrlOptions): Promise<string> {
+    const objectKey = this.objectKey(ctx, key);
+    assertContentType(options.contentType);
+    const expiresIn = resolveSignedUrlTtl(options.expiresInSeconds, this.policy);
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: objectKey,
+      ContentType: options.contentType,
+    });
+    try {
+      return await getSignedUrl(this.signer, command, { expiresIn });
+    } catch (err) {
+      throw storageError("sign", err);
+    }
+  }
+
   async delete(ctx: TenantContext, key: string): Promise<void> {
-    const objectKey = resolveTenantKey(ctx, key);
+    const objectKey = this.objectKey(ctx, key);
     try {
       await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey }));
     } catch (err) {
@@ -263,7 +321,7 @@ export class S3StorageAdapter implements StorageAdapter {
    * result carries only the failing step, HTTP status and S3 error code (no credentials or bucket names).
    */
   async probeWrite(): Promise<StorageProbeResult> {
-    const key = resolveTenantKey(PROBE_TENANT, `probe/${randomUUID()}.txt`);
+    const key = this.keyPrefix + resolveTenantKey(PROBE_TENANT, `probe/${randomUUID()}.txt`);
     const body = new TextEncoder().encode("studix storage probe");
     let step: "put" | "get" | "head" | "delete" = "put";
     try {
