@@ -25,7 +25,7 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 3;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 4;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -110,6 +110,27 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/** Rec.601 luma (0-255) the QA black-frame gate counts as black (mean luma < 16), with headroom. */
+const MIN_SCENE_LUMA = 28;
+
+/**
+ * A scene fill lifted just off black: a near-black card (e.g. #0e0e0e) with little text on it reads as a
+ * black frame to the QA gate, so its channels are raised evenly until its luma clears MIN_SCENE_LUMA.
+ */
+function offBlack(hex: string): string {
+  const ch = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+  const luma = 0.299 * ch[0]! + 0.587 * ch[1]! + 0.114 * ch[2]!;
+  if (luma >= MIN_SCENE_LUMA) return hex;
+  const lift = Math.ceil(MIN_SCENE_LUMA - luma);
+  return `#${ch
+    .map((c) =>
+      Math.min(255, c + lift)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+
 /** WCAG AA for large text, which every motion-graphic line is. */
 const MIN_CONTRAST = 3;
 
@@ -191,7 +212,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       suggestedAction: `Cut the voice-over to at most ${budget} words (about ${VO_WORDS_PER_SECOND} words a second), or lengthen the video.`,
     });
   }
-  const brand: BrandKit = brief.brand ?? {
+  const baseBrand: BrandKit = brief.brand ?? {
     name: truncateText(brief.title ?? style.name, 120),
     palette: {
       primary: style.palette.accent,
@@ -200,6 +221,14 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       foreground: style.palette.foreground,
     },
     fonts: DEFAULT_BRAND_FONTS,
+  };
+  const brand: BrandKit = {
+    ...baseBrand,
+    palette: {
+      ...baseBrand.palette,
+      primary: offBlack(baseBrand.palette.primary),
+      background: offBlack(baseBrand.palette.background),
+    },
   };
   const logo = brand.logoAssetId
     ? options.assets?.find((a) => a.id === brand.logoAssetId && a.kind === "image")
