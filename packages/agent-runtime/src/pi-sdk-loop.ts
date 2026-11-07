@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -147,15 +148,30 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
   };
 }
 
+/**
+ * OpenCode Go rejects requests that do not name their conversation in `x-opencode-session` (it routes and
+ * caches by it) and asks agents to identify themselves rather than send a generic SDK user agent.
+ */
+export function providerRequestHeaders(
+  provider: string,
+  sessionId: string,
+): Record<string, string> | undefined {
+  if (provider !== "opencode-go") return undefined;
+  return { "x-opencode-session": sessionId, "User-Agent": "studix-agent/1.0" };
+}
+
 type PiSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
 /** Builds the isolated session: in-memory auth holding only this binding's key, no tools, no discovery. */
 async function openSession(binding: PiRunBinding, scratch: string): Promise<PiSession> {
   const authStorage = AuthStorage.inMemory({});
   const modelRegistry = ModelRegistry.inMemory(authStorage);
+  // One session is one conversation, so a fresh id per session keeps its turns together.
+  const headers = providerRequestHeaders(binding.provider, randomUUID());
   if (binding.endpoint) {
     modelRegistry.registerProvider(binding.provider, {
       baseUrl: binding.endpoint.baseUrl,
+      ...(headers ? { headers } : {}),
       ...(binding.endpoint.api ? { api: binding.endpoint.api } : {}),
       ...(binding.endpoint.models
         ? {
@@ -173,6 +189,8 @@ async function openSession(binding: PiRunBinding, scratch: string): Promise<PiSe
         : {}),
       // The SDK's provider config type is wider than this subset; the fields above are the ones it reads.
     } as Parameters<ModelRegistry["registerProvider"]>[1]);
+  } else if (headers) {
+    modelRegistry.registerProvider(binding.provider, { headers });
   }
   authStorage.setRuntimeApiKey(binding.provider, binding.apiKey);
   const model = modelRegistry.find(binding.provider, binding.modelId);
