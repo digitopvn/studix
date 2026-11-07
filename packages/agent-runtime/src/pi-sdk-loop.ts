@@ -37,6 +37,8 @@ export interface PiSdkLoopOptions {
    * VALIDATION: the loop never runs a tool on the worker itself.
    */
   workspace?: PiTaskWorkspaceProvider;
+  /** Retry of a turn that hit a rate limit or overload (default PI_TURN_RETRY); false fails at once. */
+  turnRetry?: false | typeof PI_TURN_RETRY;
 }
 
 interface Usage {
@@ -142,6 +144,7 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
           const output = await runAttempt(binding, task, total, model, {
             scratchRoot: options.scratchRoot,
             reasoningEffort: resolved.reasoningEffort,
+            turnRetry: options.turnRetry ?? PI_TURN_RETRY,
             ...(workspace ? { workspace, tools } : {}),
           });
           const files = workspace ? await workspace.collect() : undefined;
@@ -219,6 +222,7 @@ interface AttemptOptions {
   reasoningEffort?: ReasoningEffort;
   workspace?: PiTaskWorkspace;
   tools?: SandboxToolName[];
+  turnRetry?: false | typeof PI_TURN_RETRY;
 }
 
 /**
@@ -234,6 +238,13 @@ export function providerRequestHeaders(
 }
 
 type PiSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+
+/**
+ * A rate limit, overload or 5xx inside a session retries the turn instead of failing the run: 15, 30, 60,
+ * 60 and 60 s apart (under 4 minutes). Pi's matcher leaves out auth, quota and context-overflow errors, and
+ * the task's abort (deadline, budget, cancel) stops a wait.
+ */
+export const PI_TURN_RETRY = { enabled: true, maxRetries: 5, baseDelayMs: 15_000, maxAgentDelayMs: 60_000 };
 
 /** Builds the isolated session: in-memory auth holding only this binding's key, no tools, no discovery. */
 async function openSession(
@@ -349,7 +360,10 @@ async function openSession(
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(),
     // Retries and compaction would spend money the budget has not seen; the job layer owns retries.
-    settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
+    settingsManager: SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: attempt.turnRetry || { enabled: false },
+    }),
     ...(attempt.reasoningEffort ? { thinkingLevel: attempt.reasoningEffort } : {}),
     // Custom definitions replace the built-ins of the same name, so every tool runs in the sandbox.
     tools: attempt.workspace ? [...(attempt.tools ?? [])] : [],
