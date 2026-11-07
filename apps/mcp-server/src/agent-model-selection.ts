@@ -1,4 +1,4 @@
-import { findPiModel, listCodexModels } from "@studix/agent-runtime";
+import { claudeModelReasoning, findPiModel, listCodexModels } from "@studix/agent-runtime";
 import {
   AGENT_RUNTIMES,
   type JobAgentSelection,
@@ -100,7 +100,7 @@ export async function resolveAgentSelection(
         : agent.runtime === "codex"
           ? listCodexModels().find((m) => m.id === modelId)?.reasoning
           : /^claude-[a-z0-9.-]{1,80}$/.test(modelId)
-            ? true
+            ? claudeModelReasoning(modelId)
             : undefined;
     if (reasoning === undefined) {
       throw invalid(

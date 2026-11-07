@@ -2,6 +2,7 @@ export * from "./bounded-agent-runtime.ts";
 export * from "./claude-agent-runtime.ts";
 export * from "./claude-code-cli-transport.ts";
 export * from "./claude-code-sandbox-runtime.ts";
+export * from "./claude-models.ts";
 export * from "./claude-preflight.ts";
 export * from "./claude-sdk-transport.ts";
 export * from "./codex-agent-runtime.ts";

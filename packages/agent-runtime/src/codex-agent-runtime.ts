@@ -184,11 +184,10 @@ export interface CodexModel {
 
 /** Models the Codex CLI runs on a ChatGPT login or an OpenAI key, from the pinned Pi SDK catalog. */
 export function listCodexModels(): CodexModel[] {
-  return getModels("openai-codex").map((m) => ({
-    id: m.id,
-    name: m.name ?? m.id,
-    reasoning: m.reasoning ?? false,
-  }));
+  // The catalog lists oldest first; pickers show the newest first.
+  return getModels("openai-codex")
+    .map((m) => ({ id: m.id, name: m.name ?? m.id, reasoning: m.reasoning ?? false }))
+    .reverse();
 }
 
 export function createCodexAgentRuntime(options: CodexAgentRuntimeOptions): AgentRuntime {
