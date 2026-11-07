@@ -29,7 +29,6 @@ export function SkillsPage({ isOperator }: { isOperator: boolean }) {
   const { data, error, reload } = useAsync(() => api.skills());
   const [scope, setScope] = useState<SkillScope>("workspace");
   const [repositoryUrl, setRepositoryUrl] = useState("");
-  const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
   const [results, setResults] = useState<string[]>([]);
@@ -56,13 +55,10 @@ export function SkillsPage({ isOperator }: { isOperator: boolean }) {
     });
   }
 
-  async function upload(event: FormEvent) {
-    event.preventDefault();
-    if (!file) return;
+  async function upload(file: File) {
     await act(async () => {
       const { result } = await api.uploadSkill(file, { scope, activate: true });
       setResults([resultText(result)]);
-      setFile(null);
     });
   }
 
@@ -78,125 +74,118 @@ export function SkillsPage({ isOperator }: { isOperator: boolean }) {
   }
 
   return (
-    <>
-      <Section title="Add skills">
+    <Section title="Skills">
+      <p className="muted">
+        Skills teach the Studix agent a style or a workflow. Add one from GitHub or a zip.
+      </p>
+      <ErrorBanner error={error} />
+      {data && data.items.length === 0 && <Empty>No skills yet.</Empty>}
+      {data && data.items.length > 0 && (
+        <ul className="key-list">
+          {data.items.map((s) => (
+            <li key={s.id} className="key-row">
+              <div className="key-main">
+                <div className="key-title">
+                  <Link to={`/skills/${s.id}`}>
+                    <strong>{s.name}</strong>
+                  </Link>
+                </div>
+                <div className="key-meta">
+                  <span>{s.scope === "platform" ? "Every workspace" : "This workspace"}</span>
+                  <span>{sourceLabel(s)}</span>
+                  <span>Updated {formatDate(s.updatedAt)}</span>
+                </div>
+              </div>
+              <div className="key-state">
+                <RiskBadge level={s.activeRiskLevel} />
+                <StatusBadge status={s.status === "enabled" ? "succeeded" : "canceled"} label={s.status} />
+              </div>
+              {s.manageable && (
+                <div className="key-actions">
+                  {s.status === "enabled" ? (
+                    <button
+                      type="button"
+                      className="secondary small"
+                      disabled={busy}
+                      onClick={() => void act(() => api.disableSkill(s.id))}
+                    >
+                      Disable
+                    </button>
+                  ) : (
+                    <button type="button" className="small" disabled={busy} onClick={() => void enable(s)}>
+                      Enable
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="ghost-danger small"
+                    disabled={busy}
+                    onClick={() => void remove(s)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <form className="key-add" onSubmit={importRepo}>
+        <input
+          required
+          type="url"
+          aria-label="GitHub repository URL"
+          placeholder="https://github.com/owner/repo"
+          value={repositoryUrl}
+          onChange={(e) => setRepositoryUrl(e.target.value)}
+        />
         {isOperator && (
-          <label className="row">
-            Scope
-            <select value={scope} onChange={(e) => setScope(e.target.value as SkillScope)}>
-              <option value="workspace">This workspace</option>
-              <option value="platform">Platform (every workspace)</option>
-            </select>
-          </label>
+          <select
+            aria-label="Who can use it"
+            value={scope}
+            onChange={(e) => setScope(e.target.value as SkillScope)}
+          >
+            <option value="workspace">This workspace</option>
+            <option value="platform">Every workspace</option>
+          </select>
         )}
-        <form className="row" onSubmit={importRepo}>
+        <button type="submit" disabled={busy}>
+          Import
+        </button>
+        <label className={`button secondary${busy ? " disabled" : ""}`}>
+          Upload zip
           <input
-            required
-            type="url"
-            placeholder="https://github.com/owner/repo"
-            value={repositoryUrl}
-            onChange={(e) => setRepositoryUrl(e.target.value)}
-          />
-          <button type="submit" disabled={busy}>
-            Import from GitHub
-          </button>
-        </form>
-        <form className="row" onSubmit={upload}>
-          <input
-            required
             type="file"
+            hidden
+            disabled={busy}
             accept=".zip,application/zip"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void upload(file);
+            }}
           />
-          <button type="submit" disabled={busy || !file}>
-            Upload zip
-          </button>
-        </form>
+        </label>
+      </form>
+      <details className="why">
+        <summary>What a skill zip holds</summary>
         <p className="muted">
-          A zip holds SKILL.md at its root or in one top folder. Uploading the same skill name again adds a
-          new version. High-risk skills start disabled.
+          SKILL.md at its root or in one top folder. The same name again adds a new version. High-risk skills
+          start disabled.
         </p>
-        {results.length > 0 && (
-          <ul>
-            {results.map((r) => (
-              <li key={r}>{r}</li>
-            ))}
-          </ul>
-        )}
-        <ErrorBanner error={actionError} />
-      </Section>
-      <Section title="Skills">
-        <ErrorBanner error={error} />
-        {data && data.items.length === 0 && <Empty>No skills yet.</Empty>}
-        {data && data.items.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Scope</th>
-                <th>Source</th>
-                <th>Risk</th>
-                <th>Status</th>
-                <th>Updated</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((s) => (
-                <tr key={s.id}>
-                  <td>
-                    <Link to={`/skills/${s.id}`}>{s.name}</Link>
-                  </td>
-                  <td>{s.scope}</td>
-                  <td>{sourceLabel(s)}</td>
-                  <td>
-                    <RiskBadge level={s.activeRiskLevel} />
-                  </td>
-                  <td>
-                    <StatusBadge
-                      status={s.status === "enabled" ? "succeeded" : "canceled"}
-                      label={s.status}
-                    />
-                  </td>
-                  <td>{formatDate(s.updatedAt)}</td>
-                  <td className="row">
-                    {s.manageable && s.status === "enabled" && (
-                      <button
-                        type="button"
-                        className="secondary small"
-                        disabled={busy}
-                        onClick={() => void act(() => api.disableSkill(s.id))}
-                      >
-                        Disable
-                      </button>
-                    )}
-                    {s.manageable && s.status === "disabled" && (
-                      <button type="button" className="small" disabled={busy} onClick={() => void enable(s)}>
-                        Enable
-                      </button>
-                    )}
-                    {s.manageable && (
-                      <button
-                        type="button"
-                        className="secondary small"
-                        disabled={busy}
-                        onClick={() => void remove(s)}
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Section>
-    </>
+      </details>
+      {results.length > 0 && (
+        <ul>
+          {results.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+      )}
+      <ErrorBanner error={actionError} />
+    </Section>
   );
 }
 
-/** One skill: risk report, files, SKILL.md and versions, with activation behind the high-risk gate. */
 export function SkillDetailPage({ skillId }: { skillId: string }) {
   const [versionId, setVersionId] = useState<string>();
   const { data, error, reload } = useAsync(() => api.skill(skillId, versionId), [skillId, versionId]);

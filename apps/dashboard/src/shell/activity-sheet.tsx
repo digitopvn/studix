@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Job } from "../api-client.ts";
 import { CopyForAgent } from "../copy-for-agent.tsx";
-import { errorText, Link, StatusBadge } from "../ui.tsx";
+import { errorText, formatDate, Link } from "../ui.tsx";
+import { jobTitle, needsKey, shortError, stepLabel } from "./job-labels.ts";
 
 const RUNNING = new Set(["queued", "running", "rendering", "waiting"]);
+
+const FAILED_PREVIEW = 3;
 
 function jobHref(job: Job): string {
   return job.projectId ? `/projects/${job.projectId}` : `/jobs/${job.id}`;
@@ -44,6 +47,7 @@ export function ActivitySheet({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState<string>();
+  const [showAllFailed, setShowAllFailed] = useState(false);
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
@@ -61,11 +65,10 @@ export function ActivitySheet({
     }
   }
 
-  const groups: Array<[string, Job[]]> = [
-    ["Running", jobs.filter((j) => RUNNING.has(j.status))],
-    ["Failed", jobs.filter((j) => j.status === "failed")],
-    ["Done", jobs.filter((j) => j.status === "succeeded").slice(0, 8)],
-  ];
+  const running = jobs.filter((j) => RUNNING.has(j.status));
+  const failed = jobs.filter((j) => j.status === "failed");
+  const done = jobs.filter((j) => j.status === "succeeded").slice(0, 5);
+  const shownFailed = showAllFailed ? failed : failed.slice(0, FAILED_PREVIEW);
   return (
     <dialog ref={ref} className="sheet" onClose={onClose} aria-label="Activity">
       <header className="sheet-head">
@@ -79,34 +82,70 @@ export function ActivitySheet({
           {error}
         </p>
       )}
-      {groups.map(([title, items]) =>
-        items.length ? (
-          <section key={title} className="sheet-group">
-            <h3>{title}</h3>
-            {items.map((j) => (
-              <div key={j.id} className="activity-row">
-                <div className="activity-main">
-                  <Link to={jobHref(j)}>{j.kind.replace(/_/g, " ")}</Link>
-                  <span className="muted small-text">
-                    {j.stage ?? ""} {RUNNING.has(j.status) ? `${Math.round(j.progress * 100)}%` : ""}
-                  </span>
-                </div>
-                <StatusBadge status={j.status} />
-                {j.status === "failed" && (
-                  <div className="row">
-                    <button type="button" className="small" onClick={() => void retry(j.id)}>
-                      Retry
-                    </button>
-                    <Link to="/settings/models" className="button secondary small">
-                      Add key
-                    </Link>
-                    <CopyForAgent tool="studix_get_job" args={{ jobId: j.id }} small />
-                  </div>
+      {running.length > 0 && (
+        <section className="sheet-group">
+          <h3>Running · {running.length}</h3>
+          {running.map((j) => (
+            <Link key={j.id} to={jobHref(j)} className="activity-row">
+              <span className="activity-title">{jobTitle(j)}</span>
+              <span className="activity-meta">
+                {stepLabel(j)} · {Math.round(j.progress * 100)}%
+              </span>
+              <span className="activity-progress" aria-hidden="true">
+                <span style={{ width: `${Math.max(3, Math.round(j.progress * 100))}%` }} />
+              </span>
+            </Link>
+          ))}
+        </section>
+      )}
+      {failed.length > 0 && (
+        <section className="sheet-group">
+          <h3>Failed · {failed.length}</h3>
+          {shownFailed.map((j) => (
+            <div key={j.id} className="activity-row failed">
+              <Link to={jobHref(j)} className="activity-title">
+                {jobTitle(j)}
+              </Link>
+              <span className="activity-meta">
+                Stopped at {stepLabel(j).toLowerCase()} · {formatDate(j.finishedAt ?? j.updatedAt)}
+              </span>
+              {j.error?.message && <span className="activity-error">{shortError(j.error.message)}</span>}
+              <div className="activity-actions">
+                {needsKey(j) ? (
+                  <Link to="/settings/models" className="button small">
+                    Add key
+                  </Link>
+                ) : (
+                  <button type="button" className="small" onClick={() => void retry(j.id)}>
+                    Retry
+                  </button>
                 )}
+                {needsKey(j) && (
+                  <button type="button" className="secondary small" onClick={() => void retry(j.id)}>
+                    Retry
+                  </button>
+                )}
+                <CopyForAgent tool="studix_get_job" args={{ jobId: j.id }} small label="Copy for agent" />
               </div>
-            ))}
-          </section>
-        ) : null,
+            </div>
+          ))}
+          {failed.length > FAILED_PREVIEW && (
+            <button type="button" className="ghost small" onClick={() => setShowAllFailed((v) => !v)}>
+              {showAllFailed ? "Show fewer" : `Show ${failed.length - FAILED_PREVIEW} more`}
+            </button>
+          )}
+        </section>
+      )}
+      {done.length > 0 && (
+        <section className="sheet-group">
+          <h3>Done</h3>
+          {done.map((j) => (
+            <Link key={j.id} to={jobHref(j)} className="activity-row">
+              <span className="activity-title">{jobTitle(j)}</span>
+              <span className="activity-meta">{formatDate(j.finishedAt ?? j.updatedAt)}</span>
+            </Link>
+          ))}
+        </section>
       )}
       {!jobs.length && <p className="muted">Nothing has run yet.</p>}
       <p>

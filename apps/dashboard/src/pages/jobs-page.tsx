@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Job } from "../api-client.ts";
+import { jobTitle, shortError, stepLabel } from "../shell/job-labels.ts";
 import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge } from "../ui.tsx";
 import { useHashQuery } from "../use-hash-route.ts";
 import { formatJobAgent, JOB_AGENT_OPTIONS, jobAgentOptionLabel } from "./job-agent.ts";
@@ -23,6 +24,13 @@ import {
 } from "./job-list-filters.ts";
 
 type Query = URLSearchParams;
+
+const TABS = [
+  { id: "all", label: "All", statuses: [] as string[] },
+  { id: "running", label: "Running", statuses: ["queued", "running", "waiting_approval"] },
+  { id: "failed", label: "Failed", statuses: ["failed"] },
+  { id: "done", label: "Done", statuses: ["succeeded"] },
+];
 type SetQuery = (next: Query) => void;
 
 export function JobsPage() {
@@ -92,19 +100,47 @@ export function JobsPage() {
     <SortHeader field={field} label={label} also={also} query={query} onChange={set} />
   );
 
+  const table = query.get("view") === "table";
+  const statuses = listParam(query, "status");
+  const tab = TABS.find((t) => t.statuses.join() === statuses.join())?.id ?? (statuses.length ? "" : "all");
+  const toggleView = () => {
+    const next = new URLSearchParams(query);
+    if (table) next.delete("view");
+    else next.set("view", "table");
+    set(next);
+  };
+
   return (
     <Section
-      title="Jobs"
+      title="Activity"
       actions={
         <>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => set(clearFilters(query))}
-            disabled={!hasFilters(query)}
-          >
-            Clear filters
+          <div className="segment" role="tablist" aria-label="Status">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                onClick={() => set(withList(query, "status", t.statuses))}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="secondary" onClick={toggleView}>
+            {table ? "List view" : "Table view"}
           </button>
+          {table && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => set(clearFilters(query))}
+              disabled={!hasFilters(query)}
+            >
+              Clear filters
+            </button>
+          )}
           <button
             type="button"
             className="secondary"
@@ -117,109 +153,150 @@ export function JobsPage() {
       }
     >
       <ErrorBanner error={error} />
-      <div className="table-scroll">
-        <table className="jobs-table">
-          <thead>
-            <tr>
-              {sortHeader("kind", "Job")}
-              {sortHeader("status", "Status")}
-              {sortHeader("stage", "Stage")}
-              {sortHeader("projectId", "Project")}
-              {sortHeader("agent", "Agent", { field: "model", label: "model" })}
-              {sortHeader("progress", "Progress")}
-              {sortHeader("spentCents", "Spend")}
-              {sortHeader("createdAt", "Created")}
-              {sortHeader("updatedAt", "Updated")}
-            </tr>
-            <tr className="filter-row">
-              <th>
-                <MultiSelect label="Kind" name="kind" options={[...seen.kind]} query={query} onChange={set} />
-                <TextFilter label="Job id contains" name="id" query={query} onChange={set} />
-              </th>
-              <th>
-                <MultiSelect
-                  label="Status"
-                  name="status"
-                  options={JOB_STATUS_OPTIONS}
-                  query={query}
-                  onChange={set}
-                />
-              </th>
-              <th>
-                <MultiSelect
-                  label="Stage"
-                  name="stage"
-                  options={[...seen.stage]}
-                  query={query}
-                  onChange={set}
-                />
-              </th>
-              <th>
-                <TextFilter label="Project id contains" name="project" query={query} onChange={set} />
-              </th>
-              <th>
-                <MultiSelect
-                  label="Runtime"
-                  name="agent"
-                  options={JOB_AGENT_OPTIONS}
-                  optionLabel={jobAgentOptionLabel}
-                  query={query}
-                  onChange={set}
-                />
-                <TextFilter label="Model contains" name="model" query={query} onChange={set} />
-              </th>
-              <th>
-                <RangeFilter
-                  label="Progress %"
-                  min="progressMin"
-                  max="progressMax"
-                  scale={UNIT_SCALE.progress}
-                  integer={false}
-                  query={query}
-                  onChange={set}
-                />
-              </th>
-              <th>
-                <RangeFilter
-                  label="Spend $"
-                  min="spentMin"
-                  max="spentMax"
-                  scale={UNIT_SCALE.spent}
-                  integer
-                  query={query}
-                  onChange={set}
-                />
-              </th>
-              <th>
-                <DateFilter label="Created" from="createdFrom" to="createdTo" query={query} onChange={set} />
-              </th>
-              <th>
-                <DateFilter label="Updated" from="updatedFrom" to="updatedTo" query={query} onChange={set} />
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((j) => (
-              <tr key={j.id}>
-                <td>
-                  <Link to={`/jobs/${j.id}`}>{j.kind}</Link>
-                  <div className="muted mono">{j.id}</div>
-                </td>
-                <td>
+      {!table && (
+        <ul className="activity-list">
+          {items.map((j) => (
+            <li key={j.id}>
+              <Link to={`/jobs/${j.id}`} className="activity-row">
+                <span className="activity-head">
+                  <span className="activity-title">{jobTitle(j)}</span>
                   <StatusBadge status={j.status} />
-                </td>
-                <td>{j.stage ?? "-"}</td>
-                <td>{j.projectId ? <Link to={`/projects/${j.projectId}`}>{j.projectId}</Link> : "-"}</td>
-                <td>{formatJobAgent(j.agent)}</td>
-                <td>{Math.round((j.progress ?? 0) * 100)}%</td>
-                <td>${((j.spentCents ?? 0) / 100).toFixed(2)}</td>
-                <td>{formatDate(j.createdAt)}</td>
-                <td>{formatDate(j.updatedAt)}</td>
+                </span>
+                <span className="activity-meta">
+                  {stepLabel(j)} · {Math.round((j.progress ?? 0) * 100)}% · {formatJobAgent(j.agent)} · $
+                  {((j.spentCents ?? 0) / 100).toFixed(2)} · {formatDate(j.updatedAt)}
+                </span>
+                {j.status === "failed" && j.error?.message && (
+                  <span className="activity-error">{shortError(j.error.message)}</span>
+                )}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      {table && (
+        <div className="table-scroll">
+          <table className="jobs-table">
+            <thead>
+              <tr>
+                {sortHeader("kind", "Job")}
+                {sortHeader("status", "Status")}
+                {sortHeader("stage", "Stage")}
+                {sortHeader("projectId", "Project")}
+                {sortHeader("agent", "Agent", { field: "model", label: "model" })}
+                {sortHeader("progress", "Progress")}
+                {sortHeader("spentCents", "Spend")}
+                {sortHeader("createdAt", "Created")}
+                {sortHeader("updatedAt", "Updated")}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+              <tr className="filter-row">
+                <th>
+                  <MultiSelect
+                    label="Kind"
+                    name="kind"
+                    options={[...seen.kind]}
+                    query={query}
+                    onChange={set}
+                  />
+                  <TextFilter label="Job id contains" name="id" query={query} onChange={set} />
+                </th>
+                <th>
+                  <MultiSelect
+                    label="Status"
+                    name="status"
+                    options={JOB_STATUS_OPTIONS}
+                    query={query}
+                    onChange={set}
+                  />
+                </th>
+                <th>
+                  <MultiSelect
+                    label="Stage"
+                    name="stage"
+                    options={[...seen.stage]}
+                    query={query}
+                    onChange={set}
+                  />
+                </th>
+                <th>
+                  <TextFilter label="Project id contains" name="project" query={query} onChange={set} />
+                </th>
+                <th>
+                  <MultiSelect
+                    label="Runtime"
+                    name="agent"
+                    options={JOB_AGENT_OPTIONS}
+                    optionLabel={jobAgentOptionLabel}
+                    query={query}
+                    onChange={set}
+                  />
+                  <TextFilter label="Model contains" name="model" query={query} onChange={set} />
+                </th>
+                <th>
+                  <RangeFilter
+                    label="Progress %"
+                    min="progressMin"
+                    max="progressMax"
+                    scale={UNIT_SCALE.progress}
+                    integer={false}
+                    query={query}
+                    onChange={set}
+                  />
+                </th>
+                <th>
+                  <RangeFilter
+                    label="Spend $"
+                    min="spentMin"
+                    max="spentMax"
+                    scale={UNIT_SCALE.spent}
+                    integer
+                    query={query}
+                    onChange={set}
+                  />
+                </th>
+                <th>
+                  <DateFilter
+                    label="Created"
+                    from="createdFrom"
+                    to="createdTo"
+                    query={query}
+                    onChange={set}
+                  />
+                </th>
+                <th>
+                  <DateFilter
+                    label="Updated"
+                    from="updatedFrom"
+                    to="updatedTo"
+                    query={query}
+                    onChange={set}
+                  />
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((j) => (
+                <tr key={j.id}>
+                  <td>
+                    <Link to={`/jobs/${j.id}`}>{j.kind}</Link>
+                    <div className="muted mono">{j.id}</div>
+                  </td>
+                  <td>
+                    <StatusBadge status={j.status} />
+                  </td>
+                  <td>{j.stage ?? "-"}</td>
+                  <td>{j.projectId ? <Link to={`/projects/${j.projectId}`}>{j.projectId}</Link> : "-"}</td>
+                  <td>{formatJobAgent(j.agent)}</td>
+                  <td>{Math.round((j.progress ?? 0) * 100)}%</td>
+                  <td>${((j.spentCents ?? 0) / 100).toFixed(2)}</td>
+                  <td>{formatDate(j.createdAt)}</td>
+                  <td>{formatDate(j.updatedAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {!loading && !error && items.length === 0 && (
         <Empty>{hasFilters(query) ? "No jobs match these filters." : "No jobs yet."}</Empty>
       )}

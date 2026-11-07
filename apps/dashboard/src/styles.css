@@ -269,19 +269,54 @@ dialog.modal {
 
 .activity-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.5rem;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid var(--line);
+  gap: 0.2rem;
+  padding: 0.7rem 0.5rem;
+  margin: 0 -0.5rem;
+  border-radius: var(--r2);
+  color: inherit;
+  text-decoration: none;
 }
-
-.activity-row .row {
-  grid-column: 1 / -1;
+a.activity-row:hover {
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
 }
-
-.activity-main {
-  display: grid;
-  gap: 0.15rem;
+.activity-row + .activity-row {
+  border-top: 1px solid var(--line);
+}
+.activity-title {
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: none;
+}
+.activity-meta {
+  font-size: 0.8rem;
+  color: var(--text-2);
+}
+.activity-error {
+  font-size: 0.8rem;
+  color: var(--danger);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.activity-progress {
+  height: 3px;
+  margin-top: 0.3rem;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.activity-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
 }
 
 .small-text {
@@ -1542,4 +1577,33 @@ details.advanced > summary {
   .settings-body td:last-child:has(button) > .row {
     justify-content: flex-start;
   }
+}
+
+label.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.key-add > label.button {
+  flex: 0 0 auto;
+}
+label.button.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.activity-list > li + li {
+  border-top: 1px solid var(--line);
+}
+.activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
