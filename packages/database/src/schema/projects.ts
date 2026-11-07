@@ -99,6 +99,8 @@ export const assetVersions = pgTable(
       .references(() => assets.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
     storageKey: text("storage_key").notNull(),
+    /** Storage profile holding the bytes (`env` = the S3_* environment settings). */
+    storageProfileId: text("storage_profile_id").notNull().default("env"),
     sha256: text("sha256").notNull(),
     mime: text("mime").notNull(),
     bytes: bigint("bytes", { mode: "number" }).notNull(),
@@ -113,6 +115,8 @@ export const assetVersions = pgTable(
   (t) => [
     uniqueIndex("asset_versions_asset_version_uq").on(t.assetId, t.version),
     index("asset_versions_sha_idx").on(t.workspaceId, t.sha256),
+    index("asset_versions_storage_key_idx").on(t.workspaceId, t.storageKey),
+    index("asset_versions_storage_profile_idx").on(t.storageProfileId),
   ],
 );
 
@@ -133,13 +137,19 @@ export const renders = pgTable(
     status: text("status").$type<RenderStatus>().notNull(),
     assetVersionId: text("asset_version_id").references(() => assetVersions.id, { onDelete: "set null" }),
     storageKey: text("storage_key"),
+    /** Storage profile holding the output (`env` = the S3_* environment settings). */
+    storageProfileId: text("storage_profile_id").notNull().default("env"),
     probe: jsonb("probe").$type<MediaProbe>(),
     error: jsonb("error").$type<StudixErrorPayload>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     completedAt: ts("completed_at"),
   },
-  (t) => [index("renders_project_idx").on(t.projectId, t.id)],
+  (t) => [
+    index("renders_project_idx").on(t.projectId, t.id),
+    index("renders_storage_key_idx").on(t.workspaceId, t.storageKey),
+    index("renders_storage_profile_idx").on(t.storageProfileId),
+  ],
 );
 
 export const reviews = pgTable(

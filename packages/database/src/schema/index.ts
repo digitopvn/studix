@@ -8,6 +8,7 @@ export * from "./projects.ts";
 export * from "./provider-connections.ts";
 export * from "./rate-limits.ts";
 export * from "./revisions.ts";
+export * from "./storage-profiles.ts";
 export * from "./telemetry.ts";
 export * from "./tenancy.ts";
 export * from "./workspace-multix-settings.ts";

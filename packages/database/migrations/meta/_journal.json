@@ -197,6 +197,13 @@
       "when": 1794026726301,
       "tag": "0027_silent_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794028305745,
+      "tag": "0028_next_rictor",
+      "breakpoints": true
     }
   ]
 }

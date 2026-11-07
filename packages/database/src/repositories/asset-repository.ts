@@ -4,6 +4,7 @@ import { desc, eq, max } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { assets, assetVersions } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
+import { activeStorageProfileSql } from "./storage-profile-repository.ts";
 
 type AssetRow = typeof assets.$inferSelect;
 type VersionRow = typeof assetVersions.$inferSelect;
@@ -112,6 +113,7 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
             assetId: input.assetId,
             version: (current?.version ?? 0) + 1,
             storageKey: input.storageKey,
+            storageProfileId: activeStorageProfileSql,
             sha256: input.sha256,
             mime: input.mime,
             bytes: input.bytes,

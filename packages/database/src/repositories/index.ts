@@ -20,6 +20,7 @@ import { createProviderConnectionRepository } from "./provider-connection-reposi
 import { createRateLimitRepository } from "./rate-limit-repository.ts";
 import { createRenderRepository, createWorkflowRunRepository } from "./render-workflow-repositories.ts";
 import { createRevisionRepository, createStageCacheRepository } from "./revision-repositories.ts";
+import { createStorageProfileRepository } from "./storage-profile-repository.ts";
 import { createStoryboardRepository } from "./storyboard-repository.ts";
 import { createActivityRepository, createUsageRepository } from "./telemetry-repositories.ts";
 import {
@@ -43,6 +44,7 @@ export * from "./provider-connection-repository.ts";
 export * from "./rate-limit-repository.ts";
 export * from "./render-workflow-repositories.ts";
 export * from "./revision-repositories.ts";
+export * from "./storage-profile-repository.ts";
 export * from "./storyboard-repository.ts";
 export * from "./telemetry-repositories.ts";
 export * from "./tenancy-repositories.ts";
@@ -78,6 +80,7 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     modelPreferences: createModelPreferenceRepository(db, clock),
     modelSnapshots: createModelSnapshotRepository(db, clock),
     platformCredentials: createPlatformCredentialRepository(db, clock),
+    storageProfiles: createStorageProfileRepository(db, clock),
     rateLimits: createRateLimitRepository(db),
     workspaceSettings: createWorkspaceSettingsRepository(db),
     workspaceMultixSettings: createWorkspaceMultixSettingsRepository(db),
