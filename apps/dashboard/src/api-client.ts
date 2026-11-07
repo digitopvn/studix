@@ -579,6 +579,23 @@ export interface CreateVideoRequest {
   budgetCents?: number;
   idempotencyKey?: string;
   planner?: PlannerSelection;
+  /** Runtime, paying connection, model and reasoning effort of the job's agent stages. */
+  agent?: {
+    runtime: AgentRuntimeName;
+    providerConnectionId: string;
+    model?: string;
+    reasoningEffort?: ReasoningEffort;
+  };
+  /** A workflow pack id (GET /api/workflow-packs); defaults to brand-intro. */
+  workflowTemplate?: string;
+  renderPreset?: "preview" | "final";
+}
+
+export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high";
+
+export interface WorkflowPackInfo {
+  id: string;
+  title: string;
 }
 
 export type ReviewStatus = "draft" | "in_review" | "approved" | "changes_requested";
@@ -979,6 +996,7 @@ export const api = {
     request<ProviderConnection>("POST", `/api/providers/anthropic/api-keys/${enc(id)}/test`, {}),
   removeAnthropicKey: (id: string) =>
     request<ProviderConnection>("DELETE", `/api/providers/anthropic/api-keys/${enc(id)}`),
+  workflowPacks: () => request<{ packs: WorkflowPackInfo[] }>("GET", "/api/workflow-packs"),
   providerCatalog: () => request<{ providers: CatalogProvider[] }>("GET", "/api/providers/catalog"),
   providerConnections: () => request<ProviderConnectionList>("GET", "/api/providers/connections"),
   addProviderKey: (input: {

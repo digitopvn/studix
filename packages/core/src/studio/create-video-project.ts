@@ -65,13 +65,8 @@ export async function createVideoProject(
       "planner cannot be combined with spec: a supplied spec is not planned",
     );
   }
-  if (input.planner && input.workflowTemplate && input.workflowTemplate !== DEFAULT_WORKFLOW_TEMPLATE) {
-    // The Claude planner writes the VideoIR itself and does not run a pack's template.
-    throw new StudixError(
-      "VALIDATION",
-      `planner cannot be combined with workflowTemplate "${input.workflowTemplate}": the planner does not use pack templates`,
-    );
-  }
+  // A planner with a pack is valid: the pack's pipeline runs and its agent stages run on the planner's
+  // Claude connection (the worker's agent harness), while the default pack plans with the Claude planner.
   const spec: VideoIR | undefined =
     input.spec === undefined
       ? undefined

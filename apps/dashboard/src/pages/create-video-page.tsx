@@ -1,9 +1,12 @@
 import { type FormEvent, useState } from "react";
-import { api, type CreateVideoRequest } from "../api-client.ts";
+import { type AgentRuntimeName, api, type CreateVideoRequest, type ReasoningEffort } from "../api-client.ts";
 import { ErrorBanner, Section, useAsync } from "../ui.tsx";
 import { navigate } from "../use-hash-route.ts";
 
 type AspectRatio = NonNullable<CreateVideoRequest["aspectRatio"]>;
+
+const RUNTIME_LABELS: Record<AgentRuntimeName, string> = { claude: "Claude", codex: "Codex", pi: "Pi" };
+const EFFORTS: ReasoningEffort[] = ["off", "minimal", "low", "medium", "high"];
 
 export function CreateVideoPage() {
   const [prompt, setPrompt] = useState("");
@@ -11,16 +14,25 @@ export function CreateVideoPage() {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("9:16");
   const [seconds, setSeconds] = useState(8);
   const [language, setLanguage] = useState("en");
-  // "" = default planner; otherwise the id of the Anthropic key Claude plans with.
-  const [connectionId, setConnectionId] = useState("");
+  const [pack, setPack] = useState("");
+  const [renderPreset, setRenderPreset] = useState<"preview" | "final">("final");
+  // "" = the workspace's default agent; otherwise "runtime:connectionId".
+  const [agentKey, setAgentKey] = useState("");
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState<ReasoningEffort | "">("");
   const [error, setError] = useState<unknown>();
-  const providers = useAsync(() => api.anthropicProvider());
-  // Only keys this user may run jobs with: workspace keys and their own personal keys.
-  const usableKeys = providers.data?.claudePlanner
-    ? providers.data.connections.filter(
-        (c) => c.status !== "invalid" && (c.owner === "workspace" || c.ownedByMe),
-      )
+  const packs = useAsync(() => api.workflowPacks());
+  const connections = useAsync(() => api.providerConnections());
+  const catalog = useAsync(() => api.providerCatalog());
+  // Only keys this user may run jobs with: workspace keys and their own personal keys, once per runtime.
+  const agents = (connections.data?.connections ?? [])
+    .filter((c) => c.status !== "invalid" && (c.owner === "workspace" || c.ownedByMe))
+    .flatMap((c) => c.runtimes.map((runtime) => ({ key: `${runtime}:${c.id}`, runtime, connection: c })));
+  const chosen = agents.find((a) => a.key === agentKey);
+  const models = chosen
+    ? (catalog.data?.providers.find((p) => p.id === chosen.connection.provider)?.models ?? [])
     : [];
+  const reasoning = models.find((m) => m.id === model)?.reasoning ?? false;
   const [busy, setBusy] = useState(false);
   // One key per form instance: a double submit or a retry after a network error returns the same job.
   const [idempotencyKey] = useState(() => `dash-${crypto.randomUUID()}`);
@@ -37,7 +49,18 @@ export function CreateVideoPage() {
         durationMs: Math.round(seconds * 1000),
         language,
         idempotencyKey,
-        ...(connectionId ? { planner: { runtime: "claude", providerConnectionId: connectionId } } : {}),
+        renderPreset,
+        ...(pack ? { workflowTemplate: pack } : {}),
+        ...(chosen
+          ? {
+              agent: {
+                runtime: chosen.runtime,
+                providerConnectionId: chosen.connection.id,
+                ...(model ? { model } : {}),
+                ...(effort && reasoning ? { reasoningEffort: effort } : {}),
+              },
+            }
+          : {}),
       });
       navigate(`/jobs/${result.job.id}`);
     } catch (e) {
@@ -92,19 +115,75 @@ export function CreateVideoPage() {
             </select>
           </label>
         </div>
-        {usableKeys.length > 0 && (
+        <div className="row">
           <label>
-            Planner
-            <select value={connectionId} onChange={(e) => setConnectionId(e.target.value)}>
-              <option value="">Studix default planner</option>
-              {usableKeys.map((c) => (
-                <option key={c.id} value={c.id}>
-                  Claude, billed to {c.label} ({c.keyHint ?? "API key"})
+            Pack
+            <select value={pack} onChange={(e) => setPack(e.target.value)}>
+              <option value="">Default (brand intro)</option>
+              {(packs.data?.packs ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
                 </option>
               ))}
             </select>
           </label>
-        )}
+          <label>
+            Render
+            <select
+              value={renderPreset}
+              onChange={(e) => setRenderPreset(e.target.value as "preview" | "final")}
+            >
+              <option value="final">Final (1080p)</option>
+              <option value="preview">Preview (fast, low-res)</option>
+            </select>
+          </label>
+        </div>
+        <div className="row">
+          <label>
+            Agent
+            <select
+              value={agentKey}
+              onChange={(e) => {
+                setAgentKey(e.target.value);
+                setModel("");
+                setEffort("");
+              }}
+            >
+              <option value="">Workspace default</option>
+              {agents.map((a) => (
+                <option key={a.key} value={a.key}>
+                  {RUNTIME_LABELS[a.runtime]}, billed to {a.connection.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {chosen && (
+            <label>
+              Model
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">Runtime default</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {chosen && reasoning && (
+            <label>
+              Reasoning effort
+              <select value={effort} onChange={(e) => setEffort(e.target.value as ReasoningEffort | "")}>
+                <option value="">Model default</option>
+                {EFFORTS.map((x) => (
+                  <option key={x} value={x}>
+                    {x}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
         <ErrorBanner error={error} />
         <button type="submit" disabled={busy || prompt.trim() === ""}>
           {busy ? "Starting..." : "Create video"}

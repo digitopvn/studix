@@ -143,8 +143,10 @@ Behavior notes:
   (`studix_inspect` lists them under `skills`); it defaults to `brand-intro`.
   An unknown id fails with `VALIDATION` before anything is stored, with
   `error.details.available` listing the registered ids. Adding a pack needs
-  only `registerPack`; the server does not change. The Claude `planner` writes
-  the IR itself, so it is refused together with a non-default pack.
+  only `registerPack`; the server does not change. A Claude `planner` (or
+  `agent`) combines with any pack: the pack's pipeline runs and its agent stages
+  (for example the motion-graphic storyboard) run on that Claude connection and
+  model; with the default pack the Claude planner writes the IR.
 - `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
   entry (1 to 6), all sharing the brief's brand, language, format and length
   (default 20 s, 9:16). The create job writes the script, generates one

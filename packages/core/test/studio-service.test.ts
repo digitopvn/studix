@@ -36,6 +36,24 @@ describe("StudioService.createVideoProject", () => {
     expect(unknownRuntime.code).toBe("VALIDATION");
   });
 
+  it("combines a Claude agent with a workflow pack, keeping both on the job", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const agent = {
+      runtime: "claude" as const,
+      connectionId: "pcn_1",
+      provider: "anthropic",
+      modelId: "claude-opus-5-5",
+    };
+    const out = await studio.createVideoProject(ctx, { brief, agent, workflowTemplate: "motion-graphic" });
+    const job = await repos.jobs.get(ctx, out.job.id);
+    expect(job?.payload).toMatchObject({
+      workflowTemplate: "motion-graphic",
+      agent,
+      planner: { runtime: "claude", providerConnectionId: "pcn_1" },
+    });
+  });
+
   it("carries the agent mode into the job payload and rejects unknown modes", async () => {
     const { studio, repos } = createInMemoryStudio();
     const ctx = testTenant();

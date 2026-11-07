@@ -9,9 +9,10 @@ import {
   WorkflowTemplateId,
 } from "@studix/core";
 import { packRegistry } from "@studix/skills";
-import { AspectRatio, LanguageTag } from "@studix/video-ir";
+import { AspectRatio, LanguageTag, RenderPreset } from "@studix/video-ir";
 import { Router } from "express";
 import { z } from "zod";
+import { AgentInput, resolveAgentSelection } from "../agent-model-selection.ts";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, playbackForRender, signRender } from "../artifact-urls.ts";
 import { withMediaExecUrls } from "../mcp/media-exec-tool.ts";
@@ -41,7 +42,9 @@ const CreateVideoBody = z
       .regex(/^[A-Za-z0-9._:-]{1,200}$/)
       .optional(),
     planner: PlannerSelection.optional(),
+    agent: AgentInput.optional(),
     workflowTemplate: WorkflowTemplateId.optional(),
+    renderPreset: RenderPreset.optional(),
   })
   .strict();
 
@@ -95,11 +98,21 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     res.json(await deps.studio.listProjects(ctx, query));
   });
 
+  // The packs a create request may name as workflowTemplate, for the dashboard's pack picker.
+  router.get("/workflow-packs", (_req, res) => {
+    res.json({ packs: packRegistry.packs().map((p) => ({ id: p.id, title: p.title })) });
+  });
+
   router.post("/projects", async (req, res) => {
     const { ctx } = sessionOf(res);
     const body = parseBody(CreateVideoBody, req.body, "video request");
     const pack = resolveWorkflowPack(packRegistry, body.workflowTemplate);
-    await assertPlannerSelection(deps, ctx, body.planner);
+    const planner =
+      body.agent?.runtime === "claude"
+        ? { runtime: "claude" as const, providerConnectionId: body.agent.providerConnectionId }
+        : body.planner;
+    await assertPlannerSelection(deps, ctx, planner);
+    const agent = body.agent ? await resolveAgentSelection(deps, ctx, body.agent) : undefined;
     const result = await deps.studio.createVideoProject(ctx, {
       brief: {
         prompt: body.prompt,
@@ -112,6 +125,8 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       idempotencyKey: body.idempotencyKey,
       planner: body.planner,
       workflowTemplate: pack.id,
+      ...(body.renderPreset ? { renderPreset: body.renderPreset } : {}),
+      ...(agent ? { agent } : {}),
     });
     await deps.activity?.record(ctx, {
       name: "dashboard.create_video",
