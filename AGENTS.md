@@ -19,6 +19,9 @@ Rules for coding agents working in this repository.
   next run better, faster, less error-prone and cheaper in tokens, while keeping the highest
   effectiveness and the best output quality.
 - Always dogfood the product to find bugs and poor AX/UX, then propose improvements.
+- Always take the place of the user and the user's agent. Work out what they need from Studix to be
+  more satisfied, then propose it or apply it directly while you work, following the product
+  philosophy above.
 
 ## Definition of done
 
