@@ -69,6 +69,35 @@ describe("provider and model API (Better Auth session, Postgres)", () => {
     expect((await tested.json()).lastTest).toMatchObject({ ok: true });
   });
 
+  it("stores a workspace media key per vendor, isolated per workspace, and never echoes it", async () => {
+    const apiKey = "sume-test-key-not-real-0099";
+    const saved = await app.api("PUT", "/api/providers/media-keys/sume", { cookie: alice, body: { apiKey } });
+    expect(saved.status).toBe(200);
+    expect(saved.headers.get("cache-control")).toBe("no-store");
+    const text = await saved.text();
+    expect(text).not.toContain(apiKey);
+    expect(JSON.parse(text)).toMatchObject({ vendor: "sume", source: "workspace", keyHint: "…0099" });
+
+    const mine = await (await app.api("GET", "/api/providers/media-keys", { cookie: alice })).json();
+    expect(mine.keys.find((k: { vendor: string }) => k.vendor === "sume")).toMatchObject({
+      source: "workspace",
+    });
+    // Media keys are not AI provider connections.
+    const list = await (await app.api("GET", "/api/providers/connections", { cookie: alice })).json();
+    expect(list.connections.some((c: { provider: string }) => c.provider.startsWith("media-"))).toBe(false);
+
+    const theirs = await (await app.api("GET", "/api/providers/media-keys", { cookie: bob })).json();
+    expect(theirs.keys.find((k: { vendor: string }) => k.vendor === "sume")).toEqual({
+      vendor: "sume",
+      source: "platform",
+    });
+    expect((await app.api("DELETE", "/api/providers/media-keys/sume", { cookie: bob })).status).toBe(404);
+    expect(
+      (await app.api("PUT", "/api/providers/media-keys/openai", { cookie: alice, body: { apiKey } })).status,
+    ).toBe(400);
+    expect((await app.api("DELETE", "/api/providers/media-keys/sume", { cookie: alice })).status).toBe(200);
+  });
+
   it("keeps the Anthropic route on Anthropic even if the body names another provider", async () => {
     const res = await app.api("POST", "/api/providers/anthropic/api-keys", {
       cookie: bob,

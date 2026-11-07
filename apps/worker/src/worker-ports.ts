@@ -28,6 +28,7 @@ import {
 } from "@studix/decision-routing";
 import { createEnvSecretResolver, createMcpGateway, loadGatewayConfig } from "@studix/mcp-gateway";
 import { createActivityRecorder } from "@studix/observability";
+import { MULTIX_VENDOR_KEYS } from "@studix/providers";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { StudixError } from "@studix/shared";
 import { createS3StorageAdapterFromConfig } from "@studix/storage";
@@ -74,7 +75,7 @@ function gatewayBrandLookup(settings: WorkerSettings, runtime: WorkerPortsRuntim
  * STUDIX_SECRETS_KEY (then no workspace can have stored a key). A run re-tests a rejected key with the
  * provider's own tester before marking it invalid.
  */
-function providerConnections(
+export function providerConnections(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
 ): ProviderConnectionService | undefined {
@@ -95,6 +96,7 @@ function providerConnections(
     ),
     claudeSubscription: async (ctx) =>
       (await workspaceFeatures(settings, runtime).effective(ctx)).claudeSubscription,
+    mediaKeyNames: MULTIX_VENDOR_KEYS,
     logger: runtime.logger,
   });
 }

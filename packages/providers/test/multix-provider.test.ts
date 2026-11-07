@@ -1462,3 +1462,111 @@ describe("MultixProvider.inspectJob", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe("MultixProvider workspace keys (BYOK)", () => {
+  const platformEnv = { PATH: "/usr/bin", SUME_API_KEY: "platform-sume" };
+
+  it("runs a workspace's calls on its own key and reports them as workspace-funded", async () => {
+    const cli = sumeImageCli();
+    const asked: string[] = [];
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      env: platformEnv,
+      workspaceCredentials: async (tenant) => {
+        asked.push(tenant.workspaceId);
+        return { SUME_API_KEY: "workspace-sume" };
+      },
+    });
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result).toMatchObject({ costCents: 3, funding: "workspace" });
+    expect(asked).toEqual([ctx.workspaceId]);
+    expect(cli.calls.map((c) => c.options.env.SUME_API_KEY)).toEqual([
+      "workspace-sume",
+      "workspace-sume",
+      "workspace-sume",
+    ]);
+  });
+
+  it("keeps the platform key and funding when the workspace has no key for the call's vendor", async () => {
+    const cli = sumeImageCli();
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      env: platformEnv,
+      workspaceCredentials: async () => ({ ATLASCLOUD_API_KEY: "workspace-atlas" }),
+    });
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result.funding).toBeUndefined();
+    expect(cli.calls.every((c) => c.options.env.SUME_API_KEY === "platform-sume")).toBe(true);
+  });
+
+  it("never lets a workspace key reach the shared capability probe, even when a call starts it", async () => {
+    const seen: string[] = [];
+    const sume = sumeImageCli();
+    let multix: MultixProvider | undefined;
+    const runner: MultixRunner = async (argv, options) => {
+      const reply = (envelope: object) => ({
+        exitCode: 0,
+        stdout: `${JSON.stringify({ schema: "multix.result/v1", ok: true, ...envelope })}\n`,
+      });
+      if (argv[0] === "check") {
+        seen.push(options.env.SUME_API_KEY ?? "");
+        return reply({ text: CHECK_TEXT });
+      }
+      if (argv[0] !== "sume") return reply({ data: [] });
+      // A probe started while a workspace call runs must still use the platform key.
+      if (argv.includes("--estimate")) await multix?.capabilities();
+      return sume.runner(argv, options);
+    };
+    multix = new MultixProvider({
+      bin: "multix",
+      runner,
+      env: platformEnv,
+      workspaceCredentials: async () => ({ SUME_API_KEY: "workspace-sume" }),
+    });
+    await multix.generate(ctx, imageRequest());
+    expect(seen).toEqual(["platform-sume"]);
+  });
+
+  it("tags the charge of a failed workspace-funded call", async () => {
+    const cli = sumeImageCli(() => ({
+      exitCode: 5,
+      envelope: {
+        ok: false,
+        error: { code: "DOWNLOAD_FAILED", message: "could not save output", retryable: false },
+        usage: {
+          cost_usd: 0.03,
+          metrics: {
+            "data.job.usage_summary.reserved_usd_cents": 3,
+            "data.job.usage_summary.captured_usd_cents": 3,
+          },
+        },
+      },
+    }));
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      env: platformEnv,
+      workspaceCredentials: async () => ({ SUME_API_KEY: "workspace-sume" }),
+    });
+    const error = await multix.generate(ctx, imageRequest()).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MediaChargedError);
+    expect((error as MediaChargedError).charge).toMatchObject({ costCents: 3, funding: "workspace" });
+  });
+
+  it("falls back to the platform key when the workspace source fails", async () => {
+    const cli = sumeImageCli();
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      env: platformEnv,
+      workspaceCredentials: async () => {
+        throw new Error("db down");
+      },
+    });
+    const result = await multix.generate(ctx, imageRequest());
+    expect(result.funding).toBeUndefined();
+    expect(cli.calls[0]?.options.env.SUME_API_KEY).toBe("platform-sume");
+  });
+});

@@ -202,6 +202,18 @@ export function providerRoutes(deps: AppDeps): Router {
     res.json(await requireProviders(deps).remove(sessionOf(res).ctx, idParam(req, "connectionId")));
   });
 
+  // The workspace's own media vendor keys (BYOK); the service accepts only the Multix vendors.
+  router.get("/media-keys", async (_req, res) => {
+    res.json(await requireProviders(deps).listMediaKeys(sessionOf(res).ctx));
+  });
+  router.put("/media-keys/:vendor", async (req, res) => {
+    const vendor = String(req.params.vendor);
+    res.json(await requireProviders(deps).saveMediaKey(sessionOf(res).ctx, vendor, req.body ?? {}));
+  });
+  router.delete("/media-keys/:vendor", async (req, res) => {
+    res.json(await requireProviders(deps).removeMediaKey(sessionOf(res).ctx, String(req.params.vendor)));
+  });
+
   router.get("/models", async (_req, res) => {
     res.json(await requireModels(deps).list(sessionOf(res).ctx));
   });

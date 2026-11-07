@@ -26,6 +26,21 @@ export function selectWorkspace(id: string | null): void {
   else localStorage.removeItem(WORKSPACE_KEY);
 }
 
+/** A workspace's own media vendor key (BYOK); `platform` means media calls use the platform key. */
+export interface WorkspaceMediaKey {
+  vendor: string;
+  source: "workspace" | "platform";
+  keyHint?: string;
+  version?: number;
+  updatedAt?: string;
+}
+
+export interface WorkspaceMediaKeys {
+  storage: "available" | "unavailable";
+  canManage: boolean;
+  keys: WorkspaceMediaKey[];
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };
   const workspace = selectedWorkspace();
@@ -663,6 +678,11 @@ export const api = {
     request<PlatformCredential>("PUT", `/api/platform/media-keys/${enc(name)}`, { value }),
   revokePlatformMediaKey: (name: string) =>
     request<PlatformCredential>("DELETE", `/api/platform/media-keys/${enc(name)}`),
+  workspaceMediaKeys: () => request<WorkspaceMediaKeys>("GET", "/api/providers/media-keys"),
+  setWorkspaceMediaKey: (vendor: string, apiKey: string) =>
+    request<WorkspaceMediaKey>("PUT", `/api/providers/media-keys/${enc(vendor)}`, { apiKey }),
+  removeWorkspaceMediaKey: (vendor: string) =>
+    request<WorkspaceMediaKey>("DELETE", `/api/providers/media-keys/${enc(vendor)}`),
   workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
   updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
     request<WorkspaceFeatures>("PUT", "/api/providers/features", patch),

@@ -394,6 +394,19 @@ or change them. They are dashboard session routes for the `operator` role
 | `PUT /api/platform/media-keys/:name`    | `{ value }` | Credential metadata with a last-four hint. Name must be allowlisted. |
 | `DELETE /api/platform/media-keys/:name` | none        | Metadata after removal; the environment value, if any, applies.      |
 
+### Workspace media keys (BYOK)
+
+A workspace may bring its own key for each Multix vendor (`sume`, `atlas`,
+`elevenlabs`, `fish`, `minimax`, `openrouter`). These are dashboard session
+routes too, `Cache-Control: no-store`, and never return the key. Any member
+may read; only workspace admins (`member:manage`) may write.
+
+| Route                                      | Body         | Returns                                                        |
+| ------------------------------------------ | ------------ | -------------------------------------------------------------- |
+| `GET /api/providers/media-keys`            | none         | `{ storage, canManage, keys: [{ vendor, source, keyHint? }] }` |
+| `PUT /api/providers/media-keys/:vendor`    | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.        |
+| `DELETE /api/providers/media-keys/:vendor` | none         | `source: "platform"`: media calls use the platform key again.  |
+
 ## Roadmap tools
 
 Not implemented; do not depend on them. Capabilities are added to the contract
