@@ -363,6 +363,18 @@ export interface PlatformSettings {
     lastCheck?: { at: string; state: string; reason?: string; code?: string };
     apply: { keyChange: string; executableChange: string };
     processNote: string;
+    /** The worker's own media report; absent when the app has no STUDIX_WORKER_HEALTH_URL. */
+    worker?: {
+      reachable: boolean;
+      report?: {
+        executable: "configured" | "missing";
+        state: string;
+        code?: string;
+        secretsKey: boolean;
+        vendors: Record<string, boolean>;
+      };
+      mismatches: string[];
+    };
   };
 }
 

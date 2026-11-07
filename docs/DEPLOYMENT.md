@@ -98,10 +98,15 @@ key and OAuth client.
   the key it started with. `MULTIX_BIN` is still deployment configuration.
 - **The safe check calls no paid provider.** It runs `multix check`, which only
   reports which keys exist, so it cannot tell a wrong key from a right one; a
-  bad key shows up on the first real job. The check runs in the app process, and
-  the worker's `/readyz` does not report media yet: the first media job confirms
-  the worker reads the key. A worker without `STUDIX_SECRETS_KEY` logs a warning
-  at startup when keys exist in the database.
+  bad key shows up on the first real job. The check runs in the app process. The
+  worker runs its own `multix check` (at most once a minute) and reports it under
+  `media` in `/readyz`: `executable`, `state`, `code`, `secretsKey` and, per
+  vendor, only whether a key exists. It never gates readiness. Set
+  `STUDIX_WORKER_HEALTH_URL` on the app (for example `http://studix-worker:8081`)
+  and the page lists where the app and the worker disagree (`MULTIX_BIN`,
+  `STUDIX_SECRETS_KEY`, a key found on one side only). A worker without
+  `STUDIX_SECRETS_KEY` also logs a warning at startup when keys exist in the
+  database.
 - **Rollback:** revoke the key on the page (the environment value applies again)
   and revoke it at the provider if it leaked. Losing `STUDIX_SECRETS_KEY` makes
   stored keys unreadable (they are skipped and logged); set them again.
@@ -184,8 +189,13 @@ ANTHROPIC_API_KEY=... pnpm test:live`) and are skipped without the key. The
 plan test is capped by `STUDIX_CLAUDE_LIVE_MAX_COST_CENTS` (default 100); the
 rejected-key test uses a made-up key and costs nothing.
 
-Paid media runs through the Multix provider (`packages/providers`), which is
-off unless the worker has `MULTIX_BIN=/opt/multix/dist/cli.js`. Routes: image,
+Paid media runs through the Multix provider (`packages/providers`). The image
+sets `MULTIX_BIN=/opt/multix/dist/cli.js`, so the provider is on in every
+deployment built from the root `Dockerfile`, even when the platform secrets
+omit the variable; an empty `MULTIX_BIN=` in the secrets turns it off. Before
+this default, a deployment whose secrets lacked the variable failed `motion-graphic` jobs
+with a voice-over with `UNAVAILABLE` ("The Multix provider is not
+configured") after compose. Routes: image,
 video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
 music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech.
 The worker passes only `SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
@@ -233,7 +243,7 @@ workflow stage fall back to an in-process journal, which a restart loses.
 Pack stages (`marketing-video`, `motion-graphic`) get the media provider, the
 storage, the renderer and the hard QA gate from the worker
 ([`pack-services.ts`](../apps/worker/src/pack-services.ts)). Without
-`MULTIX_BIN` their paid stages fail with `UNAVAILABLE`; without the QA
+`MULTIX_BIN` (set to empty) their paid stages fail with `UNAVAILABLE`; without the QA
 toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
 is never published.
 

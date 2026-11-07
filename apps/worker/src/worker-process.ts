@@ -3,9 +3,17 @@ import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } fro
 import { createStorageWriteCheck, S3StorageAdapter, type StorageProbeResult } from "@studix/storage";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
-import { createWorkerRuntime, type WorkerPorts, type WorkerRuntime } from "./wiring.ts";
+import {
+  createWorkerRuntime,
+  type WorkerMediaStatus,
+  type WorkerPorts,
+  type WorkerRuntime,
+} from "./wiring.ts";
 import { sweepStaleJobDirs } from "./work-dir-sweep.ts";
 import { loadWorkerSettings, type WorkerSettings } from "./worker-settings.ts";
+
+/** Shortest time between two media checks (each one runs `multix check`). */
+const MEDIA_STATUS_INTERVAL_MS = 60_000;
 
 /** Process resources handed to the port resolver (shared pool, environment, process logger). */
 export interface WorkerPortsRuntime {
@@ -70,6 +78,27 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     );
   };
 
+  let lastMediaStatus: WorkerMediaStatus | undefined;
+  let mediaCheckedAt = Number.NEGATIVE_INFINITY;
+  let mediaInFlight = false;
+  /** `multix check` spawns a process, so readiness probes refresh it at most once per interval, in the background. */
+  const refreshMediaStatus = (): void => {
+    const check = ports?.mediaStatus;
+    const now = Date.now();
+    if (!check || mediaInFlight || now - mediaCheckedAt < MEDIA_STATUS_INTERVAL_MS) return;
+    mediaInFlight = true;
+    mediaCheckedAt = now;
+    check().then(
+      (status) => {
+        lastMediaStatus = status;
+        mediaInFlight = false;
+      },
+      () => {
+        mediaInFlight = false;
+      },
+    );
+  };
+
   const health: HealthServer = await startHealthServer({
     port: settings.healthPort,
     host: settings.healthHost,
@@ -80,7 +109,9 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
         return { ok: false, details: { reason: stopping ? "stopping" : "starting" } };
       const db = await databaseReady(handle).catch(() => false);
       refreshStorageProbe();
+      refreshMediaStatus();
       const storage = lastStorageProbe;
+      const media = lastMediaStatus;
       // Reported, not gating: a rejected bucket credential is fixed by configuration, and an unready worker
       // would also block the deploy that carries the fix.
       return {
@@ -95,6 +126,8 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
                   : { ok: false, step: storage.step, status: storage.status, s3Code: storage.s3Code },
               }
             : {}),
+          // Reported, not gating, like storage: the dashboard compares it with the app's own check.
+          ...(media ? { media } : {}),
         },
       };
     },
@@ -169,6 +202,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
         () => {},
       );
     }
+    refreshMediaStatus();
     runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });
     runtime.start();
     const sweep = () =>

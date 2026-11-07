@@ -69,7 +69,7 @@ function platformCredentials(
 export async function loadPackServices(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
-): Promise<Pick<WorkerPorts, "media" | "mediaFor" | "qa" | "speech">> {
+): Promise<Pick<WorkerPorts, "media" | "mediaFor" | "qa" | "speech" | "mediaStatus">> {
   const { config } = settings;
   const credentials = platformCredentials(settings, runtime);
   const workspaceKeys = providerConnections(settings, runtime);
@@ -136,6 +136,16 @@ export async function loadPackServices(
   }
   return {
     media,
+    mediaStatus: async () => {
+      const diagnosis = await media.diagnose();
+      return {
+        executable: config.MULTIX_BIN ? "configured" : "missing",
+        state: diagnosis.state,
+        ...(diagnosis.state === "ready" || !diagnosis.code ? {} : { code: diagnosis.code }),
+        secretsKey: Boolean(config.STUDIX_SECRETS_KEY),
+        vendors: { ...diagnosis.vendors },
+      };
+    },
     mediaFor: (ctx) => providers.forWorkspace(ctx),
     ...(speech ? { speech } : {}),
     qa: createHardQaGate({
