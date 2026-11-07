@@ -7,12 +7,32 @@ import {
   type JobQueue,
   refersToProviderJob,
 } from "../ports/job-queue.ts";
+import {
+  compareJobs,
+  decodeJobCursor,
+  type JobSortField,
+  type JobSortValue,
+  jobMatches,
+  toJobPage,
+} from "../repositories/job-list-query.ts";
 import type {
   JobRepository,
   RenderRepository,
   WorkflowRunRepository,
 } from "../repositories/job-repository.ts";
+import { pageLimit } from "../repositories/pagination.ts";
 import { InMemoryTenantTable } from "./in-memory-table.ts";
+
+/** A copy of `job` whose sort value is `value`, so a cursor can be compared like a row. */
+function withSortValue(job: Job, field: JobSortField, value: JobSortValue): Job {
+  switch (field) {
+    case "createdAt":
+    case "updatedAt":
+      return { ...job, [field]: new Date(value as number) };
+    default:
+      return { ...job, [field]: value };
+  }
+}
 
 /** In-memory jobs: implements both the read/update repository and the producer-side queue. */
 export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; queue: JobQueue } {
@@ -27,13 +47,21 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
       return jobs.filter(ctx, (j) => j.idempotencyKey === key)[0];
     },
     async list(ctx, query = {}) {
-      return jobs.page(
-        ctx,
-        query,
-        (j) =>
-          (query.projectId === undefined || j.projectId === query.projectId) &&
-          (query.status === undefined || j.status === query.status),
-      );
+      const limit = pageLimit(query.limit);
+      const sort = query.sort ?? "createdAt";
+      const order = query.order ?? "desc";
+      const compare = compareJobs(sort, order);
+      const after = query.cursor === undefined ? undefined : decodeJobCursor(query.cursor, sort);
+      const rows = jobs
+        .filter(ctx, (j) => jobMatches(j, query))
+        .sort(compare)
+        .filter((j) => {
+          if (!after) return true;
+          const anchor = { ...j, id: after.id } as Job;
+          // Strictly after the cursor row under (sort, id).
+          return compare(j, withSortValue(anchor, sort, after.value)) > 0;
+        });
+      return toJobPage(rows.slice(0, limit + 1), limit, sort);
     },
     async update(ctx, id, patch, options = {}) {
       const current = jobs.require(ctx, id);

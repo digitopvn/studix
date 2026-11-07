@@ -1,7 +1,6 @@
 import {
   assertPermission,
   FeedbackInput,
-  JOB_STATUSES,
   PlannerSelection,
   PROJECT_STATUSES,
   RenderVersionInput,
@@ -18,6 +17,7 @@ import { type ArtifactUrlDeps, isPlayable, playbackForRender, signRender } from 
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
+import { parseJobListQuery } from "./job-list-params.ts";
 
 const PageQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -172,18 +172,7 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
   router.get("/jobs", async (req, res) => {
     const { ctx } = sessionOf(res);
     assertPermission(ctx, "project:read");
-    const query = parseBody(
-      PageQuery.extend({
-        status: z.enum(JOB_STATUSES).optional(),
-        projectId: z
-          .string()
-          .regex(/^[A-Za-z0-9_-]{1,100}$/)
-          .optional(),
-      }),
-      req.query,
-      "query",
-    );
-    res.json(await deps.repos.jobs.list(ctx, query));
+    res.json(await deps.repos.jobs.list(ctx, parseJobListQuery(req.query)));
   });
 
   router.get("/jobs/:jobId", async (req, res) => {

@@ -486,3 +486,72 @@ th {
   align-items: center;
   gap: 0.5rem;
 }
+
+/* Jobs table: sortable headers and a filter row. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.sort-header {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sort-header.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.filter-row th {
+  font-weight: 400;
+}
+
+.filter-input {
+  width: 100%;
+  min-width: 6rem;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.3rem;
+}
+
+.filter-number {
+  min-width: 4rem;
+}
+
+.filter-range {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.filter-multi {
+  position: relative;
+  margin-bottom: 0.2rem;
+}
+
+.filter-multi summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.filter-menu {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 10rem;
+  padding: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.filter-menu label {
+  white-space: nowrap;
+}

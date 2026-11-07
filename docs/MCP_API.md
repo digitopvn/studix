@@ -391,6 +391,25 @@ three tools; they never appear in `tools/list`.
 Every execute is re-authorized at call time; a grant revoked after search
 returns `FORBIDDEN`. See [SECURITY.md](SECURITY.md#mcp-in-mcp-connectors).
 
+## Listing jobs (dashboard API only)
+
+`GET /api/jobs` returns `{ items, nextCursor? }` for the caller's workspace, newest created first.
+It needs `project:read`. Every param is optional and checked against an allowlist; an unknown param,
+sort field or enum value fails with `VALIDATION`.
+
+| Param                                                  | Meaning                                                                                                                            |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `sort`, `order`                                        | `createdAt` (default), `updatedAt`, `status`, `kind`, `stage`, `projectId`, `progress` or `spentCents`; `asc` or `desc` (default). |
+| `status`, `kind`, `stage`                              | Comma-separated values; a job matches any of them.                                                                                 |
+| `id`, `project`                                        | Case-insensitive substring of the job id or project id. `projectId` matches one project exactly.                                   |
+| `createdFrom`, `createdTo`, `updatedFrom`, `updatedTo` | ISO 8601 instants with an offset, inclusive.                                                                                       |
+| `progressMin`, `progressMax`                           | Progress bounds from 0 to 1, inclusive.                                                                                            |
+| `spentMin`, `spentMax`                                 | Spend bounds in whole cents, inclusive.                                                                                            |
+| `limit`, `cursor`                                      | Page size (1-100, default 20) and the `nextCursor` of the previous page.                                                           |
+
+Pages are keyset on (sort column, id), so they neither skip nor repeat a job while the list is paged.
+A cursor is only valid with the sort it came from; reusing it under another sort fails with `VALIDATION`.
+
 ## Platform settings (dashboard API only)
 
 Storage and media settings are not MCP tools: agents and API keys cannot read

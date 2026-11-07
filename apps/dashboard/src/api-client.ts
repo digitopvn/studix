@@ -174,6 +174,7 @@ export interface Job {
   projectId?: string;
   stage?: string;
   progress: number;
+  spentCents?: number;
   attempts?: number;
   maxAttempts?: number;
   createdAt: string;
@@ -697,7 +698,13 @@ export const api = {
     request<{ job: Job }>("POST", `/api/projects/${enc(id)}/render`, input),
   createVideo: (input: CreateVideoRequest) =>
     request<{ project: Project; job: Job; replayed: boolean }>("POST", "/api/projects", input),
-  jobs: () => request<Page<Job>>("GET", "/api/jobs?limit=50"),
+  /** `query` holds the `GET /api/jobs` sort/filter params (see JOB_LIST_PARAMS); `cursor` pages on. */
+  jobs: (query: URLSearchParams = new URLSearchParams(), cursor?: string) => {
+    const params = new URLSearchParams(query);
+    params.set("limit", "50");
+    if (cursor) params.set("cursor", cursor);
+    return request<Page<Job>>("GET", `/api/jobs?${params}`);
+  },
   job: (id: string) => request<{ job: Job; activity: ActivityEvent[] }>("GET", `/api/jobs/${enc(id)}`),
   cancelJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/cancel`, {}),
   retryJob: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/retry`, {}),
