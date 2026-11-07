@@ -300,6 +300,10 @@ its tools in a per-task Docker container
 | `STUDIX_SANDBOX_WALL_SECONDS` | `1800`                 | Wall-time cap of one container                                                 |
 | `STUDIX_SANDBOX_SKILLS_DIR`   | unset                  | Local skills (`<dir>/{platform,workspace}/<name>/`) instead of the skill store |
 | `DOCKER_BIN`                  | `docker`               | Docker CLI path                                                                |
+| `STUDIX_CODEX_MODEL`          | `gpt-5.5`              | Default model of the `codex` agent runtime when the job names none             |
+
+The `codex` runtime runs `codex exec` inside this sandbox, so it needs `STUDIX_SANDBOX=docker`. The image
+pins the Codex CLI with the `CODEX_VERSION` build argument of `docker/sandbox.Dockerfile`.
 
 Build the image with `docker compose --profile sandbox build sandbox-image`. It pins the same multix
 commit and chrome-headless-shell as the Studix image; bump both together. The container receives only

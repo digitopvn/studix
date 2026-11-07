@@ -9,7 +9,7 @@ import {
 } from "@studix/video-ir";
 import { z } from "zod";
 import type { Job, JobStatus, StageStatus } from "../entities/job.ts";
-import { REASONING_EFFORTS } from "../entities/model-preference.ts";
+import { AGENT_RUNTIMES, REASONING_EFFORTS } from "../entities/model-preference.ts";
 import type { Approval, ApprovalAction, ApprovalStatus, ApprovalSubjectType } from "../entities/review.ts";
 import type { ApprovalPolicy } from "../ports/approval-policy.ts";
 import type { JobQueue } from "../ports/job-queue.ts";
@@ -99,6 +99,22 @@ export const PlannerSelection = z
 export type PlannerSelection = z.infer<typeof PlannerSelection>;
 
 /**
+ * The agent a job's creative stages run on, already checked by the caller: the runtime, the provider
+ * connection that pays, and optionally the model and its reasoning effort. Stored on the job payload, so
+ * every attempt runs the same agent. `claude` is the same path as `planner`.
+ */
+export const JobAgentSelection = z
+  .object({
+    runtime: z.enum(AGENT_RUNTIMES),
+    connectionId: z.string().min(1).max(100),
+    provider: z.string().min(1).max(60),
+    modelId: z.string().min(1).max(200).optional(),
+    reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+  })
+  .strict();
+export type JobAgentSelection = z.infer<typeof JobAgentSelection>;
+
+/**
  * Where a job's creative agent stages run: `harness` (default) inside the worker under hard caps, `host` on the
  * MCP client's own agent through the handoff tools (no model spend for Studix).
  */
@@ -117,15 +133,7 @@ export const CreateVideoProjectInput = z.object({
   deadlineAt: z.coerce.date().optional(),
   renderPreset: RenderPreset.optional(),
   agentMode: AgentMode.optional(),
-  /** The agent model the job's Pi stages must use, already checked against the workspace catalog. */
-  agentModel: z
-    .object({
-      connectionId: z.string().min(1).max(100),
-      provider: z.string().min(1).max(60),
-      modelId: z.string().min(1).max(200),
-    })
-    .optional(),
-  reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+  agent: JobAgentSelection.optional(),
 });
 export type CreateVideoProjectInput = z.input<typeof CreateVideoProjectInput>;
 

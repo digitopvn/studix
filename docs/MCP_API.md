@@ -111,16 +111,23 @@ Behavior notes:
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
   past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
   `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
-  handoff tools below), `model` and `reasoningEffort`.
-- `model` (`provider/modelId`) pins the agent model of the job's Pi stages. It
-  must be in the workspace catalog and served by a usable Pi connection of the
-  workspace (your personal key first, then the workspace key); otherwise the
-  call fails with `VALIDATION`. `reasoningEffort` is `off`, `minimal`, `low`,
-  `medium` or `high` and is passed to the Pi SDK as its thinking level. Any
-  value other than `off` on a model without reasoning support is `VALIDATION`;
-  without `model` it is checked against the workspace's default Pi model. Both
-  are stored on the job and in its model snapshot, so every attempt runs the
-  same model and effort. A requested model has no fallbacks.
+  handoff tools below) and `agent`.
+- `agent: {runtime, providerConnectionId, model?, reasoningEffort?}` picks the
+  runtime of the job's agent stages: `pi`, `claude` or `codex`. The connection
+  must belong to the workspace (or be yours), be usable and be enabled for that
+  runtime; otherwise the call fails with `VALIDATION`, `FORBIDDEN` or
+  `NOT_FOUND`. `model` must be one the runtime runs on that connection: a Pi
+  catalog model of the connection's provider, a Codex model (`gpt-5.1` to
+  `gpt-5.5`, default `STUDIX_CODEX_MODEL`) or a `claude-*` id.
+  `reasoningEffort` is `off`, `minimal`, `low`, `medium` or `high`; a value
+  other than `off` on a model without reasoning support is `VALIDATION`. The
+  selection is stored on the job and in its model snapshot, so every attempt
+  runs the same runtime, model and effort, with no fallbacks.
+  `studix_list_agent_runtimes` lists the usable choices. `planner: {runtime:
+  "claude", providerConnectionId}` stays as an alias of a Claude `agent`.
+- A `codex` agent needs `STUDIX_SANDBOX=docker` on the worker: `codex exec`
+  runs inside the task's skill sandbox. A ChatGPT login is paid by the
+  subscription (cost 0); an OpenAI key is billed by OpenAI.
 - Time spent parked is not counted against the deadline. While a job waits at a human gate
   (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
   is paused: what is left of it is kept and starts counting again when a worker
@@ -342,6 +349,14 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   host work. A `model` written as `provider/modelId` must be in the workspace
   catalog, and a `reasoningEffort` other than `off` needs a model with reasoning
   support; either mismatch is `VALIDATION`.
+- `agent: {runtime?, model?, reasoningEffort?}` is the same declaration in the
+  shape of `studix_create_video`'s `agent`: the host says which runtime, model
+  and effort it used. It is checked against the catalog like `usage` and merged
+  into it.
+- `studix_list_agent_runtimes` (no arguments, `project:read`) returns, per
+  runtime, the connections you may use (`id`, `provider`, `label`, `owner`,
+  `authMethod`, `status`) and the models each one runs (`id`, `reasoning`).
+  Secrets and key hints are never in it.
 - Reading needs `project:read`; submitting needs `project:write`. Other
   workspaces' tasks are `NOT_FOUND`.
 - When a stage reaches a limit (any cap in the harness, the time limit in host
@@ -468,6 +483,25 @@ may read; only workspace admins (`member:manage`) may write.
 | `GET /api/providers/media-keys`            | none         | `{ storage, canManage, keys: [{ vendor, source, keyHint? }] }` |
 | `PUT /api/providers/media-keys/:vendor`    | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.        |
 | `DELETE /api/providers/media-keys/:vendor` | none         | `source: "platform"`: media calls use the platform key again.  |
+
+### Provider connections: rename and ChatGPT sign-in
+
+Dashboard session routes, `Cache-Control: no-store`. They never return a key or
+a token.
+
+| Route                                           | Body            | Returns                                                                                                  |
+| ----------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
+| `PATCH /api/providers/connections/:id`          | `{ label }`     | The connection's view with the trimmed label (1 to 80 characters). Audited with the old and new label.   |
+| `POST /api/providers/connections/chatgpt/start` | `{ owner? }`    | `{ flowToken, userCode, verificationUrl, intervalSeconds, expiresAt }` of a ChatGPT device-code sign-in. |
+| `POST /api/providers/connections/chatgpt/poll`  | `{ flowToken }` | `{ status: "pending", intervalSeconds }` or `{ status: "connected", connection }`.                       |
+- Renaming needs the same role as managing the connection (`member:manage` for
+  a workspace connection, the owner for a personal one); someone else's personal
+  connection is `NOT_FOUND`. The secret and version do not change.
+- The sign-in creates (or rotates) an `openai` connection with `authMethod:
+  "oauth_subscription"`, `billing: "subscription"` and `runtimes: ["codex"]`.
+  A workspace-owned login needs `member:manage`; a personal one `project:write`.
+  Only the user who started a flow can poll it, and a flow token expires after
+  15 minutes. Without a ChatGPT client the start route is `503 UNAVAILABLE`.
 
 ## Roadmap tools
 

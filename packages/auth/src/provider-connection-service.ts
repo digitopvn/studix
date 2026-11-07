@@ -22,6 +22,14 @@ import {
   type ProviderKeyTester,
   type ProviderKeyTestResult,
 } from "./anthropic-key-tester.ts";
+import {
+  CHATGPT_VERIFICATION_URL,
+  type ChatGptAuthClient,
+  type ChatGptTokens,
+  chatGptEmail,
+  codexAuthJson,
+  tokensFromCodexAuthJson,
+} from "./chatgpt-auth.ts";
 import type { SecretBox } from "./secret-box.ts";
 
 /*
@@ -107,6 +115,22 @@ export interface ProviderConnectionList {
 }
 
 export const ANTHROPIC_PROVIDER = "anthropic";
+/** Provider of Codex connections: an OpenAI API key or a ChatGPT login. */
+export const OPENAI_PROVIDER = "openai";
+
+/** A ChatGPT login stored for the Codex runtime (the secret is the CLI's `auth.json`). */
+export function isChatGptLogin(row: { provider: string; authMethod: string }): boolean {
+  return row.provider === OPENAI_PROVIDER && row.authMethod === "oauth_subscription";
+}
+
+/** Runtimes that only run one provider's credentials. */
+function runtimeProviderIssue(provider: string, runtimes: readonly AgentRuntimeName[]): string | undefined {
+  if (provider !== ANTHROPIC_PROVIDER && runtimes.includes("claude"))
+    return "the claude runtime only runs Anthropic keys";
+  if (provider !== OPENAI_PROVIDER && runtimes.includes("codex"))
+    return "the codex runtime only runs OpenAI credentials";
+  return undefined;
+}
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
 /** Non-Anthropic keys have no common shape; this only rejects pasted junk (spaces, newlines, huge blobs). */
 const GENERIC_API_KEY_PATTERN = /^[\x21-\x7e]{8,512}$/;
@@ -152,13 +176,8 @@ export const SaveApiKeyInput = z
         message: anthropic ? ANTHROPIC_KEY_MESSAGE : GENERIC_KEY_MESSAGE,
       });
     }
-    if (!anthropic && input.runtimes?.includes("claude")) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["runtimes"],
-        message: "the claude runtime only runs Anthropic keys",
-      });
-    }
+    const issue = input.runtimes ? runtimeProviderIssue(input.provider, input.runtimes) : undefined;
+    if (issue) ctx.addIssue({ code: "custom", path: ["runtimes"], message: issue });
   });
 export type SaveApiKeyInput = z.input<typeof SaveApiKeyInput>;
 
@@ -180,6 +199,46 @@ export type RotateApiKeyInput = z.input<typeof RotateApiKeyInput>;
 export const SetRuntimesInput = z.object({ runtimes: Runtimes }).strict();
 export type SetRuntimesInput = z.input<typeof SetRuntimesInput>;
 
+export const SetLabelInput = z.object({ label: z.string().trim().min(1).max(80) }).strict();
+export type SetLabelInput = z.input<typeof SetLabelInput>;
+
+export const StartChatGptLoginInput = z
+  .object({ owner: z.enum(["workspace", "user"]).default("user") })
+  .strict();
+export type StartChatGptLoginInput = z.input<typeof StartChatGptLoginInput>;
+
+export const PollChatGptLoginInput = z
+  .object({
+    flowToken: z.string().min(20).max(4000),
+    label: z.string().trim().min(1).max(80).optional(),
+  })
+  .strict();
+export type PollChatGptLoginInput = z.input<typeof PollChatGptLoginInput>;
+
+/** What the dashboard shows while the user signs in to ChatGPT; `flowToken` is opaque and sealed. */
+export interface ChatGptLoginStart {
+  flowToken: string;
+  userCode: string;
+  verificationUrl: string;
+  intervalSeconds: number;
+  expiresAt: Date;
+}
+
+export type ChatGptLoginPoll =
+  | { status: "pending"; intervalSeconds: number }
+  | { status: "connected"; connection: ProviderConnectionView };
+
+/** A device code is valid on OpenAI's side for about 15 minutes. */
+const CHATGPT_LOGIN_TTL_MS = 15 * 60_000;
+const FlowState = z.object({
+  d: z.string(),
+  u: z.string(),
+  i: z.number(),
+  o: z.enum(["workspace", "user"]),
+  a: z.string(),
+  exp: z.number(),
+});
+
 export interface ResolvedProviderCredential {
   /** An API key, or for `oauth_subscription` the owner's Claude Code token (Claude Code binary only). */
   apiKey: string;
@@ -191,6 +250,11 @@ export interface ResolvedProviderCredential {
    * rotated in the meantime is left alone.
    */
   markRejected(): Promise<void>;
+  /**
+   * Stores a secret the runtime refreshed during the run (a ChatGPT login rotates its refresh token). A
+   * no-op for anything else, or when the connection was replaced meanwhile.
+   */
+  storeRefreshed(secret: string): Promise<void>;
 }
 
 /** The Claude transport a resolved credential may go to: subscriptions only to the Claude Code binary. */
@@ -210,6 +274,12 @@ export interface ProviderConnectionService {
   rotateApiKey(ctx: TenantContext, id: string, input: RotateApiKeyInput): Promise<ProviderConnectionView>;
   /** Opt a connection in or out of agent runtimes; managed by the same people who manage the key. */
   setRuntimes(ctx: TenantContext, id: string, input: SetRuntimesInput): Promise<ProviderConnectionView>;
+  /** Rename a connection; the same people who manage the key may. The secret is never touched. */
+  setLabel(ctx: TenantContext, id: string, input: SetLabelInput): Promise<ProviderConnectionView>;
+  /** Start "Sign in with ChatGPT" for the Codex runtime (device code). */
+  startChatGptLogin(ctx: TenantContext, input: StartChatGptLoginInput): Promise<ChatGptLoginStart>;
+  /** Poll the sign-in once; stores the login as a connection when the user has entered the code. */
+  pollChatGptLogin(ctx: TenantContext, input: PollChatGptLoginInput): Promise<ChatGptLoginPoll>;
   test(ctx: TenantContext, id: string): Promise<ProviderConnectionView>;
   remove(ctx: TenantContext, id: string): Promise<ProviderConnectionView>;
   /**
@@ -289,6 +359,8 @@ export interface ProviderConnectionServiceDeps {
    * CLI reads (the Multix vendor keys). Without it no media key can be stored.
    */
   mediaKeyNames?: Readonly<Record<string, string>>;
+  /** The ChatGPT device-code client of the Codex runtime; without it ChatGPT sign-in is unavailable. */
+  chatgpt?: ChatGptAuthClient;
   logger?: Logger;
 }
 
@@ -574,13 +646,14 @@ export function createProviderConnectionService(
   ): Promise<ProviderConnectionRecord> {
     assertPermission(ctx, "project:write");
     const row = await deps.connections.get(ctx, connectionId);
-    const subscription = row?.authMethod === "oauth_subscription";
+    const chatgpt = row !== undefined && isChatGptLogin(row);
+    const subscription = row?.authMethod === "oauth_subscription" && !chatgpt;
     if (
       !row ||
       row.revokedAt ||
       !row.secretCiphertext ||
       isMediaProvider(row.provider) ||
-      (row.authMethod !== "api_key" && !(subscription && (await subscriptionOn(ctx))))
+      (row.authMethod !== "api_key" && !chatgpt && !(subscription && (await subscriptionOn(ctx))))
     ) {
       throw new StudixError("UNAVAILABLE", "The selected provider connection no longer exists", {
         retryable: false,
@@ -599,7 +672,10 @@ export function createProviderConnectionService(
         suggestedAction: "Use a workspace key or your own personal key.",
       });
     }
-    if (!row.runtimes.includes(runtime) || (runtime === "claude" && row.provider !== ANTHROPIC_PROVIDER)) {
+    if (chatgpt && runtime !== "codex") {
+      throw new StudixError("FORBIDDEN", "A ChatGPT login only runs the codex runtime", { retryable: false });
+    }
+    if (!row.runtimes.includes(runtime) || runtimeProviderIssue(row.provider, [runtime])) {
       throw new StudixError("FORBIDDEN", `This ${name} key is not enabled for the ${runtime} runtime`, {
         retryable: false,
         suggestedAction: `Enable the ${runtime} runtime for this key in Settings → AI & Providers, or choose another key.`,
@@ -616,7 +692,30 @@ export function createProviderConnectionService(
 
   /** Subscription rows are shown (and usable) only while the feature stays on for the workspace. */
   const visible = (row: ProviderConnectionRecord, subscriptions: boolean) =>
-    row.authMethod === "api_key" || (row.authMethod === "oauth_subscription" && subscriptions);
+    row.authMethod === "api_key" ||
+    isChatGptLogin(row) ||
+    (row.authMethod === "oauth_subscription" && subscriptions);
+
+  const chatGptHint = (tokens: ChatGptTokens) =>
+    `ChatGPT …${(tokens.accountId ?? tokens.refreshToken).slice(-4)}`;
+
+  const flowAad = (ctx: TenantContext) => `${ctx.organizationId}/${ctx.workspaceId}/chatgpt-login`;
+
+  /** Re-seals a ChatGPT login after a refresh, unless the secret was replaced meanwhile. */
+  async function storeChatGptTokens(
+    ctx: TenantContext,
+    row: ProviderConnectionRecord,
+    previousCiphertext: string,
+    tokens: ChatGptTokens,
+  ): Promise<ProviderConnectionRecord | undefined> {
+    const updated = await deps.connections.recordTest(ctx, row.id, previousCiphertext, {
+      status: "available",
+      lastTest: { ok: true, at: new Date(), latencyMs: 0 },
+      secretCiphertext: requireSecrets().seal(codexAuthJson(tokens), associatedData(ctx, row.id)),
+      secretHint: chatGptHint(tokens),
+    });
+    return updated;
+  }
 
   return {
     async overview(ctx) {
@@ -804,8 +903,9 @@ export function createProviderConnectionService(
           retryable: false,
         });
       }
-      if (existing.provider !== ANTHROPIC_PROVIDER && input.runtimes.includes("claude")) {
-        throw new StudixError("VALIDATION", "The claude runtime only runs Anthropic keys", {
+      const issue = runtimeProviderIssue(existing.provider, input.runtimes);
+      if (issue) {
+        throw new StudixError("VALIDATION", `${issue[0]?.toUpperCase()}${issue.slice(1)}`, {
           retryable: false,
         });
       }
@@ -814,11 +914,148 @@ export function createProviderConnectionService(
       return toView(ctx, row);
     },
 
+    async setLabel(ctx, id, rawInput) {
+      const input = parse(SetLabelInput, rawInput);
+      const existing = await load(ctx, id);
+      requireManage(ctx, existing);
+      if (existing.label === input.label) return toView(ctx, existing);
+      const row = await deps.connections.update(ctx, id, { label: input.label });
+      await deps.audit.append(ctx, {
+        actor: actorRef(ctx.actor),
+        action: `${SUBJECT}.renamed`,
+        subjectType: SUBJECT,
+        subjectId: row.id,
+        data: { provider: row.provider, owner: row.ownerType, from: existing.label, to: row.label },
+      });
+      return toView(ctx, row);
+    },
+
+    async startChatGptLogin(ctx, rawInput) {
+      const input = parse(StartChatGptLoginInput, rawInput);
+      if (input.owner === "workspace") assertPermission(ctx, "member:manage");
+      else assertPermission(ctx, "project:write");
+      const actorId = userId(ctx);
+      if (!actorId) throw new StudixError("FORBIDDEN", "ChatGPT can only be connected by a signed-in user");
+      const client = deps.chatgpt;
+      if (!client) {
+        throw new StudixError("UNAVAILABLE", "ChatGPT sign-in is not configured on this server", {
+          retryable: false,
+          suggestedAction: "Add an OpenAI API key for the codex runtime instead.",
+        });
+      }
+      const secrets = requireSecrets();
+      const code = await client.requestDeviceCode();
+      const expiresAt = new Date(Date.now() + CHATGPT_LOGIN_TTL_MS);
+      // Stateless: the device id travels sealed to this workspace and caller, so any app instance can poll.
+      const state: z.infer<typeof FlowState> = {
+        d: code.deviceAuthId,
+        u: code.userCode,
+        i: code.intervalSeconds,
+        o: input.owner,
+        a: actorId,
+        exp: expiresAt.getTime(),
+      };
+      return {
+        flowToken: secrets.seal(JSON.stringify(state), flowAad(ctx)),
+        userCode: code.userCode,
+        verificationUrl: CHATGPT_VERIFICATION_URL,
+        intervalSeconds: code.intervalSeconds,
+        expiresAt,
+      };
+    },
+
+    async pollChatGptLogin(ctx, rawInput) {
+      const input = parse(PollChatGptLoginInput, rawInput);
+      const client = deps.chatgpt;
+      if (!client) throw new StudixError("UNAVAILABLE", "ChatGPT sign-in is not configured on this server");
+      const secrets = requireSecrets();
+      let state: z.infer<typeof FlowState>;
+      try {
+        state = FlowState.parse(JSON.parse(secrets.open(input.flowToken, flowAad(ctx))));
+      } catch {
+        throw new StudixError("VALIDATION", "This ChatGPT sign-in is not valid here", {
+          retryable: false,
+          suggestedAction: "Start the ChatGPT sign-in again.",
+        });
+      }
+      if (state.a !== userId(ctx)) {
+        throw new StudixError("FORBIDDEN", "This ChatGPT sign-in was started by someone else");
+      }
+      if (state.o === "workspace") assertPermission(ctx, "member:manage");
+      if (Date.now() > state.exp) {
+        throw new StudixError("VALIDATION", "The ChatGPT sign-in code expired", {
+          retryable: false,
+          suggestedAction: "Start the ChatGPT sign-in again.",
+        });
+      }
+      const result = await client.poll({ deviceAuthId: state.d, userCode: state.u });
+      if (result.status === "pending") return { status: "pending", intervalSeconds: state.i };
+      const ownerUserId = state.o === "user" ? state.a : undefined;
+      const active = await deps.connections.listActive(ctx);
+      const existing = active.find(
+        (row) => isChatGptLogin(row) && row.ownerType === state.o && row.ownerUserId === ownerUserId,
+      );
+      const secret = codexAuthJson(result.tokens);
+      if (existing) {
+        // Signing in again replaces the stored login (for example another ChatGPT account).
+        const row = await deps.connections.update(ctx, existing.id, {
+          status: "available",
+          secretCiphertext: secrets.seal(secret, associatedData(ctx, existing.id)),
+          secretHint: chatGptHint(result.tokens),
+          lastTest: { ok: true, at: new Date(), latencyMs: 0 },
+        });
+        await audit(ctx, "rotated", row);
+        return { status: "connected", connection: toView(ctx, row) };
+      }
+      const id = newId("pcon");
+      const email = chatGptEmail(result.tokens.idToken);
+      const row = await deps.connections.create(ctx, {
+        id,
+        provider: OPENAI_PROVIDER,
+        authMethod: "oauth_subscription",
+        ownerType: state.o,
+        ownerUserId,
+        label: input.label ?? (email ? `ChatGPT (${email})` : "ChatGPT"),
+        status: "available",
+        secretCiphertext: secrets.seal(secret, associatedData(ctx, id)),
+        secretHint: chatGptHint(result.tokens),
+        lastTest: { ok: true, at: new Date(), latencyMs: 0 },
+        runtimes: ["codex"],
+        billingSource: "subscription",
+        createdBy: actorRef(ctx.actor),
+      });
+      await audit(ctx, "created", row);
+      deps.logger?.info("chatgpt login connected", { connectionId: id, workspaceId: ctx.workspaceId });
+      return { status: "connected", connection: toView(ctx, row) };
+    },
+
     async test(ctx, id) {
       const existing = await load(ctx, id);
       requireManage(ctx, existing);
       if (!existing.secretCiphertext)
         throw new StudixError("NOT_FOUND", `provider connection ${id} has no key`);
+      if (isChatGptLogin(existing)) {
+        // The test is a token refresh, which also rotates the refresh token, so it is stored right away.
+        const stored = tokensFromCodexAuthJson(openKey(ctx, existing, existing.secretCiphertext));
+        const started = Date.now();
+        try {
+          if (!stored || !deps.chatgpt)
+            throw new StudixError("UNAVAILABLE", "ChatGPT sign-in is not configured");
+          const fresh = await deps.chatgpt.refresh(stored.refreshToken);
+          const row = await storeChatGptTokens(ctx, existing, existing.secretCiphertext, fresh);
+          if (!row) return toView(ctx, await load(ctx, id));
+          await audit(ctx, "tested", row);
+          return toView(ctx, row);
+        } catch (err) {
+          const error = err instanceof StudixError ? err : new StudixError("PROVIDER_ERROR", String(err));
+          const row = await deps.connections.recordTest(ctx, id, existing.secretCiphertext, {
+            // Only OpenAI refusing the refresh token means the login is gone; anything else is a hiccup.
+            status: error.code === "VALIDATION" ? "invalid" : existing.status,
+            lastTest: { ok: false, at: new Date(), latencyMs: Date.now() - started, error: error.toJSON() },
+          });
+          return toView(ctx, row ?? (await load(ctx, id)));
+        }
+      }
       // Never sent to the API directly; the next Claude Code run is the test.
       if (existing.authMethod === "oauth_subscription") return toView(ctx, existing);
       const apiKey = openKey(ctx, existing, existing.secretCiphertext);
@@ -850,6 +1087,11 @@ export function createProviderConnectionService(
         apiKey,
         authMethod: row.authMethod,
         connection: toView(ctx, row),
+        async storeRefreshed(secret) {
+          if (!isChatGptLogin(row) || secret === apiKey) return;
+          const tokens = tokensFromCodexAuthJson(secret);
+          if (tokens) await storeChatGptTokens(ctx, row, ciphertext, tokens);
+        },
         async markRejected() {
           if (row.authMethod === "oauth_subscription") {
             // Claude Code itself refused the token; there is no direct check to run, so trust that.

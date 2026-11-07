@@ -222,7 +222,9 @@ function agentHarness(
       ? { claude: { transport, plannerModel: settings.claudePlanner.model } }
       : {}),
     logger: runtime.logger,
-    ...(sandbox ? { piWorkspace: (stage) => sandbox.forStage(stage) } : {}),
+    ...(sandbox
+      ? { piWorkspace: (stage) => sandbox.forStage(stage), codex: { defaultModel: settings.codexModel } }
+      : {}),
   });
 }
 

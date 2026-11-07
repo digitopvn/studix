@@ -13,7 +13,7 @@ import { StudixError } from "@studix/shared";
 import { packRegistry } from "@studix/skills";
 import { RenderPreset } from "@studix/video-ir";
 import { z } from "zod";
-import { AgentModelRef, ReasoningEffortInput, resolveAgentModelSelection } from "../agent-model-selection.ts";
+import { AgentInput, resolveAgentSelection } from "../agent-model-selection.ts";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
@@ -124,18 +124,15 @@ const CreateVideoInput = z
       .optional()
       .describe("Seconds from now until the job fails with TIMEOUT."),
     renderPreset: RenderPreset.optional(),
-    planner: PlannerSelection.optional().describe(
-      "Opt-in Claude planner: an Anthropic key connection id (dashboard, AI & Providers). Not with spec.",
-    ),
+    planner: PlannerSelection.optional().describe("Alias of agent with runtime claude. Not with spec."),
     workflowTemplate: WorkflowTemplateId.optional().describe(
       "Workflow pack id (studix_inspect skills). Default brand-intro.",
     ),
     // Where creative agent stages run: in Studix (harness, the default) or on the host's agent through the
     // agent task tools. Left undescribed on the wire to keep the tool list within its size budget.
     agentMode: z.enum(["harness", "host"]).optional(),
-    model: AgentModelRef.optional().describe("Agent model provider/modelId from the workspace catalog."),
-    reasoningEffort: ReasoningEffortInput.optional().describe(
-      "Agent thinking level; needs a reasoning model.",
+    agent: AgentInput.optional().describe(
+      "Agent runtime, connection, model and effort (studix_list_agent_runtimes). Default: workspace preference.",
     ),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
@@ -218,8 +215,12 @@ export const NATIVE_TOOLS = [
     async run(ctx, input) {
       const brief = input.brief ?? { prompt: input.prompt };
       const pack = resolveWorkflowPack(packRegistry, input.workflowTemplate);
-      if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, input.planner);
-      const agent = await resolveAgentModelSelection(ctx.deps, ctx.tenant, input);
+      const planner =
+        input.agent?.runtime === "claude"
+          ? { runtime: "claude" as const, providerConnectionId: input.agent.providerConnectionId }
+          : input.planner;
+      if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, planner);
+      const agent = input.agent ? await resolveAgentSelection(ctx.deps, ctx.tenant, input.agent) : undefined;
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
         spec: input.spec,
@@ -231,8 +232,7 @@ export const NATIVE_TOOLS = [
         planner: input.planner,
         workflowTemplate: pack.id,
         agentMode: input.agentMode,
-        ...(agent.choice ? { agentModel: agent.choice } : {}),
-        ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
+        ...(agent ? { agent } : {}),
       });
       return {
         data: {

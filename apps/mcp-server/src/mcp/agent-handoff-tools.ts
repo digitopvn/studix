@@ -1,4 +1,10 @@
-import { type AgentHandoffService, AGENT_HANDOFF_TOOLS as NAMES, STUDIX_TOOLS } from "@studix/core";
+import { listCodexModels, listPiCatalog } from "@studix/agent-runtime";
+import {
+  AGENT_RUNTIMES,
+  type AgentHandoffService,
+  AGENT_HANDOFF_TOOLS as NAMES,
+  STUDIX_TOOLS,
+} from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { z } from "zod";
 import { assertReportedModel, ReasoningEffortInput } from "../agent-model-selection.ts";
@@ -94,11 +100,27 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
         })
         .optional()
         .describe("What the work cost you; recorded, never billed. model is provider/modelId."),
+      agent: z
+        .object({
+          runtime: z.enum(AGENT_RUNTIMES).optional(),
+          model: z.string().max(100).optional(),
+          reasoningEffort: ReasoningEffortInput.optional(),
+        })
+        .optional()
+        .describe("The agent you ran on; model and effort here win over usage."),
     }),
     readOnly: false,
     audited: true,
-    async run(ctx, input) {
-      const usage = input.usage;
+    async run(ctx, { agent, ...rest }) {
+      const usage =
+        agent?.model || agent?.reasoningEffort
+          ? {
+              ...rest.usage,
+              ...(agent.model ? { model: agent.model } : {}),
+              ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
+            }
+          : rest.usage;
+      const input = { ...rest, ...(usage ? { usage } : {}) };
       // A declared model must be one the catalog knows, and an effort needs a reasoning model.
       if (usage?.model?.includes("/") || usage?.reasoningEffort) {
         assertReportedModel(usage.model, usage.reasoningEffort);
@@ -109,6 +131,38 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
         next: [followJob(result.task.jobId)],
         scope: { jobId: result.task.jobId },
       };
+    },
+  }),
+  tool({
+    name: "studix_list_agent_runtimes",
+    title: "List agent runtimes",
+    description:
+      "Agent runtimes (claude, codex, pi) with your usable connections (no secrets) and their models, for create_video agent.",
+    input: z.object({}),
+    readOnly: true,
+    async run(ctx) {
+      const providers = ctx.deps.providers;
+      const { connections } = providers ? await providers.list(ctx.tenant) : { connections: [] };
+      const catalog = new Map(listPiCatalog().map((p) => [p.id, p.models] as const));
+      const models = (runtime: (typeof AGENT_RUNTIMES)[number], provider: string) =>
+        (runtime === "codex" ? listCodexModels() : runtime === "pi" ? (catalog.get(provider) ?? []) : []).map(
+          (m) => ({ id: m.id, reasoning: m.reasoning }),
+        );
+      const runtimes = AGENT_RUNTIMES.map((runtime) => ({
+        runtime,
+        connections: connections
+          .filter((c) => c.runtimes.includes(runtime) && c.status !== "invalid")
+          .map((c) => ({
+            providerConnectionId: c.id,
+            provider: c.provider,
+            label: c.label,
+            owner: c.owner,
+            authMethod: c.authMethod,
+            status: c.status,
+            models: models(runtime, c.provider),
+          })),
+      }));
+      return { data: { runtimes }, next: [] };
     },
   }),
 ] as const;

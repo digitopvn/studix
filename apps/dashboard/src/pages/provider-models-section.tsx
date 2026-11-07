@@ -1,8 +1,9 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   type AgentRuntimeName,
   api,
   type CatalogProvider,
+  type ChatGptLoginStart,
   type ModelPreference,
   type ProviderConnection,
   type ProviderConnectionList,
@@ -72,6 +73,7 @@ export function ProviderModelsSection() {
     <>
       <ErrorBanner error={catalog.error ?? connections.error ?? preferences.error} />
       {connections.data && <ProviderKeysCard catalog={providers} list={connections.data} reload={reload} />}
+      {connections.data && <CodexCard list={connections.data} reload={reload} />}
       {connections.data && preferences.data && (
         <ModelsCard
           catalog={providers}
@@ -218,7 +220,13 @@ function ProviderKeysCard({
             {list.connections.map((c) => (
               <tr key={c.id}>
                 <td>{providerName(catalog, c.provider)}</td>
-                <td>{c.label}</td>
+                <td>
+                  <LabelCell
+                    connection={c}
+                    busy={busy.has(c.id)}
+                    onSave={(label) => act(c.id, () => api.renameProviderConnection(c.id, label))}
+                  />
+                </td>
                 <td>{c.owner === "workspace" ? "Workspace" : c.ownedByMe ? "Personal (you)" : "Personal"}</td>
                 <td className="mono">{c.keyHint ?? "-"}</td>
                 <td>
@@ -230,12 +238,31 @@ function ProviderKeysCard({
                       type="checkbox"
                       checked={c.runtimes.includes("pi")}
                       disabled={
-                        !c.canManage || busy.has(c.id) || (c.runtimes.length === 1 && c.runtimes[0] === "pi")
+                        !c.canManage ||
+                        busy.has(c.id) ||
+                        c.authMethod === "oauth_subscription" ||
+                        (c.runtimes.length === 1 && c.runtimes[0] === "pi")
                       }
                       onChange={(e) => toggleRuntime(c, "pi", e.target.checked)}
                     />
                     Pi
                   </label>
+                  {c.provider === "openai" && (
+                    <label className="row">
+                      <input
+                        type="checkbox"
+                        checked={c.runtimes.includes("codex")}
+                        disabled={
+                          !c.canManage ||
+                          busy.has(c.id) ||
+                          c.authMethod === "oauth_subscription" ||
+                          (c.runtimes.length === 1 && c.runtimes[0] === "codex")
+                        }
+                        onChange={(e) => toggleRuntime(c, "codex", e.target.checked)}
+                      />
+                      Codex
+                    </label>
+                  )}
                   {c.provider === "anthropic" && (
                     <label className="row">
                       <input
@@ -269,14 +296,16 @@ function ProviderKeysCard({
                       >
                         {busy.has(c.id) ? "Testing…" : "Test"}
                       </button>
-                      <button
-                        type="button"
-                        className="secondary small"
-                        disabled={unavailable || busy.has(c.id)}
-                        onClick={() => setReplacing({ id: c.id, apiKey: "" })}
-                      >
-                        Replace key
-                      </button>
+                      {c.authMethod === "api_key" && (
+                        <button
+                          type="button"
+                          className="secondary small"
+                          disabled={unavailable || busy.has(c.id)}
+                          onClick={() => setReplacing({ id: c.id, apiKey: "" })}
+                        >
+                          Replace key
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="danger small"
@@ -315,6 +344,182 @@ function ProviderKeysCard({
             ))}
           </tbody>
         </table>
+      )}
+    </Section>
+  );
+}
+
+/** The connection's label, renamed in place: Enter or Save commits, Esc cancels. */
+function LabelCell({
+  connection,
+  busy,
+  onSave,
+}: {
+  connection: ProviderConnection;
+  busy: boolean;
+  onSave: (label: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<string>();
+  const input = useRef<HTMLInputElement>(null);
+  const editing = draft !== undefined;
+  useEffect(() => {
+    if (editing) input.current?.focus();
+  }, [editing]);
+  if (!editing) {
+    return (
+      <span className="row">
+        {connection.label}
+        {connection.canManage && (
+          <button
+            type="button"
+            className="secondary small"
+            aria-label={`Rename ${connection.label}`}
+            title="Rename"
+            disabled={busy}
+            onClick={() => setDraft(connection.label)}
+          >
+            ✎
+          </button>
+        )}
+      </span>
+    );
+  }
+  const label = draft.trim();
+  async function commit(event: FormEvent) {
+    event.preventDefault();
+    if (!label || label.length > 80) return;
+    if (label !== connection.label) await onSave(label);
+    setDraft(undefined);
+  }
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") setDraft(undefined);
+  }
+  return (
+    <form className="row" onSubmit={commit}>
+      <input
+        ref={input}
+        aria-label="Connection label"
+        maxLength={80}
+        value={draft}
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={onKeyDown}
+      />
+      <button type="submit" className="small" disabled={busy || !label}>
+        Save
+      </button>
+      <button type="button" className="secondary small" onClick={() => setDraft(undefined)}>
+        Cancel
+      </button>
+    </form>
+  );
+}
+
+/**
+ * Connects the Codex runtime: "Sign in with ChatGPT" (device code; the login is stored sealed and billed to
+ * the ChatGPT plan), or an OpenAI API key above with its Codex box ticked.
+ */
+function CodexCard({ list, reload }: { list: ProviderConnectionList; reload: () => void }) {
+  const [owner, setOwner] = useState<"workspace" | "user">(list.canAddPersonalKey ? "user" : "workspace");
+  const [flow, setFlow] = useState<ChatGptLoginStart>();
+  const [error, setError] = useState<unknown>();
+  const [starting, setStarting] = useState(false);
+  const unavailable = list.storage === "unavailable";
+  const codex = list.connections.filter((c) => c.runtimes.includes("codex"));
+  // A new reload callback every render must not restart the polling loop.
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+
+  useEffect(() => {
+    if (!flow) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = (delaySeconds: number) => {
+      timer = setTimeout(async () => {
+        try {
+          const result = await api.pollChatGptLogin(flow.flowToken);
+          if (stopped) return;
+          if (result.status === "connected") {
+            setFlow(undefined);
+            reloadRef.current();
+          } else {
+            poll(result.intervalSeconds);
+          }
+        } catch (e) {
+          if (stopped) return;
+          setError(e);
+          setFlow(undefined);
+        }
+      }, delaySeconds * 1000);
+    };
+    poll(flow.intervalSeconds);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [flow]);
+
+  async function start() {
+    setError(undefined);
+    setStarting(true);
+    try {
+      setFlow(await api.startChatGptLogin(owner));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  return (
+    <Section title="Codex runtime">
+      <p className="muted">
+        Codex runs agent tasks in the skill sandbox. Sign in with ChatGPT to use your ChatGPT plan, or add an
+        OpenAI API key above and tick Codex to pay by usage. Test refreshes a ChatGPT login; Remove forgets
+        it.
+      </p>
+      {(list.canAddWorkspaceKey || list.canAddPersonalKey) && !flow && (
+        <div className="row">
+          <select
+            aria-label="ChatGPT login owner"
+            value={owner}
+            disabled={unavailable}
+            onChange={(e) => setOwner(e.target.value as "workspace" | "user")}
+          >
+            {list.canAddPersonalKey && <option value="user">Personal — only you</option>}
+            {list.canAddWorkspaceKey && <option value="workspace">Workspace — shared with members</option>}
+          </select>
+          <button type="button" disabled={unavailable || starting} onClick={start}>
+            {starting ? "Starting…" : "Sign in with ChatGPT"}
+          </button>
+        </div>
+      )}
+      {flow && (
+        <div>
+          <p>
+            Open{" "}
+            <a href={flow.verificationUrl} target="_blank" rel="noreferrer">
+              {flow.verificationUrl}
+            </a>{" "}
+            and enter the code <strong className="mono">{flow.userCode}</strong>. This page updates once you
+            approve it; the code expires {formatDate(flow.expiresAt)}.
+          </p>
+          <button type="button" className="secondary small" onClick={() => setFlow(undefined)}>
+            Cancel
+          </button>
+        </div>
+      )}
+      <ErrorBanner error={error} />
+      {codex.length === 0 && <Empty>No connection runs Codex yet.</Empty>}
+      {codex.length > 0 && (
+        <ul>
+          {codex.map((c) => (
+            <li key={c.id}>
+              {c.label} · {c.authMethod === "oauth_subscription" ? "ChatGPT plan" : "OpenAI API key"} ·{" "}
+              {STATUS_LABELS[c.status] ?? c.status}
+            </li>
+          ))}
+        </ul>
       )}
     </Section>
   );

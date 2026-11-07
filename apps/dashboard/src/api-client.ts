@@ -290,7 +290,7 @@ export interface ProviderConnectionTest {
   error?: StudixErrorPayload & { retryable: boolean };
 }
 
-export type AgentRuntimeName = "claude" | "pi";
+export type AgentRuntimeName = "claude" | "codex" | "pi";
 
 /** A stored provider API key binding; the secret itself never leaves the server, only `keyHint`. */
 export interface ProviderConnection {
@@ -472,6 +472,19 @@ export interface ProviderConnectionList {
   canAddPersonalKey: boolean;
   connections: ProviderConnection[];
 }
+
+/** A ChatGPT device-code sign-in in progress: the user enters `userCode` at `verificationUrl`. */
+export interface ChatGptLoginStart {
+  flowToken: string;
+  userCode: string;
+  verificationUrl: string;
+  intervalSeconds: number;
+  expiresAt: string;
+}
+
+export type ChatGptLoginPoll =
+  | { status: "pending"; intervalSeconds: number }
+  | { status: "connected"; connection: ProviderConnection };
 
 export interface CatalogModel {
   id: string;
@@ -959,6 +972,12 @@ export const api = {
   }) => request<ProviderConnection>("POST", "/api/providers/connections", input),
   replaceProviderKey: (id: string, apiKey: string) =>
     request<ProviderConnection>("PUT", `/api/providers/connections/${enc(id)}`, { apiKey }),
+  renameProviderConnection: (id: string, label: string) =>
+    request<ProviderConnection>("PATCH", `/api/providers/connections/${enc(id)}`, { label }),
+  startChatGptLogin: (owner: "workspace" | "user") =>
+    request<ChatGptLoginStart>("POST", "/api/providers/connections/chatgpt/start", { owner }),
+  pollChatGptLogin: (flowToken: string) =>
+    request<ChatGptLoginPoll>("POST", "/api/providers/connections/chatgpt/poll", { flowToken }),
   setProviderRuntimes: (id: string, runtimes: AgentRuntimeName[]) =>
     request<ProviderConnection>("PUT", `/api/providers/connections/${enc(id)}/runtimes`, { runtimes }),
   testProviderKey: (id: string) =>

@@ -4,6 +4,7 @@ import { createPiKeyTester, findPiModel, isRuntimeKeyProvider } from "@studix/ag
 import {
   createAnthropicKeyTester,
   createApiKeyService,
+  createChatGptAuthClient,
   createDashboardAuth,
   createModelPreferenceService,
   createPlatformCredentialService,
@@ -277,6 +278,7 @@ export async function composeApp(
       createPiKeyTester(),
     ),
     isSupportedProvider: isRuntimeKeyProvider,
+    chatgpt: createChatGptAuthClient(),
     secrets: secretBox,
     claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
     mediaKeyNames: MULTIX_VENDOR_KEYS,

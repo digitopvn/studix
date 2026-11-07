@@ -3,7 +3,9 @@ import {
   agentSpendOf,
   CLAUDE_AGENT_RUNTIME_ID,
   type ClaudeAgentTransport,
+  CODEX_AGENT_RUNTIME_ID,
   createClaudeAgentRuntime,
+  createCodexAgentRuntime,
   createPiSdkAgentRuntime,
   createProviderBindingResolver,
   type PiCredentialSource,
@@ -19,6 +21,7 @@ import {
   connectionFunding,
   FUNDING_SOURCES,
   type FundingSource,
+  JobAgentSelection,
   type ModelChoice,
   type ModelSelectionSource,
   PlannerSelection,
@@ -39,6 +42,7 @@ import { z } from "zod";
 /** Provider ids recorded on the provider executions of harness runs (same as the planner and decisions). */
 export const HARNESS_PROVIDER: Readonly<Record<AgentRuntimeName, string>> = {
   claude: "anthropic",
+  codex: "openai",
   pi: "pi",
 };
 
@@ -57,6 +61,13 @@ export interface WorkerAgentHarnessDeps {
   };
   logger: Logger;
   clock?: Clock;
+  /** The worker's Codex runtime; it runs in the skill sandbox, so it also needs `piWorkspace`. */
+  codex?: {
+    /** Model of a Codex job that named none. */
+    defaultModel: string;
+    /** Test seam; production runs the Codex CLI in the sandbox. */
+    runtimeFor?: typeof createCodexAgentRuntime;
+  };
   /** Test seam; production runs the real Pi SDK. */
   piRuntimeFor?: (resolved: PiResolvedRun, workspace?: PiTaskWorkspaceProvider) => AgentRuntime;
   /** The skill sandbox of a stage's tool-using Pi runs (STUDIX_SANDBOX); without it such runs fail VALIDATION. */
@@ -73,6 +84,7 @@ export interface WorkerAgentHarness {
 /** `source` marks a Claude choice taken from a preference, pinned once its connection is opened. */
 type Choice =
   | { runtime: "claude"; connectionId: string; model: string; source?: ModelSelectionSource }
+  | { runtime: "codex"; connectionId: string; model: string; reasoningEffort?: ReasoningEffort }
   | { runtime: "pi"; resolved: PiResolvedRun };
 
 /** Most specific first, as in `resolveModelSelection`. */
@@ -104,6 +116,17 @@ function claudeOff(stage: string): StudixError {
       retryable: false,
       suggestedAction:
         "Choose a Pi model in Settings → AI & Providers, or ask the operator to enable STUDIX_CLAUDE_PLANNER.",
+    },
+  );
+}
+
+function codexOff(stage: string): StudixError {
+  return new StudixError(
+    "UNAVAILABLE",
+    `Agent stage "${stage}" selected Codex, which this worker does not run`,
+    {
+      retryable: false,
+      suggestedAction: "Ask the operator to enable STUDIX_SANDBOX (Codex runs in the skill sandbox).",
     },
   );
 }
@@ -154,13 +177,26 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
 
   async function choose(stage: StageContext, name: string): Promise<Choice> {
     const { ctx, job } = stage;
+    const agent = JobAgentSelection.safeParse(job.payload.agent);
+    if (agent.success && agent.data.runtime === "codex") {
+      if (!deps.codex || !deps.piWorkspace) throw codexOff(name);
+      return {
+        runtime: "codex",
+        connectionId: agent.data.connectionId,
+        model: agent.data.modelId ?? deps.codex.defaultModel,
+        ...(agent.data.reasoningEffort ? { reasoningEffort: agent.data.reasoningEffort } : {}),
+      };
+    }
     const planner = PlannerSelection.safeParse(job.payload.planner);
     if (planner.success) {
       if (!deps.claude) throw claudeOff(name);
       return {
         runtime: "claude",
         connectionId: planner.data.providerConnectionId,
-        model: deps.claude.plannerModel,
+        // `agent.modelId` is the per-job model of a Claude agent; the planner alias has none.
+        model:
+          (agent.success && agent.data.runtime === "claude" && agent.data.modelId) ||
+          deps.claude.plannerModel,
       };
     }
     const [pinnedPi, pinnedClaude] = await Promise.all([
@@ -184,6 +220,40 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     if (!deps.claude) throw claudeOff(name);
     const { preference, source } = claude;
     return { runtime: "claude", connectionId: preference.connectionId, model: preference.modelId, source };
+  }
+
+  /** Codex on the chosen OpenAI connection (a ChatGPT login or an API key), inside the task's sandbox. */
+  async function codexRuntime(
+    stage: StageContext,
+    name: string,
+    choice: Extract<Choice, { runtime: "codex" }>,
+  ): Promise<{ runtime: AgentRuntime; funding: FundingSource; markRejected(): Promise<void> }> {
+    const codex = deps.codex;
+    if (!codex || !deps.piWorkspace) throw codexOff(name);
+    const credential = await deps.credentials.resolveForExecution(stage.ctx, {
+      connectionId: choice.connectionId,
+      requestedBy: stage.job.createdBy,
+      runtime: "codex",
+    });
+    const runtime = (codex.runtimeFor ?? createCodexAgentRuntime)({
+      workspace: deps.piWorkspace(stage),
+      model: choice.model,
+      ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
+      clock,
+      credential: async () =>
+        credential.authMethod === "oauth_subscription"
+          ? {
+              kind: "chatgpt",
+              authJson: credential.apiKey,
+              storeRefreshed: (s) => credential.storeRefreshed(s),
+            }
+          : { kind: "api_key", apiKey: credential.apiKey },
+    });
+    return {
+      runtime,
+      funding: connectionFunding(credential.connection.owner),
+      markRejected: () => credential.markRejected(),
+    };
   }
 
   /** Claude on the chosen Anthropic connection; a preference choice is pinned to the job first. */
@@ -291,6 +361,10 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       if (choice.runtime === "claude") {
         ({ runtime, model, funding, markRejected } = await claudeRuntime(stage, task.skill, choice));
         id = CLAUDE_AGENT_RUNTIME_ID;
+      } else if (choice.runtime === "codex") {
+        ({ runtime, funding, markRejected } = await codexRuntime(stage, task.skill, choice));
+        model = choice.model;
+        id = CODEX_AGENT_RUNTIME_ID;
       } else {
         // Only a task that asks for tools opens a sandbox; the provider is built lazily per stage.
         runtime = piRuntimeFor(
@@ -389,16 +463,23 @@ const RequestedModel = z
   .object({
     agentModel: z.object({ connectionId: z.string(), provider: z.string(), modelId: z.string() }).optional(),
     reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+    agent: JobAgentSelection.optional(),
   })
   .passthrough();
 
-/** The agent model and effort `studix_create_video` checked and stored on the job, if any. */
+/** The Pi agent model and effort `studix_create_video` checked and stored on the job, if any. */
 export function jobModelRequest(payload: unknown): {
   request?: { choice?: ModelChoice; reasoningEffort?: ReasoningEffort };
 } {
   const parsed = RequestedModel.safeParse(payload ?? {});
   if (!parsed.success) return {};
-  const { agentModel, reasoningEffort } = parsed.data;
+  const { agent } = parsed.data;
+  // `agent` is the current field; top-level agentModel/reasoningEffort are kept for jobs queued before it.
+  const agentModel =
+    agent?.runtime === "pi" && agent.modelId
+      ? { connectionId: agent.connectionId, provider: agent.provider, modelId: agent.modelId }
+      : parsed.data.agentModel;
+  const reasoningEffort = agent?.runtime === "pi" ? agent.reasoningEffort : parsed.data.reasoningEffort;
   if (!agentModel && !reasoningEffort) return {};
   return {
     request: {

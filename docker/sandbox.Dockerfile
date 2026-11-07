@@ -63,6 +63,12 @@ ARG HYPERFRAMES_VERSION=0.8.77
 RUN npm install -g --no-audit --no-fund "hyperframes@${HYPERFRAMES_VERSION}" \
  && hyperframes --version && rm -rf /root/.npm
 
+# The Codex CLI of the codex agent runtime. Its login (auth.json) is written per task into /work/.codex
+# by the worker through stdin and never baked into the image.
+ARG CODEX_VERSION=0.167.0
+RUN npm install -g --no-audit --no-fund "@openai/codex@${CODEX_VERSION}" \
+ && codex --version && rm -rf /root/.npm
+
 # The worker mounts the task's directory at /work (HOME=/work/.home) and the skills read-only at /skills.
 RUN mkdir -p /work /skills && chown 1000:1000 /work
 WORKDIR /work

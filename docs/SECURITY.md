@@ -395,6 +395,14 @@ or a path guard as a security boundary:
   keys, passed by name; database, storage, secrets-box and model keys never enter
   it. Without `STUDIX_SANDBOX=docker` such a stage fails `VALIDATION`
   ([ADR-0018](decisions/0018-skill-sandbox.md)).
+- A ChatGPT sign-in for Codex uses the device-code flow: the browser talks to
+  OpenAI, Studix only holds a sealed, 15-minute flow token bound to the user and
+  workspace that started it. The resulting tokens are stored sealed like an API
+  key and never returned. For a Codex run the worker writes `auth.json` into the
+  task sandbox's scratch `CODEX_HOME` through stdin (an API key goes through
+  `codex login --with-api-key` on stdin), never on a command line; the file is
+  read back after the run to keep a rotated refresh token, and the container is
+  removed with it. A ChatGPT connection runs only on the `codex` runtime.
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its

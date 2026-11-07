@@ -201,6 +201,17 @@ export function providerRoutes(deps: AppDeps): Router {
     const id = idParam(req, "connectionId");
     res.json(await requireProviders(deps).rotateApiKey(sessionOf(res).ctx, id, req.body ?? {}));
   });
+  router.patch("/connections/:connectionId", async (req, res) => {
+    const id = idParam(req, "connectionId");
+    res.json(await requireProviders(deps).setLabel(sessionOf(res).ctx, id, req.body ?? {}));
+  });
+  // "Sign in with ChatGPT" for the codex runtime: start returns the device code, poll stores the login.
+  router.post("/connections/chatgpt/start", async (req, res) => {
+    res.json(await requireProviders(deps).startChatGptLogin(sessionOf(res).ctx, req.body ?? {}));
+  });
+  router.post("/connections/chatgpt/poll", async (req, res) => {
+    res.json(await requireProviders(deps).pollChatGptLogin(sessionOf(res).ctx, req.body ?? {}));
+  });
   router.put("/connections/:connectionId/runtimes", async (req, res) => {
     const id = idParam(req, "connectionId");
     res.json(await requireProviders(deps).setRuntimes(sessionOf(res).ctx, id, req.body ?? {}));
@@ -233,6 +244,9 @@ export function providerRoutes(deps: AppDeps): Router {
   });
   router.delete("/multix", async (_req, res) => {
     res.json(await requireMultix(deps).settings.reset(sessionOf(res).ctx));
+  });
+  router.get("/multix/catalog", async (_req, res) => {
+    res.json(await requireMultix(deps).catalog(sessionOf(res).ctx));
   });
   router.post("/multix/check", async (_req, res) => {
     res.json(await requireMultix(deps).check(sessionOf(res).ctx));

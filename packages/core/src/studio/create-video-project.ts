@@ -46,7 +46,18 @@ export async function createVideoProject(
   rawInput: CreateVideoProjectInput,
 ): Promise<CreateVideoProjectResult> {
   assertPermission(ctx, "project:write");
-  const input = parseInput(CreateVideoProjectInput, rawInput, "createVideoProject input");
+  const parsed = parseInput(CreateVideoProjectInput, rawInput, "createVideoProject input");
+  if (parsed.planner && parsed.agent) {
+    throw new StudixError("VALIDATION", "planner is an alias of agent: pass one of them, not both");
+  }
+  // A Claude agent runs the Claude planner path, so it keeps the legacy planner field the worker reads.
+  const input =
+    parsed.agent?.runtime === "claude"
+      ? {
+          ...parsed,
+          planner: { runtime: "claude" as const, providerConnectionId: parsed.agent.connectionId },
+        }
+      : parsed;
   if (input.planner && input.spec !== undefined) {
     // A client spec skips planning, so a planner choice would be silently ignored.
     throw new StudixError(
@@ -111,8 +122,7 @@ export async function createVideoProject(
       planner: input.planner,
       workflowTemplate,
       ...(input.agentMode ? { agentMode: input.agentMode } : {}),
-      ...(input.agentModel ? { agentModel: input.agentModel } : {}),
-      ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+      ...(input.agent ? { agent: input.agent } : {}),
     },
     idempotencyKey: input.idempotencyKey,
     budgetCents,
