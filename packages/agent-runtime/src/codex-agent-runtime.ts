@@ -106,8 +106,16 @@ function codexFailure(lines: readonly string[], secret: string): StudixError {
       suggestedAction: "Reconnect Codex in Settings → AI & Providers.",
     });
   }
-  if (/\b429\b|rate.?limit|quota|usage limit/i.test(clean)) {
-    return new StudixError("RATE_LIMITED", `Codex is rate limited or out of quota: ${clean}`);
+  if (/quota|usage limit|credit|billing/i.test(clean)) {
+    return new StudixError("RATE_LIMITED", `Codex is out of quota: ${clean}`, { retryable: false });
+  }
+  if (/overload|\b(503|529)\b|capacity/i.test(clean)) {
+    return new StudixError("PROVIDER_OVERLOADED", `Codex is overloaded: ${clean}`, {
+      suggestedAction: "Retry later or pick another model.",
+    });
+  }
+  if (/\b429\b|rate.?limit/i.test(clean)) {
+    return new StudixError("RATE_LIMITED", `Codex is rate limited: ${clean}`);
   }
   return new StudixError("PROVIDER_ERROR", `Codex failed: ${clean}`);
 }

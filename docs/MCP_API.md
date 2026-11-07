@@ -58,21 +58,22 @@ Rules:
 
 ### Error codes
 
-| Code                | Meaning                                                              | Typical retryable |
-| ------------------- | -------------------------------------------------------------------- | ----------------- |
-| `VALIDATION`        | Input failed schema or business validation                           | no                |
-| `NOT_FOUND`         | Resource absent in this workspace (also used for other tenants' ids) | no                |
-| `UNAUTHENTICATED`   | Missing, unknown or revoked API key                                  | no                |
-| `FORBIDDEN`         | Key or grant lacks permission; denied connector tool                 | no                |
-| `CONFLICT`          | Idempotency or version conflict                                      | no                |
-| `BUDGET_EXCEEDED`   | Job or workspace budget would be exceeded                            | no                |
-| `TIMEOUT`           | Operation exceeded its deadline                                      | yes               |
-| `CANCELLED`         | Job or call was cancelled                                            | no                |
-| `RATE_LIMITED`      | Workspace or upstream rate limit                                     | yes               |
-| `PROVIDER_ERROR`    | Model, media or downstream MCP provider failed                       | depends           |
-| `UNAVAILABLE`       | Dependency temporarily unavailable                                   | yes               |
-| `APPROVAL_REQUIRED` | Action needs a recorded human approval                               | no                |
-| `INTERNAL`          | Unexpected server error; quote `traceId`                             | depends           |
+| Code                  | Meaning                                                                   | Typical retryable |
+| --------------------- | ------------------------------------------------------------------------- | ----------------- |
+| `VALIDATION`          | Input failed schema or business validation                                | no                |
+| `NOT_FOUND`           | Resource absent in this workspace (also used for other tenants' ids)      | no                |
+| `UNAUTHENTICATED`     | Missing, unknown or revoked API key                                       | no                |
+| `FORBIDDEN`           | Key or grant lacks permission; denied connector tool                      | no                |
+| `CONFLICT`            | Idempotency or version conflict                                           | no                |
+| `BUDGET_EXCEEDED`     | Job or workspace budget would be exceeded                                 | no                |
+| `TIMEOUT`             | Operation exceeded its deadline                                           | yes               |
+| `CANCELLED`           | Job or call was cancelled                                                 | no                |
+| `RATE_LIMITED`        | Workspace or upstream rate limit; out of quota or credit is not retryable | yes, except quota |
+| `PROVIDER_OVERLOADED` | Upstream model provider overloaded after Studix backed off                | yes               |
+| `PROVIDER_ERROR`      | Model, media or downstream MCP provider failed                            | depends           |
+| `UNAVAILABLE`         | Dependency temporarily unavailable                                        | yes               |
+| `APPROVAL_REQUIRED`   | Action needs a recorded human approval                                    | no                |
+| `INTERNAL`            | Unexpected server error; quote `traceId`                                  | depends           |
 
 The union is `ErrorCode` in `packages/shared`; the `retryable` column is a
 guide, the per-error value is authoritative.
