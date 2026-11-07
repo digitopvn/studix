@@ -9,6 +9,7 @@ import {
   type PlatformStorageTest,
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { StorageProfilesCard } from "./storage-profiles-card.tsx";
 
 const SECRET_LABELS: Record<PlatformSettings["storage"]["secretAccessKey"], string> = {
   configured: "Configured",
@@ -55,6 +56,7 @@ export function StorageMediaPage() {
   return (
     <>
       <ErrorBanner error={error} />
+      {data?.storageProfiles && <StorageProfilesCard profiles={data.storageProfiles} reload={reload} />}
       {data && <StorageCard storage={data.storage} reload={reload} />}
       {data && <MediaCard media={data.media} reload={reload} />}
     </>
@@ -109,7 +111,7 @@ function StorageCard({ storage, reload }: { storage: PlatformSettings["storage"]
   const last = storage.lastTest;
   return (
     <Section
-      title="Object storage (Cloudflare R2)"
+      title="Environment storage (S3_*)"
       actions={
         <button type="button" disabled={busy || !storage.configured} onClick={test}>
           {busy ? "Testing…" : "Test connection"}

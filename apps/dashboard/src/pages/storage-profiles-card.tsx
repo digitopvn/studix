@@ -1,0 +1,313 @@
+import { type FormEvent, useState } from "react";
+import {
+  api,
+  type PlatformStorageTest,
+  type StorageProfile,
+  type StorageProfileInput,
+  type StorageProviderType,
+} from "../api-client.ts";
+import { ErrorBanner, formatDate, Section, StatusBadge } from "../ui.tsx";
+
+const PROVIDER_LABELS: Record<StorageProfile["providerType"], string> = {
+  "cloudflare-r2": "Cloudflare R2",
+  "aws-s3": "AWS S3",
+  "s3-compatible": "S3-compatible",
+  environment: "Environment",
+};
+
+const EMPTY: StorageProfileInput = {
+  name: "",
+  providerType: "cloudflare-r2",
+  endpoint: "",
+  bucket: "",
+  region: "auto",
+  forcePathStyle: false,
+  keyPrefix: "",
+};
+
+/**
+ * Storage profiles: where new renders and assets are written. Saving a profile runs a real write, read and
+ * delete with the typed settings first and stores nothing when it fails. Activating one switches new
+ * objects to it on the app and the worker within seconds; objects already stored stay readable from the
+ * profile they were written to. The key pair is typed once and never shown again.
+ */
+export function StorageProfilesCard({
+  profiles,
+  reload,
+}: {
+  profiles: StorageProfile[];
+  reload: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<unknown>();
+  const [editing, setEditing] = useState<{ id?: string; input: StorageProfileInput }>();
+  const [tests, setTests] = useState<Record<string, PlatformStorageTest>>({});
+
+  async function act(action: () => Promise<unknown>) {
+    setActionError(undefined);
+    setBusy(true);
+    try {
+      await action();
+      reload();
+    } catch (e) {
+      setActionError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const set = (patch: Partial<StorageProfileInput>) =>
+    setEditing((current) => current && { ...current, input: { ...current.input, ...patch } });
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!editing) return;
+    const { id, input } = editing;
+    const keyGiven = Boolean(input.accessKeyId?.trim() || input.secretAccessKey?.trim());
+    const body: StorageProfileInput = {
+      ...input,
+      ...(input.endpoint?.trim() ? { endpoint: input.endpoint.trim() } : { endpoint: undefined }),
+      ...(keyGiven ? {} : { accessKeyId: undefined, secretAccessKey: undefined }),
+    };
+    // The secret leaves component state as soon as it is sent, whether or not the server accepts it.
+    set({ secretAccessKey: "" });
+    await act(async () => {
+      if (id) await api.updateStorageProfile(id, body);
+      else await api.createStorageProfile(body);
+      setEditing(undefined);
+    });
+  }
+
+  const edit = (profile?: StorageProfile) =>
+    setEditing(
+      profile && profile.providerType !== "environment"
+        ? {
+            id: profile.id,
+            input: {
+              name: profile.name,
+              providerType: profile.providerType,
+              endpoint: profile.endpointHost ? `https://${profile.endpointHost}` : "",
+              bucket: profile.bucket ?? "",
+              region: profile.region,
+              forcePathStyle: profile.forcePathStyle,
+              keyPrefix: profile.keyPrefix,
+            },
+          }
+        : { input: { ...EMPTY } },
+    );
+
+  async function activate(profile: StorageProfile) {
+    const message =
+      profile.id === "env"
+        ? "Write new objects with the deployment settings (S3_*) again? Objects already stored stay readable."
+        : `Write new objects to "${profile.name}" from now on? Objects already stored stay readable where they are.`;
+    if (!window.confirm(message)) return;
+    await act(() => api.activateStorageProfile(profile.id));
+  }
+
+  async function remove(profile: StorageProfile) {
+    if (!window.confirm(`Delete "${profile.name}" and its stored key pair?`)) return;
+    await act(() => api.deleteStorageProfile(profile.id));
+  }
+
+  async function test(profile: StorageProfile) {
+    await act(async () => {
+      const result = await api.testStorageProfile(profile.id);
+      setTests((t) => ({ ...t, [profile.id]: result }));
+    });
+  }
+
+  const input = editing?.input;
+  return (
+    <Section
+      title="Storage profiles"
+      actions={
+        <button type="button" disabled={busy || Boolean(editing)} onClick={() => edit()}>
+          Add profile
+        </button>
+      }
+    >
+      <p className="muted">
+        New renders and assets go to the active profile. Switching applies to the app and the worker within
+        about 20 seconds, without a redeploy; jobs already running finish on the profile they started with,
+        and everything stored before stays readable from its own profile. A profile is saved only after a
+        write, read and delete with its settings pass. Endpoints must be public HTTPS hosts (R2:{" "}
+        <code>https://&lt;account&gt;.r2.cloudflarestorage.com</code>).
+      </p>
+      <ErrorBanner error={actionError} />
+      {input && (
+        <form className="stack" onSubmit={save}>
+          <div className="row">
+            <input
+              required
+              aria-label="Profile name"
+              placeholder="Name"
+              value={input.name}
+              disabled={busy}
+              onChange={(e) => set({ name: e.target.value })}
+            />
+            <select
+              aria-label="Provider"
+              value={input.providerType}
+              disabled={busy}
+              onChange={(e) => set({ providerType: e.target.value as StorageProviderType })}
+            >
+              <option value="cloudflare-r2">Cloudflare R2</option>
+              <option value="aws-s3">AWS S3</option>
+              <option value="s3-compatible">S3-compatible</option>
+            </select>
+          </div>
+          <div className="row">
+            <input
+              aria-label="Endpoint"
+              placeholder={input.providerType === "aws-s3" ? "Endpoint (optional)" : "https://… endpoint"}
+              required={input.providerType !== "aws-s3"}
+              value={input.endpoint ?? ""}
+              disabled={busy}
+              onChange={(e) => set({ endpoint: e.target.value })}
+            />
+            <input
+              required
+              aria-label="Bucket"
+              placeholder="Bucket"
+              value={input.bucket}
+              disabled={busy}
+              onChange={(e) => set({ bucket: e.target.value })}
+            />
+            <input
+              required
+              aria-label="Region"
+              placeholder="Region (auto for R2)"
+              value={input.region}
+              disabled={busy}
+              onChange={(e) => set({ region: e.target.value })}
+            />
+          </div>
+          <div className="row">
+            <input
+              aria-label="Key prefix"
+              placeholder="Key prefix (optional, ends with /)"
+              value={input.keyPrefix ?? ""}
+              disabled={busy}
+              onChange={(e) => set({ keyPrefix: e.target.value })}
+            />
+            <label>
+              <input
+                type="checkbox"
+                checked={input.forcePathStyle ?? false}
+                disabled={busy}
+                onChange={(e) => set({ forcePathStyle: e.target.checked })}
+              />{" "}
+              Path-style addressing
+            </label>
+          </div>
+          <div className="row">
+            <input
+              required={!editing?.id}
+              autoComplete="off"
+              aria-label="Access key ID"
+              placeholder={editing?.id ? "Access key ID (blank keeps the stored one)" : "Access key ID"}
+              value={input.accessKeyId ?? ""}
+              disabled={busy}
+              onChange={(e) => set({ accessKeyId: e.target.value })}
+            />
+            <input
+              required={!editing?.id}
+              type="password"
+              autoComplete="new-password"
+              aria-label="Secret access key"
+              placeholder={editing?.id ? "Secret access key (blank keeps it)" : "Secret access key"}
+              value={input.secretAccessKey ?? ""}
+              disabled={busy}
+              onChange={(e) => set({ secretAccessKey: e.target.value })}
+            />
+          </div>
+          <div className="row">
+            <button type="submit" disabled={busy}>
+              {busy ? "Testing…" : "Test and save"}
+            </button>
+            <button type="button" disabled={busy} onClick={() => setEditing(undefined)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+      <table>
+        <thead>
+          <tr>
+            <th>Profile</th>
+            <th>Where</th>
+            <th>Key</th>
+            <th>Last test</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {profiles.map((p) => {
+            const result = tests[p.id];
+            const last = result
+              ? { ok: result.ok, at: result.at, detail: result.suggestedAction ?? result.diagnosis }
+              : p.lastTest;
+            return (
+              <tr key={p.id}>
+                <td>
+                  {p.name} {p.active && <StatusBadge status="available" label="Active" />}
+                  <div className="muted">
+                    {PROVIDER_LABELS[p.providerType]}
+                    {p.references !== undefined ? ` · ${p.references} stored objects` : ""}
+                  </div>
+                </td>
+                <td className="mono">
+                  {p.endpointHost ?? "-"}
+                  <div>
+                    {p.bucket ?? "not configured"}
+                    {p.keyPrefix ? `/${p.keyPrefix}` : ""} · {p.region}
+                    {p.forcePathStyle ? " · path-style" : ""}
+                  </div>
+                </td>
+                <td className="mono">
+                  {p.accessKeyHint ? `${p.accessKeyHint} / ${p.secretHint}` : "S3_* env"}
+                  {p.version ? <div className="muted">v{p.version}</div> : null}
+                </td>
+                <td>
+                  {last ? (
+                    <>
+                      <StatusBadge
+                        status={last.ok ? "available" : "failed"}
+                        label={last.ok ? "Passed" : "Failed"}
+                      />{" "}
+                      {formatDate(last.at)}
+                      {!last.ok && last.detail && <div className="muted">{last.detail}</div>}
+                    </>
+                  ) : (
+                    "Never"
+                  )}
+                </td>
+                <td>
+                  <button type="button" disabled={busy} onClick={() => test(p)}>
+                    Test
+                  </button>{" "}
+                  {!p.active && (
+                    <button type="button" disabled={busy} onClick={() => activate(p)}>
+                      Activate
+                    </button>
+                  )}{" "}
+                  {p.id !== "env" && (
+                    <button type="button" disabled={busy || Boolean(editing)} onClick={() => edit(p)}>
+                      Edit
+                    </button>
+                  )}{" "}
+                  {p.id !== "env" && !p.active && !p.references && (
+                    <button type="button" disabled={busy} onClick={() => remove(p)}>
+                      Delete
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Section>
+  );
+}
