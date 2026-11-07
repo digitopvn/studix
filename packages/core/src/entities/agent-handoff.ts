@@ -1,4 +1,5 @@
 import type { ActorRef, TenantOwned } from "./common.ts";
+import type { ReasoningEffort } from "./model-preference.ts";
 
 /**
  * `pending`: waiting for the host agent. `submitted`: a valid output was accepted. `expired`: the host
@@ -27,7 +28,7 @@ export interface AgentHandoffUsage {
   inputTokens?: number;
   outputTokens?: number;
   model?: string;
-  reasoningEffort?: "off" | "minimal" | "low" | "medium" | "high";
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**

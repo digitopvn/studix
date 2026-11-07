@@ -69,6 +69,12 @@ ARG CODEX_VERSION=0.167.0
 RUN npm install -g --no-audit --no-fund "@openai/codex@${CODEX_VERSION}" \
  && codex --version && rm -rf /root/.npm
 
+# The official Claude Code CLI, for a Claude agent's tool-using tasks. The worker hands it the job's key or
+# subscription token per task through stdin; nothing is baked into the image.
+ARG CLAUDE_CODE_VERSION=2.1.312
+RUN npm install -g --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ && claude --version && rm -rf /root/.npm
+
 # The worker mounts the task's directory at /work (HOME=/work/.home) and the skills read-only at /skills.
 RUN mkdir -p /work /skills && chown 1000:1000 /work
 WORKDIR /work

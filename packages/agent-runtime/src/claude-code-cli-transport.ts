@@ -43,6 +43,7 @@ export function claudeCodeCliArgs(options: ClaudeQueryOptions): string[] {
     options.permissionMode,
     "--no-session-persistence",
   ];
+  if (options.effort) args.push("--effort", options.effort);
   if (options.outputFormat) args.push("--json-schema", JSON.stringify(options.outputFormat.schema));
   return args;
 }

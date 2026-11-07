@@ -49,7 +49,7 @@ export type ModelSelectionSource = "user-stage" | "workspace-stage" | "user-defa
 export type ModelSnapshotSource = ModelSelectionSource | "job-request";
 
 /** Thinking levels a caller may ask a reasoning model for; `off` disables thinking. */
-export const REASONING_EFFORTS = ["off", "minimal", "low", "medium", "high"] as const;
+export const REASONING_EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export interface ModelSelectionQuery {

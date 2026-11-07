@@ -2,9 +2,11 @@ import {
   type AgentSpend,
   agentSpendOf,
   CLAUDE_AGENT_RUNTIME_ID,
+  CLAUDE_CODE_SANDBOX_RUNTIME_ID,
   type ClaudeAgentTransport,
   CODEX_AGENT_RUNTIME_ID,
   createClaudeAgentRuntime,
+  createClaudeCodeSandboxRuntime,
   createCodexAgentRuntime,
   createPiSdkAgentRuntime,
   createProviderBindingResolver,
@@ -58,6 +60,8 @@ export interface WorkerAgentHarnessDeps {
     transport: ClaudeAgentTransport;
     /** Model of jobs that selected the Claude planner; a model preference brings its own model. */
     plannerModel: string;
+    /** Test seam; production runs the Claude Code binary in the skill sandbox for tool-using tasks. */
+    sandboxRuntimeFor?: typeof createClaudeCodeSandboxRuntime;
   };
   logger: Logger;
   clock?: Clock;
@@ -83,7 +87,13 @@ export interface WorkerAgentHarness {
 
 /** `source` marks a Claude choice taken from a preference, pinned once its connection is opened. */
 type Choice =
-  | { runtime: "claude"; connectionId: string; model: string; source?: ModelSelectionSource }
+  | {
+      runtime: "claude";
+      connectionId: string;
+      model: string;
+      source?: ModelSelectionSource;
+      reasoningEffort?: ReasoningEffort;
+    }
   | { runtime: "codex"; connectionId: string; model: string; reasoningEffort?: ReasoningEffort }
   | { runtime: "pi"; resolved: PiResolvedRun };
 
@@ -197,6 +207,9 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         model:
           (agent.success && agent.data.runtime === "claude" && agent.data.modelId) ||
           deps.claude.plannerModel,
+        ...(agent.success && agent.data.runtime === "claude" && agent.data.reasoningEffort
+          ? { reasoningEffort: agent.data.reasoningEffort }
+          : {}),
       };
     }
     const [pinnedPi, pinnedClaude] = await Promise.all([
@@ -261,6 +274,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     stage: StageContext,
     name: string,
     choice: Extract<Choice, { runtime: "claude" }>,
+    sandboxed: boolean,
   ): Promise<{
     runtime: AgentRuntime;
     model: string;
@@ -289,21 +303,33 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       });
       // A concurrent attempt pinned first: run what it stored so every attempt of the job uses one route.
       if (stored) {
-        return claudeRuntime(stage, name, {
-          runtime: "claude",
-          connectionId: stored.connectionId,
-          model: stored.modelId,
-        });
+        return claudeRuntime(
+          stage,
+          name,
+          { runtime: "claude", connectionId: stored.connectionId, model: stored.modelId },
+          sandboxed,
+        );
       }
     }
-    const runtime = createClaudeAgentRuntime({
-      transport: claude.transport,
-      model: choice.model,
-      clock,
-      credentials: {
-        resolve: async () => ({ secret: credential.apiKey, kind: credentialKind(credential) }),
-      },
-    });
+    const secret = { secret: credential.apiKey, kind: credentialKind(credential) };
+    const effort = choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {};
+    // A task that asks for tools runs the Claude Code binary inside the skill sandbox, with its full tool set.
+    const runtime =
+      sandboxed && deps.piWorkspace
+        ? (claude.sandboxRuntimeFor ?? createClaudeCodeSandboxRuntime)({
+            workspace: deps.piWorkspace(stage),
+            model: choice.model,
+            ...effort,
+            clock,
+            credential: async () => secret,
+          })
+        : createClaudeAgentRuntime({
+            transport: claude.transport,
+            model: choice.model,
+            ...effort,
+            clock,
+            credentials: { resolve: async () => secret },
+          });
     return {
       runtime,
       model: choice.model,
@@ -359,8 +385,14 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       // Who pays the provider: the owner of the connection the run is on (ADR 0016: recorded, not charged).
       let funding: FundingSource;
       if (choice.runtime === "claude") {
-        ({ runtime, model, funding, markRejected } = await claudeRuntime(stage, task.skill, choice));
-        id = CLAUDE_AGENT_RUNTIME_ID;
+        const sandboxed = Boolean(task.tools?.length && deps.piWorkspace);
+        ({ runtime, model, funding, markRejected } = await claudeRuntime(
+          stage,
+          task.skill,
+          choice,
+          sandboxed,
+        ));
+        id = sandboxed ? CLAUDE_CODE_SANDBOX_RUNTIME_ID : CLAUDE_AGENT_RUNTIME_ID;
       } else if (choice.runtime === "codex") {
         ({ runtime, funding, markRejected } = await codexRuntime(stage, task.skill, choice));
         model = choice.model;

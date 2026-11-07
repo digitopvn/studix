@@ -303,7 +303,8 @@ its tools in a per-task Docker container
 | `STUDIX_CODEX_MODEL`          | `gpt-5.5`              | Default model of the `codex` agent runtime when the job names none             |
 
 The `codex` runtime runs `codex exec` inside this sandbox, so it needs `STUDIX_SANDBOX=docker`. The image
-pins the Codex CLI with the `CODEX_VERSION` build argument of `docker/sandbox.Dockerfile`.
+pins the Codex CLI with the `CODEX_VERSION` build argument of `docker/sandbox.Dockerfile`. A Claude agent's
+tool-using stages run the Claude Code CLI there too, pinned by `CLAUDE_CODE_VERSION`.
 
 Build the image with `docker compose --profile sandbox build sandbox-image`. It pins the same multix
 commit and chrome-headless-shell as the Studix image; bump both together. The container receives only

@@ -1,4 +1,4 @@
-import type { AgentRunResult, AgentRuntime, AgentTask, TenantContext } from "@studix/core";
+import type { AgentRunResult, AgentRuntime, AgentTask, ReasoningEffort, TenantContext } from "@studix/core";
 import { type Clock, redactDeep, StudixError, systemClock } from "@studix/shared";
 import {
   type AgentSpend,
@@ -20,6 +20,8 @@ export interface ClaudeSessionRequest {
   allowedTools: readonly string[];
   outputSchema?: Record<string, unknown>;
   maxTurns: number;
+  /** Claude Code effort level; absent keeps the model's default. */
+  effort?: ClaudeEffort;
   /** The SDK's own cap; the runtime enforces its own cap on top of it. */
   maxBudgetUsd: number;
   /** Credential for this job only (an `sk-ant-…` key); never logged or placed in prompts. */
@@ -61,6 +63,14 @@ export interface ClaudeAgentTransport {
   start(request: ClaudeSessionRequest): ClaudeAgentSession;
 }
 
+export type ClaudeEffort = "low" | "medium" | "high" | "xhigh";
+
+/** Claude's effort for a job's reasoning effort: `off` keeps the default, `minimal` is the lowest level. */
+export function claudeEffortOf(effort: ReasoningEffort | undefined): ClaudeEffort | undefined {
+  if (!effort || effort === "off") return undefined;
+  return effort === "minimal" ? "low" : effort;
+}
+
 export type ClaudeCredentialKind = "api_key" | "subscription";
 
 export interface ClaudeCredential {
@@ -80,6 +90,7 @@ export interface ClaudeAgentRuntimeOptions {
   transport: ClaudeAgentTransport;
   credentials: ClaudeCredentialResolver;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   /** Validates the final output; defaults to requiring a non-null value. Throws to reject. */
   validateOutput?: (output: unknown, task: AgentTask) => unknown;
   /** Grace between interrupt and hard kill. */
@@ -198,6 +209,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
       let final: { output: unknown } | undefined;
       let failure: StudixError | undefined;
       let iterator: AsyncIterator<ClaudeAgentEvent> | undefined;
+      const effort = claudeEffortOf(options.reasoningEffort);
       try {
         const resolved = await Promise.race([options.credentials.resolve(ctx, task.signal), stopped]);
         if (resolved === "stopped") throw stopReason;
@@ -211,6 +223,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
           allowedTools: [...allowed],
           outputSchema: task.outputSchema,
           maxTurns: task.maxTurns,
+          ...(effort ? { effort } : {}),
           maxBudgetUsd: task.maxCostCents / 100,
           credential,
           credentialKind,

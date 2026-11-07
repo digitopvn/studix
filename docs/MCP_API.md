@@ -119,7 +119,8 @@ Behavior notes:
   `NOT_FOUND`. `model` must be one the runtime runs on that connection: a Pi
   catalog model of the connection's provider, a Codex model (`gpt-5.1` to
   `gpt-5.5`, default `STUDIX_CODEX_MODEL`) or a `claude-*` id.
-  `reasoningEffort` is `off`, `minimal`, `low`, `medium` or `high`; a value
+  `reasoningEffort` is `off`, `minimal`, `low`, `medium`, `high` or `xhigh`
+  (Claude gets it as `--effort`, `minimal` as `low`, `off` as its default); a value
   other than `off` on a model without reasoning support is `VALIDATION`. The
   selection is stored on the job and in its model snapshot, so every attempt
   runs the same runtime, model and effort, with no fallbacks.
@@ -128,6 +129,9 @@ Behavior notes:
 - A `codex` agent needs `STUDIX_SANDBOX=docker` on the worker: `codex exec`
   runs inside the task's skill sandbox. A ChatGPT login is paid by the
   subscription (cost 0); an OpenAI key is billed by OpenAI.
+- A `claude` agent runs a stage that asks for tools (the `skill-agent` pack's
+  run stage) with the Claude Code CLI inside the same sandbox, with its full
+  tool set and the stage's caps; other stages stay tool-less on the worker.
 - Time spent parked is not counted against the deadline. While a job waits at a human gate
   (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
   is paused: what is left of it is kept and starts counting again when a worker

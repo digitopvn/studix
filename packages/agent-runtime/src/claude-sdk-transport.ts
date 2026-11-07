@@ -8,6 +8,7 @@ import type {
   ClaudeAgentEvent,
   ClaudeAgentSession,
   ClaudeAgentTransport,
+  ClaudeEffort,
   ClaudeSessionRequest,
 } from "./claude-agent-runtime.ts";
 
@@ -15,6 +16,7 @@ import type {
 export interface ClaudeQueryOptions {
   model: string;
   maxTurns: number;
+  effort?: ClaudeEffort;
   maxBudgetUsd: number;
   cwd: string;
   /** Replaces the subprocess environment entirely; nothing is inherited from the worker. */
@@ -302,6 +304,7 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
       const queryOptions: ClaudeQueryOptions = {
         model: request.model,
         maxTurns: request.maxTurns,
+        ...(request.effort ? { effort: request.effort } : {}),
         maxBudgetUsd: request.maxBudgetUsd,
         cwd: sandbox,
         env,

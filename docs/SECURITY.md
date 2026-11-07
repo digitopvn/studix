@@ -403,6 +403,11 @@ or a path guard as a security boundary:
   `codex login --with-api-key` on stdin), never on a command line; the file is
   read back after the run to keep a rotated refresh token, and the container is
   removed with it. A ChatGPT connection runs only on the `codex` runtime.
+- A Claude agent's tool-using stage runs Claude Code in the same sandbox. Its
+  API key or subscription token is written through stdin to a scratch file
+  that the launching shell reads into the process environment and deletes;
+  it never appears on a command line, and the agent's tools reach only the
+  container.
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its
