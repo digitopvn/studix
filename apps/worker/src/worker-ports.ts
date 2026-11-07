@@ -38,6 +38,7 @@ import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { StudixError } from "@studix/shared";
 import { createExternalSkillService, createSkillBundleSource } from "@studix/skills";
 import { createProfileStorageRouterFromConfig } from "@studix/storage";
+import { createAgentArtifactStore } from "./agent-artifact-store.ts";
 import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
 import { createCompositionRunner } from "./composition-runner.ts";
 import { createMediaExecRunner, loadMediaExecSettings } from "./media-exec-runner.ts";
@@ -211,6 +212,7 @@ function agentHarness(
   runtime: WorkerPortsRuntime,
   providers: ProviderConnectionService | undefined,
   transport: ClaudeAgentTransport | undefined,
+  storage: ReturnType<typeof createProfileStorageRouterFromConfig>,
   sandbox?: SkillSandbox,
 ): WorkerAgentHarness | undefined {
   if (!providers) return undefined;
@@ -226,7 +228,11 @@ function agentHarness(
       : {}),
     logger: runtime.logger,
     ...(sandbox
-      ? { piWorkspace: (stage) => sandbox.forStage(stage), codex: { defaultModel: settings.codexModel } }
+      ? {
+          piWorkspace: (stage) => sandbox.forStage(stage),
+          codex: { defaultModel: settings.codexModel },
+          storeArtifact: createAgentArtifactStore(storage),
+        }
       : {}),
   });
 }
@@ -256,6 +262,7 @@ async function skillSandbox(
     settings: sandbox,
     workDir: settings.workDir,
     skills,
+    storage,
     keys: {
       ...(providers ? { workspace: (ctx) => providers.resolveMediaKeys(ctx) } : {}),
       ...(credentials ? { platform: async () => (await credentials.loadValues()).values } : {}),
@@ -418,7 +425,7 @@ export async function loadWorkerPorts(
   const transport = claudeTransport(settings, runtime, claudeExecutable);
   const claude = claudePlanner(settings, runtime, providers, transport);
   const sandbox = await skillSandbox(settings, runtime, providers, storage);
-  const harness = agentHarness(settings, runtime, providers, transport, sandbox);
+  const harness = agentHarness(settings, runtime, providers, transport, storage, sandbox);
   const mediaExec = mediaExecPort(settings, runtime, storage, logger);
   // Composition runs share the skill sandbox (open network, vendor keys, skills) and the media exec price.
   const compositionRun = sandbox

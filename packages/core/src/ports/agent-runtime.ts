@@ -31,6 +31,13 @@ export type AgentStreamEvent =
       model?: string;
     };
 
+export interface AgentInputFile {
+  /** Tenant-relative storage key, for example `assets/<id>/v1/out.mp4`. */
+  storageKey: string;
+  /** Path under /work/in, for example `builder/out.mp4`; relative, without `..`. */
+  path: string;
+}
+
 export interface AgentTask {
   /** Skill or template id that framed the task. */
   skill: string;
@@ -44,6 +51,11 @@ export interface AgentTask {
   /** Cap on input plus output tokens; omitted means only the cost cap bounds tokens. */
   maxTokens?: number;
   deadlineAt?: Date;
+  /**
+   * Stored files the agent reads, copied to /work/in/<path> before it starts; the sandbox never fetches them
+   * over the network. Needs a sandboxed (tool-using) run.
+   */
+  inputFiles?: AgentInputFile[];
   signal?: AbortSignal;
   /** Live events of the run; a runtime calls it best-effort and never waits on it. */
   onEvent?: (event: AgentStreamEvent) => void;

@@ -54,6 +54,7 @@ function fakeWorkspace(stream: string[], exitCode = 0, rotate?: string) {
   const workspace = {
     sandbox,
     skills: [],
+    inputs: [],
     async collect() {
       return [];
     },

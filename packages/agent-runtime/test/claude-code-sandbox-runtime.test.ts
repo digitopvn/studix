@@ -59,6 +59,7 @@ function fakeWorkspace(stream: string[], exitCode = 0) {
   const workspace = {
     sandbox,
     skills: [],
+    inputs: [],
     async collect() {
       return ["/host/out/video.mp4"];
     },

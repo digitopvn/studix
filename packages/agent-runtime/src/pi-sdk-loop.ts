@@ -24,7 +24,7 @@ import {
 import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
 import type { PiBindingResolver, PiRunBinding, ReasoningEffort } from "./pi-binding.ts";
 import { estimatePiModel, findLivePiModel } from "./pi-live-models.ts";
-import type { PiTaskWorkspace, PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
+import { type PiTaskWorkspace, type PiTaskWorkspaceProvider, sandboxFilesNote } from "./pi-task-workspace.ts";
 import { SANDBOX_OUTPUT_DIR, SANDBOX_WORK_DIR } from "./sandbox-docker.ts";
 import { createSandboxToolDefinitions, isSandboxTool, type SandboxToolName } from "./sandbox-tools.ts";
 
@@ -148,6 +148,12 @@ export function mapProviderFailure(
 export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
   return async (ctx, task) => {
     const tools = sandboxToolsOf(task, options.workspace);
+    if (task.inputFiles?.length && tools.length === 0) {
+      throw new StudixError("VALIDATION", "Input files need a tool-using task in the skill sandbox", {
+        retryable: false,
+        suggestedAction: "Give the task the read or bash tool.",
+      });
+    }
     const resolved = await options.resolver.resolve(ctx, { stage: task.skill });
     throwIfAborted(task);
     if (resolved.bindings.length === 0) {
@@ -167,7 +173,11 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
         const model = `${binding.provider}/${binding.modelId}`;
         try {
           if (tools.length > 0 && !workspace && options.workspace) {
-            workspace = await options.workspace.open(ctx, { taskId: randomUUID(), signal: task.signal });
+            workspace = await options.workspace.open(ctx, {
+              taskId: randomUUID(),
+              signal: task.signal,
+              ...(task.inputFiles ? { inputFiles: task.inputFiles } : {}),
+            });
           }
           const output = await runAttempt(binding, task, total, model, {
             scratchRoot: options.scratchRoot,
@@ -370,7 +380,7 @@ async function openSession(
     noContextFiles: true,
     systemPromptOverride: () =>
       attempt.workspace
-        ? SANDBOX_SYSTEM_PROMPT +
+        ? `${SANDBOX_SYSTEM_PROMPT}\n\n${sandboxFilesNote(attempt.workspace.inputs)}` +
           formatSkillsForPrompt(
             attempt.workspace.skills.map((s) => ({
               name: s.name,

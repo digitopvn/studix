@@ -152,7 +152,11 @@ export function createClaudeCodeSandboxRuntime(options: ClaudeCodeSandboxRuntime
       registerSecret(credential.secret);
       // A subscription is paid by the plan; an API key's spend is what Claude Code reports.
       const centsOf = (usd: number) => (credential.kind === "subscription" ? 0 : Math.ceil(usd * 100));
-      const workspace = await options.workspace.open(ctx, { taskId: randomUUID(), signal: task.signal });
+      const workspace = await options.workspace.open(ctx, {
+        taskId: randomUUID(),
+        signal: task.signal,
+        ...(task.inputFiles ? { inputFiles: task.inputFiles } : {}),
+      });
       const lines: string[] = [];
       try {
         const { sandbox } = workspace;

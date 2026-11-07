@@ -16,7 +16,7 @@ import {
   eventText,
   withSpend,
 } from "./bounded-agent-runtime.ts";
-import type { PiTaskWorkspace, PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
+import { type PiTaskWorkspace, type PiTaskWorkspaceProvider, sandboxFilesNote } from "./pi-task-workspace.ts";
 import { SANDBOX_OUTPUT_DIR, SANDBOX_WORK_DIR } from "./sandbox-docker.ts";
 
 /*
@@ -66,6 +66,7 @@ export function sandboxTaskPrompt(
     `Skill: ${task.skill}`,
     task.instructions,
     `Input (JSON):\n${JSON.stringify(task.input)}`,
+    sandboxFilesNote(workspace.inputs),
     ...(skills ? [`Available skills:\n${skills}`] : []),
   ].join("\n\n");
 }
@@ -207,7 +208,11 @@ export function createCodexAgentRuntime(options: CodexAgentRuntimeOptions): Agen
       const credential = await options.credential(ctx);
       const secret = credential.kind === "chatgpt" ? credential.authJson : credential.apiKey;
       registerSecret(secret);
-      const workspace = await options.workspace.open(ctx, { taskId: randomUUID(), signal: task.signal });
+      const workspace = await options.workspace.open(ctx, {
+        taskId: randomUUID(),
+        signal: task.signal,
+        ...(task.inputFiles ? { inputFiles: task.inputFiles } : {}),
+      });
       const lines: string[] = [];
       try {
         const { sandbox } = workspace;

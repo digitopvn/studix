@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { StudixError } from "@studix/shared";
@@ -15,6 +15,8 @@ export const SANDBOX_WORK_DIR = "/work";
 export const SANDBOX_SKILLS_DIR = "/skills";
 /** Results the task leaves for the job (for example `out/video.mp4`). */
 export const SANDBOX_OUTPUT_DIR = `${SANDBOX_WORK_DIR}/out`;
+/** Where a task's input files are placed before the agent starts. */
+export const SANDBOX_INPUT_DIR = `${SANDBOX_WORK_DIR}/in`;
 
 export interface SandboxLimits {
   /** CPU cores (docker `--cpus`). */
@@ -53,6 +55,8 @@ export interface SandboxSession {
   run(argv: readonly string[], options?: { stdin?: Buffer | string; signal?: AbortSignal }): Promise<Buffer>;
   /** Streams a container file to a host path outside the container's mounts (symlinks resolve in the container). */
   copyOut(containerPath: string, hostPath: string): Promise<void>;
+  /** Streams a host file into the container, creating its parent directories. */
+  copyIn(hostPath: string, containerPath: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -313,6 +317,34 @@ export function createDockerSandboxDriver(options: DockerSandboxOptions): Sandbo
               `The sandbox has no readable ${containerPath}: ${err.trim()}`,
               {
                 retryable: false,
+              },
+            );
+          }
+        },
+        async copyIn(hostPath, containerPath) {
+          assertOpen();
+          const child = execChild(
+            ["sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", containerPath],
+            true,
+          );
+          let err = "";
+          child.stderr?.on("data", (c: Buffer) => {
+            if (err.length < 2000) err += c.toString("utf8");
+          });
+          child.stdout?.resume();
+          const source = createReadStream(hostPath);
+          if (child.stdin) source.pipe(child.stdin);
+          const code = await new Promise<number | null>((resolve, reject) => {
+            source.once("error", reject);
+            child.once("error", reject);
+            child.once("close", resolve);
+          });
+          if (code !== 0) {
+            throw new StudixError(
+              "UNAVAILABLE",
+              `Could not copy an input file into the sandbox: ${err.trim()}`,
+              {
+                retryable: true,
               },
             );
           }

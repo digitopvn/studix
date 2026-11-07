@@ -14,7 +14,15 @@ export type HarnessAgentEvent =
       model?: string;
       error?: string;
     }
-  | { type: "artifact"; name: string };
+  | {
+      type: "artifact";
+      name: string;
+      /** Set once the file is stored; usable as an input file of a later task. */
+      storageKey?: string;
+      /** Short-lived signed URL for previews. */
+      url?: string;
+      contentType?: string;
+    };
 
 export interface AgentEventSink {
   push(event: HarnessAgentEvent): void;

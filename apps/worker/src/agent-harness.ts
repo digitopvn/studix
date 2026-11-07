@@ -82,6 +82,15 @@ export interface WorkerAgentHarnessDeps {
   piRuntimeFor?: (resolved: PiResolvedRun, workspace?: PiTaskWorkspaceProvider) => AgentRuntime;
   /** The skill sandbox of a stage's tool-using Pi runs (STUDIX_SANDBOX); without it such runs fail VALIDATION. */
   piWorkspace?: (stage: StageContext) => PiTaskWorkspaceProvider;
+  /**
+   * Stores one file a run left in /work/out so the dashboard can preview it and a later task can take it as
+   * an input file; resolves undefined for files it skips. Omitted, artifact events carry only the name.
+   */
+  storeArtifact?: (
+    ctx: TenantContext,
+    stage: StageContext,
+    hostPath: string,
+  ) => Promise<{ storageKey: string; url: string; contentType: string } | undefined>;
 }
 
 export interface WorkerAgentHarness {
@@ -453,6 +462,17 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       let connectionId: string | undefined;
       // Who pays the provider: the owner of the connection the run is on (ADR 0016: recorded, not charged).
       let funding: FundingSource;
+      if (
+        task.inputFiles?.length &&
+        choice.runtime !== "codex" &&
+        !(task.tools?.length && deps.piWorkspace)
+      ) {
+        throw new StudixError("VALIDATION", "Input files need a tool-using task in the skill sandbox", {
+          retryable: false,
+          suggestedAction:
+            "Give the task the read or bash tool, and run the worker with STUDIX_SANDBOX=docker.",
+        });
+      }
       if (choice.runtime === "claude") {
         const sandboxed = Boolean(task.tools?.length && deps.piWorkspace);
         ({ runtime, model, funding, connectionId, markRejected } = await claudeRuntime(
@@ -487,7 +507,14 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       sink?.push({ type: "status", status: "running", runtime: choice.runtime, ...(model ? { model } : {}) });
       try {
         const result = await runtime.run(ctx, task);
-        for (const file of filesOf(result.output)) sink?.push({ type: "artifact", name: file });
+        for (const hostPath of filesOf(result.output)) {
+          const name = hostPath.split(/[\\/]/).pop() ?? hostPath;
+          const stored = await deps.storeArtifact?.(ctx, stage, hostPath).catch((err: unknown) => {
+            log.warn("agent artifact upload failed", { jobId: stage.job.id, name, error: String(err) });
+            return undefined;
+          });
+          sink?.push({ type: "artifact", name, ...stored });
+        }
         sink?.push({
           type: "status",
           status: "succeeded",
@@ -587,12 +614,10 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
   return { runtimeFor, idle };
 }
 
-/** File names (never host paths) of what the agent left in /work/out. */
+/** Host paths of what the agent left in /work/out; only their names reach events. */
 function filesOf(output: unknown): string[] {
   const files = (output as { files?: unknown } | null)?.files;
-  return Array.isArray(files)
-    ? files.filter((f): f is string => typeof f === "string").map((f) => f.split(/[\\/]/).pop() ?? f)
-    : [];
+  return Array.isArray(files) ? files.filter((f): f is string => typeof f === "string") : [];
 }
 
 function sameSelection(a: JobAgentSelection, b: unknown): boolean {

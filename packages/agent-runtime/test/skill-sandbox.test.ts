@@ -14,6 +14,7 @@ import {
   type SandboxDriver,
   type SandboxSession,
   type SkillBundle,
+  sandboxFilesNote,
 } from "../src/index.ts";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -61,6 +62,10 @@ function fakeSandbox() {
     async copyOut(containerPath, hostPath) {
       calls.push({ kind: "copyOut", argv: [containerPath, hostPath] });
       await writeFile(hostPath, `copy of ${containerPath}`);
+    },
+    async copyIn(hostPath, containerPath) {
+      calls.push({ kind: "copyIn", argv: [containerPath] });
+      files.set(containerPath, await readFile(hostPath, "utf8"));
     },
     async close() {
       calls.push({ kind: "close" });
@@ -221,5 +226,38 @@ describe("task workspace", () => {
     expect(files).toEqual([join(outputDir, "video.mp4"), join(outputDir, ".._.._etc_passwd")]);
     await ws.close();
     expect(calls.at(-1)).toEqual({ kind: "close" });
+  });
+
+  it("stages stored input files under /work/in from the host and lists them for the agent", async () => {
+    const { session, files } = fakeSandbox();
+    const driver: SandboxDriver = { id: "fake", open: async () => session };
+    const fetched: string[] = [];
+    const provider = createPiTaskWorkspaceProvider({
+      driver,
+      env: async () => ({}),
+      limits,
+      outputDir: await mkdtemp(join(tmpdir(), "studix-out-")),
+      async fetchInput(_ctx, key, hostPath) {
+        fetched.push(key);
+        await writeFile(hostPath, `bytes of ${key}`);
+      },
+    });
+    const signal = new AbortController().signal;
+    const ws = await provider.open(testTenant(), {
+      taskId: "t2",
+      signal,
+      inputFiles: [{ storageKey: "assets/a1/v1/out.mp4", path: "builder/out.mp4" }],
+    });
+    expect(fetched).toEqual(["assets/a1/v1/out.mp4"]);
+    expect(files.get("/work/in/builder/out.mp4")).toBe("bytes of assets/a1/v1/out.mp4");
+    expect(ws.inputs).toEqual(["/work/in/builder/out.mp4"]);
+    expect(sandboxFilesNote(ws.inputs)).toContain("- /work/in/builder/out.mp4");
+    expect(sandboxFilesNote([])).toContain("Only files under /work/out are kept");
+
+    for (const path of ["../etc/passwd", "/abs.mp4", "a/./b", ""]) {
+      await expect(
+        provider.open(testTenant(), { taskId: "t3", signal, inputFiles: [{ storageKey: "k", path }] }),
+      ).rejects.toMatchObject({ code: "VALIDATION" });
+    }
   });
 });

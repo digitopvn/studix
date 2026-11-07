@@ -7,7 +7,7 @@ import {
   type SkillBundleSource,
   sweepDockerSandboxes,
 } from "@studix/agent-runtime";
-import type { TenantContext } from "@studix/core";
+import type { StorageAdapter, TenantContext } from "@studix/core";
 import { MULTIX_ENV_KEY_NAMES } from "@studix/providers";
 import { type Logger, StudixError } from "@studix/shared";
 import type { StageContext } from "@studix/workflow";
@@ -118,10 +118,12 @@ export async function createSkillSandbox(options: {
   settings: SandboxSettings;
   workDir: string;
   skills?: SkillBundleSource;
+  /** Where a task's input files are read from, on the host, before its sandbox starts. */
+  storage?: Pick<StorageAdapter, "download">;
   keys: SandboxKeySources;
   logger: Logger;
 }): Promise<SkillSandbox> {
-  const { settings, logger } = options;
+  const { settings, logger, storage } = options;
   // Containers a crashed worker left behind; their tasks were already retried or failed.
   const swept = await sweepDockerSandboxes(settings.docker).catch((err: unknown) => {
     logger.warn("skill sandbox sweep failed", { error: String(err) });
@@ -145,6 +147,13 @@ export async function createSkillSandbox(options: {
         driver,
         ...(options.skills ? { skills: options.skills } : {}),
         env: (ctx) => sandboxProviderKeys(options.keys, ctx),
+        ...(storage
+          ? {
+              fetchInput: async (ctx: TenantContext, key: string, hostPath: string) => {
+                await storage.download(ctx, key, hostPath);
+              },
+            }
+          : {}),
         limits: settings.limits,
         outputDir: join(options.workDir, stage.job.id, `attempt-${stage.attempt}`, "sandbox-out"),
         scratchRoot: join(options.workDir, "sandboxes"),
