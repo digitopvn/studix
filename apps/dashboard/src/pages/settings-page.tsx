@@ -19,7 +19,8 @@ const SECTIONS = [
   { id: "agents", label: "Agents" },
   { id: "models", label: "Models & keys" },
   { id: "skills", label: "Skills" },
-  { id: "storage", label: "Media & storage", managersOnly: true },
+  { id: "media", label: "Media", managersOnly: true },
+  { id: "storage", label: "Storage", managersOnly: true },
   { id: "account", label: "Account" },
 ] as const;
 
@@ -58,15 +59,21 @@ function body(me: Me, section: string, id?: string) {
       return <ProvidersPage />;
     case "skills":
       return id ? <SkillDetailPage skillId={id} /> : <SkillsPage isOperator={me.role === "operator"} />;
-    case "storage":
+    case "media":
       return canManageStorage(me) ? (
         <>
           <WorkspaceMultixSection />
           <WorkspaceMediaKeysSection />
-          <StorageMediaPage isOperator={me.role === "operator"} />
+          <StorageMediaPage isOperator={me.role === "operator"} part="media" />
         </>
       ) : (
-        <p className="muted">Media &amp; storage settings are managed by the workspace owners and admins.</p>
+        <p className="muted">Media settings are managed by the workspace owners and admins.</p>
+      );
+    case "storage":
+      return canManageStorage(me) ? (
+        <StorageMediaPage isOperator={me.role === "operator"} part="storage" />
+      ) : (
+        <p className="muted">Storage settings are managed by the workspace owners and admins.</p>
       );
     case "account":
       return <AccountPage me={me} />;

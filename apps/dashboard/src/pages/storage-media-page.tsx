@@ -49,11 +49,12 @@ const MEDIA_DIAGNOSIS: Record<PlatformMediaTest["diagnosis"], string> = {
  * keys the Multix CLI uses. Keys are typed into a password field, sent once and never shown again: after
  * saving, only a hint, the owner and the last test remain.
  */
-export function StorageMediaPage({ isOperator }: { isOperator: boolean }) {
+/** One settings tab: file storage, or the media generation defaults (platform part for operators only). */
+export function StorageMediaPage({ isOperator, part }: { isOperator: boolean; part: "storage" | "media" }) {
   return (
     <>
-      <WorkspaceStorageCard />
-      {isOperator && <PlatformSettingsCards />}
+      {part === "storage" && <WorkspaceStorageCard />}
+      {isOperator && <PlatformSettingsCards part={part} />}
     </>
   );
 }
@@ -84,15 +85,17 @@ function WorkspaceStorageCard() {
 }
 
 /** The platform defaults every workspace without its own settings uses (platform operators only). */
-function PlatformSettingsCards() {
+function PlatformSettingsCards({ part }: { part: "storage" | "media" }) {
   const { data, error, reload } = useAsync(() => api.platformSettings());
   return (
     <>
       <h2>Platform defaults</h2>
       <ErrorBanner error={error} />
-      {data?.storageProfiles && <StorageProfilesCard profiles={data.storageProfiles} reload={reload} />}
-      {data && <StorageCard storage={data.storage} reload={reload} />}
-      {data && <MediaCard media={data.media} reload={reload} />}
+      {part === "storage" && data?.storageProfiles && (
+        <StorageProfilesCard profiles={data.storageProfiles} reload={reload} />
+      )}
+      {part === "storage" && data && <StorageCard storage={data.storage} reload={reload} />}
+      {part === "media" && data && <MediaCard media={data.media} reload={reload} />}
     </>
   );
 }
