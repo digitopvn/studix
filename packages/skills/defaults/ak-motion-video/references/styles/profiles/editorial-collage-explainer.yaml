@@ -1,0 +1,55 @@
+id: editorial-collage-explainer
+name: Editorial Collage Explainer
+family: brand-inspired
+aliases: [vox, vox-like, vox explainer, vox collage, collage explainer, motion collage, editorial collage]
+summary: Explainer collage; torn-paper posters, halftone cut-outs, one bold flat colour per scene, pieces fly in and assemble.
+energy: 3
+best_for: [explainer, history-story, data-story, brand-story]
+character: >-
+  A narrated explainer built from editorial paper collage: printed photo and
+  woodblock cut-outs with torn or scissor-cut edges, tape corners, newspaper
+  strips and halftone dots on one bold flat colour per scene. Each scene
+  assembles piece by piece like a poster being pasted up, then lives on as a
+  layered page that drifts in parallax under the narration.
+dimensions:
+  palette:
+    mode: light
+    colors: {bg: "#f1e7d3", ink: "#1d1a17", accent: "#e2412b", mustard: "#f0b429", teal: "#1f7a7a", cobalt: "#2547a8", clay: "#c8875a", paper: "#fbf6ea"}
+    rule: "Each scene sits on ONE bold flat colour taken from the palette; the colour travels across scenes to carry the story's mood (aged clay → bold pop → payoff gold). Cut-outs keep their printed colours; accent red is for the seal, the key number and the active word."
+  typography:
+    - "Archivo Black 140-220 px all-caps headlines set on torn-paper banner strips, rotated -3 to 3 deg"
+    - "Libre Franklin 600 subheads 52 px; Special Elite 28 px typewriter labels and dates on paper tags"
+    - "Headlines stay live HTML over the art, never baked into generated images"
+  layout:
+    - "Poster composition per scene: hero cut-out off-centre, headline banner in a clear third, 2-4 supporting scraps"
+    - "Foreground, midground and background paper layers with shadows growing by depth"
+    - "Labels and arrows taped near the subject, above the caption band"
+  material: ["Printed cut-outs with torn or scissor-cut white borders (baked PNG)", "Drop shadow 0 8px 14px rgba(29,26,23,0.28) per layer, deeper layers larger", "Masking-tape strips and a red circular seal"]
+  texture: ["Baked halftone dots on photo cut-outs and in background corners only", "Newsprint strips and paper fibre grain as PNG tiles", "Generated art per generated-art.md with one shared style block"]
+  camera: ["One move per scene from story-and-shots.md, never the same as the neighbour", "Layer parallax 0.3 : 1 : 1.6 during holds", "Stage overscanned 1.2x for pans and whips"]
+  transitions: ["collage-assembly (pieces fly to their home positions, 0.5-0.8 s staggered, expo.out with spin resolving)", "paper-wipe (a torn coloured sheet slides across on a beat and the next scene is under it)", "whip (0.22 s expo.in out / expo.out in on the overscanned stage)", "cut-in (hard cut to a CLOSE of the key piece on the spoken keyword)"]
+  pacing:
+    bpm: [96, 118]
+    rhythm: "Explainer pace: each scene assembles in its first 1-1.5 s, holds while the narration explains, cuts in to a detail mid-sentence on long scenes; a calm static scene for the payoff."
+  beat_response: ["Tape and seal stamps land on kick beats", "Confetti scraps drift continuously, denser burst on drops", "Halftone accent pulses 1.00-1.04 on downbeats in title scenes only"]
+  ui_choreography: ["Product UI printed on a paper card, taped onto the collage, with cut-out arrows pointing at the feature", "Cards slap in (scale 1.4 → 1.0, 5 frames) and settle with a 1 deg sway"]
+  diagrams: ["Paper-strip bars cut to length and pasted in order", "Flows as cut-out arrows and string lines drawn with draw()", "Maps and timelines as torn newsprint strips with stamped dates"]
+  character_motion: ["Cut-out figures pivot on paper joints, animated on twos", "Hero props (a paper plane, a coin, an arrow) cross the frame on one key scene only"]
+  captions: ["Cream torn-paper strip, 42 px Be Vietnam Pro 700 ink, 0-1 deg tilt, current word accent red; bottom band"]
+  sound: ["Light hip-hop, documentary pop or plucked strings 96-118 BPM", "SFX: paper slide, tape pull, stamp thud, page flip; medium density"]
+scene_types:
+  prefer: [hook, title, timeline, stats, feature, comparison, quote, outro]
+  avoid: [terminal, code]
+signature_moves:
+  - "Poster assembles piece by piece onto a bold flat colour"
+  - "Torn banner headline slapped in on the spoken keyword"
+  - "Mid-sentence cut-in to a detail of the collage"
+  - "Scene colour travels across the story"
+strengths: ["Turns abstract topics into tactile stories", "Strong scene identity with one colour each", "Works for history, explainers and ads"]
+constraints:
+  - "Flat 2D paper only: pieces move as rigid cut-outs, no 3D, no morphing"
+  - "Headline text is live HTML and never wobbles"
+  - "Halftone never on faces or product labels"
+  - "Jitter, confetti and sway use seeded rng"
+avoid: ["Glass, chrome, neon or glow", "Smooth CGI or photoreal renders", "The same camera move in two adjacent scenes"]
+pairs_well_with: [paper-cut-collage, data-editorial, newsprint-editorial, documentary-purpose]

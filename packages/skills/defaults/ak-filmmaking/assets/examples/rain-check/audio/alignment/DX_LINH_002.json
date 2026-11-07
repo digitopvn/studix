@@ -1,0 +1,15 @@
+{
+  "cue_id": "DX_LINH_002",
+  "sentences": [
+    {
+      "text": "Three years, Mai.",
+      "start": 0.1,
+      "end": 1.4
+    },
+    {
+      "text": "Three years of eventually.",
+      "start": 2.0,
+      "end": 4.0
+    }
+  ]
+}

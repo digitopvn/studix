@@ -1,0 +1,49 @@
+id: constructivist-poster
+name: Constructivist Poster
+family: aesthetic
+aliases: [constructivism, russian constructivist, soviet poster, propaganda poster, agitprop]
+summary: Constructivist photomontage; red, black and cream, bold diagonals, condensed type, wedges driving into frame.
+energy: 4
+best_for: [manifesto, industry-story, revolution-history, launch-announcement]
+character: >-
+  Russian Constructivist photomontage: heroic photo cut-outs, red wedges and
+  bars on strong diagonals, bold condensed type set at angles and
+  letterpress grain on cream. Motion is mechanical and forceful: wedges drive
+  in on straight lines, type slides along diagonals and everything locks
+  into place with a hard stop.
+dimensions:
+  palette:
+    mode: light
+    colors: {bg: "#efe6d2", ink: "#141414", accent: "#c8102e", cream: "#f6efdf", grey: "#5e5a55"}
+    rule: "Red, black and cream only; red for wedges, bars and one key word."
+  typography:
+    - "Oswald 700 180-280 px condensed caps set at 15-30 deg diagonals"
+    - "Russo One 60 px for slogans; IBM Plex Mono 500 22 px for numbers and dates"
+  layout: ["Dynamic diagonal composition, 15-30 deg axis", "Hero photomontage figure looking up and off-frame", "Red wedge or circle as the focal device"]
+  material: ["Flat ink shapes and halftone photo cut-outs", "No rounded corners, no soft shadows"]
+  texture: ["Baked letterpress grain and newsprint", "Halftone on photo cut-outs"]
+  camera: ["Locked-off; the composition itself moves along the diagonal", "Occasional slow tilt along the main axis"]
+  transitions: ["wedge-drive (a red wedge drives across on the diagonal, power4.in 0.35 s, next scene behind it)", "diagonal-slide (type and figures slide along the 25 deg axis, expo.out)", "hard cut on downbeat"]
+  pacing:
+    bpm: [112, 132]
+    rhythm: "March-like: reveals on downbeats, mechanical holds of 4-8 beats, sections change on bar lines."
+  beat_response: ["Wedges advance one step per beat", "Numerals tick on downbeats with no ease", "No pulse or glow"]
+  ui_choreography: ["UI panels cropped into angled frames, entering along the diagonal", "Callouts as red bars with condensed labels"]
+  diagrams: ["Straight lines and wedges only, red for the active path", "Bars as thick red and black slabs growing along the diagonal"]
+  character_motion: ["Photomontage figures stay rigid; they slide and scale, never bend"]
+  captions: ["Black bar, 42 px Be Vietnam Pro 700 cream, current word red; bottom band"]
+  sound: ["Industrial, march or driving orchestral electronica 112-132 BPM", "SFX: press stamp, metal clank, typewriter; low-medium density"]
+scene_types:
+  prefer: [cover, title, quote, stats, timeline, cta]
+  avoid: [ui-demo, terminal, code]
+signature_moves:
+  - "Red wedge driving into frame on the drop"
+  - "Headline sliding along a 25 deg diagonal and locking"
+  - "Heroic cut-out figure rising from the bottom edge"
+strengths: ["Forceful and declarative", "Great for manifestos and calls to action", "Iconic with three colours"]
+constraints:
+  - "Only red, black and cream"
+  - "Motion follows straight lines and the diagonal axis; no bounce"
+  - "Grain and halftone baked to PNG"
+avoid: ["Soft curves or rounded UI", "Gradients and glass", "Playful bouncing"]
+pairs_well_with: [bauhaus-geometry, swiss-kinetic-editorial, kinetic-typography, newsprint-editorial]

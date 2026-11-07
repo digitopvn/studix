@@ -1,0 +1,17 @@
+{
+  "fps": 24,
+  "duration": 4.5,
+  "width": 1920,
+  "height": 1080,
+  "note": "edit times in seconds, frame multiples of 1/fps. video: src is relative to the episode dir, in = seconds into src, speed > 1 plays faster; conform writes clips/<id>.mp4. gl: set = scene-config set id. cel: img relative to the scene dir.",
+  "title": { "text": "題名", "sub": "TÊN PHIM", "at": 4.0 },
+  "fade": { "in": 0.35, "out": 0.3 },
+  "captions": { "highlight": "#ffe08a", "hold": 0.15 },
+  "speakers": { "a": { "name": "A", "color": "#ffd6e2" }, "b": { "name": "B", "color": "#d6e6ff" } },
+  "shots": [
+    { "id": "s01", "kind": "gl", "set": "main", "start": 0.0, "end": 1.75, "tier": "T0", "beat": "establish: fly through the set" },
+    { "id": "s02", "kind": "video", "start": 1.75, "end": 3.5, "src": "gen/video/s02.mp4", "in": 0.55, "speed": 1.0, "audio": true, "tier": "T2",
+      "beat": "her taunt", "dialogue": [ { "speaker": "a", "t0": 1.88, "t1": 3.4, "text": "接招！", "tr": "Đỡ chiêu!" } ] },
+    { "id": "s03", "kind": "cel", "start": 3.5, "end": 4.5, "img": "assets/cels/s03.jpg", "tier": "T1", "beat": "his answer: blade rises" }
+  ]
+}

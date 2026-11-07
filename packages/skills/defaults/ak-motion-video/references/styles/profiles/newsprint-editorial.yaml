@@ -1,0 +1,50 @@
+id: newsprint-editorial
+name: Newsprint Editorial
+family: aesthetic
+aliases: [newsprint, front page, newspaper, breaking news, tabloid]
+summary: Mid-century front-page feature; condensed headlines, heavy halftone, deep red and mustard on cream, stamp slams.
+energy: 4
+best_for: [news-explainer, ai-tech-explainer, announcement, editorial-feature]
+character: >-
+  A mid-century newspaper front page brought to life: stacked condensed
+  headlines, column rules, halftone photos and red EXTRA stamps on aged cream.
+  Motion is energetic and tactile: pages spin in, headlines slam, columns
+  type themselves out and the camera pushes into the key photo like a
+  reader leaning in.
+dimensions:
+  palette:
+    mode: light
+    colors: {bg: "#f1e8d4", ink: "#1b1916", accent: "#b3201c", mustard: "#e0a526", charcoal: "#3a3733", cream: "#f8f2e3"}
+    rule: "Cream, charcoal and ink; deep red for stamps and the key headline word; mustard as a highlighter."
+  typography:
+    - "Anton 160-260 px all-caps stacked headlines, tight 0.9 leading"
+    - "Old Standard TT 700 54 px decks; PT Serif 400 28 px column body"
+    - "IBM Plex Mono 500 20 px datelines and captions"
+  layout: ["Front-page grid with column rules and a masthead strip", "Hero halftone photo with a caption block", "Stamp or banner across a corner"]
+  material: ["Newsprint sheets with fold creases and soft shadows", "Red rubber stamps and mustard highlighter strokes"]
+  texture: ["Baked heavy halftone and aged paper grain", "Slight print misregistration on red ink"]
+  camera: ["push_in into the hero photo on holds", "pan down columns for lists", "Overscanned stage for whips"]
+  transitions: ["spinning-page (the next page spins in from small, 0.6 s expo.out with 540 deg rotation resolving)", "column-wipe (text columns wipe in top to bottom, staggered)", "stamp-cut (hard cut under a stamp slam on the drop)"]
+  pacing:
+    bpm: [108, 128]
+    rhythm: "Newsroom urgency: headline slams on downbeats, columns type out between them, holds 4 beats."
+  beat_response: ["Stamps slam on kicks with a 2-frame shake", "Highlighter strokes draw on downbeats", "Ticker numerals roll on beats"]
+  ui_choreography: ["UI printed into a column as a halftone screenshot with a caption", "Callouts as mustard highlighter marks and red circles"]
+  diagrams: ["Newspaper infographics: bar charts in ink and red, pictograms", "Flows as numbered column boxes"]
+  character_motion: ["Halftone photo cut-outs slide and scale only"]
+  captions: ["Cream strip with ink rule above, 42 px Be Vietnam Pro 700 ink, current word red; bottom band"]
+  sound: ["Driving news-theme percussion, jazz or electronic 108-128 BPM", "SFX: typewriter, press roll, stamp, paper rustle; medium density"]
+scene_types:
+  prefer: [cover, hook, title, stats, timeline, quote, comparison, cta]
+  avoid: [terminal, code]
+signature_moves:
+  - "Spinning front page landing on the downbeat"
+  - "EXTRA stamp slamming on the key claim"
+  - "Columns typing themselves out under the headline"
+strengths: ["Urgent and credible", "Great for announcements and explainers", "Dense information stays readable"]
+constraints:
+  - "Halftone and grain baked to PNG"
+  - "Red only for stamps and one key word per scene"
+  - "Shake is seeded and decays within 6 frames"
+avoid: ["Glass, neon or gradients", "Rounded friendly UI", "Script fonts"]
+pairs_well_with: [data-editorial, editorial-collage-explainer, editorial-intelligence, constructivist-poster]

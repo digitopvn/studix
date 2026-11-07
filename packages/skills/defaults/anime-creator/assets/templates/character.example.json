@@ -1,0 +1,17 @@
+{
+  "id": "taoyao",
+  "name": "Tao Yao",
+  "role": "heroine; playful challenger who is secretly in love",
+  "age_look": "early 20s",
+  "anchors": ["black hair with peach-pink tips", "two buns with long red ribbons", "crimson peach-blossom mark on the forehead", "pink and crimson hanfu", "red sword tassel"],
+  "silhouette": "slim; the two buns and trailing ribbons read in silhouette",
+  "handedness": "right-handed: her sword is always in her RIGHT hand",
+  "props": {"sword": "slim straight jian, silver blade, red tassel on the pommel"},
+  "palette": {"hair": "#141018", "tips": "#ff9ab8", "robe": "#ff6f91", "accent": "#c4153c"},
+  "sheet": "bible/refs/taoyao-sheet.png",
+  "expressions": "bible/refs/taoyao-expressions.png",
+  "voice": {"provider": "elevenlabs", "model": "eleven_v3", "voice_id": "", "language": "zh", "accent": "standard Mandarin; gate every take against an approved anchor line",
+            "respellings": {"Lingxiao": "Líng Xiāo"}, "notes": "bright and teasing, a light breath at line ends"},
+  "acting": "quick, light, teasing; tilts her head before she attacks; slow blink when tender",
+  "negatives": ["no earrings", "no third bun", "no blue in her outfit"]
+}

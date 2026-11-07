@@ -1,0 +1,19 @@
+{
+  "_comment": "ffmpeg -af chains that turn a clean TTS take into a stylized voice (make-voice-variants.py). Prompt-only TTS could not make a convincing robot; DSP on an approved take did, at no new API cost. {sr} is replaced by the take's sample rate. A series can add its own groups in <series>/voice-dsp-presets.json (merged per group and per variant). The user picks by ear from the labelled reel; record the pick in the character file and the scene's notes. `source` names which --in take a variant starts from (default: the first).",
+  "robot": {
+    "A": {"label": "ring-mod 55 Hz + short comb (metal android)", "source": "flat",
+          "af": "asplit[d][w];[w]aeval='val(0)*sin(2*PI*55*t)':c=same[r];[d][r]amix=inputs=2:weights='0.35 1':normalize=0,aecho=0.8:0.6:6|11:0.45|0.3,highpass=f=180,lowpass=f=7500"},
+    "B": {"label": "flat robotize + bitcrush (reading machine)", "source": "flat",
+          "af": "afftfilt=real='hypot(re,im)':imag='0':win_size=1024:overlap=0.75,highpass=f=200,lowpass=f=6000,acrusher=bits=8:mix=0.45:samples=2,aecho=0.7:0.5:4:0.4"},
+    "C": {"label": "digital assistant: 3 detuned voices + tight flanger", "source": "bright",
+          "status": "picked by the user for FRONTIER ep02 (a polite chatbot android)",
+          "af": "asplit=3[a][b][c];[b]asetrate={sr}*1.03,aresample={sr},atempo=1/1.03[b2];[c]asetrate={sr}*0.97,aresample={sr},atempo=1/0.97[c2];[a][b2][c2]amix=inputs=3:weights='1 0.6 0.6':normalize=0,flanger=delay=1:depth=1:speed=0.8:regen=60,highpass=f=220"},
+    "D": {"label": "cheap robot speaker: bandpass + 6-bit + sample-rate crush", "source": "flat",
+          "af": "highpass=f=450,lowpass=f=3400,acrusher=bits=6:mix=0.6:samples=3,aecho=0.6:0.4:3:0.5,volume=1.6"},
+    "E": {"label": "deep robot: down 3 semitones + ring-mod 90 Hz + metal echo", "source": "flat",
+          "af": "asetrate={sr}*0.84,aresample={sr},atempo=1/0.84,asplit[d][w];[w]aeval='val(0)*sin(2*PI*90*t)':c=same[r];[d][r]amix=inputs=2:weights='0.5 0.8':normalize=0,aecho=0.8:0.7:14|23:0.4|0.25,highpass=f=120"}
+  },
+  "radio": {
+    "A": {"label": "handheld radio: bandpass + light drive", "af": "highpass=f=300,lowpass=f=3000,acompressor=threshold=0.1:ratio=6,acrusher=bits=10:mix=0.2"}
+  }
+}

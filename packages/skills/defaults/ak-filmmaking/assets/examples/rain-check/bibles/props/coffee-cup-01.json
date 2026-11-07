@@ -1,0 +1,15 @@
+{
+  "id": "COFFEE_CUP_01",
+  "kind": "prop",
+  "name": "white ceramic cup",
+  "description": "White ceramic cup and saucer, chipped rim facing Linh.",
+  "references": [
+    {
+      "id": "PROP_COFFEE_CUP_01",
+      "view": "detail",
+      "path": "bibles/props/coffee-cup-01.png",
+      "status": "canonical",
+      "version": 1
+    }
+  ]
+}

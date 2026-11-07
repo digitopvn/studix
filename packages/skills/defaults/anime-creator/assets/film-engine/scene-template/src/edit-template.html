@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!--
+  The edit of one scene: AI clips (video shots) under one transparent WebGL canvas (multiplane set, cels,
+  weather, light FX), with the DOM camera, shake, whips, impact frames, live captions and title on top.
+  index.html is GENERATED from this file by `anime-studio.py build-edit`; edit the template, never index.html.
+  It lives in src/ because a second root composition at the project root fails `hyperframes check`
+  (multiple_root_compositions).
+  HyperFrames contract: #root composition "main", paused GSAP timeline at __timelines.main, GL draws on hf-seek.
+  Audio is mixed separately and muxed in the master pass, so the clips stay muted here.
+-->
+<html lang="__LANG__" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=__W__, height=__H__">
+    <title>__TITLE_PAGE__</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>window.__timelines = window.__timelines || {};</script>
+    <style>
+      @font-face { font-family: "Caption Sans"; src: url("assets/fonts/BeVietnamPro-SemiBold.ttf") format("truetype"); font-weight: 600; font-display: block; }
+      html, body { margin: 0; background: #000; }
+      #root { position: relative; width: __W__px; height: __H__px; overflow: hidden; background: #000; }
+      #fx, #shaker, #cam, .layer, .clip { position: absolute; inset: 0; width: __W__px; height: __H__px; }
+      #fx, #shaker, #cam { transform-origin: 50% 50%; }
+      #shaker { filter: url(#whipblur); }
+      .clip { object-fit: cover; display: block; }
+      #gl { position: absolute; inset: 0; width: __W__px; height: __H__px; }
+      #tint { mix-blend-mode: screen; opacity: 0; background: rgb(255, 150, 190); }
+      #dim { background: rgb(6, 4, 2); opacity: 0; }
+      #flash { background: #fff; opacity: 0; }
+      #vignette { background: radial-gradient(ellipse 80% 74% at 50% 50%, rgba(0,0,0,0) 58%, rgba(10,6,16,.45) 100%); }
+      #black { background: #000; opacity: 1; }
+      /* captions: line 1 is what is spoken, line 2 the translation; 46px+ with a thick stroke reads on a phone */
+      .cap { position: absolute; left: 0; right: 0; bottom: 84px; text-align: center; visibility: hidden; opacity: 0; }
+      .cap .l1 { display: block; font: 700 40px/1.25 "Songti SC", "Hiragino Mincho ProN", "STSong", serif; color: var(--spk, #fff2f4); letter-spacing: 0.1em; -webkit-text-stroke: 5px #14070f; paint-order: stroke fill; text-shadow: 0 2px 8px rgba(0,0,0,.6); margin-bottom: 8px; }
+      .cap .l2 { display: block; font: 600 46px/1.2 "Caption Sans", "Be Vietnam Pro", sans-serif; color: #fff; -webkit-text-stroke: 7px #14070f; paint-order: stroke fill; text-shadow: 0 3px 10px rgba(0,0,0,.55); }
+      .cap.mono .l1 { font: 600 46px/1.2 "Caption Sans", "Be Vietnam Pro", sans-serif; letter-spacing: 0; }
+      #title { position: absolute; right: 150px; top: 170px; text-align: center; visibility: hidden; opacity: 0; }
+      #title .t1 { display: block; font: 900 150px/1 "Songti SC", "Hiragino Mincho ProN", serif; color: #fff6f2; letter-spacing: 0.08em; writing-mode: vertical-rl;
+        text-shadow: 0 0 24px rgba(255, 140, 180, .85), 0 0 60px rgba(255, 120, 170, .5), 0 4px 10px rgba(60, 10, 30, .6); }
+      #title .t2 { display: block; margin-top: 18px; font: 600 30px/1 "Caption Sans", sans-serif; color: #ffe9ef; letter-spacing: 0.5em; text-shadow: 0 2px 10px rgba(60, 10, 30, .8); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="__DURATION__" data-width="__W__" data-height="__H__" data-fps="__FPS__">
+      <svg width="0" height="0" style="position:absolute">
+        <filter id="whipblur" x="-5%" y="0%" width="110%" height="100%" color-interpolation-filters="sRGB">
+          <feGaussianBlur id="whip" stdDeviation="0 0" edgeMode="duplicate" />
+        </filter>
+      </svg>
+      <div id="fx">
+        <div id="shaker">
+          <div id="cam">
+          <!--VIDEOS-->
+            <canvas id="gl" data-layout-allow-overflow="" width="__W__" height="__H__"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="layer" id="tint"></div>
+      <div class="layer" id="dim"></div>
+      <div class="layer" id="flash"></div>
+      <div class="layer" id="vignette"></div>
+      <!--TITLE-->
+      <!--CAPTIONS-->
+      <div class="layer" id="black"></div>
+    </div>
+    <script src="dist/film.js"></script>
+  </body>
+</html>

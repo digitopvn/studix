@@ -6,6 +6,7 @@ const HIGH_RISK_PROMPT =
   "This version is HIGH risk (it runs shell or network code, harvests secrets or hides code). Enable it anyway? Your confirmation is audited.";
 
 function sourceLabel(skill: Pick<SkillListItem, "source">): string {
+  if (skill.source.kind === "default") return "Studix default";
   return skill.source.kind === "upload"
     ? `Upload${skill.source.fileName ? ` (${skill.source.fileName})` : ""}`
     : `${skill.source.owner}/${skill.source.repo}${skill.source.path ? `/${skill.source.path}` : ""}`;
@@ -109,10 +110,29 @@ export function SkillsPage({ isOperator }: { isOperator: boolean }) {
               <div className="key-state">
                 <RiskBadge level={s.activeRiskLevel} />
                 <StatusBadge
-                  status={s.status === "enabled" ? "succeeded" : "canceled"}
-                  label={s.status === "enabled" ? "On" : "Off"}
+                  status={s.status === "enabled" && !s.turnedOffHere ? "succeeded" : "canceled"}
+                  label={s.status !== "enabled" ? "Off" : s.turnedOffHere ? "Off here" : "On"}
                 />
               </div>
+              {s.scope === "platform" && s.status === "enabled" && (
+                <div className="key-actions">
+                  <button
+                    type="button"
+                    className={s.turnedOffHere ? "small" : "secondary small"}
+                    disabled={busy}
+                    title="Only this workspace; other workspaces keep it"
+                    onClick={() =>
+                      void act(() =>
+                        s.turnedOffHere
+                          ? api.updateSkill(s.id, { action: "enable", workspaceOnly: true })
+                          : api.disableSkill(s.id, { workspaceOnly: true }),
+                      )
+                    }
+                  >
+                    {s.turnedOffHere ? "Turn on here" : "Turn off here"}
+                  </button>
+                </div>
+              )}
               {s.manageable && (
                 <div className="key-actions">
                   {s.status === "enabled" ? (

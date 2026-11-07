@@ -1,0 +1,88 @@
+{
+  "shot_id": "S02_SH006",
+  "scene_id": "S02",
+  "shot_type": "close_up",
+  "lens": "85mm",
+  "camera": "static",
+  "action": "Mai takes the hit, swallows, looks at the rain on the glass.",
+  "emotion": "guilt",
+  "duration_target": 4,
+  "characters": [
+    "MAI_01"
+  ],
+  "location": "CAFE_INTERIOR_01",
+  "wardrobe": {
+    "MAI_01": "MAI_RAINCOAT_01"
+  },
+  "props": [],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "CHAR_MAI_FRONT",
+    "CHAR_MAI_3QL",
+    "WARDROBE_MAI_RAINCOAT_01",
+    "CHAR_MAI_3QR",
+    "LOC_CAFE_TABLE"
+  ],
+  "continuity_from": "S02_SH005",
+  "continuity_to": "S02_SH007",
+  "continuity": {
+    "screen_positions": {
+      "MAI_01": "center"
+    },
+    "prop_states": {},
+    "conditions": {
+      "MAI_01": [
+        "damp_hair"
+      ]
+    },
+    "screen_direction": "static"
+  },
+  "render_class": "CHARACTER_CRITICAL",
+  "retry_budget": 2,
+  "estimate": {
+    "generation_seconds": 8,
+    "cost": {
+      "amount": 4.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "QC_FAILED",
+  "storyboard": {
+    "path": "storyboard/S02_SH006.png",
+    "status": "approved"
+  },
+  "keyframe": {
+    "path": "scenes/S02/shots/S02_SH006/approved/keyframe.png",
+    "status": "approved"
+  },
+  "generations": [
+    {
+      "id": "GEN_S02_SH006_01",
+      "prompt_version": 1,
+      "provider": "example-provider",
+      "model": "example-video-model",
+      "seed": 1001,
+      "output": "scenes/S02/shots/S02_SH006/generations/01.mp4",
+      "seconds": 4,
+      "status": "selected",
+      "cost": {
+        "amount": 1.6,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    }
+  ],
+  "qc": {
+    "status": "failed",
+    "failures": [
+      {
+        "category": "identity",
+        "at": 1.8,
+        "end": 3.1,
+        "note": "Jawline widens and the left-eyebrow scar disappears versus CHAR_MAI_FRONT."
+      }
+    ]
+  }
+}

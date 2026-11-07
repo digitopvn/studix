@@ -1,0 +1,15 @@
+{
+  "id": "CAFE_STREET_01",
+  "kind": "location",
+  "name": "corner cafe street",
+  "description": "Narrow street, green awning, rain-streaked shopfront glass, warm interior light spilling out.",
+  "references": [
+    {
+      "id": "LOC_CAFE_STREET_WIDE",
+      "view": "wide",
+      "path": "bibles/locations/cafe-street-01/wide.png",
+      "status": "canonical",
+      "version": 1
+    }
+  ]
+}

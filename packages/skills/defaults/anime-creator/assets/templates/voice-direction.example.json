@@ -1,0 +1,60 @@
+{
+  "_note": "Voice direction manifest: identity per character (pinned voice, never changed per line), performance per line. `text` is the plain spoken words (subtitles, ASR, alignment); `directed_text` adds [directions] and paired tags and must strip back to `text`. Check: anime-studio.py voice-direction <file>; --emit-jobs writes one tts job per line into gen-plan.json.",
+  "provider": "openrouter",
+  "model": "fish-audio/drama-3",
+  "language": "vi",
+  "format": "mp3",
+  "characters": {
+    "zuey": {
+      "voice": {
+        "provider": "openrouter",
+        "model": "fish-audio/drama-3",
+        "voice_id": "<pinned-voice-id>",
+        "origin": "library",
+        "approved_by": "",
+        "approved_take": "",
+        "dictionaries": [
+          {
+            "id": "frontier-names",
+            "version": "v3"
+          }
+        ]
+      }
+    },
+    "kael": {
+      "voice": {
+        "provider": "openrouter",
+        "model": "fish-audio/drama-3",
+        "voice_id": "<pinned-voice-id>",
+        "origin": "clone",
+        "consent": {
+          "rights_confirmed": false,
+          "owner": "",
+          "evidence": ""
+        },
+        "approved_by": ""
+      }
+    }
+  },
+  "scenes": [
+    {
+      "id": "sc03",
+      "lines": [
+        {
+          "id": "sc03-01",
+          "shot": "sc03-sh02",
+          "speaker": "zuey",
+          "text": "Anh... đừng đi.",
+          "directed_text": "[giọng run run, cố nén nước mắt] Anh... <whisper>đừng đi.</whisper>"
+        },
+        {
+          "id": "sc03-02",
+          "shot": "sc03-sh03",
+          "speaker": "kael",
+          "text": "Tôi phải đi. Đây là lệnh.",
+          "directed_text": "[lạnh lùng, dứt khoát] Tôi phải đi. <emphasis>Đây là lệnh.</emphasis>"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "scene": "sc03",
+  "notes": "One sound designer per scene writes this file (work/<round>/mix-add-<scene>.json) and never edits audio/mix-events.json. The controller checks it with audit-mix-buses.py --events and merges all scenes at once with merge-mix-proposals.py. Every `match` must hit exactly one existing event of this scene, or nothing is merged. Event keys are the mix-events keys; `scene` is filled in when missing. Put bed gain fixes in the file (normalize the source), not +16 dB here.",
+  "remove": [
+    {"match": {"file": "audio/sfx/old-wind.mp3", "t": 4.0}}
+  ],
+  "modify": [
+    {"match": {"file": "audio/sfx/burning-city-loop.wav", "t": 0.0}, "set": {"gain": -9}}
+  ],
+  "add": [
+    {"t": 0.0, "file": "audio/sfx/sc03/bed-rain-close.wav", "bus": "beds", "gain": -14, "len": 20.0, "fade_in": 0.5, "fade_out": 0.6},
+    {"t": 19.4, "file": "audio/sfx/sc03/bed-rain-close.wav", "bus": "beds", "gain": -14, "len": 20.0, "fade_in": 0.6, "fade_out": 0.6},
+    {"at_shot": "s06", "t": 0.0, "file": "audio/sfx/sc03/siren-far.mp3", "bus": "hits", "gain": -14.6, "fx": "far", "fade_out": 0.8}
+  ],
+  "duck": {
+    "beds": [{"at_shot": "s10", "t0": 0.15, "t1": 2.0, "gain": 0.42}],
+    "music": []
+  }
+}

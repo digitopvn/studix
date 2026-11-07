@@ -1,0 +1,99 @@
+{
+  "shot_id": "S02_SH001",
+  "scene_id": "S02",
+  "shot_type": "two_shot",
+  "lens": "28mm",
+  "camera": "static wide across the table",
+  "action": "Mai sits opposite Linh and hangs the umbrella on her chair.",
+  "emotion": "awkward",
+  "duration_target": 5,
+  "characters": [
+    "MAI_01",
+    "LINH_01"
+  ],
+  "location": "CAFE_INTERIOR_01",
+  "wardrobe": {
+    "MAI_01": "MAI_RAINCOAT_01",
+    "LINH_01": "LINH_KNIT_01"
+  },
+  "props": [
+    "UMBRELLA_01",
+    "COFFEE_CUP_01"
+  ],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "CHAR_MAI_FRONT",
+    "CHAR_MAI_3QL",
+    "WARDROBE_MAI_RAINCOAT_01",
+    "CHAR_LINH_FRONT",
+    "CHAR_LINH_3QR",
+    "WARDROBE_LINH_KNIT_01",
+    "LOC_CAFE_INTERIOR_WIDE",
+    "PROP_COFFEE_CUP_01"
+  ],
+  "continuity_from": "S01_SH002",
+  "continuity_to": "S02_SH002",
+  "continuity": {
+    "screen_positions": {
+      "MAI_01": "left",
+      "LINH_01": "right"
+    },
+    "prop_states": {
+      "UMBRELLA_01": "chair:left",
+      "COFFEE_CUP_01": "table:center"
+    },
+    "conditions": {
+      "MAI_01": [
+        "damp_hair"
+      ]
+    },
+    "screen_direction": "static"
+  },
+  "continuity_changes": [
+    {
+      "field": "prop_states.UMBRELLA_01",
+      "reason": "Mai hangs the closed umbrella on her chair as she sits."
+    }
+  ],
+  "render_class": "STANDARD",
+  "retry_budget": 2,
+  "estimate": {
+    "generation_seconds": 10,
+    "cost": {
+      "amount": 3.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "APPROVED",
+  "storyboard": {
+    "path": "storyboard/S02_SH001.png",
+    "status": "approved"
+  },
+  "keyframe": {
+    "path": "scenes/S02/shots/S02_SH001/approved/keyframe.png",
+    "status": "approved"
+  },
+  "generations": [
+    {
+      "id": "GEN_S02_SH001_01",
+      "prompt_version": 1,
+      "provider": "example-provider",
+      "model": "example-video-model",
+      "seed": 1001,
+      "output": "scenes/S02/shots/S02_SH001/generations/01.mp4",
+      "seconds": 5,
+      "status": "selected",
+      "cost": {
+        "amount": 1.2,
+        "currency": "USD",
+        "source": "fixture: illustrative amount, not a provider price"
+      }
+    }
+  ],
+  "qc": {
+    "status": "passed",
+    "failures": []
+  }
+}

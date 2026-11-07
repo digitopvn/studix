@@ -15,6 +15,7 @@
       "!packages/video-ir/schemas",
       "!apps/marketing/public",
       "!packages/renderers/film-engine",
+      "!packages/skills/defaults",
       "!**/*.html"
     ]
   },

@@ -1,0 +1,10 @@
+{
+ "speed": 1.08,
+ "pad": 0.08,
+ "keep": [
+  { "segments": "g001..g014" },
+  { "segments": ["g016", "g018"], "speed": 1.15 },
+  { "take": "take2", "from": 12.4, "to": 31.9 },
+  { "segments": "g031..g040" }
+ ]
+}

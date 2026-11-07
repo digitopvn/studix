@@ -1,0 +1,13 @@
+{
+  "_comment": "Composable impact presets on top of the edit kit (dom-edit-helpers.js): each preset is a list of existing kit calls, so no new FX API exists. {t} is the event time in seconds (frame-aligned by the planner), F is one frame. `flashes` counts full-frame luminance changes for the photosensitivity check (no more than 3 a second). `reduced` names the preset used under --reduced-flash. Impact frames are 1-4 FRAMES; a 1-2 second burst strobes.",
+  "presets": {
+    "impact-1f": {"what": "one inverted frame at contact; the lightest readable hit", "calls": ["impact({t}, 1)"], "flashes": 1, "reduced": "shake-only"},
+    "impact-2f": {"what": "two inverted frames at contact, the FRONTIER default", "calls": ["impact({t}, 2)"], "flashes": 1, "reduced": "shake-only"},
+    "hit-full": {"what": "impact frames + flash + heavy shake (the kit's hit())", "calls": ["hit({t}, {{ frames: 2, amp: 18, seed: {seed} }})"], "flashes": 2, "reduced": "hit-soft"},
+    "hit-soft": {"what": "flash at low peak + shake, no inversion", "calls": ["flash({t}, 0.35, 0.1)", "shake({t}, 0.35, 12, {{ decay: 3, seed: {seed}, cover: true, snap: true }})"], "flashes": 1, "reduced": "shake-only"},
+    "shake-only": {"what": "camera shake alone; safe for photosensitive review", "calls": ["shake({t}, 0.35, 12, {{ decay: 3, seed: {seed}, cover: true, snap: true }})"], "flashes": 0},
+    "silhouette-flash": {"what": "near-black tint for 3 frames: figures read as silhouettes against the flash", "calls": ["tint({t}, 0.85, 3 * F, \"rgb(8, 8, 14)\")", "flash({t} + 3 * F, 0.6, 0.1)"], "flashes": 2, "reduced": "hit-soft"},
+    "blackout-2f": {"what": "graphic cut: two black frames hide a contact the footage cannot show", "calls": ["tint({t}, 1.0, 2 * F, \"rgb(0, 0, 0)\")"], "flashes": 1, "reduced": "blackout-2f"},
+    "whip-into-cut": {"what": "horizontal whip blur carrying motion across the cut (smear / speed emphasis)", "calls": ["whipIn({t}, 70, 0.1)"], "flashes": 0}
+  }
+}

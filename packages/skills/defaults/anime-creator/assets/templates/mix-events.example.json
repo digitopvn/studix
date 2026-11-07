@@ -1,0 +1,22 @@
+{
+  "note": "Times: `scene` + `t` = scene time; `scene` + `at_shot` + `t` = time from that shot's start; no scene = episode time. fx is a preset name or a raw ffmpeg -af chain. Buses: beds (ambience, foley), hits (impacts, whooshes), vo, music.",
+  "sample_rate": 48000,
+  "target": {"lufs": -14, "true_peak": -1.5, "lra": 20, "limit": 0.82},
+  "fade_out": 0.4,
+  "bus_trim_db": {"vo": 4, "music": -2},
+  "presets": {
+    "air": "highpass=f=180,lowpass=f=9000",
+    "hit": "acompressor=threshold=0.25:ratio=4:attack=2:release=60,alimiter=limit=0.9",
+    "far": "lowpass=f=3500,aecho=0.8:0.6:60:0.25",
+    "radio": "highpass=f=300,lowpass=f=3400"
+  },
+  "bus_fx": {"hits": "acompressor=threshold=0.3:ratio=3:attack=3:release=80,alimiter=limit=0.92"},
+  "auto": {"clip_audio": true, "dialogue_vo": true, "vo_gain_db": 2},
+  "events": [
+    {"scene": "sc01", "t": 0.0, "file": "audio/sfx/garden-bed.mp3", "len": 12.0, "gain": -8, "bus": "beds", "fx": "air", "fade_in": 0.5, "fade_out": 1.0},
+    {"scene": "sc01", "at_shot": "s02", "t": 0.05, "file": "audio/sfx/swish.mp3", "gain": -3, "bus": "hits", "fx": "hit", "pan": 0.2},
+    {"t": 0.0, "file": "audio/mus/main.mp3", "gain": -6, "bus": "music", "fade_in": 0.3, "fade_out": 1.2}
+  ],
+  "duck": {"music": [{"scene": "sc01", "at_shot": "s02", "t0": 0.0, "t1": 0.6, "gain": 0.5}]},
+  "duck_from_dialogue": {"music": 0.75, "beds": 0.6}
+}

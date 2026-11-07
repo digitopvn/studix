@@ -1,0 +1,34 @@
+{
+  "id": "performance",
+  "version": "1.0.1",
+  "title": "Performance and acting",
+  "purpose": "Direct what a character shows and what they hide, so a keyframe or clip prompt carries behaviour instead of a single emotion label.",
+  "load_when": ["acting", "performance", "emotion", "expression", "gaze", "subtext", "voice", "dialogue", "lipsync"],
+  "use_cases": [
+    "Writing `performance.surface` and `performance.hidden` per shot: smiling (surface) while afraid of being found out (hidden).",
+    "Choosing one micro-behaviour per beat (a held breath, a glance away, hands that stop moving) instead of a bigger face.",
+    "Giving a voice take an intention (to reassure, to stall, to provoke) before choosing pitch or pace.",
+    "Keeping a character fingerprint: the habits and posture that stay the same across episodes."
+  ],
+  "anti_patterns": [
+    "One emotion word per shot ('sad') pasted into the prompt; the face goes generic and the same in every shot.",
+    "Hidden emotion that repeats the surface one, so there is no subtext to play.",
+    "Gaze that wanders with no target; eyelines must point at someone or something in the set.",
+    "Dialogue with no pauses; silence before a line is often where the acting is.",
+    "An expression sized for the look, not by default: live-action-like looks shrink the move as the shot gets closer, while anime looks may push a close-up reaction on purpose. Decide it per look.",
+    "Emotional jumps between adjacent shots with no event in between (the trajectory breaks)."
+  ],
+  "tool_roles": ["planner (filmspec performance)", "prompt compiler (acting field)", "voice director", "QA reviewer"],
+  "checks": [
+    {"id": "performance.subtext-differs", "level": "shot", "kind": "hard", "fn": "subtext",
+     "measure": "a shot with `performance.hidden` names a different emotion from `performance.surface`", "pass": "0 failures"},
+    {"id": "performance.eyeline", "level": "shot", "kind": "evidence",
+     "measure": "reviewer marks the gaze target in the first, middle and last frame", "pass": "target named in all three"},
+    {"id": "performance.trajectory", "level": "scene", "kind": "evidence",
+     "measure": "reviewer lists each shot's surface emotion in order and names the event behind each change", "pass": "no change without an event"},
+    {"id": "performance.believable", "level": "scene", "kind": "human",
+     "measure": "the user says whether the character feels like themselves", "pass": "user approves"}
+  ],
+  "spec_fields": {"shot": ["performance.surface", "performance.hidden", "blocking"]},
+  "references": ["references/voice-takes-and-stylized-voices.md", "references/keyframes-and-ai-video.md"]
+}

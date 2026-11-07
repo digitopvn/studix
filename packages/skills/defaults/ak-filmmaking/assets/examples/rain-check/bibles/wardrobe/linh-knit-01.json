@@ -1,0 +1,16 @@
+{
+  "id": "LINH_KNIT_01",
+  "kind": "wardrobe",
+  "name": "oatmeal knit",
+  "description": "Oversized oatmeal cable-knit sweater, sleeves pushed to the elbow.",
+  "character": "LINH_01",
+  "references": [
+    {
+      "id": "WARDROBE_LINH_KNIT_01",
+      "view": "full_body",
+      "path": "bibles/wardrobe/linh-knit-01.png",
+      "status": "canonical",
+      "version": 1
+    }
+  ]
+}

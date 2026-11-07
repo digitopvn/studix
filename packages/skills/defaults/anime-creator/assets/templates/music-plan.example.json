@@ -1,0 +1,10 @@
+{
+  "positive_global_styles": ["cinematic East Asian orchestral score", "guzheng and dizi lead", "taiko and low strings for action", "hand-made, film score dynamics"],
+  "negative_global_styles": ["vocals", "lyrics", "EDM drop", "lo-fi", "modern pop drums"],
+  "sections": [
+    {"section_name": "intro garden", "positive_local_styles": ["solo dizi over soft string pad", "airy, curious"], "negative_local_styles": ["percussion"], "duration_ms": 4000, "lines": []},
+    {"section_name": "duel", "positive_local_styles": ["taiko ostinato", "fast guzheng runs", "rising tension"], "negative_local_styles": ["slow tempo"], "duration_ms": 6000, "lines": []},
+    {"section_name": "the catch", "positive_local_styles": ["percussion drops out", "warm strings swell", "tender, romantic"], "negative_local_styles": ["drums"], "duration_ms": 5000, "lines": []}
+  ],
+  "note": "ElevenLabs composition plan: each section >= 3000 ms; sum the sections to the edit length plus about 1 s of tail. Place section boundaries on picture beats (the edit's hits)."
+}

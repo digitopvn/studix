@@ -1,0 +1,16 @@
+{
+  "id": "MAI_RAINCOAT_01",
+  "kind": "wardrobe",
+  "name": "mustard raincoat",
+  "description": "Knee-length mustard raincoat over a grey turtleneck, dark jeans.",
+  "character": "MAI_01",
+  "references": [
+    {
+      "id": "WARDROBE_MAI_RAINCOAT_01",
+      "view": "full_body",
+      "path": "bibles/wardrobe/mai-raincoat-01.png",
+      "status": "canonical",
+      "version": 1
+    }
+  ]
+}
