@@ -55,6 +55,20 @@ export function ActivitySheet({
     if (!open && dialog.open) dialog.close();
   }, [open]);
 
+  // A backdrop click targets the dialog too, so close only when it falls outside the sheet's box.
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const onClick = (e: MouseEvent) => {
+      if (e.target !== dialog) return;
+      const r = dialog.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
+        dialog.close();
+    };
+    dialog.addEventListener("click", onClick);
+    return () => dialog.removeEventListener("click", onClick);
+  }, []);
+
   async function retry(id: string) {
     setError(undefined);
     try {

@@ -245,6 +245,46 @@ dialog.sheet {
   width: min(440px, 100vw);
   border-radius: var(--r3) 0 0 var(--r3);
   overflow-y: auto;
+  transform: translateX(100%);
+  transition:
+    transform 0.25s ease,
+    overlay 0.25s allow-discrete,
+    display 0.25s allow-discrete;
+}
+
+dialog.sheet[open] {
+  transform: none;
+}
+
+@starting-style {
+  dialog.sheet[open] {
+    transform: translateX(100%);
+  }
+}
+
+dialog.sheet::backdrop {
+  opacity: 0;
+  transition:
+    opacity 0.25s ease,
+    overlay 0.25s allow-discrete,
+    display 0.25s allow-discrete;
+}
+
+dialog.sheet[open]::backdrop {
+  opacity: 1;
+}
+
+@starting-style {
+  dialog.sheet[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.sheet,
+  dialog.sheet::backdrop {
+    transition: none;
+  }
 }
 
 dialog.modal {
