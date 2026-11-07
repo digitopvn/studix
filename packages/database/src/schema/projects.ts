@@ -1,5 +1,6 @@
 import type {
   AssetKind,
+  AssetRole,
   MediaProbe,
   ProjectStatus,
   ProjectVersionSource,
@@ -76,6 +77,10 @@ export const assets = pgTable(
     ...tenantColumns(),
     projectId: text("project_id").references(() => videoProjects.id, { onDelete: "set null" }),
     kind: text("kind").$type<AssetKind>().notNull(),
+    role: text("role").$type<AssetRole>().notNull().default("other"),
+    /** Virtual folder (`ep03/sc01/s05`); "" is the root. No folder table. */
+    path: text("path").notNull().default(""),
+    tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     name: text("name").notNull(),
     currentVersionId: text("current_version_id"),
     createdByType: text("created_by_type").$type<ActorType>().notNull(),
@@ -86,6 +91,7 @@ export const assets = pgTable(
   (t) => [
     index("assets_tenant_idx").on(t.workspaceId, t.organizationId, t.id),
     index("assets_project_idx").on(t.projectId),
+    index("assets_path_idx").on(t.workspaceId, t.projectId, t.path),
   ],
 );
 

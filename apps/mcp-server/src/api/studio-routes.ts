@@ -23,6 +23,7 @@ import {
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, playbackForRender, signRender } from "../artifact-urls.ts";
 import { withMediaExecUrls } from "../mcp/media-exec-tool.ts";
+import { AssetListInput } from "../mcp/native-tools.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
@@ -104,6 +105,11 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       "query",
     );
     res.json(await deps.studio.listProjects(ctx, query));
+  });
+
+  router.get("/assets", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    res.json(await deps.studio.listAssets(ctx, parseBody(AssetListInput, req.query, "query")));
   });
 
   // The packs a create request may name as workflowTemplate, for the dashboard's pack picker.

@@ -1,10 +1,11 @@
 import { StudixError } from "@studix/shared";
-import type { Asset, AssetKind } from "../entities/asset.ts";
+import type { Asset } from "../entities/asset.ts";
 import { JOB_KINDS, type Render } from "../entities/job.ts";
 import type { ProjectVersion, VideoProject } from "../entities/project.ts";
 import type { Approval } from "../entities/review.ts";
 import type { AuditEvent } from "../entities/telemetry.ts";
 import type { MediaJobRecord } from "../ports/media-provider.ts";
+import type { AssetListQuery } from "../repositories/asset-repository.ts";
 import type { Page, PageRequest } from "../repositories/pagination.ts";
 import { actorRef, assertPermission, type TenantContext } from "../tenant.ts";
 import {
@@ -194,10 +195,7 @@ export class StudioService {
     return this.deps.projects.list(ctx, query);
   }
 
-  async listAssets(
-    ctx: TenantContext,
-    query: PageRequest & { projectId?: string; kind?: AssetKind } = {},
-  ): Promise<Page<Asset>> {
+  async listAssets(ctx: TenantContext, query: AssetListQuery = {}): Promise<Page<Asset>> {
     assertPermission(ctx, "asset:read");
     return this.deps.assets.list(ctx, query);
   }

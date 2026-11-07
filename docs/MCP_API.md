@@ -86,6 +86,7 @@ guide, the per-error value is authoritative.
 | `studix_create_video`     | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly.                     |
 | `studix_get_job`          | Job stage, progress, recommended next action, and signed preview/final URLs when ready. `waitSeconds` (max 50) holds the call until the status changes, with progress notifications (see [Job notifications](#job-notifications)).                     |
 | `studix_webhook`          | Get, set or delete the workspace job webhook (see [Job notifications](#job-notifications)). Setting needs owner or admin.                                                                                                                              |
+| `studix_list_assets`      | Asset library, newest first, filtered by `projectId`, `kind`, `role`, `path`, `tag` or name `search` (see [Asset roles and folders](#asset-roles-and-folders)). `asset:read`.                                                                          |
 | `studix_get_project`      | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                                            |
 | `studix_cancel_job`       | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                                               |
 | `studix_retry_job`        | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                                                 |
@@ -529,6 +530,32 @@ Rules:
   with the active version only and may report `unknown`; reading a non-active
   `versionId` needs `skill:write`. `list`/`discover` results carry `trust`.
 
+### Asset roles and folders
+
+Every asset has a `kind` (the media type: `image`, `video`, `audio`, `font`,
+`document`, `code`, `render`) and three fields that organize the library:
+
+| Field  | Meaning                                                                                                                                                                 |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `role` | What it is for: `character`, `background`, `prop`, `vfx`, `sfx`, `bgm`, `voice`, `storyboard`, `keyframe`, `render`, `reference` or `other`.                            |
+| `path` | A virtual folder such as `ep03/sc01/s05`: up to 8 lowercase segments of letters, digits, `.`, `_` and `-` (200 characters). There is no folder table. `""` is the root. |
+| `tags` | Up to 16 lowercase tags of 40 characters.                                                                                                                               |
+
+When an agent saves an asset without them, Studix infers the `role` from the
+file name and the media kind (an audio file named `whoosh_01.wav` is `sfx`,
+`bgm-main.mp3` is `bgm`; an image named `bg_city.png` is `background`) and falls
+back to `other`; a `render` kind keeps the `render` role. The `path` then defaults to the role folder (`sfx/`), so a library reads
+`sfx/`, `bgm/`, … Pass `path: "ep03/sc01/s05"` to file under an episode, scene
+and shot instead. A malformed `path` fails with `VALIDATION` before any work
+starts. Existing assets were backfilled with the same rules: audio placed on an
+IR audio track takes `bgm` (music), `sfx` or `voice` (dialogue and voice-over),
+and the rest is labelled from the file name. Their `path` is the role folder,
+or the root for `other`.
+
+`studix_list_assets` and `GET /api/assets` take the same filters. `path`
+matches the folder and everything below it (`ep03` matches `ep03/sc01`, not
+`ep030`).
+
 ### Media exec (ffmpeg / ffprobe)
 
 `studix_media_exec` runs `ffmpeg` or `ffprobe` with raw arguments as an async
@@ -536,15 +563,15 @@ worker job in an offline sandbox container. It needs the `media:exec` permission
 (editor role and up; OAuth scope `studix:write`) and `STUDIX_SANDBOX=docker` on
 the worker. Threat model: [SECURITY.md](SECURITY.md#media-exec).
 
-| Argument         | Notes                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `tool`           | `ffmpeg` or `ffprobe`.                                                                           |
-| `args`           | argv, no shell (max 500, 8000 chars each). Files only as `{in:<name>}` and `{out:<name>}`.       |
-| `inputs`         | `name -> {assetId}`, `{url}` (public https, SSRF-guarded) or `{base64}` (2 MB each, 4 MB total). |
-| `outputs`        | `[{name, contentType?}]`; every output must be referenced. ffmpeg needs at least one.            |
-| `timeoutSeconds` | Default 300, max 1800.                                                                           |
-| `budgetCents`    | Job budget; compute time is metered per started minute.                                          |
-| `idempotencyKey` | The same key returns the earlier job (`replayed: true`).                                         |
+| Argument         | Notes                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| `tool`           | `ffmpeg` or `ffprobe`.                                                                                     |
+| `args`           | argv, no shell (max 500, 8000 chars each). Files only as `{in:<name>}` and `{out:<name>}`.                 |
+| `inputs`         | `name -> {assetId}`, `{url}` (public https, SSRF-guarded) or `{base64}` (2 MB each, 4 MB total).           |
+| `outputs`        | `[{name, contentType?, role?, path?, tags?}]`; every output must be referenced. ffmpeg needs at least one. |
+| `timeoutSeconds` | Default 300, max 1800.                                                                                     |
+| `budgetCents`    | Job budget; compute time is metered per started minute.                                                    |
+| `idempotencyKey` | The same key returns the earlier job (`replayed: true`).                                                   |
 
 Names match `[A-Za-z0-9][A-Za-z0-9_.-]*`. Absolute, Windows, home and `..`
 paths, URLs, protocol prefixes (`concat:`, `file:`, `subfile,`) and the options
@@ -554,7 +581,7 @@ Studix adds `-hide_banner -nostdin` and `-protocol_whitelist file,pipe` itself.
 The tool returns `{jobId, status, replayed}`; poll `studix_get_job`. A finished
 job's `result` holds `exitCode`, `durationMs`, truncated `stdout` / `stderr`,
 `json` (parsed ffprobe output when stdout is JSON) and `outputs` with
-`assetId`, `name`, `contentType`, `bytes`, `sha256` and a signed `url`. A
+`assetId`, `name`, `role`, `path`, `contentType`, `bytes`, `sha256` and a signed `url`. A
 non-zero exit fails the job with `VALIDATION` and the stderr tail in
 `error.message` (`details.exitCode`, `details.stderrTail`); the time is still
 billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
@@ -782,13 +809,12 @@ a token.
 Not implemented; do not depend on them. Capabilities are added to the contract
 before new tools are created.
 
-| Tool                 | Intent                                                    | Phase        |
-| -------------------- | --------------------------------------------------------- | ------------ |
-| `studix_edit_video`  | Revise a version from free-form feedback without a patch  | P1           |
-| `studix_list_assets` | List workspace assets                                     | P1           |
-| `studix_search`      | Search projects, scenes, assets                           | P1-P2        |
-| `studix_publish`     | Publish an approved final; fails closed without approval  | P2           |
-| `studix_code`        | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
+| Tool                | Intent                                                    | Phase        |
+| ------------------- | --------------------------------------------------------- | ------------ |
+| `studix_edit_video` | Revise a version from free-form feedback without a patch  | P1           |
+| `studix_search`     | Search projects, scenes, assets                           | P1-P2        |
+| `studix_publish`    | Publish an approved final; fails closed without approval  | P2           |
+| `studix_code`       | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
 
 ## Connecting a client
 

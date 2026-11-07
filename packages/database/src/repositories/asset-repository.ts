@@ -1,10 +1,24 @@
-import type { Asset, AssetRepository, AssetVersion } from "@studix/core";
+import {
+  type Asset,
+  type AssetRepository,
+  type AssetVersion,
+  normalizeAssetPath,
+  organizeNewAsset,
+} from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { desc, eq, max } from "drizzle-orm";
+import { desc, eq, ilike, like, max, or, sql } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { assets, assetVersions } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
 import { activeStorageProfileSql } from "./storage-profile-repository.ts";
+
+const escapeLike = (text: string) => text.replace(/[\\%_]/g, "\\$&");
+
+/** The folder itself or anything below it; "" is every folder. */
+function folderFilter(folder: string) {
+  if (folder === "") return undefined;
+  return or(eq(assets.path, folder), like(assets.path, `${escapeLike(folder)}/%`));
+}
 
 type AssetRow = typeof assets.$inferSelect;
 type VersionRow = typeof assetVersions.$inferSelect;
@@ -16,6 +30,9 @@ function toAsset(row: AssetRow): Asset {
     workspaceId: row.workspaceId,
     projectId: opt(row.projectId),
     kind: row.kind,
+    role: row.role,
+    path: row.path,
+    tags: row.tags,
     name: row.name,
     currentVersionId: opt(row.currentVersionId),
     createdBy: actorFrom(row.createdByType, row.createdById),
@@ -55,6 +72,7 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
           ...tenantValues(ctx),
           projectId: input.projectId ?? null,
           kind: input.kind,
+          ...organizeNewAsset(input),
           name: input.name,
           createdByType: input.createdBy.type,
           createdById: input.createdBy.id,
@@ -85,6 +103,10 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
             beforeCursor(assets.id, query.cursor),
             query.projectId ? eq(assets.projectId, query.projectId) : undefined,
             query.kind ? eq(assets.kind, query.kind) : undefined,
+            query.role ? eq(assets.role, query.role) : undefined,
+            query.path === undefined ? undefined : folderFilter(normalizeAssetPath(query.path)),
+            query.tag ? sql`${assets.tags} ? ${query.tag.trim().toLowerCase()}` : undefined,
+            query.search ? ilike(assets.name, `%${escapeLike(query.search)}%`) : undefined,
           ),
         )
         .orderBy(desc(assets.id))

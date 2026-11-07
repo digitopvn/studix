@@ -59,4 +59,55 @@ describe("migrate", () => {
       await db.current.client.unsafe(`drop database if exists "${name}" with (force)`);
     }
   });
+
+  it("backfills asset roles from IR audio tracks, kinds and file names", async () => {
+    const name = `studix_test_${randomBytes(6).toString("hex")}`;
+    await db.current.client.unsafe(`create database "${name}"`);
+    const url = new URL(db.current.url);
+    url.pathname = `/${name}`;
+    const sql = postgres(url.toString(), { max: 1, onnotice: () => {} });
+    const folder = migrationsBefore("0034_asset_role_path");
+    try {
+      await drizzleMigrate(drizzle(sql), { migrationsFolder: folder });
+      await sql`insert into organizations (id, name, slug) values ('org_1', 'o', 'o')`;
+      await sql`insert into workspaces (id, organization_id, name, slug) values ('ws_1', 'org_1', 'w', 'w')`;
+      const asset = (id: string, kind: string, assetName: string) =>
+        sql`insert into assets (id, organization_id, workspace_id, kind, name, created_by_type, created_by_id)
+            values (${id}, 'org_1', 'ws_1', ${kind}, ${assetName}, 'system', 't')`;
+      await asset("ast_track", "audio", "take-01.mp3");
+      await asset("ast_render", "render", "final.mp4");
+      await asset("ast_named", "audio", "boom_sfx.wav");
+      await asset("ast_plain", "image", "photo.png");
+      await sql`insert into asset_versions (id, organization_id, workspace_id, asset_id, version, storage_key, sha256, mime, bytes, provenance, created_by_type, created_by_id)
+        values ('astv_track', 'org_1', 'ws_1', 'ast_track', 1, 'k', 'x', 'audio/mpeg', 1, '{"source":"generated"}', 'system', 't')`;
+      await sql`insert into video_projects (id, organization_id, workspace_id, title, status, brief, created_by_type, created_by_id)
+        values ('prj_1', 'org_1', 'ws_1', 'p', 'draft', '{}', 'system', 't')`;
+      const ir = {
+        assets: [{ id: "music1", assetVersionId: "astv_track" }],
+        audio: [{ id: "t1", kind: "music", assetId: "music1" }],
+      };
+      await sql`insert into project_versions (id, organization_id, workspace_id, project_id, version, schema_version, ir, source, created_by_type, created_by_id)
+        values ('pver_1', 'org_1', 'ws_1', 'prj_1', 1, 1, ${JSON.stringify(ir)}::jsonb, 'client', 'system', 't')`;
+      await migrate(url.toString());
+      const rows = await sql`select id, role, path, tags from assets order by id`;
+      expect(Object.fromEntries(rows.map((r) => [r.id, r.role]))).toEqual({
+        ast_named: "sfx",
+        ast_plain: "other",
+        ast_render: "render",
+        ast_track: "bgm",
+      });
+      // Existing assets get the role folder new ones get; unlabelled ones stay at the root.
+      expect(Object.fromEntries(rows.map((r) => [r.id, r.path]))).toEqual({
+        ast_named: "sfx",
+        ast_plain: "",
+        ast_render: "render",
+        ast_track: "bgm",
+      });
+      expect(rows.every((r) => Array.isArray(r.tags) && r.tags.length === 0)).toBe(true);
+    } finally {
+      await sql.end({ timeout: 5 });
+      rmSync(folder, { recursive: true, force: true });
+      await db.current.client.unsafe(`drop database if exists "${name}" with (force)`);
+    }
+  });
 });
