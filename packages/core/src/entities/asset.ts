@@ -60,33 +60,32 @@ export function normalizeAssetTags(tags: readonly string[]): string[] {
   return out;
 }
 
+/** A word of the file name: letters only, so digits, `-`, `_` and `.` all separate words. */
+const word = (alternatives: string) => new RegExp(`(^|[^a-z])(?:${alternatives})([^a-z]|$)`);
+
+// Order matters, and migration 0034 backfills with the same words in the same order.
 const ROLE_WORDS: ReadonlyArray<readonly [AssetRole, RegExp]> = [
-  ["storyboard", /story-?board|\bboard\b/],
-  ["keyframe", /key-?frame/],
-  ["character", /character|\bchar\b|lead-?sheet|turnaround/],
-  ["background", /background|\bbg\b|backdrop|environment/],
-  ["prop", /\bprops?\b/],
-  ["vfx", /\bvfx\b|particle|explosion|overlay/],
-  ["bgm", /\bbgm\b|music|score|soundtrack|theme/],
-  ["sfx", /\bsfx\b|sound-?effect|whoosh|impact|foley|\bfx\b/],
-  ["voice", /voice|\bvo\b|narration|dialogue|speech|\bline\d*\b/],
-  ["reference", /reference|\bref\b|moodboard/],
+  ["storyboard", word("storyboard|story[^a-z]?board")],
+  ["keyframe", word("keyframes?|key[^a-z]?frames?")],
+  ["character", word("characters?|char|lead[^a-z]?sheet|turnaround")],
+  ["background", word("backgrounds?|bg|backdrop|environment")],
+  ["prop", word("props?")],
+  ["vfx", word("vfx|particles?|explosions?")],
+  ["sfx", word("sfx|sound[^a-z]?effects?|whoosh|impact|foley|fx")],
+  ["bgm", word("bgm|music|score|soundtrack|theme")],
+  ["voice", word("voice|vo|narration|dialogue|speech")],
+  ["reference", word("reference|ref|moodboard")],
 ];
 
 /** Best guess of the role from the media kind and file name; `other` when nothing fits. */
 export function inferAssetRole(kind: AssetKind, name: string): AssetRole {
   if (kind === "render") return "render";
-  const text = name
-    .toLowerCase()
-    .replace(/\.[a-z0-9]{1,5}$/, "")
-    .replace(/[_\s]+/g, "-");
-  const spaced = text.replace(/-/g, " ");
+  const text = name.toLowerCase().replace(/\.[a-z0-9]{1,5}$/, "");
   for (const [role, re] of ROLE_WORDS) {
-    if (!re.test(spaced) && !re.test(text)) continue;
+    if (!re.test(text)) continue;
     // Sound roles apply to audio only; picture roles apply to images and video.
     const sound = role === "sfx" || role === "bgm" || role === "voice";
-    if (sound && kind !== "audio") continue;
-    if (!sound && kind === "audio") continue;
+    if (sound !== (kind === "audio")) continue;
     return role;
   }
   return "other";

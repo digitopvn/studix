@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { TenantContext } from "@studix/core";
+import { type AssetKind, inferAssetRole, type TenantContext } from "@studix/core";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { withTestDatabase } from "../src/testing/index.ts";
@@ -63,13 +63,23 @@ describe("asset organization", () => {
       ["image", "hero-character-sheet.png", "character"],
       ["image", "city-background.png", "background"],
       ["render", "final.mp4", "render"],
+      ["audio", "impact-music.wav", "sfx"],
+      ["image", "bg01.png", "background"],
+      ["audio", "vo2.wav", "voice"],
+      ["image", "chess-board.png", "other"],
+      ["audio", "bass-line.wav", "other"],
+      ["audio", "scoreboard-beep.wav", "other"],
+      ["image", "text-overlay.png", "other"],
     ] as const;
     const created = [];
     for (const [kind, name] of rows) {
       // Rows from before the migration all carry the defaults.
       created.push(await assets.create(ctx, { kind, name, role: "other", path: "", createdBy }));
     }
-    const migration = readFileSync(new URL("../migrations/0034_fast_ultron.sql", import.meta.url), "utf8");
+    const migration = readFileSync(
+      new URL("../migrations/0034_asset_roles_paths_tags.sql", import.meta.url),
+      "utf8",
+    );
     const backfill = migration.slice(migration.indexOf("-- Backfill"));
     for (const statement of backfill.split("--> statement-breakpoint")) {
       await db.current.db.execute(sql.raw(statement));
@@ -77,6 +87,7 @@ describe("asset organization", () => {
     for (const [i, [, , role]] of rows.entries()) {
       const row = await assets.get(ctx, (created[i] as { id: string }).id);
       expect(row?.role, rows[i]?.[1]).toBe(role);
+      expect(inferAssetRole(rows[i]?.[0] as AssetKind, rows[i]?.[1] as string)).toBe(role);
       expect(row?.path).toBe(role === "other" ? "" : role);
     }
   });

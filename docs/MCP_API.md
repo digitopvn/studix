@@ -537,15 +537,17 @@ worker job in an offline sandbox container. It needs the `media:exec` permission
 (editor role and up; OAuth scope `studix:write`) and `STUDIX_SANDBOX=docker` on
 the worker. Threat model: [SECURITY.md](SECURITY.md#media-exec).
 
-| Argument         | Notes                                                                                                                             |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `tool`           | `ffmpeg` or `ffprobe`.                                                                                                            |
-| `args`           | argv, no shell (max 500, 8000 chars each). Files only as `{in:<name>}` and `{out:<name>}`.                                        |
-| `inputs`         | `name -> {assetId}`, `{url}` (public https, SSRF-guarded) or `{base64}` (2 MB each, 4 MB total).                                  |
-| `outputs`        | `[{name, contentType?, role?, path?, tags?}]`; every output must be referenced. ffmpeg needs at least one. See [Assets](#assets). |
-| `timeoutSeconds` | Default 300, max 1800.                                                                                                            |
-| `budgetCents`    | Job budget; compute time is metered per started minute.                                                                           |
-| `idempotencyKey` | The same key returns the earlier job (`replayed: true`).                                                                          |
+| Argument         | Notes                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------- |
+| `tool`           | `ffmpeg` or `ffprobe`.                                                                            |
+| `args`           | argv, no shell (max 500, 8000 chars each). Files only as `{in:<name>}` and `{out:<name>}`.        |
+| `inputs`         | `name -> {assetId}`, `{url}` (public https, SSRF-guarded) or `{base64}` (2 MB each, 4 MB total).  |
+| `outputs`        | `[{name, contentType?, role?, path?, tags?}]`; every output must be referenced. ffmpeg needs one. |
+| `timeoutSeconds` | Default 300, max 1800.                                                                            |
+| `budgetCents`    | Job budget; compute time is metered per started minute.                                           |
+| `idempotencyKey` | The same key returns the earlier job (`replayed: true`).                                          |
+
+Output `role`, `path` and `tags` organize the stored assets (see [Assets](#assets)).
 
 Names match `[A-Za-z0-9][A-Za-z0-9_.-]*`. Absolute, Windows, home and `..`
 paths, URLs, protocol prefixes (`concat:`, `file:`, `subfile,`) and the options

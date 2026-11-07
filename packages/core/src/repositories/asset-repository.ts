@@ -25,6 +25,8 @@ export interface AssetRepository {
   /** Changes only the organization fields; the binary versions are untouched. */
   update(ctx: TenantContext, id: string, patch: AssetPatch): Promise<Asset>;
   addVersion(ctx: TenantContext, input: NewAssetVersion): Promise<AssetVersion>;
+  /** The versions with these ids (missing ones are left out), in one query. */
+  getVersions(ctx: TenantContext, versionIds: readonly string[]): Promise<AssetVersion[]>;
   getVersion(ctx: TenantContext, versionId: string): Promise<AssetVersion | undefined>;
   /** Newest version first. */
   listVersions(ctx: TenantContext, assetId: string): Promise<AssetVersion[]>;

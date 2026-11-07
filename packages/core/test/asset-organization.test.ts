@@ -21,6 +21,15 @@ describe("asset role inference", () => {
     ["image", "theme-song-cover.png", "other"],
     ["render", "anything.mp4", "render"],
     ["document", "notes.txt", "other"],
+    ["audio", "impact-music.wav", "sfx"],
+    ["audio", "theme-whoosh.wav", "sfx"],
+    ["image", "bg01.png", "background"],
+    ["audio", "vo2.wav", "voice"],
+    ["image", "chess-board.png", "other"],
+    ["audio", "bass-line.wav", "other"],
+    ["audio", "invoice-call.mp3", "other"],
+    ["audio", "scoreboard-beep.wav", "other"],
+    ["image", "text-overlay.png", "other"],
   ] as const)("%s %s -> %s", (kind, name, role) => {
     expect(inferAssetRole(kind, name)).toBe(role);
   });

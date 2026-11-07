@@ -3,6 +3,7 @@ import {
   ASSET_ROLES,
   type Asset,
   type AssetRepository,
+  type AssetVersion,
   assertPermission,
   MAX_ASSET_PATH_LENGTH,
   MAX_ASSET_TAGS,
@@ -67,8 +68,7 @@ export interface AssetView {
   updatedAt: string;
 }
 
-async function view(repo: AssetRepository, ctx: TenantContext, asset: Asset): Promise<AssetView> {
-  const version = asset.currentVersionId ? await repo.getVersion(ctx, asset.currentVersionId) : undefined;
+function view(asset: Asset, version: AssetVersion | undefined): AssetView {
   return {
     id: asset.id,
     name: asset.name,
@@ -106,8 +106,10 @@ export async function listAssets(
     ...(input.limit ? { limit: input.limit } : {}),
     ...(input.cursor ? { cursor: input.cursor } : {}),
   });
+  const ids = page.items.flatMap((a) => (a.currentVersionId ? [a.currentVersionId] : []));
+  const versions = new Map((await repo.getVersions(ctx, ids)).map((v) => [v.id, v]));
   return {
-    assets: await Promise.all(page.items.map((a) => view(repo, ctx, a))),
+    assets: page.items.map((a) => view(a, a.currentVersionId ? versions.get(a.currentVersionId) : undefined)),
     ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
   };
 }
@@ -131,5 +133,6 @@ export async function updateAsset(
       suggestedAction: "List assets with studix_list_assets to find the id.",
     });
   }
-  return view(repo, ctx, await repo.update(ctx, id, input));
+  const asset = await repo.update(ctx, id, input);
+  return view(asset, asset.currentVersionId ? await repo.getVersion(ctx, asset.currentVersionId) : undefined);
 }

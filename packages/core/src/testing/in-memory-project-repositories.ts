@@ -116,6 +116,9 @@ export function createInMemoryAssetRepository(clock: Clock): AssetRepository {
       assets.update(ctx, input.assetId, { currentVersionId: row.id });
       return row;
     },
+    async getVersions(ctx, versionIds) {
+      return versions.filter(ctx, (v) => versionIds.includes(v.id));
+    },
     async getVersion(ctx, versionId) {
       return versions.get(ctx, versionId);
     },

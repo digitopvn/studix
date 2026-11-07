@@ -8,7 +8,7 @@ import {
   normalizeAssetTags,
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { desc, eq, like, max, or, sql } from "drizzle-orm";
+import { desc, eq, inArray, like, max, or, sql } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { assets, assetVersions } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -170,6 +170,15 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
           .where(scoped(assets, ctx, eq(assets.id, input.assetId)));
         return version;
       });
+    },
+
+    async getVersions(ctx, versionIds) {
+      if (versionIds.length === 0) return [];
+      const rows = await db
+        .select()
+        .from(assetVersions)
+        .where(scoped(assetVersions, ctx, inArray(assetVersions.id, [...versionIds])));
+      return rows.map(toVersion);
     },
 
     async getVersion(ctx, versionId) {

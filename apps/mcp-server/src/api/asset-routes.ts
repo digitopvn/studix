@@ -19,7 +19,14 @@ export function assetRoutes(deps: AppDeps): Router {
   });
   router.patch("/:assetId", async (req, res) => {
     const body = parseBody(AssetUpdateInput, req.body, "asset update");
-    res.json(await updateAsset(deps.repos.assets, sessionOf(res).ctx, idParam(req, "assetId"), body));
+    const { ctx } = sessionOf(res);
+    const asset = await updateAsset(deps.repos.assets, ctx, idParam(req, "assetId"), body);
+    await deps.activity?.record(ctx, {
+      name: "api.asset.update",
+      ...(asset.projectId ? { scope: { projectId: asset.projectId } } : {}),
+      attributes: { assetId: asset.id, actorType: ctx.actor.type, actorId: ctx.actor.id },
+    });
+    res.json(asset);
   });
   return router;
 }
