@@ -109,7 +109,9 @@ Behavior notes:
   ([ADR-0003](decisions/0003-jev-decision-provider-adapter-and-routing-fallback.md)).
 - `studix_create_video` inputs: `prompt` or `brief` (one is required), `spec`,
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
-  past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
+  past it the job fails with `TIMEOUT`; without it a job gets 30 minutes, and a
+  `skill-agent` job gets 60 minutes counted from its first claim, so queue time
+  does not count), `renderPreset`, `planner`,
   `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
   handoff tools below) and `agent`.
 - `agent: {runtime, providerConnectionId, model?, reasoningEffort?}` picks the

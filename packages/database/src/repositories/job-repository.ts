@@ -289,7 +289,7 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
           runAfter: input.runAfter ?? now,
           idempotencyKey: input.idempotencyKey ?? null,
           // A job born at a gate has no active execution yet: its deadline starts when it is first claimed.
-          ...(input.initialStatus === "waiting_approval" && input.deadlineAt
+          ...((input.initialStatus === "waiting_approval" || input.deadlineFromClaim) && input.deadlineAt
             ? {
                 deadlineAt: null,
                 deadlineRemainingMs: Math.max(0, input.deadlineAt.getTime() - now.getTime()),

@@ -160,6 +160,17 @@ describe("StudioService.createVideoProject", () => {
     expect((await rejects(studio.createVideoProject(readOnlyKey, { brief }))).code).toBe("FORBIDDEN");
   });
 
+  it("gives a skill-agent job an hour that starts when the job is claimed", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const out = await studio.createVideoProject(ctx, { brief, workflowTemplate: "skill-agent" });
+    const job = await repos.jobs.get(ctx, out.job.id);
+    expect(job?.deadlineAt).toBeUndefined();
+    expect(job?.deadlineRemainingMs).toBe(60 * 60_000);
+    const plain = await repos.jobs.get(ctx, (await studio.createVideoProject(ctx, { brief })).job.id);
+    expect(plain?.deadlineAt).toBeInstanceOf(Date);
+  });
+
   it("rejects deadlines in the past", async () => {
     const { studio } = createInMemoryStudio();
     const err = await rejects(

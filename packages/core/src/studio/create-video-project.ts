@@ -15,6 +15,9 @@ import {
   type NextAction,
 } from "./studio-types.ts";
 
+/** Default window for a skill-agent job, counted from its first claim. */
+export const SKILL_AGENT_DEADLINE_MS = 60 * 60_000;
+
 export interface CreateVideoProjectResult {
   project: VideoProject;
   job: JobView;
@@ -73,10 +76,15 @@ export async function createVideoProject(
       : unwrapValidation(validateVideoIR(input.spec) as ValidationResult<VideoIR>, "spec (VideoIR)");
   const { projects, jobs, queue, clock, defaults } = deps;
   const now = clock.now();
-  const deadlineAt = input.deadlineAt ?? new Date(now.getTime() + defaults.jobDeadlineMs);
+  const workflowTemplate = input.workflowTemplate ?? DEFAULT_WORKFLOW_TEMPLATE;
+  // An agent authoring the whole video needs longer than a pack run, and its default window starts at
+  // the first claim so time spent queued behind other jobs does not eat it.
+  const agentAuthored = workflowTemplate === "skill-agent" && input.deadlineAt === undefined;
+  const deadlineAt =
+    input.deadlineAt ??
+    new Date(now.getTime() + (agentAuthored ? SKILL_AGENT_DEADLINE_MS : defaults.jobDeadlineMs));
   if (deadlineAt <= now) throw new StudixError("VALIDATION", "deadlineAt must be in the future");
   const budgetCents = input.budgetCents ?? defaults.jobBudgetCents;
-  const workflowTemplate = input.workflowTemplate ?? DEFAULT_WORKFLOW_TEMPLATE;
 
   if (input.idempotencyKey) {
     const existing = await jobs.findByIdempotencyKey(ctx, input.idempotencyKey);
@@ -122,6 +130,7 @@ export async function createVideoProject(
     idempotencyKey: input.idempotencyKey,
     budgetCents,
     deadlineAt,
+    ...(agentAuthored ? { deadlineFromClaim: true } : {}),
     maxAttempts: defaults.jobMaxAttempts,
     initialStatus: requirement.required ? "waiting_approval" : "queued",
     createdBy,
