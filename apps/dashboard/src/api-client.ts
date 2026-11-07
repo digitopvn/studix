@@ -369,6 +369,14 @@ export interface PlatformCredential {
 
 export interface PlatformMediaKeyTest {
   name: string;
+/** `platform`: the operator's profiles; `workspace`: the session workspace's own (owners and admins). */
+export type StorageProfileScope = "platform" | "workspace";
+
+const profilesPath = (scope: StorageProfileScope, id?: string) =>
+  `${scope === "platform" ? "/api/platform" : "/api/workspace-storage"}/storage/profiles${
+    id === undefined ? "" : `/${encodeURIComponent(id)}`
+  }`;
+
   at: string;
   verdict: "available" | "invalid" | "unverified";
   httpStatus?: number;
@@ -388,7 +396,8 @@ export type StorageProviderType = "cloudflare-r2" | "aws-s3" | "s3-compatible";
 export interface StorageProfile {
   id: string;
   name: string;
-  providerType: StorageProviderType | "environment";
+  /** `environment`: the S3_* settings; `platform`: a workspace following the platform choice. */
+  providerType: StorageProviderType | "environment" | "platform";
   endpointHost?: string;
   bucket?: string;
   region: string;
@@ -956,16 +965,18 @@ export const api = {
   setPlatformStorageKey: (accessKeyId: string, secretAccessKey: string) =>
     request<PlatformStorageTest>("PUT", "/api/platform/storage/key", { accessKeyId, secretAccessKey }),
   revokePlatformStorageKey: () => request<void>("DELETE", "/api/platform/storage/key"),
-  createStorageProfile: (input: StorageProfileInput) =>
-    request<StorageProfile>("POST", "/api/platform/storage/profiles", input),
-  updateStorageProfile: (id: string, input: StorageProfileInput) =>
-    request<StorageProfile>("PUT", `/api/platform/storage/profiles/${encodeURIComponent(id)}`, input),
-  activateStorageProfile: (id: string) =>
-    request<StorageProfile>("POST", `/api/platform/storage/profiles/${encodeURIComponent(id)}/activate`, {}),
-  testStorageProfile: (id: string) =>
-    request<PlatformStorageTest>("POST", `/api/platform/storage/profiles/${encodeURIComponent(id)}/test`, {}),
-  deleteStorageProfile: (id: string) =>
-    request<void>("DELETE", `/api/platform/storage/profiles/${encodeURIComponent(id)}`),
+  listStorageProfiles: (scope: StorageProfileScope = "platform") =>
+    request<StorageProfile[]>("GET", profilesPath(scope)),
+  createStorageProfile: (input: StorageProfileInput, scope: StorageProfileScope = "platform") =>
+    request<StorageProfile>("POST", profilesPath(scope), input),
+  updateStorageProfile: (id: string, input: StorageProfileInput, scope: StorageProfileScope = "platform") =>
+    request<StorageProfile>("PUT", profilesPath(scope, id), input),
+  activateStorageProfile: (id: string, scope: StorageProfileScope = "platform") =>
+    request<StorageProfile>("POST", `${profilesPath(scope, id)}/activate`, {}),
+  testStorageProfile: (id: string, scope: StorageProfileScope = "platform") =>
+    request<PlatformStorageTest>("POST", `${profilesPath(scope, id)}/test`, {}),
+  deleteStorageProfile: (id: string, scope: StorageProfileScope = "platform") =>
+    request<void>("DELETE", profilesPath(scope, id)),
   testPlatformMediaKey: (name: string) =>
     request<PlatformMediaKeyTest>("POST", `/api/platform/media-keys/${enc(name)}/test`, {}),
   testPlatformMedia: () => request<PlatformMediaTest>("POST", "/api/platform/media/test", {}),

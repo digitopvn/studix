@@ -85,3 +85,39 @@ describe("storage profile repository", () => {
     await storageProfiles.activate(undefined, by);
   });
 });
+
+describe("workspace storage profiles", () => {
+  it("records the workspace's own active profile, else the platform's, one active per scope", async () => {
+    const { storageProfiles } = db.current.repos;
+    const ctx = await tenant("stp-ws-own");
+    const other = await tenant("stp-ws-other");
+    await storageProfiles.create({ id: "stp_plat01", ...fields("Platform"), ...sealed }, by);
+    await storageProfiles.create(
+      { id: "stp_wsown1", workspaceId: ctx.workspaceId, ...fields("Own"), ...sealed },
+      by,
+    );
+    await storageProfiles.activate("stp_plat01", by);
+    await storageProfiles.activate("stp_wsown1", by, ctx.workspaceId);
+    // Activating in one scope leaves the other scope's active profile alone.
+    expect(
+      (await storageProfiles.list())
+        .filter((p) => p.active)
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual(["stp_plat01", "stp_wsown1"]);
+    // A platform activation cannot reach a workspace row.
+    await storageProfiles.activate("stp_wsown1", by);
+    expect((await storageProfiles.get("stp_plat01"))?.active).toBe(false);
+    await storageProfiles.activate("stp_plat01", by);
+
+    await addVersion(ctx, "assets/ws.png");
+    await addVersion(other, "assets/ws.png");
+    expect(await storageProfiles.locate(ctx, "assets/ws.png")).toBe("stp_wsown1");
+    expect(await storageProfiles.locate(other, "assets/ws.png")).toBe("stp_plat01");
+    expect((await storageProfiles.listScope(ctx.workspaceId)).map((p) => p.id)).toEqual(["stp_wsown1"]);
+    expect((await storageProfiles.listScope(undefined)).map((p) => p.id)).toContain("stp_plat01");
+
+    await storageProfiles.activate(undefined, by, ctx.workspaceId);
+    await storageProfiles.activate(undefined, by);
+  });
+});

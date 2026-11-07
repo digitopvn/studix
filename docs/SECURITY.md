@@ -144,22 +144,26 @@ another name does not open). Rules:
   when it is set. The R2 key pair is stored the same way, and only after a
   write/read/delete probe with it passes.
 
-### Storage profiles (operator)
+### Storage profiles (operator and workspace)
 
 An operator can point new objects at another S3-compatible bucket
 ([ADR-0020](decisions/0020-storage-profiles.md)). The server connects to that
 endpoint with stored credentials, so these rules apply:
 
-- **Who:** only the `operator` role on a dashboard session. Everyone else gets
-  `FORBIDDEN`: owners, admins, API keys, OAuth clients and the system actor.
-  There is no MCP tool for it.
+- **Who:** platform profiles: only the `operator` role on a dashboard session.
+  A workspace's own profiles ([ADR-0023](decisions/0023-workspace-storage-profiles.md)):
+  its owners and admins on a dashboard session. Everyone else gets `FORBIDDEN`:
+  editors, viewers, API keys, OAuth clients and the system actor. A profile from
+  another scope reads as `NOT_FOUND`, and the router never uses a workspace's
+  profile for another workspace. There is no MCP tool for it.
 - **Probe first:** a profile is stored only after a write/read/head/delete probe
   with the candidate settings passes.
 - **Sealed keys:** the key pair is sealed with `STUDIX_SECRETS_KEY` and bound to
   `storage-profile:<id>:access|secret`. Views, errors, audit events and logs
   carry only a last-four hint.
 - **Audit:** `storage_profile.created`, `updated`, `activated`, `revoked` and
-  `tested` are audited in the platform workspace, without secrets.
+  `tested` are audited without secrets, in the platform workspace for platform
+  profiles and in the workspace itself for its own.
 - **SSRF guard** (`packages/storage/src/endpoint-guard.ts`):
   - HTTPS only.
   - No credentials, path or query in the URL.

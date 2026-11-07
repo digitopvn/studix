@@ -103,6 +103,9 @@ key and OAuth client.
   **Activate** makes one profile the target of new objects. The app and the
   worker pick it up within about 20 seconds. A job keeps the profile of its
   first write. The `S3_*` settings remain the `env` profile and the fallback.
+  Workspace owners and admins can add and activate their workspace's own
+  profile on the same page; it overrides the platform choice for that workspace
+  only ([ADR-0023](decisions/0023-workspace-storage-profiles.md)).
   Every asset version and render records the profile that holds its bytes
   (`storage_profile_id`; rows written before the change record `env`).
   Reads and signed URLs use that profile. If an object is not found there,

@@ -113,7 +113,7 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
             assetId: input.assetId,
             version: (current?.version ?? 0) + 1,
             storageKey: input.storageKey,
-            storageProfileId: activeStorageProfileSql,
+            storageProfileId: activeStorageProfileSql(ctx.workspaceId),
             sha256: input.sha256,
             mime: input.mime,
             bytes: input.bytes,

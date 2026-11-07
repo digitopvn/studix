@@ -601,6 +601,12 @@ may read; only workspace admins (`member:manage`) may write.
 | `PUT /api/providers/media-keys/:vendor`    | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.        |
 | `DELETE /api/providers/media-keys/:vendor` | none         | `source: "platform"`: media calls use the platform key again.  |
 
+Workspace owners and admins have the same routes under
+`/api/workspace-storage/storage/profiles` for their workspace's own profiles
+([ADR-0023](decisions/0023-workspace-storage-profiles.md)). There `env` is
+**Platform default** (`providerType: "platform"`): activating it makes the
+workspace follow the platform choice again, and it cannot be tested.
+
 ### Provider connections: rename and ChatGPT sign-in
 
 Dashboard session routes, `Cache-Control: no-store`. They never return a key or

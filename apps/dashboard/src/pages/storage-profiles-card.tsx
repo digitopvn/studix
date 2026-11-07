@@ -4,6 +4,7 @@ import {
   type PlatformStorageTest,
   type StorageProfile,
   type StorageProfileInput,
+  type StorageProfileScope,
   type StorageProviderType,
 } from "../api-client.ts";
 import { ErrorBanner, formatDate, Section, StatusBadge } from "../ui.tsx";
@@ -13,6 +14,7 @@ const PROVIDER_LABELS: Record<StorageProfile["providerType"], string> = {
   "aws-s3": "AWS S3",
   "s3-compatible": "S3-compatible",
   environment: "Environment",
+  platform: "Platform",
 };
 
 const EMPTY: StorageProfileInput = {
@@ -34,9 +36,12 @@ const EMPTY: StorageProfileInput = {
 export function StorageProfilesCard({
   profiles,
   reload,
+  scope = "platform",
 }: {
   profiles: StorageProfile[];
   reload: () => void;
+  /** `workspace`: this workspace's own profiles; its active one overrides the platform choice. */
+  scope?: StorageProfileScope;
 }) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
@@ -72,15 +77,15 @@ export function StorageProfilesCard({
     // The secret leaves component state as soon as it is sent, whether or not the server accepts it.
     set({ secretAccessKey: "" });
     await act(async () => {
-      if (id) await api.updateStorageProfile(id, body);
-      else await api.createStorageProfile(body);
+      if (id) await api.updateStorageProfile(id, body, scope);
+      else await api.createStorageProfile(body, scope);
       setEditing(undefined);
     });
   }
 
   const edit = (profile?: StorageProfile) =>
     setEditing(
-      profile && profile.providerType !== "environment"
+      profile && profile.providerType !== "environment" && profile.providerType !== "platform"
         ? {
             id: profile.id,
             input: {
@@ -99,20 +104,22 @@ export function StorageProfilesCard({
   async function activate(profile: StorageProfile) {
     const message =
       profile.id === "env"
-        ? "Write new objects with the deployment settings (S3_*) again? Objects already stored stay readable."
+        ? scope === "workspace"
+          ? "Write this workspace's new objects to the platform storage again? Objects already stored stay readable."
+          : "Write new objects with the deployment settings (S3_*) again? Objects already stored stay readable."
         : `Write new objects to "${profile.name}" from now on? Objects already stored stay readable where they are.`;
     if (!window.confirm(message)) return;
-    await act(() => api.activateStorageProfile(profile.id));
+    await act(() => api.activateStorageProfile(profile.id, scope));
   }
 
   async function remove(profile: StorageProfile) {
     if (!window.confirm(`Delete "${profile.name}" and its stored key pair?`)) return;
-    await act(() => api.deleteStorageProfile(profile.id));
+    await act(() => api.deleteStorageProfile(profile.id, scope));
   }
 
   async function test(profile: StorageProfile) {
     await act(async () => {
-      const result = await api.testStorageProfile(profile.id);
+      const result = await api.testStorageProfile(profile.id, scope);
       setTests((t) => ({ ...t, [profile.id]: result }));
     });
   }
@@ -120,7 +127,7 @@ export function StorageProfilesCard({
   const input = editing?.input;
   return (
     <Section
-      title="Storage profiles"
+      title={scope === "workspace" ? "Workspace storage" : "Storage profiles"}
       actions={
         <button type="button" disabled={busy || Boolean(editing)} onClick={() => edit()}>
           Add profile
@@ -284,9 +291,11 @@ export function StorageProfilesCard({
                   )}
                 </td>
                 <td>
-                  <button type="button" disabled={busy} onClick={() => test(p)}>
-                    Test
-                  </button>{" "}
+                  {(scope === "platform" || p.id !== "env") && (
+                    <button type="button" disabled={busy} onClick={() => test(p)}>
+                      Test
+                    </button>
+                  )}{" "}
                   {!p.active && (
                     <button type="button" disabled={busy} onClick={() => activate(p)}>
                       Activate

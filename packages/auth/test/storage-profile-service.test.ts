@@ -27,6 +27,9 @@ function memoryRepo(references: Map<string, number> = new Map()) {
     async list() {
       return [...rows.values()];
     },
+    async listScope(workspaceId) {
+      return [...rows.values()].filter((r) => r.workspaceId === workspaceId);
+    },
     async get(id) {
       return rows.get(id);
     },
@@ -50,8 +53,8 @@ function memoryRepo(references: Map<string, number> = new Map()) {
       rows.set(id, row);
       return row;
     },
-    async activate(id) {
-      for (const [k, r] of rows) rows.set(k, { ...r, active: k === id });
+    async activate(id, _by, workspaceId) {
+      for (const [k, r] of rows) if (r.workspaceId === workspaceId) rows.set(k, { ...r, active: k === id });
     },
     async delete(id) {
       const row = rows.get(id);
@@ -255,5 +258,71 @@ describe("storage profile service storage", () => {
     const snap = await service.snapshot();
     expect(snap.profiles.map((p) => p.id)).toEqual([a.id]);
     expect(snap.profiles[0]!.candidate.credentials).toEqual(key);
+  });
+});
+
+describe("workspace storage profiles", () => {
+  const owner = ctxOf({ type: "user", id: "usr_own", role: "owner" }, "ws_a");
+  const admin = ctxOf({ type: "user", id: "usr_adm", role: "admin" }, "ws_a");
+  const ownerB = ctxOf({ type: "user", id: "usr_b", role: "owner" }, "ws_b");
+
+  it.each([
+    ["editor", { type: "user", id: "u", role: "editor" }],
+    ["viewer", { type: "user", id: "u", role: "viewer" }],
+    ["api key", { type: "apiKey", id: "k", scopes: ["workspace:read", "member:manage"] }],
+    ["system", { type: "system", id: "worker" }],
+  ] as const)("refuses a %s", async (_label, actor) => {
+    const { service, rows } = setup();
+    const ctx = ctxOf(actor as Actor, "ws_a");
+    await expect(service.list(ctx, "workspace")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(service.create(ctx, FIELDS, key, ok, "workspace")).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(rows.size).toBe(0);
+  });
+
+  it("lets owners and admins manage their own workspace, apart from the platform", async () => {
+    const { service, events } = setup();
+    const platform = await service.create(operator, FIELDS, key, ok);
+    await service.activate(operator, platform.id);
+    const own = await service.create(owner, { ...FIELDS, name: "Own bucket" }, key, ok, "workspace");
+    await service.activate(admin, own.id, "workspace");
+
+    const listed = await service.list(admin, "workspace");
+    expect(listed.map((p) => [p.id, p.active])).toEqual([
+      ["env", false],
+      [own.id, true],
+    ]);
+    expect(listed[0]!.providerType).toBe("platform");
+    expect((await service.list(operator)).map((p) => p.id)).toEqual(["env", platform.id]);
+
+    const snap = await service.snapshot();
+    expect(snap.activeId).toBe(platform.id);
+    expect(snap.workspaceActive).toEqual({ ws_a: own.id });
+    expect(snap.profiles.find((p) => p.id === own.id)?.workspaceId).toBe("ws_a");
+    // Workspace changes are audited to the workspace itself.
+    expect(events.filter((e) => e.action.startsWith("storage_profile.")).length).toBeGreaterThan(0);
+
+    await service.activate(owner, "env", "workspace");
+    expect((await service.snapshot()).workspaceActive).toEqual({});
+    expect((await service.snapshot()).activeId).toBe(platform.id);
+  });
+
+  it("hides another workspace's and the platform's profiles from a workspace", async () => {
+    const { service } = setup();
+    const platform = await service.create(operator, FIELDS, key, ok);
+    const own = await service.create(owner, FIELDS, key, ok, "workspace");
+    for (const id of [own.id, platform.id]) {
+      const ctx = id === own.id ? ownerB : owner;
+      await expect(service.activate(ctx, id, "workspace")).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(service.revoke(ctx, id, "workspace")).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(service.candidate(ctx, id, "workspace")).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(service.update(ctx, id, FIELDS, undefined, ok, "workspace")).rejects.toMatchObject({
+        code: "NOT_FOUND",
+      });
+    }
+    expect((await service.list(ownerB, "workspace")).map((p) => p.id)).toEqual(["env"]);
+    // The operator cannot reach a workspace profile through the platform scope either.
+    await expect(service.activate(operator, own.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

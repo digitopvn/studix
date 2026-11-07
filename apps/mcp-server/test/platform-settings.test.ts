@@ -19,7 +19,7 @@ import { createLogger, StudixError } from "@studix/shared";
 import type { StorageProbeResult } from "@studix/storage";
 import express from "express";
 import { afterEach, describe, expect, it } from "vitest";
-import { platformRoutes } from "../src/api/platform-routes.ts";
+import { platformRoutes, workspaceStorageRoutes } from "../src/api/platform-routes.ts";
 import type { AppDeps } from "../src/app-deps.ts";
 import { apiErrorHandler } from "../src/http/http-errors.ts";
 import {
@@ -92,8 +92,11 @@ function memoryProfiles(): StorageProfileRepository {
       rows.set(id, row);
       return row;
     },
-    async activate(id) {
-      for (const [k, r] of rows) rows.set(k, { ...r, active: k === id });
+    async listScope(workspaceId) {
+      return [...rows.values()].filter((r) => r.workspaceId === workspaceId);
+    },
+    async activate(id, _by, workspaceId) {
+      for (const [k, r] of rows) if (r.workspaceId === workspaceId) rows.set(k, { ...r, active: k === id });
     },
     async delete(id) {
       return Boolean(!rows.get(id)?.active && rows.delete(id));
@@ -469,11 +472,20 @@ describe("platform routes", () => {
     app.use(express.json());
     app.use((req, res, next) => {
       const who = req.header("x-actor");
-      if (who) res.locals.session = { ctx: who === "operator" ? operator : owner };
+      if (who)
+        res.locals.session = {
+          ctx:
+            who === "operator"
+              ? operator
+              : who === "editor"
+                ? ctxOf({ type: "user", id: "usr_ed", role: "editor" })
+                : owner,
+        };
       next();
     });
     const api = express.Router();
     api.use("/platform", platformRoutes({ platform: service } as unknown as AppDeps));
+    api.use("/workspace-storage", workspaceStorageRoutes({ platform: service } as unknown as AppDeps));
     api.use(apiErrorHandler(createLogger({}, { level: "error" })));
     app.use("/api", api);
     const server = app.listen(0);
@@ -508,6 +520,30 @@ describe("platform routes", () => {
       expect((await call(base, path, method, undefined, body)).status).toBe(401);
       expect((await call(base, path, method, "owner", body)).status).toBe(403);
     }
+  });
+
+  it("serves workspace storage to owners and admins only, before reading the body", async () => {
+    const { base } = await start();
+    const ws = base.replace(/\/platform$/, "/workspace-storage");
+    const routes: Array<[string, string, unknown?]> = [
+      ["/storage/profiles", "GET"],
+      ["/storage/profiles", "POST", {}],
+      ["/storage/profiles/stp_abcdef12", "PUT", {}],
+      ["/storage/profiles/env/activate", "POST", {}],
+      ["/storage/profiles/stp_abcdef12/test", "POST", {}],
+      ["/storage/profiles/stp_abcdef12", "DELETE"],
+    ];
+    for (const [path, method, body] of routes) {
+      expect((await call(ws, path, method, undefined, body)).status).toBe(401);
+      expect((await call(ws, path, method, "editor", body)).status).toBe(403);
+    }
+    const listed = await call(ws, "/storage/profiles", "GET", "owner");
+    expect(listed.status).toBe(200);
+    expect(listed.headers.get("cache-control")).toBe("no-store");
+    expect(((await listed.json()) as Array<{ id: string; providerType: string }>)[0]).toMatchObject({
+      id: "env",
+      providerType: "platform",
+    });
   });
 
   it("serves an operator with no-store responses that never carry a key value", async () => {

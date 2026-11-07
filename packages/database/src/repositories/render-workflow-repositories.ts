@@ -61,7 +61,7 @@ export function createRenderRepository(db: DbExecutor, clock: Clock): RenderRepo
           status: input.status,
           assetVersionId: input.assetVersionId ?? null,
           storageKey: input.storageKey ?? null,
-          storageProfileId: activeStorageProfileSql,
+          storageProfileId: activeStorageProfileSql(ctx.workspaceId),
           probe: input.probe ?? null,
           error: input.error ?? null,
           createdAt: now,
@@ -84,7 +84,7 @@ export function createRenderRepository(db: DbExecutor, clock: Clock): RenderRepo
         .set({
           ...patch,
           // A render's output is uploaded after the row exists: record the profile it went to.
-          ...(patch.storageKey ? { storageProfileId: activeStorageProfileSql } : {}),
+          ...(patch.storageKey ? { storageProfileId: activeStorageProfileSql(ctx.workspaceId) } : {}),
           updatedAt: clock.now(),
         })
         .where(scoped(renders, ctx, eq(renders.id, id)))

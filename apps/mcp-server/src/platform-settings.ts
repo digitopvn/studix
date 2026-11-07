@@ -5,6 +5,7 @@ import {
   type StorageKeyPair,
   type StorageProfileCandidate,
   type StorageProfileFields,
+  type StorageProfileScopeName,
   type StorageProfileService,
   type StorageProfileView,
   type VendorKeyTester,
@@ -172,12 +173,14 @@ export interface PlatformSettingsService {
   setStorageKey(ctx: TenantContext, pair: S3Credentials): Promise<StorageTestView>;
   /** Remove the stored pair; S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY from the environment apply again. */
   revokeStorageKey(ctx: TenantContext): Promise<void>;
-  listStorageProfiles(ctx: TenantContext): Promise<StorageProfileView[]>;
+  /** Profile methods take the scope last: `platform` (operator, default) or the session's `workspace`. */
+  listStorageProfiles(ctx: TenantContext, scope?: StorageProfileScopeName): Promise<StorageProfileView[]>;
   /** Probe the candidate profile, then store it (inactive); nothing is saved when the probe fails. */
   createStorageProfile(
     ctx: TenantContext,
     fields: StorageProfileFields,
     key: StorageKeyPair,
+    scope?: StorageProfileScopeName,
   ): Promise<StorageProfileView>;
   /** Without `key` the stored pair is kept; the probe runs with the new settings either way. */
   updateStorageProfile(
@@ -185,12 +188,21 @@ export interface PlatformSettingsService {
     id: string,
     fields: StorageProfileFields,
     key?: StorageKeyPair,
+    scope?: StorageProfileScopeName,
   ): Promise<StorageProfileView>;
   /** New objects go to this profile (or `env`) from now on, on the app and, within seconds, on the worker. */
-  activateStorageProfile(ctx: TenantContext, id: string): Promise<StorageProfileView>;
-  testStorageProfile(ctx: TenantContext, id: string): Promise<StorageTestView>;
+  activateStorageProfile(
+    ctx: TenantContext,
+    id: string,
+    scope?: StorageProfileScopeName,
+  ): Promise<StorageProfileView>;
+  testStorageProfile(
+    ctx: TenantContext,
+    id: string,
+    scope?: StorageProfileScopeName,
+  ): Promise<StorageTestView>;
   /** Refused while the profile is active or assets are stored in it. */
-  deleteStorageProfile(ctx: TenantContext, id: string): Promise<void>;
+  deleteStorageProfile(ctx: TenantContext, id: string, scope?: StorageProfileScopeName): Promise<void>;
 }
 
 export interface PlatformSettingsDeps {
@@ -411,8 +423,12 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
     }
   };
 
-  const profilesOrThrow = (ctx: TenantContext): StorageProfileService => {
-    assertPlatformOperator(ctx);
+  /** The profile service; the platform scope is the operator's, the service checks a workspace scope. */
+  const profilesOrThrow = (
+    ctx: TenantContext,
+    scope: StorageProfileScopeName = "platform",
+  ): StorageProfileService => {
+    if (scope === "platform") assertPlatformOperator(ctx);
     if (!deps.profiles) {
       throw new StudixError("UNAVAILABLE", "Storage profiles cannot be stored on this server", {
         retryable: false,
@@ -582,45 +598,55 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
       storageTest = undefined;
     },
 
-    async listStorageProfiles(ctx) {
-      return profilesOrThrow(ctx).list(ctx);
+    async listStorageProfiles(ctx, scope = "platform") {
+      return profilesOrThrow(ctx, scope).list(ctx, scope);
     },
 
-    async createStorageProfile(ctx, fields, key) {
-      const view = await profilesOrThrow(ctx).create(ctx, fields, key, verifyProfile);
+    async createStorageProfile(ctx, fields, key, scope = "platform") {
+      const view = await profilesOrThrow(ctx, scope).create(ctx, fields, key, verifyProfile, scope);
       await deps.profilesChanged?.();
       return view;
     },
 
-    async updateStorageProfile(ctx, id, fields, key) {
-      const view = await profilesOrThrow(ctx).update(ctx, id, fields, key, verifyProfile);
+    async updateStorageProfile(ctx, id, fields, key, scope = "platform") {
+      const view = await profilesOrThrow(ctx, scope).update(ctx, id, fields, key, verifyProfile, scope);
       await deps.profilesChanged?.();
       return view;
     },
 
-    async activateStorageProfile(ctx, id) {
-      const view = await profilesOrThrow(ctx).activate(ctx, id);
-      storageTest = undefined;
+    async activateStorageProfile(ctx, id, scope = "platform") {
+      const view = await profilesOrThrow(ctx, scope).activate(ctx, id, scope);
+      if (scope === "platform") storageTest = undefined;
       await deps.profilesChanged?.();
       return view;
     },
 
-    async testStorageProfile(ctx, id) {
-      const profiles = profilesOrThrow(ctx);
-      if (id === "env") return this.testStorage(ctx);
-      const candidate = await profiles.candidate(ctx, id);
+    async testStorageProfile(ctx, id, scope = "platform") {
+      const profiles = profilesOrThrow(ctx, scope);
+      if (id === "env") {
+        if (scope === "platform") return this.testStorage(ctx);
+        throw new StudixError("VALIDATION", "The platform default is checked by the platform operator", {
+          retryable: false,
+        });
+      }
+      const candidate = await profiles.candidate(ctx, id, scope);
       const view = storageView(await probeProfileOrThrow()(candidate), clock.now());
-      await profiles.recordTest(ctx, id, {
-        ok: view.ok,
-        detail: view.ok
-          ? "Write, read and delete passed"
-          : `${view.diagnosis}${view.failedStep ? ` at ${view.failedStep}` : ""}`,
-      });
+      await profiles.recordTest(
+        ctx,
+        id,
+        {
+          ok: view.ok,
+          detail: view.ok
+            ? "Write, read and delete passed"
+            : `${view.diagnosis}${view.failedStep ? ` at ${view.failedStep}` : ""}`,
+        },
+        scope,
+      );
       return view;
     },
 
-    async deleteStorageProfile(ctx, id) {
-      await profilesOrThrow(ctx).revoke(ctx, id);
+    async deleteStorageProfile(ctx, id, scope = "platform") {
+      await profilesOrThrow(ctx, scope).revoke(ctx, id, scope);
       await deps.profilesChanged?.();
     },
 

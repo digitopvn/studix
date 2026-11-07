@@ -10,6 +10,7 @@ import {
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
 import { StorageProfilesCard } from "./storage-profiles-card.tsx";
+import { WorkspaceMediaKeysSection } from "./workspace-media-keys-section.tsx";
 
 const SECRET_LABELS: Record<PlatformSettings["storage"]["secretAccessKey"], string> = {
   configured: "Configured",
@@ -47,14 +48,39 @@ const KEY_VERDICT: Record<PlatformMediaKeyTest["verdict"], string> = {
 };
 
 /**
- * Platform operator settings: object storage (R2) status and a real read/write check, and the media vendor
+ * Storage & Media. Owners and admins set the workspace's own storage profile and media vendor keys, which
+ * override the platform defaults for this workspace. Platform operators also see the platform defaults:
+ * object storage (R2) status and a real read/write check, and the media vendor
  * keys the Multix CLI uses. Keys are typed into a password field, sent once and never shown again: after
  * saving, only a hint, the owner and the last test remain.
  */
-export function StorageMediaPage() {
+export function StorageMediaPage({ isOperator }: { isOperator: boolean }) {
+  return (
+    <>
+      <WorkspaceStorageCard />
+      <WorkspaceMediaKeysSection />
+      {isOperator && <PlatformSettingsCards />}
+    </>
+  );
+}
+
+/** This workspace's own storage (owners and admins); its active profile overrides the platform choice. */
+function WorkspaceStorageCard() {
+  const { data, error, reload } = useAsync(() => api.listStorageProfiles("workspace"));
+  return (
+    <>
+      <ErrorBanner error={error} />
+      {data && <StorageProfilesCard profiles={data} reload={reload} scope="workspace" />}
+    </>
+  );
+}
+
+/** The platform defaults every workspace without its own settings uses (platform operators only). */
+function PlatformSettingsCards() {
   const { data, error, reload } = useAsync(() => api.platformSettings());
   return (
     <>
+      <h2>Platform defaults</h2>
       <ErrorBanner error={error} />
       {data?.storageProfiles && <StorageProfilesCard profiles={data.storageProfiles} reload={reload} />}
       {data && <StorageCard storage={data.storage} reload={reload} />}

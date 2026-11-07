@@ -23,7 +23,8 @@ import type { SignedUrlPolicy } from "./signed-url-options.ts";
  * the profile its database row records, so a bucket an operator switched away from stays readable and its
  * signed URLs keep working. Profiles are re-read every `refreshMs`, so app and worker follow a switch
  * without a redeploy. The deployment environment's S3_* settings are the `env` profile, active while no
- * stored profile is.
+ * stored profile is. A workspace may have its own active profile, which wins over the platform's for that
+ * workspace; a workspace's profiles are never used for another workspace's objects.
  */
 
 /** Id of the profile built from the S3_* environment settings. */
@@ -31,6 +32,8 @@ export const ENV_STORAGE_PROFILE_ID = "env";
 
 export interface StorageProfileTarget {
   id: string;
+  /** Owning workspace; absent for a platform profile. */
+  workspaceId?: string;
   /** Changes whenever the profile's endpoint, bucket, prefix or key pair changes; the client is then rebuilt. */
   revision: string;
   options: S3StorageOptions;
@@ -41,6 +44,8 @@ export interface StorageProfileSnapshot {
   activeId: string;
   /** Every readable stored profile, active or not. The `env` profile is not listed here. */
   profiles: readonly StorageProfileTarget[];
+  /** Workspace id to its own active profile; a workspace absent here follows `activeId`. */
+  workspaceActive?: Readonly<Record<string, string>>;
 }
 
 export interface ProfileStorageRouterOptions {
@@ -63,6 +68,7 @@ const LOCATION_CACHE_LIMIT = 5_000;
 
 interface Built {
   id: string;
+  workspaceId?: string;
   revision: string;
   adapter: S3StorageAdapter;
   origins: string[];
@@ -137,6 +143,7 @@ export class ProfileStorageRouter implements StorageAdapter {
       if (existing) this.retire(existing);
       this.built.set(target.id, {
         id: target.id,
+        ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
         revision: target.revision,
         adapter: new S3StorageAdapter(target.options),
         origins: originsOf(target.options),
@@ -158,23 +165,29 @@ export class ProfileStorageRouter implements StorageAdapter {
     setTimeout(() => old.adapter.destroy(), RETIRE_AFTER_MS).unref?.();
   }
 
-  private adapterFor(id: string): S3StorageAdapter | undefined {
+  /** The profile's client, when `ctx` (if given) may use it: platform profiles, or the workspace's own. */
+  private adapterFor(id: string, ctx?: Pick<TenantContext, "workspaceId">): S3StorageAdapter | undefined {
     if (id === ENV_STORAGE_PROFILE_ID) return this.options.fallback;
-    return this.built.get(id)?.adapter;
+    const built = this.built.get(id);
+    if (!built) return undefined;
+    if (built.workspaceId !== undefined && built.workspaceId !== ctx?.workspaceId) return undefined;
+    return built.adapter;
   }
 
-  /** Id of the profile new objects go to right now. */
-  async activeProfileId(): Promise<string> {
+  /** Id of the profile new objects go to right now: the workspace's own active one, else the platform's. */
+  async activeProfileId(ctx?: Pick<TenantContext, "workspaceId">): Promise<string> {
     const snap = await this.current();
+    const own = ctx ? snap.workspaceActive?.[ctx.workspaceId] : undefined;
+    if (own !== undefined && this.adapterFor(own, ctx)) return own;
     return this.adapterFor(snap.activeId) ? snap.activeId : ENV_STORAGE_PROFILE_ID;
   }
 
   private async writeTarget(ctx: TenantContext): Promise<{ id: string; adapter: S3StorageAdapter }> {
     const pinned = this.pins.get(ctx);
-    const pinnedAdapter = pinned === undefined ? undefined : this.adapterFor(pinned);
+    const pinnedAdapter = pinned === undefined ? undefined : this.adapterFor(pinned, ctx);
     if (pinned !== undefined && pinnedAdapter) return { id: pinned, adapter: pinnedAdapter };
-    const id = await this.activeProfileId();
-    const adapter = this.adapterFor(id);
+    const id = await this.activeProfileId(ctx);
+    const adapter = this.adapterFor(id, ctx);
     if (!adapter) throw noStorage();
     this.pins.set(ctx, id);
     return { id, adapter };
@@ -194,8 +207,16 @@ export class ProfileStorageRouter implements StorageAdapter {
     const snap = await this.current();
     const cached = this.locations.get(`${ctx.organizationId}/${ctx.workspaceId}/${key}`);
     const first = cached ?? (await this.options.locate?.(ctx, key).catch(() => undefined));
-    const all = [first, snap.activeId, ...snap.profiles.map((p) => p.id), ENV_STORAGE_PROFILE_ID];
-    const order = [...new Set(all)].filter((id): id is string => id !== undefined && !!this.adapterFor(id));
+    const all = [
+      first,
+      snap.workspaceActive?.[ctx.workspaceId],
+      snap.activeId,
+      ...snap.profiles.map((p) => p.id),
+      ENV_STORAGE_PROFILE_ID,
+    ];
+    const order = [...new Set(all)].filter(
+      (id): id is string => id !== undefined && !!this.adapterFor(id, ctx),
+    );
     // Only a location this process confirmed is "known"; a recorded one is tried first but checked, since a
     // row written while app and worker disagreed for a few seconds about the active profile may be off.
     return { order, known: cached !== undefined && order[0] === cached };
@@ -214,7 +235,7 @@ export class ProfileStorageRouter implements StorageAdapter {
     let notFound: unknown;
     for (const id of order) {
       try {
-        const value = await op(this.adapterFor(id)!);
+        const value = await op(this.adapterFor(id, ctx)!);
         if (missing(value)) {
           last = value;
           continue;
@@ -270,7 +291,7 @@ export class ProfileStorageRouter implements StorageAdapter {
       // Sign for the profile that actually holds the object (checked once per key, then cached).
       for (const candidate of order) {
         if (
-          await this.adapterFor(candidate)!
+          await this.adapterFor(candidate, ctx)!
             .head(ctx, key)
             .catch(() => undefined)
         ) {
@@ -280,7 +301,7 @@ export class ProfileStorageRouter implements StorageAdapter {
       }
     }
     this.remember(ctx, key, id);
-    return this.adapterFor(id)!.signedUrl(ctx, key, options);
+    return this.adapterFor(id, ctx)!.signedUrl(ctx, key, options);
   }
 
   async signedUploadUrl(ctx: TenantContext, key: string, options: SignedUploadUrlOptions): Promise<string> {
@@ -291,7 +312,7 @@ export class ProfileStorageRouter implements StorageAdapter {
 
   async delete(ctx: TenantContext, key: string): Promise<void> {
     const { order } = await this.readOrder(ctx, key);
-    for (const id of order) await this.adapterFor(id)!.delete(ctx, key);
+    for (const id of order) await this.adapterFor(id, ctx)!.delete(ctx, key);
   }
 
   /** The startup and readiness write probe, against the active profile. */
@@ -318,6 +339,7 @@ export class ProfileStorageRouter implements StorageAdapter {
 /** A stored profile as the profile service hands it out (settings plus the opened key pair). */
 export interface StorageProfileEntry {
   id: string;
+  workspaceId?: string;
   revision: string;
   candidate: {
     endpoint?: string;
@@ -349,15 +371,24 @@ export function storageProfileOptions(
   };
 }
 
+/** What the profile service's `snapshot()` returns. */
+export interface ServiceSnapshot {
+  activeId: string;
+  workspaceActive?: Readonly<Record<string, string>>;
+  profiles: readonly StorageProfileEntry[];
+}
+
 /** Router snapshot from the profile service's snapshot. */
 export function routerSnapshot(
-  snapshot: { activeId: string; profiles: readonly StorageProfileEntry[] },
+  snapshot: ServiceSnapshot,
   options: { policy: EndpointPolicy; signedUrlPolicy?: SignedUrlPolicy },
 ): StorageProfileSnapshot {
   return {
     activeId: snapshot.activeId,
+    ...(snapshot.workspaceActive ? { workspaceActive: snapshot.workspaceActive } : {}),
     profiles: snapshot.profiles.map((p) => ({
       id: p.id,
+      ...(p.workspaceId ? { workspaceId: p.workspaceId } : {}),
       revision: p.revision,
       options: storageProfileOptions(p.candidate, options),
     })),
@@ -373,7 +404,7 @@ export function createProfileStorageRouterFromConfig(
     Pick<StudixConfig, "STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS">,
   input: {
     credentials?: S3CredentialSource;
-    profiles?: { snapshot(): Promise<{ activeId: string; profiles: readonly StorageProfileEntry[] }> };
+    profiles?: { snapshot(): Promise<ServiceSnapshot> };
     locate?: (ctx: TenantContext, key: string) => Promise<string | undefined>;
     logger?: Logger;
     refreshMs?: number;

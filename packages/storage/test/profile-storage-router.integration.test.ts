@@ -134,3 +134,32 @@ describe("ProfileStorageRouter against MinIO", () => {
     expect(await router.head(tenant(), "renders/rev.txt")).toBeDefined();
   });
 });
+
+describe("ProfileStorageRouter with workspace profiles", () => {
+  const own = () => testTenant({ organizationId: "org_router", workspaceId: `ws_own_${run}` });
+  const other = () => testTenant({ organizationId: "org_router", workspaceId: `ws_other_${run}` });
+  const snapshot = {
+    current: {
+      activeId: "stp_a",
+      profiles: [target("stp_a", "a"), { ...target("stp_w", "w"), workspaceId: `ws_own_${run}` }],
+      workspaceActive: { [`ws_own_${run}`]: "stp_w" },
+    } as StorageProfileSnapshot,
+  };
+
+  it("writes a workspace's objects to its own active profile and others' to the platform one", async () => {
+    const router = routerWith(snapshot);
+    expect(await router.activeProfileId(own())).toBe("stp_w");
+    expect(await router.activeProfileId(other())).toBe("stp_a");
+    await router.put(own(), "renders/own.txt", bytes("own"), { contentType: "text/plain" });
+    await router.put(other(), "renders/other.txt", bytes("other"), { contentType: "text/plain" });
+    expect(await router.signedUrl(own(), "renders/own.txt")).toContain(`router-${run}/w/`);
+    expect(await router.signedUrl(other(), "renders/other.txt")).toContain(`router-${run}/a/`);
+  });
+
+  it("never uses a workspace's profile for another workspace, even when a row names it", async () => {
+    const router = routerWith(snapshot, () => "stp_w");
+    await router.put(other(), "renders/guard.txt", bytes("guard"), { contentType: "text/plain" });
+    expect(await router.signedUrl(other(), "renders/guard.txt")).toContain(`router-${run}/a/`);
+    expect(await router.head(other(), "renders/own.txt")).toBeUndefined();
+  });
+});

@@ -1,4 +1,10 @@
-import { type AuditRepository, actorRef, assertPlatformOperator, type TenantContext } from "@studix/core";
+import {
+  type AuditRepository,
+  actorRef,
+  assertPlatformOperator,
+  can,
+  type TenantContext,
+} from "@studix/core";
 import {
   newStorageProfileId,
   type StorageProfileInput,
@@ -10,15 +16,20 @@ import { type Clock, type Logger, redact, registerSecret, StudixError, systemClo
 import type { SecretBox } from "./secret-box.ts";
 
 /*
- * Object storage profiles managed by a platform operator under Settings > Storage & Media. The key pair is
+ * Object storage profiles under Settings > Storage & Media, in two scopes. Platform profiles are managed by a
+ * platform operator; workspace profiles by that workspace's owners and admins (`member:manage`), and a
+ * workspace's active profile overrides the platform choice for that workspace only. The key pair is
  * sealed with STUDIX_SECRETS_KEY (no second vault) and bound to the profile id; no view, audit record or
  * error carries it. A profile is saved only after the caller's `verify` (the put/get/head/delete probe with
- * the candidate settings) passes. Exactly one profile is active, the S3_* environment settings (`env`) when
- * no stored one is. Deactivated profiles stay readable; a profile that assets still reference cannot be
+ * the candidate settings) passes. At most one profile per scope is active. `env` stands for the S3_* environment
+ * settings in the platform scope and for "follow the platform" in a workspace scope. Deactivated profiles stay readable; a profile that assets still reference cannot be
  * deleted. App and worker read `snapshot()` every few seconds, so a change needs no redeploy.
  */
 
 export const ENV_PROFILE_ID = "env";
+
+/** `platform` (operator) or `workspace` (the caller's workspace, owners and admins). */
+export type StorageProfileScopeName = "platform" | "workspace";
 
 export interface StorageProfileFields {
   name: string;
@@ -51,7 +62,8 @@ export interface StorageProfileCandidate {
 export interface StorageProfileView {
   id: string;
   name: string;
-  providerType: StorageProviderTypeName | "environment";
+  /** `environment`: the S3_* settings; `platform`: a workspace following the platform choice. */
+  providerType: StorageProviderTypeName | "environment" | "platform";
   endpointHost?: string;
   bucket?: string;
   region: string;
@@ -71,22 +83,29 @@ export interface StorageProfileView {
 
 export interface StorageProfileSnapshotEntry {
   id: string;
+  /** Owning workspace; absent for a platform profile. */
+  workspaceId?: string;
   revision: string;
   candidate: StorageProfileCandidate;
 }
 
 export interface StorageProfilesSnapshot {
+  /** The platform's active profile, `env` when none. */
   activeId: string;
+  /** Workspace id to that workspace's active profile; a workspace absent here follows `activeId`. */
+  workspaceActive: Record<string, string>;
   profiles: StorageProfileSnapshotEntry[];
 }
 
+/** Every method takes the scope last; it defaults to `platform`. */
 export interface StorageProfileService {
-  list(ctx: TenantContext): Promise<StorageProfileView[]>;
+  list(ctx: TenantContext, scope?: StorageProfileScopeName): Promise<StorageProfileView[]>;
   create(
     ctx: TenantContext,
     fields: StorageProfileFields,
     key: StorageKeyPair,
     verify: (candidate: StorageProfileCandidate) => Promise<void>,
+    scope?: StorageProfileScopeName,
   ): Promise<StorageProfileView>;
   /** Without `key` the stored pair is kept and re-verified with the new settings. */
   update(
@@ -95,14 +114,24 @@ export interface StorageProfileService {
     fields: StorageProfileFields,
     key: StorageKeyPair | undefined,
     verify: (candidate: StorageProfileCandidate) => Promise<void>,
+    scope?: StorageProfileScopeName,
   ): Promise<StorageProfileView>;
-  /** Make a stored profile (or `env`) the one new objects go to. */
-  activate(ctx: TenantContext, id: string): Promise<StorageProfileView>;
+  /** Make a stored profile (or `env`) the one new objects of the scope go to. */
+  activate(ctx: TenantContext, id: string, scope?: StorageProfileScopeName): Promise<StorageProfileView>;
   /** Delete an inactive, unreferenced profile and its sealed key pair. */
-  revoke(ctx: TenantContext, id: string): Promise<void>;
-  /** The candidate for a stored profile, to re-run the probe on it (operator only). */
-  candidate(ctx: TenantContext, id: string): Promise<StorageProfileCandidate>;
-  recordTest(ctx: TenantContext, id: string, result: { ok: boolean; detail?: string }): Promise<void>;
+  revoke(ctx: TenantContext, id: string, scope?: StorageProfileScopeName): Promise<void>;
+  /** The candidate for a stored profile, to re-run the probe on it. */
+  candidate(
+    ctx: TenantContext,
+    id: string,
+    scope?: StorageProfileScopeName,
+  ): Promise<StorageProfileCandidate>;
+  recordTest(
+    ctx: TenantContext,
+    id: string,
+    result: { ok: boolean; detail?: string },
+    scope?: StorageProfileScopeName,
+  ): Promise<void>;
   /** For the storage routers in app and worker: never throws, cached for a few seconds. */
   snapshot(): Promise<StorageProfilesSnapshot>;
 }
@@ -166,8 +195,22 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
     return deps.secrets;
   };
 
-  const auditTarget = (ctx: TenantContext) =>
-    deps.auditContext ? deps.auditContext(ctx) : Promise.resolve(ctx);
+  /** Checks the caller may manage the scope; returns the workspace the rows belong to (undefined: platform). */
+  const authorize = (ctx: TenantContext, scope: StorageProfileScopeName): string | undefined => {
+    if (scope === "platform") {
+      assertPlatformOperator(ctx);
+      return undefined;
+    }
+    if (ctx.actor.type !== "user" || !can(ctx.actor, "member:manage")) {
+      throw new StudixError("FORBIDDEN", "Only workspace owners and admins manage the workspace storage", {
+        retryable: false,
+      });
+    }
+    return ctx.workspaceId;
+  };
+
+  const auditTarget = (ctx: TenantContext, scope: StorageProfileScopeName) =>
+    deps.auditContext && scope === "platform" ? deps.auditContext(ctx) : Promise.resolve(ctx);
 
   /** Audit data: settings and hints only. */
   const auditData = (row: StorageProfileRecord) => ({
@@ -218,7 +261,18 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
     ...(references === undefined ? {} : { references }),
   });
 
-  const envView = (anyActive: boolean): StorageProfileView => {
+  const envView = (anyActive: boolean, scope: StorageProfileScopeName): StorageProfileView => {
+    if (scope === "workspace") {
+      return {
+        id: ENV_PROFILE_ID,
+        name: "Platform default",
+        providerType: "platform",
+        region: "auto",
+        forcePathStyle: false,
+        keyPrefix: "",
+        active: !anyActive,
+      };
+    }
     const env = deps.environment;
     return {
       id: ENV_PROFILE_ID,
@@ -306,9 +360,11 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
     credentials: key,
   });
 
-  const getOrThrow = async (id: string): Promise<StorageProfileRecord> => {
+  /** A row of the scope; another scope's row is reported as missing. */
+  const getOrThrow = async (id: string, workspaceId: string | undefined): Promise<StorageProfileRecord> => {
     const row = await deps.profiles.get(id);
-    if (!row) throw new StudixError("NOT_FOUND", "No storage profile with that id", { retryable: false });
+    if (!row || row.workspaceId !== workspaceId)
+      throw new StudixError("NOT_FOUND", "No storage profile with that id", { retryable: false });
     return row;
   };
 
@@ -317,24 +373,33 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
   };
 
   return {
-    async list(ctx) {
-      assertPlatformOperator(ctx);
-      const rows = await deps.profiles.list();
+    async list(ctx, scope = "platform") {
+      const ws = authorize(ctx, scope);
+      const rows = await deps.profiles.listScope(ws);
       const views = await Promise.all(
         rows.map(async (row) => view(row, await deps.profiles.countReferences(row.id))),
       );
-      return [envView(rows.some((r) => r.active)), ...views];
+      return [
+        envView(
+          rows.some((r) => r.active),
+          scope,
+        ),
+        ...views,
+      ];
     },
 
-    async create(ctx, fields, key, verify) {
-      assertPlatformOperator(ctx);
+    async create(ctx, fields, key, verify, scope = "platform") {
+      const ws = authorize(ctx, scope);
       box();
-      const target = await auditTarget(ctx);
+      const target = await auditTarget(ctx, scope);
       const input = await normalize(fields);
       const pair = normalizeKey(key);
       const id = newStorageProfileId();
       await verify(candidateOf(id, input, pair));
-      const row = await deps.profiles.create({ id, ...input, ...seal(id, pair) }, actorRef(ctx.actor));
+      const row = await deps.profiles.create(
+        { id, ...(ws ? { workspaceId: ws } : {}), ...input, ...seal(id, pair) },
+        actorRef(ctx.actor),
+      );
       await deps.profiles.recordTest(id, {
         ok: true,
         at: clock.now(),
@@ -345,11 +410,11 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
       return view({ ...row, lastTest: { ok: true, at: clock.now() } }, 0);
     },
 
-    async update(ctx, id, fields, key, verify) {
-      assertPlatformOperator(ctx);
+    async update(ctx, id, fields, key, verify, scope = "platform") {
+      const ws = authorize(ctx, scope);
       box();
-      const target = await auditTarget(ctx);
-      const existing = await getOrThrow(id);
+      const target = await auditTarget(ctx, scope);
+      const existing = await getOrThrow(id, ws);
       const input = await normalize(fields);
       const pair = key ? normalizeKey(key) : open(existing);
       await verify(candidateOf(id, input, pair));
@@ -369,33 +434,33 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
       return view(row, await deps.profiles.countReferences(id));
     },
 
-    async activate(ctx, id) {
-      assertPlatformOperator(ctx);
-      const target = await auditTarget(ctx);
+    async activate(ctx, id, scope = "platform") {
+      const ws = authorize(ctx, scope);
+      const target = await auditTarget(ctx, scope);
       if (id === ENV_PROFILE_ID) {
-        await deps.profiles.activate(undefined, actorRef(ctx.actor));
+        await deps.profiles.activate(undefined, actorRef(ctx.actor), ws);
         invalidate();
-        await audit(target, "activated", ENV_PROFILE_ID, { id: ENV_PROFILE_ID });
-        return envView(false);
+        await audit(target, "activated", ENV_PROFILE_ID, { id: ENV_PROFILE_ID, scope });
+        return envView(false, scope);
       }
-      const row = await getOrThrow(id);
+      const row = await getOrThrow(id, ws);
       // Opening proves this server can use it before new objects go there.
       open(row);
-      await deps.profiles.activate(id, actorRef(ctx.actor));
+      await deps.profiles.activate(id, actorRef(ctx.actor), ws);
       invalidate();
       await audit(target, "activated", id, auditData(row));
       return view({ ...row, active: true }, await deps.profiles.countReferences(id));
     },
 
-    async revoke(ctx, id) {
-      assertPlatformOperator(ctx);
-      const target = await auditTarget(ctx);
+    async revoke(ctx, id, scope = "platform") {
+      const ws = authorize(ctx, scope);
+      const target = await auditTarget(ctx, scope);
       if (id === ENV_PROFILE_ID) {
         throw new StudixError("VALIDATION", "The environment profile is changed in the deployment settings", {
           retryable: false,
         });
       }
-      const row = await getOrThrow(id);
+      const row = await getOrThrow(id, ws);
       if (row.active) {
         throw new StudixError("CONFLICT", "The active storage profile cannot be deleted", {
           retryable: false,
@@ -419,15 +484,14 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
       await audit(target, "revoked", id, auditData(row));
     },
 
-    async candidate(ctx, id) {
-      assertPlatformOperator(ctx);
-      const row = await getOrThrow(id);
+    async candidate(ctx, id, scope = "platform") {
+      const row = await getOrThrow(id, authorize(ctx, scope));
       return candidateOf(id, row, open(row));
     },
 
-    async recordTest(ctx, id, result) {
-      assertPlatformOperator(ctx);
-      const target = await auditTarget(ctx);
+    async recordTest(ctx, id, result, scope = "platform") {
+      await getOrThrow(id, authorize(ctx, scope));
+      const target = await auditTarget(ctx, scope);
       const stored = await deps.profiles.recordTest(id, {
         ok: result.ok,
         at: clock.now(),
@@ -439,7 +503,7 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
     async snapshot() {
       const now = clock.now().getTime();
       if (cached && now - cached.at < cacheMs) return cached.value;
-      if (!deps.secrets) return { activeId: ENV_PROFILE_ID, profiles: [] };
+      if (!deps.secrets) return { activeId: ENV_PROFILE_ID, workspaceActive: {}, profiles: [] };
       let rows: StorageProfileRecord[];
       try {
         rows = await deps.profiles.list();
@@ -447,19 +511,22 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
         deps.logger?.warn("storage profiles could not be read; using the previous ones", {
           error: err instanceof Error ? err.message : String(err),
         });
-        return cached?.value ?? { activeId: ENV_PROFILE_ID, profiles: [] };
+        return cached?.value ?? { activeId: ENV_PROFILE_ID, workspaceActive: {}, profiles: [] };
       }
       const profiles: StorageProfileSnapshotEntry[] = [];
       const unreadable: string[] = [];
       let activeId = ENV_PROFILE_ID;
+      const workspaceActive: Record<string, string> = {};
       for (const row of rows) {
         try {
           profiles.push({
             id: row.id,
+            ...(row.workspaceId ? { workspaceId: row.workspaceId } : {}),
             revision: `${row.version}:${row.updatedAt.getTime()}`,
             candidate: candidateOf(row.id, row, open(row)),
           });
-          if (row.active) activeId = row.id;
+          if (row.active && row.workspaceId) workspaceActive[row.workspaceId] = row.id;
+          else if (row.active) activeId = row.id;
         } catch {
           unreadable.push(row.id);
         }
@@ -471,7 +538,7 @@ export function createStorageProfileService(deps: StorageProfileServiceDeps): St
           ids: unreadable,
         });
       }
-      const value = { activeId, profiles };
+      const value = { activeId, workspaceActive, profiles };
       cached = { at: now, value };
       return value;
     },

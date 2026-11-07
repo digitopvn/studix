@@ -28,11 +28,16 @@ const NAV = [
   { to: "/connected-apps", label: "Connected apps" },
   { to: "/providers", label: "AI & Providers" },
   { to: "/skills", label: "Skills" },
-  { to: "/storage-media", label: "Storage & Media", operatorOnly: true },
+  { to: "/storage-media", label: "Storage & Media", managersOnly: true },
   { to: "/account", label: "Account" },
 ] as const;
 
 type SessionState = { status: "loading" } | { status: "anonymous" } | { status: "ready"; me: Me };
+
+/** Workspace owners and admins manage the workspace's storage; platform operators also the platform's. */
+function canManageStorage(me: Me): boolean {
+  return me.role === "operator" || me.role === "owner" || me.role === "admin";
+}
 
 function Route({ segments, me }: { segments: string[]; me: Me }) {
   const [section, id, view] = segments;
@@ -56,10 +61,10 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
     case "skills":
       return id ? <SkillDetailPage skillId={id} /> : <SkillsPage isOperator={me.role === "operator"} />;
     case "storage-media":
-      return me.role === "operator" ? (
-        <StorageMediaPage />
+      return canManageStorage(me) ? (
+        <StorageMediaPage isOperator={me.role === "operator"} />
       ) : (
-        <p className="muted">Storage &amp; Media settings are managed by the platform operator.</p>
+        <p className="muted">Storage &amp; Media settings are managed by the workspace owners and admins.</p>
       );
     case "account":
       return <AccountPage email={me.user.email} />;
@@ -142,7 +147,7 @@ export function App() {
       <header className="topbar">
         <strong className="brand">Studix</strong>
         <nav>
-          {NAV.filter((item) => !("operatorOnly" in item) || me.role === "operator").map((item) => (
+          {NAV.filter((item) => !("managersOnly" in item) || canManageStorage(me)).map((item) => (
             <Link key={item.to} to={item.to} className={current === item.to.slice(1) ? "active" : undefined}>
               {item.label}
             </Link>

@@ -4,7 +4,7 @@ import express, { type Express } from "express";
 import { apiKeyRoutes, connectorRoutes, providerRoutes } from "./api/admin-routes.ts";
 import { requireSession } from "./api/api-context.ts";
 import { mountOAuthDiscovery, oauthRoutes } from "./api/oauth-routes.ts";
-import { platformRoutes } from "./api/platform-routes.ts";
+import { platformRoutes, workspaceStorageRoutes } from "./api/platform-routes.ts";
 import { skillRoutes } from "./api/skill-routes.ts";
 import { studioRoutes } from "./api/studio-routes.ts";
 import { type AppDeps, SERVER_VERSION } from "./app-deps.ts";
@@ -95,6 +95,7 @@ export function createApp(deps: AppDeps): Express {
   api.use("/providers", providerRoutes(deps));
   api.use("/platform", platformRoutes(deps));
   api.use("/skills", skillRoutes(deps));
+  api.use("/workspace-storage", workspaceStorageRoutes(deps));
   api.use(studioRoutes(deps, artifacts));
   api.use(() => {
     throw new StudixError("NOT_FOUND", "Unknown API route");

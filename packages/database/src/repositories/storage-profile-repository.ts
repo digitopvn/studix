@@ -1,6 +1,6 @@
 import type { ActorRef, TenantContext } from "@studix/core";
 import { type Clock, newId } from "@studix/shared";
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, isNull, type SQL, sql } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { assetVersions, renders } from "../schema/projects.ts";
 import { storageProfiles } from "../schema/storage-profiles.ts";
@@ -10,6 +10,8 @@ export type StorageProviderTypeName = "cloudflare-r2" | "aws-s3" | "s3-compatibl
 
 export interface StorageProfileRecord {
   id: string;
+  /** Owning workspace; absent for a platform profile. */
+  workspaceId?: string;
   name: string;
   providerType: StorageProviderTypeName;
   endpoint?: string;
@@ -47,11 +49,17 @@ export interface SealedStorageKey {
   secretHint: string;
 }
 
+/** Platform profiles (`undefined`) or one workspace's own profiles. */
+export type StorageProfileScope = string | undefined;
+
 export interface StorageProfileRepository {
+  /** Every profile of every scope, for the routers. */
   list(): Promise<StorageProfileRecord[]>;
+  /** Profiles of one scope. */
+  listScope(workspaceId: StorageProfileScope): Promise<StorageProfileRecord[]>;
   get(id: string): Promise<StorageProfileRecord | undefined>;
   create(
-    input: StorageProfileInput & SealedStorageKey & { id: string },
+    input: StorageProfileInput & SealedStorageKey & { id: string; workspaceId?: string },
     by: ActorRef,
   ): Promise<StorageProfileRecord>;
   /** Replace the settings and, when given, the key pair; bumps `version` and clears the last test. */
@@ -60,8 +68,11 @@ export interface StorageProfileRepository {
     input: StorageProfileInput & Partial<SealedStorageKey>,
     by: ActorRef,
   ): Promise<StorageProfileRecord | undefined>;
-  /** Make `id` the only active profile, or deactivate every profile (`env` applies) when `id` is undefined. */
-  activate(id: string | undefined, by: ActorRef): Promise<void>;
+  /**
+   * Make `id` the only active profile of its scope, or deactivate every profile of the scope when `id` is
+   * undefined (a workspace then follows the platform choice; the platform falls back to `env`).
+   */
+  activate(id: string | undefined, by: ActorRef, workspaceId?: StorageProfileScope): Promise<void>;
   /** Delete an inactive profile; false when there is no such inactive profile. */
   delete(id: string): Promise<boolean>;
   recordTest(id: string, result: PlatformTestRecord): Promise<boolean>;
@@ -74,8 +85,22 @@ export interface StorageProfileRepository {
   ): Promise<string | undefined>;
 }
 
-/** Profile new rows record: the active stored profile, else the environment settings (`env`). */
-export const activeStorageProfileSql = sql<string>`coalesce((select ${storageProfiles.id} from ${storageProfiles} where ${storageProfiles.active} limit 1), 'env')`;
+/**
+ * Profile a new row of `workspaceId` records: the workspace's active profile, else the platform's active profile,
+ * else the environment settings (`env`).
+ */
+export function activeStorageProfileSql(workspaceId: string): SQL<string> {
+  return sql<string>`coalesce(
+    (select ${storageProfiles.id} from ${storageProfiles} where ${storageProfiles.active} and ${storageProfiles.workspaceId} = ${workspaceId} limit 1),
+    (select ${storageProfiles.id} from ${storageProfiles} where ${storageProfiles.active} and ${storageProfiles.workspaceId} is null limit 1),
+    'env')`;
+}
+
+function inScope(workspaceId: StorageProfileScope): SQL {
+  return workspaceId === undefined
+    ? isNull(storageProfiles.workspaceId)
+    : eq(storageProfiles.workspaceId, workspaceId);
+}
 
 export function newStorageProfileId(): string {
   return newId("stp");
@@ -84,6 +109,7 @@ export function newStorageProfileId(): string {
 function toRecord(row: typeof storageProfiles.$inferSelect): StorageProfileRecord {
   return {
     id: row.id,
+    ...(row.workspaceId ? { workspaceId: row.workspaceId } : {}),
     name: row.name,
     providerType: row.providerType,
     ...(row.endpoint ? { endpoint: row.endpoint } : {}),
@@ -110,6 +136,14 @@ export function createStorageProfileRepository(db: StudixDb, clock: Clock): Stor
       const rows = await db.select().from(storageProfiles).orderBy(desc(storageProfiles.createdAt));
       return rows.map(toRecord);
     },
+    async listScope(workspaceId) {
+      const rows = await db
+        .select()
+        .from(storageProfiles)
+        .where(inScope(workspaceId))
+        .orderBy(desc(storageProfiles.createdAt));
+      return rows.map(toRecord);
+    },
     async get(id) {
       const rows = await db.select().from(storageProfiles).where(eq(storageProfiles.id, id));
       return rows[0] ? toRecord(rows[0]) : undefined;
@@ -120,6 +154,7 @@ export function createStorageProfileRepository(db: StudixDb, clock: Clock): Stor
         .insert(storageProfiles)
         .values({
           ...input,
+          workspaceId: input.workspaceId ?? null,
           endpoint: input.endpoint ?? null,
           active: false,
           updatedByType: by.type,
@@ -146,19 +181,19 @@ export function createStorageProfileRepository(db: StudixDb, clock: Clock): Stor
         .returning();
       return rows[0] ? toRecord(rows[0]) : undefined;
     },
-    async activate(id, by) {
+    async activate(id, by, workspaceId) {
       await db.transaction(async (tx) => {
         const now = clock.now();
         const who = { updatedByType: by.type, updatedById: by.id, updatedAt: now };
         await tx
           .update(storageProfiles)
           .set({ active: false, ...who })
-          .where(eq(storageProfiles.active, true));
+          .where(and(eq(storageProfiles.active, true), inScope(workspaceId)));
         if (id)
           await tx
             .update(storageProfiles)
             .set({ active: true, ...who })
-            .where(eq(storageProfiles.id, id));
+            .where(and(eq(storageProfiles.id, id), inScope(workspaceId)));
       });
     },
     async delete(id) {
