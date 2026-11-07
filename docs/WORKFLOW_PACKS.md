@@ -354,7 +354,8 @@ Script smoke [`smoke-video.ts`](../apps/mcp-server/scripts/smoke-video.ts) chỉ
 Agent của job (Claude Code, Pi hoặc Codex) tự dựng và render video trong skill sandbox, theo đúng
 SKILL.md của skill được bật. Studix chỉ đặt contract đầu ra (1080p, thời lượng ±0.5 s, có voice-over,
 -16 LUFS ±2, true peak ≤ -1 dBTP) và kiểm lại file trước khi lưu; file sai contract làm job lỗi
-`VALIDATION`. Cần `STUDIX_SANDBOX=docker` và `budgetCents` lớn hơn cap 800¢ của stage. Quyết định ở
+`VALIDATION`. Cần `STUDIX_SANDBOX=docker`. Stage chỉ giữ trước tối đa phần budget còn lại của job (cap 800¢), nên
+budget nhỏ hơn chỉ giới hạn lượt chạy chứ không làm job fail. Quyết định ở
 [ADR-0022](decisions/0022-agentic-video-authoring.md).
 
 ## Giới hạn của QA gate

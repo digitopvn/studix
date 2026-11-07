@@ -27,8 +27,8 @@ cost under US$0.50 and matched the target quality.
 
 ## Consequences
 
-- `skill-agent` needs `STUDIX_SANDBOX=docker` and a job budget above the stage cap (800¢); the cap is
-  a ceiling, the reference run spent far less.
+- `skill-agent` needs `STUDIX_SANDBOX=docker`. An agent stage reserves at most what is left of the job
+  budget (the stage cap is 800¢), so a smaller budget caps the run instead of failing the job.
 - Quality now depends on the skill and the sandbox toolchain (Chromium, ffmpeg, fonts, audio tools),
   which the sandbox image pins.
 - A file that misses the contract costs the agent run without a result; the job's stages keep the

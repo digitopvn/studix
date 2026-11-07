@@ -182,8 +182,11 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
     retry: "never",
     cacheKey: (s) => stageCacheKey(spec.name, spec.version, s.input),
     // Host work costs Studix nothing; an invalid mode is reported by `run`, so the estimate stays conservative.
+    // The reservation never exceeds what is left of the job budget: `run` caps the agent at that amount.
     estimateCostCents: (s) =>
-      AgentModePayload.safeParse(s.job.payload).data?.agentMode === "host" ? 0 : spec.limits.maxCostCents,
+      AgentModePayload.safeParse(s.job.payload).data?.agentMode === "host"
+        ? 0
+        : Math.min(spec.limits.maxCostCents, remainingBudget(s.job)),
     async run(s) {
       const agents = s.agents;
       if (!agents) {
@@ -223,9 +226,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
             "Submit the job with payload.agentMode 'host' and complete the stage from your MCP client.",
         });
       }
-      const remaining =
-        s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
-      const maxCostCents = Math.min(limits.maxCostCents, remaining);
+      const maxCostCents = Math.min(limits.maxCostCents, remainingBudget(s.job));
       if (maxCostCents <= 0) {
         throw new StudixError("BUDGET_EXCEEDED", `No budget left for agent stage ${spec.name}`, {
           retryable: false,
@@ -305,4 +306,10 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
       },
     });
   }
+}
+
+function remainingBudget(job: { budgetCents?: number; spentCents: number }): number {
+  return job.budgetCents === undefined
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, job.budgetCents - job.spentCents);
 }

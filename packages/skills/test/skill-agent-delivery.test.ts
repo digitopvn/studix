@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deliveryOf, deliveryProblems } from "../src/skill-agent/skill-agent-pack.ts";
+import { deliveryOf, deliveryProblems, skillAgentPipeline } from "../src/skill-agent/skill-agent-pack.ts";
 
 const ok = { width: 1920, height: 1080, durationMs: 10_100, audioCodec: "aac" };
 const loud = { integratedLufs: -16.3, truePeakDbtp: -1.5 };
@@ -32,5 +32,19 @@ describe("skill-agent delivery contract", () => {
       "loudness -24 LUFS, expected -16 +/-2",
       "true peak -0.2 dBTP, expected <= -1",
     ]);
+  });
+});
+
+describe("skill-agent run stage reservation", () => {
+  const run = skillAgentPipeline.stages({} as never, {} as never)[1] as unknown as {
+    estimateCostCents: (s: unknown) => number;
+  };
+  const estimate = (job: Record<string, unknown>) => run.estimateCostCents({ job: { payload: {}, ...job } });
+
+  it("reserves no more than what is left of the job budget", () => {
+    expect(estimate({ budgetCents: 500, spentCents: 1 })).toBe(499);
+    expect(estimate({ budgetCents: 5000, spentCents: 0 })).toBe(800);
+    expect(estimate({ spentCents: 0 })).toBe(800);
+    expect(estimate({ budgetCents: 100, spentCents: 200 })).toBe(0);
   });
 });
