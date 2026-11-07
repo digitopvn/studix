@@ -2,15 +2,16 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
   formatSkillsForPrompt,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import type { AgentRunResult } from "@studix/core";
 import { registerSecret, StudixError } from "@studix/shared";
 import {
@@ -22,6 +23,7 @@ import {
 } from "./bounded-agent-runtime.ts";
 import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
 import type { PiBindingResolver, PiRunBinding, ReasoningEffort } from "./pi-binding.ts";
+import { estimatePiModel, findLivePiModel } from "./pi-live-models.ts";
 import type { PiTaskWorkspace, PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
 import { SANDBOX_OUTPUT_DIR, SANDBOX_WORK_DIR } from "./sandbox-docker.ts";
 import { createSandboxToolDefinitions, isSandboxTool, type SandboxToolName } from "./sandbox-tools.ts";
@@ -239,13 +241,19 @@ async function openSession(
   scratch: string,
   attempt: AttemptOptions = {},
 ): Promise<PiSession> {
-  const authStorage = AuthStorage.inMemory({});
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  // No auth.json, no models.json, no catalog download: the runtime knows only this binding's key.
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    modelsStorePath: join(scratch, "models-store.json"),
+    allowModelNetwork: false,
+    refreshOnCreate: false,
+  });
   // One session is one conversation, so a fresh id per session keeps its turns together.
   const headers = providerRequestHeaders(binding.provider, randomUUID());
   const endpoint = binding.endpoint ?? pinnedPiEndpoint(binding.provider);
   if (endpoint) {
-    modelRegistry.registerProvider(binding.provider, {
+    modelRuntime.registerProvider(binding.provider, {
       baseUrl: endpoint.baseUrl,
       ...(headers ? { headers } : {}),
       ...(endpoint.api ? { api: endpoint.api } : {}),
@@ -264,12 +272,40 @@ async function openSession(
           }
         : {}),
       // The SDK's provider config type is wider than this subset; the fields above are the ones it reads.
-    } as Parameters<ModelRegistry["registerProvider"]>[1]);
+    } as Parameters<ModelRuntime["registerProvider"]>[1]);
   } else if (headers) {
-    modelRegistry.registerProvider(binding.provider, { headers });
+    modelRuntime.registerProvider(binding.provider, { headers });
   }
-  authStorage.setRuntimeApiKey(binding.provider, binding.apiKey);
-  const model = modelRegistry.find(binding.provider, binding.modelId);
+  await modelRuntime.setRuntimeApiKey(binding.provider, binding.apiKey);
+  let model = modelRuntime.getModel(binding.provider, binding.modelId);
+  if (!model && !endpoint) {
+    // A model the key lists live but this SDK version does not know yet: run it on the provider's own
+    // endpoint with the estimated limits the listing found.
+    const template = getBuiltinModels(binding.provider as Parameters<typeof getBuiltinModels>[0]).at(-1);
+    const estimate =
+      findLivePiModel(binding.provider, binding.modelId) ??
+      (await estimatePiModel(binding.provider, binding.modelId));
+    if (template && estimate) {
+      modelRuntime.registerProvider(binding.provider, {
+        baseUrl: template.baseUrl,
+        api: template.api,
+        apiKey: binding.apiKey,
+        ...(headers ? { headers } : {}),
+        models: [
+          {
+            id: estimate.id,
+            name: estimate.name,
+            reasoning: estimate.reasoning,
+            input: template.input ?? ["text"],
+            cost: { ...estimate.cost, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: estimate.contextWindow,
+            maxTokens: estimate.maxTokens,
+          },
+        ],
+      } as Parameters<ModelRuntime["registerProvider"]>[1]);
+      model = modelRuntime.getModel(binding.provider, binding.modelId);
+    }
+  }
   if (!model) {
     throw new StudixError(
       "UNAVAILABLE",
@@ -309,8 +345,7 @@ async function openSession(
     cwd: scratch,
     agentDir: scratch,
     model,
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(),
     // Retries and compaction would spend money the budget has not seen; the job layer owns retries.

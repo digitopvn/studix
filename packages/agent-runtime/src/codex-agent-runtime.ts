@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getModels } from "@mariozechner/pi-ai";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type {
   AgentRunResult,
   AgentRuntime,
@@ -185,7 +185,7 @@ export interface CodexModel {
 /** Models the Codex CLI runs on a ChatGPT login or an OpenAI key, from the pinned Pi SDK catalog. */
 export function listCodexModels(): CodexModel[] {
   // The catalog lists oldest first; pickers show the newest first.
-  return getModels("openai-codex")
+  return getBuiltinModels("openai-codex")
     .map((m) => ({ id: m.id, name: m.name ?? m.id, reasoning: m.reasoning ?? false }))
     .reverse();
 }

@@ -6,7 +6,7 @@ import {
   createReadToolDefinition,
   createWriteToolDefinition,
   type ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { SANDBOX_WORK_DIR, type SandboxSession } from "./sandbox-docker.ts";
 
 /** Tool names a task may ask for; each one runs inside the task's sandbox. */

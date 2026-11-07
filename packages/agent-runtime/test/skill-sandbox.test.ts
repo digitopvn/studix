@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { testTenant } from "@studix/core/testing";
 import { describe, expect, it } from "vitest";
 import {
@@ -111,8 +112,10 @@ describe("sandbox tools", () => {
     expect(tools.map((t) => t.name)).toEqual(["bash", "write", "read"]);
     const [bash, write, read] = tools;
     const signal = new AbortController().signal;
+    // A session hands each tool its context; the tools read the session from it.
+    const ctx = { sessionManager: SessionManager.inMemory() } as never;
     // biome-ignore lint/suspicious/noExplicitAny: Pi tool execute signatures are generic.
-    const exec = (t: any, args: object) => t.execute("call-1", args, signal, () => {}, {} as never);
+    const exec = (t: any, args: object) => t.execute("call-1", args, signal, () => {}, ctx);
     await exec(bash, { command: "python3 --version" });
     expect(calls.find((c) => c.kind === "exec")).toMatchObject({
       command: "python3 --version",

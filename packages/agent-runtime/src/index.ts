@@ -12,6 +12,7 @@ export * from "./pi-agent-runtime.ts";
 export * from "./pi-binding.ts";
 export * from "./pi-catalog.ts";
 export * from "./pi-key-tester.ts";
+export * from "./pi-live-models.ts";
 export * from "./pi-sdk-loop.ts";
 export * from "./pi-task-workspace.ts";
 export * from "./sandbox-docker.ts";
