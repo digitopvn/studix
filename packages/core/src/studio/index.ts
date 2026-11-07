@@ -5,6 +5,7 @@ export * from "./job-view.ts";
 export * from "./media-exec.ts";
 export * from "./media-exec-service.ts";
 export * from "./project-review.ts";
+export * from "./stage-run.ts";
 export * from "./storyboard-review.ts";
 export * from "./studio-service.ts";
 export * from "./studio-types.ts";

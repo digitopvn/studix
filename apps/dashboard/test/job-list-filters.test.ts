@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatJobAgent } from "../src/pages/job-agent.ts";
+import { formatJobAgent, formatStageRuntime, formatStageSpend } from "../src/pages/job-agent.ts";
 import {
   clearFilters,
   currentSort,
@@ -63,5 +63,24 @@ describe("job agent label", () => {
     expect(formatJobAgent({ runtime: "none" })).toBe("none (MCP/external)");
     expect(formatJobAgent({ runtime: "planner" })).toBe("legacy planner");
     expect(formatJobAgent(undefined)).toBe("-");
+  });
+});
+
+describe("stage run line", () => {
+  it("shows runtime, model and effort, or function for plain code, and the spend that was recorded", () => {
+    expect(
+      formatStageRuntime({ runtime: "claude", model: "claude-opus-5-5", reasoningEffort: "xhigh" }),
+    ).toBe("claude · claude-opus-5-5 · xhigh");
+    expect(formatStageRuntime({ runtime: "function" })).toBe("function");
+    expect(
+      formatStageSpend({
+        costCents: 12.345,
+        inputTokens: 1000,
+        outputTokens: 234,
+        turns: 6,
+        connectionLabel: "Team",
+      }),
+    ).toBe("12.35c · 1,234 tok · 6 turns · via Team");
+    expect(formatStageSpend({ costCents: 40 })).toBe("40c");
   });
 });

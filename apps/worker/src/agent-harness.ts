@@ -18,6 +18,7 @@ import { claudeCredentialKind as credentialKind, type ProviderConnectionService 
 import {
   type ActivityRepository,
   type AgentRunResult,
+  type AgentRunRoute,
   type AgentRuntime,
   type AgentRuntimeName,
   type AgentTask,
@@ -244,7 +245,12 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     stage: StageContext,
     name: string,
     choice: Extract<Choice, { runtime: "codex" }>,
-  ): Promise<{ runtime: AgentRuntime; funding: FundingSource; markRejected(): Promise<void> }> {
+  ): Promise<{
+    runtime: AgentRuntime;
+    funding: FundingSource;
+    connectionId: string;
+    markRejected(): Promise<void>;
+  }> {
     const codex = deps.codex;
     if (!codex || !deps.piWorkspace) throw codexOff(name);
     const credential = await deps.credentials.resolveForExecution(stage.ctx, {
@@ -269,6 +275,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     return {
       runtime,
       funding: connectionFunding(credential.connection.owner),
+      connectionId: credential.connection.id,
       markRejected: () => credential.markRejected(),
     };
   }
@@ -283,6 +290,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     runtime: AgentRuntime;
     model: string;
     funding: FundingSource;
+    connectionId: string;
     markRejected(): Promise<void>;
   }> {
     const claude = deps.claude;
@@ -338,6 +346,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       runtime,
       model: choice.model,
       funding: connectionFunding(credential.connection.owner),
+      connectionId: credential.connection.id,
       markRejected: () => credential.markRejected(),
     };
   }
@@ -427,11 +436,12 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       let runtime: AgentRuntime;
       let model: string | undefined;
       let markRejected: (() => Promise<void>) | undefined;
+      let connectionId: string | undefined;
       // Who pays the provider: the owner of the connection the run is on (ADR 0016: recorded, not charged).
       let funding: FundingSource;
       if (choice.runtime === "claude") {
         const sandboxed = Boolean(task.tools?.length && deps.piWorkspace);
-        ({ runtime, model, funding, markRejected } = await claudeRuntime(
+        ({ runtime, model, funding, connectionId, markRejected } = await claudeRuntime(
           stage,
           task.skill,
           choice,
@@ -439,7 +449,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         ));
         id = sandboxed ? CLAUDE_CODE_SANDBOX_RUNTIME_ID : CLAUDE_AGENT_RUNTIME_ID;
       } else if (choice.runtime === "codex") {
-        ({ runtime, funding, markRejected } = await codexRuntime(stage, task.skill, choice));
+        ({ runtime, funding, connectionId, markRejected } = await codexRuntime(stage, task.skill, choice));
         model = choice.model;
         id = CODEX_AGENT_RUNTIME_ID;
       } else {
@@ -450,7 +460,15 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         );
         id = runtime.id;
         funding = choice.resolved.bindings[0]?.funding ?? "operator";
+        connectionId = choice.resolved.bindings[0]?.connectionId;
       }
+      const effort = choice.runtime === "pi" ? choice.resolved.reasoningEffort : choice.reasoningEffort;
+      // The stage's usage line names what ran; a Pi fallback reports the connection it used.
+      const routeOf = (usedConnection?: string): AgentRunRoute => ({
+        runtime: choice.runtime,
+        ...((usedConnection ?? connectionId) ? { connectionId: usedConnection ?? connectionId } : {}),
+        ...(effort ? { reasoningEffort: effort } : {}),
+      });
       const started = clock.now().getTime();
       sink?.push({ type: "status", status: "running", runtime: choice.runtime, ...(model ? { model } : {}) });
       try {
@@ -478,7 +496,12 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
           turns: result.turns,
           costCents: result.costCents,
         });
-        return { ...result, funding, ...(providerExecutionId ? { providerExecutionId } : {}) };
+        return {
+          ...result,
+          funding,
+          route: routeOf(result.resolved?.connectionId),
+          ...(providerExecutionId ? { providerExecutionId } : {}),
+        };
       } catch (err) {
         const error = toStudixError(err);
         sink?.push({ type: "status", status: "failed", runtime: choice.runtime, error: error.message });
@@ -507,7 +530,12 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
           suggestedAction: error.suggestedAction,
           details: {
             ...error.details,
-            spent: { ...spent, funding, ...(providerExecutionId ? { providerExecutionId } : {}) },
+            spent: {
+              ...spent,
+              funding,
+              route: routeOf(),
+              ...(providerExecutionId ? { providerExecutionId } : {}),
+            },
           },
           cause: error,
         });

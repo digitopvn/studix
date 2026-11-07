@@ -138,6 +138,13 @@ Behavior notes:
   each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
 - A stage that finished on its template instead of its agent shows `stages[].fallback` with the
   reason on `studix_get_job`; it is never silent.
+- Each stage on `studix_get_job` carries `stages[].run`, summed from its attempt's usage lines:
+  - `runtime`: `claude`, `codex` or `pi` for an agent run; `host` for the MCP client's own agent; `planner` for the legacy planner's model calls; `function` for plain code such as `brief`, `compose` or `finalize`.
+  - The `model`, `reasoningEffort` and `connectionLabel` it ran on.
+  - `costCents`, `inputTokens`, `outputTokens` and `turns`.
+  - A stage books its spend when it ends, so a running stage has no `run` yet. The dashboard shows the cost, tokens and turns the runtime streams (`GET /api/jobs/:jobId/events`) until then.
+  - Claude Code reports its cost only when the run ends.
+  - A connection is named by its label, never by its id or key.
 - Time spent parked is not counted against the deadline. While a job waits at a human gate
   (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
   is paused: what is left of it is kept and starts counting again when a worker

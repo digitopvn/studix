@@ -3,12 +3,13 @@ import type {
   AgentCap,
   AgentHandoff,
   AgentRunResult,
+  AgentRunRoute,
   AgentStageLimits,
   AgentToolDefinition,
   Approval,
   FundingSource,
 } from "@studix/core";
-import { FUNDING_SOURCES } from "@studix/core";
+import { AGENT_RUNTIMES, FUNDING_SOURCES, REASONING_EFFORTS } from "@studix/core";
 import { newId, redactDeep, StudixError, toStudixError } from "@studix/shared";
 import { z } from "zod";
 import { stageCacheKey } from "./stage-runner.ts";
@@ -81,6 +82,19 @@ interface Spend {
   model?: string;
   providerExecutionId?: string;
   funding?: FundingSource;
+  route?: AgentRunRoute;
+}
+
+function routeOf(value: unknown): AgentRunRoute | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const r = value as Partial<AgentRunRoute>;
+  const runtime = AGENT_RUNTIMES.find((x) => x === r.runtime);
+  if (!runtime) return undefined;
+  return {
+    runtime,
+    ...(typeof r.connectionId === "string" ? { connectionId: r.connectionId } : {}),
+    ...(REASONING_EFFORTS.find((e) => e === r.reasoningEffort) ? { reasoningEffort: r.reasoningEffort } : {}),
+  };
 }
 
 function spendOf(err: unknown): Spend | undefined {
@@ -96,6 +110,7 @@ function spendOf(err: unknown): Spend | undefined {
     model: typeof s.model === "string" ? s.model : undefined,
     providerExecutionId: typeof s.providerExecutionId === "string" ? s.providerExecutionId : undefined,
     funding: FUNDING_SOURCES.find((f) => f === s.funding),
+    route: routeOf(s.route),
   };
 }
 
@@ -164,6 +179,14 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
       outputTokens: spend.outputTokens,
       turns: spend.turns,
       round,
+      // What ran, for the job's stage list; a connection id, never its key.
+      ...(spend.route
+        ? {
+            agentRuntime: spend.route.runtime,
+            ...(spend.route.connectionId ? { connectionId: spend.route.connectionId } : {}),
+            ...(spend.route.reasoningEffort ? { reasoningEffort: spend.route.reasoningEffort } : {}),
+          }
+        : {}),
       ...(cap ? { cap } : {}),
     },
   });

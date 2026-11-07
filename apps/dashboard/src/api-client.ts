@@ -183,6 +183,20 @@ export interface Stage {
   error?: StudixErrorPayload;
   /** The stage used its template because the agent did not run, with the reason. */
   fallback?: string;
+  /** What the attempt ran on and spent; absent while it runs and has booked nothing yet. */
+  run?: StageRun;
+}
+
+/** `runtime` is `function` for a stage that ran no agent. The connection is named by its label only. */
+export interface StageRun {
+  runtime: string;
+  model?: string;
+  reasoningEffort?: string;
+  connectionLabel?: string;
+  costCents: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  turns?: number;
 }
 
 export interface Job {

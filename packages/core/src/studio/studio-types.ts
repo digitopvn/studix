@@ -25,6 +25,9 @@ import type { JobRepository, RenderRepository } from "../repositories/job-reposi
 import type { ProjectRepository } from "../repositories/project-repository.ts";
 import type { RevisionRepository } from "../repositories/revision-repositories.ts";
 import type { StoryboardRepository } from "../repositories/storyboard-repository.ts";
+import type { UsageRepository } from "../repositories/telemetry-repositories.ts";
+import type { TenantContext } from "../tenant.ts";
+import type { StageRunView } from "./stage-run.ts";
 
 /** MCP tool names that next-action hints point to (the MCP server registers tools with these names). */
 export const STUDIX_TOOLS = {
@@ -67,6 +70,9 @@ export interface StudioServiceDeps {
   revisions: RevisionRepository;
   storyboards: StoryboardRepository;
   queue: JobQueue;
+  /** Usage lines and connection labels for each stage's runtime and cost; job views omit them when absent. */
+  usage?: Pick<UsageRepository, "list">;
+  providerConnections?: { get(ctx: TenantContext, id: string): Promise<{ label: string } | undefined> };
   /** Checks an upstream job before `attachMediaJob` records it; without one, attaching is refused. */
   providerJobs?: ProviderJobInspector;
   approvalPolicy: ApprovalPolicy;
@@ -265,6 +271,8 @@ export interface StageView {
   error?: StudixErrorPayload;
   /** Set when the stage finished on a fallback instead of its agent, with the reason. Never silent. */
   fallback?: string;
+  /** What the attempt ran on and spent; absent while a stage runs and has booked nothing yet. */
+  run?: StageRunView;
 }
 
 export interface ApprovalView {

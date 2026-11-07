@@ -1,4 +1,8 @@
-import type { ResolvedModelSnapshot } from "../entities/model-preference.ts";
+import type {
+  AgentRuntimeName,
+  ReasoningEffort,
+  ResolvedModelSnapshot,
+} from "../entities/model-preference.ts";
 import type { FundingSource } from "../entities/telemetry.ts";
 import type { TenantContext } from "../tenant.ts";
 
@@ -63,6 +67,14 @@ export interface AgentRunResult {
   providerExecutionId?: string;
   /** Who paid the provider for this run (the connection's owner); `operator` when omitted. */
   funding?: FundingSource;
+  /** The runtime, connection and effort the run actually used, for the stage's usage line. Never a secret. */
+  route?: AgentRunRoute;
+}
+
+export interface AgentRunRoute {
+  runtime: AgentRuntimeName;
+  connectionId?: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 /** The limit an agent run stopped at; carried as `details.cap` on the run's error. */
