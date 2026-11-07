@@ -1,6 +1,6 @@
 import type { Asset, AssetRepository, AssetVersion } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { desc, eq, max } from "drizzle-orm";
+import { desc, eq, ilike, isNotNull, isNull, max, type SQL } from "drizzle-orm";
 import type { StudixDb } from "../client.ts";
 import { assets, assetVersions } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -21,7 +21,15 @@ function toAsset(row: AssetRow): Asset {
     createdBy: actorFrom(row.createdByType, row.createdById),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    deletedAt: opt(row.deletedAt),
   };
+}
+
+const escapeLike = (text: string) => text.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+function stateFilter(state: "active" | "deleted" | "all" | undefined): SQL | undefined {
+  if (state === "all") return undefined;
+  return state === "deleted" ? isNotNull(assets.deletedAt) : isNull(assets.deletedAt);
 }
 
 function toVersion(row: VersionRow): AssetVersion {
@@ -85,11 +93,48 @@ export function createAssetRepository(db: StudixDb, clock: Clock): AssetReposito
             beforeCursor(assets.id, query.cursor),
             query.projectId ? eq(assets.projectId, query.projectId) : undefined,
             query.kind ? eq(assets.kind, query.kind) : undefined,
+            query.q ? ilike(assets.name, `%${escapeLike(query.q)}%`) : undefined,
+            stateFilter(query.state),
           ),
         )
         .orderBy(desc(assets.id))
         .limit(limit + 1);
       return toPage(rows.map(toAsset), limit);
+    },
+
+    async update(ctx, id, patch) {
+      const set: Partial<typeof assets.$inferInsert> = { updatedAt: clock.now() };
+      if (patch.name !== undefined) set.name = patch.name;
+      if (patch.projectId !== undefined) set.projectId = patch.projectId;
+      const rows = await db
+        .update(assets)
+        .set(set)
+        .where(scoped(assets, ctx, eq(assets.id, id)))
+        .returning();
+      return toAsset(first(rows, `asset ${id}`));
+    },
+
+    async setDeleted(ctx, id, deleted) {
+      const now = clock.now();
+      const rows = await db
+        .update(assets)
+        .set({ deletedAt: deleted ? now : null, updatedAt: now })
+        .where(
+          scoped(
+            assets,
+            ctx,
+            eq(assets.id, id),
+            // Keep the first deletion time when the call is repeated.
+            deleted ? isNull(assets.deletedAt) : isNotNull(assets.deletedAt),
+          ),
+        )
+        .returning();
+      if (rows[0]) return toAsset(rows[0]);
+      const current = await db
+        .select()
+        .from(assets)
+        .where(scoped(assets, ctx, eq(assets.id, id)));
+      return toAsset(first(current, `asset ${id}`));
     },
 
     async addVersion(ctx, input) {

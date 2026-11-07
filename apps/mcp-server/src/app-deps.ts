@@ -7,6 +7,7 @@ import type {
 import type {
   ActivityRepository,
   AgentHandoffService,
+  AssetService,
   CompositionService,
   JobRepository,
   MediaExecService,
@@ -89,6 +90,8 @@ export interface AppDeps {
   mediaExec?: MediaExecService;
   /** studix_composition_* (client-authored videos); without it those tools answer UNAVAILABLE. */
   compositions?: CompositionService;
+  /** Project asset library (list, upload, rename, version, trash); without it the asset tools answer UNAVAILABLE. */
+  assets?: AssetService;
   /** Imported GitHub skills; without it the skill tools answer UNAVAILABLE. */
   externalSkills?: ExternalSkillService;
   /** Storage & media settings for platform operators; without it the platform API answers UNAVAILABLE. */

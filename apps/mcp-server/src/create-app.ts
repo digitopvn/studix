@@ -4,6 +4,7 @@ import express, { type Express } from "express";
 import { apiKeyRoutes, connectorRoutes, providerRoutes } from "./api/admin-routes.ts";
 import { agentChatRoutes } from "./api/agent-chat-routes.ts";
 import { requireSession } from "./api/api-context.ts";
+import { assetRoutes } from "./api/asset-routes.ts";
 import { mountOAuthDiscovery, oauthRoutes } from "./api/oauth-routes.ts";
 import { platformRoutes, workspaceStorageRoutes } from "./api/platform-routes.ts";
 import { skillRoutes } from "./api/skill-routes.ts";
@@ -89,7 +90,8 @@ export function createApp(deps: AppDeps): Express {
   const api = express.Router();
   api.use(
     rateLimit(apiLimiter, "api"),
-    express.json({ limit: API_BODY_LIMIT }),
+    // Asset uploads carry base64 and parse their own, larger body (see assetRoutes).
+    express.json({ limit: API_BODY_LIMIT, type: (req) => !req.url?.startsWith("/assets") }),
     requireSession(deps.dashboardAuth),
   );
   if (oauth) api.use("/oauth", oauthRoutes(oauth));
@@ -99,6 +101,7 @@ export function createApp(deps: AppDeps): Express {
   api.use("/platform", platformRoutes(deps));
   api.use("/workspace-storage", workspaceStorageRoutes(deps));
   api.use("/skills", skillRoutes(deps));
+  api.use("/assets", assetRoutes(deps));
   api.use("/webhook", webhookRoutes(deps));
   api.use(agentChatRoutes(deps));
   api.use(studioRoutes(deps, artifacts));

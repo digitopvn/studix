@@ -82,6 +82,8 @@ export const assets = pgTable(
     createdById: text("created_by_id").notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    /** Trash: set while the asset is deleted; nothing is removed from storage. */
+    deletedAt: ts("deleted_at"),
   },
   (t) => [
     index("assets_tenant_idx").on(t.workspaceId, t.organizationId, t.id),

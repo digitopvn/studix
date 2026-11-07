@@ -410,8 +410,8 @@ MCP Tasks are not offered: the SDK in use (`@modelcontextprotocol/server`
 ### WebMCP in the dashboard
 
 A signed-in dashboard registers `studix_create_video`, `studix_get_job`,
-`studix_get_project`, `studix_feedback`, `studix_render`, `studix_cancel_job`
-and `studix_retry_job` with the browser's `modelContext` when the browser
+`studix_get_project`, `studix_feedback`, `studix_render`, `studix_cancel_job`,
+`studix_retry_job` and the six asset tools with the browser's `modelContext` when the browser
 supports WebMCP. Names, descriptions and input schemas come from
 `GET /api/webmcp/tools`, and calls go to `POST /api/webmcp/tools/:name`. Both
 use the same tool definitions as `/mcp`, with the session's workspace.
@@ -528,6 +528,29 @@ Rules:
 - A full commit SHA `ref` must be on the default branch. `update` `check` compares
   with the active version only and may report `unknown`; reading a non-active
   `versionId` needs `skill:write`. `list`/`discover` results carry `trust`.
+
+### Project assets
+
+Six small tools manage the files of a workspace. `/api/assets` and the
+dashboard run the same service, and WebMCP serves these exact tool definitions.
+
+| Tool                   | Does                                                                                                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `studix_list_assets`   | List and search: `projectId?`, `kind?`, `q?` (part of the name), `state?` (`active` default, `deleted`, `all`), `limit?`, `cursor?`. Needs `asset:read`.                                    |
+| `studix_get_asset`     | One asset with its versions, lineage (`derivedFrom`, `derivatives`) and a signed URL for the current or a given `versionId`. Needs `asset:read`.                                            |
+| `studix_upload_asset`  | Create an asset, or add a version with `assetId`. Exactly one of `base64` (1.5 MB) or `url` (public https, SSRF-guarded, 100 MB). Optional `derivedFrom` version ids. Needs `asset:write`.  |
+| `studix_update_asset`  | Rename (`name`) or move (`projectId`, `null` detaches). Needs `asset:write`.                                                                                                                |
+| `studix_delete_asset`  | Move to the trash. Bytes and versions are kept; repeating it is a no-op.                                                                                                                    |
+| `studix_restore_asset` | Take an asset out of the trash.                                                                                                                                                             |
+
+Uploading identical bytes as the current version returns `unchanged: true`
+and writes nothing. A foreign workspace's id reads as `NOT_FOUND`. Every
+change is audited (`asset.uploaded`, `asset.version_added`, `asset.updated`,
+`asset.deleted`, `asset.restored`).
+
+REST: `GET /api/assets`, `POST /api/assets` (201), `GET|PATCH|DELETE
+/api/assets/:id` and `POST /api/assets/:id/restore`, with the same arguments
+as JSON or query string.
 
 ### Media exec (ffmpeg / ffprobe)
 
@@ -655,7 +678,9 @@ exit code, the tail of the combined log (`logTail`), changed files and the check
 ## P0 meta-tools (MCP-in-MCP)
 
 Third-party tools registered in the workspace are reached only through these
-three tools; they never appear in `tools/list`.
+three tools; they never appear in `tools/list`. Native `studix_*` tools are
+the opposite: they are listed by `tools/list` and `studix_inspect`, and
+`studix_tool_search` does not return them.
 
 | Tool                  | Arguments                    | Returns                                                                                               |
 | --------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -782,13 +807,12 @@ a token.
 Not implemented; do not depend on them. Capabilities are added to the contract
 before new tools are created.
 
-| Tool                 | Intent                                                    | Phase        |
-| -------------------- | --------------------------------------------------------- | ------------ |
-| `studix_edit_video`  | Revise a version from free-form feedback without a patch  | P1           |
-| `studix_list_assets` | List workspace assets                                     | P1           |
-| `studix_search`      | Search projects, scenes, assets                           | P1-P2        |
-| `studix_publish`     | Publish an approved final; fails closed without approval  | P2           |
-| `studix_code`        | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
+| Tool                | Intent                                                    | Phase        |
+| ------------------- | --------------------------------------------------------- | ------------ |
+| `studix_edit_video` | Revise a version from free-form feedback without a patch  | P1           |
+| `studix_search`     | Search projects, scenes, assets                           | P1-P2        |
+| `studix_publish`    | Publish an approved final; fails closed without approval  | P2           |
+| `studix_code`       | Sandboxed Code Mode over the gateway, feature-flagged off | P2, optional |
 
 ## Connecting a client
 

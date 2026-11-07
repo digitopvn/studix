@@ -12,6 +12,8 @@ export interface Asset extends TenantOwned {
   currentVersionId?: string;
   createdBy: ActorRef;
   updatedAt: Date;
+  /** Set while the asset is in the trash; its versions and bytes stay until it is restored or purged. */
+  deletedAt?: Date;
 }
 
 export interface AssetVersion extends TenantOwned {
