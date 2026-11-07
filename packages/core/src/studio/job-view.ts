@@ -4,7 +4,13 @@ import type { Approval } from "../entities/review.ts";
 import type { UsageEvent } from "../entities/telemetry.ts";
 import { AGENT_HANDOFF_TOOLS } from "./agent-handoff-service.ts";
 import { stageRunOf } from "./stage-run.ts";
-import { type ApprovalView, type JobView, type NextAction, STUDIX_TOOLS } from "./studio-types.ts";
+import {
+  type ApprovalView,
+  type JobView,
+  type NextAction,
+  STUDIX_TOOLS,
+  type StageReviewView,
+} from "./studio-types.ts";
 
 export const JOB_POLL_INTERVAL_MS = 3000;
 
@@ -97,6 +103,14 @@ function fallbackOf(stage: Stage): { fallback?: string } {
   return { fallback: typeof out.fallbackReason === "string" ? out.fallbackReason : "agent unavailable" };
 }
 
+/** QA rounds of a reviewed agent stage (skill-agent roles): each round's scores, verdict and notes. */
+function reviewOf(stage: Stage): { review?: StageReviewView } {
+  const review = (stage.output as { review?: { rounds?: unknown } } | undefined)?.review;
+  return Array.isArray(review?.rounds)
+    ? { review: { rounds: review.rounds as StageReviewView["rounds"] } }
+    : {};
+}
+
 /** Usage lines of the job and labels of the connections they name, for each stage's runtime and cost. */
 export interface JobSpendDetail {
   usage: readonly UsageEvent[];
@@ -141,6 +155,7 @@ export function toJobView(job: Job, stages: Stage[], approval?: Approval, spend?
       finishedAt: s.finishedAt,
       error: s.error,
       ...fallbackOf(s),
+      ...reviewOf(s),
       ...stageRun(s, spend),
     })),
     approval: approval ? toApprovalView(approval) : undefined,

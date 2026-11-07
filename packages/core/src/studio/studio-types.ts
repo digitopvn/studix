@@ -337,6 +337,15 @@ export interface JobView {
   deadlineRemainingMs?: number;
   createdAt: Date;
   updatedAt: Date;
+export interface StageReviewView {
+  rounds: {
+    scores: Record<string, number>;
+    overall: number;
+    verdict: "pass" | "revise";
+    notes: string;
+  }[];
+}
+
   startedAt?: Date;
   finishedAt?: Date;
   result?: Record<string, unknown>;
@@ -346,6 +355,8 @@ export interface JobView {
   /** Runtime, model and effort the job's creative stages run on (see `jobAgent`). */
   agent: JobAgentView;
   next: NextAction[];
+  /** QA rounds when the job has a `qa` role: scores 0-10, verdict and notes per round. */
+  review?: StageReviewView;
 }
 
 export type { Approval, Job };

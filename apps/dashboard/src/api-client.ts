@@ -194,6 +194,10 @@ export interface Stage {
   error?: StudixErrorPayload;
   /** The stage used its template because the agent did not run, with the reason. */
   fallback?: string;
+  /** QA rounds when the job has a `qa` role. */
+  review?: {
+    rounds: { scores: Record<string, number>; overall: number; verdict: string; notes: string }[];
+  };
   /** What the attempt ran on and spent; absent while it runs and has booked nothing yet. */
   run?: StageRun;
 }

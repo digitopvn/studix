@@ -140,6 +140,30 @@ function StageRunLine({ stage, live, agent }: { stage: Stage; live?: LiveStage; 
   );
 }
 
+/** The QA role's verdict per round: overall and per-criterion scores (0-10) and the notes sent back. */
+function QaRounds({ rounds }: { rounds: NonNullable<Stage["review"]>["rounds"] }) {
+  return (
+    <ol>
+      {rounds.map((r, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: rounds never reorder.
+        <li key={i}>
+          <div className="row">
+            <span className="muted">QA round {i + 1}</span>
+            <span className={`badge ${r.verdict === "pass" ? "badge-succeeded" : ""}`}>{r.verdict}</span>
+            <strong>{r.overall}/10</strong>
+            {Object.entries(r.scores).map(([k, v]) => (
+              <span key={k} className="muted">
+                {k} {v}
+              </span>
+            ))}
+          </div>
+          {r.notes && <p className="muted">{r.notes}</p>}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function StageTimeline({ job, live }: { job: Job; live: Record<string, LiveStage> }) {
   const stages = job.stages ?? [];
   if (stages.length === 0) return <Empty>No stages started yet.</Empty>;
@@ -159,6 +183,7 @@ function StageTimeline({ job, live }: { job: Job; live: Record<string, LiveStage
               {s.error.code}: {s.error.message} {s.error.suggestedAction}
             </p>
           )}
+          {s.review && <QaRounds rounds={s.review.rounds} />}
           {s.fallback && (
             <p className="banner banner-warning">Agent did not run, used the template: {s.fallback}</p>
           )}
