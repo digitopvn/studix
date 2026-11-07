@@ -207,7 +207,10 @@ interface ToolCard {
   result?: string;
 }
 
-type Block = { kind: "message" | "reasoning"; text: string } | ToolCard | { kind: "artifact"; name: string; url?: string };
+type Block =
+  | { kind: "message" | "reasoning"; text: string }
+  | ToolCard
+  | { kind: "artifact"; name: string; url?: string };
 
 interface RunState {
   blocks: Block[];
