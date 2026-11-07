@@ -7,6 +7,9 @@ import { parseBody, sessionOf } from "./api-context.ts";
 
 const KeyName = z.string().regex(/^[A-Z][A-Z0-9_]{2,63}$/, "must be an environment variable name");
 const SetKeyBody = z.object({ value: z.string().min(1).max(600) }).strict();
+const StorageKeyBody = z
+  .object({ accessKeyId: z.string().min(1).max(600), secretAccessKey: z.string().min(1).max(600) })
+  .strict();
 
 function requirePlatform(deps: AppDeps): PlatformSettingsService {
   if (!deps.platform) {
@@ -37,6 +40,17 @@ export function platformRoutes(deps: AppDeps): Router {
   });
   router.post("/storage/test", async (_req, res) => {
     res.json(await requirePlatform(deps).testStorage(sessionOf(res).ctx));
+  });
+  router.put("/storage/key", async (req, res) => {
+    const pair = parseBody(StorageKeyBody, req.body, "storage key");
+    res.json(await requirePlatform(deps).setStorageKey(sessionOf(res).ctx, pair));
+  });
+  router.delete("/storage/key", async (_req, res) => {
+    await requirePlatform(deps).revokeStorageKey(sessionOf(res).ctx);
+    res.status(204).end();
+  });
+  router.post("/media-keys/:name/test", async (req, res) => {
+    res.json(await requirePlatform(deps).testMediaKey(sessionOf(res).ctx, keyName(req.params.name)));
   });
   router.post("/media/test", async (_req, res) => {
     res.json(await requirePlatform(deps).testMedia(sessionOf(res).ctx));

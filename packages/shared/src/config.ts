@@ -68,6 +68,8 @@ export const ConfigSchema = z
     GOOGLE_CLIENT_SECRET: optionalString,
     /** 32 random bytes (base64) sealing stored provider credentials; without it none can be saved. */
     STUDIX_SECRETS_KEY: optionalString,
+    /** Operators' workspace (wsp_...): platform credential audit events go there instead of a tenant's. */
+    STUDIX_PLATFORM_WORKSPACE_ID: optionalString,
     /** Earlier STUDIX_SECRETS_KEY values that may still open stored credentials during a rotation. */
     STUDIX_SECRETS_KEYS_PREVIOUS: csv.default([]),
     ANTHROPIC_BASE_URL: origin.default("https://api.anthropic.com"),

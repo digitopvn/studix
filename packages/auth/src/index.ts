@@ -8,6 +8,7 @@ export * from "./mcp-oauth-scopes.ts";
 export * from "./model-preference-service.ts";
 export * from "./personal-workspace.ts";
 export * from "./platform-credential-service.ts";
+export * from "./platform-vendor-key-tester.ts";
 export * from "./provider-connection-service.ts";
 export * from "./secret-box.ts";
 export * from "./self-hosted-secrets-key.ts";

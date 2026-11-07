@@ -136,10 +136,13 @@ another name does not open). Rules:
   editor. The Multix child receives only allowlisted vendor names from the
   store (`PATH`, `LD_PRELOAD` and the like are ignored) and runs with
   `MULTIX_DISABLE_HOME_ENV=1`.
-- The R2 secret key is not stored by Studix and is never shown; the page reports
-  only whether it works.
+- The R2 key pair may be stored the same way (as `S3_ACCESS_KEY_ID` and
+  `S3_SECRET_ACCESS_KEY`) and is never shown again. It is never handed to the
+  Multix child, which only receives vendor key names.
 - Every change is audited (`platform_credential.created`, `rotated`, `revoked`,
-  `tested`) in the operator's workspace.
+  `tested`) in the operator's workspace, or in `STUDIX_PLATFORM_WORKSPACE_ID`
+  when it is set. The R2 key pair is stored the same way, and only after a
+  write/read/delete probe with it passes.
 
 ### Workspace media keys (BYOK)
 

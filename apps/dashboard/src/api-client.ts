@@ -332,6 +332,14 @@ export interface PlatformCredential {
   lastTest?: { ok: boolean; at: string; detail?: string };
 }
 
+export interface PlatformMediaKeyTest {
+  name: string;
+  at: string;
+  verdict: "available" | "invalid" | "unverified";
+  httpStatus?: number;
+  note?: string;
+}
+
 export interface PlatformMediaVendor {
   vendor: string;
   keyName: string;
@@ -343,7 +351,9 @@ export interface PlatformMediaVendor {
 export interface PlatformSettings {
   storage: {
     configured: boolean;
-    source: "environment";
+    source: "dashboard" | "environment";
+    credentialStorage: "available" | "unavailable";
+    credential?: PlatformCredential;
     endpointHost?: string;
     bucket?: string;
     region: string;
@@ -352,7 +362,7 @@ export interface PlatformSettings {
     accessKeyId?: string;
     secretAccessKey: PlatformSecretStatus;
     lastTest?: PlatformStorageTest;
-    changeNeedsRedeploy: true;
+    changeNeedsRedeploy: boolean;
   };
   media: {
     executable: "configured" | "missing";
@@ -714,6 +724,11 @@ export const api = {
   anthropicProvider: () => request<AnthropicProvider>("GET", "/api/providers/anthropic"),
   platformSettings: () => request<PlatformSettings>("GET", "/api/platform/storage-media"),
   testPlatformStorage: () => request<PlatformStorageTest>("POST", "/api/platform/storage/test", {}),
+  setPlatformStorageKey: (accessKeyId: string, secretAccessKey: string) =>
+    request<PlatformStorageTest>("PUT", "/api/platform/storage/key", { accessKeyId, secretAccessKey }),
+  revokePlatformStorageKey: () => request<void>("DELETE", "/api/platform/storage/key"),
+  testPlatformMediaKey: (name: string) =>
+    request<PlatformMediaKeyTest>("POST", `/api/platform/media-keys/${enc(name)}/test`, {}),
   testPlatformMedia: () => request<PlatformMediaTest>("POST", "/api/platform/media/test", {}),
   setPlatformMediaKey: (name: string, value: string) =>
     request<PlatformCredential>("PUT", `/api/platform/media-keys/${enc(name)}`, { value }),

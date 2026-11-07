@@ -75,11 +75,16 @@ database) sees **Storage & Media** in the dashboard. Nobody else does, and the
 API behind it (`/api/platform/*`) answers `FORBIDDEN` to every other role, API
 key and OAuth client.
 
-- **Object storage (R2) stays in the deployment settings.** The page shows the
-  endpoint host, bucket, region, a masked access key id and whether the secret
-  key works, but never holds the secret. To rotate it, change `S3_ACCESS_KEY_ID`
-  and `S3_SECRET_ACCESS_KEY` in the deployment, redeploy the app and the
-  worker, then press **Test connection**. The test writes, reads, checks and
+- **The R2 key pair can be set on the page; the bucket stays in the deployment.**
+  Endpoint, bucket and region come from `S3_*`. The page shows them, a masked
+  access key id and whether the secret works. **Set key** / **Rotate** takes an
+  access key id and secret, runs the same write/read/delete probe with that
+  pair, and stores it (sealed, as `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`
+  rows in `platform_credentials`) only when the probe passes. A stored pair
+  overrides the environment on the app and the worker within about 20 seconds,
+  with no redeploy; **Revoke** falls back to the environment pair. Without
+  `STUDIX_SECRETS_KEY` on both, the pair can only come from the environment.
+  **Test connection** writes, reads, checks and
   deletes one small object under a probe prefix. A failure is classified as
   missing credential, bad credential, missing permission (token can reach the
   bucket but not write it), bucket not found or remote unavailable.
@@ -96,6 +101,16 @@ key and OAuth client.
 - **Applying a change needs no restart.** The next media call on the app and the
   worker uses the new key (within a few seconds); a call already running keeps
   the key it started with. `MULTIX_BIN` is still deployment configuration.
+- **Test checks one vendor key for free.** It looks the key in use (stored or
+  from the environment) up at the vendor's fixed account endpoint:
+  `OPENROUTER_API_KEY` (a 401 means invalid) and `ELEVENLABS_API_KEY` (a 401
+  stays unverified, since restricted keys are refused too). Vendors without
+  such an endpoint answer unverified; no paid call is made.
+- **Audit events can go to the operators' workspace.** Set
+  `STUDIX_PLATFORM_WORKSPACE_ID` (app only) to write `platform_credential.*`
+  events there instead of the workspace the operator has selected, so tenant
+  admins never see them. An operator who is not an `operator` member of that
+  workspace is then refused before anything changes.
 - **The safe check calls no paid provider.** It runs `multix check`, which only
   reports which keys exist, so it cannot tell a wrong key from a right one; a
   bad key shows up on the first real job. The check runs in the app process. The

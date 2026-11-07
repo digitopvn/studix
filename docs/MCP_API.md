@@ -386,13 +386,14 @@ or change them. They are dashboard session routes for the `operator` role
 (anything else gets `403 FORBIDDEN`; no session gets `401`). Responses are
 `Cache-Control: no-store` and never carry a key value.
 
-| Route                                   | Body        | Returns                                                              |
-| --------------------------------------- | ----------- | -------------------------------------------------------------------- |
-| `GET /api/platform/storage-media`       | none        | Redacted R2 status, media executable status, vendor key metadata.    |
-| `POST /api/platform/storage/test`       | `{}`        | Put/get/head/delete result with a diagnosis and a suggested action.  |
-| `POST /api/platform/media/test`         | `{}`        | Safe `multix check` result; `paidCalls` is always `false`.           |
-| `PUT /api/platform/media-keys/:name`    | `{ value }` | Credential metadata with a last-four hint. Name must be allowlisted. |
-| `DELETE /api/platform/media-keys/:name` | none        | Metadata after removal; the environment value, if any, applies.      |
+- `GET /api/platform/storage-media`: Redacted R2 status, media executable status, vendor key metadata.
+- `POST /api/platform/storage/test` (body: `{}`): Put/get/head/delete result with a diagnosis and a suggested action.
+- `PUT /api/platform/storage/key` (body: key pair): Probe result; the pair is stored only if the probe passes.
+- `DELETE /api/platform/storage/key`: `204`; `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` apply again.
+- `POST /api/platform/media/test` (body: `{}`): Safe `multix check` result; `paidCalls` is always `false`.
+- `POST /api/platform/media-keys/:name/test` (body: `{}`): Free vendor lookup; `verdict` is `available`, `invalid` or `unverified`.
+- `PUT /api/platform/media-keys/:name` (body: `{ value }`): Credential metadata with a last-four hint. Name must be allowlisted.
+- `DELETE /api/platform/media-keys/:name`: Metadata after removal; the environment value, if any, applies.
 
 ### Workspace media keys (BYOK)
 
