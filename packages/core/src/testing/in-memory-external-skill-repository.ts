@@ -49,6 +49,9 @@ export function createInMemoryExternalSkillRepository(
     async get(ctx, id) {
       return skills.get(ctx, id);
     },
+    async getPlatform(id) {
+      return skills.filterAnyTenant((s) => s.id === id && s.scope === "platform")[0];
+    },
     async findBySourceKey(ctx, sourceKey) {
       return skills.filter(ctx, (s) => s.sourceKey === sourceKey)[0];
     },
@@ -58,7 +61,14 @@ export function createInMemoryExternalSkillRepository(
     async list(ctx, query = {}) {
       const status = query.status ?? "enabled";
       const term = query.q?.trim().toLowerCase();
-      return skills.page(ctx, query, (s) => {
+      const scope = query.scope ?? "workspace";
+      const own = (s: ExternalSkill) =>
+        s.workspaceId === ctx.workspaceId && s.organizationId === ctx.organizationId;
+      const where = (s: ExternalSkill) => {
+        if (scope === "workspace" && !(own(s) && s.scope === "workspace")) return false;
+        if (scope === "platform" && s.scope !== "platform") return false;
+        if (scope === "visible" && !(own(s) && s.scope === "workspace") && s.scope !== "platform")
+          return false;
         if (status !== "all" && s.status !== status) return false;
         if (query.owner !== undefined && s.source.owner.toLowerCase() !== query.owner.toLowerCase())
           return false;
@@ -70,7 +80,8 @@ export function createInMemoryExternalSkillRepository(
           s.description.toLowerCase().includes(term) ||
           s.sourceKey.includes(term)
         );
-      });
+      };
+      return listPage(skills.filterAnyTenant(where), query);
     },
     async getVersion(ctx, skillId, versionId) {
       const v = versions.get(ctx, versionId);
@@ -105,9 +116,10 @@ export function createInMemoryExternalSkillRepository(
         id: input.skillId,
         sourceKey: input.sourceKey,
         source: input.source,
+        scope: input.scope,
         name: input.name,
         description: input.description,
-        status: "enabled",
+        status: input.initialStatus ?? "enabled",
         upstreamStatus: "current",
         createdBy: input.actor,
       });
@@ -121,6 +133,7 @@ export function createInMemoryExternalSkillRepository(
         manifest: input.manifest,
         storagePrefix: input.storagePrefix,
         importKey: input.importKey,
+        risk: input.risk,
         createdBy: input.actor,
       });
       const activate = input.activate === true || skill.activeVersionId === undefined;
@@ -140,11 +153,13 @@ export function createInMemoryExternalSkillRepository(
           versionId: version.id,
           commitSha: input.commitSha,
           activated: activate,
+          scope: skill.scope,
+          riskLevel: input.risk.level,
         },
       );
       return { outcome: created ? "created" : "new_version", skill, version };
     },
-    async activateVersion(ctx, skillId, versionId, actor) {
+    async activateVersion(ctx, skillId, versionId, actor, auditData) {
       requireSkill(ctx, skillId);
       const version = versions.get(ctx, versionId);
       if (version?.skillId !== skillId)
@@ -154,10 +169,10 @@ export function createInMemoryExternalSkillRepository(
         name: version.name,
         description: version.description,
       });
-      await record(ctx, actor, "external_skill.version_activated", skillId, { versionId });
+      await record(ctx, actor, "external_skill.version_activated", skillId, { versionId, ...auditData });
       return skill;
     },
-    async setStatus(ctx, skillId, status, actor) {
+    async setStatus(ctx, skillId, status, actor, auditData) {
       requireSkill(ctx, skillId);
       const skill = skills.update(ctx, skillId, {
         status,
@@ -168,8 +183,21 @@ export function createInMemoryExternalSkillRepository(
         actor,
         status === "disabled" ? "external_skill.disabled" : "external_skill.enabled",
         skillId,
+        auditData,
       );
       return skill;
+    },
+    async delete(ctx, skillId, actor) {
+      const skill = requireSkill(ctx, skillId);
+      const own = versions.filter(ctx, (v) => v.skillId === skillId);
+      for (const v of own) versions.delete(ctx, v.id);
+      skills.delete(ctx, skillId);
+      await record(ctx, actor, "external_skill.deleted", skillId, {
+        sourceKey: skill.sourceKey,
+        scope: skill.scope,
+        versions: own.length,
+      });
+      return { storagePrefixes: own.map((v) => v.storagePrefix) };
     },
     async recordUpstreamCheck(ctx, skillId, status, actor) {
       requireSkill(ctx, skillId);

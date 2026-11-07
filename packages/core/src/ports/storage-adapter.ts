@@ -24,6 +24,12 @@ export interface SignedUrlOptions {
   downloadName?: string;
 }
 
+export interface SignedUploadUrlOptions {
+  /** The client must send this Content-Type. */
+  contentType: string;
+  expiresInSeconds?: number;
+}
+
 /**
  * Object storage scoped to a tenant. Callers pass tenant-relative keys; adapters prefix them with
  * tenantObjectKey(ctx, key) so one workspace can never address another's objects.
@@ -38,6 +44,11 @@ export interface StorageAdapter {
   download(ctx: TenantContext, key: string, filePath: string): Promise<{ sha256: string; bytes: number }>;
   head(ctx: TenantContext, key: string): Promise<StoredObject | undefined>;
   signedUrl(ctx: TenantContext, key: string, options?: SignedUrlOptions): Promise<string>;
+  /**
+   * Short-lived URL a client can PUT one object to. The store cannot cap the size, so whoever reads the
+   * object afterwards must check `head().bytes` first. Optional: adapters without it cannot take uploads.
+   */
+  signedUploadUrl?(ctx: TenantContext, key: string, options: SignedUploadUrlOptions): Promise<string>;
   delete(ctx: TenantContext, key: string): Promise<void>;
 }
 

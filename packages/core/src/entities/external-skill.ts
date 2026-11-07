@@ -17,8 +17,22 @@ export const EXTERNAL_SKILL_UPSTREAM_STATUSES = [
 ] as const;
 export type ExternalSkillUpstreamStatus = (typeof EXTERNAL_SKILL_UPSTREAM_STATUSES)[number];
 
-/** Where a skill came from: a public GitHub repository, a directory in it and the ref it was read at. */
+/**
+ * Who sees and manages a skill: `workspace` skills belong to one workspace; `platform` skills are managed by
+ * platform operators and visible (read and run) in every workspace.
+ */
+export const EXTERNAL_SKILL_SCOPES = ["workspace", "platform"] as const;
+export type ExternalSkillScope = (typeof EXTERNAL_SKILL_SCOPES)[number];
+
+/**
+ * Where a skill came from. GitHub: a public repository, a directory in it and the ref it was read at.
+ * Upload: a zip archive; `owner` and `repo` are empty and `path` is the skill name (rows written before
+ * uploads existed have no `kind` and are GitHub).
+ */
 export interface ExternalSkillSource {
+  kind?: "github" | "upload";
+  /** Upload only: the archive's file name as given by the uploader. */
+  fileName?: string;
   owner: string;
   repo: string;
   /** Skill directory relative to the repository root; empty when SKILL.md is at the root. */
@@ -47,8 +61,12 @@ export interface ExternalSkillManifestFile {
   gitSha?: string;
   /** True when the bytes are kept in object storage and can be read back. */
   stored: boolean;
-  /** Why the content was not kept (scripts and binaries are described, never stored). */
+  /** Why the content was not kept (symbolic links, submodules, size limits). */
   skipped?: string;
+  /** True when the file is not UTF-8 text. */
+  binary?: boolean;
+  /** True when the archive marked the file executable. */
+  executable?: boolean;
 }
 
 export interface ExternalSkillSecurityNote {
@@ -69,9 +87,48 @@ export interface ExternalSkillLicense {
   notice: string;
 }
 
+export const SKILL_RISK_LEVELS = ["low", "medium", "high"] as const;
+export type SkillRiskLevel = (typeof SKILL_RISK_LEVELS)[number];
+
+export const SKILL_RISK_RULES = [
+  "shell-exec",
+  "network-call",
+  "remote-exec",
+  "install-command",
+  "obfuscated-code",
+  "dynamic-eval",
+  "prompt-injection",
+  "credential-request",
+  "secret-harvest",
+  "binary-file",
+  "symlink",
+  "script-present",
+] as const;
+export type SkillRiskRule = (typeof SKILL_RISK_RULES)[number];
+
+export interface SkillRiskFinding {
+  rule: SkillRiskRule;
+  severity: SkillRiskLevel;
+  path: string;
+  /** Short excerpt that triggered the finding; never executed. */
+  excerpt: string;
+  line?: number;
+}
+
+/** What the risk scanner found in one version. The level is the highest finding severity. */
+export interface SkillRiskReport {
+  level: SkillRiskLevel;
+  findings: SkillRiskFinding[];
+  /** Findings beyond the stored cap. */
+  truncated?: number;
+  scannerVersion: number;
+  scannedAt: Date;
+}
+
 /** Immutable record of what an import read. Never edited after the version is written. */
 export interface ExternalSkillManifest {
-  schemaVersion: 1;
+  /** 1: data-only imports (scripts described, not stored); 2: every regular file stored. */
+  schemaVersion: 1 | 2;
   files: ExternalSkillManifestFile[];
   /** Frontmatter fields, as plain text. */
   frontmatter: Record<string, string>;
@@ -85,6 +142,7 @@ export interface ExternalSkill extends TenantOwned {
   /** `github.com/<owner>/<repo>/<path or .>`, lower-cased owner and repo; unique per workspace. */
   sourceKey: string;
   source: ExternalSkillSource;
+  scope: ExternalSkillScope;
   name: string;
   description: string;
   status: ExternalSkillStatus;
@@ -99,7 +157,7 @@ export interface ExternalSkill extends TenantOwned {
 
 export interface ExternalSkillVersion extends TenantOwned {
   skillId: string;
-  /** Immutable upstream commit the content was read at. */
+  /** Immutable upstream commit the content was read at; `upload` for an uploaded archive. */
   commitSha: string;
   /** sha256 over the manifest's file list; equal content has an equal hash whatever the commit. */
   contentHash: string;
@@ -110,5 +168,7 @@ export interface ExternalSkillVersion extends TenantOwned {
   storagePrefix: string;
   /** Caller's idempotency key plus skill path; a replay returns this version. */
   importKey?: string;
+  /** Risk scan of this version's files; undefined only for versions stored before the scanner existed. */
+  risk?: SkillRiskReport;
   createdBy: ActorRef;
 }

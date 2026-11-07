@@ -190,6 +190,7 @@ export async function composeApp(
     approvalPolicy,
     activity,
     logger,
+    ...(auditContext ? { platformContext: auditContext } : {}),
     ...(storageCredentials && secretBox
       ? { storageCredentials: liveStorageCredentials(storageCredentials, config) }
       : {}),

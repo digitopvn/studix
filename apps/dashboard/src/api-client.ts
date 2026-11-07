@@ -611,6 +611,99 @@ export interface FeedbackRequest {
   comment: string;
 }
 
+export type SkillScope = "workspace" | "platform";
+export type SkillRiskLevel = "low" | "medium" | "high";
+
+export type SkillSource =
+  | { kind: "upload"; fileName: string | null }
+  | { kind: "github"; owner: string; repo: string; path: string; ref: string | null; url: string };
+
+export interface SkillListItem {
+  id: string;
+  name: string;
+  description: string;
+  status: "enabled" | "disabled";
+  scope: SkillScope;
+  activeVersionId: string | null;
+  source: SkillSource;
+  upstreamStatus: string;
+  activeRiskLevel: SkillRiskLevel | null;
+  manageable: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillRiskFinding {
+  rule: string;
+  severity: SkillRiskLevel;
+  path: string;
+  excerpt: string;
+  line?: number;
+}
+
+export interface SkillVersionSummary {
+  id: string;
+  commitSha: string;
+  contentHash: string;
+  createdAt: string;
+  active: boolean;
+  riskLevel: SkillRiskLevel;
+}
+
+export interface SkillDetail {
+  skill: Omit<SkillListItem, "activeRiskLevel">;
+  version: SkillVersionSummary;
+  risk: { level: SkillRiskLevel; findings: SkillRiskFinding[]; truncated?: boolean; scannedAt: string };
+  content: { path: string; text?: string; binary?: true; bytes?: number; nextOffset?: number };
+  files: Array<{
+    path: string;
+    kind: string;
+    bytes: number;
+    stored: boolean;
+    binary?: boolean;
+    executable?: boolean;
+  }>;
+  license: { status: string; declared?: string; notice: string };
+  versions?: SkillVersionSummary[];
+}
+
+export interface SkillImportItem {
+  path: string;
+  outcome: string;
+  name?: string;
+  skillId?: string;
+  versionId?: string;
+  risk?: { level: SkillRiskLevel; findings: number };
+  riskConfirmationRequired?: boolean;
+  activationRequired?: boolean;
+  error?: { code: string; message: string };
+}
+
+async function uploadZip<T>(path: string, file: Blob): Promise<T> {
+  const headers: Record<string, string> = { accept: "application/json", "content-type": "application/zip" };
+  const workspace = selectedWorkspace();
+  if (workspace) headers[WORKSPACE_HEADER] = workspace;
+  let res: Response;
+  try {
+    res = await fetch(path, { method: "POST", headers, credentials: "same-origin", body: file });
+  } catch {
+    throw new ApiError(0, "NETWORK", "Cannot reach the Studix server. Check your connection and retry.");
+  }
+  const payload = (await res.json().catch(() => undefined)) as
+    | { error?: { code?: string; message?: string; suggestedAction?: string } }
+    | undefined;
+  if (!res.ok) {
+    const error = payload?.error ?? {};
+    throw new ApiError(
+      res.status,
+      error.code ?? `HTTP_${res.status}`,
+      error.message ?? res.statusText,
+      error.suggestedAction,
+    );
+  }
+  return payload as T;
+}
+
 const enc = encodeURIComponent;
 
 export type SsoProvider = "github" | "google";
@@ -663,6 +756,35 @@ export interface OAuthRedirect {
 }
 
 export const api = {
+  skills: (scope: SkillScope | "visible" = "visible") =>
+    request<{ items: SkillListItem[]; nextCursor?: string }>(
+      "GET",
+      `/api/skills?status=all&limit=100&scope=${scope}`,
+    ),
+  skill: (id: string, versionId?: string) =>
+    request<SkillDetail>("GET", `/api/skills/${enc(id)}${versionId ? `?versionId=${enc(versionId)}` : ""}`),
+  importSkills: (input: { repositoryUrl: string; ref?: string; path?: string; scope?: SkillScope }) =>
+    request<{ results: SkillImportItem[] }>("POST", "/api/skills/import", input),
+  uploadSkill: (
+    file: File,
+    options: { scope?: SkillScope; activate?: boolean; confirmHighRisk?: boolean },
+  ) => {
+    const query = new URLSearchParams({ fileName: file.name.slice(0, 200) });
+    if (options.scope) query.set("scope", options.scope);
+    if (options.activate) query.set("activate", "true");
+    if (options.confirmHighRisk) query.set("confirmHighRisk", "true");
+    return uploadZip<{ result: SkillImportItem }>(`/api/skills/upload?${query}`, file);
+  },
+  updateSkill: (
+    id: string,
+    input:
+      | { action: "check" }
+      | { action: "import"; activate?: boolean; confirmHighRisk?: boolean }
+      | { action: "activate"; versionId: string; confirmHighRisk?: boolean }
+      | { action: "enable"; confirmHighRisk?: boolean },
+  ) => request<Record<string, unknown>>("POST", `/api/skills/${enc(id)}/update`, input),
+  disableSkill: (id: string) => request("POST", `/api/skills/${enc(id)}/disable`, {}),
+  deleteSkill: (id: string) => request("DELETE", `/api/skills/${enc(id)}`),
   signIn: (email: string, password: string) =>
     request("POST", "/api/auth/sign-in/email", { email, password }),
   signUp: (name: string, email: string, password: string) =>

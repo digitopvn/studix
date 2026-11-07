@@ -37,6 +37,8 @@ function importOf(contentHash: string, overrides: Partial<RecordExternalSkillImp
     contentHash,
     manifest,
     storagePrefix: `external-skills/${versionId}`,
+    scope: "workspace" as const,
+    risk: { level: "low" as const, findings: [], scannerVersion: 1, scannedAt: new Date() },
     actor: createdBy,
     ...overrides,
   } satisfies RecordExternalSkillImport;
@@ -129,6 +131,56 @@ describe("Postgres external skill repository", () => {
       (e) => e.action,
     );
     expect(actions).toEqual(expect.arrayContaining(["external_skill.disabled", "external_skill.enabled"]));
+  });
+
+  it("shows platform skills to every workspace and stores risk and initial status", async () => {
+    const { externalSkills } = db.current.repos;
+    const platform = await tenant("esk-platform");
+    const other = await tenant("esk-platform-other");
+    const risk = {
+      level: "high" as const,
+      findings: [
+        { rule: "remote-exec" as const, severity: "high" as const, path: "SKILL.md", excerpt: "curl | sh" },
+      ],
+      scannerVersion: 1,
+      scannedAt: new Date(),
+    };
+    const res = await externalSkills.recordImport(
+      platform,
+      importOf("h1", { scope: "platform", sourceKey: "upload/demo", risk, initialStatus: "disabled" }),
+    );
+    expect(res.skill).toMatchObject({ scope: "platform", status: "disabled" });
+    expect((await externalSkills.getVersion(platform, res.skill.id, res.version.id))?.risk).toMatchObject({
+      level: "high",
+      findings: [expect.objectContaining({ rule: "remote-exec" })],
+    });
+    expect(await externalSkills.get(other, res.skill.id)).toBeUndefined();
+    expect((await externalSkills.getPlatform(res.skill.id))?.id).toBe(res.skill.id);
+    expect(
+      (await externalSkills.list(other, { scope: "visible", status: "all" })).items.map((s) => s.id),
+    ).toEqual([res.skill.id]);
+    expect((await externalSkills.list(other, { status: "all" })).items).toHaveLength(0);
+    // A workspace skill is never returned by getPlatform.
+    const own = await externalSkills.recordImport(other, importOf("h2"));
+    expect(await externalSkills.getPlatform(own.skill.id)).toBeUndefined();
+  });
+
+  it("deletes a skill with its versions and audits it", async () => {
+    const { externalSkills, audit } = db.current.repos;
+    const ctx = await tenant("esk-delete");
+    const first = await externalSkills.recordImport(ctx, importOf("h1"));
+    await externalSkills.recordImport(ctx, importOf("h2"));
+    const { storagePrefixes } = await externalSkills.delete(ctx, first.skill.id, createdBy);
+    expect(storagePrefixes).toHaveLength(2);
+    expect(await externalSkills.get(ctx, first.skill.id)).toBeUndefined();
+    const rows = await db.current
+      .client`select id from external_skill_versions where skill_id = ${first.skill.id}`;
+    expect(rows).toHaveLength(0);
+    const events = await audit.list(ctx, { subjectType: "external_skill", subjectId: first.skill.id });
+    expect(events.items.map((e) => e.action)).toContain("external_skill.deleted");
+    await expect(externalSkills.delete(ctx, first.skill.id, createdBy)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
   });
 
   it("keeps data across a fresh connection (durable, not process-local)", async () => {

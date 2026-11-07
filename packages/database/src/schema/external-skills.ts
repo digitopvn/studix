@@ -1,8 +1,10 @@
 import type {
   ExternalSkillManifest,
+  ExternalSkillScope,
   ExternalSkillSource,
   ExternalSkillStatus,
   ExternalSkillUpstreamStatus,
+  SkillRiskReport,
 } from "@studix/core";
 import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
@@ -10,9 +12,10 @@ import { type ActorType, createdAt, id, ts, updatedAt } from "./columns.ts";
 import { tenantColumns } from "./tenancy.ts";
 
 /**
- * Agent Skills imported from public GitHub repositories. One row per (workspace, source path); the content
- * lives in immutable versions. Kept apart from workflow and knowledge packs on purpose: these are
- * third-party instruction text, never executable pipelines.
+ * Agent Skills imported from public GitHub repositories or uploaded as zip archives. One row per (workspace,
+ * source); the content lives in immutable versions with every file stored in full. Kept apart from workflow
+ * and knowledge packs on purpose: their scripts run only in the skill sandbox, never in Studix itself.
+ * `platform` rows live in the operator's workspace and are visible to every workspace.
  */
 export const externalSkills = pgTable(
   "external_skills",
@@ -21,6 +24,7 @@ export const externalSkills = pgTable(
     ...tenantColumns(),
     sourceKey: text("source_key").notNull(),
     source: jsonb("source").$type<ExternalSkillSource>().notNull(),
+    scope: text("scope").$type<ExternalSkillScope>().notNull().default("workspace"),
     name: text("name").notNull(),
     description: text("description").notNull(),
     status: text("status").$type<ExternalSkillStatus>().notNull().default("enabled"),
@@ -41,6 +45,7 @@ export const externalSkills = pgTable(
     uniqueIndex("external_skills_source_uq").on(t.workspaceId, t.sourceKey),
     index("external_skills_tenant_idx").on(t.workspaceId, t.organizationId, t.id),
     index("external_skills_name_idx").on(t.workspaceId, t.name),
+    index("external_skills_platform_idx").on(t.id).where(sql`${t.scope} = 'platform'`),
   ],
 );
 
@@ -59,6 +64,8 @@ export const externalSkillVersions = pgTable(
     manifest: jsonb("manifest").$type<ExternalSkillManifest>().notNull(),
     storagePrefix: text("storage_prefix").notNull(),
     importKey: text("import_key"),
+    // Null only for versions stored before the risk scanner existed (data-only imports).
+    risk: jsonb("risk").$type<SkillRiskReport>(),
     createdByType: text("created_by_type").$type<ActorType>().notNull(),
     createdById: text("created_by_id").notNull(),
     createdAt: createdAt(),

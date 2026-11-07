@@ -190,6 +190,13 @@
       "when": 1794021265397,
       "tag": "0026_motionless_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794026726301,
+      "tag": "0027_silent_angel",
+      "breakpoints": true
     }
   ]
 }

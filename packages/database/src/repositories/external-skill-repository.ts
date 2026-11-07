@@ -5,7 +5,7 @@ import type {
   TenantContext,
 } from "@studix/core";
 import { type Clock, StudixError } from "@studix/shared";
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { externalSkills, externalSkillVersions } from "../schema/external-skills.ts";
 import { createAuditRepository } from "./governance-repositories.ts";
@@ -27,6 +27,7 @@ function toSkill(row: typeof externalSkills.$inferSelect): ExternalSkill {
     workspaceId: row.workspaceId,
     sourceKey: row.sourceKey,
     source: row.source,
+    scope: row.scope,
     name: row.name,
     description: row.description,
     status: row.status,
@@ -53,6 +54,7 @@ function toVersion(row: typeof externalSkillVersions.$inferSelect): ExternalSkil
     manifest: row.manifest,
     storagePrefix: row.storagePrefix,
     importKey: opt(row.importKey),
+    risk: row.risk ? { ...row.risk, scannedAt: new Date(row.risk.scannedAt) } : undefined,
     createdBy: actorFrom(row.createdByType, row.createdById),
     createdAt: row.createdAt,
   };
@@ -84,6 +86,15 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
       return rows[0] ? toSkill(rows[0]) : undefined;
     },
 
+    async getPlatform(id) {
+      const rows = await db
+        .select()
+        .from(externalSkills)
+        .where(and(eq(externalSkills.id, id), eq(externalSkills.scope, "platform")))
+        .limit(1);
+      return rows[0] ? toSkill(rows[0]) : undefined;
+    },
+
     async findBySourceKey(ctx, sourceKey) {
       const rows = await db
         .select()
@@ -107,13 +118,21 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
       const limit = pageLimit(query.limit);
       const status = query.status ?? "enabled";
       const term = query.q?.trim();
+      const scope = query.scope ?? "workspace";
+      const own = and(
+        eq(externalSkills.workspaceId, ctx.workspaceId),
+        eq(externalSkills.organizationId, ctx.organizationId),
+        eq(externalSkills.scope, "workspace"),
+      );
+      const platform = eq(externalSkills.scope, "platform");
+      const visibility: SQL | undefined =
+        scope === "workspace" ? own : scope === "platform" ? platform : or(own, platform);
       const rows = await db
         .select()
         .from(externalSkills)
         .where(
-          scoped(
-            externalSkills,
-            ctx,
+          and(
+            visibility,
             status === "all" ? undefined : eq(externalSkills.status, status),
             query.owner === undefined
               ? undefined
@@ -207,9 +226,11 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
               ...tenantValues(ctx),
               sourceKey: input.sourceKey,
               source: input.source,
+              scope: input.scope,
               name: input.name,
               description: input.description,
-              status: "enabled",
+              status: input.initialStatus ?? "enabled",
+              disabledAt: input.initialStatus === "disabled" ? now : null,
               upstreamStatus: "current",
               upstreamCheckedAt: now,
               createdByType: input.actor.type,
@@ -259,6 +280,7 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
               manifest: input.manifest,
               storagePrefix: input.storagePrefix,
               importKey: input.importKey ?? null,
+              risk: input.risk,
               createdByType: input.actor.type,
               createdById: input.actor.id,
               createdAt: now,
@@ -288,6 +310,8 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
               commitSha: input.commitSha,
               contentHash: input.contentHash,
               activated: activate,
+              scope: skillRow.scope,
+              riskLevel: input.risk.level,
               ...(input.importKey ? { importKey: input.importKey } : {}),
             },
           });
@@ -322,7 +346,7 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
       }
     },
 
-    async activateVersion(ctx, skillId, versionId, actor) {
+    async activateVersion(ctx, skillId, versionId, actor, auditData) {
       return db.transaction(async (tx) => {
         const rows = await tx
           .select()
@@ -352,13 +376,13 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
           action: "external_skill.version_activated",
           subjectType: "external_skill",
           subjectId: skillId,
-          data: { versionId, previousVersionId: rows[0].activeVersionId },
+          data: { versionId, previousVersionId: rows[0].activeVersionId, ...auditData },
         });
         return toSkill(updated[0]!);
       });
     },
 
-    async setStatus(ctx, skillId, status, actor) {
+    async setStatus(ctx, skillId, status, actor, auditData) {
       return db.transaction(async (tx) => {
         await requireSkillIn(tx, ctx, skillId);
         const now = clock.now();
@@ -372,8 +396,35 @@ export function createExternalSkillRepository(db: StudixDb, clock: Clock): Exter
           action: status === "disabled" ? "external_skill.disabled" : "external_skill.enabled",
           subjectType: "external_skill",
           subjectId: skillId,
+          ...(auditData ? { data: auditData } : {}),
         });
         return toSkill(updated[0]!);
+      });
+    },
+
+    async delete(ctx, skillId, actor) {
+      return db.transaction(async (tx) => {
+        const rows = await tx
+          .select()
+          .from(externalSkills)
+          .where(scoped(externalSkills, ctx, eq(externalSkills.id, skillId)))
+          .for("update");
+        const skill = rows[0];
+        if (!skill) throw new StudixError("NOT_FOUND", `Skill ${skillId} not found`);
+        const versions = await tx
+          .select({ storagePrefix: externalSkillVersions.storagePrefix })
+          .from(externalSkillVersions)
+          .where(eq(externalSkillVersions.skillId, skillId));
+        // Versions go with the skill (ON DELETE CASCADE).
+        await tx.delete(externalSkills).where(eq(externalSkills.id, skillId));
+        await createAuditRepository(tx, clock).append(ctx, {
+          actor,
+          action: "external_skill.deleted",
+          subjectType: "external_skill",
+          subjectId: skillId,
+          data: { sourceKey: skill.sourceKey, scope: skill.scope, versions: versions.length },
+        });
+        return { storagePrefixes: versions.map((v) => v.storagePrefix) };
       });
     },
 

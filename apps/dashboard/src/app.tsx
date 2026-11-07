@@ -13,6 +13,7 @@ import { ProjectDetailPage } from "./pages/project-detail-page.tsx";
 import { ProjectReviewPage } from "./pages/project-review-page.tsx";
 import { ProjectsPage } from "./pages/projects-page.tsx";
 import { ProvidersPage } from "./pages/providers-page.tsx";
+import { SkillDetailPage, SkillsPage } from "./pages/skills-page.tsx";
 import { StorageMediaPage } from "./pages/storage-media-page.tsx";
 import { takeSsoError } from "./sso-error.ts";
 import { ErrorBanner, Link } from "./ui.tsx";
@@ -26,6 +27,7 @@ const NAV = [
   { to: "/connectors", label: "Connectors" },
   { to: "/connected-apps", label: "Connected apps" },
   { to: "/providers", label: "AI & Providers" },
+  { to: "/skills", label: "Skills" },
   { to: "/storage-media", label: "Storage & Media", operatorOnly: true },
   { to: "/account", label: "Account" },
 ] as const;
@@ -51,6 +53,8 @@ function Route({ segments, me }: { segments: string[]; me: Me }) {
       return <ConnectedAppsPage />;
     case "providers":
       return <ProvidersPage />;
+    case "skills":
+      return id ? <SkillDetailPage skillId={id} /> : <SkillsPage isOperator={me.role === "operator"} />;
     case "storage-media":
       return me.role === "operator" ? (
         <StorageMediaPage />

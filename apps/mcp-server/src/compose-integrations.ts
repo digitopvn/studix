@@ -1,3 +1,4 @@
+import type { TenantContext } from "@studix/core";
 import {
   type AgentHandoffService,
   type AgentOutputValidator,
@@ -88,6 +89,8 @@ export function composeIntegrations(input: {
   logger: Logger;
   /** The storage key pair to use right now (a dashboard-stored pair or the environment's), read live. */
   storageCredentials?: S3CredentialSource;
+  /** Maps an operator context to the platform workspace, where platform skills live. */
+  platformContext?: (ctx: TenantContext) => Promise<TenantContext>;
 }): Integrations {
   const { config, repos, logger } = input;
   const gatewayConfig = loadGatewayConfig(input.env);
@@ -122,6 +125,7 @@ export function composeIntegrations(input: {
       repository: repos.externalSkills,
       storage,
       githubToken: config.STUDIX_GITHUB_TOKEN,
+      ...(input.platformContext ? { platformContext: input.platformContext } : {}),
       logger: logger.child({ component: "external-skills" }),
     }),
   };

@@ -5,6 +5,7 @@ import { apiKeyRoutes, connectorRoutes, providerRoutes } from "./api/admin-route
 import { requireSession } from "./api/api-context.ts";
 import { mountOAuthDiscovery, oauthRoutes } from "./api/oauth-routes.ts";
 import { platformRoutes } from "./api/platform-routes.ts";
+import { skillRoutes } from "./api/skill-routes.ts";
 import { studioRoutes } from "./api/studio-routes.ts";
 import { type AppDeps, SERVER_VERSION } from "./app-deps.ts";
 import type { ArtifactUrlDeps } from "./artifact-urls.ts";
@@ -93,6 +94,7 @@ export function createApp(deps: AppDeps): Express {
   api.use("/connectors", connectorRoutes(deps));
   api.use("/providers", providerRoutes(deps));
   api.use("/platform", platformRoutes(deps));
+  api.use("/skills", skillRoutes(deps));
   api.use(studioRoutes(deps, artifacts));
   api.use(() => {
     throw new StudixError("NOT_FOUND", "Unknown API route");
