@@ -195,6 +195,45 @@ const VersionJobOptions = {
  * target (feedback without a patch answers with the `allowedPaths`); with a patch a new version is stored
  * and a render job is queued.
  */
+const Fraction = z.number().min(0).max(1);
+const FramePoint = z.object({ x: Fraction, y: Fraction });
+const ImageDataUrl = z
+  .string()
+  .regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "an image data URL");
+
+/** Marks on a paused frame: where and what to change, shown to the agent as text and as a snapshot image. */
+export const FeedbackAnnotation = z
+  .object({
+    intent: z.enum(["change", "fix", "remove", "add", "keep"]).optional(),
+    priority: z.enum(["must", "should", "nice"]).optional(),
+    frameMs: Milliseconds.optional(),
+    region: FramePoint.extend({ w: Fraction, h: Fraction }).optional(),
+    pins: z
+      .array(FramePoint.extend({ label: z.string().trim().max(60).optional() }))
+      .max(20)
+      .optional(),
+    strokes: z
+      .array(z.object({ tool: z.enum(["pen", "arrow"]), points: z.array(FramePoint).min(2).max(120) }))
+      .max(30)
+      .optional(),
+    snapshot: ImageDataUrl.max(100_000).optional(),
+    references: z
+      .array(
+        z.object({
+          url: z.union([z.url({ protocol: /^https?$/ }).max(2000), ImageDataUrl.max(30_000)]),
+          note: z.string().trim().max(300).optional(),
+        }),
+      )
+      .max(6)
+      .optional(),
+  })
+  .strict()
+  // The parts fit one by one but not all together: the whole note stays under the API's 256 KB request limit.
+  .refine((a) => JSON.stringify(a).length <= 200_000, {
+    message: "Annotation is over 200 KB; attach fewer or smaller reference images.",
+  });
+export type FeedbackAnnotation = z.infer<typeof FeedbackAnnotation>;
+
 export const FeedbackInput = z
   .object({
     projectId: Id,
@@ -206,6 +245,7 @@ export const FeedbackInput = z
     startMs: Milliseconds.optional(),
     endMs: PositiveMilliseconds.optional(),
     comment: z.string().trim().min(1).max(2000),
+    annotation: FeedbackAnnotation.optional(),
     patch: VideoIRPatch.optional(),
     /** The version the feedback was written against; CONFLICT when the project moved on. */
     baseVersionId: Id.optional(),
@@ -297,6 +337,15 @@ export const RecordAuditInput = z.object({
 });
 export type RecordAuditInput = z.input<typeof RecordAuditInput>;
 
+export interface StageReviewView {
+  rounds: {
+    scores: Record<string, number>;
+    overall: number;
+    verdict: "pass" | "revise";
+    notes: string;
+  }[];
+}
+
 export interface StageView {
   name: string;
   status: StageStatus;
@@ -306,6 +355,8 @@ export interface StageView {
   error?: StudixErrorPayload;
   /** Set when the stage finished on a fallback instead of its agent, with the reason. Never silent. */
   fallback?: string;
+  /** QA rounds when the job has a `qa` role: scores 0-10, verdict and notes per round. */
+  review?: StageReviewView;
   /** What the attempt ran on and spent; absent while a stage runs and has booked nothing yet. */
   run?: StageRunView;
 }
@@ -337,15 +388,6 @@ export interface JobView {
   deadlineRemainingMs?: number;
   createdAt: Date;
   updatedAt: Date;
-export interface StageReviewView {
-  rounds: {
-    scores: Record<string, number>;
-    overall: number;
-    verdict: "pass" | "revise";
-    notes: string;
-  }[];
-}
-
   startedAt?: Date;
   finishedAt?: Date;
   result?: Record<string, unknown>;
@@ -355,8 +397,6 @@ export interface StageReviewView {
   /** Runtime, model and effort the job's creative stages run on (see `jobAgent`). */
   agent: JobAgentView;
   next: NextAction[];
-  /** QA rounds when the job has a `qa` role: scores 0-10, verdict and notes per round. */
-  review?: StageReviewView;
 }
 
 export type { Approval, Job };

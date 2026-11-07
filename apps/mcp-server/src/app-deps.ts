@@ -19,6 +19,7 @@ import type { ActivityRecorder } from "@studix/observability";
 import type { Logger } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
+import type { JobWebhookService } from "./job-webhooks.ts";
 import type { PlatformSettingsService } from "./platform-settings.ts";
 import type {
   ArtifactUrlSigner,
@@ -28,7 +29,6 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
-import type { JobWebhookService } from "./job-webhooks.ts";
 import type { WorkspaceMultixApi } from "./workspace-multix.ts";
 
 /** Product limits and defaults advertised by `studix_inspect` (values come from configuration). */
@@ -87,14 +87,18 @@ export interface AppDeps {
   agentHandoffs?: AgentHandoffService;
   /** studix_media_exec (ffmpeg/ffprobe jobs); without it the tool answers UNAVAILABLE. */
   mediaExec?: MediaExecService;
-  /** Imported GitHub skills; without it the skill tools answer UNAVAILABLE. */
   /** studix_composition_* (client-authored videos); without it those tools answer UNAVAILABLE. */
   compositions?: CompositionService;
+  /** Imported GitHub skills; without it the skill tools answer UNAVAILABLE. */
   externalSkills?: ExternalSkillService;
   /** Storage & media settings for platform operators; without it the platform API answers UNAVAILABLE. */
   platform?: PlatformSettingsService;
   /** A workspace's Multix settings and status; without it the Multix API answers UNAVAILABLE. */
   multix?: WorkspaceMultixApi;
+  /** Cross-tenant job change reads; with it the API pushes MCP resource updates and webhooks. */
+  jobChanges?: JobChangeRepository;
+  /** Per-workspace job webhook; without it the webhook API answers UNAVAILABLE. */
+  webhooks?: JobWebhookService;
 
   /** Built dashboard directory; when missing, browser navigations get a 503 page. */
   dashboardDist?: string;
@@ -105,10 +109,6 @@ export interface AppDeps {
   trustProxy?: number | boolean;
   /** Shared token-bucket store so limits hold across replicas; without it each process keeps its own buckets. */
   rateLimitStore?: RateLimitRepository;
-  /** Cross-tenant job change reads; with it the API pushes MCP resource updates and webhooks. */
-  jobChanges?: JobChangeRepository;
-  /** Per-workspace job webhook; without it the webhook API answers UNAVAILABLE. */
-  webhooks?: JobWebhookService;
   rateLimits?: {
     auth?: TokenBucketOptions;
     mcpIp?: TokenBucketOptions;

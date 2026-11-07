@@ -1,50 +1,91 @@
-import { api } from "../api-client.ts";
-import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { type CSSProperties, useState } from "react";
+import { api, type Project } from "../api-client.ts";
+import { ErrorBanner, formatDate, Link, StatusBadge, useAsync } from "../ui.tsx";
+import "./projects.css";
+
+const FILTERS = [
+  { id: "all", label: "All", match: () => true },
+  { id: "running", label: "Running", match: (s: string) => /queued|running|render|planning|draft/.test(s) },
+  { id: "review", label: "Review", match: (s: string) => /review|awaiting|storyboard/.test(s) },
+  { id: "failed", label: "Failed", match: (s: string) => /fail|error/.test(s) },
+] as const;
+
+/** A stable hue per project, so each card frame is recognizable before a poster exists. */
+function hue(id: string): number {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+}
+
+function ratio(project: Project): string {
+  const [w, h] = (project.brief.aspectRatio ?? "16:9").split(":").map(Number);
+  return w && h ? `${w} / ${h}` : "16 / 9";
+}
 
 export function ProjectsPage() {
-  const { data, error, loading, reload } = useAsync(() => api.projects());
+  const { data, error } = useAsync(() => api.projects());
+  const [filter, setFilter] = useState<string>("all");
+  const [q, setQ] = useState("");
+  const match = FILTERS.find((f) => f.id === filter)?.match ?? (() => true);
+  const needle = q.trim().toLowerCase();
+  const items = (data?.items ?? []).filter(
+    (p) =>
+      match(p.status) &&
+      (!needle || p.title.toLowerCase().includes(needle) || p.brief.prompt?.toLowerCase().includes(needle)),
+  );
   return (
-    <Section
-      title="Projects"
-      actions={
+    <div className="projects">
+      <header className="page-head">
+        <h1>Projects</h1>
         <div className="row">
-          <button type="button" className="secondary" onClick={reload} disabled={loading}>
-            Refresh
-          </button>
-          <Link to="/create" className="button">
-            New video
-          </Link>
-        </div>
-      }
-    >
-      <ErrorBanner error={error} />
-      {data && data.items.length === 0 && <Empty>No projects yet. Create your first video.</Empty>}
-      {data && data.items.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Status</th>
-              <th>Format</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((p) => (
-              <tr key={p.id}>
-                <td>
-                  <Link to={`/projects/${p.id}`}>{p.title}</Link>
-                </td>
-                <td>
-                  <StatusBadge status={p.status} />
-                </td>
-                <td>{p.brief.aspectRatio ?? "-"}</td>
-                <td>{formatDate(p.updatedAt)}</td>
-              </tr>
+          <div className="segment" role="tablist" aria-label="Filter">
+            {FILTERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                role="tab"
+                aria-selected={filter === f.id}
+                onClick={() => setFilter(f.id)}
+              >
+                {f.label}
+              </button>
             ))}
-          </tbody>
-        </table>
+          </div>
+          <input
+            type="search"
+            placeholder="Search projects"
+            aria-label="Search projects"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+      </header>
+      <ErrorBanner error={error} />
+      <div className="project-grid">
+        <Link to="/" className="project-card new-card">
+          <span className="plus">+</span>
+          New video
+        </Link>
+        {items.map((p) => (
+          <Link key={p.id} to={`/projects/${p.id}`} className="project-card">
+            <span className="poster" style={{ "--h": hue(p.id), aspectRatio: ratio(p) } as CSSProperties}>
+              <span className="poster-title">{p.title}</span>
+            </span>
+            <span className="card-meta">
+              <strong>{p.title}</strong>
+              <span className="row">
+                <StatusBadge status={p.status} />
+                <span className="muted small-text">{formatDate(p.updatedAt)}</span>
+              </span>
+            </span>
+          </Link>
+        ))}
+      </div>
+      {data && !items.length && (
+        <p className="muted">
+          {data.items.length ? "No project matches this filter." : "No projects yet. Make your first video."}
+        </p>
       )}
-    </Section>
+    </div>
   );
 }

@@ -1,5 +1,28 @@
 import type { ActorRef, TenantOwned } from "./common.ts";
 
+/** A point or size on the video frame, as a fraction of its width or height (0 to 1). */
+export interface FramePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * What a reviewer marked on a paused frame, so an agent knows exactly where and what to change:
+ * a region, pins, pen or arrow strokes, a snapshot of the frame with the marks, and references.
+ */
+export interface ReviewAnnotation {
+  intent?: "change" | "fix" | "remove" | "add" | "keep";
+  priority?: "must" | "should" | "nice";
+  /** The paused frame the marks were drawn on. */
+  frameMs?: number;
+  region?: FramePoint & { w: number; h: number };
+  pins?: Array<FramePoint & { label?: string }>;
+  strokes?: Array<{ tool: "pen" | "arrow"; points: FramePoint[] }>;
+  /** The frame with the marks drawn on it, as an image data URL. */
+  snapshot?: string;
+  references?: Array<{ url: string; note?: string }>;
+}
+
 export const REVIEW_STATUSES = ["open", "resolved"] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
@@ -18,6 +41,7 @@ export interface Review extends TenantOwned {
   atMs?: number;
   /** End (exclusive) of the commented time range; only with `atMs`. */
   endMs?: number;
+  annotation?: ReviewAnnotation;
   status: ReviewStatus;
   /** Client retry key of a comment sent without a patch (a patch stores its key on the version). */
   idempotencyKey?: string;

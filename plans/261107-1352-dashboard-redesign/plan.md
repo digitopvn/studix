@@ -118,6 +118,26 @@ and phase 6 touch `styles.css`.
 - Connect agent dialog: tabs for Claude Code, Claude.ai, ChatGPT, Cursor, and API & CLI. Each tab
   shows copy blocks built from `me.mcpUrl`, plus a suggested first prompt.
 
+### 5b. Review and feedback toolkit
+
+- Files: new `pages/project-view/review-*`, the feedback contract in `packages/core` (studio types and
+  service), `apps/mcp-server` routes and the `studix_feedback` tool, and `docs/MCP_API.md`.
+- A review mode on the player. Pause, then annotate the frame:
+  - a box region, a pin, an arrow, and a freehand pen sketch;
+  - a time point or a range, set from the playhead or by dragging on the timeline;
+  - a note, an intent (change, remove, keep, add) and a priority;
+  - a frame snapshot: the frame plus the drawing, captured from the video to a PNG;
+  - references: an uploaded image or video, or a URL, with a note on what to take from each.
+- Notes collect into a review batch. "Send to agent" sends one structured feedback packet. Each note
+  carries:
+  - its target (shot, scene or time range), a normalized region `{x,y,w,h}` in the range 0 to 1,
+    and the drawing as SVG paths;
+  - the snapshot asset id, the references, the intent, the priority and the text;
+  - the base version id.
+- The agent gets the packet as text and images, so it sees exactly where and what to change.
+  The same packet comes from `studix_feedback` (`notes[]`) and from "Copy for agent", which keeps the
+  MCP, API and UI in sync.
+
 ### 6. Copy for agent and cleanup
 
 - Files: new `src/copy-for-agent.tsx`, `src/styles.css`, docs.

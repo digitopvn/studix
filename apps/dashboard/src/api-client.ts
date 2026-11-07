@@ -697,6 +697,9 @@ export interface ReviewComment {
   targetId?: string;
   atMs?: number;
   endMs?: number;
+  annotation?: ReviewAnnotation;
+  /** Stored images left out of the review; image 0 is the snapshot. */
+  images?: number;
   createdAt: string;
 }
 
@@ -742,13 +745,33 @@ export interface StoryboardDecisionRequest {
   expectedRevision?: number;
 }
 
+export interface FramePoint {
+  x: number;
+  y: number;
+}
+
+/** Marks on a paused frame, as fractions (0 to 1) of its width and height. */
+export interface ReviewAnnotation {
+  intent?: "change" | "fix" | "remove" | "add" | "keep";
+  priority?: "must" | "should" | "nice";
+  frameMs?: number;
+  region?: FramePoint & { w: number; h: number };
+  pins?: Array<FramePoint & { label?: string }>;
+  strokes?: Array<{ tool: "pen" | "arrow"; points: FramePoint[] }>;
+  snapshot?: string;
+  references?: Array<{ url: string; note?: string }>;
+}
+
 export interface FeedbackRequest {
+  annotation?: ReviewAnnotation;
   shotId?: string;
   sceneId?: string;
   assetId?: string;
   startMs?: number;
   endMs?: number;
   comment: string;
+  /** Same key returns the stored comment, so a retried send never duplicates a note. */
+  idempotencyKey?: string;
 }
 
 export type SkillScope = "workspace" | "platform";
@@ -955,7 +978,10 @@ export const api = {
   decideStoryboard: (id: string, input: StoryboardDecisionRequest) =>
     request("POST", `/api/projects/${enc(id)}/storyboard/decision`, input),
   sendFeedback: (id: string, input: FeedbackRequest) =>
-    request("POST", `/api/projects/${enc(id)}/feedback`, input),
+    request<{ feedbackId: string; replayed: boolean }>("POST", `/api/projects/${enc(id)}/feedback`, input),
+  webmcpTools: <T>() => request<T>("GET", "/api/webmcp/tools"),
+  callWebmcpTool: <T>(name: string, args: unknown) =>
+    request<T>("POST", `/api/webmcp/tools/${enc(name)}`, args),
   renderProject: (id: string, input: { versionId?: string; renderPreset?: "preview" | "final" }) =>
     request<{ job: Job }>("POST", `/api/projects/${enc(id)}/render`, input),
   createVideo: (input: CreateVideoRequest) =>

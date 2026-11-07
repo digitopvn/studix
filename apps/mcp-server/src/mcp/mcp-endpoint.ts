@@ -12,9 +12,9 @@ import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
 import { jobResourceUri, startJobChangeFeed } from "../job-change-feed.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
+import { COMPOSITION_MCP_TOOLS } from "./composition-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
 import { registerJobResource, WEBHOOK_MCP_TOOLS } from "./job-notifications.ts";
-import { COMPOSITION_MCP_TOOLS } from "./composition-tools.ts";
 import { MEDIA_EXEC_MCP_TOOLS } from "./media-exec-tool.ts";
 import { NATIVE_TOOL_NAMES, NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
 import { REVIEW_APP_TOOL_META, REVIEW_APP_TOOLS, registerReviewApp } from "./review-app.ts";
@@ -30,7 +30,6 @@ const INSTRUCTIONS =
   "studix_render; a person reviews and approves the storyboard at the returned reviewUrl. studix_get_job waitSeconds " +
   "waits for the next status change; subscribe to the studix://jobs/{jobId} resource for push updates.";
 
-/** Tools whose result the review MCP App renders. */
 /** Tools whose result the review MCP App renders. */
 const APP_TOOL_META: Record<string, Record<string, unknown>> = {
   [NATIVE_TOOL_NAMES.createVideo]: REVIEW_APP_TOOL_META,
@@ -63,6 +62,7 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     ...AGENT_HANDOFF_MCP_TOOLS,
     ...SKILL_MCP_TOOLS,
     ...MEDIA_EXEC_MCP_TOOLS,
+    ...COMPOSITION_MCP_TOOLS,
     ...REVIEW_APP_TOOLS,
     ...WEBHOOK_MCP_TOOLS,
   ] as readonly NativeTool[];
@@ -75,7 +75,6 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
         title: def.title,
         description: def.description,
         inputSchema: def.input as z.ZodObject,
-    ...COMPOSITION_MCP_TOOLS,
         outputSchema: ToolEnvelopeSchema,
         annotations: {
           readOnlyHint: def.readOnly,
@@ -107,7 +106,7 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
                 attributes: { tool: def.name, actorType: tenant.actor.type, actorId: tenant.actor.id },
               });
             }
-            return okEnvelope(outcome.data, outcome.next, traceId);
+            return okEnvelope(outcome.data, outcome.next, traceId, outcome.images);
           } catch (err) {
             const error = toStudixError(err);
             deps.logger[error.code === "INTERNAL" ? "error" : "warn"]("mcp tool failed", {
@@ -123,9 +122,9 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     );
   }
 
-  deps.metaTools?.(server, { tenant, gatewayDepth, logger: deps.logger, traceId: requestTraceId });
   registerReviewApp(server, deps);
   registerJobResource(server, deps, artifacts, tenant);
+  deps.metaTools?.(server, { tenant, gatewayDepth, logger: deps.logger, traceId: requestTraceId });
   return server;
 }
 

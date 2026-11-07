@@ -211,6 +211,13 @@
       "when": 1794032021531,
       "tag": "0029_nifty_zzzax",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794036858177,
+      "tag": "0030_little_martin_li",
+      "breakpoints": true
     }
   ]
 }

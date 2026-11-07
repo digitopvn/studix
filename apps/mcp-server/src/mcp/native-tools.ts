@@ -1,5 +1,6 @@
 import {
   can,
+  FeedbackAnnotation,
   type FeedbackInput,
   type NextAction,
   PlannerSelection,
@@ -26,6 +27,7 @@ import { jobWithVideo, projectView } from "../resource-views.ts";
 import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
 import { waitForJobChange } from "./job-notifications.ts";
 import { withMediaExecUrls } from "./media-exec-tool.ts";
+import type { ToolImage } from "./tool-envelope.ts";
 
 /** Native tool names. `studix_cancel_job` is not referenced by core next-hints, so it is named here. */
 export const NATIVE_TOOL_NAMES = {
@@ -51,6 +53,8 @@ export interface ToolContext {
 export interface ToolOutcome {
   data: object;
   next: NextAction[];
+  /** Images the client model should see next to the data, such as reviewers' marked frames. */
+  images?: ToolImage[];
   /** Job/project ids for the activity trail. */
   scope?: { jobId?: string; projectId?: string };
 }
@@ -147,6 +151,9 @@ const CreateVideoInput = z
     agent: AgentInput.optional().describe(
       "Agent runtime, connection, model and effort (studix_list_agent_runtimes). Default: workspace preference.",
     ),
+    roles: AgentRolesInput.optional().describe(
+      "skill-agent only: director (script), builder (makes it; default agent), qa (scores, may send back); each an agent.",
+    ),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
     message: "Provide prompt or brief",
@@ -158,9 +165,6 @@ const IdempotencyKey = z
   .regex(/^[A-Za-z0-9._:-]{1,200}$/)
   .optional();
 const Ms = z.number().int().min(0).max(600_000).optional();
-    roles: AgentRolesInput.optional().describe(
-      "skill-agent only: director (script), builder (makes it; default agent), qa (scores, may send back); each an agent.",
-    ),
 
 /**
  * Compact wire schema for feedback: the tool list stays small, and StudioService re-validates the call
@@ -177,6 +181,9 @@ const FeedbackToolInput = z.object({
   startMs: Ms.describe("Time range start; with endMs instead of an id."),
   endMs: Ms,
   comment: z.string().trim().min(1).max(2000),
+  annotation: FeedbackAnnotation.optional().describe(
+    "Marks on a paused frame. Coordinates are fractions (0 to 1) of the frame; snapshot is an image data URL of the frame with the marks.",
+  ),
   patch: z
     .object({
       description: z.string().max(500).optional(),
@@ -200,6 +207,69 @@ const FeedbackToolInput = z.object({
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),
 });
 
+const MAX_FEEDBACK_IMAGES = 8;
+
+/**
+ * Open review notes on the current version. Images (the marked snapshot and attached reference images) leave
+ * the JSON, which would spend tokens on base64, and come back as image content blocks. Each note names its
+ * blocks by content index (0 is the text block); `imagesOmitted` counts the ones past the cap. Pen strokes
+ * shrink to their ends, since the snapshot already shows their shape.
+ */
+async function openFeedback(ctx: ToolContext, projectId: string) {
+  const review = await ctx.deps.studio.getProjectReview(ctx.tenant, projectId, { images: true });
+  const open = review.comments.filter(
+    (c) => c.status === "open" && (!review.currentVersion || c.versionId === review.currentVersion.id),
+  );
+  const images: ToolImage[] = [];
+  let imagesOmitted = 0;
+  const attach = (url: string | undefined): number | undefined => {
+    const match = url?.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+    if (!match) return undefined;
+    if (images.length >= MAX_FEEDBACK_IMAGES) {
+      imagesOmitted++;
+      return undefined;
+    }
+    return images.push({ mimeType: match[1]!, data: match[2]! });
+  };
+  const notes = open.map((c) => {
+    const { snapshot, strokes, references, ...marks } = c.annotation ?? {};
+    const snapshotImage = attach(snapshot);
+    return {
+      feedbackId: c.id,
+      target: c.targetId,
+      ...(c.atMs !== undefined ? { startMs: c.atMs, endMs: c.endMs } : {}),
+      comment: c.body,
+      ...(c.annotation
+        ? {
+            annotation: {
+              ...marks,
+              ...(strokes?.length
+                ? {
+                    strokes: strokes.map((s) => ({
+                      tool: s.tool,
+                      from: s.points[0],
+                      to: s.points.at(-1),
+                      points: s.points.length,
+                    })),
+                  }
+                : {}),
+              ...(references?.length
+                ? {
+                    references: references.map((r) =>
+                      r.url.startsWith("data:")
+                        ? { image: attach(r.url) ?? null, ...(r.note ? { note: r.note } : {}) }
+                        : r,
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
+      ...(snapshotImage ? { snapshotImage } : {}),
+    };
+  });
+  return { notes, images, ...(imagesOmitted ? { imagesOmitted } : {}) };
+}
 export const NATIVE_TOOLS = [
   tool({
     name: NATIVE_TOOL_NAMES.inspect,
@@ -237,6 +307,7 @@ export const NATIVE_TOOLS = [
           : input.planner;
       if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, planner);
       const agent = input.agent ? await resolveAgentSelection(ctx.deps, ctx.tenant, input.agent) : undefined;
+      const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles);
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
         spec: input.spec,
@@ -249,6 +320,7 @@ export const NATIVE_TOOLS = [
         workflowTemplate: pack.id,
         agentMode: input.agentMode,
         ...(agent ? { agent } : {}),
+        ...(roles ? { roles } : {}),
       });
       return {
         data: {
@@ -292,16 +364,26 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.getProject,
     title: "Get project",
     description:
-      "Project, current version, recent jobs and renders with signed URLs. includeIr adds the VideoIR.",
-    input: z.object({ projectId: Id, includeIr: z.boolean().optional() }),
+      "Project, current version, recent jobs and renders with signed URLs. includeIr adds the VideoIR. includeFeedback adds the open review notes of the current version (target, time, region, pins, sketches, references) and returns each note's marked frame as an image.",
+    input: z.object({
+      projectId: Id,
+      includeIr: z.boolean().optional(),
+      includeFeedback: z.boolean().optional(),
+    }),
     readOnly: true,
     async run(ctx, input) {
       const details = await ctx.deps.studio.getProject(ctx.tenant, input.projectId);
       const view = await projectView(ctx.artifacts, ctx.tenant, details, {
         includeIr: input.includeIr ?? false,
       });
-      const data = { ...view, reviewUrl: reviewUrl(ctx.deps, details.project.id) };
-      return { data, next: details.jobs[0]?.next ?? [] };
+      const feedback = input.includeFeedback ? await openFeedback(ctx, input.projectId) : undefined;
+      const data = {
+        ...view,
+        ...(feedback ? { feedback: feedback.notes } : {}),
+        ...(feedback?.imagesOmitted ? { imagesOmitted: feedback.imagesOmitted } : {}),
+        reviewUrl: reviewUrl(ctx.deps, details.project.id),
+      };
+      return { data, next: details.jobs[0]?.next ?? [], ...(feedback ? { images: feedback.images } : {}) };
     },
   }),
   tool({
@@ -318,7 +400,6 @@ export const NATIVE_TOOLS = [
     },
   }),
   tool({
-      const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles);
     name: NATIVE_TOOL_NAMES.retryJob,
     title: "Retry failed job",
     description:
@@ -331,7 +412,6 @@ export const NATIVE_TOOLS = [
       return { data: job, next: job.next, scope: { jobId: job.id, projectId: job.projectId } };
     },
   }),
-        ...(roles ? { roles } : {}),
   tool({
     name: NATIVE_TOOL_NAMES.attachMediaJob,
     title: "Attach Atlas prediction",

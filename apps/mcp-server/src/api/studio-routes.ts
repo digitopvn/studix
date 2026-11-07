@@ -9,6 +9,7 @@ import {
   StoryboardDecisionInput,
   WorkflowTemplateId,
 } from "@studix/core";
+import { StudixError } from "@studix/shared";
 import { packRegistry } from "@studix/skills";
 import { AspectRatio, LanguageTag, RenderPreset } from "@studix/video-ir";
 import { Router } from "express";
@@ -49,8 +50,8 @@ const CreateVideoBody = z
       .optional(),
     planner: PlannerSelection.optional(),
     agent: AgentInput.optional(),
-    workflowTemplate: WorkflowTemplateId.optional(),
     roles: AgentRolesInput.optional(),
+    workflowTemplate: WorkflowTemplateId.optional(),
     renderPreset: RenderPreset.optional(),
   })
   .strict();
@@ -120,8 +121,8 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
         : body.planner;
     await assertPlannerSelection(deps, ctx, planner);
     const agent = body.agent ? await resolveAgentSelection(deps, ctx, body.agent) : undefined;
-    const result = await deps.studio.createVideoProject(ctx, {
     const roles = await resolveAgentRoles(deps, ctx, body.roles);
+    const result = await deps.studio.createVideoProject(ctx, {
       brief: {
         prompt: body.prompt,
         ...(body.aspectRatio ? { aspectRatio: body.aspectRatio } : {}),
@@ -135,8 +136,8 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       workflowTemplate: pack.id,
       ...(body.renderPreset ? { renderPreset: body.renderPreset } : {}),
       ...(agent ? { agent } : {}),
-    });
       ...(roles ? { roles } : {}),
+    });
     await deps.activity?.record(ctx, {
       name: "dashboard.create_video",
       scope: { projectId: result.project.id, jobId: result.job.id },
@@ -149,6 +150,20 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     const { ctx } = sessionOf(res);
     const details = await deps.studio.getProject(ctx, idParam(req, "projectId"));
     res.json(await projectView(artifacts, ctx, details, { includeIr: req.query.includeIr === "true" }));
+  });
+
+  // One stored image of a review note (n = 0 is its snapshot), so the review page stays small.
+  router.get("/projects/:projectId/feedback/:feedbackId/image/:n", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    const url = await deps.studio.getFeedbackImage(
+      ctx,
+      idParam(req, "projectId"),
+      idParam(req, "feedbackId"),
+      Number(req.params.n),
+    );
+    const match = url?.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+    if (!match) throw new StudixError("NOT_FOUND", "No such feedback image");
+    res.set("Cache-Control", "private, max-age=86400").type(match[1]!).send(Buffer.from(match[2]!, "base64"));
   });
 
   router.get("/projects/:projectId/review", async (req, res) => {

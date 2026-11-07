@@ -144,6 +144,87 @@ describe("MCP workflow templates, feedback and render (Postgres)", () => {
     expect(replay.envelope.data).toMatchObject({ jobId, replayed: true });
   });
 
+  it("get_project includeFeedback returns annotated notes with the snapshot as an image block", async () => {
+    const { projectId } = await createFromSpec(editor);
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const sent = await call(editor, "studix_feedback", {
+      projectId,
+      shotId: "feature-1",
+      comment: "Logo too small",
+      annotation: {
+        priority: "must",
+        region: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+        strokes: [
+          {
+            tool: "pen",
+            points: [
+              { x: 0, y: 0 },
+              { x: 0.5, y: 0.5 },
+              { x: 1, y: 1 },
+            ],
+          },
+        ],
+        snapshot: png,
+      },
+      idempotencyKey: "fb-annotated",
+    });
+    expect(sent.envelope.status).toBe("ok");
+
+    const result = await editor.callTool({
+      name: "studix_get_project",
+      arguments: { projectId, includeFeedback: true },
+    });
+    const content = result.content as Array<{ type: string; data?: string }>;
+    const note = (result.structuredContent as unknown as Envelope).data?.feedback as Array<
+      Record<string, any>
+    >;
+    expect(note[0]).toMatchObject({ comment: "Logo too small", snapshotImage: 1 });
+    expect(note[0]?.annotation.snapshot).toBeUndefined();
+    expect(note[0]?.annotation.strokes[0]).toMatchObject({ tool: "pen", points: 3 });
+    expect(content[1]).toMatchObject({ type: "image", data: "iVBORw0KGgo=" });
+  });
+
+  it("WebMCP serves the MCP tool schemas and runs them for the signed-in session", async () => {
+    const cookie = await app.signUp(`webmcp-${Date.now()}@example.test`);
+    const listed = (await (await app.api("GET", "/api/webmcp/tools", { cookie })).json()) as {
+      tools: Array<{ name: string; inputSchema: unknown }>;
+    };
+    const mcp = new Map((await editor.listTools()).tools.map((t) => [t.name, t.inputSchema]));
+    expect(listed.tools.map((t) => t.name)).toContain("studix_feedback");
+    for (const t of listed.tools) expect(t.inputSchema).toEqual(mcp.get(t.name));
+    expect((await app.api("POST", "/api/webmcp/tools/studix_nope", { cookie, body: {} })).status).toBe(404);
+
+    const callWeb = async (name: string, body: unknown) =>
+      (await (await app.api("POST", `/api/webmcp/tools/${name}`, { cookie, body })).json()) as {
+        isError?: boolean;
+        structuredContent: Envelope;
+      };
+    const created = await callWeb("studix_create_video", { prompt: "Web intro", spec: brandIntro });
+    const projectId = created.structuredContent.data?.projectId as string;
+    const bad = await callWeb("studix_feedback", { projectId, shotId: "nope", comment: "x" });
+    expect(bad).toMatchObject({ isError: true, structuredContent: { error: { code: "NOT_FOUND" } } });
+
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const sent = await callWeb("studix_feedback", {
+      projectId,
+      shotId: "feature-1",
+      comment: "Brighter",
+      annotation: { snapshot: png },
+    });
+    const feedbackId = sent.structuredContent.data?.feedbackId as string;
+    const review = (await (await app.api("GET", `/api/projects/${projectId}/review`, { cookie })).json()) as {
+      comments: Array<{ id: string; images?: number; annotation?: { snapshot?: string } }>;
+    };
+    const note = review.comments.find((c) => c.id === feedbackId);
+    expect(note).toMatchObject({ images: 1 });
+    expect(note?.annotation?.snapshot).toBeUndefined();
+    const image = await app.api("GET", `/api/projects/${projectId}/feedback/${feedbackId}/image/0`, {
+      cookie,
+    });
+    expect(image.headers.get("content-type")).toContain("image/png");
+    expect(Buffer.from(await image.arrayBuffer()).toString("base64")).toBe("iVBORw0KGgo=");
+  });
+
   it("feedback without a patch is a comment that tells the client which paths a patch may touch", async () => {
     const { projectId } = await createFromSpec(editor);
     const { envelope } = await call(editor, "studix_feedback", {

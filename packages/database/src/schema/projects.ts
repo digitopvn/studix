@@ -4,6 +4,7 @@ import type {
   ProjectStatus,
   ProjectVersionSource,
   RenderStatus,
+  ReviewAnnotation,
   ReviewStatus,
 } from "@studix/core";
 import type { StudixErrorPayload } from "@studix/shared";
@@ -167,6 +168,7 @@ export const reviews = pgTable(
     targetId: text("target_id"),
     atMs: integer("at_ms"),
     endMs: integer("end_ms"),
+    annotation: jsonb("annotation").$type<ReviewAnnotation>(),
     status: text("status").$type<ReviewStatus>().notNull(),
     idempotencyKey: text("idempotency_key"),
     createdAt: createdAt(),

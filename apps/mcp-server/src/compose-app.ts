@@ -304,13 +304,6 @@ export async function composeApp(
 
   const deps: AppDeps = {
     logger,
-    jobChanges: repos.jobChanges,
-    webhooks: createJobWebhookService({
-      repo: repos.workspaceWebhooks,
-      secrets: secretBox,
-      logger,
-      allowLocal: config.STUDIX_WEBHOOK_ALLOW_LOCAL,
-    }),
     publicUrl: config.STUDIX_PUBLIC_URL,
     appUrl: config.STUDIX_APP_URL,
     allowedHosts: allowedHosts(config),
@@ -342,6 +335,13 @@ export async function composeApp(
       ...(overrides.readiness ?? []),
     ],
     skills: overrides.skills ?? integrations.skills,
+    jobChanges: repos.jobChanges,
+    webhooks: createJobWebhookService({
+      repo: repos.workspaceWebhooks,
+      secrets: secretBox,
+      logger,
+      allowLocal: config.STUDIX_WEBHOOK_ALLOW_LOCAL,
+    }),
     agentHandoffs: integrations.agentHandoffs,
     mediaExec: createMediaExecService({
       queue: repos.queue,
@@ -349,14 +349,6 @@ export async function composeApp(
       audit: repos.audit,
       defaults: { jobBudgetCents: config.DEFAULT_JOB_BUDGET_CENTS },
     }),
-    externalSkills: overrides.externalSkills ?? integrations.externalSkills,
-    platform: createPlatformSettingsService({
-      config,
-      storage: integrations.storage,
-      multix,
-      credentials: platformCredentials,
-      ...(storageCredentials ? { storageCredentials } : {}),
-      ...(config.S3_BUCKET
     ...(integrations.storage
       ? {
           compositions: createCompositionService({
@@ -367,6 +359,14 @@ export async function composeApp(
           }),
         }
       : {}),
+    externalSkills: overrides.externalSkills ?? integrations.externalSkills,
+    platform: createPlatformSettingsService({
+      config,
+      storage: integrations.storage,
+      multix,
+      credentials: platformCredentials,
+      ...(storageCredentials ? { storageCredentials } : {}),
+      ...(config.S3_BUCKET
         ? {
             probeCandidate: async (pair: S3Credentials) => {
               const probe = createS3StorageAdapterFromConfig(config, { credentials: pair });
