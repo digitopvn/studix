@@ -17,6 +17,7 @@ import {
   type PiCredentialSource,
   type PiRunBinding,
 } from "../src/index.ts";
+import { OPENCODE_GO_ENDPOINT, pinnedPiEndpoint } from "../src/opencode-go-catalog.ts";
 
 interface Seen {
   auth: string | undefined;
@@ -468,5 +469,16 @@ describe("Pi catalog", () => {
     expect(opencodeGo?.models.every((m) => m.cost.input > 0)).toBe(true);
     expect(isRuntimeKeyProvider("opencode-go")).toBe(true);
     expect(cheapestPiModel("opencode-go")).toBeDefined();
+  });
+
+  it("lists the OpenCode Go models Studix pins, not the SDK's retired ones", () => {
+    const ids = listPiCatalog()
+      .find((p) => p.id === "opencode-go")
+      ?.models.map((m) => m.id);
+    expect(ids).toEqual(OPENCODE_GO_ENDPOINT.models?.map((m) => m.id));
+    expect(ids).toContain("deepseek-v4.1-flash");
+    expect(ids).not.toContain("deepseek-v4-flash");
+    expect(pinnedPiEndpoint("opencode-go")?.baseUrl).toMatch(/^https:\/\/opencode\.ai\//);
+    expect(pinnedPiEndpoint("openai")).toBeUndefined();
   });
 });

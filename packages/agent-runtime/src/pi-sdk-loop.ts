@@ -13,6 +13,7 @@ import {
 import type { AgentRunResult } from "@studix/core";
 import { registerSecret, StudixError } from "@studix/shared";
 import { type AgentLoop, abortReason, type BoundedAgentTask } from "./bounded-agent-runtime.ts";
+import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
 import type { PiBindingResolver, PiRunBinding } from "./pi-binding.ts";
 
 export interface PiSdkLoopOptions {
@@ -168,15 +169,16 @@ async function openSession(binding: PiRunBinding, scratch: string): Promise<PiSe
   const modelRegistry = ModelRegistry.inMemory(authStorage);
   // One session is one conversation, so a fresh id per session keeps its turns together.
   const headers = providerRequestHeaders(binding.provider, randomUUID());
-  if (binding.endpoint) {
+  const endpoint = binding.endpoint ?? pinnedPiEndpoint(binding.provider);
+  if (endpoint) {
     modelRegistry.registerProvider(binding.provider, {
-      baseUrl: binding.endpoint.baseUrl,
+      baseUrl: endpoint.baseUrl,
       ...(headers ? { headers } : {}),
-      ...(binding.endpoint.api ? { api: binding.endpoint.api } : {}),
-      ...(binding.endpoint.models
+      ...(endpoint.api ? { api: endpoint.api } : {}),
+      ...(endpoint.models
         ? {
             apiKey: binding.apiKey,
-            models: binding.endpoint.models.map((m) => ({
+            models: endpoint.models.map((m) => ({
               id: m.id,
               name: m.name ?? m.id,
               reasoning: m.reasoning ?? false,
