@@ -13,6 +13,13 @@ Rules for coding agents working in this repository.
 - Stay general enough, and easy to change later.
 - The MVP ships fast: keep tests few and focused, and keep tests and CI as fast as possible.
 
+## Working habits
+
+- Before ending a turn, review the runs in the current session. Propose improvements that make the
+  next run better, faster, less error-prone and cheaper in tokens, while keeping the highest
+  effectiveness and the best output quality.
+- Always dogfood the product to find bugs and poor AX/UX, then propose improvements.
+
 ## Definition of done
 
 - Use `pnpm`. Before reporting done, run `pnpm check` (lint, typecheck, QA and unit tests).
