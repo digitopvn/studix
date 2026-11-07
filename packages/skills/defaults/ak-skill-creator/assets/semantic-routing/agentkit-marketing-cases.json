@@ -1,0 +1,454 @@
+{
+  "schema_version": 1,
+  "holdout_id": "agentkit-marketing-v2",
+  "cases": [
+    {
+      "id": "case-00000",
+      "split": "train",
+      "prompt": "Audit our docs site for technical SEO problems and missing JSON-LD schema.",
+      "expected": "ak-seo",
+      "class": "positive"
+    },
+    {
+      "id": "case-00001",
+      "split": "train",
+      "prompt": "Plan a Google Ads campaign strategy with audience targeting for our accounting app.",
+      "expected": "ak-paid-ads",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00002",
+      "split": "train",
+      "prompt": "Pause the three underperforming Meta ad sets and move their budget to the best one.",
+      "expected": "ak-ads-management",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00003",
+      "split": "train",
+      "prompt": "Write a five-email onboarding drip sequence for new trial users.",
+      "expected": "ak-email",
+      "class": "positive"
+    },
+    {
+      "id": "case-00004",
+      "split": "train",
+      "prompt": "Schedule next week's posts for LinkedIn and X from this announcement.",
+      "expected": "ak-social",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00005",
+      "split": "train",
+      "prompt": "Draft a publication-ready blog post about our new offline mode.",
+      "expected": "ak-write",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00006",
+      "split": "train",
+      "prompt": "Build a six-month editorial calendar around three content pillars.",
+      "expected": "ak-content-marketing",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00007",
+      "split": "train",
+      "prompt": "Design a new logo mark for our coffee subscription startup.",
+      "expected": "ak-logo-design",
+      "class": "positive"
+    },
+    {
+      "id": "case-00008",
+      "split": "train",
+      "prompt": "Define our brand voice and tone guidelines so every channel sounds consistent.",
+      "expected": "ak-brand",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00009",
+      "split": "train",
+      "prompt": "Should we move from a free trial to freemium, and how should the tiers be packaged?",
+      "expected": "ak-pricing-strategy",
+      "class": "positive"
+    },
+    {
+      "id": "case-00010",
+      "split": "train",
+      "prompt": "We're going live on Product Hunt next month. How should we phase the announcement?",
+      "expected": "ak-launch-strategy",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00011",
+      "split": "train",
+      "prompt": "What time zone is Hanoi in?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00012",
+      "split": "train",
+      "prompt": "Fix the typo 'recieve' in this sentence.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00013",
+      "split": "holdout",
+      "prompt": "Write a comparison page positioning us against our two biggest rivals.",
+      "expected": "ak-competitor",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00014",
+      "split": "holdout",
+      "prompt": "Research our audience and build customer personas before we plan the quarter.",
+      "expected": "ak-marketing-research",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00015",
+      "split": "holdout",
+      "prompt": "Design a split test for the pricing page headline with a hypothesis and stopping rule.",
+      "expected": "ak-ab-test-setup",
+      "class": "positive"
+    },
+    {
+      "id": "case-00016",
+      "split": "holdout",
+      "prompt": "Too many people abandon our demo request form. How do we cut the friction?",
+      "expected": "ak-form-cro",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00017",
+      "split": "holdout",
+      "prompt": "New users sign up but never reach the aha moment. Improve the first-run experience.",
+      "expected": "ak-onboarding-cro",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00018",
+      "split": "holdout",
+      "prompt": "Set up a two-sided refer-a-friend reward for our customers.",
+      "expected": "ak-referral-program-building",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00019",
+      "split": "holdout",
+      "prompt": "Recruit creators as commission-based partners and design the payout tiers.",
+      "expected": "ak-affiliate-marketing",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00020",
+      "split": "holdout",
+      "prompt": "Our video click-through is low; create a few thumbnail variants to test.",
+      "expected": "ak-youtube-thumbnail-design",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00021",
+      "split": "holdout",
+      "prompt": "Report campaign ROI and attribution across channels for last quarter.",
+      "expected": "ak-analytics",
+      "class": "positive"
+    },
+    {
+      "id": "case-00022",
+      "split": "holdout",
+      "prompt": "Summarize this paragraph in one sentence.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00023",
+      "split": "holdout",
+      "prompt": "Thanks, looks good.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00024",
+      "split": "train",
+      "prompt": "Write a landing page headline and three CTA variants for our time-tracking app.",
+      "expected": "ak-copywriting",
+      "class": "positive"
+    },
+    {
+      "id": "case-00025",
+      "split": "train",
+      "prompt": "Plan our Q3 marketing strategy using the SOSTAC framework.",
+      "expected": "ak-marketing-planning",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00026",
+      "split": "train",
+      "prompt": "Give me fifteen fresh ways to promote our developer tool without paying for ads.",
+      "expected": "ak-marketing-ideas",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00027",
+      "split": "train",
+      "prompt": "Apply loss aversion and social proof principles to our upgrade prompt.",
+      "expected": "ak-marketing-psychology",
+      "class": "positive"
+    },
+    {
+      "id": "case-00028",
+      "split": "train",
+      "prompt": "Design a Black Friday sale banner in three ad sizes.",
+      "expected": "ak-banner-design",
+      "class": "positive"
+    },
+    {
+      "id": "case-00029",
+      "split": "train",
+      "prompt": "Mock up letterhead, business cards and a tote bag from our existing identity.",
+      "expected": "ak-cip-design",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00030",
+      "split": "train",
+      "prompt": "Write a voiceover script and synthesize the narration with a warm British voice.",
+      "expected": "ak-elevenlabs",
+      "class": "positive"
+    },
+    {
+      "id": "case-00031",
+      "split": "train",
+      "prompt": "Turn this YouTube interview into a blog post and three social snippets.",
+      "expected": "ak-youtube",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00032",
+      "split": "train",
+      "prompt": "Build a free ROI calculator as a lead magnet for our accounting software.",
+      "expected": "ak-free-tool-strategy",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00033",
+      "split": "train",
+      "prompt": "Add streaks, badges and a leaderboard to our loyalty campaign.",
+      "expected": "ak-gamification-marketing",
+      "class": "positive"
+    },
+    {
+      "id": "case-00034",
+      "split": "train",
+      "prompt": "Upload our campaign images to the R2 bucket and give me public links.",
+      "expected": "ak-storage",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00035",
+      "split": "train",
+      "prompt": "Make a twelve-slide HTML pitch presentation with Chart.js charts for our investors.",
+      "expected": "ak-slides",
+      "class": "positive"
+    },
+    {
+      "id": "case-00036",
+      "split": "train",
+      "prompt": "Set up the marketing project context and brand constraints for this new repository.",
+      "expected": "ak-init",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00037",
+      "split": "train",
+      "prompt": "Write a creative brief for a nostalgic 90s-style TV commercial with voiceover and music direction.",
+      "expected": "ak-creativity",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00038",
+      "split": "train",
+      "prompt": "What's 15% of 2,400?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00039",
+      "split": "train",
+      "prompt": "Translate 'thank you for your order' into French.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00040",
+      "split": "train",
+      "prompt": "Hi there!",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00041",
+      "split": "train",
+      "prompt": "What does CTR stand for?",
+      "expected": "none",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00042",
+      "split": "train",
+      "prompt": "Capitalize the first letter of each word in this title.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00043",
+      "split": "train",
+      "prompt": "What day of the week is March 3, 2027?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00044",
+      "split": "holdout",
+      "prompt": "Create a storyboard and script for a 60-second product video for Instagram Reels.",
+      "expected": "ak-video",
+      "class": "positive"
+    },
+    {
+      "id": "case-00045",
+      "split": "holdout",
+      "prompt": "Produce a 15-minute AI short film with consistent characters and lipsync across scenes.",
+      "expected": "ak-filmmaking",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00046",
+      "split": "holdout",
+      "prompt": "Define primitive and semantic tokens plus component specs so our marketing pages stay consistent.",
+      "expected": "ak-design-system",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00047",
+      "split": "holdout",
+      "prompt": "Tidy our campaign asset folders and fix broken asset paths without moving anyone's files.",
+      "expected": "ak-assets-organizing",
+      "class": "positive"
+    },
+    {
+      "id": "case-00048",
+      "split": "holdout",
+      "prompt": "Open the asset gallery so I can browse and filter last month's creatives.",
+      "expected": "ak-content-hub",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00049",
+      "split": "holdout",
+      "prompt": "Run our spring multi-channel campaign: track its status, budget and performance week by week.",
+      "expected": "ak-campaign",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00050",
+      "split": "holdout",
+      "prompt": "Write a newsletter to existing subscribers announcing the price change.",
+      "expected": "ak-email",
+      "class": "positive"
+    },
+    {
+      "id": "case-00051",
+      "split": "holdout",
+      "prompt": "Draft a thread for X and LinkedIn with a strong hook about our case study.",
+      "expected": "ak-social",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00052",
+      "split": "holdout",
+      "prompt": "Organic traffic dropped after the redesign; find the crawl and indexing problems.",
+      "expected": "ak-seo",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00053",
+      "split": "holdout",
+      "prompt": "Build a battlecard for the sales team comparing us with our main rival.",
+      "expected": "ak-competitor",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00054",
+      "split": "holdout",
+      "prompt": "Revise our wordmark to feel more premium while keeping the brand palette.",
+      "expected": "ak-logo-design",
+      "class": "positive"
+    },
+    {
+      "id": "case-00055",
+      "split": "holdout",
+      "prompt": "Write a polished, publication-ready article with remote work tips for our audience.",
+      "expected": "ak-write",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00056",
+      "split": "holdout",
+      "prompt": "Which channel drove the most signups last month? Build me a KPI report.",
+      "expected": "ak-analytics",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00057",
+      "split": "holdout",
+      "prompt": "Run the playbook for validating a new product idea and tell me the next step.",
+      "expected": "ak-play",
+      "class": "positive"
+    },
+    {
+      "id": "case-00058",
+      "split": "holdout",
+      "prompt": "Spell 'necessary' backwards.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00059",
+      "split": "holdout",
+      "prompt": "What is the capital of Australia?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00060",
+      "split": "holdout",
+      "prompt": "Define the term conversion rate in one sentence.",
+      "expected": "none",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00061",
+      "split": "holdout",
+      "prompt": "Convert 3 hours into minutes.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00062",
+      "split": "holdout",
+      "prompt": "Great, thanks for the help!",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00063",
+      "split": "holdout",
+      "prompt": "Remove the extra space before the comma in 'hello , world'.",
+      "expected": "none",
+      "class": "no-skill"
+    }
+  ]
+}

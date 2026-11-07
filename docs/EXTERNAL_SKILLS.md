@@ -112,7 +112,7 @@ next start.
 
 Bundled: `ak-ai-multimodal`, `ak-dogfood`, `ak-elevenlabs`, `ak-filmmaking`,
 `ak-hyperframes`, `ak-media-processing`, `ak-motion-design`,
-`ak-motion-graphics`, `ak-motion-video`, `ak-remotion`, `ak-video`,
+`ak-motion-graphics`, `ak-motion-video`, `ak-remotion`, `ak-skill-creator`, `ak-video`,
 `ak-youtube`, `ak-youtube-thumbnail-design`, `anime-creator`, `motion-video`.
 
 To add or update one, copy the skill directory there without `.env` files,

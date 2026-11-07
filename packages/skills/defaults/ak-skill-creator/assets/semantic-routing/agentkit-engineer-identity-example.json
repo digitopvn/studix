@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "mappings": [
+    {
+      "from": "ak-watzup",
+      "to": ["ak-sumup"],
+      "kind": "merge",
+      "note": "Hypothetical example, not a roster decision: one recap owner for handoff and technical summaries."
+    },
+    {
+      "from": "ak-sowat",
+      "to": ["ak-sumup"],
+      "kind": "merge",
+      "note": "Hypothetical example, not a roster decision."
+    },
+    {
+      "from": "ak-mermaidjs-v11",
+      "to": ["ak-mermaid"],
+      "kind": "rename",
+      "note": "Hypothetical example: a stable id without a version suffix."
+    }
+  ]
+}

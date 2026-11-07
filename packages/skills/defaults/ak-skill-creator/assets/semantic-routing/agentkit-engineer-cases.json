@@ -1,0 +1,615 @@
+{
+  "schema_version": 1,
+  "holdout_id": "agentkit-engineer-v2",
+  "cases": [
+    {
+      "id": "case-00000",
+      "split": "train",
+      "prompt": "The login endpoint started returning 500 after this morning's deploy. Find the cause and patch it.",
+      "expected": "ak-fix",
+      "class": "positive"
+    },
+    {
+      "id": "case-00001",
+      "split": "train",
+      "prompt": "Figure out why the payments test fails only on CI but passes on my laptop. Don't change any code yet.",
+      "expected": "ak-debug",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00002",
+      "split": "train",
+      "prompt": "Write an implementation plan with phases and acceptance criteria for adding SSO to our admin app.",
+      "expected": "ak-plan",
+      "class": "positive"
+    },
+    {
+      "id": "case-00003",
+      "split": "train",
+      "prompt": "Before I push, can you look over my staged changes for bugs or anything risky?",
+      "expected": "ak-code-review",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00004",
+      "split": "train",
+      "prompt": "Go through pull request 482 on GitHub and leave review comments on the problems you find.",
+      "expected": "ak-review-pr",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00005",
+      "split": "train",
+      "prompt": "Add Stripe checkout with subscription webhooks to our Next.js app.",
+      "expected": "ak-payment-integration",
+      "class": "positive"
+    },
+    {
+      "id": "case-00006",
+      "split": "train",
+      "prompt": "Our orders query takes 4 seconds in Postgres; work out which index we are missing and add a migration.",
+      "expected": "ak-databases",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00007",
+      "split": "train",
+      "prompt": "What does HTTP status 418 mean?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00008",
+      "split": "train",
+      "prompt": "Rename the variable cnt to count in utils.ts.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00009",
+      "split": "train",
+      "prompt": "This branch is done. Run the tests, open the PR and get it ready to merge.",
+      "expected": "ak-ship",
+      "class": "positive"
+    },
+    {
+      "id": "case-00010",
+      "split": "train",
+      "prompt": "Split my working changes into conventional commits and push the branch, no PR yet.",
+      "expected": "ak-git",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00011",
+      "split": "train",
+      "prompt": "Set up an isolated worktree so I can work on the hotfix without touching my feature branch.",
+      "expected": "ak-worktree",
+      "class": "positive"
+    },
+    {
+      "id": "case-00012",
+      "split": "train",
+      "prompt": "Check whether we committed any API keys and whether our npm dependencies have known vulnerabilities.",
+      "expected": "ak-security",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00013",
+      "split": "train",
+      "prompt": "Write the Helm chart and Kubernetes manifests to run this service on GKE.",
+      "expected": "ak-devops",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00014",
+      "split": "train",
+      "prompt": "Put this static site live on Netlify with a custom domain.",
+      "expected": "ak-deploy",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00015",
+      "split": "train",
+      "prompt": "I'm not sure whether to use queues or cron for the reminder emails. Help me weigh the options before we build anything.",
+      "expected": "ak-brainstorm",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00016",
+      "split": "train",
+      "prompt": "Run the unit and integration suites and tell me the coverage for the billing package.",
+      "expected": "ak-test",
+      "class": "positive"
+    },
+    {
+      "id": "case-00017",
+      "split": "train",
+      "prompt": "Write Playwright end-to-end tests for the signup flow across Chrome and Safari.",
+      "expected": "ak-web-testing",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00018",
+      "split": "train",
+      "prompt": "Walk me through how the request middleware chain in this repo works, like I'm new to the codebase.",
+      "expected": "ak-explain",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00019",
+      "split": "train",
+      "prompt": "Build a React component with TanStack Router and Suspense for the settings page.",
+      "expected": "ak-frontend-development",
+      "class": "positive"
+    },
+    {
+      "id": "case-00020",
+      "split": "holdout",
+      "prompt": "The plan is approved; implement phase two of it now.",
+      "expected": "ak-cook",
+      "class": "positive"
+    },
+    {
+      "id": "case-00021",
+      "split": "holdout",
+      "prompt": "Our nightly job sometimes produces duplicate rows. Find the root cause before anyone touches the code.",
+      "expected": "ak-debug",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00022",
+      "split": "holdout",
+      "prompt": "Typecheck is red on main with three errors in the auth module, please make it green.",
+      "expected": "ak-fix",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00023",
+      "split": "holdout",
+      "prompt": "Give me a technical recap of what we changed today, what failed and what is left.",
+      "expected": "ak-sumup",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00024",
+      "split": "holdout",
+      "prompt": "I just opened this worktree. What's in flight across branches and what should I pick up next?",
+      "expected": "ak-watzup",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00025",
+      "split": "holdout",
+      "prompt": "Looking at what we shipped this week, are we focused on the right thing? What matters most next?",
+      "expected": "ak-sowat",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00026",
+      "split": "holdout",
+      "prompt": "Refresh our project docs and the root agent guidance to match the current architecture.",
+      "expected": "ak-docs",
+      "class": "positive"
+    },
+    {
+      "id": "case-00027",
+      "split": "holdout",
+      "prompt": "Add a Mermaid sequence diagram of the OAuth flow to the README.",
+      "expected": "ak-mermaidjs-v11",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00028",
+      "split": "holdout",
+      "prompt": "Compare three vector databases for our scale and recommend one, with tradeoffs, before we commit.",
+      "expected": "ak-research",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00029",
+      "split": "holdout",
+      "prompt": "List the edge cases and QA scenarios we should cover for the new refund feature before coding.",
+      "expected": "ak-scenario",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00030",
+      "split": "holdout",
+      "prompt": "Start a brand new CLI project in Go from scratch with tests and a release setup.",
+      "expected": "ak-bootstrap",
+      "class": "positive"
+    },
+    {
+      "id": "case-00031",
+      "split": "holdout",
+      "prompt": "Design a polished, art-directed landing page for our launch from this screenshot.",
+      "expected": "ak-frontend-design",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00032",
+      "split": "holdout",
+      "prompt": "Can you check PR 91 on GitHub for regressions and merge it when it's clean?",
+      "expected": "ak-review-pr",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00033",
+      "split": "holdout",
+      "prompt": "Convert 72 degrees Fahrenheit to Celsius.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00034",
+      "split": "holdout",
+      "prompt": "Add a missing semicolon at line 12 of index.js.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00035",
+      "split": "holdout",
+      "prompt": "Thanks, that's all for today.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00036",
+      "split": "train",
+      "prompt": "Add Better Auth with email magic links and GitHub OAuth to our Hono API.",
+      "expected": "ak-better-auth",
+      "class": "positive"
+    },
+    {
+      "id": "case-00037",
+      "split": "train",
+      "prompt": "Create an MCP server that exposes our internal ticket search to agents.",
+      "expected": "ak-mcp-builder",
+      "class": "positive"
+    },
+    {
+      "id": "case-00038",
+      "split": "train",
+      "prompt": "Fill out this quarterly budget workbook with formulas for each department total.",
+      "expected": "ak-document-skills",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00039",
+      "split": "train",
+      "prompt": "Turn these meeting notes into a ten-slide PowerPoint deck for the board.",
+      "expected": "ak-document-skills",
+      "class": "positive"
+    },
+    {
+      "id": "case-00040",
+      "split": "train",
+      "prompt": "Extract the tables from this scanned invoice PDF into CSV.",
+      "expected": "ak-document-skills",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00041",
+      "split": "train",
+      "prompt": "Pack the whole repo into one AI-friendly file so I can paste it into another model.",
+      "expected": "ak-repomix",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00042",
+      "split": "train",
+      "prompt": "Find where the rate limiter is configured across the monorepo; I only need the file locations.",
+      "expected": "ak-scout",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00043",
+      "split": "train",
+      "prompt": "Build a React Native screen for push notification settings that works on iOS and Android.",
+      "expected": "ak-mobile-development",
+      "class": "positive"
+    },
+    {
+      "id": "case-00044",
+      "split": "train",
+      "prompt": "Write a GLSL fragment shader for an animated water ripple.",
+      "expected": "ak-shader",
+      "class": "positive"
+    },
+    {
+      "id": "case-00045",
+      "split": "train",
+      "prompt": "Render a 3D product viewer with orbit controls and GLTF models in the browser.",
+      "expected": "ak-threejs",
+      "class": "positive"
+    },
+    {
+      "id": "case-00046",
+      "split": "train",
+      "prompt": "Make a 30-second promo video from React components with animated captions.",
+      "expected": "ak-remotion",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00047",
+      "split": "train",
+      "prompt": "Sketch a hand-drawn whiteboard-style architecture drawing of our services I can keep editing.",
+      "expected": "ak-excalidraw",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00048",
+      "split": "train",
+      "prompt": "Record a journal entry about why the migration rollback failed and what we learned.",
+      "expected": "ak-journal",
+      "class": "positive"
+    },
+    {
+      "id": "case-00049",
+      "split": "train",
+      "prompt": "Run a retrospective on the last sprint from our git history and agree on follow-ups.",
+      "expected": "ak-retro",
+      "class": "positive"
+    },
+    {
+      "id": "case-00050",
+      "split": "train",
+      "prompt": "I'm switching to another model. Write up where the refactor stands so a fresh agent can resume it cold.",
+      "expected": "ak-handoff",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00051",
+      "split": "train",
+      "prompt": "Turn GitHub issue 2280 into a validated implementation plan.",
+      "expected": "ak-issue-to-plan",
+      "class": "positive"
+    },
+    {
+      "id": "case-00052",
+      "split": "train",
+      "prompt": "Look up in the official Next.js documentation how route handlers cache by default.",
+      "expected": "ak-docs-seeker",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00053",
+      "split": "train",
+      "prompt": "Build a Shopify theme app extension that shows a loyalty badge on product pages.",
+      "expected": "ak-shopify",
+      "class": "positive"
+    },
+    {
+      "id": "case-00054",
+      "split": "train",
+      "prompt": "Implement a Python agent with Google's Agent Development Kit that calls our weather tool.",
+      "expected": "ak-google-adk-python",
+      "class": "positive"
+    },
+    {
+      "id": "case-00055",
+      "split": "train",
+      "prompt": "What's the difference between let and const in JavaScript?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00056",
+      "split": "train",
+      "prompt": "Explain eventual consistency to me in two sentences.",
+      "expected": "none",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00057",
+      "split": "train",
+      "prompt": "Sort this list of names alphabetically: Lan, Bao, Minh.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00058",
+      "split": "train",
+      "prompt": "How many bytes are in a kibibyte?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00059",
+      "split": "train",
+      "prompt": "Change the button label from Submit to Save in form.tsx.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00060",
+      "split": "train",
+      "prompt": "Good morning!",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00061",
+      "split": "train",
+      "prompt": "What is the time complexity of binary search?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00062",
+      "split": "train",
+      "prompt": "Explain what a race condition is in general terms.",
+      "expected": "none",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00063",
+      "split": "holdout",
+      "prompt": "Set up shadcn/ui components with Tailwind and a consistent dark theme across the dashboard.",
+      "expected": "ak-ui-styling",
+      "class": "positive"
+    },
+    {
+      "id": "case-00064",
+      "split": "holdout",
+      "prompt": "Our React app re-renders too much and the bundle is huge. Apply the known performance patterns.",
+      "expected": "ak-react-best-practices",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00065",
+      "split": "holdout",
+      "prompt": "Scaffold a Next.js App Router project inside our Turborepo with shared packages.",
+      "expected": "ak-web-frameworks",
+      "class": "positive"
+    },
+    {
+      "id": "case-00066",
+      "split": "holdout",
+      "prompt": "Spin up a team of independent teammates to research, implement and review the import feature in parallel.",
+      "expected": "ak-team",
+      "class": "positive"
+    },
+    {
+      "id": "case-00067",
+      "split": "holdout",
+      "prompt": "Show me the plans board with which phases are blocked and how far along each one is.",
+      "expected": "ak-plans-kanban",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00068",
+      "split": "holdout",
+      "prompt": "Generate an llms.txt index and Markdown page mirrors for our documentation site.",
+      "expected": "ak-llms",
+      "class": "positive"
+    },
+    {
+      "id": "case-00069",
+      "split": "holdout",
+      "prompt": "Set up a Mintlify docs site for our public API with an OpenAPI reference.",
+      "expected": "ak-mintlify",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00070",
+      "split": "holdout",
+      "prompt": "Drive a browser to log into the staging admin and take a snapshot of each settings tab.",
+      "expected": "ak-agent-browser",
+      "class": "positive"
+    },
+    {
+      "id": "case-00071",
+      "split": "holdout",
+      "prompt": "Generate concept art of a fox reading a book for our blog header, cinematic style.",
+      "expected": "ak-ai-artist",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00072",
+      "split": "holdout",
+      "prompt": "Transcribe this meeting recording and pull out the action items.",
+      "expected": "ak-ai-multimodal",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00073",
+      "split": "holdout",
+      "prompt": "Compress these clips to 720p and strip the audio track with FFmpeg.",
+      "expected": "ak-media-processing",
+      "class": "positive"
+    },
+    {
+      "id": "case-00074",
+      "split": "holdout",
+      "prompt": "Our agent forgets instructions halfway through long sessions and burns tokens. Rework its context budget.",
+      "expected": "ak-context-engineering",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00075",
+      "split": "holdout",
+      "prompt": "Author a new agent skill that teaches our release checklist, with a SKILL.md and validation.",
+      "expected": "ak-skill-creator",
+      "class": "positive"
+    },
+    {
+      "id": "case-00076",
+      "split": "holdout",
+      "prompt": "Is there an agent skill I could install that handles database migrations? We have nothing for that yet.",
+      "expected": "ak-find-skills",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00077",
+      "split": "holdout",
+      "prompt": "Investigate this phishing domain and map its infrastructure to known threat actors.",
+      "expected": "ak-cti-expert",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00078",
+      "split": "holdout",
+      "prompt": "Give the release bot admin access to the repository and rotate the deploy secret with the gh CLI.",
+      "expected": "ak-github",
+      "class": "indirect"
+    },
+    {
+      "id": "case-00080",
+      "split": "holdout",
+      "prompt": "What year did Go 1.0 come out?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00081",
+      "split": "holdout",
+      "prompt": "Translate 'good night' into Vietnamese.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00082",
+      "split": "holdout",
+      "prompt": "Delete the unused import on line 3 of main.go.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00083",
+      "split": "holdout",
+      "prompt": "Explain the CAP theorem briefly.",
+      "expected": "none",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00084",
+      "split": "holdout",
+      "prompt": "Is 97 a prime number?",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00085",
+      "split": "holdout",
+      "prompt": "Okay, sounds good.",
+      "expected": "none",
+      "class": "no-skill"
+    },
+    {
+      "id": "case-00086",
+      "split": "holdout",
+      "prompt": "Explain how a TCP handshake works.",
+      "expected": "none",
+      "class": "near-miss"
+    },
+    {
+      "id": "case-00087",
+      "split": "holdout",
+      "prompt": "Write a function that returns the larger of two integers.",
+      "expected": "none",
+      "class": "no-skill"
+    }
+  ]
+}
