@@ -2,6 +2,17 @@
 
 Rules for coding agents working in this repository.
 
+## Product philosophy
+
+- Insanely simple: users and their AI agents know how to use Studix without thinking.
+- One goal: create and edit AI video projects as conveniently as possible, with the highest output
+  quality, the fastest render, the most convenient agent use, the fewest mistakes and the fewest tokens.
+- MCP, WebMCP, API, CLI and docs always stay in sync.
+- AX and UX matter most. Studix takes the complexity onto itself so the user and their agent get a
+  perfect experience.
+- Stay general enough, and easy to change later.
+- The MVP ships fast: keep tests few and focused, and keep tests and CI as fast as possible.
+
 ## Definition of done
 
 - Use `pnpm`. Before reporting done, run `pnpm check` (lint, typecheck, QA and unit tests).
