@@ -198,6 +198,13 @@ role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`, and voice per langua
 `@<voice>`), which also carries the packs' delivery direction to models that take it;
 `MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
 job. Every paid call is estimated first and refused above the request's cap.
+
+These env values are the server defaults. A workspace admin (`member:manage`) can override them on the
+dashboard's Providers page, or through `GET|PUT|DELETE /api/providers/multix`: turn Multix off for the
+workspace, change the wait timeout (30–7200 s), the model of each role and the voice routes. Saved values
+win over env field by field; a blank field keeps the env value, and a workspace cannot turn Multix on
+where the server has no `MULTIX_BIN`. `POST /api/providers/multix/check` reports the CLI version and
+`multix check`. The CLI version itself stays pinned in the image (`MULTIX_COMMIT`).
 A video request on `sume:seedance-2.5` runs at `480p` unless it passes
 `params.resolution`; a higher resolution is an explicit, separately estimated
 choice

@@ -183,6 +183,13 @@
       "when": 1793981197036,
       "tag": "0025_condemned_warbound",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794021265397,
+      "tag": "0026_motionless_goblin_queen",
+      "breakpoints": true
     }
   ]
 }

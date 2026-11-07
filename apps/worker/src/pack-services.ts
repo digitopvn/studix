@@ -6,7 +6,7 @@ import {
   parseSecretKey,
 } from "@studix/auth";
 import { createRepositories } from "@studix/database";
-import { createMultixProviderFromConfig, MULTIX_VENDOR_KEYS, MULTIX_VENDORS } from "@studix/providers";
+import { createWorkspaceMultixProviders, MULTIX_VENDOR_KEYS, MULTIX_VENDORS } from "@studix/providers";
 import {
   assertSpeechProbeReady,
   createHardQaGate,
@@ -69,17 +69,24 @@ function platformCredentials(
 export async function loadPackServices(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
-): Promise<Pick<WorkerPorts, "media" | "qa" | "speech">> {
+): Promise<Pick<WorkerPorts, "media" | "mediaFor" | "qa" | "speech">> {
   const { config } = settings;
   const credentials = platformCredentials(settings, runtime);
   const workspaceKeys = providerConnections(settings, runtime);
-  const media = createMultixProviderFromConfig(config, {
-    env: runtime.env,
-    // Vendor keys an operator set in the dashboard apply to the next Multix call, with no restart.
-    ...(credentials ? { credentials: () => credentials.loadValues() } : {}),
-    // A workspace's own vendor keys (BYOK) win for that workspace's media calls only.
-    ...(workspaceKeys ? { workspaceCredentials: (ctx) => workspaceKeys.resolveMediaKeys(ctx) } : {}),
+  const multixSettings = createRepositories(runtime.db).workspaceMultixSettings;
+  const providers = createWorkspaceMultixProviders({
+    config,
+    options: {
+      env: runtime.env,
+      // Vendor keys an operator set in the dashboard apply to the next Multix call, with no restart.
+      ...(credentials ? { credentials: () => credentials.loadValues() } : {}),
+      // A workspace's own vendor keys (BYOK) win for that workspace's media calls only.
+      ...(workspaceKeys ? { workspaceCredentials: (ctx) => workspaceKeys.resolveMediaKeys(ctx) } : {}),
+    },
+    // Models, voice routes, the switch and the timeout a workspace saved in the dashboard win over MULTIX_*.
+    load: (ctx) => multixSettings.get(ctx),
   });
+  const media = providers.server;
   const toolchain = resolveQaToolchain(runtime.env);
   const qaStatus = qaToolchainStatus(toolchain, runtime.env);
   if (!qaStatus.ok) {
@@ -129,6 +136,7 @@ export async function loadPackServices(
   }
   return {
     media,
+    mediaFor: (ctx) => providers.forWorkspace(ctx),
     ...(speech ? { speech } : {}),
     qa: createHardQaGate({
       run: {

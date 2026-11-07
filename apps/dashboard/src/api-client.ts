@@ -41,6 +41,47 @@ export interface WorkspaceMediaKeys {
   keys: WorkspaceMediaKey[];
 }
 
+/** What a workspace overrides; null (or a role left out) keeps the server's MULTIX_* value. */
+export interface WorkspaceMultixValues {
+  enabled: boolean | null;
+  waitTimeoutSeconds: number | null;
+  models: Record<string, string>;
+  voiceLanguageModels: string | null;
+}
+
+export interface MultixEffective<T> {
+  value: T;
+  source: "workspace" | "server";
+}
+
+export interface WorkspaceMultixSettings {
+  canChange: boolean;
+  server: {
+    enabled: boolean;
+    waitTimeoutSeconds: number;
+    models: Record<string, string>;
+    voiceLanguageModels: string | null;
+  };
+  workspace: WorkspaceMultixValues | null;
+  effective: {
+    enabled: MultixEffective<boolean>;
+    waitTimeoutSeconds: MultixEffective<number>;
+    models: Record<string, MultixEffective<string>>;
+    voiceLanguageModels: MultixEffective<string | null>;
+  };
+  updatedAt?: string;
+}
+
+export interface WorkspaceMultixCheck {
+  version: string | null;
+  diagnosis: {
+    state: "ready" | "missing_executable" | "check_failed";
+    vendors: Record<string, boolean>;
+    reason?: string;
+    code?: string;
+  };
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };
   const workspace = selectedWorkspace();
@@ -671,6 +712,11 @@ export const api = {
     request<WorkspaceMediaKey>("PUT", `/api/providers/media-keys/${enc(vendor)}`, { apiKey }),
   removeWorkspaceMediaKey: (vendor: string) =>
     request<WorkspaceMediaKey>("DELETE", `/api/providers/media-keys/${enc(vendor)}`),
+  workspaceMultix: () => request<WorkspaceMultixSettings>("GET", "/api/providers/multix"),
+  updateWorkspaceMultix: (values: WorkspaceMultixValues) =>
+    request<WorkspaceMultixSettings>("PUT", "/api/providers/multix", values),
+  resetWorkspaceMultix: () => request<WorkspaceMultixSettings>("DELETE", "/api/providers/multix"),
+  checkWorkspaceMultix: () => request<WorkspaceMultixCheck>("POST", "/api/providers/multix/check", {}),
   workspaceFeatures: () => request<WorkspaceFeatures>("GET", "/api/providers/features"),
   updateWorkspaceFeatures: (patch: { claudePlanner?: boolean; claudeSubscription?: boolean }) =>
     request<WorkspaceFeatures>("PUT", "/api/providers/features", patch),
