@@ -147,8 +147,9 @@ const runStage = createAgentStage({
     "Make the video the brief asks for, end to end, inside your sandbox. Pick the enabled skill that fits " +
     "the brief, read its SKILL.md and follow it with its references, scripts and assets; where this task " +
     "and the skill disagree on method, the skill wins. Before the final render, render keyframes or a " +
-    "contact sheet, look at the images and fix what is wrong; look again after the final render. Report " +
-    "every such pass in qaRounds. The delivered file must meet this contract, which Studix checks with " +
+    "contact sheet, look at the images and fix what is wrong; look again after the final render. If you " +
+    "cannot see images yourself, ask a vision model instead: `multix gemini analyze --files <image> " +
+    "--prompt <what to check>` works whenever GEMINI_API_KEY is set. Report every such pass in qaRounds. The delivered file must meet this contract, which Studix checks with " +
     "ffprobe and ffmpeg and rejects otherwise: /work/out/video.mp4 (H.264 + AAC), exactly the size in " +
     "task input `delivery` (1080p), duration within 0.5 s of `delivery.durationMs`, an audible voice-over, " +
     "integrated loudness -16 LUFS (+/-2 LU) with true peak at or under -1 dBTP. Keep paid calls to what " +

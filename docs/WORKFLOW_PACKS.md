@@ -355,7 +355,9 @@ Agent của job (Claude Code, Pi hoặc Codex) tự dựng và render video tron
 SKILL.md của skill được bật. Studix chỉ đặt contract đầu ra (1080p, thời lượng ±0.5 s, có voice-over,
 -16 LUFS ±2, true peak ≤ -1 dBTP) và kiểm lại file trước khi lưu; file sai contract làm job lỗi
 `VALIDATION`. Cần `STUDIX_SANDBOX=docker`. Stage chỉ giữ trước tối đa phần budget còn lại của job (cap 800¢), nên
-budget nhỏ hơn chỉ giới hạn lượt chạy chứ không làm job fail. Quyết định ở
+budget nhỏ hơn chỉ giới hạn lượt chạy chứ không làm job fail. Deadline mặc định là 60 phút, tính từ lúc worker
+nhận job. Model không có vision được gợi ý soát khung hình bằng `multix gemini analyze` khi sandbox có
+`GEMINI_API_KEY`. Quyết định ở
 [ADR-0022](decisions/0022-agentic-video-authoring.md).
 
 ## Giới hạn của QA gate
