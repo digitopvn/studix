@@ -1,6 +1,7 @@
 import { newId, StudixError } from "@studix/shared";
 import {
   applyPatch,
+  canonicalJson,
   dependentsOf,
   nodeDigests,
   nodeKey,
@@ -14,7 +15,7 @@ import {
 import { z } from "zod";
 import type { Render } from "../entities/job.ts";
 import type { ProjectVersion, ProjectVersionSource, VideoProject } from "../entities/project.ts";
-import type { Approval, Review } from "../entities/review.ts";
+import type { Approval, Review, ReviewAnnotation } from "../entities/review.ts";
 import type { ProjectStoryboard } from "../entities/storyboard.ts";
 import type { ProjectRepository } from "../repositories/project-repository.ts";
 import type { StoryboardRepository } from "../repositories/storyboard-repository.ts";
@@ -164,7 +165,8 @@ function assertSameComment(stored: Review, input: FeedbackInput, targetKey: stri
     stored.targetId !== targetKey ||
     stored.body !== input.comment ||
     stored.atMs !== input.startMs ||
-    stored.endMs !== input.endMs
+    stored.endMs !== input.endMs ||
+    canonicalJson(stored.annotation ?? null) !== canonicalJson(input.annotation ?? null)
   ) {
     throw new StudixError("CONFLICT", "idempotency key was used for a different request", {
       suggestedAction: "Use a new idempotencyKey for a different feedback.",
@@ -265,7 +267,8 @@ export interface ProjectReview {
       Pick<JobView, "id" | "kind" | "status" | "createdAt"> & { spentCents: number; budgetCents?: number }
     >;
   };
-  comments: Review[];
+  /** `images` counts the stored images (snapshot first) when they were left out; read them one by one. */
+  comments: Array<Review & { images?: number }>;
   /** Node keys changed by the current version compared to its parent. */
   invalidated: string[];
 }
@@ -290,6 +293,7 @@ export async function getProjectReview(
   deps: Deps,
   ctx: TenantContext,
   projectId: string,
+  opts: { images?: boolean } = {},
 ): Promise<ProjectReview> {
   assertPermission(ctx, "project:read");
   const project = await requireProject(deps, ctx, projectId);
@@ -323,7 +327,17 @@ export async function getProjectReview(
       })),
     },
     // The retry key is a write-side detail; versions hide theirs the same way.
-    comments: comments.items.map(({ idempotencyKey: _key, ...comment }) => comment),
+    // Images only travel for notes on the current version, so a long review history stays a small response.
+    comments: comments.items.map(({ idempotencyKey: _key, ...comment }) =>
+      // Images stay out of the review by default: a page of notes would otherwise carry megabytes of frames.
+      comment.annotation && !opts.images
+        ? {
+            ...comment,
+            annotation: withoutImages(comment.annotation),
+            images: annotationImages(comment.annotation).length,
+          }
+        : comment,
+    ),
     invalidated: [],
   };
   if (!current) return base;
@@ -729,6 +743,32 @@ async function waitingCreativeGate(
   return undefined;
 }
 
+/** One stored image of a note (n = 0 is its snapshot), read without loading the whole review. */
+export async function getFeedbackImage(
+  deps: Deps,
+  ctx: TenantContext,
+  projectId: string,
+  feedbackId: string,
+  n: number,
+): Promise<string | undefined> {
+  assertPermission(ctx, "project:read");
+  const review = await deps.reviews.get(ctx, feedbackId);
+  if (!review?.annotation || review.projectId !== projectId) return undefined;
+  return annotationImages(review.annotation)[n];
+}
+
+/** The images a note carries, as data URLs: its snapshot first, then attached reference images. */
+export function annotationImages(annotation: ReviewAnnotation): string[] {
+  const refs = annotation.references?.flatMap((r) => (r.url.startsWith("data:") ? [r.url] : [])) ?? [];
+  return [...(annotation.snapshot ? [annotation.snapshot] : []), ...refs];
+}
+
+/** An annotation without its image payloads (snapshot and attached reference images). */
+function withoutImages(annotation: ReviewAnnotation): ReviewAnnotation {
+  const { snapshot: _snapshot, references, ...rest } = annotation;
+  const links = references?.filter((r) => !r.url.startsWith("data:"));
+  return { ...rest, ...(links?.length ? { references: links } : {}) };
+}
 export interface FeedbackResult {
   feedbackId: string;
   projectId: string;
@@ -872,6 +912,7 @@ export async function submitFeedback(
         targetId: target.key,
         atMs: input.startMs,
         endMs: input.endMs,
+        annotation: input.annotation,
         idempotencyKey: commentKey,
       })
       // A concurrent request completing the same version, or retrying the same comment key, may have

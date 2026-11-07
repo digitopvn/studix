@@ -164,6 +164,7 @@ describe("Pi SDK runtime", () => {
     respond = (s) => (s.auth?.includes("bad-key") ? { status: 500 } : { status: 200, text: '{"ok":1}' });
     const snapshot = { connectionId: "pcon_1" } as ResolvedModelSnapshot;
     const runtime = createPiSdkAgentRuntime({
+      turnRetry: false,
       resolver: {
         async resolve() {
           return {
@@ -245,7 +246,7 @@ describe("Pi SDK runtime", () => {
 
 describe("Pi key tester", () => {
   const runtimeFor = () => (b: PiRunBinding) =>
-    createPiSdkAgentRuntime({ resolver: staticResolver(binding({ apiKey: b.apiKey })) });
+    createPiSdkAgentRuntime({ resolver: staticResolver(binding({ apiKey: b.apiKey })), turnRetry: false });
 
   it("counts a reply stopped only by the one-cent cap as a working key", async () => {
     respond = () => ({ status: 200, text: "OK" });

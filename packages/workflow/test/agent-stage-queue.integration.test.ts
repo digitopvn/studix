@@ -108,6 +108,27 @@ const submission = (id: string, attempt: number, output: Record<string, unknown>
 });
 
 describe("agent stage on the Postgres queue", () => {
+  it("names the runtime, connection and effort of a harness run on the stage's usage line", async () => {
+    const ctx = await tenant(db.current, "agent-route");
+    const { repos } = db.current;
+    const route = { runtime: "pi" as const, connectionId: "pc_1", reasoningEffort: "high" as const };
+    const world = createWorld({ steps: [{ ...ok("Bright"), route }] });
+    const job = await world.enqueue(ctx);
+
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+    const [line] = await createUsageLedger(repos.usage).listForJob(ctx, job.id);
+    const [stage] = await repos.jobs.listStages(ctx, job.id);
+    expect(line?.metadata).toMatchObject({
+      stage: STAGE,
+      // The stage list joins usage lines to stage rows on this attempt.
+      attempt: stage?.attempt,
+      agentRuntime: "pi",
+      connectionId: "pc_1",
+      reasoningEffort: "high",
+      turns: 1,
+    });
+  });
+
   it("parks for the host, takes one fenced submission and resumes at the same attempt", async () => {
     const ctx = await tenant(db.current, "agent-host");
     const { repos } = db.current;

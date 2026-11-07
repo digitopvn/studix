@@ -13,6 +13,7 @@ export const MCP_OAUTH_SCOPES = {
     "job:retry",
     "asset:write",
     "skill:write",
+    "media:exec",
     "approval:request",
   ],
 } as const satisfies Record<string, readonly Permission[]>;

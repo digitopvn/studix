@@ -265,6 +265,35 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
         body: { ...body, planner: { runtime: "other", providerConnectionId: connection.id } },
       });
       expect(unknown.status).toBe(400);
+
+      // A Claude agent with a model and effort runs a pack at the final preset.
+      const withPack = await app.api("POST", "/api/projects", {
+        cookie: alice,
+        body: {
+          prompt: "Studix teaser",
+          workflowTemplate: "motion-graphic",
+          renderPreset: "final",
+          agent: {
+            runtime: "claude",
+            providerConnectionId: connection.id,
+            model: "claude-opus-5-5",
+            reasoningEffort: "high",
+          },
+        },
+      });
+      expect(withPack.status).toBe(201);
+      const packJob = await app.db.repos.jobs.get(
+        { ...(await sessionTenant(app, alice)), actor: { type: "system", id: "test" } },
+        (await withPack.json()).job.id,
+      );
+      expect(packJob?.payload).toMatchObject({
+        workflowTemplate: "motion-graphic",
+        renderPreset: "final",
+        planner: { runtime: "claude", providerConnectionId: connection.id },
+        agent: { runtime: "claude", modelId: "claude-opus-5-5", reasoningEffort: "high" },
+      });
+      const packs = await (await app.api("GET", "/api/workflow-packs", { cookie: alice })).json();
+      expect(packs.packs.map((p: { id: string }) => p.id)).toContain("motion-graphic");
     } finally {
       app.deps.claudePlanner = false;
     }

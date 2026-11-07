@@ -280,7 +280,10 @@ describe("MultixProvider capabilities", () => {
     // Fish has no key and OpenAI is not an audio route, so neither is offered.
     expect(byKind.voice).toEqual(["elevenlabs:eleven_multilingual_v2", "elevenlabs:eleven_v3"]);
     expect(byKind.sfx).toEqual(["elevenlabs:sound-effects"]);
-    expect(await multix.readiness()).toEqual({
+    // Readiness covers every key multix reads, not only the routed vendors.
+    expect(await multix.readiness()).toMatchObject({
+      gemini: true,
+      "cloudflare-api-token": false,
       sume: true,
       atlas: false,
       elevenlabs: true,

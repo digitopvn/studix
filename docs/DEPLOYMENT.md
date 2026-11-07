@@ -33,9 +33,11 @@ layers on an ordinary commit.
 
 multix is built in a separate stage from a pinned commit of
 `mrgoonie/multix-cli` (`MULTIX_COMMIT` in the `Dockerfile` owns the value). The
-stage fails if the fetched HEAD is not that commit. The pin must be v1.26.0 or
-later: the first stable release with the Sume commands that counts Sume cost
-once per job.
+stage fails if the fetched HEAD is not that commit. The pin is v1.27.0-beta.3:
+it counts Sume cost once per job (since v1.26.0) and lists each provider's key
+names in `multix catalog providers`, which `pnpm multix:keys` turns into the
+keys Studix stores and injects (`packages/providers/src/multix-key-providers.generated.ts`).
+After a bump, rerun `MULTIX_BIN=<multix dist/cli.js> pnpm multix:keys` and commit the result.
 The image keeps the git build instead of `npm install -g @mrgoonie/multix`,
 because a commit pin is checked and an npm install here has no lockfile
 integrity hash. To upgrade, set `MULTIX_COMMIT` to the new release tag's commit
@@ -88,6 +90,30 @@ key and OAuth client.
   deletes one small object under a probe prefix. A failure is classified as
   missing credential, bad credential, missing permission (token can reach the
   bucket but not write it), bucket not found or remote unavailable.
+- **Storage profiles move new objects to another bucket without a redeploy.**
+  **Storage profiles** on the same page holds named profiles: provider
+  (`cloudflare-r2`, `aws-s3`, `s3-compatible`), endpoint, bucket, region,
+  path-style addressing, an optional key prefix and a key pair (sealed with
+  `STUDIX_SECRETS_KEY`, shown only as a hint). **Test and save** first runs the
+  write/read/head/delete probe with the typed settings, and stores nothing
+  when the probe fails. The endpoint must be a public HTTPS host. R2 endpoints
+  must be `https://<account>.r2.cloudflarestorage.com`. IP literals, private,
+  loopback, link-local and metadata addresses are refused, both at save time
+  and on every connection. `STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS=true` allows
+  `http` and private hosts, for a local MinIO only. Metadata addresses stay
+  blocked even then.
+  **Activate** makes one profile the target of new objects. The app and the
+  worker pick it up within about 20 seconds. A job keeps the profile of its
+  first write. The `S3_*` settings remain the `env` profile and the fallback.
+  Workspace owners and admins can add and activate their workspace's own
+  profile on the same page; it overrides the platform choice for that workspace
+  only ([ADR-0023](decisions/0023-workspace-storage-profiles.md)).
+  Every asset version and render records the profile that holds its bytes
+  (`storage_profile_id`; rows written before the change record `env`).
+  Reads and signed URLs use that profile. If an object is not found there,
+  the other profiles are tried, so a deactivated profile stays readable.
+  A profile cannot be deleted while it is active or while any asset references
+  it.
 - **Media vendor keys can be set on the page.** `SUME_API_KEY`,
   `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`, `FISH_API_KEY`, `MINIMAX_API_KEY`
   and `OPENROUTER_API_KEY` are stored sealed with `STUDIX_SECRETS_KEY` in the
@@ -210,14 +236,19 @@ deployment built from the root `Dockerfile`, even when the platform secrets
 omit the variable; an empty `MULTIX_BIN=` in the secrets turns it off. Before
 this default, a deployment whose secrets lacked the variable failed `motion-graphic` jobs
 with a voice-over with `UNAVAILABLE` ("The Multix provider is not
-configured") after compose. Routes: image,
-video, lip-sync and video upscale on Sume; image upscale on Atlas Cloud; voice,
-music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech.
-The worker passes only `SUME_API_KEY`, `ATLASCLOUD_API_KEY`, `ELEVENLABS_API_KEY`,
-`FISH_API_KEY`, `MINIMAX_API_KEY` and `OPENROUTER_API_KEY` (plus PATH, HOME, temp and proxy variables) to the CLI, and
+configured") after compose. Routes: Sume models
+run image, video, lip-sync and video upscale as Sume jobs; every other provider `multix generate` serves
+(Gemini, MiniMax, OpenAI, OpenRouter, Leonardo, BytePlus, Cloudflare, fal, Atlas Cloud, Replicate, Runway,
+HeyGen and TopView, listed in `GENERATE_VENDORS` in
+[`multix-routes.ts`](../packages/providers/src/multix-routes.ts)) runs them through
+`multix generate <task> --model=<vendor>:<model>`; image upscale runs on Atlas Cloud or Leonardo; voice,
+music and SFX on ElevenLabs, Fish or MiniMax, and voice also on OpenRouter speech. The model pickers list
+every provider's models from `multix models --task <task> --live`, and mark a provider without all its keys
+"needs key". multix cannot price these providers before a run yet (mrgoonie/multix-cli#581), so a job reserves a ceiling rounded up from the public list price ([`multix-generate-prices.ts`](../packages/providers/src/multix-generate-prices.ts), shown as "est. ≤ X¢" in the picker). It books the receipt when multix reports one and the ceiling otherwise. A provider without a public price (Leonardo, HeyGen) is labelled "no trusted price" and refused. The worker passes only the key names multix reads (`MULTIX_ENV_KEY_NAMES`, plus PATH, HOME,
+temp and proxy variables) to the CLI, and
 sets `MULTIX_DISABLE_HOME_ENV=1` so `~/.multix/.env` is never read on servers
-(`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A kind is
-advertised only when `multix check` reports its vendor key. Default models per
+(`MULTIX_ALLOW_HOME_ENV=true` is for local development only). A model is
+advertised only when `multix check` reports every key of its vendor. Default models per
 role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`, and voice per language from
 `MULTIX_VOICE_LANGUAGE_MODELS` (`vi=openrouter:fish-audio/drama-3`, optionally
 `@<voice>`), which also carries the packs' delivery direction to models that take it;
@@ -261,6 +292,34 @@ storage, the renderer and the hard QA gate from the worker
 `MULTIX_BIN` (set to empty) their paid stages fail with `UNAVAILABLE`; without the QA
 toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
 is never published.
+
+### Skill sandbox (worker)
+
+The `skill-agent` pack, and any agent stage that asks for `bash`, `read`, `write`, `edit` or `ls`, runs
+its tools in a per-task Docker container
+([ADR-0018](decisions/0018-skill-sandbox.md)). It is off by default.
+
+| Variable                      | Default                | Meaning                                                                        |
+| ----------------------------- | ---------------------- | ------------------------------------------------------------------------------ |
+| `STUDIX_SANDBOX`              | `off`                  | `docker` turns it on; the worker needs a Docker daemon                         |
+| `STUDIX_SANDBOX_IMAGE`        | `studix-sandbox:local` | Image built from `docker/sandbox.Dockerfile`                                   |
+| `STUDIX_SANDBOX_NETWORK`      | `bridge`               | Docker network of the containers (egress is open)                              |
+| `STUDIX_SANDBOX_CPUS`         | `2`                    | CPU cap per task                                                               |
+| `STUDIX_SANDBOX_MEMORY_MB`    | `4096`                 | Memory cap per task, no swap                                                   |
+| `STUDIX_SANDBOX_PIDS`         | `512`                  | Process cap per task                                                           |
+| `STUDIX_SANDBOX_WALL_SECONDS` | `1800`                 | Wall-time cap of one container                                                 |
+| `STUDIX_SANDBOX_SKILLS_DIR`   | unset                  | Local skills (`<dir>/{platform,workspace}/<name>/`) instead of the skill store |
+| `DOCKER_BIN`                  | `docker`               | Docker CLI path                                                                |
+| `STUDIX_CODEX_MODEL`          | `gpt-5.5`              | Default model of the `codex` agent runtime when the job names none             |
+
+The `codex` runtime runs `codex exec` inside this sandbox, so it needs `STUDIX_SANDBOX=docker`. The image
+pins the Codex CLI with the `CODEX_VERSION` build argument of `docker/sandbox.Dockerfile`. A Claude agent's
+tool-using stages run the Claude Code CLI there too, pinned by `CLAUDE_CODE_VERSION`.
+
+Build the image with `docker compose --profile sandbox build sandbox-image`. It pins the same multix
+commit and chrome-headless-shell as the Studix image; bump both together. The container receives only
+the task's media vendor keys (every name in `MULTIX_ENV_KEY_NAMES`). The self-host `worker` service does not mount
+the Docker socket, so run a sandboxed worker on a host with Docker until that wiring exists.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
@@ -574,6 +633,11 @@ is running; the job must still end `succeeded`.
   schema until its own rollout.
 - Proxy Worker and marketing: `npx wrangler@4 rollback` in the Worker's
   directory, or pick the previous version in the Cloudflare dashboard.
+- Storage profile: activate the previous profile (or `env`) on **Storage &
+  Media**. New objects go there within about 20 seconds. Objects written in
+  the meantime stay readable from the profile they were written to. Migration
+  `0028` only adds a table and columns with a default, so the previous image
+  runs against it unchanged.
 - Configuration: `tose env push` the previous file, then `tose redeploy <project> -y`
   (redeploys without rebuilding).
 

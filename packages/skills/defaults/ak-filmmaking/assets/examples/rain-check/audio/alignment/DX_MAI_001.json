@@ -1,0 +1,15 @@
+{
+  "cue_id": "DX_MAI_001",
+  "sentences": [
+    {
+      "text": "I said I would.",
+      "start": 0.1,
+      "end": 1.5
+    },
+    {
+      "text": "I always do, eventually.",
+      "start": 2.2,
+      "end": 4.6
+    }
+  ]
+}

@@ -63,6 +63,14 @@ export class InMemoryTenantTable<T extends TenantOwned> {
       .map((row) => structuredClone(row));
   }
 
+  /** Rows of every tenant matching `where`, newest id first; only for deliberately cross-tenant reads. */
+  filterAnyTenant(where: (row: T) => boolean): T[] {
+    return [...this.rows.values()]
+      .filter(where)
+      .sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+      .map((row) => structuredClone(row));
+  }
+
   page(ctx: TenantContext, query: { limit?: number; cursor?: string }, where?: (row: T) => boolean): Page<T> {
     const limit = pageLimit(query.limit);
     const rows = this.filter(ctx, where).filter((row) => query.cursor === undefined || row.id < query.cursor);

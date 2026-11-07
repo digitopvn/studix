@@ -1,0 +1,9 @@
+{
+  "name": "ufotable digital composite",
+  "block": "Style: ufotable digital-composite anime (Demon Slayer / Fate production quality): clean thin lineart, two-tone cel shading with soft gradient highlights, strong rim light, compositing glow and bloom on highlights, painterly background with atmospheric perspective and shallow depth of field. Single cinematic 16:9 frame, no text, no borders, no panels, no watermark.",
+  "video_block": "Hand-drawn anime look that matches the first frame exactly: same character designs, palette and lineart weight; cel-shaded motion with drawn smears on fast moves; no 3D CG look, no morphing, no extra characters; keep the first frame's framing unless a camera move is asked for.",
+  "negatives": "3D render, photoreal skin, extra or merged fingers, warped or duplicated sword, text, watermark, frame border, cropped head or limb",
+  "grade_look": "warm",
+  "fps": 24,
+  "caption_font": "Be Vietnam Pro SemiBold"
+}

@@ -187,5 +187,17 @@ export function createInMemoryActivityRepository(clock: Clock): ActivityReposito
           (query.traceId === undefined || e.traceId === query.traceId),
       );
     },
+    async listAfter(ctx, query) {
+      return events
+        .filter(
+          ctx,
+          (e) =>
+            e.jobId === query.jobId &&
+            e.name === query.name &&
+            (query.afterId === undefined || e.id > query.afterId),
+        )
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+        .slice(0, query.limit ?? 500);
+    },
   };
 }

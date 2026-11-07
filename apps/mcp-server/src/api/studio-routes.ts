@@ -1,7 +1,7 @@
 import {
   assertPermission,
   FeedbackInput,
-  JOB_STATUSES,
+  jobAgent,
   PlannerSelection,
   PROJECT_STATUSES,
   RenderVersionInput,
@@ -9,15 +9,24 @@ import {
   StoryboardDecisionInput,
   WorkflowTemplateId,
 } from "@studix/core";
+import { StudixError } from "@studix/shared";
 import { packRegistry } from "@studix/skills";
-import { AspectRatio, LanguageTag } from "@studix/video-ir";
+import { AspectRatio, LanguageTag, RenderPreset } from "@studix/video-ir";
 import { Router } from "express";
 import { z } from "zod";
+import {
+  AgentInput,
+  AgentRolesInput,
+  resolveAgentRoles,
+  resolveAgentSelection,
+} from "../agent-model-selection.ts";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, playbackForRender, signRender } from "../artifact-urls.ts";
+import { withMediaExecUrls } from "../mcp/media-exec-tool.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { idParam, parseBody, sessionOf } from "./api-context.ts";
+import { parseJobListQuery } from "./job-list-params.ts";
 
 const PageQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -40,7 +49,10 @@ const CreateVideoBody = z
       .regex(/^[A-Za-z0-9._:-]{1,200}$/)
       .optional(),
     planner: PlannerSelection.optional(),
+    agent: AgentInput.optional(),
+    roles: AgentRolesInput.optional(),
     workflowTemplate: WorkflowTemplateId.optional(),
+    renderPreset: RenderPreset.optional(),
   })
   .strict();
 
@@ -94,11 +106,22 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     res.json(await deps.studio.listProjects(ctx, query));
   });
 
+  // The packs a create request may name as workflowTemplate, for the dashboard's pack picker.
+  router.get("/workflow-packs", (_req, res) => {
+    res.json({ packs: packRegistry.packs().map((p) => ({ id: p.id, title: p.title })) });
+  });
+
   router.post("/projects", async (req, res) => {
     const { ctx } = sessionOf(res);
     const body = parseBody(CreateVideoBody, req.body, "video request");
     const pack = resolveWorkflowPack(packRegistry, body.workflowTemplate);
-    await assertPlannerSelection(deps, ctx, body.planner);
+    const planner =
+      body.agent?.runtime === "claude"
+        ? { runtime: "claude" as const, providerConnectionId: body.agent.providerConnectionId }
+        : body.planner;
+    await assertPlannerSelection(deps, ctx, planner);
+    const agent = body.agent ? await resolveAgentSelection(deps, ctx, body.agent) : undefined;
+    const roles = await resolveAgentRoles(deps, ctx, body.roles);
     const result = await deps.studio.createVideoProject(ctx, {
       brief: {
         prompt: body.prompt,
@@ -111,6 +134,9 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       idempotencyKey: body.idempotencyKey,
       planner: body.planner,
       workflowTemplate: pack.id,
+      ...(body.renderPreset ? { renderPreset: body.renderPreset } : {}),
+      ...(agent ? { agent } : {}),
+      ...(roles ? { roles } : {}),
     });
     await deps.activity?.record(ctx, {
       name: "dashboard.create_video",
@@ -124,6 +150,20 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     const { ctx } = sessionOf(res);
     const details = await deps.studio.getProject(ctx, idParam(req, "projectId"));
     res.json(await projectView(artifacts, ctx, details, { includeIr: req.query.includeIr === "true" }));
+  });
+
+  // One stored image of a review note (n = 0 is its snapshot), so the review page stays small.
+  router.get("/projects/:projectId/feedback/:feedbackId/image/:n", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    const url = await deps.studio.getFeedbackImage(
+      ctx,
+      idParam(req, "projectId"),
+      idParam(req, "feedbackId"),
+      Number(req.params.n),
+    );
+    const match = url?.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+    if (!match) throw new StudixError("NOT_FOUND", "No such feedback image");
+    res.set("Cache-Control", "private, max-age=86400").type(match[1]!).send(Buffer.from(match[2]!, "base64"));
   });
 
   router.get("/projects/:projectId/review", async (req, res) => {
@@ -172,25 +212,15 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
   router.get("/jobs", async (req, res) => {
     const { ctx } = sessionOf(res);
     assertPermission(ctx, "project:read");
-    const query = parseBody(
-      PageQuery.extend({
-        status: z.enum(JOB_STATUSES).optional(),
-        projectId: z
-          .string()
-          .regex(/^[A-Za-z0-9_-]{1,100}$/)
-          .optional(),
-      }),
-      req.query,
-      "query",
-    );
-    res.json(await deps.repos.jobs.list(ctx, query));
+    const page = await deps.repos.jobs.list(ctx, parseJobListQuery(req.query));
+    res.json({ ...page, items: page.items.map((job) => ({ ...job, agent: jobAgent(job) })) });
   });
 
   router.get("/jobs/:jobId", async (req, res) => {
     const { ctx } = sessionOf(res);
     const job = await deps.studio.getJob(ctx, idParam(req, "jobId"));
     const [view, activity] = await Promise.all([
-      jobWithVideo(artifacts, ctx, job),
+      withMediaExecUrls(artifacts, ctx, job).then((j) => jobWithVideo(artifacts, ctx, j)),
       deps.repos.activity.list(ctx, { jobId: job.id, limit: 100 }),
     ]);
     res.json({ job: view, activity: activity.items });

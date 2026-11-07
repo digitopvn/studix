@@ -1,0 +1,36 @@
+{
+  "id": "sound",
+  "version": "1.0.1",
+  "title": "Sound design",
+  "purpose": "Design sound as part of the story: a room tone for every space, Foley that fits the material, motifs that recur, cuts that lead or trail the picture, and silence used on purpose.",
+  "load_when": ["sound", "foley", "sfx", "music", "mix", "room tone", "silence", "motif", "audio"],
+  "use_cases": [
+    "Giving every scene a room tone (the bed under dialogue) so cuts do not drop to digital silence.",
+    "Choosing Foley by material and size: boots on wet stone, a small cup on wood, cloth against armour.",
+    "Leading a scene change with sound (J cut) or letting the old scene's sound trail (L cut).",
+    "Placing a motif (a theme, a sound tied to a character or object) and bringing it back when the story calls it back.",
+    "Dropping music and ambience to silence before a key line or hit, then bringing them back."
+  ],
+  "anti_patterns": [
+    "Hard cuts in sound on every picture cut; the edit feels choppy.",
+    "One generic footstep sample for every surface and every character.",
+    "Music under every second, so nothing has room and the mix is tiring.",
+    "Reverb that does not match the space (a small room with a cathedral tail).",
+    "A motif used once and never returned to."
+  ],
+  "tool_roles": ["sound designer (SFX, Foley, V2A)", "music", "mixer", "QA reviewer (audio-only pass)"],
+  "checks": [
+    {"id": "sound.room-tone", "level": "scene", "kind": "hard", "fn": "room-tone",
+     "measure": "filmspec scene has a `room_tone`", "pass": "every scene"},
+    {"id": "sound.cut-kind", "level": "shot", "kind": "hard", "fn": "sound-cut",
+     "measure": "sound.cut (the cut INTO this shot) is J, L or straight when set", "pass": "0 failures"},
+    {"id": "sound.loudness", "level": "episode", "kind": "evidence", "tool": "loudness",
+     "measure": "integrated loudness and true peak of the master", "pass": "within the delivery target"},
+    {"id": "sound.audio-only", "level": "scene", "kind": "evidence",
+     "measure": "reviewer listens without picture and writes what happens", "pass": "the scene's change is audible"},
+    {"id": "sound.signoff", "level": "episode", "kind": "human",
+     "measure": "the user approves the mix", "pass": "user approves"}
+  ],
+  "spec_fields": {"scene": ["room_tone", "motif"], "shot": ["sound.cut", "sound.sync"]},
+  "references": ["references/audio-voice-and-mix.md", "references/action-sound-from-references.md"]
+}

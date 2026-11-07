@@ -1,0 +1,56 @@
+{
+  "shot_id": "S02_SH003",
+  "scene_id": "S02",
+  "shot_type": "reaction",
+  "lens": "85mm",
+  "camera": "static",
+  "action": "Linh listens, jaw tight, a slow blink.",
+  "emotion": "hurt held back",
+  "duration_target": 4,
+  "characters": [
+    "LINH_01"
+  ],
+  "location": "CAFE_INTERIOR_01",
+  "wardrobe": {
+    "LINH_01": "LINH_KNIT_01"
+  },
+  "props": [],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "CHAR_LINH_FRONT",
+    "CHAR_LINH_3QR",
+    "WARDROBE_LINH_KNIT_01",
+    "CHAR_LINH_HURT",
+    "LOC_CAFE_TABLE"
+  ],
+  "continuity_from": "S02_SH002",
+  "continuity_to": "S02_SH004",
+  "continuity": {
+    "screen_positions": {
+      "LINH_01": "center"
+    },
+    "prop_states": {},
+    "conditions": {},
+    "screen_direction": "static"
+  },
+  "render_class": "STANDARD",
+  "retry_budget": 2,
+  "estimate": {
+    "generation_seconds": 8,
+    "cost": {
+      "amount": 2.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "APPROVED_FRAME",
+  "storyboard": {
+    "path": "storyboard/S02_SH003.png",
+    "status": "approved"
+  },
+  "keyframe": {
+    "path": "scenes/S02/shots/S02_SH003/approved/keyframe.png",
+    "status": "approved"
+  }
+}

@@ -26,6 +26,10 @@ export const JOB_KINDS = {
   createVideo: "video.create",
   render: "video.render",
   publish: "video.publish",
+  /** ffmpeg or ffprobe with raw arguments in the sandbox (studix_media_exec). */
+  mediaExec: "media.exec",
+  /** A shell command in the skill sandbox over a composition workspace (studix_composition_run). */
+  compositionRun: "composition.run",
 } as const;
 
 /**

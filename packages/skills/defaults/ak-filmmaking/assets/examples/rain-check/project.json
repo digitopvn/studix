@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "slug": "rain-check",
+  "title": "Rain Check",
+  "logline": "Two estranged friends meet in a rain-soaked cafe; the first three scenes of a 12-minute short.",
+  "target_duration_minutes": 12,
+  "budget_mode": "balanced",
+  "aspect_ratio": "16:9",
+  "fps": 24,
+  "currency": "USD",
+  "scenes": [
+    "S01",
+    "S02",
+    "S03"
+  ],
+  "animatic": {
+    "status": "approved",
+    "approved_at": "2026-10-05",
+    "notes": "Full-length animatic reviewed on master dialogue."
+  },
+  "style": {
+    "visual": "Naturalistic 35mm drama, soft practical light, rain-streaked glass, muted teal and amber palette.",
+    "negative": [
+      "No lens flares.",
+      "No slow-motion."
+    ]
+  }
+}

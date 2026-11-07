@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type OAuthConnection } from "../api-client.ts";
-import { Empty, ErrorBanner, formatDate, Link, Section, useAsync } from "../ui.tsx";
+import { Empty, ErrorBanner, formatDate, Section, useAsync } from "../ui.tsx";
 
 /** OAuth clients (MCP connectors) the user has authorized, per workspace, with revocation. */
 export function ConnectedAppsPage() {
@@ -29,49 +29,38 @@ export function ConnectedAppsPage() {
       <ErrorBanner error={error} />
       <ErrorBanner error={actionError} />
       {connections && connections.length === 0 && (
-        <Empty>
-          No apps connected yet. Claude, ChatGPT and other connectors that sign in with OAuth appear here once
-          you authorize them. For headless use, <Link to="/api-keys">API keys</Link> remain available.
-        </Empty>
+        <Empty>No apps yet. Claude, ChatGPT and Cursor show up here after you sign in from them.</Empty>
       )}
       {connections && connections.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>App</th>
-              <th>Workspace</th>
-              <th>Permissions</th>
-              <th>Connected</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {connections.map((c) => (
-              <tr key={c.id}>
-                <td>
-                  {c.clientName || c.clientId}
-                  {c.clientUri && <div className="muted mono">{c.clientUri}</div>}
-                </td>
-                <td>
-                  {c.organizationName} / {c.workspaceName}
-                </td>
-                <td className="mono">{c.scopes.join(" ")}</td>
-                <td>{formatDate(c.createdAt)}</td>
-                <td>
-                  <button
-                    type="button"
-                    className="danger small"
-                    disabled={revoking !== undefined}
-                    aria-label={`Revoke ${c.clientName || c.clientId}`}
-                    onClick={() => void revoke(c)}
-                  >
-                    {revoking === c.id ? "Revoking..." : "Revoke"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <ul className="key-list">
+          {connections.map((c) => (
+            <li key={c.id} className="key-row">
+              <div className="key-main">
+                <div className="key-title">
+                  <strong>{c.clientName || c.clientId}</strong>
+                </div>
+                <div className="key-meta">
+                  <span>
+                    {c.organizationName} / {c.workspaceName}
+                  </span>
+                  <span>Connected {formatDate(c.createdAt)}</span>
+                  <span className="mono">{c.scopes.join(" ")}</span>
+                </div>
+              </div>
+              <div className="key-actions">
+                <button
+                  type="button"
+                  className="ghost-danger small"
+                  disabled={revoking !== undefined}
+                  aria-label={`Revoke ${c.clientName || c.clientId}`}
+                  onClick={() => void revoke(c)}
+                >
+                  {revoking === c.id ? "Revoking..." : "Revoke"}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </Section>
   );

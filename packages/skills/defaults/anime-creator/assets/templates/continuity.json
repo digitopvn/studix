@@ -1,0 +1,38 @@
+{
+  "updated": "",
+  "after_episode": "",
+  "state": {
+    "taoyao.sword": "in her right hand, sheathed at the start of ep01",
+    "lingxiao.injury": "none",
+    "time_of_day": "golden afternoon",
+    "weather": "petals falling"
+  },
+  "open_threads": [],
+  "history": [],
+  "shots": {
+    "_note": "per-shot state keyed <episode>/<scene>/<shot>. Flat map = same state before and after (legacy). Or {state_before, state_after (only what changes), invariants [\"key=value\"], changes {key: why it changes on screen}, overrides [{key, reason, reviewer}]}. context-pack prints it; `anime-studio.py continuity <episode> <scene>` checks every cut: definite / suspected / allowed",
+    "ep01/sc02/s04": {
+      "lingxiao.robe": "torn left sleeve (from sc01 s09)",
+      "taoyao.sword": "drawn, right hand"
+    },
+    "ep01/sc02/s05": {
+      "lingxiao.robe": "torn left sleeve",
+      "taoyao.sword": "drawn, right hand"
+    },
+    "ep01/sc02/s06": {
+      "state_before": {
+        "lingxiao.robe": "torn left sleeve",
+        "taoyao.sword": "drawn, right hand"
+      },
+      "state_after": {
+        "taoyao.sword": "sheathed"
+      },
+      "invariants": [
+        "taoyao.hand=right"
+      ],
+      "changes": {
+        "taoyao.sword": "she sheathes it on screen at 1.2 s"
+      }
+    }
+  }
+}

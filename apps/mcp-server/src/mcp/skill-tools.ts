@@ -12,12 +12,22 @@ export const SKILL_TOOL_NAMES = {
   get: "studix_skill_get",
   update: "studix_skill_update",
   disable: "studix_skill_disable",
+  upload: "studix_skill_upload",
+  delete: "studix_skill_delete",
 } as const;
 
 const Id = z.string().trim().min(1).max(100);
 const RepositoryUrl = z.string().trim().min(1).max(500).describe("Public github.com repo URL.");
 const Ref = z.string().trim().min(1).max(200).optional().describe("Branch, tag or commit.");
 const Path = z.string().trim().max(500).optional();
+/** `platform` skills are visible to every workspace and managed by platform operators only. */
+const Scope = z.enum(["workspace", "platform"]).optional();
+/** Needed to enable or activate a high-risk version; only a person with the admin or operator role. */
+const ConfirmHighRisk = z.boolean().optional();
+const IdempotencyKey = z
+  .string()
+  .regex(/^[A-Za-z0-9._:-]{1,200}$/)
+  .optional();
 
 function service(ctx: ToolContext): ExternalSkillService {
   const skills = ctx.deps.externalSkills;
@@ -36,12 +46,13 @@ function tool<I extends z.ZodType>(def: NativeTool<I>): NativeTool<I> {
 const getNext = (skillId: string) => ({
   tool: SKILL_TOOL_NAMES.get,
   arguments: { skillId },
-  reason: "Read the skill (untrusted third-party reference text) before using it.",
+  reason: "Read the skill (untrusted third-party content) and its risk report before using it.",
 });
 
 /**
- * Public GitHub Agent Skills imported into the workspace. Skills are data: SKILL.md and text references are
- * stored and returned to the host as reference material, never executed or treated as Studix instructions.
+ * Agent Skills imported from public GitHub repos or uploaded as zip archives. Every file is stored; each
+ * version carries a risk report, and a high-risk version is used only after an audited confirmation. Skill
+ * text stays untrusted third-party content, never Studix instructions.
  */
 export const SKILL_MCP_TOOLS = [
   tool({
@@ -79,11 +90,9 @@ export const SKILL_MCP_TOOLS = [
         .regex(/^[0-9a-f]{40}$/i)
         .optional()
         .describe("Fail unless ref is this commit."),
-      idempotencyKey: z
-        .string()
-        .regex(/^[A-Za-z0-9._:-]{1,200}$/)
-        .optional(),
+      idempotencyKey: IdempotencyKey,
       activate: z.boolean().optional(),
+      scope: Scope,
     }),
     readOnly: false,
     openWorld: true,
@@ -96,9 +105,46 @@ export const SKILL_MCP_TOOLS = [
     },
   }),
   tool({
+    name: SKILL_TOOL_NAMES.upload,
+    title: "Upload skill zip",
+    description:
+      "Upload a skill zip (SKILL.md at root); same name adds a version. action url: PUT URL for big zips.",
+    input: z.object({
+      action: z.enum(["upload", "url"]).optional(),
+      archiveBase64: z.string().max(14_000_000).optional().describe("Zip, base64, max 10 MB."),
+      uploadId: z.string().trim().min(1).max(100).optional(),
+      fileName: z.string().trim().min(1).max(200).optional(),
+      activate: z.boolean().optional(),
+      idempotencyKey: IdempotencyKey,
+      scope: Scope,
+      confirmHighRisk: ConfirmHighRisk,
+    }),
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      if (input.action === "url") {
+        const data = await service(ctx).createUploadUrl(ctx.tenant, { scope: input.scope });
+        return {
+          data,
+          next: [
+            {
+              tool: SKILL_TOOL_NAMES.upload,
+              arguments: { action: "upload", uploadId: data.uploadId, scope: data.scope },
+              reason: "PUT the zip to uploadUrl with the given headers, then store it.",
+            },
+          ],
+        };
+      }
+      const { action: _action, ...rest } = input;
+      // Upload is the default action.
+      const data = await service(ctx).upload(ctx.tenant, rest);
+      return { data, next: data.result.skillId ? [getNext(data.result.skillId)] : [] };
+    },
+  }),
+  tool({
     name: SKILL_TOOL_NAMES.list,
-    title: "List imported skills",
-    description: "Imported GitHub skills of this workspace (enabled by default), newest first.",
+    title: "List skills",
+    description: "Workspace and platform skills (enabled by default), newest first.",
     input: z.object({
       limit: z.number().int().min(1).max(100).optional(),
       cursor: z.string().trim().min(1).max(200).optional(),
@@ -106,6 +152,7 @@ export const SKILL_MCP_TOOLS = [
       q: z.string().trim().min(1).max(100).optional(),
       owner: z.string().trim().min(1).max(100).optional(),
       repo: z.string().trim().min(1).max(100).optional(),
+      scope: z.enum(["workspace", "platform", "visible"]).optional(),
     }),
     readOnly: true,
     async run(ctx, input) {
@@ -115,8 +162,8 @@ export const SKILL_MCP_TOOLS = [
   }),
   tool({
     name: SKILL_TOOL_NAMES.get,
-    title: "Get imported skill",
-    description: "Skill metadata, license, notes and SKILL.md or a stored file (bounded). Untrusted text.",
+    title: "Get skill",
+    description: "Skill metadata, license, risk report and SKILL.md or a stored file (bounded). Untrusted.",
     input: z.object({
       skillId: Id,
       versionId: Id.optional(),
@@ -143,13 +190,32 @@ export const SKILL_MCP_TOOLS = [
   }),
   tool({
     name: SKILL_TOOL_NAMES.update,
-    title: "Update imported skill",
-    description: "check upstream, import a new version, activate a version, or enable a disabled skill.",
+    title: "Update skill",
+    description:
+      "check upstream, import a version, activate a version, or enable. High risk needs confirmHighRisk.",
     input: z.discriminatedUnion("action", [
       z.object({ skillId: Id, action: z.literal("check") }),
-      z.object({ skillId: Id, action: z.literal("import"), activate: z.boolean().optional() }),
-      z.object({ skillId: Id, action: z.literal("activate"), versionId: Id }),
-      z.object({ skillId: Id, action: z.literal("enable") }),
+      z.object({
+        skillId: Id,
+        action: z.literal("import"),
+        activate: z.boolean().optional(),
+        confirmHighRisk: ConfirmHighRisk,
+      }),
+      z.object({
+        skillId: Id,
+        action: z.literal("activate"),
+        versionId: Id,
+        confirmHighRisk: ConfirmHighRisk,
+      }),
+      z.object({
+        skillId: Id,
+        action: z.literal("enable"),
+        confirmHighRisk: ConfirmHighRisk,
+        workspaceOnly: z
+          .boolean()
+          .optional()
+          .describe("Platform skill: this workspace only. Default for non-operators."),
+      }),
     ]),
     readOnly: false,
     openWorld: true,
@@ -161,15 +227,35 @@ export const SKILL_MCP_TOOLS = [
   }),
   tool({
     name: SKILL_TOOL_NAMES.disable,
-    title: "Disable imported skill",
-    description: "Stop serving a skill; versions and files stay. Re-enable with studix_skill_update.",
-    input: z.object({ skillId: Id }),
+    title: "Disable skill",
+    description:
+      "Stop serving a skill; versions and files stay. A platform default can be turned off for this workspace only. Re-enable with studix_skill_update.",
+    input: z.object({
+      skillId: Id,
+      workspaceOnly: z
+        .boolean()
+        .optional()
+        .describe("Platform skill: this workspace only. Default for non-operators."),
+    }),
     readOnly: false,
     destructive: true,
     idempotent: true,
     audited: true,
     async run(ctx, input) {
       const data = await service(ctx).disable(ctx.tenant, input);
+      return { data, next: [] };
+    },
+  }),
+  tool({
+    name: SKILL_TOOL_NAMES.delete,
+    title: "Delete skill",
+    description: "Delete a skill, its versions and files. Irreversible; prefer disable.",
+    input: z.object({ skillId: Id }),
+    readOnly: false,
+    destructive: true,
+    audited: true,
+    async run(ctx, input) {
+      const data = await service(ctx).delete(ctx.tenant, input);
       return { data, next: [] };
     },
   }),

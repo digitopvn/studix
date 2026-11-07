@@ -1,0 +1,26 @@
+{
+  "note": "One line per pack. Load a pack with `anime-studio.py knowledge show <id> [--section checks]`, or find one with `knowledge for <task words>`.",
+  "packs": [
+    {"id": "narrative", "version": "1.0.0", "file": "packs/narrative.json",
+     "summary": "causality, want and stakes, setup and payoff, twists, arcs; what each scene changes",
+     "load_when": ["story", "beat", "twist", "setup", "payoff", "arc", "script", "plot", "easter egg"]},
+    {"id": "performance", "version": "1.0.1", "file": "packs/performance.json",
+     "summary": "surface vs hidden emotion, micro-behaviour, gaze, pauses, posture, voice intention",
+     "load_when": ["acting", "performance", "emotion", "expression", "gaze", "subtext", "voice", "dialogue", "lipsync"]},
+    {"id": "art-direction", "version": "1.0.1", "file": "packs/art-direction.json",
+     "summary": "a registry of looks with tokens, palette, risks, camera fit and when not to use them",
+     "load_when": ["style", "look", "palette", "art direction", "sheet", "design", "grade", "render style"]},
+    {"id": "dop-camera", "version": "1.0.1", "file": "packs/dop-camera.json",
+     "summary": "visual intent, shot size, lens, height, motivated moves, blocking, the 180-degree line, light ratio",
+     "load_when": ["camera", "lens", "framing", "composition", "blocking", "keyframe", "shot", "angle", "lighting", "previz"]},
+    {"id": "wardrobe-props", "version": "1.0.0", "file": "packs/wardrobe-props.json",
+     "summary": "wardrobe states, materials, wear and damage, props and set dressing, events that change them",
+     "load_when": ["wardrobe", "costume", "outfit", "prop", "set dressing", "material", "damage", "wet"]},
+    {"id": "physics-lite", "version": "1.0.0", "file": "packs/physics-lite.json",
+     "summary": "weight, contact, collisions, fire, water, smoke and light responses; justified stylised exceptions",
+     "load_when": ["physics", "fight", "action", "impact", "fire", "water", "smoke", "weather", "fx", "collision"]},
+    {"id": "sound", "version": "1.0.1", "file": "packs/sound.json",
+     "summary": "room tone, material-aware Foley, motifs, J and L cuts, silence, spatial acoustics",
+     "load_when": ["sound", "foley", "sfx", "music", "mix", "room tone", "silence", "motif", "audio"]}
+  ]
+}

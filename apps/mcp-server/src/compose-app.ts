@@ -4,27 +4,35 @@ import { createPiKeyTester, findPiModel, isRuntimeKeyProvider } from "@studix/ag
 import {
   createAnthropicKeyTester,
   createApiKeyService,
+  createChatGptAuthClient,
   createDashboardAuth,
   createModelPreferenceService,
   createPlatformCredentialService,
   createProviderConnectionService,
   createSecretBox,
+  createStorageProfileService,
   createVendorKeyTester,
   createWorkspaceFeatureService,
   liveStorageCredentials,
   parseSecretKey,
   routeKeyTester,
   STORAGE_KEY_NAMES,
+  type StorageProfileCandidate,
   withSelfHostedSecretsKey,
 } from "@studix/auth";
-import { createDefaultApprovalPolicy, StudioService } from "@studix/core";
+import {
+  createCompositionService,
+  createDefaultApprovalPolicy,
+  createMediaExecService,
+  StudioService,
+} from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
 import {
   createMultixProviderFromConfig,
   createWorkspaceMultixProviders,
-  MULTIX_VENDOR_KEYS,
-  MULTIX_VENDORS,
+  MULTIX_KEY_NAMES,
+  MULTIX_KEY_SLOTS,
 } from "@studix/providers";
 import {
   allowedHosts,
@@ -39,12 +47,20 @@ import {
   systemClock,
 } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
-import { createS3StorageAdapterFromConfig, type S3Credentials } from "@studix/storage";
+import {
+  assertKeyPrefix,
+  assertSafeStorageEndpoint,
+  createS3StorageAdapterFromConfig,
+  type S3Credentials,
+  S3StorageAdapter,
+  storageProfileOptions,
+} from "@studix/storage";
 import type { Express } from "express";
 import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
+import { createJobWebhookService } from "./job-webhooks.ts";
 import { platformAuditContext } from "./platform-audit-context.ts";
 import { createPlatformSettingsService, fetchWorkerMedia } from "./platform-settings.ts";
 import type {
@@ -54,6 +70,7 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
+import { seedDefaultSkills } from "./seed-default-skills.ts";
 import { createWorkspaceMultixApi } from "./workspace-multix.ts";
 
 /** App-role settings that are not part of the shared config schema. */
@@ -166,7 +183,7 @@ export async function composeApp(
     credentials: repos.platformCredentials,
     audit: repos.audit,
     secrets: secretBox,
-    allowedNames: MULTIX_VENDORS.map((vendor) => MULTIX_VENDOR_KEYS[vendor]),
+    allowedNames: Object.values(MULTIX_KEY_NAMES),
     env,
     logger,
     ...(auditContext ? { auditContext } : {}),
@@ -183,6 +200,27 @@ export async function composeApp(
         ...(auditContext ? { auditContext } : {}),
       })
     : undefined;
+  // Storage profiles an operator manages from the dashboard; the worker reads the same rows.
+  const storageProfiles = secretBox
+    ? createStorageProfileService({
+        profiles: repos.storageProfiles,
+        audit: repos.audit,
+        secrets: secretBox,
+        checkEndpoint: (endpoint, providerType) =>
+          assertSafeStorageEndpoint(endpoint, providerType, {
+            allowLocal: config.STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS,
+          }),
+        checkKeyPrefix: assertKeyPrefix,
+        environment: {
+          ...(config.S3_ENDPOINT ? { endpoint: config.S3_ENDPOINT } : {}),
+          ...(config.S3_BUCKET ? { bucket: config.S3_BUCKET } : {}),
+          region: config.S3_REGION,
+          forcePathStyle: config.S3_FORCE_PATH_STYLE,
+        },
+        logger,
+        ...(auditContext ? { auditContext } : {}),
+      })
+    : undefined;
   const integrations = composeIntegrations({
     env,
     config,
@@ -190,6 +228,8 @@ export async function composeApp(
     approvalPolicy,
     activity,
     logger,
+    ...(storageProfiles ? { storageProfiles } : {}),
+    ...(auditContext ? { platformContext: auditContext } : {}),
     ...(storageCredentials && secretBox
       ? { storageCredentials: liveStorageCredentials(storageCredentials, config) }
       : {}),
@@ -236,6 +276,7 @@ export async function composeApp(
       claudeSubscription: config.STUDIX_CLAUDE_SUBSCRIPTION,
     },
   });
+  const vendorTester = createVendorKeyTester();
   const providers = createProviderConnectionService({
     connections: repos.providerConnections,
     audit: repos.audit,
@@ -245,9 +286,12 @@ export async function composeApp(
       createPiKeyTester(),
     ),
     isSupportedProvider: isRuntimeKeyProvider,
+    chatgpt: createChatGptAuthClient(),
     secrets: secretBox,
     claudeSubscription: async (ctx) => (await features.effective(ctx)).claudeSubscription,
-    mediaKeyNames: MULTIX_VENDOR_KEYS,
+    mediaKeyNames: MULTIX_KEY_NAMES,
+    mediaKeyLabels: Object.fromEntries(MULTIX_KEY_SLOTS.map((slot) => [slot.id, slot.name])),
+    mediaKeyTester: vendorTester,
     logger,
   });
   if (!config.STUDIX_SECRETS_KEY)
@@ -292,7 +336,30 @@ export async function composeApp(
       ...(overrides.readiness ?? []),
     ],
     skills: overrides.skills ?? integrations.skills,
+    jobChanges: repos.jobChanges,
+    webhooks: createJobWebhookService({
+      repo: repos.workspaceWebhooks,
+      secrets: secretBox,
+      logger,
+      allowLocal: config.STUDIX_WEBHOOK_ALLOW_LOCAL,
+    }),
     agentHandoffs: integrations.agentHandoffs,
+    mediaExec: createMediaExecService({
+      queue: repos.queue,
+      assets: repos.assets,
+      audit: repos.audit,
+      defaults: { jobBudgetCents: config.DEFAULT_JOB_BUDGET_CENTS },
+    }),
+    ...(integrations.storage
+      ? {
+          compositions: createCompositionService({
+            storage: integrations.storage,
+            queue: repos.queue,
+            audit: repos.audit,
+            defaults: { jobBudgetCents: config.DEFAULT_JOB_BUDGET_CENTS },
+          }),
+        }
+      : {}),
     externalSkills: overrides.externalSkills ?? integrations.externalSkills,
     platform: createPlatformSettingsService({
       config,
@@ -312,7 +379,27 @@ export async function composeApp(
             },
           }
         : {}),
-      vendorTester: createVendorKeyTester(),
+      ...(storageProfiles
+        ? {
+            profiles: storageProfiles,
+            probeProfile: async (candidate: StorageProfileCandidate) => {
+              const probe = new S3StorageAdapter(
+                storageProfileOptions(candidate, {
+                  policy: { allowLocal: config.STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS },
+                }),
+              );
+              try {
+                return await probe.probeWrite();
+              } finally {
+                probe.destroy();
+              }
+            },
+            profilesChanged: async () => {
+              await integrations.storage?.refresh();
+            },
+          }
+        : {}),
+      vendorTester,
       env,
       ...(appEnv.STUDIX_WORKER_HEALTH_URL
         ? { worker: { media: () => fetchWorkerMedia(appEnv.STUDIX_WORKER_HEALTH_URL as string) } }
@@ -323,6 +410,10 @@ export async function composeApp(
       repository: repos.workspaceMultixSettings,
       audit: repos.audit,
       env,
+      workspaceKeySlots: async (ctx) =>
+        (await providers.listMediaKeys(ctx)).keys
+          .filter((k) => k.source === "workspace")
+          .map((k) => k.vendor),
       // The dashboard's check runs with the platform keys only, like the capability probe jobs use.
       providers: createWorkspaceMultixProviders({
         config,
@@ -331,7 +422,9 @@ export async function composeApp(
       }),
     }),
     dashboardDist: appEnv.STUDIX_DASHBOARD_DIST ?? DEFAULT_DASHBOARD_DIST,
-    mediaOrigins: storageMediaOrigins(config),
+    mediaOrigins: integrations.storage
+      ? () => integrations.storage?.mediaOrigins() ?? []
+      : storageMediaOrigins(config),
     trustProxy: appEnv.STUDIX_TRUST_PROXY,
     rateLimitStore: repos.rateLimits,
   };
@@ -349,6 +442,16 @@ export async function composeApp(
           s3Code: probe.s3Code,
         });
       }
+    });
+  }
+  if (deps.storage) {
+    void seedDefaultSkills({
+      platformWorkspaceId: config.STUDIX_PLATFORM_WORKSPACE_ID,
+      directory: repos.directory,
+      skills: deps.externalSkills,
+      logger,
+    }).catch((error: unknown) => {
+      if (!closed) logger.error("default skills seed failed", { error: String(error) });
     });
   }
 

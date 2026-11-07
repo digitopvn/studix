@@ -1,0 +1,17 @@
+name: youtube
+version: "1.0.0"
+description: VidCap.xyz API client for YouTube video processing — info, captions, summaries, downloads.
+
+# Declarative runtime block interpreted by the `ak` skill-env manager.
+# Behavior unchanged for users without the AGENTKIT_SKILL_RUNTIME=1 flag;
+# users with the flag get an isolated venv at ~/.agentkit/cache/<hash>/venv
+# instead of relying on a system-wide pip install.
+runtime:
+  python:
+    version: ">=3.10"
+    packages:
+      - "requests==2.31.0"
+      - "python-dotenv==1.0.1"
+
+entrypoint:
+  python: scripts/vidcap.py

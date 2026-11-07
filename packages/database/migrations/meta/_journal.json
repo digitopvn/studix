@@ -190,6 +190,48 @@
       "when": 1794021265397,
       "tag": "0026_motionless_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794026726301,
+      "tag": "0027_silent_angel",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794028305745,
+      "tag": "0028_next_rictor",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794032021531,
+      "tag": "0029_nifty_zzzax",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794036858177,
+      "tag": "0030_little_martin_li",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794037755605,
+      "tag": "0031_ancient_trish_tilby",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794041674928,
+      "tag": "0032_majestic_reptil",
+      "breakpoints": true
     }
   ]
 }

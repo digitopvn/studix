@@ -1,6 +1,7 @@
 import type { NewRecord } from "../entities/common.ts";
 import type { Job, JobStatus, Render, Stage, WorkflowRun } from "../entities/job.ts";
 import type { TenantContext } from "../tenant.ts";
+import type { JobListQuery } from "./job-list-query.ts";
 import type { Page, PageRequest } from "./pagination.ts";
 
 export type JobPatch = Partial<
@@ -34,10 +35,8 @@ export interface JobUpdateOptions {
 export interface JobRepository {
   get(ctx: TenantContext, id: string): Promise<Job | undefined>;
   findByIdempotencyKey(ctx: TenantContext, idempotencyKey: string): Promise<Job | undefined>;
-  list(
-    ctx: TenantContext,
-    query?: PageRequest & { projectId?: string; status?: JobStatus },
-  ): Promise<Page<Job>>;
+  /** Tenant-scoped page, newest created first unless `sort`/`order` say otherwise. */
+  list(ctx: TenantContext, query?: JobListQuery): Promise<Page<Job>>;
   update(ctx: TenantContext, id: string, patch: JobPatch, options?: JobUpdateOptions): Promise<Job>;
   /** Insert or update the stage row identified by (jobId, name, attempt). */
   upsertStage(ctx: TenantContext, stage: Omit<NewRecord<Stage>, "id">): Promise<Stage>;

@@ -58,21 +58,22 @@ Rules:
 
 ### Error codes
 
-| Code                | Meaning                                                              | Typical retryable |
-| ------------------- | -------------------------------------------------------------------- | ----------------- |
-| `VALIDATION`        | Input failed schema or business validation                           | no                |
-| `NOT_FOUND`         | Resource absent in this workspace (also used for other tenants' ids) | no                |
-| `UNAUTHENTICATED`   | Missing, unknown or revoked API key                                  | no                |
-| `FORBIDDEN`         | Key or grant lacks permission; denied connector tool                 | no                |
-| `CONFLICT`          | Idempotency or version conflict                                      | no                |
-| `BUDGET_EXCEEDED`   | Job or workspace budget would be exceeded                            | no                |
-| `TIMEOUT`           | Operation exceeded its deadline                                      | yes               |
-| `CANCELLED`         | Job or call was cancelled                                            | no                |
-| `RATE_LIMITED`      | Workspace or upstream rate limit                                     | yes               |
-| `PROVIDER_ERROR`    | Model, media or downstream MCP provider failed                       | depends           |
-| `UNAVAILABLE`       | Dependency temporarily unavailable                                   | yes               |
-| `APPROVAL_REQUIRED` | Action needs a recorded human approval                               | no                |
-| `INTERNAL`          | Unexpected server error; quote `traceId`                             | depends           |
+| Code                  | Meaning                                                                   | Typical retryable |
+| --------------------- | ------------------------------------------------------------------------- | ----------------- |
+| `VALIDATION`          | Input failed schema or business validation                                | no                |
+| `NOT_FOUND`           | Resource absent in this workspace (also used for other tenants' ids)      | no                |
+| `UNAUTHENTICATED`     | Missing, unknown or revoked API key                                       | no                |
+| `FORBIDDEN`           | Key or grant lacks permission; denied connector tool                      | no                |
+| `CONFLICT`            | Idempotency or version conflict                                           | no                |
+| `BUDGET_EXCEEDED`     | Job or workspace budget would be exceeded                                 | no                |
+| `TIMEOUT`             | Operation exceeded its deadline                                           | yes               |
+| `CANCELLED`           | Job or call was cancelled                                                 | no                |
+| `RATE_LIMITED`        | Workspace or upstream rate limit; out of quota or credit is not retryable | yes, except quota |
+| `PROVIDER_OVERLOADED` | Upstream model provider overloaded after Studix backed off                | yes               |
+| `PROVIDER_ERROR`      | Model, media or downstream MCP provider failed                            | depends           |
+| `UNAVAILABLE`         | Dependency temporarily unavailable                                        | yes               |
+| `APPROVAL_REQUIRED`   | Action needs a recorded human approval                                    | no                |
+| `INTERNAL`            | Unexpected server error; quote `traceId`                                  | depends           |
 
 The union is `ErrorCode` in `packages/shared`; the `retryable` column is a
 guide, the per-error value is authoritative.
@@ -83,7 +84,8 @@ guide, the per-error value is authoritative.
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `studix_inspect`          | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first.                                                                                    |
 | `studix_create_video`     | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly.                     |
-| `studix_get_job`          | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                                                |
+| `studix_get_job`          | Job stage, progress, recommended next action, and signed preview/final URLs when ready. `waitSeconds` (max 50) holds the call until the status changes, with progress notifications (see [Job notifications](#job-notifications)).                     |
+| `studix_webhook`          | Get, set or delete the workspace job webhook (see [Job notifications](#job-notifications)). Setting needs owner or admin.                                                                                                                              |
 | `studix_get_project`      | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                                            |
 | `studix_cancel_job`       | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                                               |
 | `studix_retry_job`        | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                                                 |
@@ -109,9 +111,50 @@ Behavior notes:
   ([ADR-0003](decisions/0003-jev-decision-provider-adapter-and-routing-fallback.md)).
 - `studix_create_video` inputs: `prompt` or `brief` (one is required), `spec`,
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
-  past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
+  past it the job fails with `TIMEOUT`; without it a job gets 30 minutes, and a
+  `skill-agent` job gets 60 minutes counted from its first claim, so queue time
+  does not count), `renderPreset`, `planner`,
   `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
-  handoff tools below).
+  handoff tools below) and `agent`.
+- `agent: {runtime, providerConnectionId, model?, reasoningEffort?}` picks the
+  runtime of the job's agent stages: `pi`, `claude` or `codex`. The connection
+  must belong to the workspace (or be yours), be usable and be enabled for that
+  runtime; otherwise the call fails with `VALIDATION`, `FORBIDDEN` or
+  `NOT_FOUND`. `model` must be one the runtime runs on that connection: a Pi
+  catalog model of the connection's provider, a Codex model (`gpt-5.1` to
+  `gpt-5.5`, default `STUDIX_CODEX_MODEL`) or a `claude-*` id.
+  `reasoningEffort` is `off`, `minimal`, `low`, `medium`, `high` or `xhigh`
+  (Claude gets it as `--effort`, `minimal` as `low`, `off` as its default); a value
+  other than `off` on a model without reasoning support is `VALIDATION`. The
+  selection is stored on the job and in its model snapshot, so every attempt
+  runs the same runtime, model and effort, with no fallbacks.
+  `studix_list_agent_runtimes` lists the usable choices. `planner: {runtime:
+  "claude", providerConnectionId}` stays as an alias of a Claude `agent`.
+- A `codex` agent needs `STUDIX_SANDBOX=docker` on the worker: `codex exec`
+  runs inside the task's skill sandbox. A ChatGPT login is paid by the
+  subscription (cost 0); an OpenAI key is billed by OpenAI.
+- A `claude` agent runs a stage that asks for tools (the `skill-agent` pack's
+  run stage) with the Claude Code CLI inside the same sandbox, with its full
+  tool set and the stage's caps; other stages stay tool-less on the worker.
+- `skill-agent` output contract ([ADR-0022](decisions/0022-agentic-video-authoring.md)): 1080p at the
+  brief's aspect ratio, duration within 0.5 s of the brief, audible voice-over, -16 LUFS +/-2 with
+  true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
+  each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
+- `roles: {director?, builder?, qa?}` (`skill-agent` only, each an `agent` object from any catalogue
+  runtime and model, e.g. `pi` + `deepseek-v4.1-flash` as builder): the director writes the script and
+  direction first; the builder makes the video (default: the job's `agent`); QA watches each render,
+  scores taste, motion, brief and audio 0-10 and sends it back with notes below 7, at most 3 rounds.
+  Scores land in the version metadata as `review` and on the job page
+  ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)).
+- A stage that finished on its template instead of its agent shows `stages[].fallback` with the
+  reason on `studix_get_job`; it is never silent.
+- Each stage on `studix_get_job` carries `stages[].run`, summed from its attempt's usage lines:
+  - `runtime`: `claude`, `codex` or `pi` for an agent run; `host` for the MCP client's own agent; `planner` for the legacy planner's model calls; `function` for plain code such as `brief`, `compose` or `finalize`.
+  - The `model`, `reasoningEffort` and `connectionLabel` it ran on.
+  - `costCents`, `inputTokens`, `outputTokens` and `turns`.
+  - A stage books its spend when it ends, so a running stage has no `run` yet. The dashboard shows the cost, tokens and turns the runtime streams (`GET /api/jobs/:jobId/events`) until then.
+  - Claude Code reports its cost only when the run ends.
+  - A connection is named by its label, never by its id or key.
 - Time spent parked is not counted against the deadline. While a job waits at a human gate
   (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
   is paused: what is left of it is kept and starts counting again when a worker
@@ -127,8 +170,10 @@ Behavior notes:
   (`studix_inspect` lists them under `skills`); it defaults to `brand-intro`.
   An unknown id fails with `VALIDATION` before anything is stored, with
   `error.details.available` listing the registered ids. Adding a pack needs
-  only `registerPack`; the server does not change. The Claude `planner` writes
-  the IR itself, so it is refused together with a non-default pack.
+  only `registerPack`; the server does not change. A Claude `planner` (or
+  `agent`) combines with any pack: the pack's pipeline runs and its agent stages
+  (for example the motion-graphic storyboard) run on that Claude connection and
+  model; with the default pack the Claude planner writes the IR.
 - `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
   entry (1 to 6), all sharing the brief's brand, language, format and length
   (default 20 s, 9:16). The create job writes the script, generates one
@@ -243,6 +288,20 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
 
 ### Feedback, render and storyboard approval
 
+- `studix_feedback` takes an optional `annotation` that pins a note to a
+  paused frame: `intent` (`change`, `fix`, `remove`, `add`, `keep`),
+  `priority` (`must`, `should`, `nice`), `frameMs`, and marks as fractions
+  (0 to 1) of the frame: `region`, up to 20 `pins`, up to 30 pen or arrow
+  `strokes` of 2 to 120 points, a PNG, JPEG or WebP `snapshot` data URL (at
+  most 100 000 characters) and up to 6 `references` (http(s) URLs, or image
+  data URLs of at most 30 000 characters). The dashboard review toolkit writes
+  these notes and keeps each request under the 256 KB API body limit.
+- `studix_get_project` with `includeFeedback: true` adds `feedback[]`, the
+  open notes on the current version. Images do not travel as base64 text:
+  each snapshot and attached reference image is an image content block, and
+  the note names it by content index (`snapshotImage`, `references[].image`;
+  index 0 is the text block). At most 8 images are returned; `imagesOmitted`
+  counts the rest. Pen strokes come back as their start, end and point count.
 - `studix_feedback` with no `patch` stores a comment and returns
   `allowedPaths`: the JSON pointers a patch for that target may touch (the
   shot, the scene with `/timeline`, the asset, the shots overlapping the time
@@ -298,6 +357,68 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
   `APPROVAL_REQUIRED`. A patch that changes a shot puts that shot, its scene
   and the storyboard back in review. "Rendered" never means "approved".
 
+### Review app (MCP Apps)
+
+`studix_create_video` and `studix_get_job` carry tool `_meta` that links them
+to the MCP App `ui://studix/review.html` (`_meta.ui.resourceUri` for MCP Apps
+hosts such as Claude, `openai/outputTemplate` for ChatGPT). The resource is
+served with MIME type `text/html;profile=mcp-app`, and its CSP allows media only
+from the storage origins. Hosts without MCP Apps ignore the `_meta` and show the
+JSON result as before.
+
+The app plays the newest render and shows the storyboard as a timeline and a
+shot list. The user pauses, optionally drags a region on the frame, and sends a
+note. The note becomes a `studix_feedback` call on the selected shot, or on the
+time range with `annotation: {frameMs, region}`. **Approve** calls
+`studix_approve` for a pending approval; an API key gets `FORBIDDEN`, and the
+app then opens `reviewUrl`, where a person approves the storyboard.
+**Re-render** calls `studix_render`. The app reads its data through
+`studix_review` `{projectId}`, which returns the storyboard, timeline, newest
+video and open notes. That tool has `_meta.ui.visibility: ["app"]`, so MCP
+Apps hosts keep it away from the model.
+
+### Job notifications
+
+Polling `studix_get_job` always works. Three ways avoid it:
+
+- **Wait in the call.** `studix_get_job` with `waitSeconds` (at most 50) holds
+  the call until the job changes status or finishes. If the request carries
+  `_meta.progressToken`, Studix sends `notifications/progress` meanwhile
+  (`progress` 0 to 100, `message` the status and stage).
+- **Subscribe to the job resource.** `studix://jobs/{jobId}` (a resource
+  template; `resources/read` returns the job as `studix_get_job` does). Open a
+  `subscriptions/listen` stream (protocol 2026-07-28) that names the URI, and
+  each status or stage change sends `notifications/resources/updated`; then read
+  the resource. The `/mcp` endpoint is stateless, so 2025-era clients cannot
+  hold a `resources/subscribe` session and keep polling. Notifications are
+  per API replica: each replica watches job changes itself.
+- **Webhook.** One per workspace: `studix_webhook` `{action: "get" | "set" |
+  "delete", url?}`, or `GET|PUT|DELETE /api/webhook` (`{url}`). Setting it needs
+  `apikey:manage` (owner or admin) and returns the signing secret `whsec_…`
+  once. The URL must be https and resolve to public addresses
+  (`STUDIX_WEBHOOK_ALLOW_LOCAL=true` allows http and private hosts in local
+  development). Each status or stage change is a POST with body
+  `{type: "job.status", eventId, jobId, projectId, status, stage, progress, at}`
+  and headers `studix-event-id` and `studix-signature: t=<unix>,v1=<hex>`,
+  where `v1` is HMAC-SHA256 of `<t>.<raw body>` with the secret. Delivery is at
+  least once with no retry; dedupe on `studix-event-id` and poll when a post
+  was missed.
+
+MCP Tasks are not offered: the SDK in use (`@modelcontextprotocol/server`
+2.4, protocol 2026-07-28) has dropped them.
+
+### WebMCP in the dashboard
+
+A signed-in dashboard registers `studix_create_video`, `studix_get_job`,
+`studix_get_project`, `studix_feedback`, `studix_render`, `studix_cancel_job`
+and `studix_retry_job` with the browser's `modelContext` when the browser
+supports WebMCP. Names, descriptions and input schemas come from
+`GET /api/webmcp/tools`, and calls go to `POST /api/webmcp/tools/:name`. Both
+use the same tool definitions as `/mcp`, with the session's workspace.
+
+The reply to a call is the same `CallToolResult` as `/mcp`: the envelope as
+text and `structuredContent`, the image blocks, and `isError` on failure.
+
 ### Agent stage handoff tools
 
 A creative agent stage (for example `brand-intro.script`) runs in one of two
@@ -328,8 +449,19 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   `details.reason: "already_submitted"`. A wrong `attempt` is `CONFLICT`
   `stale_attempt`, a job that stopped waiting is `CONFLICT` `not_waiting`, and a
   task past `expiresAt` is `TIMEOUT` `expired`.
-- `usage` (`turns`, `inputTokens`, `outputTokens`, `model`) is optional and is
-  recorded in the ledger with zero cost. Studix pays nothing for host work.
+- `usage` (`turns`, `inputTokens`, `outputTokens`, `model`, `reasoningEffort`)
+  is optional and is recorded on the task with zero cost. Studix pays nothing for
+  host work. A `model` written as `provider/modelId` must be in the workspace
+  catalog, and a `reasoningEffort` other than `off` needs a model with reasoning
+  support; either mismatch is `VALIDATION`.
+- `agent: {runtime?, model?, reasoningEffort?}` is the same declaration in the
+  shape of `studix_create_video`'s `agent`: the host says which runtime, model
+  and effort it used. It is checked against the catalog like `usage` and merged
+  into it.
+- `studix_list_agent_runtimes` (no arguments, `project:read`) returns, per
+  runtime, the connections you may use (`id`, `provider`, `label`, `owner`,
+  `authMethod`, `status`) and the models each one runs (`id`, `reasoning`).
+  Secrets and key hints are never in it.
 - Reading needs `project:read`; submitting needs `project:write`. Other
   workspaces' tasks are `NOT_FOUND`.
 - When a stage reaches a limit (any cap in the harness, the time limit in host
@@ -340,23 +472,55 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
 
 ### Imported GitHub skills
 
-Public GitHub Agent Skills (`SKILL.md`) imported into the workspace and read
-back as untrusted reference text. Guide: [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
+Agent Skills (`SKILL.md`) imported from public GitHub repositories or uploaded
+as zip archives, at `workspace` (default) or `platform` scope. Every file is
+stored and each version has a risk report; content stays untrusted. Guide:
+[EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md).
 
-| Tool                    | Arguments                                                                                          | Returns                                                                                               |
-| ----------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `studix_skill_discover` | `repositoryUrl`, `ref?`, `path?`                                                                   | Pinned `source.commitSha` and every `SKILL.md` found (valid or invalid, stored vs described files).   |
-| `studix_skill_import`   | `repositoryUrl`, `ref?`, `path?`, `skillPaths?`, `expectedCommit?`, `idempotencyKey?`, `activate?` | Per skill: `imported`, `new_version`, `unchanged` or `rejected`, ids, license, `nameCollisions`.      |
-| `studix_skill_list`     | `limit?`, `cursor?`, `status?`, `q?`, `owner?`, `repo?`                                            | Skills (enabled by default) with `activeVersionId` and upstream status.                               |
-| `studix_skill_get`      | `skillId`, `versionId?`, `path?`, `offset?`, `limit?`, `includeVersions?`                          | Metadata, license, notices, `securityNotes`, file list, a bounded text slice and a `trust` block.     |
-| `studix_skill_update`   | `skillId`, `action`: `check`, `import`, `activate` (`versionId`) or `enable`                       | Updated skill and, for `check`/`import`, the upstream result. Never changes the active version alone. |
-| `studix_skill_disable`  | `skillId`                                                                                          | The disabled skill; versions and files are kept.                                                      |
+| Tool                    | Returns                                                         |
+| ----------------------- | --------------------------------------------------------------- |
+| `studix_skill_discover` | Pinned source.commitSha and every SKILL.md found.               |
+| `studix_skill_import`   | Per skill: outcome, ids, license, risk, nameCollisions.         |
+| `studix_skill_upload`   | An upload URL (action: "url") or the stored item and its risk.  |
+| `studix_skill_list`     | Skills with scope, activeRiskLevel and manageable.              |
+| `studix_skill_get`      | Metadata, license, risk report, files and a bounded text slice. |
+| `studix_skill_update`   | The updated skill and, for check/import, the upstream result.   |
+| `studix_skill_disable`  | The disabled skill, or `turnedOffHere` for a platform skill.    |
+| `studix_skill_delete`   | deleted and filesRemoved. Cannot be undone.                     |
+
+Arguments:
+
+- `discover`: `repositoryUrl`, `ref?`, `path?`.
+- `import`: as `discover`, plus `skillPaths?`, `expectedCommit?`,
+  `idempotencyKey?`, `activate?`, `scope?`.
+- `upload`: `action?` (`upload` or `url`), `archiveBase64?` or `uploadId?`,
+  `fileName?`, `activate?`, `idempotencyKey?`, `scope?`, `confirmHighRisk?`.
+- `list`: `limit?`, `cursor?`, `status?`, `q?`, `owner?`, `repo?`, `scope?`
+  (`visible` by default, `workspace` or `platform`).
+- `get`: `skillId`, `versionId?`, `path?`, `offset?`, `limit?`,
+  `includeVersions?`. A binary file returns its size only.
+- `update`: `skillId`, `action` (`check`, `import`, `activate` with
+  `versionId`, or `enable`), `confirmHighRisk?`. It never changes the active
+  version on its own.
+- `disable` and `delete`: `skillId`.
+
+Rules:
+
 - `discover` and `import` read from GitHub (`openWorldHint`); nothing from a
   repository is executed. Only `github.com` repository URLs are accepted, other
   hosts, IPs and schemes are `VALIDATION`.
-- Reading needs `skill:read`; `discover`, `import`, `update` and `disable` need
-  `skill:write`. Other workspaces' skills are `NOT_FOUND`; a disabled skill is
-  `CONFLICT` on `get`.
+- Reading needs `skill:read`; `discover`, `import`, `upload`, `update`,
+  `disable` and `delete` need `skill:write`, and platform skills need a platform
+  operator. Other workspaces' skills are `NOT_FOUND`; a disabled skill is
+  `CONFLICT` on `get` for readers who cannot enable it.
+- A high-risk version starts disabled. `enable` or `activate` of a high-risk
+  version without `confirmHighRisk` is `CONFLICT`; with it from an API key or a
+  role below admin it is `FORBIDDEN`. Confirmations are audited.
+- `upload` with `uploadId`: first PUT the zip to `uploadUrl` within 15 minutes
+  (`Content-Type: application/zip`, at most 30 MiB). Archive problems (no
+  `SKILL.md`, unsafe paths, zip bombs, too large) are `VALIDATION`. The dashboard
+  uses the same service through `/api/skills` (list, discover, import, raw-zip
+  `upload`, get, update, disable, delete).
 - Errors: `NOT_FOUND` (repository not public, path or skill missing),
   `CONFLICT` (`expectedCommit` mismatch), `RATE_LIMITED` (with the reset time),
   `UNAVAILABLE` (no object storage).
@@ -364,6 +528,129 @@ back as untrusted reference text. Guide: [EXTERNAL_SKILLS.md](EXTERNAL_SKILLS.md
 - A full commit SHA `ref` must be on the default branch. `update` `check` compares
   with the active version only and may report `unknown`; reading a non-active
   `versionId` needs `skill:write`. `list`/`discover` results carry `trust`.
+
+### Media exec (ffmpeg / ffprobe)
+
+`studix_media_exec` runs `ffmpeg` or `ffprobe` with raw arguments as an async
+worker job in an offline sandbox container. It needs the `media:exec` permission
+(editor role and up; OAuth scope `studix:write`) and `STUDIX_SANDBOX=docker` on
+the worker. Threat model: [SECURITY.md](SECURITY.md#media-exec).
+
+| Argument         | Notes                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `tool`           | `ffmpeg` or `ffprobe`.                                                                           |
+| `args`           | argv, no shell (max 500, 8000 chars each). Files only as `{in:<name>}` and `{out:<name>}`.       |
+| `inputs`         | `name -> {assetId}`, `{url}` (public https, SSRF-guarded) or `{base64}` (2 MB each, 4 MB total). |
+| `outputs`        | `[{name, contentType?}]`; every output must be referenced. ffmpeg needs at least one.            |
+| `timeoutSeconds` | Default 300, max 1800.                                                                           |
+| `budgetCents`    | Job budget; compute time is metered per started minute.                                          |
+| `idempotencyKey` | The same key returns the earlier job (`replayed: true`).                                         |
+
+Names match `[A-Za-z0-9][A-Za-z0-9_.-]*`. Absolute, Windows, home and `..`
+paths, URLs, protocol prefixes (`concat:`, `file:`, `subfile,`) and the options
+`-protocol_whitelist`, `-protocol_blacklist` and `-safe` are `VALIDATION`.
+Studix adds `-hide_banner -nostdin` and `-protocol_whitelist file,pipe` itself.
+
+The tool returns `{jobId, status, replayed}`; poll `studix_get_job`. A finished
+job's `result` holds `exitCode`, `durationMs`, truncated `stdout` / `stderr`,
+`json` (parsed ffprobe output when stdout is JSON) and `outputs` with
+`assetId`, `name`, `contentType`, `bytes`, `sha256` and a signed `url`. A
+non-zero exit fails the job with `VALIDATION` and the stderr tail in
+`error.message` (`details.exitCode`, `details.stderrTail`); the time is still
+billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
+
+```json
+{
+  "tool": "ffmpeg",
+  "args": ["-i", "{in:a.mp4}", "-vf", "scale=iw/2:-2", "-c:a", "copy", "{out:small.mp4}"],
+  "inputs": { "a.mp4": { "assetId": "ast_..." } },
+  "outputs": [{ "name": "small.mp4" }]
+}
+```
+
+```json
+{
+  "tool": "ffmpeg",
+  "args": [
+    "-i",
+    "{in:one.mp4}",
+    "-i",
+    "{in:two.mp4}",
+    "-filter_complex",
+    "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]",
+    "-map",
+    "[v]",
+    "-map",
+    "[a]",
+    "{out:joined.mp4}"
+  ],
+  "inputs": { "one.mp4": { "assetId": "ast_1" }, "two.mp4": { "url": "https://example.com/two.mp4" } },
+  "outputs": [{ "name": "joined.mp4" }]
+}
+```
+
+```json
+{
+  "tool": "ffmpeg",
+  "args": ["-i", "{in:v.mp4}", "-vn", "-c:a", "libmp3lame", "{out:audio.mp3}"],
+  "inputs": { "v.mp4": { "assetId": "ast_..." } },
+  "outputs": [{ "name": "audio.mp3" }]
+}
+```
+
+```json
+{
+  "tool": "ffmpeg",
+  "args": ["-ss", "0.5", "-i", "{in:v.mp4}", "-frames:v", "1", "{out:thumb.png}"],
+  "inputs": { "v.mp4": { "assetId": "ast_..." } },
+  "outputs": [{ "name": "thumb.png" }]
+}
+```
+
+```json
+{
+  "tool": "ffprobe",
+  "args": ["-v", "error", "-of", "json", "-show_format", "-show_streams", "{in:v.mp4}"],
+  "inputs": { "v.mp4": { "assetId": "ast_..." } }
+}
+```
+
+### Composition workspaces (client-authored video)
+
+The client AI can author the video itself instead of delegating to a job
+([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)). A composition is a file tree in
+object storage; Studix checks only the outputs a run asks it to check.
+
+| Tool                       | Does                                                                                                                                                            |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `studix_composition_write` | Omit `compositionId` to create one. `files: [{path, text} or {path, base64, contentType?}]` (8 MB each, 50 per call), `delete: [paths]`. Returns the file list. |
+| `studix_composition_run`   | Async job `composition.run`: `command` runs under `sh` in the composition root inside the skill sandbox. Returns `{jobId}`; poll `studix_get_job`.              |
+| `studix_composition_read`  | Without `path`: the file list. With `path`: a signed URL, text inline, and png/jpeg/webp/gif up to 1.5 MB as an image block (frames, contact sheets).           |
+
+The run sandbox has network, Node, Python, ffmpeg, Chromium, the HyperFrames and Remotion CLIs,
+`multix generate` with the workspace's media keys (images, TTS, BGM, SFX via ElevenLabs and others)
+and the enabled skills under `/skills`. Every file the command adds or changes is stored back (1 GB
+each, 200 per run; `node_modules`, `.git` and caches stay behind). `timeoutSeconds` defaults to 900
+(max 3600); compute is billed per started minute against `budgetCents`. It needs `media:exec`
+(write needs `project:write`) and `STUDIX_SANDBOX=docker` on the worker.
+
+`check: {path, width?, height?, durationMs?, durationToleranceMs?, loudnessLufs?}` probes a file after
+an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the
+exit code, the tail of the combined log (`logTail`), changed files and the check result. The files it wrote are kept either way.
+
+```json
+{
+  "compositionId": "cmp_...",
+  "command": "npx hyperframes render index.html -o out/video.mp4 && ffmpeg -i out/video.mp4 -vf fps=1/2,scale=480:-1,tile=4x2 out/sheet.png",
+  "check": {
+    "path": "out/video.mp4",
+    "width": 1920,
+    "height": 1080,
+    "durationMs": 10000,
+    "loudnessLufs": -16
+  }
+}
+```
 
 ## P0 meta-tools (MCP-in-MCP)
 
@@ -378,6 +665,43 @@ three tools; they never appear in `tools/list`.
 
 Every execute is re-authorized at call time; a grant revoked after search
 returns `FORBIDDEN`. See [SECURITY.md](SECURITY.md#mcp-in-mcp-connectors).
+
+## Listing jobs (dashboard API only)
+
+`GET /api/jobs` returns `{ items, nextCursor? }` for the caller's workspace, newest created first.
+It needs `project:read`. Every param is optional and checked against an allowlist; an unknown param,
+sort field or enum value fails with `VALIDATION`.
+
+| Param                                                  | Meaning                                                                                                                                                        |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sort`, `order`                                        | `createdAt` (default), `updatedAt`, `status`, `kind`, `stage`, `projectId`, `progress`, `spentCents`, `agent` (runtime) or `model`; `asc` or `desc` (default). |
+| `status`, `kind`, `stage`                              | Comma-separated values; a job matches any of them.                                                                                                             |
+| `agent`, `model`                                       | Comma-separated agent runtimes (`claude`, `codex`, `pi`, `host`, `planner`, `none`); case-insensitive substring of the agent model id.                         |
+| `id`, `project`                                        | Case-insensitive substring of the job id or project id. `projectId` matches one project exactly.                                                               |
+| `createdFrom`, `createdTo`, `updatedFrom`, `updatedTo` | ISO 8601 instants with an offset, inclusive.                                                                                                                   |
+| `progressMin`, `progressMax`                           | Progress bounds from 0 to 1, inclusive.                                                                                                                        |
+| `spentMin`, `spentMax`                                 | Spend bounds in whole cents, inclusive.                                                                                                                        |
+| `limit`, `cursor`                                      | Page size (1-100, default 20) and the `nextCursor` of the previous page.                                                                                       |
+
+Each item, and the job returned by `studix_get_job`, carries `agent: { runtime, provider?, model?, reasoningEffort? }`, read from the job's payload.
+`host` means the MCP client's own agent (`agentMode: "host"`), `planner` the legacy fixed Claude planner, and `none` a job with no Studix agent, such as one driven over MCP by an external tool.
+It never carries a connection id or a secret.
+
+Pages are keyset on (sort column, id), so they neither skip nor repeat a job while the list is paged.
+A cursor is only valid with the sort it came from; reusing it under another sort fails with `VALIDATION`.
+
+## Live agent events (dashboard API only)
+
+The dashboard root (`#/`) is a chat: each message creates a `skill-agent` job (`POST /api/projects` with `workflowTemplate: "skill-agent"` and `agent`), and the page follows that job's agent while it works.
+
+- `GET /api/agent-runtimes` returns the same data as `studix_list_agent_runtimes`: each runtime (`claude`, `codex`, `pi`) with the caller's usable connections and their models. A runtime with no connection cannot run.
+- `GET /api/jobs/:jobId/events` is a Server-Sent Events stream that needs the `project:read` permission.
+  - `event: agent` carries one normalized agent event: `message` and `reasoning` deltas, `tool_start` (`id`, `name`, `args`), `tool_end` (`id`, `name`, `ok`, short `result`), `usage` (turns, tokens, `costCents`), `status` (`running`, `succeeded`, `failed`, with runtime and model) and `artifact` (a file name in `/work/out`).
+  - `event: job` carries the job's status, stage, `spentCents` and `budgetCents` whenever they change.
+  - `event: end` is sent once the job has finished and every event has been sent.
+  - Each agent event has an SSE `id`. Pass `?after=<id>` or `Last-Event-ID` to replay only what came later, so a reload resumes where it stopped.
+
+The worker stores these events with the job as `agent.event` activity rows. They are redacted before they are stored, and large tool arguments keep only a preview, so no secret is streamed. Claude Code and Codex report whole blocks rather than token deltas, so their text arrives a block at a time. Pi streams tokens.
 
 ## Platform settings (dashboard API only)
 
@@ -395,18 +719,63 @@ or change them. They are dashboard session routes for the `operator` role
 - `PUT /api/platform/media-keys/:name` (body: `{ value }`): Credential metadata with a last-four hint. Name must be allowlisted.
 - `DELETE /api/platform/media-keys/:name`: Metadata after removal; the environment value, if any, applies.
 
+Storage profiles (same rules; the id is `env` or `stp_…`):
+
+- `GET /api/platform/storage/profiles`: The `env` profile, then stored profiles
+  with hints, reference counts and the last test.
+- `POST /api/platform/storage/profiles` (body: `{ name, providerType, endpoint?, bucket, region, forcePathStyle?, keyPrefix?, accessKeyId, secretAccessKey }`):
+  `201` with the profile. The probe runs first: a `VALIDATION` error for a
+  refused endpoint, or the probe's diagnosis when it fails. Nothing is stored
+  on failure.
+- `PUT /api/platform/storage/profiles/:id` (same body, key pair optional but
+  both or neither): Re-probes, with the stored pair when no pair is given.
+- `POST /api/platform/storage/profiles/:id/activate` (body: `{}`): New objects
+  go to this profile; `env` reverts to `S3_*`.
+- `POST /api/platform/storage/profiles/:id/test` (body: `{}`): Probe result,
+  recorded as the last test.
+- `DELETE /api/platform/storage/profiles/:id`: `204`. `CONFLICT` when the
+  profile is active or still referenced by assets.
+
+Workspace owners and admins have the same routes under
+`/api/workspace-storage/storage/profiles` for their workspace's own profiles
+([ADR-0023](decisions/0023-workspace-storage-profiles.md)). There `env` is
+**Platform default** (`providerType: "platform"`): activating it makes the
+workspace follow the platform choice again, and it cannot be tested.
+
 ### Workspace media keys (BYOK)
 
-A workspace may bring its own key for each Multix vendor (`sume`, `atlas`,
-`elevenlabs`, `fish`, `minimax`, `openrouter`). These are dashboard session
+A workspace may bring its own key for every key Multix reads: one `vendor` per
+provider (`sume`, `atlas`, `gemini`, `openai`, `fal`, ...), plus one per further
+required key (`cloudflare-api-token`). The list is generated from Multix
+(`multix catalog providers`). These are dashboard session
 routes too, `Cache-Control: no-store`, and never return the key. Any member
 may read; only workspace admins (`member:manage`) may write.
 
-| Route                                      | Body         | Returns                                                        |
-| ------------------------------------------ | ------------ | -------------------------------------------------------------- |
-| `GET /api/providers/media-keys`            | none         | `{ storage, canManage, keys: [{ vendor, source, keyHint? }] }` |
-| `PUT /api/providers/media-keys/:vendor`    | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.        |
-| `DELETE /api/providers/media-keys/:vendor` | none         | `source: "platform"`: media calls use the platform key again.  |
+| Route                                         | Body         | Returns                                                                                                                          |
+| --------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/providers/media-keys`               | none         | `{ storage, canManage, keys: [{ vendor, name?, keyName, testable, source, keyHint? }] }`                                         |
+| `PUT /api/providers/media-keys/:vendor`       | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.                                                                          |
+| `DELETE /api/providers/media-keys/:vendor`    | none         | `source: "platform"`: media calls use the platform key again.                                                                    |
+| `POST /api/providers/media-keys/:vendor/test` | `{}`         | `{ vendor, at, verdict, httpStatus?, note? }`: a free account lookup at the vendor (admins only); `unverified` when it has none. |
+
+### Provider connections: rename and ChatGPT sign-in
+
+Dashboard session routes, `Cache-Control: no-store`. They never return a key or
+a token.
+
+| Route                                           | Body            | Returns                                                                                                  |
+| ----------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
+| `PATCH /api/providers/connections/:id`          | `{ label }`     | The connection's view with the trimmed label (1 to 80 characters). Audited with the old and new label.   |
+| `POST /api/providers/connections/chatgpt/start` | `{ owner? }`    | `{ flowToken, userCode, verificationUrl, intervalSeconds, expiresAt }` of a ChatGPT device-code sign-in. |
+| `POST /api/providers/connections/chatgpt/poll`  | `{ flowToken }` | `{ status: "pending", intervalSeconds }` or `{ status: "connected", connection }`.                       |
+- Renaming needs the same role as managing the connection (`member:manage` for
+  a workspace connection, the owner for a personal one); someone else's personal
+  connection is `NOT_FOUND`. The secret and version do not change.
+- The sign-in creates (or rotates) an `openai` connection with `authMethod:
+  "oauth_subscription"`, `billing: "subscription"` and `runtimes: ["codex"]`.
+  A workspace-owned login needs `member:manage`; a personal one `project:write`.
+  Only the user who started a flow can poll it, and a flow token expires after
+  15 minutes. Without a ChatGPT client the start route is `503 UNAVAILABLE`.
 
 ## Roadmap tools
 

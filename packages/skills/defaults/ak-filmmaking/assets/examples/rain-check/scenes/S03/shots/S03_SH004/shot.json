@@ -1,0 +1,68 @@
+{
+  "shot_id": "S03_SH004",
+  "scene_id": "S03",
+  "shot_type": "hero",
+  "lens": "24mm",
+  "camera": "slow crane up and back",
+  "action": "They walk away together down the glistening street.",
+  "emotion": "fragile hope",
+  "duration_target": 8,
+  "characters": [
+    "MAI_01",
+    "LINH_01"
+  ],
+  "location": "CAFE_STREET_01",
+  "wardrobe": {
+    "MAI_01": "MAI_RAINCOAT_01",
+    "LINH_01": "LINH_KNIT_01"
+  },
+  "props": [
+    "UMBRELLA_01"
+  ],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "CHAR_MAI_FRONT",
+    "CHAR_MAI_3QL",
+    "WARDROBE_MAI_RAINCOAT_01",
+    "CHAR_LINH_FRONT",
+    "CHAR_LINH_3QR",
+    "WARDROBE_LINH_KNIT_01",
+    "LOC_CAFE_STREET_WIDE"
+  ],
+  "continuity_from": "S03_SH003",
+  "continuity_to": null,
+  "continuity": {
+    "screen_positions": {
+      "MAI_01": "left",
+      "LINH_01": "right"
+    },
+    "prop_states": {
+      "UMBRELLA_01": "MAI_01:right_hand"
+    },
+    "conditions": {
+      "MAI_01": [
+        "damp_hair"
+      ]
+    },
+    "screen_direction": "away_from_camera"
+  },
+  "render_class": "HERO",
+  "model_requirements": [
+    "camera_control"
+  ],
+  "retry_budget": 3,
+  "estimate": {
+    "generation_seconds": 16,
+    "cost": {
+      "amount": 12.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "STORYBOARDED",
+  "storyboard": {
+    "path": "storyboard/S03_SH004.png",
+    "status": "approved"
+  }
+}

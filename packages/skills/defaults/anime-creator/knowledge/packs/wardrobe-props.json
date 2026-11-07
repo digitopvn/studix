@@ -1,0 +1,34 @@
+{
+  "id": "wardrobe-props",
+  "version": "1.0.0",
+  "title": "Wardrobe, props and environment",
+  "purpose": "Track what characters wear and carry, and how it changes, as state driven by events, so a jacket does not dry, tear or vanish between shots without a reason.",
+  "load_when": ["wardrobe", "costume", "outfit", "prop", "set dressing", "material", "damage", "wet"],
+  "use_cases": [
+    "Naming wardrobe looks per character in the bible (look ids) and using them per shot in filmspec `wardrobe`.",
+    "Recording an event when a look changes: soaked in the rain, sleeve torn in the fight, coat taken off indoors.",
+    "Choosing materials that move right: heavy wool swings slowly, silk flows, leather creases and holds.",
+    "Dressing a set with practical objects at a known scale (a door handle, a cup) so character size stays readable.",
+    "Labelling cultural or historical clothing by source and checking it before use, rather than mixing eras at random."
+  ],
+  "anti_patterns": [
+    "A look that changes between adjacent shots with no event (dry hair one shot after the rain).",
+    "Props that appear in a hand with no shot of picking them up, or switch hands across a continuous join.",
+    "Damage that heals between scenes without a time skip or a repair.",
+    "Fabric that moves the same way in wind, running and stillness.",
+    "Cultural dress used as decoration without a source label."
+  ],
+  "tool_roles": ["planner (bible looks, filmspec wardrobe)", "prompt compiler (costume field)", "continuity checker", "QA reviewer"],
+  "checks": [
+    {"id": "wardrobe.change-has-event", "level": "shot", "kind": "hard", "fn": "wardrobe-event",
+     "measure": "when a character's look differs from their previous shot, the shot's wardrobe entry has an `event`", "pass": "0 failures"},
+    {"id": "wardrobe.continuity", "level": "shot", "kind": "hard", "source": "continuity",
+     "measure": "continuity across each cut: no definite break in props or costume", "pass": "0 definite"},
+    {"id": "wardrobe.material-motion", "level": "shot", "kind": "evidence",
+     "measure": "reviewer names the fabric and how it moves in a frame strip", "pass": "motion fits the material and the action"},
+    {"id": "wardrobe.source-label", "level": "asset", "kind": "evidence",
+     "measure": "cultural or historical dress in a sheet has a source note", "pass": "every such sheet"}
+  ],
+  "spec_fields": {"shot": ["wardrobe.<character>.look", "wardrobe.<character>.event"]},
+  "references": ["references/series-bible-and-continuity.md"]
+}

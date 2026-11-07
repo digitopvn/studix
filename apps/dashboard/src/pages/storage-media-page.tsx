@@ -7,8 +7,11 @@ import {
   type PlatformMediaVendor,
   type PlatformSettings,
   type PlatformStorageTest,
+  type StorageProfile,
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { StorageProfilesCard } from "./storage-profiles-card.tsx";
+import { KEY_VERDICT } from "./workspace-media-keys-section.tsx";
 
 const SECRET_LABELS: Record<PlatformSettings["storage"]["secretAccessKey"], string> = {
   configured: "Configured",
@@ -39,22 +42,55 @@ const MEDIA_DIAGNOSIS: Record<PlatformMediaTest["diagnosis"], string> = {
   check_failed: "Check failed",
 };
 
-const KEY_VERDICT: Record<PlatformMediaKeyTest["verdict"], string> = {
-  available: "Key accepted",
-  invalid: "Key rejected",
-  unverified: "Not verified",
-};
-
 /**
- * Platform operator settings: object storage (R2) status and a real read/write check, and the media vendor
+ * Storage & Media. Owners and admins set the workspace's own storage profile and media vendor keys, which
+ * override the platform defaults for this workspace. Platform operators also see the platform defaults:
+ * object storage (R2) status and a real read/write check, and the media vendor
  * keys the Multix CLI uses. Keys are typed into a password field, sent once and never shown again: after
  * saving, only a hint, the owner and the last test remain.
  */
-export function StorageMediaPage() {
-  const { data, error, reload } = useAsync(() => api.platformSettings());
+export function StorageMediaPage({ isOperator }: { isOperator: boolean }) {
+  return (
+    <>
+      <WorkspaceStorageCard />
+      {isOperator && <PlatformSettingsCards />}
+    </>
+  );
+}
+
+/** True once the workspace keeps files in a bucket of its own rather than the Studix default. */
+function ownStorage(profiles: StorageProfile[]): boolean {
+  return profiles.some((p) => p.active && p.providerType !== "platform" && p.providerType !== "environment");
+}
+
+/** This workspace's own storage (owners and admins); its active profile overrides the platform choice. */
+function WorkspaceStorageCard() {
+  const { data, error, reload } = useAsync(() => api.listStorageProfiles("workspace"));
   return (
     <>
       <ErrorBanner error={error} />
+      {data && ownStorage(data) && <StorageProfilesCard profiles={data} reload={reload} scope="workspace" />}
+      {data && !ownStorage(data) && (
+        <Section title="File storage">
+          <p className="muted">Studix stores your videos and uploads for you. Nothing to set up.</p>
+          <details className="advanced">
+            <summary>Use my own storage (S3 or R2)</summary>
+            <StorageProfilesCard profiles={data} reload={reload} scope="workspace" />
+          </details>
+        </Section>
+      )}
+    </>
+  );
+}
+
+/** The platform defaults every workspace without its own settings uses (platform operators only). */
+function PlatformSettingsCards() {
+  const { data, error, reload } = useAsync(() => api.platformSettings());
+  return (
+    <>
+      <h2>Platform defaults</h2>
+      <ErrorBanner error={error} />
+      {data?.storageProfiles && <StorageProfilesCard profiles={data.storageProfiles} reload={reload} />}
       {data && <StorageCard storage={data.storage} reload={reload} />}
       {data && <MediaCard media={data.media} reload={reload} />}
     </>
@@ -109,7 +145,7 @@ function StorageCard({ storage, reload }: { storage: PlatformSettings["storage"]
   const last = storage.lastTest;
   return (
     <Section
-      title="Object storage (Cloudflare R2)"
+      title="Server storage"
       actions={
         <button type="button" disabled={busy || !storage.configured} onClick={test}>
           {busy ? "Testing…" : "Test connection"}
@@ -117,12 +153,15 @@ function StorageCard({ storage, reload }: { storage: PlatformSettings["storage"]
       }
     >
       <p className="muted">
-        The bucket is shared by every workspace, each under its own prefix. Endpoint, bucket and region come
-        from the deployment settings. The access key pair can be stored here: it is tested with a write, read
-        and delete before it replaces the current one, overrides <code>S3_ACCESS_KEY_ID</code> /
-        <code> S3_SECRET_ACCESS_KEY</code>, reaches the app and the worker within seconds without a redeploy,
-        and is never shown again.
+        One bucket for every workspace. A key saved here is tested first and applies without a redeploy.
       </p>
+      <details className="why">
+        <summary>Details</summary>
+        <p className="muted">
+          Endpoint, bucket and region come from the deployment settings. A saved key pair overrides{" "}
+          <code>S3_ACCESS_KEY_ID</code> / <code>S3_SECRET_ACCESS_KEY</code> and is never shown again.
+        </p>
+      </details>
       <ErrorBanner error={actionError} />
       {storage.configured && storage.credentialStorage === "unavailable" && (
         <p className="banner banner-error">
@@ -264,7 +303,7 @@ function MediaCard({ media, reload }: { media: PlatformSettings["media"]; reload
 
   return (
     <Section
-      title="Media providers (Multix)"
+      title="Media check"
       actions={
         <button type="button" disabled={busy} onClick={check}>
           {busy ? "Checking…" : "Run safe check"}
@@ -430,7 +469,8 @@ function VendorRow({
   return (
     <tr>
       <td>
-        <span className="mono">{vendor.keyName}</span>
+        {vendor.name}
+        <div className="mono muted">{vendor.keyName}</div>
         {credential.keyHint && <div className="mono muted">{credential.keyHint}</div>}
         <ErrorBanner error={actionError} />
         {editing && (
@@ -461,7 +501,9 @@ function VendorRow({
           </form>
         )}
       </td>
-      <td>{vendor.kinds.join(", ")}</td>
+      <td>
+        {vendor.kinds.length > 0 ? vendor.kinds.join(", ") : <span className="muted">Multix only</span>}
+      </td>
       <td>
         <StatusBadge
           status={credential.source === "missing" ? "missing" : "configured"}

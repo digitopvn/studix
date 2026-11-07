@@ -13,6 +13,7 @@ export const ERROR_CODES = [
   "TIMEOUT",
   "CANCELLED",
   "RATE_LIMITED",
+  "PROVIDER_OVERLOADED",
   "PROVIDER_ERROR",
   "UNAVAILABLE",
   "APPROVAL_REQUIRED",
@@ -25,6 +26,7 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 const RETRYABLE_BY_DEFAULT: ReadonlySet<ErrorCode> = new Set([
   "TIMEOUT",
   "RATE_LIMITED",
+  "PROVIDER_OVERLOADED",
   "PROVIDER_ERROR",
   "UNAVAILABLE",
 ]);

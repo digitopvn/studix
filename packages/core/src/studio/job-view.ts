@@ -1,7 +1,16 @@
 import { JOB_KINDS, type Job, type Stage } from "../entities/job.ts";
+import { jobAgent } from "../entities/job-agent.ts";
 import type { Approval } from "../entities/review.ts";
+import type { UsageEvent } from "../entities/telemetry.ts";
 import { AGENT_HANDOFF_TOOLS } from "./agent-handoff-service.ts";
-import { type ApprovalView, type JobView, type NextAction, STUDIX_TOOLS } from "./studio-types.ts";
+import { stageRunOf } from "./stage-run.ts";
+import {
+  type ApprovalView,
+  type JobView,
+  type NextAction,
+  STUDIX_TOOLS,
+  type StageReviewView,
+} from "./studio-types.ts";
 
 export const JOB_POLL_INTERVAL_MS = 3000;
 
@@ -87,7 +96,38 @@ export function nextActionsForJob(job: Job, approval?: Approval): NextAction[] {
   }
 }
 
-export function toJobView(job: Job, stages: Stage[], approval?: Approval): JobView {
+/** A stage output of `{ source: "template", fallbackReason }` means the agent did not run; surface why. */
+function fallbackOf(stage: Stage): { fallback?: string } {
+  const out = stage.output;
+  if (out?.source !== "template") return {};
+  return { fallback: typeof out.fallbackReason === "string" ? out.fallbackReason : "agent unavailable" };
+}
+
+/** QA rounds of a reviewed agent stage (skill-agent roles): each round's scores, verdict and notes. */
+function reviewOf(stage: Stage): { review?: StageReviewView } {
+  const review = (stage.output as { review?: { rounds?: unknown } } | undefined)?.review;
+  return Array.isArray(review?.rounds)
+    ? { review: { rounds: review.rounds as StageReviewView["rounds"] } }
+    : {};
+}
+
+/** Usage lines of the job and labels of the connections they name, for each stage's runtime and cost. */
+export interface JobSpendDetail {
+  usage: readonly UsageEvent[];
+  connectionLabels: ReadonlyMap<string, string>;
+}
+
+function stageRun(s: Stage, spend: JobSpendDetail | undefined) {
+  if (!spend) return {};
+  const run = stageRunOf(s, spend.usage);
+  // A running stage books its spend when it ends; until then the live agent stream is the source.
+  if (s.status === "running" && run.costCents === 0 && run.runtime === "function") return {};
+  const label = run.connectionId ? spend.connectionLabels.get(run.connectionId) : undefined;
+  const { connectionId: _id, ...shown } = run;
+  return { run: { ...shown, ...(label ? { connectionLabel: label } : {}) } };
+}
+
+export function toJobView(job: Job, stages: Stage[], approval?: Approval, spend?: JobSpendDetail): JobView {
   return {
     id: job.id,
     kind: job.kind,
@@ -114,8 +154,12 @@ export function toJobView(job: Job, stages: Stage[], approval?: Approval): JobVi
       startedAt: s.startedAt,
       finishedAt: s.finishedAt,
       error: s.error,
+      ...fallbackOf(s),
+      ...reviewOf(s),
+      ...stageRun(s, spend),
     })),
     approval: approval ? toApprovalView(approval) : undefined,
+    agent: jobAgent(job),
     next: nextActionsForJob(job, approval),
   };
 }

@@ -399,7 +399,8 @@ export async function runStages(
     );
     const sctx: StageContext = {
       ctx,
-      job,
+      // Earlier stages of this run have spent since the claim; estimates and caps read what is left now.
+      job: { ...job, spentCents },
       attempt: job.attempts,
       signal,
       outputs,

@@ -36,15 +36,25 @@ export function toJsonSafe<T>(value: T): unknown {
   return JSON.parse(JSON.stringify(value));
 }
 
-function toCallToolResult(envelope: ToolEnvelope, isError: boolean) {
+/** An image the client model should see, such as a reviewer's marked frame. */
+export interface ToolImage {
+  data: string;
+  mimeType: string;
+}
+
+function toCallToolResult(envelope: ToolEnvelope, isError: boolean, images: ToolImage[] = []) {
   return {
     ...(isError ? { isError: true } : {}),
-    content: [{ type: "text" as const, text: JSON.stringify(envelope) }],
+    // The envelope text always comes first; images follow it.
+    content: [
+      { type: "text" as const, text: JSON.stringify(envelope) },
+      ...images.map((image) => ({ type: "image" as const, ...image })),
+    ] as [{ type: "text"; text: string }, ...Array<{ type: "image"; data: string; mimeType: string }>],
     structuredContent: envelope as unknown as Record<string, unknown>,
   };
 }
 
-export function okEnvelope(data: object, next: NextAction[], traceId: string) {
+export function okEnvelope(data: object, next: NextAction[], traceId: string, images?: ToolImage[]) {
   return toCallToolResult(
     {
       status: "ok",
@@ -53,6 +63,7 @@ export function okEnvelope(data: object, next: NextAction[], traceId: string) {
       traceId,
     },
     false,
+    images,
   );
 }
 

@@ -6,7 +6,7 @@ import {
   parseSecretKey,
 } from "@studix/auth";
 import { createRepositories } from "@studix/database";
-import { createWorkspaceMultixProviders, MULTIX_VENDOR_KEYS, MULTIX_VENDORS } from "@studix/providers";
+import { createWorkspaceMultixProviders, MULTIX_KEY_NAMES } from "@studix/providers";
 import {
   assertSpeechProbeReady,
   createHardQaGate,
@@ -27,7 +27,7 @@ const QA_TOOL_TIMEOUT_MS = 120_000;
 const SPEECH_TOOL_TIMEOUT_MS = 60_000;
 
 /** The dashboard-managed vendor keys, or undefined without STUDIX_SECRETS_KEY (nothing can be stored then). */
-function platformCredentials(
+export function platformCredentials(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
 ): PlatformCredentialService | undefined {
@@ -55,7 +55,7 @@ function platformCredentials(
       parseSecretKey(config.STUDIX_SECRETS_KEY),
       config.STUDIX_SECRETS_KEYS_PREVIOUS.map(parseSecretKey),
     ),
-    allowedNames: MULTIX_VENDORS.map((vendor) => MULTIX_VENDOR_KEYS[vendor]),
+    allowedNames: Object.values(MULTIX_KEY_NAMES),
     env: runtime.env,
     logger: runtime.logger,
   });

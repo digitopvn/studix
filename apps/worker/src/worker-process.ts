@@ -1,6 +1,11 @@
 import { createDb, type StudixDb } from "@studix/database";
 import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } from "@studix/shared";
-import { createStorageWriteCheck, S3StorageAdapter, type StorageProbeResult } from "@studix/storage";
+import {
+  createStorageWriteCheck,
+  ProfileStorageRouter,
+  S3StorageAdapter,
+  type StorageProbeResult,
+} from "@studix/storage";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
 import {
@@ -183,7 +188,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       signal: startup.signal,
     });
     if (stopping) throw new Error("worker stopped during startup");
-    if (ports.storage instanceof S3StorageAdapter) {
+    if (ports.storage instanceof S3StorageAdapter || ports.storage instanceof ProfileStorageRouter) {
       storageCheck = createStorageWriteCheck(ports.storage);
       // Not awaited: the result is only logged and reported, and must not delay startup or shutdown.
       storageCheck().then(

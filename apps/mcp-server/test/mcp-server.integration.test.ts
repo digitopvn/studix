@@ -85,13 +85,17 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
       "studix_list_agent_tasks",
       "studix_render",
       "studix_retry_job",
+      "studix_review",
+      "studix_skill_delete",
       "studix_skill_disable",
       "studix_skill_discover",
       "studix_skill_get",
       "studix_skill_import",
       "studix_skill_list",
       "studix_skill_update",
+      "studix_skill_upload",
       "studix_submit_agent_task",
+      "studix_webhook",
     ]);
     for (const tool of tools) {
       expect(tool.description?.length ?? 0).toBeLessThanOrEqual(200);

@@ -1,0 +1,49 @@
+id: mid-century-retro
+name: Mid-Century Retro
+family: aesthetic
+aliases: [american retro, atomic age, 1950s ad, pulp poster, retro futurism, googie]
+summary: 1950s ad and atomic-age print; wood-type slabs, starbursts, teal-orange-cream halftone, optimistic bounce.
+energy: 4
+best_for: [product-promo, business-explainer, sports-promo, science-story]
+character: >-
+  Post-war American advertising and atomic-age optimism: heavy wood-type and
+  slab headlines, boomerang and starburst shapes, halftone printed photos and
+  a sunny primary palette on aged cream stock. Motion is buoyant and
+  confident, with springy landings and orbiting atoms.
+dimensions:
+  palette:
+    mode: light
+    colors: {bg: "#f4ead2", ink: "#1f1b16", accent: "#d93a2b", mustard: "#f2a71b", teal: "#1d8a8a", orange: "#ef6c2f", cream: "#fbf3df"}
+    rule: "Two or three of red, mustard, teal and orange per scene on cream; ink for type; a starburst always takes the accent."
+  typography:
+    - "Alfa Slab One 150-240 px all-caps headlines, slight 2-4 px ink offset shadow"
+    - "Yellowtail 72 px script for taglines and atomic labels"
+    - "Bebas Neue 44 px for small caps and price-tag numerals"
+  layout: ["Ad-page layout: big headline top, hero product or figure in a circle or boomerang frame, starburst callout", "Diagonal bands and kidney shapes as backgrounds"]
+  material: ["Flat printed ink shapes with a slight registration offset", "Round-corner ad panels with cream borders"]
+  texture: ["Baked heavy halftone and aged newsprint grain", "Slight 2 px colour misregistration baked into hero art"]
+  camera: ["Locked-off page with gentle push_in on holds", "Pan across a wide ad spread for lists"]
+  transitions: ["starburst-wipe (a growing starburst fills the frame on a beat, next scene inside it)", "page-slide (panels slide in on diagonals with back.out(1.6))", "iris (circular reveal from the hero, expo.inOut 0.5 s)"]
+  pacing:
+    bpm: [110, 128]
+    rhythm: "Upbeat jingle pace: reveals on every downbeat, holds 4 beats, a boing-like settle on hero landings."
+  beat_response: ["Starbursts spin 15 deg and pulse 1.0-1.08 on kicks", "Atom orbits tick one step per beat", "Price-tag numerals bounce on downbeats"]
+  ui_choreography: ["UI shown in a rounded TV or ad-panel frame", "Callouts are starburst stickers that slap in with back.out(1.8)"]
+  diagrams: ["Pictogram figures and arrows in flat ink", "Bars as stacked ad blocks with rounded ends", "Orbit diagrams with dotted paths"]
+  character_motion: ["Cartoon mascots with squash and stretch, rubber-hose arms", "Products bounce once on landing (bounce.out)"]
+  captions: ["Cream pill with ink border, 42 px Be Vietnam Pro 700 ink, current word mustard; bottom band"]
+  sound: ["Swing, surf or lounge exotica 110-128 BPM", "SFX: boing, ding, slide whistle, cash register; medium density"]
+scene_types:
+  prefer: [cover, hook, product-hero, feature, stats, cta, outro]
+  avoid: [terminal, code]
+signature_moves:
+  - "Starburst callout slapped on the key number"
+  - "Product lands in a boomerang frame with one bounce"
+  - "Atom orbit ticking on the beat"
+strengths: ["Instantly nostalgic and fun", "Great for products and money stories", "Clear ad-style hierarchy"]
+constraints:
+  - "Halftone and misregistration are baked to PNG"
+  - "Shapes stay flat ink, no gradients"
+  - "Bounce and spin are seeded and finite"
+avoid: ["Neon, glass or chrome", "Thin modern sans headlines", "Dark moody palettes"]
+pairs_well_with: [joyful-pop, paper-cut-collage, editorial-collage-explainer, retro-crt-broadcast]

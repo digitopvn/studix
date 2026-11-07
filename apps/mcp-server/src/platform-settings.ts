@@ -2,27 +2,33 @@ import {
   type PlatformCredentialService,
   type PlatformCredentialView,
   STORAGE_KEY_NAMES,
+  type StorageKeyPair,
+  type StorageProfileCandidate,
+  type StorageProfileFields,
+  type StorageProfileScopeName,
+  type StorageProfileService,
+  type StorageProfileView,
   type VendorKeyTester,
 } from "@studix/auth";
 import { assertPlatformOperator, type TenantContext } from "@studix/core";
 import {
+  keyReadiness,
+  MULTIX_KEY_SLOTS,
   MULTIX_ROLE_VENDORS,
-  MULTIX_VENDOR_KEYS,
-  MULTIX_VENDORS,
   type MultixDiagnosis,
   type MultixRole,
-  type MultixVendor,
 } from "@studix/providers";
 import { type Clock, redact, StudixError, systemClock } from "@studix/shared";
 import type { S3Credentials, StorageProbeResult } from "@studix/storage";
 
 /*
- * What a platform operator sees and changes under Settings > Storage & Media. The bucket, endpoint and
- * region of object storage (R2) stay in the deployment environment (S3_*); its access key pair may also be
- * stored from the dashboard, sealed like the media vendor keys, and then overrides S3_ACCESS_KEY_ID /
- * S3_SECRET_ACCESS_KEY without a redeploy. A new pair is saved only after a real put/get/head/delete with it
- * passes. Nothing here returns a secret, and every call is limited to platform operators in a dashboard
- * session.
+ * What a platform operator sees and changes under Settings > Storage & Media. Object storage is a set of
+ * storage profiles (provider, endpoint, bucket, region, path style, key prefix and a sealed key pair); the
+ * S3_* deployment settings are the `env` profile, active while no stored profile is. The `env` key pair may
+ * also be stored from the dashboard, sealed like the media vendor keys. Anything new is saved only after a
+ * real put/get/head/delete with it passes. Switching the active profile changes where new objects go; old
+ * objects are read from the profile their rows record. Nothing here returns a secret, and every call is
+ * limited to platform operators in a dashboard session.
  */
 
 /** Which kinds of media each vendor key serves, from the routes the worker actually uses. */
@@ -81,7 +87,9 @@ export interface StorageStatusView {
 }
 
 export interface MediaVendorView {
-  vendor: MultixVendor;
+  /** A Multix key slot id (MULTIX_KEY_SLOTS): the provider, or `<provider>-<key>` for its further keys. */
+  vendor: string;
+  name: string;
   /** The variable name the CLI reads; a name, never a value. */
   keyName: string;
   kinds: string[];
@@ -114,7 +122,7 @@ export interface WorkerMediaReport {
   code?: string;
   /** The worker has STUDIX_SECRETS_KEY and can open dashboard-stored keys. */
   secretsKey: boolean;
-  vendors: Partial<Record<MultixVendor, boolean>>;
+  vendors: Partial<Record<string, boolean>>;
 }
 
 export interface WorkerMediaView {
@@ -127,6 +135,8 @@ export interface WorkerMediaView {
 
 export interface PlatformSettingsView {
   storage: StorageStatusView;
+  /** The `env` profile first, then stored ones; absent when profiles cannot be stored (no STUDIX_SECRETS_KEY). */
+  storageProfiles?: StorageProfileView[];
   media: MediaStatusView;
 }
 
@@ -136,7 +146,7 @@ export interface MediaTestView {
   state: MultixDiagnosis["state"];
   /** `missing credential` etc.; the operator's wording for a failed check. */
   diagnosis: "ok" | "missing_executable" | "missing_credential" | "check_failed";
-  vendors: Array<{ vendor: MultixVendor; keyName: string; hasKey: boolean }>;
+  vendors: Array<{ vendor: string; keyName: string; hasKey: boolean }>;
   reason?: string;
   code?: string;
   /** The check reads which keys exist; it calls no paid API. */
@@ -164,6 +174,36 @@ export interface PlatformSettingsService {
   setStorageKey(ctx: TenantContext, pair: S3Credentials): Promise<StorageTestView>;
   /** Remove the stored pair; S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY from the environment apply again. */
   revokeStorageKey(ctx: TenantContext): Promise<void>;
+  /** Profile methods take the scope last: `platform` (operator, default) or the session's `workspace`. */
+  listStorageProfiles(ctx: TenantContext, scope?: StorageProfileScopeName): Promise<StorageProfileView[]>;
+  /** Probe the candidate profile, then store it (inactive); nothing is saved when the probe fails. */
+  createStorageProfile(
+    ctx: TenantContext,
+    fields: StorageProfileFields,
+    key: StorageKeyPair,
+    scope?: StorageProfileScopeName,
+  ): Promise<StorageProfileView>;
+  /** Without `key` the stored pair is kept; the probe runs with the new settings either way. */
+  updateStorageProfile(
+    ctx: TenantContext,
+    id: string,
+    fields: StorageProfileFields,
+    key?: StorageKeyPair,
+    scope?: StorageProfileScopeName,
+  ): Promise<StorageProfileView>;
+  /** New objects go to this profile (or `env`) from now on, on the app and, within seconds, on the worker. */
+  activateStorageProfile(
+    ctx: TenantContext,
+    id: string,
+    scope?: StorageProfileScopeName,
+  ): Promise<StorageProfileView>;
+  testStorageProfile(
+    ctx: TenantContext,
+    id: string,
+    scope?: StorageProfileScopeName,
+  ): Promise<StorageTestView>;
+  /** Refused while the profile is active or assets are stored in it. */
+  deleteStorageProfile(ctx: TenantContext, id: string, scope?: StorageProfileScopeName): Promise<void>;
 }
 
 export interface PlatformSettingsDeps {
@@ -187,6 +227,12 @@ export interface PlatformSettingsDeps {
   storageCredentials?: PlatformCredentialService;
   /** Put/get/head/delete with a candidate pair before it is stored. */
   probeCandidate?: (pair: S3Credentials) => Promise<StorageProbeResult>;
+  /** Stored storage profiles; absent without STUDIX_SECRETS_KEY. */
+  profiles?: StorageProfileService;
+  /** Put/get/head/delete with a candidate profile (through the SSRF-guarded connection) before it is stored. */
+  probeProfile?: (candidate: StorageProfileCandidate) => Promise<StorageProbeResult>;
+  /** Called after a profile change so this process applies it at once instead of within the refresh period. */
+  profilesChanged?: () => Promise<void>;
   vendorTester?: VendorKeyTester;
   /** The process environment, for testing a vendor key that is not stored here. */
   env?: Readonly<Record<string, string | undefined>>;
@@ -211,9 +257,9 @@ export async function fetchWorkerMedia(
     return undefined;
   }
   const vendors: WorkerMediaReport["vendors"] = {};
-  for (const vendor of MULTIX_VENDORS) {
-    const has = (media.vendors as Record<string, unknown>)[vendor];
-    if (typeof has === "boolean") vendors[vendor] = has;
+  for (const { id } of MULTIX_KEY_SLOTS) {
+    const has = (media.vendors as Record<string, unknown>)[id];
+    if (typeof has === "boolean") vendors[id] = has;
   }
   return {
     executable: media.executable,
@@ -248,13 +294,13 @@ export function mediaMismatches(
     out.push("STUDIX_SECRETS_KEY is set on the worker but not on the app.");
   }
   if (app.vendors && worker.state === "ready") {
-    for (const vendor of MULTIX_VENDORS) {
-      const onWorker = worker.vendors[vendor];
-      if (onWorker === undefined || onWorker === app.vendors[vendor]) continue;
+    for (const { id, keyName } of MULTIX_KEY_SLOTS) {
+      const onWorker = worker.vendors[id];
+      if (onWorker === undefined || onWorker === Boolean(app.vendors[id])) continue;
       out.push(
         onWorker
-          ? `${MULTIX_VENDOR_KEYS[vendor]} is found on the worker but not on the app.`
-          : `${MULTIX_VENDOR_KEYS[vendor]} is found on the app but not on the worker.`,
+          ? `${keyName} is found on the worker but not on the app.`
+          : `${keyName} is found on the app but not on the worker.`,
       );
     }
   }
@@ -325,6 +371,22 @@ function storageView(probe: StorageProbeResult, at: Date): StorageTestView {
   };
 }
 
+/** Refuse a candidate whose probe failed, with the diagnosis and no secret. */
+function assertProbePassed(view: StorageTestView, what: string): void {
+  if (view.ok) return;
+  throw new StudixError("VALIDATION", `${what} failed the storage check; nothing was saved`, {
+    retryable: false,
+    details: {
+      diagnosis: view.diagnosis,
+      ...(view.failedStep ? { failedStep: view.failedStep } : {}),
+      ...(view.httpStatus === undefined ? {} : { httpStatus: view.httpStatus }),
+      ...(view.s3Code ? { s3Code: view.s3Code } : {}),
+      ...(view.message ? { message: view.message } : {}),
+    },
+    ...(view.suggestedAction ? { suggestedAction: view.suggestedAction } : {}),
+  });
+}
+
 export function createPlatformSettingsService(deps: PlatformSettingsDeps): PlatformSettingsService {
   const clock = deps.clock ?? systemClock;
   const { config } = deps;
@@ -351,10 +413,10 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
 
   /** Keep the outcome of the check next to each dashboard-stored key (a key from the environment has no row). */
   const recordVendorTests = async (ctx: TenantContext, diagnosis: MultixDiagnosis): Promise<void> => {
-    for (const vendor of MULTIX_VENDORS) {
-      const ok = diagnosis.state === "ready" && diagnosis.vendors[vendor];
+    for (const { id, keyName } of MULTIX_KEY_SLOTS) {
+      const ok = diagnosis.state === "ready" && Boolean(diagnosis.vendors[id]);
       await deps.credentials
-        .recordTest(ctx, MULTIX_VENDOR_KEYS[vendor], {
+        .recordTest(ctx, keyName, {
           ok,
           detail: ok ? "Key found by multix check" : (diagnosis.reason ?? "Key not found by multix check"),
         })
@@ -362,9 +424,40 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
     }
   };
 
-  const kindsOf = (vendor: MultixVendor): string[] =>
+  /** The profile service; the platform scope is the operator's, the service checks a workspace scope. */
+  const profilesOrThrow = (
+    ctx: TenantContext,
+    scope: StorageProfileScopeName = "platform",
+  ): StorageProfileService => {
+    if (scope === "platform") assertPlatformOperator(ctx);
+    if (!deps.profiles) {
+      throw new StudixError("UNAVAILABLE", "Storage profiles cannot be stored on this server", {
+        retryable: false,
+        suggestedAction: "Set STUDIX_SECRETS_KEY (32 random bytes, base64) on the app and the worker.",
+      });
+    }
+    return deps.profiles;
+  };
+
+  const probeProfileOrThrow = () => {
+    if (!deps.probeProfile) {
+      throw new StudixError("UNAVAILABLE", "Storage profiles cannot be checked on this server", {
+        retryable: false,
+      });
+    }
+    return deps.probeProfile;
+  };
+
+  const verifyProfile = async (candidate: StorageProfileCandidate): Promise<void> => {
+    assertProbePassed(
+      storageView(await probeProfileOrThrow()(candidate), clock.now()),
+      "The storage profile",
+    );
+  };
+
+  const kindsOf = (vendor: string): string[] =>
     (Object.keys(MULTIX_ROLE_VENDORS) as MultixRole[])
-      .filter((role) => MULTIX_ROLE_VENDORS[role].includes(vendor))
+      .filter((role) => (MULTIX_ROLE_VENDORS[role] as readonly string[]).includes(vendor))
       .map((role) => ROLE_LABELS[role]);
 
   return {
@@ -395,9 +488,11 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           worker = { reachable: false, mismatches: [] };
         }
       }
+      const storageProfiles = deps.profiles ? await deps.profiles.list(ctx) : undefined;
       return {
+        ...(storageProfiles ? { storageProfiles } : {}),
         storage: {
-          configured: Boolean(config.S3_BUCKET),
+          configured: Boolean(config.S3_BUCKET) || Boolean(storageProfiles?.some((p) => p.id !== "env")),
           source: pair ? "dashboard" : "environment",
           credentialStorage: storageStored?.storage ?? "unavailable",
           ...(pair && storageCredential ? { credential: storageCredential } : {}),
@@ -416,11 +511,11 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
           ...(config.MULTIX_BIN ? { path: config.MULTIX_BIN } : {}),
           homeEnvDisabled: !config.MULTIX_ALLOW_HOME_ENV,
           credentialStorage: stored.storage,
-          vendors: MULTIX_VENDORS.map((vendor) => {
-            const keyName = MULTIX_VENDOR_KEYS[vendor];
+          vendors: MULTIX_KEY_SLOTS.map(({ id: vendor, name, keyName }) => {
             const credential = byName.get(keyName) ?? { name: keyName, source: "missing" as const };
             return {
               vendor,
+              name,
               keyName,
               kinds: kindsOf(vendor),
               credential,
@@ -446,7 +541,8 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
       assertPlatformOperator(ctx);
       const at = clock.now();
       let view: StorageTestView;
-      if (!config.S3_BUCKET || !deps.storage) {
+      const anyProfile = Boolean((await deps.profiles?.list(ctx))?.some((p) => p.active && p.id !== "env"));
+      if ((!config.S3_BUCKET && !anyProfile) || !deps.storage) {
         view = {
           ok: false,
           at,
@@ -475,18 +571,7 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
         secretAccessKey: pair.secretAccessKey.trim(),
       };
       const view = storageView(await deps.probeCandidate(candidate), clock.now());
-      if (!view.ok) {
-        throw new StudixError("VALIDATION", "The new key pair failed the storage check; nothing was saved", {
-          retryable: false,
-          details: {
-            diagnosis: view.diagnosis,
-            ...(view.failedStep ? { failedStep: view.failedStep } : {}),
-            ...(view.httpStatus === undefined ? {} : { httpStatus: view.httpStatus }),
-            ...(view.s3Code ? { s3Code: view.s3Code } : {}),
-          },
-          ...(view.suggestedAction ? { suggestedAction: view.suggestedAction } : {}),
-        });
-      }
+      assertProbePassed(view, "The new key pair");
       await store.set(ctx, "S3_ACCESS_KEY_ID", candidate.accessKeyId);
       await store.set(ctx, "S3_SECRET_ACCESS_KEY", candidate.secretAccessKey);
       await store.recordTest(ctx, "S3_SECRET_ACCESS_KEY", {
@@ -512,6 +597,58 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
         });
       }
       storageTest = undefined;
+    },
+
+    async listStorageProfiles(ctx, scope = "platform") {
+      return profilesOrThrow(ctx, scope).list(ctx, scope);
+    },
+
+    async createStorageProfile(ctx, fields, key, scope = "platform") {
+      const view = await profilesOrThrow(ctx, scope).create(ctx, fields, key, verifyProfile, scope);
+      await deps.profilesChanged?.();
+      return view;
+    },
+
+    async updateStorageProfile(ctx, id, fields, key, scope = "platform") {
+      const view = await profilesOrThrow(ctx, scope).update(ctx, id, fields, key, verifyProfile, scope);
+      await deps.profilesChanged?.();
+      return view;
+    },
+
+    async activateStorageProfile(ctx, id, scope = "platform") {
+      const view = await profilesOrThrow(ctx, scope).activate(ctx, id, scope);
+      if (scope === "platform") storageTest = undefined;
+      await deps.profilesChanged?.();
+      return view;
+    },
+
+    async testStorageProfile(ctx, id, scope = "platform") {
+      const profiles = profilesOrThrow(ctx, scope);
+      if (id === "env") {
+        if (scope === "platform") return this.testStorage(ctx);
+        throw new StudixError("VALIDATION", "The platform default is checked by the platform operator", {
+          retryable: false,
+        });
+      }
+      const candidate = await profiles.candidate(ctx, id, scope);
+      const view = storageView(await probeProfileOrThrow()(candidate), clock.now());
+      await profiles.recordTest(
+        ctx,
+        id,
+        {
+          ok: view.ok,
+          detail: view.ok
+            ? "Write, read and delete passed"
+            : `${view.diagnosis}${view.failedStep ? ` at ${view.failedStep}` : ""}`,
+        },
+        scope,
+      );
+      return view;
+    },
+
+    async deleteStorageProfile(ctx, id, scope = "platform") {
+      await profilesOrThrow(ctx, scope).revoke(ctx, id, scope);
+      await deps.profilesChanged?.();
     },
 
     async testMediaKey(ctx, name) {
@@ -551,14 +688,14 @@ export function createPlatformSettingsService(deps: PlatformSettingsDeps): Platf
         ? await deps.multix.diagnose()
         : {
             state: "missing_executable",
-            vendors: Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixDiagnosis["vendors"],
+            vendors: keyReadiness(new Set()),
             reason: "MULTIX_BIN is not set in the app process",
             code: "NOT_SET",
           };
-      const vendors = MULTIX_VENDORS.map((vendor) => ({
-        vendor,
-        keyName: MULTIX_VENDOR_KEYS[vendor],
-        hasKey: diagnosis.vendors[vendor],
+      const vendors = MULTIX_KEY_SLOTS.map(({ id, keyName }) => ({
+        vendor: id,
+        keyName,
+        hasKey: Boolean(diagnosis.vendors[id]),
       }));
       const anyKey = vendors.some((v) => v.hasKey);
       lastVendors = diagnosis.state === "ready" ? diagnosis.vendors : undefined;

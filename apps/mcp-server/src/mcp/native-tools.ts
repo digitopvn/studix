@@ -1,5 +1,6 @@
 import {
   can,
+  FeedbackAnnotation,
   type FeedbackInput,
   type NextAction,
   PlannerSelection,
@@ -13,11 +14,20 @@ import { StudixError } from "@studix/shared";
 import { packRegistry } from "@studix/skills";
 import { RenderPreset } from "@studix/video-ir";
 import { z } from "zod";
+import {
+  AgentInput,
+  AgentRolesInput,
+  resolveAgentRoles,
+  resolveAgentSelection,
+} from "../agent-model-selection.ts";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
+import { waitForJobChange } from "./job-notifications.ts";
+import { withMediaExecUrls } from "./media-exec-tool.ts";
+import type { ToolImage } from "./tool-envelope.ts";
 
 /** Native tool names. `studix_cancel_job` is not referenced by core next-hints, so it is named here. */
 export const NATIVE_TOOL_NAMES = {
@@ -34,11 +44,17 @@ export interface ToolContext {
   traceId: string;
   /** Names of every tool listed on this server (for the inspect handshake). */
   toolNames: string[];
+  /** Sends `notifications/progress` when the caller asked for progress (a progressToken). */
+  progress?: (progress: number, total: number, message: string) => Promise<void>;
+  /** Aborted when the client cancels the call. */
+  signal?: AbortSignal;
 }
 
 export interface ToolOutcome {
   data: object;
   next: NextAction[];
+  /** Images the client model should see next to the data, such as reviewers' marked frames. */
+  images?: ToolImage[];
   /** Job/project ids for the activity trail. */
   scope?: { jobId?: string; projectId?: string };
 }
@@ -56,6 +72,8 @@ export interface NativeTool<I extends z.ZodType = z.ZodType> {
   idempotent?: boolean;
   /** Mutations are recorded in the workspace activity trail. */
   audited?: boolean;
+  /** Tool `_meta`, e.g. the MCP App that renders its result. */
+  meta?: Record<string, unknown>;
   run(ctx: ToolContext, input: z.output<I>): Promise<ToolOutcome>;
 }
 
@@ -123,15 +141,19 @@ const CreateVideoInput = z
       .optional()
       .describe("Seconds from now until the job fails with TIMEOUT."),
     renderPreset: RenderPreset.optional(),
-    planner: PlannerSelection.optional().describe(
-      "Opt-in Claude planner: an Anthropic key connection id (dashboard, AI & Providers). Not with spec.",
-    ),
+    planner: PlannerSelection.optional().describe("Alias of agent with runtime claude. Not with spec."),
     workflowTemplate: WorkflowTemplateId.optional().describe(
       "Workflow pack id (studix_inspect skills). Default brand-intro.",
     ),
     // Where creative agent stages run: in Studix (harness, the default) or on the host's agent through the
     // agent task tools. Left undescribed on the wire to keep the tool list within its size budget.
     agentMode: z.enum(["harness", "host"]).optional(),
+    agent: AgentInput.optional().describe(
+      "Agent runtime, connection, model and effort (studix_list_agent_runtimes). Default: workspace preference.",
+    ),
+    roles: AgentRolesInput.optional().describe(
+      "skill-agent only: director (script), builder (makes it; default agent), qa (scores, may send back); each an agent.",
+    ),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
     message: "Provide prompt or brief",
@@ -159,6 +181,9 @@ const FeedbackToolInput = z.object({
   startMs: Ms.describe("Time range start; with endMs instead of an id."),
   endMs: Ms,
   comment: z.string().trim().min(1).max(2000),
+  annotation: FeedbackAnnotation.optional().describe(
+    "Marks on a paused frame. Coordinates are fractions (0 to 1) of the frame; snapshot is an image data URL of the frame with the marks.",
+  ),
   patch: z
     .object({
       description: z.string().max(500).optional(),
@@ -182,6 +207,69 @@ const FeedbackToolInput = z.object({
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),
 });
 
+const MAX_FEEDBACK_IMAGES = 8;
+
+/**
+ * Open review notes on the current version. Images (the marked snapshot and attached reference images) leave
+ * the JSON, which would spend tokens on base64, and come back as image content blocks. Each note names its
+ * blocks by content index (0 is the text block); `imagesOmitted` counts the ones past the cap. Pen strokes
+ * shrink to their ends, since the snapshot already shows their shape.
+ */
+async function openFeedback(ctx: ToolContext, projectId: string) {
+  const review = await ctx.deps.studio.getProjectReview(ctx.tenant, projectId, { images: true });
+  const open = review.comments.filter(
+    (c) => c.status === "open" && (!review.currentVersion || c.versionId === review.currentVersion.id),
+  );
+  const images: ToolImage[] = [];
+  let imagesOmitted = 0;
+  const attach = (url: string | undefined): number | undefined => {
+    const match = url?.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+    if (!match) return undefined;
+    if (images.length >= MAX_FEEDBACK_IMAGES) {
+      imagesOmitted++;
+      return undefined;
+    }
+    return images.push({ mimeType: match[1]!, data: match[2]! });
+  };
+  const notes = open.map((c) => {
+    const { snapshot, strokes, references, ...marks } = c.annotation ?? {};
+    const snapshotImage = attach(snapshot);
+    return {
+      feedbackId: c.id,
+      target: c.targetId,
+      ...(c.atMs !== undefined ? { startMs: c.atMs, endMs: c.endMs } : {}),
+      comment: c.body,
+      ...(c.annotation
+        ? {
+            annotation: {
+              ...marks,
+              ...(strokes?.length
+                ? {
+                    strokes: strokes.map((s) => ({
+                      tool: s.tool,
+                      from: s.points[0],
+                      to: s.points.at(-1),
+                      points: s.points.length,
+                    })),
+                  }
+                : {}),
+              ...(references?.length
+                ? {
+                    references: references.map((r) =>
+                      r.url.startsWith("data:")
+                        ? { image: attach(r.url) ?? null, ...(r.note ? { note: r.note } : {}) }
+                        : r,
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
+      ...(snapshotImage ? { snapshotImage } : {}),
+    };
+  });
+  return { notes, images, ...(imagesOmitted ? { imagesOmitted } : {}) };
+}
 export const NATIVE_TOOLS = [
   tool({
     name: NATIVE_TOOL_NAMES.inspect,
@@ -213,7 +301,13 @@ export const NATIVE_TOOLS = [
     async run(ctx, input) {
       const brief = input.brief ?? { prompt: input.prompt };
       const pack = resolveWorkflowPack(packRegistry, input.workflowTemplate);
-      if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, input.planner);
+      const planner =
+        input.agent?.runtime === "claude"
+          ? { runtime: "claude" as const, providerConnectionId: input.agent.providerConnectionId }
+          : input.planner;
+      if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, planner);
+      const agent = input.agent ? await resolveAgentSelection(ctx.deps, ctx.tenant, input.agent) : undefined;
+      const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles);
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
         spec: input.spec,
@@ -225,6 +319,8 @@ export const NATIVE_TOOLS = [
         planner: input.planner,
         workflowTemplate: pack.id,
         agentMode: input.agentMode,
+        ...(agent ? { agent } : {}),
+        ...(roles ? { roles } : {}),
       });
       return {
         data: {
@@ -246,12 +342,20 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.getJob,
     title: "Get job",
     description:
-      "Job status, stages, progress, error with suggestedAction, and a signed MP4 URL once succeeded.",
-    input: z.object({ jobId: Id }),
+      "Job status, stages, progress, error with suggestedAction, and a signed MP4 URL once succeeded. waitSeconds holds the call until the status changes, with progress notifications.",
+    input: z.object({
+      jobId: Id,
+      waitSeconds: z.number().int().min(0).max(50).optional(),
+    }),
     readOnly: true,
     async run(ctx, input) {
-      const job = await ctx.deps.studio.getJob(ctx.tenant, input.jobId);
-      const view = await jobWithVideo(ctx.artifacts, ctx.tenant, job);
+      const found = await ctx.deps.studio.getJob(ctx.tenant, input.jobId);
+      const job = input.waitSeconds ? await waitForJobChange(ctx, found, input.waitSeconds) : found;
+      const view = await jobWithVideo(
+        ctx.artifacts,
+        ctx.tenant,
+        await withMediaExecUrls(ctx.artifacts, ctx.tenant, job),
+      );
       const data = job.projectId ? { ...view, reviewUrl: reviewUrl(ctx.deps, job.projectId) } : view;
       return { data, next: job.next };
     },
@@ -260,16 +364,26 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.getProject,
     title: "Get project",
     description:
-      "Project, current version, recent jobs and renders with signed URLs. includeIr adds the VideoIR.",
-    input: z.object({ projectId: Id, includeIr: z.boolean().optional() }),
+      "Project, current version, recent jobs and renders with signed URLs. includeIr adds the VideoIR. includeFeedback adds the open review notes of the current version (target, time, region, pins, sketches, references) and returns each note's marked frame as an image.",
+    input: z.object({
+      projectId: Id,
+      includeIr: z.boolean().optional(),
+      includeFeedback: z.boolean().optional(),
+    }),
     readOnly: true,
     async run(ctx, input) {
       const details = await ctx.deps.studio.getProject(ctx.tenant, input.projectId);
       const view = await projectView(ctx.artifacts, ctx.tenant, details, {
         includeIr: input.includeIr ?? false,
       });
-      const data = { ...view, reviewUrl: reviewUrl(ctx.deps, details.project.id) };
-      return { data, next: details.jobs[0]?.next ?? [] };
+      const feedback = input.includeFeedback ? await openFeedback(ctx, input.projectId) : undefined;
+      const data = {
+        ...view,
+        ...(feedback ? { feedback: feedback.notes } : {}),
+        ...(feedback?.imagesOmitted ? { imagesOmitted: feedback.imagesOmitted } : {}),
+        reviewUrl: reviewUrl(ctx.deps, details.project.id),
+      };
+      return { data, next: details.jobs[0]?.next ?? [], ...(feedback ? { images: feedback.images } : {}) };
     },
   }),
   tool({

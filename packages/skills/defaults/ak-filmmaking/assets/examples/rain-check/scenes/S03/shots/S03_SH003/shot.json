@@ -1,0 +1,61 @@
+{
+  "shot_id": "S03_SH003",
+  "scene_id": "S03",
+  "shot_type": "medium_close_up",
+  "lens": "50mm",
+  "camera": "handheld, gentle",
+  "action": "Mai turns to Linh and asks.",
+  "emotion": "hopeful, shy",
+  "duration_target": 5,
+  "characters": [
+    "MAI_01"
+  ],
+  "location": "CAFE_STREET_01",
+  "wardrobe": {
+    "MAI_01": "MAI_RAINCOAT_01"
+  },
+  "props": [],
+  "visible_speakers": [
+    "MAI_01"
+  ],
+  "lipsync": "native",
+  "references": [
+    "CHAR_MAI_FRONT",
+    "CHAR_MAI_3QL",
+    "WARDROBE_MAI_RAINCOAT_01",
+    "LOC_CAFE_STREET_WIDE"
+  ],
+  "continuity_from": "S03_SH002",
+  "continuity_to": "S03_SH004",
+  "continuity": {
+    "screen_positions": {
+      "MAI_01": "left"
+    },
+    "prop_states": {},
+    "conditions": {
+      "MAI_01": [
+        "damp_hair"
+      ]
+    },
+    "screen_direction": "static"
+  },
+  "render_class": "STANDARD",
+  "model_requirements": [
+    "audio_reference",
+    "native_lipsync"
+  ],
+  "retry_budget": 2,
+  "estimate": {
+    "generation_seconds": 10,
+    "cost": {
+      "amount": 3.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "STORYBOARDED",
+  "storyboard": {
+    "path": "storyboard/S03_SH003.png",
+    "status": "approved"
+  }
+}

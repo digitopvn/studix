@@ -1,0 +1,23 @@
+{
+  "scene_id": "S01",
+  "title": "Arrival in the rain",
+  "location": "CAFE_STREET_01",
+  "time_of_day": "dusk",
+  "weather": "heavy rain",
+  "lighting": "blue dusk, warm shop spill",
+  "characters": [
+    "MAI_01"
+  ],
+  "wardrobe": {
+    "MAI_01": "MAI_RAINCOAT_01"
+  },
+  "props": [
+    "UMBRELLA_01"
+  ],
+  "purpose": "Mai commits to the meeting.",
+  "audio_context": "Rain on awning, tyres on wet road.",
+  "shots": [
+    "S01_SH001",
+    "S01_SH002"
+  ]
+}

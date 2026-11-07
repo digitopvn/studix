@@ -3,12 +3,13 @@ import type {
   AgentCap,
   AgentHandoff,
   AgentRunResult,
+  AgentRunRoute,
   AgentStageLimits,
   AgentToolDefinition,
   Approval,
   FundingSource,
 } from "@studix/core";
-import { FUNDING_SOURCES } from "@studix/core";
+import { AGENT_RUNTIMES, FUNDING_SOURCES, REASONING_EFFORTS, stageAgentSelection } from "@studix/core";
 import { newId, redactDeep, StudixError, toStudixError } from "@studix/shared";
 import { z } from "zod";
 import { stageCacheKey } from "./stage-runner.ts";
@@ -30,8 +31,15 @@ export interface AgentStageSpec<I extends z.ZodType, O extends z.ZodType<StageOu
   taskInput(input: z.infer<I>): Record<string, unknown>;
   /** Limits of the first run; each overrun approval doubles every one of them. */
   limits: Omit<AgentStageLimits, "tools">;
+  /** Per-job limits of the first run (for example by the agent's reasoning effort); `limits` otherwise. */
+  limitsFor?(job: StageContext["job"]): Omit<AgentStageLimits, "tools">;
   /** Tools the agent may call (the allowlist); none by default. */
   tools?: AgentToolDefinition[];
+  /**
+   * False when the output points at files that live only for the job (a sandbox render), or when
+   * the same input should make a new result each run. Cached by input otherwise.
+   */
+  cacheable?: boolean;
 }
 
 const CAP_LABELS: Record<AgentCap, string> = {
@@ -76,6 +84,19 @@ interface Spend {
   model?: string;
   providerExecutionId?: string;
   funding?: FundingSource;
+  route?: AgentRunRoute;
+}
+
+function routeOf(value: unknown): AgentRunRoute | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const r = value as Partial<AgentRunRoute>;
+  const runtime = AGENT_RUNTIMES.find((x) => x === r.runtime);
+  if (!runtime) return undefined;
+  return {
+    runtime,
+    ...(typeof r.connectionId === "string" ? { connectionId: r.connectionId } : {}),
+    ...(REASONING_EFFORTS.find((e) => e === r.reasoningEffort) ? { reasoningEffort: r.reasoningEffort } : {}),
+  };
 }
 
 function spendOf(err: unknown): Spend | undefined {
@@ -91,6 +112,7 @@ function spendOf(err: unknown): Spend | undefined {
     model: typeof s.model === "string" ? s.model : undefined,
     providerExecutionId: typeof s.providerExecutionId === "string" ? s.providerExecutionId : undefined,
     funding: FUNDING_SOURCES.find((f) => f === s.funding),
+    route: routeOf(s.route),
   };
 }
 
@@ -159,6 +181,14 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
       outputTokens: spend.outputTokens,
       turns: spend.turns,
       round,
+      // What ran, for the job's stage list; a connection id, never its key.
+      ...(spend.route
+        ? {
+            agentRuntime: spend.route.runtime,
+            ...(spend.route.connectionId ? { connectionId: spend.route.connectionId } : {}),
+            ...(spend.route.reasoningEffort ? { reasoningEffort: spend.route.reasoningEffort } : {}),
+          }
+        : {}),
       ...(cap ? { cap } : {}),
     },
   });
@@ -180,10 +210,21 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
     inputSchema: spec.inputSchema,
     outputSchema: spec.outputSchema,
     retry: "never",
-    cacheKey: (s) => stageCacheKey(spec.name, spec.version, s.input),
+    // The agent that runs the stage is part of the key: another runtime, model, effort or connection (a role's or
+    // the job's) must not reuse this output.
+    cacheKey: (s) =>
+      spec.cacheable === false
+        ? undefined
+        : stageCacheKey(spec.name, spec.version, {
+            input: s.input,
+            agent: agentKeyOf(s.job.payload, spec.name),
+          }),
     // Host work costs Studix nothing; an invalid mode is reported by `run`, so the estimate stays conservative.
+    // The reservation never exceeds what is left of the job budget: `run` caps the agent at that amount.
     estimateCostCents: (s) =>
-      AgentModePayload.safeParse(s.job.payload).data?.agentMode === "host" ? 0 : spec.limits.maxCostCents,
+      AgentModePayload.safeParse(s.job.payload).data?.agentMode === "host"
+        ? 0
+        : Math.min(spec.limits.maxCostCents, remainingBudget(s.job)),
     async run(s) {
       const agents = s.agents;
       if (!agents) {
@@ -210,7 +251,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
         await agents.consumeOverrun(latest.id);
       }
       const round = await agents.grantedOverruns();
-      const limits = scaled(spec.limits, 2 ** round);
+      const limits = scaled(spec.limitsFor?.(s.job) ?? spec.limits, 2 ** round);
       const input = spec.taskInput(s.input as z.infer<I>);
 
       if (mode === "host") return runOnHost(s, round, limits, input);
@@ -223,9 +264,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
             "Submit the job with payload.agentMode 'host' and complete the stage from your MCP client.",
         });
       }
-      const remaining =
-        s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
-      const maxCostCents = Math.min(limits.maxCostCents, remaining);
+      const maxCostCents = Math.min(limits.maxCostCents, remainingBudget(s.job));
       if (maxCostCents <= 0) {
         throw new StudixError("BUDGET_EXCEEDED", `No budget left for agent stage ${spec.name}`, {
           retryable: false,
@@ -305,4 +344,21 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
       },
     });
   }
+}
+
+function remainingBudget(job: { budgetCents?: number; spentCents: number }): number {
+  return job.budgetCents === undefined
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, job.budgetCents - job.spentCents);
+}
+
+/** What picks the agent of one stage: its selection (role or job agent), the roles, the mode and the legacy planner. */
+export function agentKeyOf(payload: unknown, stage: string): unknown {
+  const p = (payload ?? {}) as { roles?: unknown; agentMode?: unknown; planner?: unknown };
+  return {
+    selection: stageAgentSelection(payload, stage) ?? null,
+    roles: p.roles ?? null,
+    agentMode: p.agentMode ?? null,
+    planner: p.planner ?? null,
+  };
 }

@@ -19,6 +19,7 @@
     "test:integration": "vitest run --project integration",
     "test:live": "vitest run --project live",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "multix:keys": "node tools/multix/generate-key-providers.mjs",
     "db:generate": "pnpm --filter @studix/database db:generate",
     "db:migrate": "pnpm --filter @studix/database db:migrate",
     "schemas:export": "pnpm --filter @studix/video-ir schemas:export"

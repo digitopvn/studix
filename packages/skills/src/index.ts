@@ -86,6 +86,12 @@ export {
   type WorkflowPack,
 } from "./pack-registry.ts";
 export {
+  SKILL_AGENT_PACK,
+  SKILL_AGENT_STAGES,
+  SkillAgentRunOutput,
+  skillAgentPack,
+} from "./skill-agent/skill-agent-pack.ts";
+export {
   getSkill,
   knowledgeCatalog,
   listSkills,

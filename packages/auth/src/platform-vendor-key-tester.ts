@@ -5,7 +5,10 @@ export interface VendorKeyVerdict {
 }
 
 /** A free, read-only authentication check against the vendor; `undefined` for vendors that offer none. */
-export type VendorKeyTester = (name: string, value: string) => Promise<VendorKeyVerdict | undefined>;
+export type VendorKeyTester = ((name: string, value: string) => Promise<VendorKeyVerdict | undefined>) & {
+  /** Whether the key name has a free check at all. */
+  supports?: (name: string) => boolean;
+};
 
 export interface VendorKeyTesterOptions {
   fetch?: typeof fetch;
@@ -33,6 +36,41 @@ const PROBES: Readonly<
     headers: (key) => ({ authorization: `Bearer ${key}` }),
     unauthorized: "invalid",
   },
+  OPENAI_API_KEY: {
+    url: "https://api.openai.com/v1/models",
+    headers: (key) => ({ authorization: `Bearer ${key}` }),
+    unauthorized: "invalid",
+  },
+  GEMINI_API_KEY: {
+    url: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+    headers: (key) => ({ "x-goog-api-key": key }),
+    unauthorized: "invalid",
+  },
+  REPLICATE_API_TOKEN: {
+    url: "https://api.replicate.com/v1/account",
+    headers: (key) => ({ authorization: `Bearer ${key}` }),
+    unauthorized: "invalid",
+  },
+  RUNWAYML_API_SECRET: {
+    url: "https://api.dev.runwayml.com/v1/organization",
+    headers: (key) => ({ authorization: `Bearer ${key}`, "x-runway-version": "2024-11-06" }),
+    unauthorized: "invalid",
+  },
+  HEYGEN_API_KEY: {
+    url: "https://api.heygen.com/v2/user/remaining_quota",
+    headers: (key) => ({ "x-api-key": key }),
+    unauthorized: "invalid",
+  },
+  LEONARDO_API_KEY: {
+    url: "https://cloud.leonardo.ai/api/rest/v1/me",
+    headers: (key) => ({ authorization: `Bearer ${key}` }),
+    unauthorized: "invalid",
+  },
+  CLOUDFLARE_API_TOKEN: {
+    url: "https://api.cloudflare.com/client/v4/user/tokens/verify",
+    headers: (key) => ({ authorization: `Bearer ${key}` }),
+    unauthorized: "invalid",
+  },
   ELEVENLABS_API_KEY: {
     url: "https://api.elevenlabs.io/v1/user",
     headers: (key) => ({ "xi-api-key": key }),
@@ -45,7 +83,7 @@ const PROBES: Readonly<
 export function createVendorKeyTester(options: VendorKeyTesterOptions = {}): VendorKeyTester {
   const doFetch = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
-  return async (name, value) => {
+  const test = async (name: string, value: string): Promise<VendorKeyVerdict | undefined> => {
     const probe = PROBES[name];
     if (!probe) return undefined;
     try {
@@ -73,4 +111,5 @@ export function createVendorKeyTester(options: VendorKeyTesterOptions = {}): Ven
       return { verdict: "unverified", note: "The vendor could not be reached" };
     }
   };
+  return Object.assign(test, { supports: (name: string) => Object.hasOwn(PROBES, name) });
 }

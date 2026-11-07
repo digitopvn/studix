@@ -144,6 +144,42 @@ another name does not open). Rules:
   when it is set. The R2 key pair is stored the same way, and only after a
   write/read/delete probe with it passes.
 
+### Storage profiles (operator and workspace)
+
+An operator can point new objects at another S3-compatible bucket
+([ADR-0020](decisions/0020-storage-profiles.md)). The server connects to that
+endpoint with stored credentials, so these rules apply:
+
+- **Who:** platform profiles: only the `operator` role on a dashboard session.
+  A workspace's own profiles ([ADR-0023](decisions/0023-workspace-storage-profiles.md)):
+  its owners and admins on a dashboard session. Everyone else gets `FORBIDDEN`:
+  editors, viewers, API keys, OAuth clients and the system actor. A profile from
+  another scope reads as `NOT_FOUND`, and the router never uses a workspace's
+  profile for another workspace. There is no MCP tool for it.
+- **Probe first:** a profile is stored only after a write/read/head/delete probe
+  with the candidate settings passes.
+- **Sealed keys:** the key pair is sealed with `STUDIX_SECRETS_KEY` and bound to
+  `storage-profile:<id>:access|secret`. Views, errors, audit events and logs
+  carry only a last-four hint.
+- **Audit:** `storage_profile.created`, `updated`, `activated`, `revoked` and
+  `tested` are audited without secrets, in the platform workspace for platform
+  profiles and in the workspace itself for its own.
+- **SSRF guard** (`packages/storage/src/endpoint-guard.ts`):
+  - HTTPS only.
+  - No credentials, path or query in the URL.
+  - No IP literals, `localhost`, `.internal`, `.local` or `.localdomain` hosts.
+  - R2 endpoints must end in `.r2.cloudflarestorage.com`.
+  - Every address the host resolves to must be public. This is checked at save
+    time, and again on each connection through the socket `lookup` of the S3
+    client, so a DNS answer that changes after the check (rebinding) is still
+    refused.
+  - Link-local and cloud metadata addresses (`169.254.0.0/16`,
+    `100.100.100.200`, `fd00:ec2::254`) are always blocked.
+  - Private and loopback ranges are allowed only with
+    `STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS` (local development).
+  - The S3 SDK does not follow redirects.
+- **Media CSP:** the dashboard CSP media origins follow the configured profiles.
+
 ### Workspace media keys (BYOK)
 
 A workspace admin may store the workspace's own key for a Multix vendor under
@@ -294,9 +330,23 @@ Skills imported from public GitHub repositories are untrusted third-party text
 - Egress is fixed to `api.github.com` and `raw.githubusercontent.com`. The
   user's URL is only parsed, never requested, so it cannot reach internal hosts;
   redirects are handled manually inside the allowlist.
-- Only text is stored. Scripts and binaries are described, symlinks and
-  submodules skipped, unsafe paths dropped, and every read is byte-capped with
-  timeouts. Nothing is executed or installed.
+- Every regular file is stored, scripts and binaries included, so the skill
+  sandbox ([ADR-0018](decisions/0018-skill-sandbox.md)) can run them; the server
+  and worker host never execute or install anything from a skill. Symlinks and
+  submodules are skipped, unsafe paths dropped, and every read is byte-capped
+  with timeouts.
+- Zip uploads are never fetched from a user URL: small archives arrive inline,
+  larger ones through a presigned PUT into Studix's own bucket that is read once
+  and deleted. The reader rejects absolute paths, `..`, drive letters, control
+  characters, duplicate paths, ZIP64 and encryption, skips symlinks, and stops
+  zip bombs with entry, size and compression-ratio limits and capped inflation.
+- Each version gets a risk report (`low`/`medium`/`high`). A high-risk first
+  version starts disabled; enabling or activating a high-risk version needs
+  `confirmHighRisk` from a user with the admin, owner or operator role (never an
+  API key) and is audited with the level and version. The scanner is a review
+  aid, not a filter.
+- Platform-scope skills ([ADR-0019](decisions/0019-full-skill-store-uploads-and-risk-gate.md))
+  are visible to every workspace and writable only by platform operators.
 - Versions are pinned to a commit, content-hashed and immutable; the hash is
   rechecked on read. An upstream change is never served until activated.
 - `studix_skill_get` marks content untrusted and lists heuristic
@@ -342,10 +392,53 @@ or a path guard as a security boundary:
   interrupt is killed, and one still alive after the grace period is reported
   `INTERNAL` rather than as a clean stop
   ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)).
+- A harness stage that asks for shell or file tools runs them in a per-task
+  Docker container, never on the worker: read-only root, no capabilities, uid
+  1000, CPU/memory/PID/wall-time caps, its own `/work`, the enabled skills
+  read-only at `/skills`. Its environment holds only that task's media vendor
+  keys, passed by name; database, storage, secrets-box and model keys never enter
+  it. Without `STUDIX_SANDBOX=docker` such a stage fails `VALIDATION`
+  ([ADR-0018](decisions/0018-skill-sandbox.md)).
+- A ChatGPT sign-in for Codex uses the device-code flow: the browser talks to
+  OpenAI, Studix only holds a sealed, 15-minute flow token bound to the user and
+  workspace that started it. The resulting tokens are stored sealed like an API
+  key and never returned. For a Codex run the worker writes `auth.json` into the
+  task sandbox's scratch `CODEX_HOME` through stdin (an API key goes through
+  `codex login --with-api-key` on stdin), never on a command line; the file is
+  read back after the run to keep a rotated refresh token, and the container is
+  removed with it. A ChatGPT connection runs only on the `codex` runtime.
+- A Claude agent's tool-using stage runs Claude Code in the same sandbox. Its
+  API key or subscription token is written through stdin to a scratch file
+  that the launching shell reads into the process environment and deletes;
+  it never appears on a command line, and the agent's tools reach only the
+  container.
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its
   reported usage is recorded but never billed.
+
+## Media exec
+
+`studix_media_exec` passes caller-chosen ffmpeg/ffprobe arguments to a real
+binary, so the arguments are untrusted. Owner: `packages/core/src/studio/media-exec.ts`
+(validation), `apps/worker/src/media-exec-runner.ts` (execution).
+
+- Each job runs in its own Docker sandbox container: `--network none`, read-only
+  root, no capabilities, uid 1000, CPU/memory/PID/wall-time caps, an empty
+  environment and its own scratch `/work`, removed after the run.
+- argv is passed without a shell; the worker quotes every word. Placeholders map
+  only to `/work/in` and `/work/out`; absolute, Windows, home and `..` paths,
+  URLs and protocol prefixes are refused, and `-protocol_whitelist file,pipe` is
+  forced before every input, so ffmpeg cannot open network or other protocols
+  even through filters or concat lists (`-safe` and protocol options are refused).
+- URL inputs are fetched by the worker, not the sandbox: https only, internal
+  hosts and private/reserved IPs refused, DNS pinned by the guarded lookup, each
+  redirect re-checked, size capped.
+- Output size is capped with `ulimit -f` and checked again before upload; logs
+  and JSON are truncated. Asset inputs are read only within the caller's workspace.
+- The `media.exec_started` audit event records tool, argument count, input names
+  and source types, output names and timeout, never argument text or input
+  contents. Compute time is metered into the job budget, failed runs included.
 
 ## Redaction
 
@@ -363,31 +456,33 @@ Owner: `redact()` and the logger in `packages/shared`, spans in
 
 Each item maps to a negative test in the owning package.
 
-| Threat                                                 | Control                                                                       |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Cross-tenant read/write                                | `TenantContext` in every repository call; tenant A/B tests                    |
-| Stolen or leaked API key                               | Hashed storage, revocation, scopes, redaction                                 |
-| OAuth token replayed to another resource or workspace  | `aud`/`iss` check, `workspace_id` claim, membership and consent recheck       |
-| Revoked OAuth grant still usable                       | Consent row required on every request, tokens revoked with it                 |
-| Inbound credential forwarded downstream                | Separate outbound credentials via `secretRef`                                 |
-| `secretRef` value leak                                 | Resolution only at execute, never serialized                                  |
-| SSRF to internal or metadata IPs                       | URL policy, IP range denylist                                                 |
-| DNS rebinding                                          | Pinned resolution                                                             |
-| Redirect to internal host or wrong origin              | Manual redirect handling, origin-bound credentials                            |
-| Malicious tool description / result (prompt injection) | Data-not-instruction rule, bounded summaries, code-side authorization         |
-| Permission changed after search                        | Re-authorization at execute                                                   |
-| Disabled or revoked tool still callable                | Catalog invalidation and execute-time check                                   |
-| Recursion through Studix's own `/mcp`                  | Self-reference rejection                                                      |
-| Oversized result or schema                             | Size caps, truncation, asset refs                                             |
-| Duplicate side effects on retry                        | Idempotency keys, no auto-retry of unknown-outcome mutations                  |
-| Duplicate billing on retry                             | Usage dedupe keys ([ADR-0008](decisions/0008-billing-usage-ledger.md))        |
-| Publish or high-cost action without approval           | `ApprovalPolicy`, fail closed                                                 |
-| Runaway cost                                           | Budgets checked before each costly stage                                      |
-| Agent escaping its workspace                           | Worker pod isolation, no shell, scoped credentials                            |
-| Agent run past its caps                                | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate           |
-| Forged or stale host output                            | Output schema check, attempt fencing, idempotent digest per task              |
-| Job spending another user's Anthropic key              | `resolveForExecution` checks the job creator, no fallback key                 |
-| SSRF or path escape through a skill import             | Fixed GitHub hosts, parsed-only URL, safe-path filter, symlink skip           |
-| Imported skill text steering the agent or running code | Data-only storage, untrusted marker, notes, no execution, explicit activation |
-| Expired artifact URL still valid                       | Presign expiry tests                                                          |
-| Host header / origin spoofing                          | Host allow-list derived from `STUDIX_*_URL`                                   |
+| Threat                                                   | Control                                                                                                    |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Cross-tenant read/write                                  | `TenantContext` in every repository call; tenant A/B tests                                                 |
+| Stolen or leaked API key                                 | Hashed storage, revocation, scopes, redaction                                                              |
+| OAuth token replayed to another resource or workspace    | `aud`/`iss` check, `workspace_id` claim, membership and consent recheck                                    |
+| Revoked OAuth grant still usable                         | Consent row required on every request, tokens revoked with it                                              |
+| Inbound credential forwarded downstream                  | Separate outbound credentials via `secretRef`                                                              |
+| `secretRef` value leak                                   | Resolution only at execute, never serialized                                                               |
+| SSRF to internal or metadata IPs                         | URL policy, IP range denylist                                                                              |
+| DNS rebinding                                            | Pinned resolution                                                                                          |
+| Redirect to internal host or wrong origin                | Manual redirect handling, origin-bound credentials                                                         |
+| Malicious tool description / result (prompt injection)   | Data-not-instruction rule, bounded summaries, code-side authorization                                      |
+| Permission changed after search                          | Re-authorization at execute                                                                                |
+| Disabled or revoked tool still callable                  | Catalog invalidation and execute-time check                                                                |
+| Recursion through Studix's own `/mcp`                    | Self-reference rejection                                                                                   |
+| Oversized result or schema                               | Size caps, truncation, asset refs                                                                          |
+| Duplicate side effects on retry                          | Idempotency keys, no auto-retry of unknown-outcome mutations                                               |
+| Duplicate billing on retry                               | Usage dedupe keys ([ADR-0008](decisions/0008-billing-usage-ledger.md))                                     |
+| Publish or high-cost action without approval             | `ApprovalPolicy`, fail closed                                                                              |
+| Runaway cost                                             | Budgets checked before each costly stage                                                                   |
+| Agent escaping its workspace                             | Worker pod isolation, no shell, scoped credentials                                                         |
+| Agent run past its caps                                  | Mid-run cap checks, abort then kill by handle, `agent.overrun` gate                                        |
+| Forged or stale host output                              | Output schema check, attempt fencing, idempotent digest per task                                           |
+| Job spending another user's Anthropic key                | `resolveForExecution` checks the job creator, no fallback key                                              |
+| SSRF or path escape through a skill import               | Fixed GitHub hosts, parsed-only URL, safe-path filter, symlink skip                                        |
+| Imported skill text steering the agent or running code   | Untrusted marker, risk report, audited high-risk confirmation, sandbox-only execution, explicit activation |
+| Zip slip or zip bomb in a skill upload                   | Path checks reject the archive, symlinks skipped, entry/size/ratio caps, capped inflation                  |
+| Expired artifact URL still valid                         | Presign expiry tests                                                                                       |
+| Host header / origin spoofing                            | Host allow-list derived from `STUDIX_*_URL`                                                                |
+| Argument injection or file/network access through ffmpeg | Shell-free argv, path and protocol checks, forced `-protocol_whitelist`, offline per-job sandbox           |

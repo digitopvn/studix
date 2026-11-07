@@ -1,6 +1,6 @@
 # 0017. External GitHub skill store
 
-- Status: Accepted
+- Status: Accepted (the "Data only" decision is superseded by [ADR-0019](0019-full-skill-store-uploads-and-risk-gate.md))
 - Date: 2026-11-06
 
 ## Context

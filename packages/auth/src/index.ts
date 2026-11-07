@@ -1,6 +1,7 @@
 export * from "./anthropic-key-tester.ts";
 export * from "./api-key-format.ts";
 export * from "./api-key-service.ts";
+export * from "./chatgpt-auth.ts";
 export * from "./dashboard-auth.ts";
 export * from "./mcp-oauth.ts";
 export * from "./mcp-oauth-plugins.ts";
@@ -12,5 +13,6 @@ export * from "./platform-vendor-key-tester.ts";
 export * from "./provider-connection-service.ts";
 export * from "./secret-box.ts";
 export * from "./self-hosted-secrets-key.ts";
+export * from "./storage-profile-service.ts";
 export * from "./workspace-feature-service.ts";
 export * from "./workspace-multix-settings-service.ts";

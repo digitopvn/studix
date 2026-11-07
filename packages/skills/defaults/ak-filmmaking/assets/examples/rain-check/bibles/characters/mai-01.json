@@ -1,0 +1,66 @@
+{
+  "id": "MAI_01",
+  "name": "Mai",
+  "identity_version": 1,
+  "description": "Slim, oval face, faint scar through left eyebrow, brown eyes.",
+  "age": "early 30s",
+  "canonical_hair": "shoulder-length black bob, side part left",
+  "accessories": [
+    "small silver hoop earrings"
+  ],
+  "voice": {
+    "direction": "warm, understated"
+  },
+  "references": [
+    {
+      "id": "CHAR_MAI_FRONT",
+      "view": "front",
+      "path": "bibles/characters/mai-01/front.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_MAI_3QL",
+      "view": "three_quarter_left",
+      "path": "bibles/characters/mai-01/three_quarter_left.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_MAI_3QR",
+      "view": "three_quarter_right",
+      "path": "bibles/characters/mai-01/three_quarter_right.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_MAI_PROFILE",
+      "view": "profile",
+      "path": "bibles/characters/mai-01/profile.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_MAI_FULL",
+      "view": "full_body",
+      "path": "bibles/characters/mai-01/full_body.png",
+      "status": "canonical",
+      "version": 1
+    },
+    {
+      "id": "CHAR_MAI_SMILE",
+      "view": "expression",
+      "path": "bibles/characters/mai-01/expressions/smile.png",
+      "status": "canonical",
+      "version": 1,
+      "expression": "guilty half-smile"
+    },
+    {
+      "id": "CHAR_MAI_CAND_007",
+      "view": "front",
+      "path": "bibles/characters/mai-01/candidates/007.png",
+      "status": "candidate",
+      "version": 1
+    }
+  ]
+}

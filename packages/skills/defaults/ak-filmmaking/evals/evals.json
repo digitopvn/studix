@@ -1,0 +1,132 @@
+{
+  "skill_name": "ak-filmmaking",
+  "evals": [
+    {
+      "id": "provenance-and-scope",
+      "split": "train",
+      "prompt": "Record how these cases are meant to be used and what has been verified.",
+      "expected_output": "A provenance record stating the cases are synthetic, that the deterministic tooling is covered by scripts/tests/test_film_tools.py against the bundled example film, and that the routing and behavioral cases below need a consumer runtime and have not been run.",
+      "assertions": [
+        {
+          "id": "synthetic",
+          "text": "The record states the cases are synthetic and no provider was called."
+        },
+        {
+          "id": "tooling-covered",
+          "text": "The record names scripts/tests/test_film_tools.py as the evidence for validator, continuity, prompt, timeline, cost and QC behavior."
+        },
+        {
+          "id": "not-run",
+          "text": "Routing and behavioral cases are marked not run rather than passed."
+        }
+      ]
+    },
+    {
+      "id": "route-long-form-dialogue-film",
+      "split": "train",
+      "prompt": "I want to make a 12-minute AI short film about two sisters reconciling at their mother's house, with lots of dialogue. Keep their faces consistent across every scene and plan it so the lip sync looks right.",
+      "expected_output": "The filmmaking skill activates, initializes or plans a films/<slug>/ production graph, and starts with screenplay and beats rather than video prompts.",
+      "assertions": [
+        {
+          "id": "activates",
+          "text": "The ak-filmmaking skill is the one selected."
+        },
+        {
+          "id": "graph-first",
+          "text": "The plan creates or describes machine-readable project/scene/shot state with stable IDs rather than a list of prompts."
+        },
+        {
+          "id": "audio-first",
+          "text": "Dialogue master and alignment are planned before any lipsync-dependent shot is generated."
+        },
+        {
+          "id": "coverage",
+          "text": "The plan uses reaction or cutaway coverage so not every line needs visible lipsync."
+        }
+      ]
+    },
+    {
+      "id": "negative-product-promo",
+      "split": "train",
+      "prompt": "Make a 30-second vertical promo video for our new running shoe for Instagram Reels, with a script and storyboard.",
+      "expected_output": "Routes to the marketing video owner, not the filmmaking skill.",
+      "expect_skill": "ak-video",
+      "assertions": [
+        {
+          "id": "not-filmmaking",
+          "text": "ak-filmmaking is not selected; ak-video handles the marketing video."
+        }
+      ]
+    },
+    {
+      "id": "negative-motion-graphic",
+      "split": "train",
+      "prompt": "Create a beat-synced motion graphic launch video for our v2 release with voice-over and karaoke captions.",
+      "expected_output": "Routes to the motion-graphics owner, not the filmmaking skill.",
+      "expect_skill": "ak-motion-video",
+      "assertions": [
+        {
+          "id": "not-filmmaking",
+          "text": "ak-filmmaking is not selected; ak-motion-video handles the HyperFrames motion graphic."
+        }
+      ]
+    },
+    {
+      "id": "negative-single-voice-line",
+      "split": "holdout",
+      "prompt": "Generate a voice-over MP3 of this paragraph in a warm female voice.",
+      "expected_output": "Routes to the voice/audio owner; no film project is created.",
+      "expect_skill": "ak-elevenlabs",
+      "assertions": [
+        {
+          "id": "not-filmmaking",
+          "text": "ak-filmmaking is not selected and no films/ project is initialized."
+        }
+      ]
+    },
+    {
+      "id": "identity-drift-regeneration",
+      "split": "holdout",
+      "prompt": "In films/rain-check, the new render of shot S02_SH007 came back with Mai's face drifting and her scar missing. Fix it.",
+      "expected_output": "The agent records an identity QC failure with a timestamp on S02_SH007, returns the shot to STORYBOARDED, rebuilds the keyframe from the canonical pack, and regenerates only that shot; it does not promote the drifted frame or rerender the scene.",
+      "assertions": [
+        {
+          "id": "qc-record",
+          "text": "A QC failure with category identity and a timestamp is recorded on S02_SH007."
+        },
+        {
+          "id": "cheapest-stage",
+          "text": "The fix returns to the keyframe stage before any new video generation."
+        },
+        {
+          "id": "no-promotion",
+          "text": "The drifted frame is not promoted to a canonical reference."
+        },
+        {
+          "id": "shot-scoped",
+          "text": "No other shot is regenerated."
+        }
+      ]
+    },
+    {
+      "id": "no-stale-prices",
+      "split": "holdout",
+      "prompt": "Which video model should we use for the hero shots in films/rain-check and what will it cost?",
+      "expected_output": "The agent runs the route report, gathers current provider evidence before naming a model or price, and labels any figure with its source and date.",
+      "assertions": [
+        {
+          "id": "route",
+          "text": "The answer uses the render tier and capabilities from film.py route for the HERO shot."
+        },
+        {
+          "id": "live-evidence",
+          "text": "Model names, limits and prices are sourced from current evidence with a date, or explicitly marked unverified."
+        },
+        {
+          "id": "no-durable-claims",
+          "text": "No price or capability is stated as permanent fact."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+id: ink-woodblock
+name: Ink Woodblock
+family: aesthetic
+aliases: [chinese ink, sumi-e, ink wash, woodblock print, brush and seal]
+summary: East Asian ink and woodblock; brush strokes on rice paper, vermilion seals, misty layered mountains, slow unfurling.
+energy: 2
+best_for: [culture-history, heritage-brand, philosophy-explainer, calm-promo]
+character: >-
+  Ink wash and woodblock printing on aged rice paper: brush strokes that
+  write themselves, layered misty mountains, red seal stamps and vertical
+  calligraphy. Motion is unhurried and breathing: ink bleeds outward, scrolls
+  unroll, mist drifts between depth layers and every reveal follows the
+  direction of a brush.
+dimensions:
+  palette:
+    mode: light
+    colors: {bg: "#efe6d4", ink: "#151311", accent: "#c0301f", wash: "#6d6a64", mist: "#d9d2c3", jade: "#4f7a68"}
+    rule: "Ink and its grey washes on rice paper; vermilion only for seals and one key word; jade sparingly for nature."
+  typography:
+    - "Ma Shan Zheng brush calligraphy 160-240 px for CJK headlines, set vertically where it fits"
+    - "Cormorant Garamond 600 64 px for Latin headlines; Noto Serif 400 30 px body"
+    - "A square vermilion seal with 1-2 characters beside each headline"
+  layout: ["Generous negative space; subject in one third", "Vertical text columns at the right edge", "Mountains or scroll as layered depth planes"]
+  material: ["Rice paper and silk scroll, no hard shadows", "Seals as stamped vermilion squares"]
+  texture: ["Baked rice-paper fibre and ink bleed edges", "Woodblock grain on prints"]
+  camera: ["Slow pan along a long scroll", "Gentle push_in through mist layers"]
+  transitions: ["ink-bleed (an ink blot expands as a mask, power2.out 0.8 s)", "scroll-unroll (the next scene unrolls from one edge)", "mist-dissolve (mist layer crosses and the scene changes behind it)"]
+  pacing:
+    bpm: [64, 88]
+    rhythm: "Contemplative: long holds of 8+ beats, one stroke or reveal per bar, breathing pauses."
+  beat_response: ["Seal stamps on downbeats only", "Mist drifts continuously, no beat pulse", "No shake or flash"]
+  ui_choreography: ["UI framed as a hanging scroll or a paper panel", "Panels reveal through an ink-bleed mask"]
+  diagrams: ["Brush-stroke lines drawn with draw() and tapered ends", "Nodes as seals or ink dots"]
+  character_motion: ["Silhouette figures and animals in few strokes, slow and graceful"]
+  captions: ["No pill; 42 px Be Vietnam Pro 600 ink on a soft paper wash, current word vermilion; bottom band"]
+  sound: ["Guzheng, erhu, shakuhachi or ambient strings 64-88 BPM", "SFX: brush stroke, paper unroll, a single gong; low density"]
+scene_types:
+  prefer: [cover, title, quote, timeline, testimonial, outro]
+  avoid: [terminal, code, ui-demo, chart]
+signature_moves:
+  - "Brush stroke writes the headline stroke by stroke"
+  - "Vermilion seal stamped on the downbeat"
+  - "Scroll unrolls into the next scene"
+strengths: ["Elegant, calm and cultured", "Fits history and heritage topics", "Very strong negative space"]
+constraints:
+  - "Ink, wash and vermilion only"
+  - "No bounce, shake or fast cuts"
+  - "Ink bleed and paper fibre baked to PNG"
+avoid: ["Neon, glass or gradients", "Busy layouts", "Western comic energy"]
+pairs_well_with: [organic-biomorphic, documentary-purpose, monochrome-luxury, editorial-collage-explainer]

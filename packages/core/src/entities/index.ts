@@ -3,6 +3,7 @@ export * from "./asset.ts";
 export * from "./common.ts";
 export * from "./external-skill.ts";
 export * from "./job.ts";
+export * from "./job-agent.ts";
 export * from "./model-preference.ts";
 export * from "./project.ts";
 export * from "./review.ts";

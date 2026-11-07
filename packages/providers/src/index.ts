@@ -36,12 +36,28 @@ export {
 } from "./media-provider-registry.ts";
 export { MAX_PROMPT_LENGTH, type MediaInput } from "./media-request-guards.ts";
 export {
+  buildMultixCatalog,
+  createMultixCatalogLoader,
+  GENERATE_ROLE_TASKS,
+  type MultixCatalog,
+  type MultixCatalogEntry,
+  markNeedsKey,
+} from "./multix-catalog.ts";
+export {
   type MultixEnvelope,
   type MultixRunner,
   type MultixRunOptions,
   type MultixRunResult,
   parseMultixEnvelope,
 } from "./multix-cli-runner.ts";
+export {
+  keyReadiness,
+  MULTIX_ENV_KEY_NAMES,
+  MULTIX_KEY_NAMES,
+  MULTIX_KEY_SLOTS,
+  type MultixKeySlot,
+  providerReadiness,
+} from "./multix-key-slots.ts";
 export {
   createMultixProviderFromConfig,
   MULTIX_PROVIDER_ID,
@@ -54,6 +70,7 @@ export {
 } from "./multix-provider.ts";
 export {
   DEFAULT_MULTIX_MODELS,
+  GENERATE_VENDORS,
   MULTIX_ROLE_VENDORS,
   MULTIX_VENDOR_KEYS,
   MULTIX_VENDORS,

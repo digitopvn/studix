@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shot.schema.json",
+  "title": "Shot (scenes/<scene_id>/shots/<shot_id>/shot.json)",
+  "type": "object",
+  "required": ["shot_id", "scene_id", "shot_type", "lens", "camera", "action", "emotion", "duration_target", "characters", "location", "wardrobe", "props", "visible_speakers", "lipsync", "references", "continuity_from", "continuity_to", "continuity", "render_class", "retry_budget", "state"],
+  "additionalProperties": false,
+  "properties": {
+    "shot_id": {"$ref": "common.schema.json#/$defs/shot_id"},
+    "scene_id": {"$ref": "common.schema.json#/$defs/scene_id"},
+    "shot_type": {
+      "type": "string",
+      "enum": ["establishing", "wide", "medium", "medium_close_up", "close_up", "extreme_close_up", "over_the_shoulder", "two_shot", "reaction", "insert", "cutaway", "tracking", "pov", "hero", "one_take"]
+    },
+    "lens": {"type": "string", "minLength": 1},
+    "camera": {"type": "string", "minLength": 1},
+    "action": {"type": "string", "minLength": 1},
+    "emotion": {"type": "string", "minLength": 1},
+    "duration_target": {"type": "number", "exclusiveMinimum": 0, "maximum": 60},
+    "characters": {"description": "Characters visible in frame.", "type": "array", "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/asset_id"}},
+    "location": {"$ref": "common.schema.json#/$defs/asset_id"},
+    "wardrobe": {"type": "object", "additionalProperties": {"$ref": "common.schema.json#/$defs/asset_id"}},
+    "props": {"type": "array", "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/asset_id"}},
+    "visible_speakers": {
+      "description": "Characters whose mouths are readable in frame. Dialogue from anyone else plays off-screen over this shot.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "common.schema.json#/$defs/asset_id"}
+    },
+    "lipsync": {"type": "string", "enum": ["none", "native", "dedicated"]},
+    "references": {
+      "description": "Canonical reference-image IDs from the bibles that condition this shot.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "common.schema.json#/$defs/asset_id"}
+    },
+    "continuity_from": {"anyOf": [{"$ref": "common.schema.json#/$defs/shot_id"}, {"type": "null"}]},
+    "continuity_to": {"anyOf": [{"$ref": "common.schema.json#/$defs/shot_id"}, {"type": "null"}]},
+    "continuity": {
+      "type": "object",
+      "required": ["screen_positions", "prop_states", "conditions", "screen_direction"],
+      "additionalProperties": false,
+      "properties": {
+        "screen_positions": {"type": "object", "additionalProperties": {"type": "string", "enum": ["left", "center", "right", "offscreen"]}},
+        "prop_states": {"description": "Prop ID to holder/position, e.g. MAI_01:right_hand or table:left.", "type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "conditions": {"description": "Character ID to physical conditions (wet, dirt, wound...).", "type": "object", "additionalProperties": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}},
+        "screen_direction": {"type": "string", "enum": ["left_to_right", "right_to_left", "toward_camera", "away_from_camera", "static"]}
+      }
+    },
+    "continuity_changes": {
+      "description": "Intentional continuity changes relative to continuity_from. Anything not listed must stay unchanged.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "field": {"type": "string", "pattern": "^(wardrobe|screen_positions|prop_states|conditions)\\.[A-Z][A-Z0-9_]*[A-Z0-9]$|^screen_direction$"},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "render_class": {"type": "string", "enum": ["PREVIS", "CHEAP_BROLL", "STANDARD", "CHARACTER_CRITICAL", "HERO"]},
+    "model_requirements": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "enum": ["multi_reference", "audio_reference", "native_lipsync", "start_frame", "end_frame", "long_take", "physics", "camera_control", "extend"]}
+    },
+    "retry_budget": {"type": "integer", "minimum": 0},
+    "estimate": {
+      "type": "object",
+      "required": ["generation_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "generation_seconds": {"$ref": "common.schema.json#/$defs/seconds"},
+        "cost": {"$ref": "common.schema.json#/$defs/cost"}
+      }
+    },
+    "state": {"type": "string", "enum": ["PLANNED", "STORYBOARDED", "APPROVED_FRAME", "GENERATED", "LIPSYNCED", "QC_FAILED", "APPROVED", "ASSEMBLED"]},
+    "storyboard": {"$ref": "#/$defs/frame"},
+    "keyframe": {"$ref": "#/$defs/frame"},
+    "generations": {"type": "array", "items": {"$ref": "#/$defs/generation"}},
+    "lipsync_pass": {
+      "type": "object",
+      "required": ["output", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {"type": "string", "minLength": 1},
+        "output": {"$ref": "common.schema.json#/$defs/relative_path"},
+        "status": {"type": "string", "enum": ["pending", "done", "failed"]},
+        "cost": {"$ref": "common.schema.json#/$defs/cost"}
+      }
+    },
+    "qc": {
+      "type": "object",
+      "required": ["status", "failures"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {"type": "string", "enum": ["pending", "passed", "failed"]},
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["category", "at", "note"],
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": ["identity", "wardrobe", "hair", "accessories", "prop", "spatial", "lighting", "location", "morphing", "anatomy", "camera", "physics", "temporal_artifact", "lipsync_drift", "lipsync_offset", "pause_motion", "dialogue_timing", "pronunciation", "audio_mix", "music", "sfx_timing", "ambience_seam", "loudness", "pacing", "redundant", "coverage"]
+              },
+              "at": {"description": "Seconds from the shot start.", "$ref": "common.schema.json#/$defs/seconds"},
+              "end": {"$ref": "common.schema.json#/$defs/seconds"},
+              "note": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "frame": {
+      "type": "object",
+      "required": ["path", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "common.schema.json#/$defs/relative_path"},
+        "status": {"type": "string", "enum": ["draft", "approved", "rejected"]},
+        "references": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/asset_id"}}
+      }
+    },
+    "generation": {
+      "type": "object",
+      "required": ["id", "prompt_version", "provider", "model", "output", "seconds", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/asset_id"},
+        "prompt_version": {"type": "integer", "minimum": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "seed": {"type": ["integer", "string"]},
+        "references": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/asset_id"}},
+        "output": {"$ref": "common.schema.json#/$defs/relative_path"},
+        "seconds": {"$ref": "common.schema.json#/$defs/seconds"},
+        "status": {"type": "string", "enum": ["candidate", "selected", "discarded"]},
+        "cost": {"$ref": "common.schema.json#/$defs/cost"}
+      }
+    }
+  }
+}

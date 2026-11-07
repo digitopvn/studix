@@ -1,0 +1,150 @@
+import { claudeModelReasoning, findPiModel, listCodexModels } from "@studix/agent-runtime";
+import {
+  AGENT_ROLES,
+  AGENT_RUNTIMES,
+  type JobAgentRoles,
+  type JobAgentSelection,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+  type TenantContext,
+} from "@studix/core";
+import { StudixError } from "@studix/shared";
+import { z } from "zod";
+import type { AppDeps } from "./app-deps.ts";
+
+/** `provider/modelId` as the workspace catalog lists it, for example `anthropic/claude-sonnet-4-5`. */
+export const AgentModelRef = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9-]{1,60}\/[A-Za-z0-9._:/@-]{1,200}$/, "Use provider/modelId");
+export const ReasoningEffortInput = z.enum(REASONING_EFFORTS);
+
+function invalid(message: string, details: Record<string, unknown>, suggestedAction: string): StudixError {
+  return new StudixError("VALIDATION", message, { retryable: false, details, suggestedAction });
+}
+
+/** Parses `provider/modelId` and checks the Pi catalog; returns the catalog entry. */
+function catalogModel(ref: string) {
+  const slash = ref.indexOf("/");
+  const provider = ref.slice(0, slash);
+  const modelId = ref.slice(slash + 1);
+  const model = findPiModel(provider, modelId);
+  if (!model) {
+    throw invalid(
+      `The model ${ref} is not in the workspace catalog`,
+      { model: ref },
+      "List models with studix_inspect or the dashboard (AI & Providers).",
+    );
+  }
+  return { provider, modelId, model };
+}
+
+function assertEffort(ref: string, reasoning: boolean, effort: ReasoningEffort | undefined): void {
+  if (effort && effort !== "off" && !reasoning) {
+    throw invalid(
+      `The model ${ref} does not support reasoning effort ${effort}`,
+      { model: ref, reasoningEffort: effort },
+      "Omit reasoningEffort, set it to off, or pick a reasoning model.",
+    );
+  }
+}
+
+/** The agent a job runs on: a runtime, the provider connection that pays, and optionally model and effort. */
+export const AgentInput = z
+  .object({
+    runtime: z.enum(AGENT_RUNTIMES),
+    providerConnectionId: z.string().min(1).max(100),
+    model: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9._:/@-]{1,200}$/)
+      .optional(),
+    reasoningEffort: ReasoningEffortInput.optional(),
+  })
+  .strict();
+export type AgentInput = z.infer<typeof AgentInput>;
+
+/**
+ * Checks a job's requested agent: the connection must be usable by the runtime, the model must be one that
+ * runtime runs on that connection's provider (the Pi catalog, or the Codex models), and an effort needs a
+ * reasoning model. Returns what the job stores, so the worker never has to choose again.
+ */
+export async function resolveAgentSelection(
+  deps: Pick<AppDeps, "providers">,
+  ctx: TenantContext,
+  agent: AgentInput,
+): Promise<JobAgentSelection> {
+  if (!deps.providers) {
+    throw new StudixError("UNAVAILABLE", "Provider connections are not configured on this Studix server", {
+      retryable: false,
+      suggestedAction: "Omit agent to use the default agent model.",
+    });
+  }
+  const { connections } = await deps.providers.list(ctx);
+  const connection = connections.find((c) => c.id === agent.providerConnectionId);
+  if (!connection) {
+    throw invalid(
+      "This provider connection does not exist or is not visible to you",
+      { providerConnectionId: agent.providerConnectionId },
+      "List connections with studix_list_agent_runtimes.",
+    );
+  }
+  await deps.providers.assertUsable(ctx, connection.id, agent.runtime);
+  const effort = agent.reasoningEffort;
+  // `provider/modelId` is accepted too when it names the connection's provider.
+  const prefix = `${connection.provider}/`;
+  const modelId = agent.model?.startsWith(prefix) ? agent.model.slice(prefix.length) : agent.model;
+  if (modelId) {
+    const ref = `${connection.provider}/${modelId}`;
+    const reasoning =
+      agent.runtime === "pi"
+        ? findPiModel(connection.provider, modelId)?.reasoning
+        : agent.runtime === "codex"
+          ? listCodexModels().find((m) => m.id === modelId)?.reasoning
+          : /^claude-[a-z0-9.-]{1,80}$/.test(modelId)
+            ? claudeModelReasoning(modelId)
+            : undefined;
+    if (reasoning === undefined) {
+      throw invalid(
+        `The model ${ref} is not one the ${agent.runtime} runtime runs`,
+        { model: ref, runtime: agent.runtime },
+        "List models with studix_list_agent_runtimes.",
+      );
+    }
+    assertEffort(ref, reasoning, effort);
+  }
+  return {
+    runtime: agent.runtime,
+    connectionId: connection.id,
+    provider: connection.provider,
+    ...(modelId ? { modelId } : {}),
+    ...(effort ? { reasoningEffort: effort } : {}),
+  };
+}
+
+/** Same checks for a model the host says it used, without needing a connection of its own. */
+export function assertReportedModel(model: string | undefined, effort: ReasoningEffort | undefined): void {
+  if (!model) return;
+  const { model: entry } = catalogModel(model);
+  assertEffort(model, entry.reasoning, effort);
+}
+
+/** Optional role agents of a skill-agent job; each is checked like `agent`. */
+export const AgentRolesInput = z
+  .object({ director: AgentInput.optional(), builder: AgentInput.optional(), qa: AgentInput.optional() })
+  .strict();
+export type AgentRolesInput = z.infer<typeof AgentRolesInput>;
+
+export async function resolveAgentRoles(
+  deps: Pick<AppDeps, "providers">,
+  ctx: TenantContext,
+  roles: AgentRolesInput | undefined,
+): Promise<JobAgentRoles | undefined> {
+  if (!roles) return undefined;
+  const out: JobAgentRoles = {};
+  for (const role of AGENT_ROLES) {
+    const agent = roles[role];
+    if (agent) out[role] = await resolveAgentSelection(deps, ctx, agent);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}

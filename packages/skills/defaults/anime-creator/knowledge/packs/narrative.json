@@ -1,0 +1,36 @@
+{
+  "id": "narrative",
+  "version": "1.0.0",
+  "title": "Narrative direction",
+  "purpose": "Keep every scene causally linked and changing something, and keep setups, payoffs and twists honest. The twist ledger lives in filmspec.json (setups/payoffs), never in story/continuity.json, which stays the canonical physical state.",
+  "load_when": ["story", "beat", "twist", "setup", "payoff", "arc", "script", "plot", "easter egg"],
+  "use_cases": [
+    "Writing the beat sheet before G0: each beat says what the character wants, what blocks it and what is different after.",
+    "Planting a setup (an object, a line, a habit) and recording where it pays off, so a later cut cannot orphan it.",
+    "Checking a rough cut for narrative regression: after a re-edit, does every payoff still come after its setup?",
+    "Placing an easter egg: a setup with `payoff_later` naming a future episode, so it is a promise, not noise."
+  ],
+  "anti_patterns": [
+    "Scenes connected by 'and then' instead of 'therefore' or 'but': events follow without causing each other.",
+    "A twist with no earlier evidence; the audience cannot re-read it, so it feels arbitrary.",
+    "A payoff cut ahead of its setup during a re-edit (narrative regression).",
+    "Stakes stated in dialogue but never shown in picture.",
+    "A character arc that changes in one line of dialogue instead of across choices.",
+    "Twist notes written into story/continuity.json, which then leak into keyframe prompts."
+  ],
+  "tool_roles": ["planner (beat sheet, filmspec)", "editor (EDL order)", "QA reviewer (silent-story, regression hunt)"],
+  "checks": [
+    {"id": "narrative.scene-change", "level": "scene", "kind": "hard", "fn": "scene-change",
+     "measure": "filmspec scene has a non-empty `change`", "pass": "every scene"},
+    {"id": "narrative.payoff-after-setup", "level": "episode", "kind": "hard", "fn": "payoff-setup",
+     "measure": "every payoff names a setup that exists and comes in the same or an earlier scene; every setup has a payoff or `payoff_later`",
+     "pass": "0 failures"},
+    {"id": "narrative.causal-chain", "level": "episode", "kind": "evidence",
+     "measure": "reviewer writes the scene chain as 'X, therefore/but Y' and marks each 'and then'",
+     "pass": "no 'and then' link left unexplained"},
+    {"id": "narrative.change-reads", "level": "scene", "kind": "human",
+     "measure": "the user watches the scene and says what changed", "pass": "matches filmspec `change`"}
+  ],
+  "spec_fields": {"episode": ["logline", "arc", "setups", "payoffs"], "scene": ["want", "stakes", "change"]},
+  "references": ["references/interview-and-scope-gates.md", "references/series-bible-and-continuity.md"]
+}

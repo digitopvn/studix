@@ -296,6 +296,8 @@ export interface PackJob {
   feedback?: boolean;
   /** Redraw the storyboard shots a reviewer asked to change (payload `storyboardRedraw`), then stop. */
   redraw?: boolean;
+  /** The raw job payload, for pipelines that vary by job options (for example skill-agent roles). */
+  payload?: unknown;
 }
 
 /**

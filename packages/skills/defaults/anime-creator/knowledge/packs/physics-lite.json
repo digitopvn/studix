@@ -1,0 +1,33 @@
+{
+  "id": "physics-lite",
+  "version": "1.0.0",
+  "title": "Physics-lite",
+  "purpose": "Give action and effects believable weight, contact and response, and write down every stylised exception with its reason, so 'anime physics' is a choice and not a model error.",
+  "load_when": ["physics", "fight", "action", "impact", "fire", "water", "smoke", "weather", "fx", "collision"],
+  "use_cases": [
+    "Writing a hit as anticipation, contact, follow-through and recovery, with the heavier body moving less.",
+    "Giving effects a response: fire lights nearby faces, rain darkens fabric and makes ground reflective, smoke drifts with the wind.",
+    "Recording a stylised exception per shot (a hang time in a jump, an impossible speed line) with the reason (a power reveal).",
+    "Checking contact: feet on the ground plane, hands on the object they hold, no hovering or sinking."
+  ],
+  "anti_patterns": [
+    "Impacts with no anticipation or recoil; the hit has no weight.",
+    "Light effects (fire, magic, screens) that do not light anything around them.",
+    "Water and smoke that ignore wind direction set in the same scene.",
+    "Feet sliding on the ground during a walk cycle, or a held object drifting from the hand.",
+    "Breaking physics in every shot, so the one exception that should matter does not stand out."
+  ],
+  "tool_roles": ["planner (action plan, filmspec physics)", "GL FX", "prompt compiler", "QA reviewer"],
+  "checks": [
+    {"id": "physics.exception-justified", "level": "shot", "kind": "hard", "fn": "physics-exception",
+     "measure": "every `physics` entry with an `exception` has a `reason`", "pass": "0 failures"},
+    {"id": "physics.action-plan", "level": "shot", "kind": "hard", "source": "validate-action",
+     "measure": "action plan: axis, props, contact and flash rate", "pass": "0 errors"},
+    {"id": "physics.contact", "level": "shot", "kind": "evidence",
+     "measure": "reviewer checks a frame strip for feet and hand contact", "pass": "no sliding, hovering or drifting held objects"},
+    {"id": "physics.light-response", "level": "shot", "kind": "evidence",
+     "measure": "for a light-emitting effect, reviewer shows the lit surfaces around it", "pass": "at least one nearby surface responds"}
+  ],
+  "spec_fields": {"shot": ["physics[].what", "physics[].exception", "physics[].reason"]},
+  "references": ["references/action-sound-from-references.md", "references/gl-compositing-and-fx.md"]
+}

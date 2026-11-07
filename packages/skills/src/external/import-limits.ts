@@ -8,7 +8,7 @@ export interface SkillImportLimits {
   /** Tree API requests when the recursive listing was truncated and directories are walked one by one. */
   maxTreeRequests: number;
   maxFilesPerSkill: number;
-  /** Bytes of one stored text file. */
+  /** Bytes of one stored file (text, script or binary). */
   maxFileBytes: number;
   /** Bytes stored for one skill. */
   maxSkillBytes: number;
@@ -21,6 +21,12 @@ export interface SkillImportLimits {
   /** Retries of a request that failed with a network error or a 5xx. */
   maxRetries: number;
   concurrency: number;
+  /** Bytes of an uploaded zip archive. */
+  maxArchiveBytes: number;
+  /** Entries (files and directories) of an uploaded archive. */
+  maxArchiveEntries: number;
+  /** Largest uncompressed/compressed ratio of one archive entry; higher looks like a zip bomb. */
+  maxCompressionRatio: number;
 }
 
 export const DEFAULT_SKILL_IMPORT_LIMITS: SkillImportLimits = {
@@ -28,15 +34,18 @@ export const DEFAULT_SKILL_IMPORT_LIMITS: SkillImportLimits = {
   maxDepth: 10,
   maxTreeEntries: 100_000,
   maxTreeRequests: 200,
-  maxFilesPerSkill: 100,
-  maxFileBytes: 256 * 1024,
-  maxSkillBytes: 2 * 1024 * 1024,
-  maxImportBytes: 20 * 1024 * 1024,
+  maxFilesPerSkill: 500,
+  maxFileBytes: 10 * 1024 * 1024,
+  maxSkillBytes: 30 * 1024 * 1024,
+  maxImportBytes: 60 * 1024 * 1024,
   requestTimeoutMs: 15_000,
   totalTimeoutMs: 90_000,
   maxRedirects: 3,
   maxRetries: 2,
   concurrency: 4,
+  maxArchiveBytes: 30 * 1024 * 1024,
+  maxArchiveEntries: 1000,
+  maxCompressionRatio: 200,
 };
 
 /** Run `fn` over `items` with at most `limit` in flight; results keep the input order. */

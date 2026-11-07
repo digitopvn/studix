@@ -5,12 +5,15 @@ import {
   type FundingSource,
   type ModelChoice,
   type ModelPreference,
+  type ReasoningEffort,
   type ResolvedModelSnapshot,
   resolveModelSelection,
   type TenantContext,
 } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { isRuntimeKeyProvider } from "./pi-catalog.ts";
+
+export type { ReasoningEffort };
 
 /** An OpenAI-compatible or Anthropic-compatible endpoint for a provider the catalog does not know. */
 export interface PiEndpoint {
@@ -46,6 +49,8 @@ export interface PiResolvedRun {
   /** Primary first. Fallbacks are present only when the preference explicitly allows them. */
   bindings: PiRunBinding[];
   snapshot?: ResolvedModelSnapshot;
+  /** Thinking level for the Pi session; absent leaves the SDK default (clamped to the model). */
+  reasoningEffort?: ReasoningEffort;
 }
 
 /** Hands the Pi loop its credentials. Implementations are per job and never read process env. */
@@ -86,6 +91,11 @@ export interface ProviderBindingResolverOptions {
   requestedBy: ActorRef;
   /** This job's earlier resolution for the stage. A retry reuses it; it never re-resolves. */
   snapshot?: ResolvedModelSnapshot;
+  /**
+   * What the job itself asked for (studix_create_video `model` / `reasoningEffort`). A model outranks every
+   * preference and runs without fallbacks; an effort alone applies to whichever model resolves.
+   */
+  request?: { choice?: ModelChoice; reasoningEffort?: ReasoningEffort };
 }
 
 const NO_MODEL_SELECTED = "no_model_selected";
@@ -162,7 +172,33 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
         }
         const { binding } = await bind(pinned);
         const fallbacks = pinned.allowFallback ? await bindFallbacks(pinned.fallbacks) : [];
-        return { bindings: [binding, ...fallbacks], snapshot: pinned };
+        return {
+          bindings: [binding, ...fallbacks],
+          snapshot: pinned,
+          ...(pinned.reasoningEffort ? { reasoningEffort: pinned.reasoningEffort } : {}),
+        };
+      }
+      const effort = options.request?.reasoningEffort;
+      const requested = options.request?.choice;
+      if (requested) {
+        const { binding, connection } = await bind(requested);
+        return {
+          bindings: [binding],
+          ...(effort ? { reasoningEffort: effort } : {}),
+          snapshot: {
+            runtime: "pi",
+            stage: request.stage,
+            source: "job-request",
+            connectionId: connection.id,
+            connectionVersion: connection.version,
+            provider: requested.provider,
+            modelId: requested.modelId,
+            billingSource: connection.billing,
+            allowFallback: false,
+            fallbacks: [],
+            ...(effort ? { reasoningEffort: effort } : {}),
+          },
+        };
       }
 
       const preferences = await options.preferences.list(ctx, {
@@ -176,6 +212,7 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
       const fallbacks = preference.allowFallback ? await bindFallbacks(preference.fallbacks) : [];
       return {
         bindings: [binding, ...fallbacks],
+        ...(effort ? { reasoningEffort: effort } : {}),
         snapshot: {
           runtime: "pi",
           stage: request.stage,
@@ -187,6 +224,7 @@ export function createProviderBindingResolver(options: ProviderBindingResolverOp
           billingSource: connection.billing,
           allowFallback: preference.allowFallback,
           fallbacks: preference.allowFallback ? preference.fallbacks : [],
+          ...(effort ? { reasoningEffort: effort } : {}),
         },
       };
     },

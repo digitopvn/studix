@@ -69,6 +69,45 @@ describe("provider and model API (Better Auth session, Postgres)", () => {
     expect((await tested.json()).lastTest).toMatchObject({ ok: true });
   });
 
+  it("renames a connection with PATCH, enables Codex on an OpenAI key, and refuses ChatGPT without a client", async () => {
+    const created = await app.api("POST", "/api/providers/connections", {
+      cookie: alice,
+      body: { provider: "openai", owner: "user", apiKey: "sk-proj-test-key-not-real-0077" },
+    });
+    expect(created.status).toBe(201);
+    const view = await created.json();
+    const renamed = await app.api("PATCH", `/api/providers/connections/${view.id}`, {
+      cookie: alice,
+      body: { label: "  Team OpenAI  " },
+    });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ id: view.id, label: "Team OpenAI", keyHint: "…0077" });
+    for (const label of ["", " ", "x".repeat(81)]) {
+      const bad = await app.api("PATCH", `/api/providers/connections/${view.id}`, {
+        cookie: alice,
+        body: { label },
+      });
+      expect(bad.status).toBe(400);
+    }
+    expect(
+      (await app.api("PATCH", `/api/providers/connections/${view.id}`, { cookie: bob, body: { label: "x" } }))
+        .status,
+    ).toBe(404);
+
+    const codex = await app.api("PUT", `/api/providers/connections/${view.id}/runtimes`, {
+      cookie: alice,
+      body: { runtimes: ["codex", "pi"] },
+    });
+    expect(codex.status).toBe(200);
+    expect((await codex.json()).runtimes).toEqual(["codex", "pi"]);
+
+    const start = await app.api("POST", "/api/providers/connections/chatgpt/start", {
+      cookie: alice,
+      body: { owner: "user" },
+    });
+    expect(start.status).toBe(503);
+  });
+
   it("stores a workspace media key per vendor, isolated per workspace, and never echoes it", async () => {
     const apiKey = "sume-test-key-not-real-0099";
     const saved = await app.api("PUT", "/api/providers/media-keys/sume", { cookie: alice, body: { apiKey } });
@@ -89,11 +128,20 @@ describe("provider and model API (Better Auth session, Postgres)", () => {
     const theirs = await (await app.api("GET", "/api/providers/media-keys", { cookie: bob })).json();
     expect(theirs.keys.find((k: { vendor: string }) => k.vendor === "sume")).toEqual({
       vendor: "sume",
+      name: "Sume",
+      keyName: "SUME_API_KEY",
+      testable: false,
       source: "platform",
     });
+    // Every key Multix reads is offered, not only the routed vendors.
+    expect(theirs.keys.find((k: { vendor: string }) => k.vendor === "cloudflare-api-token")).toMatchObject({
+      keyName: "CLOUDFLARE_API_TOKEN",
+      testable: true,
+    });
     expect((await app.api("DELETE", "/api/providers/media-keys/sume", { cookie: bob })).status).toBe(404);
+    expect((await app.api("POST", "/api/providers/media-keys/sume/test", { cookie: bob })).status).toBe(404);
     expect(
-      (await app.api("PUT", "/api/providers/media-keys/openai", { cookie: alice, body: { apiKey } })).status,
+      (await app.api("PUT", "/api/providers/media-keys/acme", { cookie: alice, body: { apiKey } })).status,
     ).toBe(400);
     expect((await app.api("DELETE", "/api/providers/media-keys/sume", { cookie: alice })).status).toBe(200);
   });

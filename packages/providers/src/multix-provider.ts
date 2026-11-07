@@ -30,6 +30,7 @@ import {
   assertWithinBudget,
   throwIfAborted,
 } from "./media-request-guards.ts";
+import { GENERATE_ROLE_TASKS } from "./multix-catalog.ts";
 import {
   createSpawnMultixRunner,
   type MultixEnvelope,
@@ -39,8 +40,11 @@ import {
   parseMultixEnvelope,
   UNTRUSTED_OUTPUT_WARNINGS,
 } from "./multix-cli-runner.ts";
+import { keyReadiness, MULTIX_ENV_KEY_NAMES, providerReadiness } from "./multix-key-slots.ts";
 import {
   DEFAULT_MULTIX_MODELS,
+  GENERATE_VENDORS,
+  MULTIX_ROLE_VENDORS,
   MULTIX_VENDOR_KEYS,
   MULTIX_VENDORS,
   type MultixModelDefaults,
@@ -97,7 +101,7 @@ export interface MultixProviderOptions {
   capabilityTtlMs?: number;
 }
 
-export type MultixReadiness = Readonly<Record<MultixVendor, boolean>>;
+export type MultixReadiness = Readonly<Record<string, boolean>>;
 
 /**
  * Outcome of one safe `multix check` (it reads key presence and calls no paid API). `missing_executable` is
@@ -105,7 +109,7 @@ export type MultixReadiness = Readonly<Record<MultixVendor, boolean>>;
  */
 export interface MultixDiagnosis {
   state: "ready" | "missing_executable" | "check_failed";
-  /** Per vendor: has a key. Empty of truth (all false) unless `state` is `ready`. */
+  /** Per key slot (MULTIX_KEY_SLOTS id): has a key. Empty of truth (all false) unless `state` is `ready`. */
   vendors: MultixReadiness;
   /** Redacted reason for any state other than `ready`. */
   reason?: string;
@@ -209,7 +213,11 @@ interface CatalogModels {
   videoUpscale: string[];
   voice: string[];
   music: string[];
+  /** `<vendor>:<model>` ids `multix generate` runs, by role. */
+  generated: Record<GeneratedRole, string[]>;
 }
+
+type GeneratedRole = "image" | "video" | "lipsync" | "imageUpscale";
 
 /**
  * MediaProvider over the multix CLI. Image, video, lip-sync and video upscale run as Sume jobs; image
@@ -294,11 +302,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
 
   /** Which vendors have a key, per the last `multix check` (names only, never values). */
   async readiness(): Promise<MultixReadiness> {
-    if (!this.enabled) return Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixReadiness;
+    if (!this.enabled) return keyReadiness(new Set());
     await this.capabilities();
-    return (
-      this.lastReadiness ?? (Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixReadiness)
-    );
+    return this.lastReadiness ?? keyReadiness(new Set());
   }
 
   /**
@@ -306,7 +312,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
    * refreshes the capability cache, so what the dashboard shows and what jobs use agree.
    */
   async diagnose(signal?: AbortSignal): Promise<MultixDiagnosis> {
-    const none = Object.fromEntries(MULTIX_VENDORS.map((v) => [v, false])) as MultixReadiness;
+    const none = keyReadiness(new Set());
     if (!this.enabled) {
       return { state: "missing_executable", vendors: none, reason: "MULTIX_BIN is not set", code: "NOT_SET" };
     }
@@ -317,9 +323,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
         )
       ).text;
       const keys = parseCheckKeys(text);
-      const vendors = Object.fromEntries(
-        MULTIX_VENDORS.map((v) => [v, keys.has(MULTIX_VENDOR_KEYS[v])]),
-      ) as MultixReadiness;
+      const vendors = keyReadiness(keys);
+
       this.lastReadiness = vendors;
       this.probe = undefined;
       return { state: "ready", vendors };
@@ -571,7 +576,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
 
   private childEnv(cacheDir: string, stored: Readonly<Record<string, string>> = {}): Record<string, string> {
     const env: Record<string, string> = {};
-    const vendorKeys: readonly string[] = Object.values(MULTIX_VENDOR_KEYS);
+    const vendorKeys = MULTIX_ENV_KEY_NAMES;
     for (const name of [...PASSTHROUGH_ENV, ...vendorKeys]) {
       const own = this.workspaceKeys.getStore() ?? {};
       const value = vendorKeys.includes(name)
@@ -1051,10 +1056,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
       this.lastReadiness = undefined;
       return [];
     }
-    const ready = Object.fromEntries(
-      MULTIX_VENDORS.map((v) => [v, keys.has(MULTIX_VENDOR_KEYS[v])]),
-    ) as Record<MultixVendor, boolean>;
-    this.lastReadiness = ready;
+    const slots = keyReadiness(keys);
+    this.lastReadiness = slots;
+    const ready = providerReadiness(slots) as Record<MultixVendor, boolean>;
     const catalog = await this.catalogModels(ready, cwd);
     const d = (role: MultixRole) =>
       resolveMultixModel(
@@ -1076,12 +1080,16 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     const capabilities: MediaCapability[] = [
       {
         kind: "image",
-        models: ready.sume ? pick("image", catalog.image) : [],
+        models: unique([...(ready.sume ? pick("image", catalog.image) : []), ...catalog.generated.image]),
         outputMimes: OUTPUT_MIMES.image,
       },
       {
         kind: "video",
-        models: ready.sume ? unique([...pick("video", catalog.video), d("lipsync").id]) : [],
+        models: unique([
+          ...(ready.sume ? [...pick("video", catalog.video), d("lipsync").id] : []),
+          ...catalog.generated.video,
+          ...catalog.generated.lipsync,
+        ]),
         outputMimes: OUTPUT_MIMES.video,
       },
       {
@@ -1089,6 +1097,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
         models: unique([
           ...(ready.sume ? pick("videoUpscale", catalog.videoUpscale) : []),
           ...(ready[d("imageUpscale").vendor] ? [d("imageUpscale").id] : []),
+          ...catalog.generated.imageUpscale,
         ]),
         outputMimes: OUTPUT_MIMES.upscale,
       },
@@ -1105,7 +1114,14 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
 
   /** Model ids from the live catalogs; a catalog that cannot be read leaves only the configured defaults. */
   private async catalogModels(ready: Record<MultixVendor, boolean>, cwd: string): Promise<CatalogModels> {
-    const models: CatalogModels = { image: [], video: [], videoUpscale: [], voice: [], music: [] };
+    const models: CatalogModels = {
+      image: [],
+      video: [],
+      videoUpscale: [],
+      voice: [],
+      music: [],
+      generated: { image: [], video: [], lipsync: [], imageUpscale: [] },
+    };
     const read = async (argv: string[]) => {
       try {
         return (await this.exec(argv.slice(0, 2).join(" "), argv, cwd, PROBE_TIMEOUT_MS)).data;
@@ -1149,6 +1165,26 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     };
     await audio("speech", models.voice);
     await audio("music", models.music);
+    // Providers `multix generate` runs on, each listed only when its keys are all present.
+    for (const [role, task] of Object.entries(GENERATE_ROLE_TASKS) as [GeneratedRole, string][]) {
+      if (!GENERATE_VENDORS.some((v) => ready[v])) break;
+      const data = await read(["models", `--task=${task}`, "--live", "--json"]);
+      const rows = isObject(data) && Array.isArray(data.providers) ? data.providers : [];
+      for (const row of rows) {
+        if (!isObject(row) || typeof row.provider !== "string" || row.provider === "sume") continue;
+        const vendor = row.provider as MultixVendor;
+        if (!ready[vendor] || !(MULTIX_ROLE_VENDORS[role] as readonly string[]).includes(vendor)) continue;
+        if (role === "imageUpscale" && vendor === "atlas") continue;
+        const ids = [
+          row.default_model,
+          ...(Array.isArray(row.models) ? row.models.map((m) => (isObject(m) ? m.id : m)) : []),
+        ];
+        for (const m of ids) {
+          if (typeof m === "string" && m !== "" && !m.includes("*"))
+            models.generated[role].push(`${vendor}:${m}`);
+        }
+      }
+    }
     return models;
   }
 }

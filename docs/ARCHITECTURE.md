@@ -253,6 +253,18 @@ shot. It calls these routes:
 
 The body's `projectId` is always taken from the path.
 
+The dashboard page `#/create` starts a job with `POST /api/projects`. Besides
+the prompt, format, duration and language, it lets you pick:
+
+- the pack (`workflowTemplate`), listed by `GET /api/workflow-packs`;
+- the render preset, `final` (1080p, the default) or `preview`;
+- the agent: a runtime and the usable connection that pays for it, then a
+  model from the workspace catalogue (`GET /api/providers/catalog`) and, for a
+  reasoning model, the reasoning effort.
+
+The body's `agent` has the same shape and checks as the MCP `agent` field
+([MCP_API.md](MCP_API.md)). A Claude agent works with every pack.
+
 ## MCP-in-MCP gateway placement
 
 Studix is an MCP server to AI clients and an MCP client to workspace-registered

@@ -40,73 +40,70 @@ export function ConnectorsPage() {
   }
 
   return (
-    <>
-      <Section title="Add connector">
-        <form className="row" onSubmit={add}>
-          <input
-            required
-            pattern="[a-z][a-z0-9-]{1,39}"
-            title="Lowercase letters, digits and dashes; starts with a letter."
-            placeholder="name (e.g. brand-assets)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <input
-            required
-            type="url"
-            placeholder="https://mcp.example.com/mcp"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
-          <button type="submit">Add</button>
-        </form>
-        <ErrorBanner error={actionError} />
-      </Section>
-      <Section title="Connectors">
-        <ErrorBanner error={error} />
-        {data && data.items.length === 0 && <Empty>No connectors configured.</Empty>}
-        {data && data.items.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>URL</th>
-                <th>Status</th>
-                <th>Last check</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((c) => (
-                <tr key={c.id}>
-                  <td>{c.name}</td>
-                  <td className="mono">{c.url}</td>
-                  <td>
-                    <StatusBadge status={c.status} />
-                    {c.lastError && <div className="muted">{c.lastError}</div>}
-                    {results[c.id] && <div className="muted">{results[c.id]}</div>}
-                  </td>
-                  <td>{formatDate(c.lastCheckedAt)}</td>
-                  <td className="row">
-                    <button type="button" className="secondary small" onClick={() => test(c.id)}>
-                      Test
-                    </button>
-                    {c.status !== "disabled" && (
-                      <button
-                        type="button"
-                        className="danger small"
-                        onClick={() => act(() => api.disableConnector(c.id))}
-                      >
-                        Disable
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Section>
-    </>
+    <Section title="Tools from other apps">
+      <p className="muted">
+        Let the Studix agent use another app, for example your brand asset library, so it can pull your logo
+        into a video. Paste the app's MCP link.
+      </p>
+      <ErrorBanner error={error} />
+      {data && data.items.length === 0 && <Empty>No apps added yet.</Empty>}
+      {data && data.items.length > 0 && (
+        <ul className="key-list">
+          {data.items.map((c) => (
+            <li key={c.id} className="key-row">
+              <div className="key-main">
+                <div className="key-title">
+                  <strong>{c.name}</strong>
+                </div>
+                <div className="key-meta">
+                  <span className="mono">{c.url}</span>
+                  <span>{c.lastCheckedAt ? `Checked ${formatDate(c.lastCheckedAt)}` : "Never checked"}</span>
+                </div>
+                {c.lastError && <div className="key-error">{c.lastError}</div>}
+                {results[c.id] && <div className="muted">{results[c.id]}</div>}
+              </div>
+              <div className="key-state">
+                <StatusBadge status={c.status} />
+              </div>
+              <div className="key-actions">
+                <button type="button" className="secondary small" onClick={() => test(c.id)}>
+                  Test
+                </button>
+                {c.status !== "disabled" && (
+                  <button
+                    type="button"
+                    className="ghost-danger small"
+                    onClick={() => act(() => api.disableConnector(c.id))}
+                  >
+                    Disable
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form className="key-add" onSubmit={add}>
+        <input
+          required
+          pattern="[a-z][a-z0-9-]{1,39}"
+          title="Lowercase letters, digits and dashes; starts with a letter."
+          aria-label="Connector name"
+          placeholder="name (e.g. brand-assets)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <input
+          required
+          type="url"
+          aria-label="Connector URL"
+          placeholder="https://mcp.example.com/mcp"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        <button type="submit">Add</button>
+      </form>
+      <ErrorBanner error={actionError} />
+    </Section>
   );
 }

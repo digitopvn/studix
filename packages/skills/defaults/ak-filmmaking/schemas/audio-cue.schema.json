@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "audio-cue.schema.json",
+  "title": "Audio cue list (audio/cues.json). Dialogue, Foley/SFX, ambience and music stay separate stems.",
+  "type": "object",
+  "required": ["cues"],
+  "additionalProperties": false,
+  "properties": {
+    "cues": {"type": "array", "items": {"$ref": "#/$defs/cue"}}
+  },
+  "$defs": {
+    "cue": {
+      "type": "object",
+      "required": ["id", "stem", "scene_id", "start", "duration", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/asset_id"},
+        "stem": {"type": "string", "enum": ["DX", "FX", "AMB", "MX"]},
+        "scene_id": {"$ref": "common.schema.json#/$defs/scene_id"},
+        "start": {"description": "Seconds from the scene start on the cut timeline.", "$ref": "common.schema.json#/$defs/seconds"},
+        "duration": {"type": "number", "exclusiveMinimum": 0},
+        "status": {"description": "temp FX/AMB/MX is fine for the animatic; DX must be master for the animatic and before lipsync-dependent generation.", "type": "string", "enum": ["planned", "temp", "master", "approved"]},
+        "file": {"$ref": "common.schema.json#/$defs/relative_path"},
+        "character": {"$ref": "common.schema.json#/$defs/asset_id"},
+        "text": {"type": "string", "minLength": 1},
+        "direction": {"type": "string"},
+        "alignment": {"$ref": "common.schema.json#/$defs/relative_path"},
+        "theme": {"description": "Music motif ID, e.g. THEME_A_TENSION.", "$ref": "common.schema.json#/$defs/asset_id"},
+        "loop": {"type": "boolean"},
+        "sync_event": {
+          "description": "Visual event this sound must land on (audio onset <-> visual event).",
+          "type": "object",
+          "required": ["shot_id", "description"],
+          "additionalProperties": false,
+          "properties": {
+            "shot_id": {"$ref": "common.schema.json#/$defs/shot_id"},
+            "description": {"type": "string", "minLength": 1}
+          }
+        },
+        "cost": {"$ref": "common.schema.json#/$defs/cost"}
+      }
+    }
+  }
+}

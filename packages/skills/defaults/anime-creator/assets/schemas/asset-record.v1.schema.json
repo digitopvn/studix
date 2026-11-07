@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anime-creator/asset-record.v1.schema.json",
+  "title": "anime-creator asset catalog line (catalog/assets.jsonl), schema_version 1",
+  "description": "One JSON object per line. `add` lines describe a file; `pin`/`unpin` lines change gc protection; `retire`/`revive` lines take an edl-work file out of and back into use; `quarantine`/`unquarantine`/`purge` lines record what gc did to a file. Lines are append-only; readers fold them in order (studio/asset_registry_catalog.py state()).",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["op", "schema_version", "asset_id", "sha256", "path", "kind", "role", "bytes", "status", "parents"],
+      "properties": {
+        "op": {"const": "add"},
+        "schema_version": {"const": 1},
+        "asset_id": {"type": "string", "pattern": "^ast_[0-9a-f]{16}(-r[0-9]+)?$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "path": {"type": "string", "description": "relative to the series dir, forward slashes; the file is never moved"},
+        "kind": {"enum": ["image", "video", "audio", "model"]},
+        "role": {"enum": ["identity", "environment", "style", "keyframe", "clip", "vo", "sfx", "music", "audio", "render", "scene-asset", "edl-work", "other"]},
+        "bytes": {"type": "integer", "minimum": 0},
+        "seen": {"type": "string", "description": "local time the scan wrote this record, with its UTC offset (older records have none)"},
+        "episode": {"type": ["string", "null"]},
+        "scene": {"type": ["string", "null"]},
+        "shot": {"type": ["string", "null"]},
+        "status": {"enum": ["candidate", "approved", "rejected"]},
+        "parents": {"type": "array", "items": {"type": "string"}, "description": "asset_ids this one was generated from (refs, first/last frame, input)"},
+        "source": {"type": ["object", "null"], "properties": {"job": {}, "kind": {}, "model": {}, "pred_id": {}, "episode": {}}},
+        "supersedes": {"type": "string", "description": "the asset_id that held this path before: its bytes changed, or a re-scan learned its scene, shot or parents from the job (same bytes)"},
+        "pinned": {"type": "boolean", "description": "carried over from the superseded record on a same-bytes refresh; pin/unpin lines keep the who and why"},
+        "duplicate_of": {"type": "string", "description": "another current asset with the same bytes"}
+      }
+    },
+    {
+      "type": "object",
+      "required": ["op", "asset_id"],
+      "properties": {
+        "op": {"enum": ["pin", "unpin", "retire", "revive"], "description": "retire: an edl-work file no EDL shows any more reads as status rejected until revive"},
+        "asset_id": {"type": "string"},
+        "by": {"type": "string"},
+        "reason": {"type": "string"},
+        "at": {"type": "string"}
+      }
+    },
+    {
+      "type": "object",
+      "required": ["op", "asset_id", "path", "batch"],
+      "description": "gc moved the file to catalog/quarantine/<batch>/<path> (quarantine), back (unquarantine) or deleted it from the batch (purge)",
+      "properties": {
+        "op": {"enum": ["quarantine", "unquarantine", "purge"]},
+        "asset_id": {"type": "string"},
+        "path": {"type": "string"},
+        "batch": {"type": "string"},
+        "by": {"type": "string"},
+        "reason": {"type": "string"},
+        "at": {"type": "string"}
+      }
+    }
+  ]
+}

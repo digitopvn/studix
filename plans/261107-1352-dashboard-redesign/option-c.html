@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studix · Option C · Darkroom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Darkroom tokens. Dark is the default: video is judged in a dim room, like a grading suite.
+   The only accent is the tally light (red = the agent is working). Primary actions are inverse ink. */
+:root{
+  color-scheme:dark;
+  --bg:oklch(0.155 0.006 260); --surface:oklch(0.195 0.007 260); --raised:oklch(0.235 0.008 260); --hover:oklch(0.275 0.009 260);
+  --line:oklch(0.34 0.01 260 / .55); --line-strong:oklch(0.44 0.012 260 / .8);
+  --text:oklch(0.96 0.004 260); --text-2:oklch(0.79 0.01 260); --text-3:oklch(0.63 0.012 260);
+  --tally:oklch(0.67 0.2 29); --tally-soft:oklch(0.67 0.2 29 / .16);
+  --ok:oklch(0.76 0.13 158); --warn:oklch(0.82 0.13 80); --err:oklch(0.7 0.18 25);
+  --focus:oklch(0.8 0.1 250); --knob:oklch(0.98 0.002 260); --scrim:oklch(0.08 0.01 260 / .62);
+  --shadow:0 1px 2px oklch(0.05 0.01 260 / .4),0 16px 40px oklch(0.05 0.01 260 / .5);
+  --f:"Be Vietnam Pro",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  --t-xs:.75rem; --t-sm:.8125rem; --t-md:.9375rem; --t-lg:1.125rem; --t-xl:1.5rem; --t-2xl:2rem; --t-3xl:clamp(2.5rem,1.7rem + 3vw,4rem);
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px; --s8:64px; --s9:96px;
+  --r1:6px; --r2:10px; --r3:14px; --rp:999px;
+  --ease:cubic-bezier(.2,.8,.2,1); --d1:140ms; --d2:220ms; --d3:700ms;
+}
+:root[data-theme=light]{
+  color-scheme:light;
+  --bg:oklch(0.975 0.003 260); --surface:oklch(0.995 0.002 260); --raised:oklch(0.95 0.004 260); --hover:oklch(0.92 0.005 260);
+  --line:oklch(0.89 0.006 260); --line-strong:oklch(0.8 0.008 260);
+  --text:oklch(0.21 0.012 260); --text-2:oklch(0.41 0.012 260); --text-3:oklch(0.53 0.012 260);
+  --tally:oklch(0.58 0.21 29); --tally-soft:oklch(0.58 0.21 29 / .12);
+  --ok:oklch(0.55 0.13 158); --warn:oklch(0.62 0.14 70); --err:oklch(0.55 0.2 25);
+  --focus:oklch(0.55 0.15 250); --scrim:oklch(0.25 0.01 260 / .35);
+  --shadow:0 1px 2px oklch(0.3 0.02 260 / .06),0 16px 40px oklch(0.3 0.02 260 / .12);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:400 var(--t-md)/1.55 var(--f);-webkit-font-smoothing:antialiased;transition:background-color var(--d2),color var(--d2)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--r1)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.grow{flex:1}
+[hidden]{display:none!important}
+code,.mono{font-family:var(--mono)}
+
+/* top bar */
+.top{position:sticky;top:0;z-index:20;height:64px;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s5);background:color-mix(in oklch,var(--bg) 86%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:var(--s2);font-weight:700;font-size:var(--t-lg);letter-spacing:-.03em}
+.brand .mark{width:22px;height:22px;border-radius:7px;background:var(--text);display:grid;place-items:center}
+.brand .mark::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--tally)}
+.nav{display:flex;gap:var(--s1);margin-left:var(--s5)}
+.nav button{height:36px;padding:0 var(--s3);border-radius:var(--r1);color:var(--text-3);font-weight:500;transition:background-color var(--d1),color var(--d1)}
+.nav button:hover{color:var(--text);background:var(--raised)}
+.nav button[aria-current]{color:var(--text);background:var(--raised)}
+.tallypill{height:32px;display:inline-flex;align-items:center;gap:var(--s2);padding:0 var(--s3);border-radius:var(--rp);border:1px solid var(--line);font-size:var(--t-sm);color:var(--text-2);font-variant-numeric:tabular-nums}
+.tallypill:hover{border-color:var(--line-strong);color:var(--text)}
+.icon{width:36px;height:36px;border-radius:var(--r1);display:grid;place-items:center;color:var(--text-2)}
+.icon:hover{background:var(--raised);color:var(--text)}
+.avatar{width:32px;height:32px;border-radius:50%;background:var(--raised);display:grid;place-items:center;font-size:var(--t-xs);font-weight:600;color:var(--text-2)}
+
+.tl{width:8px;height:8px;border-radius:50%;background:var(--text-3);flex:none}
+.tl.on{background:var(--tally);box-shadow:0 0 0 3px var(--tally-soft);animation:blink 1.6s ease-in-out infinite}
+.tl.ok{background:var(--ok)} .tl.rev{background:var(--warn)} .tl.err{background:var(--err)}
+@keyframes blink{50%{opacity:.4}}
+
+/* buttons */
+.btn{height:36px;padding:0 var(--s4);border-radius:var(--r1);border:1px solid var(--line);background:var(--surface);color:var(--text);font-weight:500;font-size:var(--t-sm);display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);white-space:nowrap;transition:background-color var(--d1),border-color var(--d1),transform var(--d1)}
+.btn:hover{background:var(--raised);border-color:var(--line-strong)}
+.btn:active{transform:scale(.98)}
+.btn.primary{background:var(--text);color:var(--bg);border-color:transparent}
+.btn.primary:hover{background:color-mix(in oklch,var(--text) 88%,var(--bg))}
+.btn.sm{height:30px;padding:0 var(--s3);font-size:var(--t-xs)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+kbd{font:500 var(--t-xs) var(--mono);opacity:.55}
+.link{color:var(--text-2);font-size:var(--t-sm);font-weight:500}
+.link:hover{color:var(--text)}
+
+main{max-width:1280px;margin:0 auto;padding:var(--s6) var(--s5) var(--s9)}
+.view[hidden]{display:none}
+.view{animation:enter var(--d2) var(--ease)}
+@keyframes enter{from{opacity:0;transform:translateY(4px)}}
+
+/* video frames: the actual motion-graphic content of each video */
+.frame{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:var(--r2);container-type:inline-size;isolation:isolate;background:var(--raised);transition:background-color var(--d3) var(--ease)}
+.frame>*{transition:filter var(--d3) var(--ease),opacity var(--d3) var(--ease),transform var(--d3) var(--ease)}
+.frame .tx{position:absolute;left:8cqw;bottom:9cqw;font-weight:700;font-size:8.6cqw;line-height:.98;letter-spacing:-.045em;color:var(--fg)}
+.frame .sub{position:absolute;left:8cqw;bottom:5cqw;font-size:3.2cqw;font-weight:500;color:var(--fg);opacity:.7}
+.frame .dot{position:absolute;border-radius:50%}
+.f-notely{--fg:oklch(0.22 0.03 60);background:oklch(0.94 0.025 80)}
+.f-notely .dot{right:9cqw;top:11cqw;width:23cqw;aspect-ratio:1;background:oklch(0.72 0.16 48)}
+.f-tabs{--fg:oklch(0.97 0.004 260);background:oklch(0.24 0.02 260)}
+.f-tabs .tabs{position:absolute;right:7cqw;top:9cqw;display:grid;grid-template-columns:repeat(4,8.5cqw);gap:1.6cqw}
+.f-tabs .tabs i{height:4.6cqw;border-radius:1cqw;background:oklch(0.42 0.02 260)}
+.f-tabs .tabs i:nth-child(5n+2){background:oklch(0.72 0.16 48)}
+.f-search{--fg:oklch(0.98 0.005 262);background:oklch(0.38 0.1 262)}
+.f-search .q{position:absolute;left:8cqw;right:8cqw;top:11cqw;height:10cqw;border-radius:5cqw;background:oklch(0.98 0.005 262 / .95)}
+.f-search .q::after{content:"";position:absolute;left:5cqw;top:3cqw;width:.6cqw;height:4cqw;background:oklch(0.38 0.1 262)}
+.f-sync{--fg:oklch(0.25 0.05 160);background:oklch(0.9 0.05 160)}
+.f-sync .dev{position:absolute;border:1.1cqw solid oklch(0.25 0.05 160);border-radius:2cqw}
+.f-sync .dev.a{right:8cqw;top:9cqw;width:30cqw;height:19cqw}
+.f-sync .dev.b{right:42cqw;top:14cqw;width:9cqw;height:17cqw;border-radius:2.2cqw}
+.f-close{--fg:oklch(0.97 0.004 260);background:oklch(0.17 0.01 260)}
+.f-close .tx{left:50%;bottom:auto;top:50%;transform:translate(-50%,-62%);white-space:nowrap}
+.f-close .sub{left:50%;transform:translateX(-50%);bottom:24cqw;white-space:nowrap}
+.f-close .dot{left:50%;top:18cqw;width:4cqw;aspect-ratio:1;transform:translateX(-50%);background:oklch(0.72 0.16 48)}
+.f-api{--fg:oklch(0.2 0.03 95);background:oklch(0.87 0.1 95)}
+.f-api .blk{position:absolute;right:7cqw;top:8cqw;width:34cqw;height:24cqw;display:grid;grid-template-columns:2fr 1fr;grid-template-rows:1fr 1fr;gap:1.6cqw}
+.f-api .blk i{border-radius:1.2cqw;background:oklch(0.2 0.03 95)}
+.f-api .blk i:nth-child(1){grid-row:span 2;background:oklch(0.55 0.15 255)}
+.f-api .blk i:nth-child(3){background:oklch(0.65 0.18 30)}
+.f-tet{--fg:oklch(0.95 0.07 90);background:oklch(0.47 0.19 27)}
+.f-tet .dot{right:-6cqw;top:-10cqw;width:44cqw;aspect-ratio:1;background:oklch(0.82 0.15 85)}
+.f-reel{--fg:oklch(0.98 0 0);background:oklch(0.21 0.01 260)}
+.f-reel .portrait{position:absolute;left:50%;top:7cqw;bottom:7cqw;aspect-ratio:9/16;transform:translateX(-50%);border-radius:2cqw;background:oklch(0.7 0.12 190);container-type:inline-size}
+.f-reel .portrait b{position:absolute;left:10%;bottom:12%;font-size:15cqw;line-height:1;letter-spacing:-.04em;color:oklch(0.18 0.03 190)}
+.f-fail{--fg:var(--text-3);background:var(--raised)}
+.f-fail .tx{font-size:5cqw;font-weight:600;letter-spacing:-.02em}
+/* developing: a frame the agent has not composed yet */
+.pending .frame{background:var(--raised)}
+.pending .frame>*{filter:blur(7px);opacity:.25;transform:scale(1.05)}
+.pending .frame::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 35%,oklch(1 0 0 / .07) 50%,transparent 65%);animation:sweep 1.5s linear infinite}
+@keyframes sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+/* create */
+.create{max-width:760px;margin:0 auto;padding-top:var(--s8)}
+.create h1{font-size:var(--t-3xl);line-height:1;letter-spacing:-.045em;font-weight:700;margin:0 0 var(--s4)}
+.create .lede{margin:0;color:var(--text-2);font-size:var(--t-lg);max-width:44ch}
+.composer{margin-top:var(--s6);background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--shadow);transition:border-color var(--d1)}
+.composer:focus-within{border-color:var(--line-strong)}
+.composer textarea{display:block;width:100%;min-height:116px;padding:var(--s5) var(--s5) var(--s2);background:none;border:0;outline:0;resize:none;color:var(--text);font:400 var(--t-lg)/1.5 var(--f)}
+textarea::placeholder,input::placeholder{color:var(--text-3)}
+.files{display:flex;gap:var(--s2);padding:0 var(--s5)}
+.file{display:inline-flex;align-items:center;gap:var(--s2);height:30px;padding:0 var(--s2) 0 var(--s3);border-radius:var(--r1);background:var(--raised);font-size:var(--t-xs);color:var(--text-2)}
+.file button{width:20px;height:20px;border-radius:4px;color:var(--text-3)}
+.file button:hover{background:var(--hover);color:var(--text)}
+.cbar{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap;padding:var(--s3) var(--s3) var(--s3) var(--s5)}
+.opt{height:32px;padding:0 var(--s3);border-radius:var(--rp);border:1px solid var(--line);font-size:var(--t-sm);color:var(--text-3);transition:border-color var(--d1)}
+.opt b{color:var(--text);font-weight:500}
+.opt:hover{border-color:var(--line-strong)}
+.runtime{font-size:var(--t-xs);color:var(--text-3);margin-right:var(--s2)}
+.starts{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2);margin-top:var(--s4)}
+.starts span{font-size:var(--t-sm);color:var(--text-3);margin-right:var(--s1)}
+.chip{height:32px;padding:0 var(--s3);border-radius:var(--rp);background:var(--raised);font-size:var(--t-sm);color:var(--text-2);transition:color var(--d1),background-color var(--d1)}
+.chip:hover{color:var(--text);background:var(--hover)}
+.recent{margin-top:var(--s9)}
+.sechead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:var(--s4)}
+h2{font-size:var(--t-lg);font-weight:600;letter-spacing:-.015em;margin:0}
+.strip{display:grid;grid-auto-flow:column;grid-auto-columns:calc((100% - 2 * var(--s4)) / 3);gap:var(--s4);overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:var(--s2)}
+.strip>*{scroll-snap-align:start}
+.card{display:block;width:100%;text-align:left}
+.card .frame{transition:transform var(--d2) var(--ease)}
+.card:hover .frame{transform:translateY(-3px)}
+.card .ttl{margin-top:var(--s3);font-weight:500}
+.card .meta{display:flex;align-items:center;gap:var(--s2);margin-top:2px;font-size:var(--t-sm);color:var(--text-3)}
+
+/* project */
+.phead{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;margin-bottom:var(--s5)}
+.phead h1{font-size:var(--t-xl);font-weight:650;letter-spacing:-.025em;margin:0}
+.back{height:32px;color:var(--text-3);font-size:var(--t-sm);font-weight:500}
+.back:hover{color:var(--text)}
+.status{display:inline-flex;align-items:center;gap:var(--s2);height:28px;padding:0 var(--s3);border-radius:var(--rp);background:var(--raised);font-size:var(--t-sm);color:var(--text-2);font-variant-numeric:tabular-nums}
+.pgrid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:var(--s6);align-items:start}
+.player{background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);padding:var(--s2)}
+.player .frame{border-radius:var(--r2)}
+.controls{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) var(--s2) var(--s1)}
+.play{width:36px;height:36px;border-radius:50%;background:var(--text);color:var(--bg);display:grid;place-items:center;flex:none}
+.tc{font-size:var(--t-sm);color:var(--text-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.scrub{flex:1;display:flex;gap:3px;height:6px}
+.scrub i{position:relative;overflow:hidden;border-radius:3px;background:var(--hover)}
+.scrub i.played{background:var(--text-2)}
+.scrub i.cur::before{content:"";position:absolute;inset:0 60% 0 0;background:var(--text-2)}
+.takes{display:flex;align-items:center;gap:var(--s1);margin:var(--s5) 0 var(--s3);flex-wrap:wrap}
+.take{height:32px;padding:0 var(--s3);border-radius:var(--r1);font-size:var(--t-sm);font-weight:500;color:var(--text-3)}
+.take small{font-weight:400;margin-left:6px}
+.take:hover{color:var(--text)}
+.take[aria-selected=true]{background:var(--raised);color:var(--text)}
+.board{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--s3)}
+.shot>button{display:block;width:100%;text-align:left;border-radius:var(--r1)}
+.shot .frame{border-radius:var(--r1);outline:2px solid transparent;outline-offset:2px;transition:outline-color var(--d1),background-color var(--d3)}
+.shot>button:hover .frame{outline-color:var(--line-strong)}
+.shot>button[aria-pressed=true] .frame{outline-color:var(--text)}
+.cap{display:flex;justify-content:space-between;gap:var(--s2);margin-top:var(--s2);font-size:var(--t-xs);color:var(--text-3);font-variant-numeric:tabular-nums}
+.cap b{font-weight:500;color:var(--text-2)}
+.log{margin-top:var(--s7)}
+.log h2{margin-bottom:var(--s4)}
+.msg{max-width:62ch;margin:0 0 var(--s4)}
+.msg.me{margin-left:auto;width:fit-content;background:var(--raised);padding:var(--s3) var(--s4);border-radius:var(--r3) var(--r3) var(--r1) var(--r3)}
+.msg.ai{color:var(--text-2)}
+.calls{border:1px solid var(--line);border-radius:var(--r2);background:var(--surface);overflow:hidden;margin:0 0 var(--s4)}
+.call+.call{border-top:1px solid var(--line)}
+.call summary{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:var(--s3);align-items:center;padding:var(--s3) var(--s4);cursor:pointer;list-style:none;font-size:var(--t-sm);transition:background-color var(--d1)}
+.call summary::-webkit-details-marker{display:none}
+.call summary:hover,.call[open] summary{background:var(--raised)}
+.call code{font-size:var(--t-xs);font-weight:500;color:var(--text)}
+.call .sum{color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.call .t{color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.call .body{padding:var(--s3) var(--s4) var(--s4);display:flex;gap:var(--s3);align-items:flex-start}
+.call pre{flex:1;margin:0;padding:var(--s3);background:var(--bg);border-radius:var(--r1);font:400 var(--t-xs)/1.6 var(--mono);color:var(--text-2);overflow:auto}
+.revise{position:sticky;bottom:var(--s4);z-index:5;margin-top:var(--s6);background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r3);box-shadow:var(--shadow);padding:var(--s2) var(--s2) var(--s2) var(--s4)}
+.revise .ctx{display:flex;gap:var(--s2);align-items:center;padding-top:var(--s1);flex-wrap:wrap}
+.tag{display:inline-flex;align-items:center;gap:var(--s1);height:24px;padding:0 var(--s2);border-radius:var(--r1);background:var(--raised);font-size:var(--t-xs);color:var(--text-2)}
+.tag button{color:var(--text-3)}
+.revise .in{display:flex;align-items:flex-end;gap:var(--s2)}
+.revise textarea{flex:1;min-height:44px;max-height:160px;padding:var(--s3) 0;background:none;border:0;outline:0;resize:none;color:var(--text);font:400 16px/1.5 var(--f)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);padding:var(--s4) var(--s5);margin-bottom:var(--s4)}
+.panel h3{margin:0 0 var(--s3);font-size:var(--t-sm);font-weight:600;color:var(--text-2)}
+.panel p{margin:0 0 var(--s3);font-size:var(--t-sm);color:var(--text-3)}
+.kv{display:flex;justify-content:space-between;gap:var(--s3);padding:var(--s2) 0;border-top:1px solid var(--line);font-size:var(--t-sm);font-variant-numeric:tabular-nums}
+.kv:first-of-type{border-top:0}
+.kv span{color:var(--text-3)}
+.stage{display:grid;grid-template-columns:64px minmax(0,1fr) 44px;gap:var(--s3);align-items:center;padding:6px 0;font-size:var(--t-sm);font-variant-numeric:tabular-nums}
+.stage span:last-child{text-align:right;color:var(--text-3)}
+.meter{height:6px;border-radius:3px;background:var(--hover);overflow:hidden}
+.meter i{display:block;height:100%;border-radius:3px;background:var(--text-2);transition:transform var(--d2) var(--ease);transform-origin:left}
+.meter.live i{background:var(--tally)}
+.code{position:relative;margin-bottom:var(--s3)}
+.code pre{margin:0;padding:var(--s3) 84px var(--s3) var(--s3);background:var(--bg);border:1px solid var(--line);border-radius:var(--r1);font:400 var(--t-xs)/1.6 var(--mono);color:var(--text-2);white-space:pre-wrap;word-break:break-word}
+.code .btn{position:absolute;top:6px;right:6px}
+
+/* projects */
+.ptop{display:flex;align-items:center;gap:var(--s4);flex-wrap:wrap;margin:var(--s4) 0 var(--s6)}
+.ptop h1{font-size:var(--t-2xl);font-weight:700;letter-spacing:-.04em;margin:0}
+.seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r1);background:var(--raised)}
+.seg button{height:30px;padding:0 var(--s3);border-radius:4px;font-size:var(--t-sm);font-weight:500;color:var(--text-3)}
+.seg button:hover{color:var(--text)}
+.seg button[aria-pressed=true]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px oklch(0.1 0.01 260 / .25)}
+.search{height:36px;width:240px;padding:0 var(--s3);border:1px solid var(--line);border-radius:var(--r1);background:var(--surface);color:var(--text);font:400 16px var(--f)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--s6) var(--s5)}
+.newtile{display:grid;place-items:center;aspect-ratio:16/9;border-radius:var(--r2);border:1px dashed var(--line-strong);color:var(--text-2);font-weight:500;transition:border-color var(--d1),color var(--d1)}
+.newtile:hover{border-color:var(--text-2);color:var(--text)}
+.empty{grid-column:1/-1;padding:var(--s8) 0;text-align:center;color:var(--text-3)}
+
+/* settings */
+.settings{display:grid;grid-template-columns:180px minmax(0,720px);gap:var(--s8);margin-top:var(--s4)}
+.subnav{position:sticky;top:96px;align-self:start;display:grid;gap:2px}
+.subnav a{height:34px;display:flex;align-items:center;padding:0 var(--s3);border-radius:var(--r1);color:var(--text-3);text-decoration:none;font-size:var(--t-sm);font-weight:500}
+.subnav a:hover{color:var(--text);background:var(--raised)}
+.settings section{margin-bottom:var(--s7);scroll-margin-top:88px}
+.settings h2{margin-bottom:var(--s2)}
+.settings .hint{margin:0 0 var(--s3);color:var(--text-3);font-size:var(--t-sm)}
+.row{display:flex;align-items:center;gap:var(--s4);padding:var(--s4) 0;border-top:1px solid var(--line)}
+.row .k{flex:1;min-width:0}
+.row .k b{display:block;font-weight:500}
+.row .k small{display:block;color:var(--text-3);font-size:var(--t-sm);overflow-wrap:anywhere}
+.switch{width:40px;height:24px;flex:none;border-radius:12px;background:var(--hover);position:relative;transition:background-color var(--d1)}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--knob);transition:transform var(--d1) var(--ease)}
+.switch[aria-checked=true]{background:var(--ok)}
+.switch[aria-checked=true]::after{transform:translateX(16px)}
+.usage{width:160px;height:8px;border-radius:4px;background:var(--hover);overflow:hidden}
+.usage i{display:block;height:100%;width:78%;background:var(--warn)}
+.ok-t{color:var(--ok);font-size:var(--t-sm);font-weight:500}
+
+/* dialogs */
+dialog{border:0;padding:0;background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+dialog::backdrop{background:var(--scrim)}
+.sheet{margin:0 0 0 auto;height:100dvh;max-height:100dvh;width:min(440px,100vw);border-left:1px solid var(--line)}
+.sheet[open]{animation:slide var(--d2) var(--ease)}
+@keyframes slide{from{transform:translateX(24px);opacity:0}}
+.modal{width:min(640px,calc(100vw - 32px));border:1px solid var(--line);border-radius:var(--r3)}
+.modal[open]{animation:enter var(--d2) var(--ease)}
+.dhead{display:flex;align-items:center;gap:var(--s3);padding:var(--s4) var(--s5);border-bottom:1px solid var(--line)}
+.act{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:var(--s3);align-items:start;padding:var(--s4) var(--s5);border-bottom:1px solid var(--line)}
+.act .tl{margin-top:7px}
+.act b{font-weight:500;display:block}
+.act small{display:block;color:var(--text-3);font-size:var(--t-sm)}
+.act .r{text-align:right;font-size:var(--t-sm);color:var(--text-3);font-variant-numeric:tabular-nums}
+.act .meter{margin-top:var(--s2)}
+.act .errmsg{color:var(--err)}
+.act .actions{display:flex;gap:var(--s2);margin-top:var(--s3)}
+.tabs2{display:flex;gap:var(--s1);padding:var(--s3) var(--s5) 0;overflow-x:auto}
+.tabs2 button{height:32px;padding:0 var(--s3);border-radius:var(--r1);font-size:var(--t-sm);font-weight:500;color:var(--text-3);white-space:nowrap}
+.tabs2 button:hover{color:var(--text)}
+.tabs2 button[aria-selected=true]{background:var(--raised);color:var(--text)}
+.pane{padding:var(--s5)}
+.pane[hidden]{display:none}
+.pane ol{margin:0 0 var(--s4);padding-left:1.2em;color:var(--text-2);font-size:var(--t-sm)}
+.pane ol li{margin-bottom:var(--s1)}
+.dfoot{padding:var(--s4) var(--s5);border-top:1px solid var(--line);font-size:var(--t-sm);color:var(--text-3)}
+.dfoot code{font-size:var(--t-xs);color:var(--text-2)}
+
+.toast{position:fixed;left:50%;bottom:var(--s6);z-index:60;transform:translate(-50%,8px);opacity:0;pointer-events:none;background:var(--text);color:var(--bg);padding:var(--s2) var(--s4);border-radius:var(--rp);font-size:var(--t-sm);font-weight:500;transition:opacity var(--d2),transform var(--d2) var(--ease)}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+@media (max-width:1100px){.pgrid{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:820px){
+  .settings{grid-template-columns:1fr;gap:var(--s5)}
+  .subnav{position:static;display:flex;overflow-x:auto}
+  .board{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:40%;overflow-x:auto;padding-bottom:var(--s2)}
+  .strip{grid-auto-columns:72%}
+}
+@media (max-width:720px){
+  .top{padding:0 var(--s4);backdrop-filter:none;background:var(--bg)}
+  .nav{position:fixed;left:0;right:0;bottom:0;margin:0;justify-content:space-around;background:var(--surface);border-top:1px solid var(--line);padding:var(--s2) var(--s2) calc(var(--s2) + env(safe-area-inset-bottom))}
+  .nav button{flex:1;height:44px}
+  .hide-sm{display:none}
+  main{padding:var(--s5) var(--s4) 140px}
+  .create{padding-top:var(--s5)}
+  .revise{bottom:84px}
+  .search{width:100%}
+  .call summary{grid-template-columns:auto auto minmax(0,1fr)}
+  .call .t{display:none}
+}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <button class="brand" data-go="create" aria-label="Studix home"><span class="mark" aria-hidden="true"></span>studix</button>
+  <nav class="nav" aria-label="Main">
+    <button data-go="create" aria-current="page">Create</button>
+    <button data-go="projects">Projects</button>
+    <button data-go="settings">Settings</button>
+  </nav>
+  <div class="grow"></div>
+  <button class="tallypill" data-open="activity" aria-label="Activity, 2 running"><span class="tl on"></span><span id="runCount">2</span><span class="hide-sm">running</span></button>
+  <button class="btn hide-sm" data-open="connect">Connect agent</button>
+  <button class="icon" id="theme" aria-label="Switch light or dark">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>
+  </button>
+  <span class="avatar hide-sm" aria-label="Duy Nguyen">DN</span>
+</header>
+
+<main>
+<!-- CREATE: one sentence in, one video out -->
+<section class="view create" data-view="create">
+  <h1>Make a video.</h1>
+  <p class="lede">Describe it. Your agent writes, voices, animates and renders it, shot by shot, in front of you.</p>
+  <form class="composer" id="startForm">
+    <label class="sr" for="prompt">Describe your video</label>
+    <textarea id="prompt" placeholder="Video ra mắt Notely 2.0, 30 giây, ấm và chậm. Giọng đọc tiếng Việt, nhấn vào tìm kiếm nhanh và đồng bộ."></textarea>
+    <div class="files"><span class="file">notely-brand-kit.zip · 4.2 MB<button type="button" aria-label="Remove file">✕</button></span></div>
+    <div class="cbar">
+      <button type="button" class="opt" data-cycle="16:9|9:16|1:1">Format <b>16:9</b></button>
+      <button type="button" class="opt" data-cycle="30s|15s|60s">Length <b>30s</b></button>
+      <button type="button" class="opt" data-cycle="Linh · vi|Minh · vi|Ava · en|None">Voice <b>Linh · vi</b></button>
+      <button type="button" class="opt hide-sm" data-cycle="Auto|Apple-like|Swiss|Vox collage">Look <b>Auto</b></button>
+      <div class="grow"></div>
+      <span class="runtime hide-sm">Claude Opus 5.5 · high</span>
+      <button class="btn primary" type="submit">Start take <kbd class="hide-sm">⌘↵</kbd></button>
+    </div>
+  </form>
+  <div class="starts">
+    <span>Or start from</span>
+    <button class="chip" data-fill="Biến changelog tháng 10 thành Reel 9:16, 20 giây, chữ to, nhạc nhanh.">Changelog to Reel</button>
+    <button class="chip" data-fill="Giải thích API của Studix trong 60 giây, phong cách collage.">Explain an API</button>
+    <button class="chip" data-fill="Làm lại video Tết promo 2027 theo phong cách Swiss tối giản.">Restyle a video</button>
+    <button class="chip" data-fill="Làm video 30 giây từ trang https://notely.app/launch">From a link</button>
+  </div>
+  <section class="recent">
+    <div class="sechead"><h2>Recent</h2><button class="link" data-go="projects">All projects</button></div>
+    <div class="strip">
+      <button class="card" data-project><div class="frame f-notely"><span class="dot"></span><span class="tx">Ghi chú,<br>nhẹ hơn.</span></div><div class="ttl">Notely 2.0 launch</div><div class="meta"><span class="tl on"></span>Take 3 · rendering</div></button>
+      <button class="card" data-project><div class="frame f-api"><span class="blk"><i></i><i></i><i></i></span><span class="tx">Một API.<br>Mọi video.</span></div><div class="ttl">API explainer</div><div class="meta"><span class="tl rev"></span>Take 2 · ready to review</div></button>
+      <button class="card" data-project><div class="frame f-reel"><span class="portrait"><b>Tháng 10<br>có gì mới</b></span></div><div class="ttl">October changelog</div><div class="meta"><span class="tl on"></span>Take 2 · composing</div></button>
+      <button class="card" data-project><div class="frame f-tet"><span class="dot"></span><span class="tx">Năm mới,<br>ý tưởng mới.</span></div><div class="ttl">Tết promo 2027</div><div class="meta"><span class="tl ok"></span>Take 4 · done</div></button>
+    </div>
+  </section>
+</section>
+
+<!-- PROJECT: player, takes, storyboard, the agent's work, revise -->
+<section class="view" data-view="project" hidden>
+  <div class="phead">
+    <button class="back" data-go="projects">← Projects</button>
+    <h1>Notely 2.0 launch</h1>
+    <span class="status" id="pStatus"><span class="tl ok"></span><span>Take 3 · ready</span></span>
+    <div class="grow"></div>
+    <button class="btn" data-copy='studix_get_project {"id":"prj_8f2k"}'>Copy for agent</button>
+    <button class="btn primary" id="dl">Download MP4</button>
+  </div>
+  <div class="pgrid">
+    <div>
+      <div class="player">
+        <div class="frame f-notely" id="screen"><span class="dot"></span><span class="tx">Ghi chú,<br>nhẹ hơn.</span></div>
+        <div class="controls">
+          <button class="play" aria-label="Play"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg></button>
+          <span class="tc">0:11 / 0:30</span>
+          <div class="scrub" aria-label="Timeline by shot"><i class="played" style="flex:4"></i><i class="played" style="flex:6"></i><i class="cur" style="flex:7"></i><i style="flex:7"></i><i style="flex:6"></i></div>
+        </div>
+      </div>
+      <div class="takes" role="tablist" aria-label="Takes">
+        <button class="take" role="tab" aria-selected="false" data-take="1">Take 1<small>first cut</small></button>
+        <button class="take" role="tab" aria-selected="false" data-take="2">Take 2<small>faster hook</small></button>
+        <button class="take" role="tab" aria-selected="true" data-take="3">Take 3<small>warmer music</small></button>
+      </div>
+      <ol class="board" id="board" aria-label="Storyboard">
+        <li class="shot"><button aria-pressed="false" data-shot="Shot 01 · Hook"><div class="frame f-notely"><span class="dot"></span><span class="tx">Ghi chú,<br>nhẹ hơn.</span></div><div class="cap"><b>01 Hook</b><span>0:00</span></div></button></li>
+        <li class="shot"><button aria-pressed="false" data-shot="Shot 02 · Problem"><div class="frame f-tabs"><span class="tabs"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="tx">Ý tưởng trôi<br>giữa 12 tab.</span></div><div class="cap"><b>02 Problem</b><span>0:04</span></div></button></li>
+        <li class="shot"><button aria-pressed="false" data-shot="Shot 03 · Search"><div class="frame f-search"><span class="q"></span><span class="tx">Tìm trong<br>0,3 giây.</span></div><div class="cap"><b>03 Search</b><span>0:10</span></div></button></li>
+        <li class="shot"><button aria-pressed="false" data-shot="Shot 04 · Sync"><div class="frame f-sync"><span class="dev a"></span><span class="dev b"></span><span class="tx">Mọi thiết bị.<br>Cùng lúc.</span></div><div class="cap"><b>04 Sync</b><span>0:17</span></div></button></li>
+        <li class="shot"><button aria-pressed="false" data-shot="Shot 05 · Close"><div class="frame f-close"><span class="dot"></span><span class="tx">Notely 2.0</span><span class="sub">iOS · Android · Web</span></div><div class="cap"><b>05 Close</b><span>0:24</span></div></button></li>
+      </ol>
+
+      <section class="log" id="log" aria-live="polite">
+        <h2>Agent</h2>
+        <p class="msg me" data-step id="askText">Video ra mắt Notely 2.0, 30 giây, ấm và chậm. Giọng đọc tiếng Việt, nhấn vào tìm kiếm nhanh và đồng bộ.</p>
+        <p class="msg ai" data-step>Mình làm 5 cảnh ở nhịp 96 BPM: mở đầu, vấn đề, tìm kiếm, đồng bộ, kết. Màu và font lấy từ notely-brand-kit.zip.</p>
+        <div class="calls">
+          <details class="call" data-step data-status="Planning"><summary><span class="tl ok"></span><code>studix_create_video</code><span class="sum">Notely 2.0 launch · 16:9 · 30s</span><span class="t">0.4s</span></summary><div class="body"><pre>{ "title": "Notely 2.0 launch", "format": "16:9", "durationSec": 30, "voice": "vi-VN-Linh" }</pre><button class="btn sm" data-copy='studix_create_video {"title":"Notely 2.0 launch","format":"16:9","durationSec":30}'>Copy</button></div></details>
+          <details class="call" data-step><summary><span class="tl ok"></span><code>skill.load</code><span class="sum">motion-video, hyperframes</span><span class="t">0.2s</span></summary><div class="body"><pre>{ "skills": ["motion-video", "hyperframes"] }</pre></div></details>
+          <details class="call" data-step data-status="Writing script"><summary><span class="tl ok"></span><code>script.write</code><span class="sum">5 shots · 74 words</span><span class="t">6.2s · $0.021</span></summary><div class="body"><pre>01 Hook     "Ghi chú, nhẹ hơn."
+02 Problem  "Ý tưởng trôi mất giữa 12 tab."
+03 Search   "Tìm mọi thứ trong 0,3 giây."</pre></div></details>
+          <details class="call" data-step data-status="Recording voice"><summary><span class="tl ok"></span><code>tts.generate</code><span class="sum">vi-VN Linh · 28.6s of audio</span><span class="t">9.1s · $0.004</span></summary><div class="body"><pre>{ "provider": "multix/elevenlabs", "voice": "vi-VN-Linh", "chars": 412 }</pre></div></details>
+          <details class="call" data-step data-shot="0" data-status="Composing shot 1 of 5"><summary><span class="tl ok"></span><code>hyperframes.compose</code><span class="sum">Shot 01 Hook</span><span class="t">7.8s · $0.031</span></summary><div class="body"><pre>{ "shot": 1, "duration": 4.0, "beats": 6 }</pre></div></details>
+          <details class="call" data-step data-shot="1" data-status="Composing shot 2 of 5"><summary><span class="tl ok"></span><code>hyperframes.compose</code><span class="sum">Shot 02 Problem</span><span class="t">9.4s · $0.036</span></summary><div class="body"><pre>{ "shot": 2, "duration": 6.0, "beats": 9 }</pre></div></details>
+          <details class="call" data-step data-shot="2" data-status="Composing shot 3 of 5"><summary><span class="tl ok"></span><code>hyperframes.compose</code><span class="sum">Shot 03 Search</span><span class="t">8.7s · $0.034</span></summary><div class="body"><pre>{ "shot": 3, "duration": 7.0, "beats": 11 }</pre></div></details>
+          <details class="call" data-step data-shot="3" data-status="Composing shot 4 of 5"><summary><span class="tl ok"></span><code>hyperframes.compose</code><span class="sum">Shot 04 Sync</span><span class="t">8.1s · $0.033</span></summary><div class="body"><pre>{ "shot": 4, "duration": 7.0, "beats": 11 }</pre></div></details>
+          <details class="call" data-step data-shot="4" data-status="Composing shot 5 of 5"><summary><span class="tl ok"></span><code>hyperframes.compose</code><span class="sum">Shot 05 Close</span><span class="t">6.3s · $0.028</span></summary><div class="body"><pre>{ "shot": 5, "duration": 6.0, "beats": 8 }</pre></div></details>
+          <details class="call" data-step data-render><summary><span class="tl ok"></span><code>studix_render</code><span class="sum">1080p · 30 fps · H.264</span><span class="t">41s · $0.012</span></summary><div class="body"><pre>{ "projectId": "prj_8f2k", "take": 3, "resolution": "1080p" }</pre><button class="btn sm" data-copy='studix_render {"projectId":"prj_8f2k","take":3}'>Copy</button></div></details>
+        </div>
+        <p class="msg ai" data-step>Xong rồi. Bấm vào một cảnh để sửa riêng cảnh đó, hoặc nói mình cần đổi gì.</p>
+      </section>
+
+      <form class="revise" id="reviseForm">
+        <div class="ctx"><span class="tag" id="takeTag">Revising Take 3</span><span class="tag" id="shotTag" hidden><span></span><button type="button" aria-label="Clear shot">✕</button></span></div>
+        <div class="in">
+          <label class="sr" for="reviseText">What should change?</label>
+          <textarea id="reviseText" rows="1" placeholder="Rút cảnh mở đầu còn 3 giây, logo cuối to hơn…"></textarea>
+          <button class="btn primary" type="submit">New take</button>
+        </div>
+      </form>
+    </div>
+
+    <aside>
+      <div class="panel">
+        <h3>Take 3</h3>
+        <div class="kv"><span>Agent</span>Claude Opus 5.5 · high</div>
+        <div class="kv"><span>Time</span><span id="tTime">1m 47s</span></div>
+        <div class="kv"><span>Cost</span><span id="tCost">$0.287</span></div>
+        <div class="kv"><span>Tokens</span>48,217 in · 6,904 out</div>
+      </div>
+      <div class="panel">
+        <h3>Stages</h3>
+        <div class="stage"><span>Plan</span><span class="meter"><i style="transform:scaleX(.12)"></i></span><span>7s</span></div>
+        <div class="stage"><span>Voice</span><span class="meter"><i style="transform:scaleX(.16)"></i></span><span>9s</span></div>
+        <div class="stage"><span>Compose</span><span class="meter"><i style="transform:scaleX(.72)"></i></span><span>40s</span></div>
+        <div class="stage"><span>Render</span><span class="meter" id="renderMeter"><i style="transform:scaleX(.74)"></i></span><span>41s</span></div>
+      </div>
+      <div class="panel">
+        <h3>Continue in your own agent</h3>
+        <p>Claude, ChatGPT or Cursor can pick up this exact take.</p>
+        <div class="code"><pre>studix_get_project {"id":"prj_8f2k"}</pre><button class="btn sm" data-copy='studix_get_project {"id":"prj_8f2k"}'>Copy</button></div>
+        <div class="code"><pre>Mở project Studix prj_8f2k và làm Take 4 với cảnh mở đầu ngắn hơn.</pre><button class="btn sm" data-copy="Mở project Studix prj_8f2k và làm Take 4 với cảnh mở đầu ngắn hơn.">Copy</button></div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- PROJECTS: projects and jobs are one list -->
+<section class="view" data-view="projects" hidden>
+  <div class="ptop">
+    <h1>Projects</h1>
+    <div class="grow"></div>
+    <div class="seg" role="group" aria-label="Filter">
+      <button aria-pressed="true" data-filter="all">All</button>
+      <button aria-pressed="false" data-filter="run">Running</button>
+      <button aria-pressed="false" data-filter="rev">Review</button>
+      <button aria-pressed="false" data-filter="err">Failed</button>
+    </div>
+    <label class="sr" for="q">Search projects</label>
+    <input class="search" id="q" type="search" placeholder="Search projects">
+  </div>
+  <div class="grid" id="pgrid">
+    <button class="newtile" data-go="create">+ New video</button>
+    <button class="card" data-project data-s="run"><div class="frame f-notely"><span class="dot"></span><span class="tx">Ghi chú,<br>nhẹ hơn.</span></div><div class="ttl">Notely 2.0 launch</div><div class="meta"><span class="tl on"></span>Take 3 · rendering 62%</div></button>
+    <button class="card" data-project data-s="rev"><div class="frame f-api"><span class="blk"><i></i><i></i><i></i></span><span class="tx">Một API.<br>Mọi video.</span></div><div class="ttl">API explainer</div><div class="meta"><span class="tl rev"></span>Take 2 · ready to review</div></button>
+    <button class="card" data-project data-s="run"><div class="frame f-reel"><span class="portrait"><b>Tháng 10<br>có gì mới</b></span></div><div class="ttl">October changelog</div><div class="meta"><span class="tl on"></span>Take 2 · composing shot 3 of 4</div></button>
+    <button class="card" data-project data-s="done"><div class="frame f-tet"><span class="dot"></span><span class="tx">Năm mới,<br>ý tưởng mới.</span></div><div class="ttl">Tết promo 2027</div><div class="meta"><span class="tl ok"></span>Take 4 · done yesterday</div></button>
+    <button class="card" data-open="activity" data-s="err"><div class="frame f-fail"><span class="tx">Voice step failed</span></div><div class="ttl">Webinar teaser</div><div class="meta"><span class="tl err"></span>Take 1 · needs a Multix key</div></button>
+    <p class="empty" id="empty" hidden>Nothing here yet.</p>
+  </div>
+</section>
+
+<!-- SETTINGS: everything that is not a video, on one page -->
+<section class="view" data-view="settings" hidden>
+  <div class="ptop"><h1>Settings</h1></div>
+  <div class="settings">
+    <nav class="subnav" aria-label="Settings sections">
+      <a href="#s-agents">Agents</a><a href="#s-models">Models</a><a href="#s-media">Media</a><a href="#s-skills">Skills</a><a href="#s-storage">Storage</a><a href="#s-account">Account</a>
+    </nav>
+    <div>
+      <section id="s-agents">
+        <h2>Agents</h2>
+        <p class="hint">Every action here is also an MCP tool, a WebMCP tool, an API call and a CLI command, with the same name.</p>
+        <div class="row"><div class="k"><b>MCP endpoint</b><small class="mono">https://studix.app/mcp</small></div><button class="btn sm" data-copy="https://studix.app/mcp">Copy</button><button class="btn sm primary" data-open="connect">Connect</button></div>
+        <div class="row"><div class="k"><b>Claude Desktop</b><small>Last call 2 min ago · studix_render</small></div><button class="btn sm">Revoke</button></div>
+        <div class="row"><div class="k"><b>ChatGPT</b><small>Last call yesterday · studix_feedback</small></div><button class="btn sm">Revoke</button></div>
+        <div class="row"><div class="k"><b>API key · cli-macbook</b><small>sk_live_…f3a1 · created 3 Nov</small></div><button class="btn sm">Revoke</button></div>
+        <div class="row"><div class="k"><b>New API key</b><small>For the CLI, scripts and CI</small></div><button class="btn sm">Create key</button></div>
+      </section>
+      <section id="s-models">
+        <h2>Models</h2>
+        <p class="hint">The agent that plans and builds each take.</p>
+        <div class="row"><div class="k"><b>Runtime</b></div><div class="seg" role="group" aria-label="Runtime"><button aria-pressed="true">Claude</button><button aria-pressed="false">Codex</button><button aria-pressed="false">Pi</button></div></div>
+        <div class="row"><div class="k"><b>Model</b><small>Listed live from your Anthropic key</small></div><button class="btn sm">Claude Opus 5.5 ▾</button></div>
+        <div class="row"><div class="k"><b>Effort</b></div><div class="seg" role="group" aria-label="Effort"><button aria-pressed="false">Low</button><button aria-pressed="false">Medium</button><button aria-pressed="true">High</button></div></div>
+      </section>
+      <section id="s-media">
+        <h2>Media</h2>
+        <div class="row"><div class="k"><b>Multix</b><small>Image, video, voice, lip-sync and upscale through your provider keys</small></div><span class="ok-t">Connected</span></div>
+        <div class="row"><div class="k"><b>ElevenLabs key</b><small>Needed by Webinar teaser</small></div><button class="btn sm primary">Add key</button></div>
+        <div class="row"><div class="k"><b>Default voice</b></div><button class="btn sm">Linh · vi-VN ▾</button></div>
+      </section>
+      <section id="s-skills">
+        <h2>Skills</h2>
+        <div class="row"><div class="k"><b>motion-video</b><small>Beat-synced motion graphics, 70 looks</small></div><button class="switch" role="switch" aria-checked="true" aria-label="motion-video"></button></div>
+        <div class="row"><div class="k"><b>hyperframes</b><small>HTML and GSAP compositions</small></div><button class="switch" role="switch" aria-checked="true" aria-label="hyperframes"></button></div>
+        <div class="row"><div class="k"><b>remotion</b><small>React-based compositions</small></div><button class="switch" role="switch" aria-checked="false" aria-label="remotion"></button></div>
+        <div class="row"><div class="k"><b>More skills</b><small>Browse the skill store</small></div><button class="btn sm">Browse</button></div>
+      </section>
+      <section id="s-storage">
+        <h2>Storage</h2>
+        <div class="row"><div class="k"><b>studix-media</b><small>S3 · 7.8 of 10 GB</small></div><span class="usage" aria-label="78% used"><i></i></span></div>
+        <div class="row"><div class="k"><b>Keep drafts</b><small>Old takes are removed after</small></div><button class="btn sm">30 days ▾</button></div>
+      </section>
+      <section id="s-account">
+        <h2>Account</h2>
+        <div class="row"><div class="k"><b>Duy Nguyen</b><small>Owner · Digitop workspace</small></div><button class="btn sm">Sign out</button></div>
+      </section>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ACTIVITY: every running job across projects, behind the tally light -->
+<dialog class="sheet" id="activity" aria-labelledby="actTitle">
+  <div class="dhead"><h2 id="actTitle">Activity</h2><div class="grow"></div><button class="icon" data-close aria-label="Close">✕</button></div>
+  <div class="act"><span class="tl on"></span><div><b>Notely 2.0 launch</b><small>Take 3 · rendering 62%</small><div class="meter live"><i style="transform:scaleX(.62)"></i></div></div><div class="r">1m 12s<br>$0.214</div></div>
+  <div class="act"><span class="tl on"></span><div><b>October changelog</b><small>Take 2 · composing shot 3 of 4</small><div class="meter live"><i style="transform:scaleX(.48)"></i></div></div><div class="r">38s<br>$0.061</div></div>
+  <div class="act"><span class="tl err"></span><div><b>Webinar teaser</b><small class="errmsg">Voice failed: the ElevenLabs key is missing in Multix.</small><div class="actions"><button class="btn sm primary" data-go="settings" data-close>Add key</button><button class="btn sm">Retry</button><button class="btn sm" data-copy='studix_retry_job {"id":"job_7td2"}'>Copy for agent</button></div></div><div class="r">12s<br>$0.009</div></div>
+  <div class="act"><span class="tl rev"></span><div><b>API explainer</b><small>Take 2 · ready 14 min ago</small></div><div class="r">2m 31s<br>$0.402</div></div>
+  <div class="act"><span class="tl ok"></span><div><b>Tết promo 2027</b><small>Take 4 · done yesterday</small></div><div class="r">1m 58s<br>$0.338</div></div>
+</dialog>
+
+<!-- CONNECT: one place to plug in any agent -->
+<dialog class="modal" id="connect" aria-labelledby="conTitle">
+  <div class="dhead"><h2 id="conTitle">Connect your agent</h2><div class="grow"></div><button class="icon" data-close aria-label="Close">✕</button></div>
+  <div class="tabs2" role="tablist">
+    <button role="tab" aria-selected="true" data-pane="p-cc">Claude Code</button>
+    <button role="tab" aria-selected="false" data-pane="p-cd">Claude.ai</button>
+    <button role="tab" aria-selected="false" data-pane="p-gpt">ChatGPT</button>
+    <button role="tab" aria-selected="false" data-pane="p-cur">Cursor</button>
+    <button role="tab" aria-selected="false" data-pane="p-api">API & CLI</button>
+  </div>
+  <div class="pane" id="p-cc"><ol><li>Run this in your terminal.</li><li>Restart Claude Code and ask it to make a video.</li></ol><div class="code"><pre>claude mcp add --transport http studix https://studix.app/mcp</pre><button class="btn sm" data-copy="claude mcp add --transport http studix https://studix.app/mcp">Copy</button></div></div>
+  <div class="pane" id="p-cd" hidden><ol><li>Open Settings, then Connectors.</li><li>Add a custom connector with this URL and sign in to Studix.</li></ol><div class="code"><pre>https://studix.app/mcp</pre><button class="btn sm" data-copy="https://studix.app/mcp">Copy</button></div></div>
+  <div class="pane" id="p-gpt" hidden><ol><li>Open Settings, then Apps and Connectors, then Create.</li><li>Paste the URL and approve access.</li></ol><div class="code"><pre>https://studix.app/mcp</pre><button class="btn sm" data-copy="https://studix.app/mcp">Copy</button></div></div>
+  <div class="pane" id="p-cur" hidden><ol><li>Add this to <span class="mono">.cursor/mcp.json</span>.</li></ol><div class="code"><pre>{ "mcpServers": { "studix": { "url": "https://studix.app/mcp" } } }</pre><button class="btn sm" data-copy='{ "mcpServers": { "studix": { "url": "https://studix.app/mcp" } } }'>Copy</button></div></div>
+  <div class="pane" id="p-api" hidden><ol><li>Create a key in Settings, then call the same tools over HTTP.</li></ol><div class="code"><pre>curl -X POST https://studix.app/api/tools/studix_create_video \
+  -H "Authorization: Bearer $STUDIX_API_KEY" \
+  -d '{"title":"Notely 2.0 launch","durationSec":30}'</pre><button class="btn sm" data-copy="curl -X POST https://studix.app/api/tools/studix_create_video -H &quot;Authorization: Bearer $STUDIX_API_KEY&quot; -d '{&quot;title&quot;:&quot;Notely 2.0 launch&quot;}'">Copy</button></div></div>
+  <div class="dfoot">First prompt to try: <code>Dùng Studix làm video ra mắt 30 giây cho app của mình. Cho mình xem từng take.</code> <button class="link" data-copy="Dùng Studix làm video ra mắt 30 giây cho app của mình. Cho mình xem từng take.">Copy</button></div>
+</dialog>
+
+<div class="toast" id="toast" role="status">Copied</div>
+
+<script>
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const root=document.documentElement,reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+try{const t=localStorage.getItem('studix-c-theme');if(t)root.dataset.theme=t}catch(e){}
+$('#theme').onclick=()=>{const t=root.dataset.theme==='light'?'dark':'light';root.dataset.theme=t;try{localStorage.setItem('studix-c-theme',t)}catch(e){}};
+
+function go(v){
+  $$('.view').forEach(x=>x.hidden=x.dataset.view!==v);
+  $$('.nav button').forEach(b=>{const on=b.dataset.go===v||(v==='project'&&b.dataset.go==='projects');on?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current')});
+  scrollTo({top:0});
+}
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove('on'),1400)}
+function setStatus(kind,text){$('#pStatus').innerHTML=`<span class="tl ${kind}"></span><span>${text}</span>`}
+
+/* project states */
+let timers=[];
+function finish(){
+  timers.forEach(clearTimeout);timers=[];
+  $$('#log [data-step]').forEach(s=>s.hidden=false);
+  $$('.shot').forEach(s=>s.classList.remove('pending'));$('.player').classList.remove('pending');
+  $$('.take').forEach(t=>t.hidden=false);
+  selectTake(3);setStatus('ok','Take 3 · ready');$('#dl').disabled=false;
+}
+function run(prompt){
+  finish();
+  if(prompt)$('#askText').textContent=prompt;
+  $$('.take').forEach(t=>t.hidden=t.dataset.take!=='1');selectTake(1);
+  $('#dl').disabled=true;
+  const steps=$$('#log [data-step]');
+  steps.forEach((s,i)=>{if(i>0)s.hidden=true});
+  $$('.shot').forEach(s=>s.classList.add('pending'));$('.player').classList.add('pending');
+  setStatus('on','Planning');
+  const gap=reduce?60:850;
+  steps.forEach((s,i)=>{if(!i)return;timers.push(setTimeout(()=>{
+    s.hidden=false;
+    if(s.dataset.status)setStatus('on',s.dataset.status);
+    if(s.dataset.shot)$$('.shot')[+s.dataset.shot].classList.remove('pending');
+    if('render' in s.dataset){let p=0;const tick=()=>{p+=7;if(p>=100){setStatus('ok','Take 1 · ready');$('#dl').disabled=false;$('.player').classList.remove('pending');return}setStatus('on',`Rendering ${p}%`);timers.push(setTimeout(tick,reduce?20:120))};tick()}
+  },i*gap))});
+}
+function selectTake(n){$$('.take').forEach(t=>t.setAttribute('aria-selected',t.dataset.take==String(n)));$('#takeTag').textContent=`Revising Take ${n}`}
+
+document.addEventListener('click',e=>{
+  const t=e.target.closest('button,[data-go]');if(!t)return;
+  if(t.dataset.copy!==undefined){navigator.clipboard?.writeText(t.dataset.copy).catch(()=>{});toast('Copied for your agent')}
+  if(t.dataset.close!==undefined)t.closest('dialog')?.close();
+  if(t.dataset.go){go(t.dataset.go)}
+  if(t.dataset.project!==undefined){finish();go('project')}
+  if(t.dataset.open)$('#'+t.dataset.open).showModal();
+  if(t.dataset.cycle){const o=t.dataset.cycle.split('|'),b=$('b',t),i=(o.indexOf(b.textContent)+1)%o.length;b.textContent=o[i]}
+  if(t.dataset.fill){$('#prompt').value=t.dataset.fill;$('#prompt').focus()}
+  if(t.dataset.take)selectTake(t.dataset.take);
+  if(t.dataset.shot){const was=t.getAttribute('aria-pressed')==='true';$$('.shot>button').forEach(b=>b.setAttribute('aria-pressed','false'));
+    const tag=$('#shotTag');if(was){tag.hidden=true}else{t.setAttribute('aria-pressed','true');tag.hidden=false;$('span',tag).textContent=t.dataset.shot;
+    const f=$('.frame',t);$('#screen').className=f.className;$('#screen').innerHTML=f.innerHTML;$('#reviseText').focus()}}
+  if(t.closest('#shotTag')&&t.tagName==='BUTTON'){$('#shotTag').hidden=true;$$('.shot>button').forEach(b=>b.setAttribute('aria-pressed','false'))}
+  if(t.dataset.filter){$$('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',b===t));filter()}
+  if(t.dataset.pane){$$('.tabs2 button').forEach(b=>b.setAttribute('aria-selected',b===t));$$('.pane').forEach(p=>p.hidden=p.id!==t.dataset.pane)}
+  if(t.closest('.seg')&&!t.dataset.filter)$$('button',t.closest('.seg')).forEach(b=>b.setAttribute('aria-pressed',b===t));
+  if(t.getAttribute('role')==='switch')t.setAttribute('aria-checked',t.getAttribute('aria-checked')!=='true');
+});
+$$('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target===d)d.close()}));
+
+$('#startForm').addEventListener('submit',e=>{e.preventDefault();go('project');run($('#prompt').value.trim()||$('#prompt').placeholder)});
+$('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey))$('#startForm').requestSubmit()});
+$('#reviseForm').addEventListener('submit',e=>{
+  e.preventDefault();const v=$('#reviseText').value.trim();if(!v){$('#reviseText').focus();return}
+  const n=$$('.take').filter(t=>!t.hidden).length+1,shot=$('#shotTag').hidden?'':` (${$('span','#shotTag').textContent})`;
+  const tab=document.createElement('button');tab.className='take';tab.setAttribute('role','tab');tab.dataset.take=n;tab.innerHTML=`Take ${n}<small>new</small>`;$('.takes').append(tab);selectTake(n);
+  const me=document.createElement('p');me.className='msg me';me.textContent=v+shot;
+  const call=document.createElement('div');call.className='calls';call.innerHTML=`<details class="call"><summary><span class="tl on"></span><code>studix_feedback</code><span class="sum">Take ${n} from Take ${n-1}${shot}</span><span class="t">running</span></summary><div class="body"><pre>{ "projectId": "prj_8f2k", "fromTake": ${n-1}, "note": ${JSON.stringify(v)} }</pre></div></details>`;
+  $('#log').append(me,call);$('#reviseText').value='';setStatus('on',`Take ${n} · composing`);me.scrollIntoView({behavior:reduce?'auto':'smooth',block:'center'});
+});
+function filter(){const f=$('[data-filter][aria-pressed=true]').dataset.filter,q=$('#q').value.toLowerCase();let n=0;
+  $$('#pgrid .card').forEach(c=>{const show=(f==='all'||c.dataset.s===f)&&c.textContent.toLowerCase().includes(q);c.hidden=!show;n+=show});$('#empty').hidden=n>0}
+$('#q').addEventListener('input',filter);
+</script>
+</body>
+</html>

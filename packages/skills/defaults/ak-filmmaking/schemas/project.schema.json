@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "project.schema.json",
+  "title": "Film project (films/<slug>/project.json)",
+  "type": "object",
+  "required": ["schema_version", "slug", "title", "target_duration_minutes", "budget_mode", "aspect_ratio", "fps", "currency", "scenes", "style", "animatic"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "slug": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+    "title": {"type": "string", "minLength": 1},
+    "logline": {"type": "string"},
+    "target_duration_minutes": {"type": "number", "exclusiveMinimum": 0, "maximum": 240},
+    "budget_mode": {"type": "string", "enum": ["low", "balanced", "quality"]},
+    "aspect_ratio": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?:[0-9]+(\\.[0-9]+)?$"},
+    "fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 120},
+    "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+    "scenes": {
+      "description": "Scene order in the cut. Each ID has scenes/<id>/scene.json.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "common.schema.json#/$defs/scene_id"}
+    },
+    "animatic": {
+      "description": "Sign-off of the full-length animatic; no non-PREVIS shot may be generated before it is approved.",
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {"type": "string", "enum": ["pending", "approved"]},
+        "approved_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}"},
+        "notes": {"type": "string"}
+      }
+    },
+    "style": {
+      "type": "object",
+      "required": ["visual"],
+      "additionalProperties": false,
+      "properties": {
+        "visual": {"type": "string", "minLength": 1},
+        "negative": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

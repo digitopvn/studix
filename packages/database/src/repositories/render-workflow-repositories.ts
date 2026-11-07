@@ -5,6 +5,7 @@ import type { DbExecutor, StudixDb } from "../client.ts";
 import { workflowRuns } from "../schema/jobs.ts";
 import { renders } from "../schema/projects.ts";
 import { actorFrom, beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
+import { activeStorageProfileSql } from "./storage-profile-repository.ts";
 
 function toRender(row: typeof renders.$inferSelect): Render {
   return {
@@ -60,6 +61,7 @@ export function createRenderRepository(db: DbExecutor, clock: Clock): RenderRepo
           status: input.status,
           assetVersionId: input.assetVersionId ?? null,
           storageKey: input.storageKey ?? null,
+          storageProfileId: activeStorageProfileSql(ctx.workspaceId),
           probe: input.probe ?? null,
           error: input.error ?? null,
           createdAt: now,
@@ -79,7 +81,12 @@ export function createRenderRepository(db: DbExecutor, clock: Clock): RenderRepo
     async update(ctx, id, patch) {
       const rows = await db
         .update(renders)
-        .set({ ...patch, updatedAt: clock.now() })
+        .set({
+          ...patch,
+          // A render's output is uploaded after the row exists: record the profile it went to.
+          ...(patch.storageKey ? { storageProfileId: activeStorageProfileSql(ctx.workspaceId) } : {}),
+          updatedAt: clock.now(),
+        })
         .where(scoped(renders, ctx, eq(renders.id, id)))
         .returning();
       return toRender(first(rows, `render ${id}`));

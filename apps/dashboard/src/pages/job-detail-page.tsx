@@ -1,9 +1,66 @@
-import { useEffect, useState } from "react";
-import { api, type Job } from "../api-client.ts";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type AgentChatEvent,
+  type AgentStreamMessage,
+  api,
+  type Job,
+  type JobAgent,
+  type Stage,
+} from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { BlockView, FINAL, useAgentRun } from "./agent-chat-page.tsx";
+import { formatCents, formatJobAgent, formatStageRuntime, formatStageSpend } from "./job-agent.ts";
 
 const ACTIVE = new Set(["queued", "running", "waiting_approval", "waiting_host"]);
 const POLL_MS = 3000;
+/** Agent run events render as the chat does, not as raw activity rows. */
+const AGENT_EVENT = "agent.event";
+
+/** The job's agent steps with the chat's own blocks: messages, reasoning, tool cards. Oldest first, follows the tail. */
+function AgentRunLog({ jobId, agentRun }: { jobId: string; agentRun: ReturnType<typeof useAgentRun> }) {
+  const { run, job } = agentRun;
+  const end = useRef<HTMLDivElement>(null);
+  const count = run.blocks.length;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll again whenever a block arrives.
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "nearest" });
+  }, [count]);
+  if (count === 0) return null;
+  return (
+    <div className="chat-agent job-agent-log">
+      <div className="chat-meta">
+        <strong>Agent run</strong>
+        <Link to={`/chat/${jobId}`}>Open as chat</Link>
+      </div>
+      {run.blocks.map((block, i) => (
+        <BlockView key={block.kind === "tool" ? block.id : `${block.kind}-${i}`} block={block} />
+      ))}
+      {job && !FINAL.has(job.status) && (
+        <div className="chat-typing" role="status" aria-label="Agent is working" />
+      )}
+      <div ref={end} />
+    </div>
+  );
+}
+
+function BudgetLine({
+  spentCents,
+  liveCents,
+  limitCents,
+}: {
+  spentCents: number;
+  liveCents: number;
+  limitCents?: number;
+}) {
+  const limit = limitCents !== undefined ? ` of ${limitCents}c` : "";
+  if (liveCents <= 0) return <>{`${formatCents(spentCents)} spent${limit}`}</>;
+  return (
+    <>
+      {`${formatCents(spentCents + liveCents)} spent${limit}`}{" "}
+      <span className="muted">(includes {formatCents(liveCents)} live from the running stage)</span>
+    </>
+  );
+}
 
 function durationOf(startedAt?: string, finishedAt?: string): string {
   if (!startedAt) return "";
@@ -11,7 +68,103 @@ function durationOf(startedAt?: string, finishedAt?: string): string {
   return ms >= 0 ? `${(ms / 1000).toFixed(1)}s` : "";
 }
 
-function StageTimeline({ job }: { job: Job }) {
+type UsageEvent = Extract<AgentChatEvent, { type: "usage" }>;
+type StatusEvent = Extract<AgentChatEvent, { type: "status" }>;
+
+/** The latest usage and status the agent stream reported per stage: a running stage books its cost only at the end. */
+interface LiveStage {
+  usage?: UsageEvent;
+  status?: StatusEvent;
+}
+
+function useLiveStages(): [Record<string, LiveStage>, (message: AgentStreamMessage) => void] {
+  const [live, setLive] = useState<Record<string, LiveStage>>({});
+  const onMessage = useCallback((message: AgentStreamMessage) => {
+    if (message.kind !== "agent") return;
+    const { event } = message;
+    const stage = event.stage;
+    if (!stage || (event.type !== "usage" && event.type !== "status")) return;
+    setLive((prev) => ({
+      ...prev,
+      [stage]: { ...prev[stage], ...(event.type === "usage" ? { usage: event } : { status: event }) },
+    }));
+  }, []);
+  return [live, onMessage];
+}
+
+/** Live cost of the stages that run now and have booked nothing yet. */
+function liveCents(stages: readonly Stage[], live: Record<string, LiveStage>): number {
+  return stages
+    .filter((s) => s.status === "running" && !s.run)
+    .reduce((sum, s) => sum + (live[s.name]?.usage?.costCents ?? 0), 0);
+}
+
+/** The effort a run used: its own, else the job's agent effort when that agent is the runtime (the live stream and
+ * runs recorded before the effort was stored name none). */
+function effortOf(runtime: string, effort: string | undefined, agent: JobAgent | undefined) {
+  const shown = effort ?? (agent?.runtime === runtime ? agent.reasoningEffort : undefined);
+  return shown ? { reasoningEffort: shown } : {};
+}
+
+function StageRunLine({ stage, live, agent }: { stage: Stage; live?: LiveStage; agent?: JobAgent }) {
+  if (stage.run) {
+    return (
+      <div className="row muted">
+        <span>
+          {formatStageRuntime({
+            ...stage.run,
+            ...effortOf(stage.run.runtime, stage.run.reasoningEffort, agent),
+          })}
+        </span>
+        <span>{formatStageSpend(stage.run)}</span>
+      </div>
+    );
+  }
+  if (stage.status !== "running" || !live?.status) return null;
+  const usage = live.usage;
+  return (
+    <div className="row muted">
+      <span>
+        {formatStageRuntime({
+          runtime: live.status.runtime,
+          model: usage?.model ?? live.status.model,
+          ...effortOf(live.status.runtime, undefined, agent),
+        })}
+      </span>
+      {usage && (
+        <span>
+          {formatStageSpend(usage)} <span className="badge">live</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The QA role's verdict per round: overall and per-criterion scores (0-10) and the notes sent back. */
+function QaRounds({ rounds }: { rounds: NonNullable<Stage["review"]>["rounds"] }) {
+  return (
+    <ol>
+      {rounds.map((r, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: rounds never reorder.
+        <li key={i}>
+          <div className="row">
+            <span className="muted">QA round {i + 1}</span>
+            <span className={`badge ${r.verdict === "pass" ? "badge-succeeded" : ""}`}>{r.verdict}</span>
+            <strong>{r.overall}/10</strong>
+            {Object.entries(r.scores).map(([k, v]) => (
+              <span key={k} className="muted">
+                {k} {v}
+              </span>
+            ))}
+          </div>
+          {r.notes && <p className="muted">{r.notes}</p>}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function StageTimeline({ job, live }: { job: Job; live: Record<string, LiveStage> }) {
   const stages = job.stages ?? [];
   if (stages.length === 0) return <Empty>No stages started yet.</Empty>;
   return (
@@ -24,10 +177,15 @@ function StageTimeline({ job }: { job: Job }) {
             {s.attempt > 1 && <span className="muted">attempt {s.attempt}</span>}
             <span className="muted">{durationOf(s.startedAt, s.finishedAt)}</span>
           </div>
+          <StageRunLine stage={s} live={live[s.name]} agent={job.agent} />
           {s.error && (
             <p className="banner banner-error">
               {s.error.code}: {s.error.message} {s.error.suggestedAction}
             </p>
+          )}
+          {s.review && <QaRounds rounds={s.review.rounds} />}
+          {s.fallback && (
+            <p className="banner banner-warning">Agent did not run, used the template: {s.fallback}</p>
           )}
         </li>
       ))}
@@ -76,6 +234,8 @@ function RequestChanges({
 
 export function JobDetailPage({ jobId }: { jobId: string }) {
   const { data, error, reload } = useAsync(() => api.job(jobId), [jobId]);
+  const [live, onAgentMessage] = useLiveStages();
+  const agentRun = useAgentRun(jobId, onAgentMessage);
   const [actionError, setActionError] = useState<unknown>();
   const job = data?.job;
   const active = job ? ACTIVE.has(job.status) : false;
@@ -130,11 +290,19 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
             </dd>
             <dt>Project</dt>
             <dd>{job.projectId ? <Link to={`/projects/${job.projectId}`}>{job.projectId}</Link> : "-"}</dd>
+            <dt>Agent</dt>
+            <dd>{formatJobAgent(job.agent)}</dd>
             <dt>Budget</dt>
             <dd>
-              {job.budget
-                ? `${job.budget.spentCents}c spent${job.budget.limitCents !== undefined ? ` of ${job.budget.limitCents}c` : ""}`
-                : "-"}
+              {job.budget ? (
+                <BudgetLine
+                  spentCents={job.budget.spentCents}
+                  liveCents={liveCents(job.stages ?? [], live)}
+                  limitCents={job.budget.limitCents}
+                />
+              ) : (
+                "-"
+              )}
             </dd>
             <dt>Created</dt>
             <dd>{formatDate(job.createdAt)}</dd>
@@ -186,23 +354,26 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
       {job?.videoUnavailableReason && <p className="banner">{job.videoUnavailableReason}</p>}
       {job && (
         <Section title="Stages">
-          <StageTimeline job={job} />
+          <StageTimeline job={job} live={live} />
         </Section>
       )}
       {data && (
         <Section title="Activity">
-          {data.activity.length === 0 ? (
+          <AgentRunLog jobId={jobId} agentRun={agentRun} />
+          {data.activity.filter((a) => a.name !== AGENT_EVENT).length === 0 ? (
             <Empty>No activity recorded.</Empty>
           ) : (
             <ul className="list activity">
-              {data.activity.map((a) => (
-                <li key={a.id} className={`level-${a.level}`}>
-                  <span className="muted">{formatDate(a.createdAt)}</span> <code>{a.name}</code>
-                  {a.stage && <span className="muted"> [{a.stage}]</span>}
-                  {a.message && <span> {a.message}</span>}
-                  {a.durationMs !== undefined && <span className="muted"> ({a.durationMs}ms)</span>}
-                </li>
-              ))}
+              {data.activity
+                .filter((a) => a.name !== AGENT_EVENT)
+                .map((a) => (
+                  <li key={a.id} className={`level-${a.level}`}>
+                    <span className="muted">{formatDate(a.createdAt)}</span> <code>{a.name}</code>
+                    {a.stage && <span className="muted"> [{a.stage}]</span>}
+                    {a.message && <span> {a.message}</span>}
+                    {a.durationMs !== undefined && <span className="muted"> ({a.durationMs}ms)</span>}
+                  </li>
+                ))}
             </ul>
           )}
         </Section>

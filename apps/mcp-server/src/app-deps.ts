@@ -7,16 +7,19 @@ import type {
 import type {
   ActivityRepository,
   AgentHandoffService,
+  CompositionService,
   JobRepository,
+  MediaExecService,
   RenderRepository,
   StudioService,
   WorkspaceRepository,
 } from "@studix/core";
-import type { RateLimitRepository } from "@studix/database";
+import type { JobChangeRepository, RateLimitRepository } from "@studix/database";
 import type { ActivityRecorder } from "@studix/observability";
 import type { Logger } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
+import type { JobWebhookService } from "./job-webhooks.ts";
 import type { PlatformSettingsService } from "./platform-settings.ts";
 import type {
   ArtifactUrlSigner,
@@ -82,17 +85,26 @@ export interface AppDeps {
   skills?: SkillSummary[];
   /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
   agentHandoffs?: AgentHandoffService;
+  /** studix_media_exec (ffmpeg/ffprobe jobs); without it the tool answers UNAVAILABLE. */
+  mediaExec?: MediaExecService;
+  /** studix_composition_* (client-authored videos); without it those tools answer UNAVAILABLE. */
+  compositions?: CompositionService;
   /** Imported GitHub skills; without it the skill tools answer UNAVAILABLE. */
   externalSkills?: ExternalSkillService;
   /** Storage & media settings for platform operators; without it the platform API answers UNAVAILABLE. */
   platform?: PlatformSettingsService;
   /** A workspace's Multix settings and status; without it the Multix API answers UNAVAILABLE. */
   multix?: WorkspaceMultixApi;
+  /** Cross-tenant job change reads; with it the API pushes MCP resource updates and webhooks. */
+  jobChanges?: JobChangeRepository;
+  /** Per-workspace job webhook; without it the webhook API answers UNAVAILABLE. */
+  webhooks?: JobWebhookService;
 
   /** Built dashboard directory; when missing, browser navigations get a 503 page. */
   dashboardDist?: string;
   /** Extra origins media may load from in the dashboard CSP (object storage). */
-  mediaOrigins?: string[];
+  /** Origins the dashboard may play media from; a function when storage profiles can change at runtime. */
+  mediaOrigins?: string[] | (() => string[]);
   /** Express `trust proxy` setting (hop count) so rate limits see the client IP behind an ingress. */
   trustProxy?: number | boolean;
   /** Shared token-bucket store so limits hold across replicas; without it each process keeps its own buckets. */

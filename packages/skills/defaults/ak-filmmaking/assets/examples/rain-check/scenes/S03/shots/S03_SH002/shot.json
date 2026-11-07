@@ -1,0 +1,42 @@
+{
+  "shot_id": "S03_SH002",
+  "scene_id": "S03",
+  "shot_type": "cutaway",
+  "lens": "50mm",
+  "camera": "static, low to the ground",
+  "action": "Their reflections ripple across a puddle as footsteps pass.",
+  "emotion": "quiet",
+  "duration_target": 3,
+  "characters": [],
+  "location": "CAFE_STREET_01",
+  "wardrobe": {},
+  "props": [],
+  "visible_speakers": [],
+  "lipsync": "none",
+  "references": [
+    "LOC_CAFE_STREET_WIDE"
+  ],
+  "continuity_from": "S03_SH001",
+  "continuity_to": "S03_SH003",
+  "continuity": {
+    "screen_positions": {},
+    "prop_states": {},
+    "conditions": {},
+    "screen_direction": "static"
+  },
+  "render_class": "CHEAP_BROLL",
+  "retry_budget": 1,
+  "estimate": {
+    "generation_seconds": 6,
+    "cost": {
+      "amount": 1.0,
+      "currency": "USD",
+      "source": "fixture: illustrative amount, not a provider price"
+    }
+  },
+  "state": "STORYBOARDED",
+  "storyboard": {
+    "path": "storyboard/S03_SH002.png",
+    "status": "approved"
+  }
+}

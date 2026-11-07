@@ -86,7 +86,7 @@ export interface ProviderConnectionRepository {
     ctx: TenantContext,
     id: string,
     testedCiphertext: string,
-    patch: Pick<ProviderConnectionPatch, "status" | "lastTest">,
+    patch: Pick<ProviderConnectionPatch, "status" | "lastTest" | "secretCiphertext" | "secretHint">,
   ): Promise<ProviderConnectionRecord | undefined>;
   /** Mark revoked, erase the ciphertext and delete the model preferences that point at it. */
   revoke(ctx: TenantContext, id: string): Promise<ProviderConnectionRecord>;
@@ -216,6 +216,9 @@ export function createProviderConnectionRepository(db: StudixDb, clock: Clock): 
         .set({
           ...(patch.status !== undefined ? { status: patch.status } : {}),
           ...(patch.lastTest !== undefined ? { lastTest: storedTest(patch.lastTest) } : {}),
+          // A refreshed login replaces its own secret in place: same configuration, so no version bump.
+          ...(patch.secretCiphertext !== undefined ? { secretCiphertext: patch.secretCiphertext } : {}),
+          ...(patch.secretHint !== undefined ? { secretHint: patch.secretHint } : {}),
           updatedAt: clock.now(),
         })
         .where(

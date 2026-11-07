@@ -9,6 +9,8 @@ import {
 } from "@studix/video-ir";
 import { z } from "zod";
 import type { Job, JobStatus, StageStatus } from "../entities/job.ts";
+import type { JobAgentView } from "../entities/job-agent.ts";
+import { AGENT_RUNTIMES, REASONING_EFFORTS } from "../entities/model-preference.ts";
 import type { Approval, ApprovalAction, ApprovalStatus, ApprovalSubjectType } from "../entities/review.ts";
 import type { ApprovalPolicy } from "../ports/approval-policy.ts";
 import type { JobQueue } from "../ports/job-queue.ts";
@@ -23,6 +25,9 @@ import type { JobRepository, RenderRepository } from "../repositories/job-reposi
 import type { ProjectRepository } from "../repositories/project-repository.ts";
 import type { RevisionRepository } from "../repositories/revision-repositories.ts";
 import type { StoryboardRepository } from "../repositories/storyboard-repository.ts";
+import type { UsageRepository } from "../repositories/telemetry-repositories.ts";
+import type { TenantContext } from "../tenant.ts";
+import type { StageRunView } from "./stage-run.ts";
 
 /** MCP tool names that next-action hints point to (the MCP server registers tools with these names). */
 export const STUDIX_TOOLS = {
@@ -65,6 +70,9 @@ export interface StudioServiceDeps {
   revisions: RevisionRepository;
   storyboards: StoryboardRepository;
   queue: JobQueue;
+  /** Usage lines and connection labels for each stage's runtime and cost; job views omit them when absent. */
+  usage?: Pick<UsageRepository, "list">;
+  providerConnections?: { get(ctx: TenantContext, id: string): Promise<{ label: string } | undefined> };
   /** Checks an upstream job before `attachMediaJob` records it; without one, attaching is refused. */
   providerJobs?: ProviderJobInspector;
   approvalPolicy: ApprovalPolicy;
@@ -98,6 +106,56 @@ export const PlannerSelection = z
 export type PlannerSelection = z.infer<typeof PlannerSelection>;
 
 /**
+ * The agent a job's creative stages run on, already checked by the caller: the runtime, the provider
+ * connection that pays, and optionally the model and its reasoning effort. Stored on the job payload, so
+ * every attempt runs the same agent. `claude` is the same path as `planner`.
+ */
+export const JobAgentSelection = z
+  .object({
+    runtime: z.enum(AGENT_RUNTIMES),
+    connectionId: z.string().min(1).max(100),
+    provider: z.string().min(1).max(60),
+    modelId: z.string().min(1).max(200).optional(),
+    reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+  })
+  .strict();
+export type JobAgentSelection = z.infer<typeof JobAgentSelection>;
+
+/**
+ * Optional role agents of an agent-authored job (`skill-agent`), each on its own runtime, model and effort:
+ * the director writes the script and direction, the builder makes the video, QA scores it against a rubric
+ * and may send it back to the builder. A role left out runs on `agent` (builder) or is skipped (director, qa).
+ */
+export const AGENT_ROLES = ["director", "builder", "qa"] as const;
+export type AgentRole = (typeof AGENT_ROLES)[number];
+export const JobAgentRoles = z
+  .object({
+    director: JobAgentSelection.optional(),
+    builder: JobAgentSelection.optional(),
+    qa: JobAgentSelection.optional(),
+  })
+  .strict();
+export type JobAgentRoles = z.infer<typeof JobAgentRoles>;
+
+/** The agent stage names of each role in the skill-agent pack. */
+export const ROLE_STAGES: Readonly<Record<AgentRole, string>> = {
+  director: "skill-agent.director",
+  builder: "skill-agent.run",
+  qa: "skill-agent.qa",
+};
+
+/** The agent one stage runs on: its role's agent when the job names one, else the job's `agent`. */
+export function stageAgentSelection(payload: unknown, stage: string): JobAgentSelection | undefined {
+  const p = (payload ?? {}) as { agent?: unknown; roles?: unknown };
+  const role = AGENT_ROLES.find((r) => ROLE_STAGES[r] === stage);
+  const roles = JobAgentRoles.safeParse(p.roles ?? {});
+  const own = role && roles.success ? roles.data[role] : undefined;
+  if (own) return own;
+  const agent = JobAgentSelection.safeParse(p.agent);
+  return agent.success ? agent.data : undefined;
+}
+
+/**
  * Where a job's creative agent stages run: `harness` (default) inside the worker under hard caps, `host` on the
  * MCP client's own agent through the handoff tools (no model spend for Studix).
  */
@@ -116,6 +174,8 @@ export const CreateVideoProjectInput = z.object({
   deadlineAt: z.coerce.date().optional(),
   renderPreset: RenderPreset.optional(),
   agentMode: AgentMode.optional(),
+  agent: JobAgentSelection.optional(),
+  roles: JobAgentRoles.optional(),
 });
 export type CreateVideoProjectInput = z.input<typeof CreateVideoProjectInput>;
 
@@ -135,6 +195,45 @@ const VersionJobOptions = {
  * target (feedback without a patch answers with the `allowedPaths`); with a patch a new version is stored
  * and a render job is queued.
  */
+const Fraction = z.number().min(0).max(1);
+const FramePoint = z.object({ x: Fraction, y: Fraction });
+const ImageDataUrl = z
+  .string()
+  .regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "an image data URL");
+
+/** Marks on a paused frame: where and what to change, shown to the agent as text and as a snapshot image. */
+export const FeedbackAnnotation = z
+  .object({
+    intent: z.enum(["change", "fix", "remove", "add", "keep"]).optional(),
+    priority: z.enum(["must", "should", "nice"]).optional(),
+    frameMs: Milliseconds.optional(),
+    region: FramePoint.extend({ w: Fraction, h: Fraction }).optional(),
+    pins: z
+      .array(FramePoint.extend({ label: z.string().trim().max(60).optional() }))
+      .max(20)
+      .optional(),
+    strokes: z
+      .array(z.object({ tool: z.enum(["pen", "arrow"]), points: z.array(FramePoint).min(2).max(120) }))
+      .max(30)
+      .optional(),
+    snapshot: ImageDataUrl.max(100_000).optional(),
+    references: z
+      .array(
+        z.object({
+          url: z.union([z.url({ protocol: /^https?$/ }).max(2000), ImageDataUrl.max(30_000)]),
+          note: z.string().trim().max(300).optional(),
+        }),
+      )
+      .max(6)
+      .optional(),
+  })
+  .strict()
+  // The parts fit one by one but not all together: the whole note stays under the API's 256 KB request limit.
+  .refine((a) => JSON.stringify(a).length <= 200_000, {
+    message: "Annotation is over 200 KB; attach fewer or smaller reference images.",
+  });
+export type FeedbackAnnotation = z.infer<typeof FeedbackAnnotation>;
+
 export const FeedbackInput = z
   .object({
     projectId: Id,
@@ -146,6 +245,7 @@ export const FeedbackInput = z
     startMs: Milliseconds.optional(),
     endMs: PositiveMilliseconds.optional(),
     comment: z.string().trim().min(1).max(2000),
+    annotation: FeedbackAnnotation.optional(),
     patch: VideoIRPatch.optional(),
     /** The version the feedback was written against; CONFLICT when the project moved on. */
     baseVersionId: Id.optional(),
@@ -237,6 +337,15 @@ export const RecordAuditInput = z.object({
 });
 export type RecordAuditInput = z.input<typeof RecordAuditInput>;
 
+export interface StageReviewView {
+  rounds: {
+    scores: Record<string, number>;
+    overall: number;
+    verdict: "pass" | "revise";
+    notes: string;
+  }[];
+}
+
 export interface StageView {
   name: string;
   status: StageStatus;
@@ -244,6 +353,12 @@ export interface StageView {
   startedAt?: Date;
   finishedAt?: Date;
   error?: StudixErrorPayload;
+  /** Set when the stage finished on a fallback instead of its agent, with the reason. Never silent. */
+  fallback?: string;
+  /** QA rounds when the job has a `qa` role: scores 0-10, verdict and notes per round. */
+  review?: StageReviewView;
+  /** What the attempt ran on and spent; absent while a stage runs and has booked nothing yet. */
+  run?: StageRunView;
 }
 
 export interface ApprovalView {
@@ -279,6 +394,8 @@ export interface JobView {
   error?: StudixErrorPayload;
   stages: StageView[];
   approval?: ApprovalView;
+  /** Runtime, model and effort the job's creative stages run on (see `jobAgent`). */
+  agent: JobAgentView;
   next: NextAction[];
 }
 
