@@ -17,6 +17,8 @@ export type HarnessAgentEvent =
   | {
       type: "artifact";
       name: string;
+      /** The project asset the file became. */
+      assetId?: string;
       /** Set once the file is stored; usable as an input file of a later task. */
       storageKey?: string;
       /** Short-lived signed URL for previews. */

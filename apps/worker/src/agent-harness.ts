@@ -90,7 +90,7 @@ export interface WorkerAgentHarnessDeps {
     ctx: TenantContext,
     stage: StageContext,
     hostPath: string,
-  ) => Promise<{ storageKey: string; url: string; contentType: string } | undefined>;
+  ) => Promise<{ assetId: string; storageKey: string; url: string; contentType: string } | undefined>;
 }
 
 export interface WorkerAgentHarness {

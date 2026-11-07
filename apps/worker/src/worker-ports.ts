@@ -231,7 +231,7 @@ function agentHarness(
       ? {
           piWorkspace: (stage) => sandbox.forStage(stage),
           codex: { defaultModel: settings.codexModel },
-          storeArtifact: createAgentArtifactStore(storage),
+          storeArtifact: createAgentArtifactStore({ storage, assets: repos.assets }),
         }
       : {}),
   });
