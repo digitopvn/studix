@@ -3,7 +3,9 @@ import { assertPermission, type TenantContext } from "@studix/core";
 import type { WorkspaceMultixSettingsRepository } from "@studix/database";
 import {
   assertMultixOverrides,
+  createMultixCatalogLoader,
   createMultixProviderFromConfig,
+  type MultixCatalog,
   type MultixConfig,
   type MultixDiagnosis,
   readMultixVersion,
@@ -20,6 +22,8 @@ export interface WorkspaceMultixApi {
   settings: WorkspaceMultixSettingsService;
   /** One safe `multix check` with the workspace's settings (no paid call). */
   check(ctx: TenantContext): Promise<MultixCheckView>;
+  /** The models each role can be set to, from the multix catalogue (free commands, cached a few minutes). */
+  catalog(ctx: TenantContext): Promise<MultixCatalog>;
 }
 
 export interface WorkspaceMultixApiDeps {
@@ -44,6 +48,11 @@ export function createWorkspaceMultixApi(deps: WorkspaceMultixApiDeps): Workspac
     validate: (values) => assertMultixOverrides(deps.config, values),
   });
   let version: Promise<string | undefined> | undefined;
+  const catalog = createMultixCatalogLoader({
+    bin: deps.config.MULTIX_BIN,
+    defaults: serverModels,
+    ...(deps.env ? { env: deps.env } : {}),
+  });
   return {
     settings,
     async check(ctx) {
@@ -53,6 +62,11 @@ export function createWorkspaceMultixApi(deps: WorkspaceMultixApiDeps): Workspac
       const provider = await deps.providers.forWorkspace(ctx);
       const [v, diagnosis] = await Promise.all([version, provider.diagnose()]);
       return { version: v ?? null, diagnosis };
+    },
+    async catalog(ctx) {
+      // Same audience as the settings form it fills.
+      assertPermission(ctx, "member:manage");
+      return catalog();
     },
   };
 }

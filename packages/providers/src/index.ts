@@ -36,6 +36,12 @@ export {
 } from "./media-provider-registry.ts";
 export { MAX_PROMPT_LENGTH, type MediaInput } from "./media-request-guards.ts";
 export {
+  buildMultixCatalog,
+  createMultixCatalogLoader,
+  type MultixCatalog,
+  type MultixCatalogEntry,
+} from "./multix-catalog.ts";
+export {
   type MultixEnvelope,
   type MultixRunner,
   type MultixRunOptions,

@@ -1,6 +1,12 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { api, type WorkspaceMultixCheck, type WorkspaceMultixSettings } from "../api-client.ts";
+import {
+  api,
+  type MultixCatalog,
+  type WorkspaceMultixCheck,
+  type WorkspaceMultixSettings,
+} from "../api-client.ts";
 import { ErrorBanner, formatDate, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { MultixModelCombobox } from "./multix-model-combobox.tsx";
 
 const ROLE_LABELS: Record<string, string> = {
   image: "Image",
@@ -46,6 +52,14 @@ export function WorkspaceMultixSection() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
   const [check, setCheck] = useState<WorkspaceMultixCheck>();
+  const [catalog, setCatalog] = useState<MultixCatalog>();
+  const canChange = data?.canChange === true;
+
+  // Only people who may change the models need the list; a failed read leaves free-text entry working.
+  useEffect(() => {
+    if (!canChange) return;
+    api.multixCatalog().then(setCatalog, () => setCatalog(undefined));
+  }, [canChange]);
 
   useEffect(() => {
     if (data) setDraft(draftOf(data));
@@ -157,21 +171,23 @@ export function WorkspaceMultixSection() {
                     />
                   </td>
                   <td>
-                    <input
-                      aria-label={`${ROLE_LABELS[role] ?? role} model`}
-                      className="mono"
-                      placeholder={data.server.models[role]}
+                    <MultixModelCombobox
+                      label={`${ROLE_LABELS[role] ?? role} model`}
+                      serverValue={data.server.models[role] ?? ""}
                       value={draft.models[role] ?? ""}
+                      entries={catalog?.roles[role] ?? []}
+                      openVendors={catalog?.openVendors ?? []}
                       disabled={readOnly}
-                      onChange={(e) =>
-                        setDraft({ ...draft, models: { ...draft.models, [role]: e.target.value } })
-                      }
+                      onChange={(value) => setDraft({ ...draft, models: { ...draft.models, [role]: value } })}
                     />
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {catalog && catalog.errors.length > 0 && (
+            <p className="muted">Model list incomplete: {catalog.errors.join("; ")}</p>
+          )}
           <label>
             Speech model per language (<span className="mono">vi=vendor:model@voice,en=...</span>)
             <textarea
