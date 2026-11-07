@@ -111,7 +111,16 @@ Behavior notes:
   `title`, `idempotencyKey`, `budgetCents`, `deadlineSeconds` (10 s to 7 days;
   past it the job fails with `TIMEOUT`), `renderPreset`, `planner`,
   `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
-  handoff tools below).
+  handoff tools below), `model` and `reasoningEffort`.
+- `model` (`provider/modelId`) pins the agent model of the job's Pi stages. It
+  must be in the workspace catalog and served by a usable Pi connection of the
+  workspace (your personal key first, then the workspace key); otherwise the
+  call fails with `VALIDATION`. `reasoningEffort` is `off`, `minimal`, `low`,
+  `medium` or `high` and is passed to the Pi SDK as its thinking level. Any
+  value other than `off` on a model without reasoning support is `VALIDATION`;
+  without `model` it is checked against the workspace's default Pi model. Both
+  are stored on the job and in its model snapshot, so every attempt runs the
+  same model and effort. A requested model has no fallbacks.
 - Time spent parked is not counted against the deadline. While a job waits at a human gate
   (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
   is paused: what is left of it is kept and starts counting again when a worker
@@ -328,8 +337,11 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   `details.reason: "already_submitted"`. A wrong `attempt` is `CONFLICT`
   `stale_attempt`, a job that stopped waiting is `CONFLICT` `not_waiting`, and a
   task past `expiresAt` is `TIMEOUT` `expired`.
-- `usage` (`turns`, `inputTokens`, `outputTokens`, `model`) is optional and is
-  recorded in the ledger with zero cost. Studix pays nothing for host work.
+- `usage` (`turns`, `inputTokens`, `outputTokens`, `model`, `reasoningEffort`)
+  is optional and is recorded on the task with zero cost. Studix pays nothing for
+  host work. A `model` written as `provider/modelId` must be in the workspace
+  catalog, and a `reasoningEffort` other than `off` needs a model with reasoning
+  support; either mismatch is `VALIDATION`.
 - Reading needs `project:read`; submitting needs `project:write`. Other
   workspaces' tasks are `NOT_FOUND`.
 - When a stage reaches a limit (any cap in the harness, the time limit in host

@@ -27,6 +27,7 @@ export interface AgentHandoffUsage {
   inputTokens?: number;
   outputTokens?: number;
   model?: string;
+  reasoningEffort?: "off" | "minimal" | "low" | "medium" | "high";
 }
 
 /**

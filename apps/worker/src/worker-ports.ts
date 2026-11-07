@@ -4,6 +4,7 @@ import {
   createClaudeCodeCliTransport,
   createClaudeRoutingTransport,
   createClaudeSdkTransport,
+  createFilesystemSkillBundleSource,
   createPiKeyTester,
   isRuntimeKeyProvider,
   preflightClaudeRuntime,
@@ -34,8 +35,10 @@ import { createActivityRecorder } from "@studix/observability";
 import { MULTIX_VENDOR_KEYS } from "@studix/providers";
 import { HyperFramesRenderer, renderToolchain } from "@studix/renderers";
 import { StudixError } from "@studix/shared";
+import { createExternalSkillService, createSkillBundleSource } from "@studix/skills";
 import { createS3StorageAdapterFromConfig } from "@studix/storage";
 import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
+import { platformCredentials } from "./pack-services.ts";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
 import { registerBriefRule } from "./planner/brief-decision.ts";
 import { type ClaudePlanner, createClaudePlanner, createPlannerRouter } from "./planner/claude-planner.ts";
@@ -43,6 +46,7 @@ import { prepareClaudeSandboxRoot } from "./planner/claude-sandbox.ts";
 import { createExecutionSink } from "./planner/execution-sink.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
 import { createWorkspaceModelDecisions } from "./planner/workspace-model-decisions.ts";
+import { createSkillSandbox, loadSandboxSettings, type SkillSandbox } from "./skill-sandbox.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
@@ -204,6 +208,7 @@ function agentHarness(
   runtime: WorkerPortsRuntime,
   providers: ProviderConnectionService | undefined,
   transport: ClaudeAgentTransport | undefined,
+  sandbox?: SkillSandbox,
 ): WorkerAgentHarness | undefined {
   if (!providers) return undefined;
   const repos = createRepositories(runtime.db);
@@ -215,6 +220,41 @@ function agentHarness(
     ...(transport && settings.claudePlanner
       ? { claude: { transport, plannerModel: settings.claudePlanner.model } }
       : {}),
+    logger: runtime.logger,
+    ...(sandbox ? { piWorkspace: (stage) => sandbox.forStage(stage) } : {}),
+  });
+}
+
+/**
+ * The skill sandbox (STUDIX_SANDBOX=docker) with the enabled skills of each tenant: from a local directory
+ * when STUDIX_SANDBOX_SKILLS_DIR is set, else from the skill store.
+ */
+async function skillSandbox(
+  settings: WorkerSettings,
+  runtime: WorkerPortsRuntime,
+  providers: ProviderConnectionService | undefined,
+  storage: ReturnType<typeof createS3StorageAdapterFromConfig>,
+): Promise<SkillSandbox | undefined> {
+  const sandbox = loadSandboxSettings(runtime.env);
+  if (!sandbox) return undefined;
+  const repos = createRepositories(runtime.db);
+  const skills = sandbox.skillsDir
+    ? createFilesystemSkillBundleSource(sandbox.skillsDir)
+    : createSkillBundleSource({
+        repository: repos.externalSkills,
+        service: createExternalSkillService({ repository: repos.externalSkills, storage }),
+        logger: runtime.logger,
+      });
+  const credentials = platformCredentials(settings, runtime);
+  return createSkillSandbox({
+    settings: sandbox,
+    workDir: settings.workDir,
+    skills,
+    keys: {
+      ...(providers ? { workspace: (ctx) => providers.resolveMediaKeys(ctx) } : {}),
+      ...(credentials ? { platform: async () => (await credentials.loadValues()).values } : {}),
+      env: runtime.env,
+    },
     logger: runtime.logger,
   });
 }
@@ -326,7 +366,8 @@ export async function loadWorkerPorts(
   });
   const transport = claudeTransport(settings, runtime, claudeExecutable);
   const claude = claudePlanner(settings, runtime, providers, transport);
-  const harness = agentHarness(settings, runtime, providers, transport);
+  const sandbox = await skillSandbox(settings, runtime, providers, storage);
+  const harness = agentHarness(settings, runtime, providers, transport, sandbox);
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),

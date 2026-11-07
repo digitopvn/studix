@@ -13,6 +13,7 @@ import { StudixError } from "@studix/shared";
 import { packRegistry } from "@studix/skills";
 import { RenderPreset } from "@studix/video-ir";
 import { z } from "zod";
+import { AgentModelRef, ReasoningEffortInput, resolveAgentModelSelection } from "../agent-model-selection.ts";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
@@ -132,6 +133,10 @@ const CreateVideoInput = z
     // Where creative agent stages run: in Studix (harness, the default) or on the host's agent through the
     // agent task tools. Left undescribed on the wire to keep the tool list within its size budget.
     agentMode: z.enum(["harness", "host"]).optional(),
+    model: AgentModelRef.optional().describe("Agent model provider/modelId from the workspace catalog."),
+    reasoningEffort: ReasoningEffortInput.optional().describe(
+      "Agent thinking level; needs a reasoning model.",
+    ),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {
     message: "Provide prompt or brief",
@@ -214,6 +219,7 @@ export const NATIVE_TOOLS = [
       const brief = input.brief ?? { prompt: input.prompt };
       const pack = resolveWorkflowPack(packRegistry, input.workflowTemplate);
       if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, input.planner);
+      const agent = await resolveAgentModelSelection(ctx.deps, ctx.tenant, input);
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
         spec: input.spec,
@@ -225,6 +231,8 @@ export const NATIVE_TOOLS = [
         planner: input.planner,
         workflowTemplate: pack.id,
         agentMode: input.agentMode,
+        ...(agent.choice ? { agentModel: agent.choice } : {}),
+        ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
       });
       return {
         data: {

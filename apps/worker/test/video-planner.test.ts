@@ -269,7 +269,16 @@ describe("workflow template selection", () => {
       planner(brief, ctx({ workflowTemplate: "no-such-pack" }), new AbortController().signal),
     ).rejects.toMatchObject({
       code: "VALIDATION",
-      details: { available: ["brand-intro", "marketing-video", "motion-graphic", "anime", "long-form-film"] },
+      details: {
+        available: [
+          "brand-intro",
+          "marketing-video",
+          "motion-graphic",
+          "anime",
+          "long-form-film",
+          "skill-agent",
+        ],
+      },
     });
     expect(decided).toBe(0);
   });

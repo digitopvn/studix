@@ -111,6 +111,8 @@ export async function createVideoProject(
       planner: input.planner,
       workflowTemplate,
       ...(input.agentMode ? { agentMode: input.agentMode } : {}),
+      ...(input.agentModel ? { agentModel: input.agentModel } : {}),
+      ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
     },
     idempotencyKey: input.idempotencyKey,
     budgetCents,

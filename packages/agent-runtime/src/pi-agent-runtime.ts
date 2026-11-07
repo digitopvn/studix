@@ -3,6 +3,7 @@ import { type Clock, StudixError } from "@studix/shared";
 import { type AgentLoop, createBoundedAgentRuntime } from "./bounded-agent-runtime.ts";
 import type { PiBindingResolver } from "./pi-binding.ts";
 import { createPiSdkLoop } from "./pi-sdk-loop.ts";
+import type { PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
 
 export interface PiAgentRuntimeOptions {
   /**
@@ -32,6 +33,8 @@ export interface PiSdkAgentRuntimeOptions {
   /** Per-job resolver: explicit provider, model and decrypted credential. Required, never inferred from env. */
   resolver: PiBindingResolver;
   scratchRoot?: string;
+  /** Sandbox for tasks that use tools; see `PiSdkLoopOptions.workspace`. */
+  workspace?: PiTaskWorkspaceProvider;
   clock?: Clock;
 }
 
@@ -39,7 +42,11 @@ export interface PiSdkAgentRuntimeOptions {
 export function createPiSdkAgentRuntime(options: PiSdkAgentRuntimeOptions): AgentRuntime {
   return createBoundedAgentRuntime({
     id: PI_AGENT_RUNTIME_ID,
-    loop: createPiSdkLoop({ resolver: options.resolver, scratchRoot: options.scratchRoot }),
+    loop: createPiSdkLoop({
+      resolver: options.resolver,
+      scratchRoot: options.scratchRoot,
+      ...(options.workspace ? { workspace: options.workspace } : {}),
+    }),
     clock: options.clock,
   });
 }

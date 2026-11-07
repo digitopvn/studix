@@ -8,6 +8,7 @@ import {
   createProviderBindingResolver,
   type PiCredentialSource,
   type PiResolvedRun,
+  type PiTaskWorkspaceProvider,
 } from "@studix/agent-runtime";
 import { claudeCredentialKind as credentialKind, type ProviderConnectionService } from "@studix/auth";
 import {
@@ -18,9 +19,12 @@ import {
   connectionFunding,
   FUNDING_SOURCES,
   type FundingSource,
+  type ModelChoice,
   type ModelSelectionSource,
   PlannerSelection,
   type ProviderExecutionStatus,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
   type ResolvedModelSnapshot,
   resolveModelSelection,
   sameModelRoute,
@@ -30,6 +34,7 @@ import {
 import type { ModelPreferenceRepository, ModelSnapshotRepository } from "@studix/database";
 import { type Clock, type Logger, StudixError, systemClock, toStudixError } from "@studix/shared";
 import type { StageContext } from "@studix/workflow";
+import { z } from "zod";
 
 /** Provider ids recorded on the provider executions of harness runs (same as the planner and decisions). */
 export const HARNESS_PROVIDER: Readonly<Record<AgentRuntimeName, string>> = {
@@ -53,7 +58,9 @@ export interface WorkerAgentHarnessDeps {
   logger: Logger;
   clock?: Clock;
   /** Test seam; production runs the real Pi SDK. */
-  piRuntimeFor?: (resolved: PiResolvedRun) => AgentRuntime;
+  piRuntimeFor?: (resolved: PiResolvedRun, workspace?: PiTaskWorkspaceProvider) => AgentRuntime;
+  /** The skill sandbox of a stage's tool-using Pi runs (STUDIX_SANDBOX); without it such runs fail VALIDATION. */
+  piWorkspace?: (stage: StageContext) => PiTaskWorkspaceProvider;
 }
 
 export interface WorkerAgentHarness {
@@ -115,7 +122,11 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
   const log = deps.logger.child({ component: "agent-harness" });
   const piRuntimeFor =
     deps.piRuntimeFor ??
-    ((resolved: PiResolvedRun) => createPiSdkAgentRuntime({ resolver: { resolve: async () => resolved } }));
+    ((resolved: PiResolvedRun, workspace?: PiTaskWorkspaceProvider) =>
+      createPiSdkAgentRuntime({
+        resolver: { resolve: async () => resolved },
+        ...(workspace ? { workspace } : {}),
+      }));
   const inFlight = new Set<Promise<unknown>>();
 
   async function pin(ctx: TenantContext, jobId: string, snapshot: ResolvedModelSnapshot) {
@@ -133,6 +144,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
       preferences: deps.preferences,
       requestedBy: stage.job.createdBy,
       ...(snapshot ? { snapshot } : {}),
+      ...jobModelRequest(stage.job.payload),
     }).resolve(stage.ctx, { stage: name });
     if (snapshot || !resolved.snapshot) return { runtime: "pi", resolved };
     // A concurrent attempt pinned first: run what it stored so every attempt of the job uses one route.
@@ -280,7 +292,11 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         ({ runtime, model, funding, markRejected } = await claudeRuntime(stage, task.skill, choice));
         id = CLAUDE_AGENT_RUNTIME_ID;
       } else {
-        runtime = piRuntimeFor(choice.resolved);
+        // Only a task that asks for tools opens a sandbox; the provider is built lazily per stage.
+        runtime = piRuntimeFor(
+          choice.resolved,
+          task.tools?.length && deps.piWorkspace ? deps.piWorkspace(stage) : undefined,
+        );
         id = runtime.id;
         funding = choice.resolved.bindings[0]?.funding ?? "operator";
       }
@@ -367,4 +383,27 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
   }
 
   return { runtimeFor, idle };
+}
+
+const RequestedModel = z
+  .object({
+    agentModel: z.object({ connectionId: z.string(), provider: z.string(), modelId: z.string() }).optional(),
+    reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+  })
+  .passthrough();
+
+/** The agent model and effort `studix_create_video` checked and stored on the job, if any. */
+export function jobModelRequest(payload: unknown): {
+  request?: { choice?: ModelChoice; reasoningEffort?: ReasoningEffort };
+} {
+  const parsed = RequestedModel.safeParse(payload ?? {});
+  if (!parsed.success) return {};
+  const { agentModel, reasoningEffort } = parsed.data;
+  if (!agentModel && !reasoningEffort) return {};
+  return {
+    request: {
+      ...(agentModel ? { choice: agentModel } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    },
+  };
 }

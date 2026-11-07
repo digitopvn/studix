@@ -262,6 +262,29 @@ storage, the renderer and the hard QA gate from the worker
 toolchain (see [QA.md](QA.md)) their QA stage fails, so an unmeasured render
 is never published.
 
+### Skill sandbox (worker)
+
+The `skill-agent` pack, and any agent stage that asks for `bash`, `read`, `write`, `edit` or `ls`, runs
+its tools in a per-task Docker container
+([ADR-0018](decisions/0018-skill-sandbox.md)). It is off by default.
+
+| Variable                      | Default                | Meaning                                                                        |
+| ----------------------------- | ---------------------- | ------------------------------------------------------------------------------ |
+| `STUDIX_SANDBOX`              | `off`                  | `docker` turns it on; the worker needs a Docker daemon                         |
+| `STUDIX_SANDBOX_IMAGE`        | `studix-sandbox:local` | Image built from `docker/sandbox.Dockerfile`                                   |
+| `STUDIX_SANDBOX_NETWORK`      | `bridge`               | Docker network of the containers (egress is open)                              |
+| `STUDIX_SANDBOX_CPUS`         | `2`                    | CPU cap per task                                                               |
+| `STUDIX_SANDBOX_MEMORY_MB`    | `4096`                 | Memory cap per task, no swap                                                   |
+| `STUDIX_SANDBOX_PIDS`         | `512`                  | Process cap per task                                                           |
+| `STUDIX_SANDBOX_WALL_SECONDS` | `1800`                 | Wall-time cap of one container                                                 |
+| `STUDIX_SANDBOX_SKILLS_DIR`   | unset                  | Local skills (`<dir>/{platform,workspace}/<name>/`) instead of the skill store |
+| `DOCKER_BIN`                  | `docker`               | Docker CLI path                                                                |
+
+Build the image with `docker compose --profile sandbox build sandbox-image`. It pins the same multix
+commit and chrome-headless-shell as the Studix image; bump both together. The container receives only
+the task's media vendor keys (`MULTIX_VENDOR_KEYS` names). The self-host `worker` service does not mount
+the Docker socket, so run a sandboxed worker on a host with Docker until that wiring exists.
+
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
 

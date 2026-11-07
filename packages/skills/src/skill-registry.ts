@@ -7,13 +7,14 @@ import { motionGraphicPack } from "./motion-graphic/motion-graphic-pack.ts";
 import { animePack } from "./narrative-film/anime-pack.ts";
 import { longFormFilmPack } from "./narrative-film/long-form-film-pack.ts";
 import { createPackRegistry, type Skill, type SkillMetadata, type WorkflowPack } from "./pack-registry.ts";
+import { skillAgentPack } from "./skill-agent/skill-agent-pack.ts";
 
 /** Process-wide knowledge catalog; built-in knowledge packs are linted and registered here. */
 export const knowledgeCatalog = createKnowledgeCatalog(BUILTIN_KNOWLEDGE_PACKS);
 
 /** Process-wide registry the MCP server and the worker read; built-in packs are registered here. */
 export const packRegistry = createPackRegistry(
-  [brandIntroPack, marketingVideoPack, motionGraphicPack, animePack, longFormFilmPack],
+  [brandIntroPack, marketingVideoPack, motionGraphicPack, animePack, longFormFilmPack, skillAgentPack],
   {
     knowledge: knowledgeCatalog,
   },

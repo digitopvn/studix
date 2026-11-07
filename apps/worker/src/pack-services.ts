@@ -27,7 +27,7 @@ const QA_TOOL_TIMEOUT_MS = 120_000;
 const SPEECH_TOOL_TIMEOUT_MS = 60_000;
 
 /** The dashboard-managed vendor keys, or undefined without STUDIX_SECRETS_KEY (nothing can be stored then). */
-function platformCredentials(
+export function platformCredentials(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
 ): PlatformCredentialService | undefined {

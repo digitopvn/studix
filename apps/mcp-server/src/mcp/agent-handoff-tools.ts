@@ -1,6 +1,7 @@
 import { type AgentHandoffService, AGENT_HANDOFF_TOOLS as NAMES, STUDIX_TOOLS } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { z } from "zod";
+import { assertReportedModel, ReasoningEffortInput } from "../agent-model-selection.ts";
 import type { NativeTool, ToolContext } from "./native-tools.ts";
 
 const Id = z.string().trim().min(1).max(100);
@@ -89,13 +90,19 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
           inputTokens: z.number().int().min(0).optional(),
           outputTokens: z.number().int().min(0).optional(),
           model: z.string().max(100).optional(),
+          reasoningEffort: ReasoningEffortInput.optional(),
         })
         .optional()
-        .describe("What the work cost you; recorded, never billed."),
+        .describe("What the work cost you; recorded, never billed. model is provider/modelId."),
     }),
     readOnly: false,
     audited: true,
     async run(ctx, input) {
+      const usage = input.usage;
+      // A declared model must be one the catalog knows, and an effort needs a reasoning model.
+      if (usage?.model?.includes("/") || usage?.reasoningEffort) {
+        assertReportedModel(usage.model, usage.reasoningEffort);
+      }
       const result = await service(ctx).submit(ctx.tenant, input);
       return {
         data: result,

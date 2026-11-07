@@ -9,6 +9,7 @@ import {
 } from "@studix/video-ir";
 import { z } from "zod";
 import type { Job, JobStatus, StageStatus } from "../entities/job.ts";
+import { REASONING_EFFORTS } from "../entities/model-preference.ts";
 import type { Approval, ApprovalAction, ApprovalStatus, ApprovalSubjectType } from "../entities/review.ts";
 import type { ApprovalPolicy } from "../ports/approval-policy.ts";
 import type { JobQueue } from "../ports/job-queue.ts";
@@ -116,6 +117,15 @@ export const CreateVideoProjectInput = z.object({
   deadlineAt: z.coerce.date().optional(),
   renderPreset: RenderPreset.optional(),
   agentMode: AgentMode.optional(),
+  /** The agent model the job's Pi stages must use, already checked against the workspace catalog. */
+  agentModel: z
+    .object({
+      connectionId: z.string().min(1).max(100),
+      provider: z.string().min(1).max(60),
+      modelId: z.string().min(1).max(200),
+    })
+    .optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
 });
 export type CreateVideoProjectInput = z.input<typeof CreateVideoProjectInput>;
 

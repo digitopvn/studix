@@ -10,3 +10,7 @@ export * from "./pi-binding.ts";
 export * from "./pi-catalog.ts";
 export * from "./pi-key-tester.ts";
 export * from "./pi-sdk-loop.ts";
+export * from "./pi-task-workspace.ts";
+export * from "./sandbox-docker.ts";
+export * from "./sandbox-tools.ts";
+export * from "./skill-bundle-source.ts";

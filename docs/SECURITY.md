@@ -342,6 +342,13 @@ or a path guard as a security boundary:
   interrupt is killed, and one still alive after the grace period is reported
   `INTERNAL` rather than as a clean stop
   ([ADR-0015](decisions/0015-agent-stage-caps-and-host-handoff.md)).
+- A harness stage that asks for shell or file tools runs them in a per-task
+  Docker container, never on the worker: read-only root, no capabilities, uid
+  1000, CPU/memory/PID/wall-time caps, its own `/work`, the enabled skills
+  read-only at `/skills`. Its environment holds only that task's media vendor
+  keys, passed by name; database, storage, secrets-box and model keys never enter
+  it. Without `STUDIX_SANDBOX=docker` such a stage fails `VALIDATION`
+  ([ADR-0018](decisions/0018-skill-sandbox.md)).
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its
