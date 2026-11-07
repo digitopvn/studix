@@ -64,11 +64,27 @@ export async function materializeSkillBundles(
     }
   }
   const mounted = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-  for (const bundle of mounted) {
+  for (const stored of mounted) {
+    // A zip made on Windows may name entries with "\"; inside a skill it is always a separator.
+    const bundle = {
+      ...stored,
+      files: stored.files.map((f) => ({ ...f, path: f.path.replaceAll("\\", "/") })),
+    };
     if (!bundle.files.some((f) => f.path === "SKILL.md")) {
       throw new StudixError("VALIDATION", `Skill "${bundle.name}" has no SKILL.md`, { retryable: false });
     }
+    // Some zip tools store a folder as an empty file entry ("assets" next to "assets/x.png"). It names a
+    // directory the other paths create, so writing it as a file would break the mount.
+    const dirs = new Set(
+      bundle.files.flatMap((f) =>
+        f.path
+          .split("/")
+          .slice(0, -1)
+          .map((_, i, parts) => parts.slice(0, i + 1).join("/")),
+      ),
+    );
     for (const file of bundle.files) {
+      if (dirs.has(file.path) && file.content.byteLength === 0) continue;
       if (!isSafeSkillPath(file.path)) {
         throw new StudixError("VALIDATION", `Skill "${bundle.name}" has an unsafe path`, {
           retryable: false,

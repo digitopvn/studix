@@ -140,6 +140,23 @@ describe("skill bundles", () => {
     expect(await readFile(join(root, "motion-video", "scripts", "run.sh"), "utf8")).toBe("echo hi");
   });
 
+  it("mounts a Windows zip: backslash separators and empty folder entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "studix-skills-test-"));
+    const files = [
+      ...bundle().files,
+      { path: "assets", content: enc("") },
+      { path: "assets\\logo.svg", content: enc("<svg/>") },
+    ];
+    await materializeSkillBundles([bundle({ files })], root);
+    expect(await readFile(join(root, "motion-video", "assets", "logo.svg"), "utf8")).toBe("<svg/>");
+    await expect(
+      materializeSkillBundles(
+        [bundle({ files: [...bundle().files, { path: "..\\x", content: enc("x") }] })],
+        root,
+      ),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
   it("rejects unsafe paths and bundles without SKILL.md", async () => {
     const root = await mkdtemp(join(tmpdir(), "studix-skills-test-"));
     await expect(
