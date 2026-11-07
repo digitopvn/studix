@@ -298,7 +298,12 @@ resources prefixed `studix-`.
 - Each environment has its own TOSE managed PostgreSQL (`tose db list`), given
   to both projects as `DATABASE_URL` (internal URL). The app applies migrations
   on start (`STUDIX_MIGRATE_ON_START=true` on the app only).
-- Each environment has its own R2 bucket, S3 API with path-style addressing.
+- Each environment has its own R2 bucket, S3 API with path-style addressing,
+  and its own R2 API token (Object Read & Write) scoped to that bucket only.
+  App and worker of one environment share the token; environments never share
+  it. A token scoped to another bucket fails every object call with 403
+  `AccessDenied`. Check a token with the worker's storage probe or the R2
+  `Test connection` on the operator Storage page.
 - Secrets: set per project with `tose env push <file> --project <name>` from a
   file outside the repo (mode 600, deleted afterwards). App and worker of one
   environment share `BETTER_AUTH_SECRET`; environments never share it. Names
