@@ -2,7 +2,15 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import type { Job, RendererAdapter, StorageAdapter, TenantContext, UsageEvent } from "@studix/core";
+import type {
+  AgentRuntime,
+  AgentTask,
+  Job,
+  RendererAdapter,
+  StorageAdapter,
+  TenantContext,
+  UsageEvent,
+} from "@studix/core";
 import {
   createInMemoryJobStore,
   createInMemoryProjectRepository,
@@ -21,7 +29,7 @@ import {
   type WorkerJobQueue,
 } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MG_STAGES, MV_STAGES, packPipelines, packRegistry } from "../src/index.ts";
+import { MG_STAGES, MG_STORYBOARD_LIMITS, MV_STAGES, packPipelines, packRegistry } from "../src/index.ts";
 
 const clock = { now: () => new Date() };
 const ctx: TenantContext = {
@@ -137,6 +145,8 @@ function harness(
     qaFails?: boolean;
     /** Stages whose cached outputs are ignored, as after a change to what they produce. */
     uncached?: () => readonly string[];
+    /** The in-worker agent; the worker runs no agent services when omitted. */
+    agent?: AgentRuntime;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -210,7 +220,18 @@ function harness(
         pipelines: packPipelines(packRegistry),
       }),
     ],
-    approvals: {} as JobExecutorDeps["approvals"],
+    approvals: {
+      findLatest: async () => undefined,
+      list: async () => ({ items: [] }),
+    } as unknown as JobExecutorDeps["approvals"],
+    ...(options.agent
+      ? {
+          agents: {
+            handoffs: { findLatest: async () => undefined },
+            runtimeFor: () => options.agent,
+          },
+        }
+      : {}),
     approvalPolicy: {} as JobExecutorDeps["approvalPolicy"],
     approvalTtlMs: 1,
     billing: { authorizeSpend: async () => ({ allowed: true }) } as unknown as JobExecutorDeps["billing"],
@@ -701,6 +722,142 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     expect(h.generate).not.toHaveBeenCalled();
     expect(h.qaCalls).toHaveLength(2);
+  });
+});
+
+describe("motion-graphic storyboard agent (mock agent)", () => {
+  const graphic = {
+    prompt: "Motion graphic 10 giây giới thiệu tiệm trà Lá Mây",
+    title: "Lá Mây",
+    language: "vi",
+    aspectRatio: "16:9" as const,
+    durationMs: 10_000,
+    keyMessages: ["Trà hái tay mỗi sớm"],
+    callToAction: "Đặt trà ngay",
+  };
+  const storyboard = {
+    styleProfile: "swiss-kinetic-editorial",
+    beats: [
+      {
+        onScreen: "Sáng nay, trà gì?",
+        voiceover: "Sáng nay bạn uống trà gì?",
+        visual: "Chữ lớn trượt vào",
+        enter: "slide-left",
+        weight: 1,
+      },
+      {
+        onScreen: "Hái tay mỗi sớm",
+        voiceover: "Lá trà hái tay mỗi sớm.",
+        visual: "Lưới Swiss, nhấn màu",
+        enter: "pop",
+        weight: 1.5,
+      },
+      {
+        onScreen: "Đặt trà ngay",
+        voiceover: "Đặt trà ngay hôm nay.",
+        visual: "Logo và CTA",
+        enter: "scale",
+        weight: 1,
+      },
+    ],
+    music: "calm lo-fi pulse, 90 bpm",
+    rationale: "Swiss editorial suits a calm, factual tea brand.",
+  };
+  /** A scripted agent that records its tasks and bills 3¢ a run. */
+  const mockAgent = (output: unknown) => {
+    const tasks: AgentTask[] = [];
+    const runtime: AgentRuntime = {
+      id: "mock",
+      run: async (_ctx, task) => {
+        tasks.push(task);
+        return { output, turns: 1, costCents: 3, inputTokens: 4000, outputTokens: 600, model: "mock-model" };
+      },
+    };
+    return { runtime, tasks };
+  };
+
+  it("lays out the agent's style, beats, entrances, weights and music bed", async () => {
+    const agent = mockAgent({ storyboard });
+    const h = harness({ agent: agent.runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // The agent reads the brief, the style menu and a bounded digest of the three motion packs.
+    expect(agent.tasks).toHaveLength(1);
+    const task = agent.tasks[0] as AgentTask;
+    expect(task.skill).toBe(MG_STAGES.storyboard);
+    expect(task.maxCostCents).toBe(MG_STORYBOARD_LIMITS.maxCostCents);
+    const input = task.input as { craft: string; wordBudget: number; styles: unknown[]; durationMs: number };
+    expect(input.durationMs).toBe(10_000);
+    expect(input.styles.length).toBeGreaterThan(10);
+    expect(input.craft).toContain("Avoid:");
+    expect(input.craft.length).toBeLessThanOrEqual(12_000);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.metadata).toMatchObject({ styleProfile: "swiss-kinetic-editorial", storyboard: "agent" });
+    expect(ir.scenes.map((sc) => sc.shots[0]?.animation?.enter)).toEqual(["slide-left", "pop", "scale"]);
+    expect(ir.scenes.map((sc) => sc.durationMs)).toEqual([2800, 4200, 3000]);
+    expect(ir.format).toMatchObject({ aspectRatio: "16:9", durationMs: 10_000 });
+    expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual([
+      "music",
+      "sfx",
+      "voice",
+      "voice",
+      "voice",
+    ]);
+    expect(ir.audio?.find((t) => t.kind === "music")).toMatchObject({ startMs: 0, volume: 0.18 });
+    expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3]);
+  });
+
+  it("adds no music when the storyboard asks for none", async () => {
+    const h = harness({ agent: mockAgent({ storyboard: { ...storyboard, music: null } }).runtime });
+    await h.run({ workflowTemplate: "motion-graphic" }, await newProject(h, "motion-graphic", graphic));
+    expect(h.generate.mock.calls.map(([, r]) => r.kind)).not.toContain("music");
+  });
+
+  it("falls back to the template, billed, when the agent's voice-over overruns the length", async () => {
+    const long = "một hai ba bốn năm sáu bảy tám chín mười ".repeat(4).trim();
+    const beats = storyboard.beats.map((b) => ({ ...b, voiceover: long }));
+    const h = harness({ agent: mockAgent({ storyboard: { ...storyboard, beats } }).runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
+    expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(1);
+  });
+
+  it("falls back to the template when the workspace has no agent model", async () => {
+    const runtime: AgentRuntime = {
+      id: "none",
+      run: async () => {
+        throw new StudixError("UNAVAILABLE", "No model is configured for agent stage", { retryable: false });
+      },
+    };
+    const h = harness({ agent: runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.metadata?.storyboard).toBe("template");
+    expect(h.generate.mock.calls.map(([, r]) => r.kind)).not.toContain("music");
+    expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(0);
+  });
+
+  it("fails the job on an agent output that breaks the schema instead of silently using the template", async () => {
+    const h = harness({
+      agent: mockAgent({ storyboard: { ...storyboard, styleProfile: "made-up" } }).runtime,
+    });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(outcome).toBe("failed");
+    expect(h.generate).not.toHaveBeenCalled();
   });
 });
 

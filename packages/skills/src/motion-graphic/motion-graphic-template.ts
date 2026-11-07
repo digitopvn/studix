@@ -22,9 +22,10 @@ import { DEFAULT_BRAND_FONTS } from "../brand-intro/brief-draft.ts";
 import { captionCues, wordCount } from "../caption-chunks.ts";
 import { VO_PAD_MS, VO_WORDS_PER_SECOND, voiceoverWordBudget } from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
+import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 2;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 3;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -74,6 +75,10 @@ function motionFor(energy: number): { enter: MotionPreset; exit: MotionPreset; t
 interface Line {
   onScreen: string;
   voiceover?: string;
+  /** Entrance preset the storyboard chose for this card. */
+  enter?: MotionPreset;
+  /** Relative length of the card (storyboard weight); even split when absent. */
+  weight?: number;
 }
 
 /** On-screen lines and their voice-over: the first direction's beats, else the title, messages and CTA. */
@@ -126,16 +131,23 @@ function inkOn(
     : "background";
 }
 
-function durations(totalMs: number, count: number): number[] {
-  const base = Math.floor(totalMs / count / 100) * 100;
-  const out = Array.from({ length: count }, () => base);
-  out[count - 1] = totalMs - base * (count - 1);
+/** Card lengths in 100ms steps, in proportion to the lines' weights (even when unweighted). */
+function durations(totalMs: number, lines: readonly Line[]): number[] {
+  const weights = lines.map((l) => l.weight ?? 1);
+  const sum = weights.reduce((a, b) => a + b, 0);
+  const out = weights.map((w) => Math.floor((totalMs * w) / sum / 100) * 100);
+  out[out.length - 1] = totalMs - out.slice(0, -1).reduce((a, b) => a + b, 0);
   return out;
 }
 
 export interface MotionGraphicOptions {
   /** IR assets the brief may reference; only an image matching `brand.logoAssetId` is used. */
   assets?: readonly AssetRef[];
+  /**
+   * The agent's script and storyboard: its style profile, beats (the last is the call to action), entrances
+   * and weights replace the brief-derived cards. Absent, the cards come from the brief alone.
+   */
+  storyboard?: MotionStoryboard;
 }
 
 /**
@@ -155,9 +167,18 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     brief.directions?.[0]?.callToAction ??
     brief.callToAction ??
     (language.startsWith("vi") ? "Tìm hiểu ngay" : "Learn more");
-  const style = resolveMotionStyle(brief);
+  const storyboard = options.storyboard;
+  const style =
+    MOTION_STYLE_PROFILES.find((p) => p.id === storyboard?.styleProfile) ?? resolveMotionStyle(brief);
   const motion = motionFor(style.energy);
-  const lines = linesOf(brief, cta).slice(0, 8);
+  const lines: Line[] = storyboard
+    ? storyboard.beats.map((b) => ({
+        onScreen: b.onScreen,
+        voiceover: b.voiceover,
+        enter: b.enter,
+        weight: b.weight,
+      }))
+    : linesOf(brief, cta).slice(0, 8);
   const voiceover = lines
     .map((l) => l.voiceover)
     .filter(Boolean)
@@ -185,7 +206,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     : undefined;
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
   const chars = LINE_CHARS[aspectRatio];
-  const spans = durations(totalMs, lines.length);
+  const spans = durations(totalMs, lines);
   const last = lines.length - 1;
   let cursor = 0;
   const cues: CaptionCue[] = [];
@@ -200,6 +221,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     }
     const id = i === 0 ? "hook" : i === last ? "cta" : `message-${i}`;
     const fill = i % 2 === 0 ? "background" : "primary";
+    const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
     if (i === last) {
       shots.push({
@@ -214,7 +236,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           align: "center",
           region: "top",
         },
-        animation: { enter: motion.enter, durationMs: 400 },
+        animation: { enter, durationMs: 400 },
       });
       shots.push({
         id: "cta-text",
@@ -229,7 +251,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           region: "middle",
           emphasis: "high",
         },
-        animation: { enter: motion.enter, durationMs: 400 },
+        animation: { enter, durationMs: 400 },
       });
     } else {
       shots.push({
@@ -244,7 +266,11 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           align: "center",
           region: "middle",
         },
-        animation: { enter: i === 0 ? "scale" : motion.enter, exit: motion.exit, durationMs: 400 },
+        animation: {
+          enter: line.enter ?? (i === 0 ? "scale" : motion.enter),
+          exit: motion.exit,
+          durationMs: 400,
+        },
       });
     }
     return {
@@ -272,6 +298,8 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       styleProfile: style.id,
       bpm: style.bpm,
       ...(voiceover ? { voiceover } : {}),
+      storyboard: storyboard ? "agent" : "template",
+      ...(storyboard?.music ? { music: storyboard.music } : {}),
     },
   };
   const result = validateVideoIR(ir);
