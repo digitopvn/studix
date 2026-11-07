@@ -403,7 +403,10 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
       }
     }
 
+    // A confirmed, activated high-risk first version starts enabled; check who confirms before storing anything.
+    const enableConfirmed = high && !existing && activate === true && options.confirmHighRisk === true;
     const versionId = newId("eskv");
+    if (enableConfirmed) requireHighRiskConfirmation(ctx, true, versionId);
     const prefix = `external-skills/${versionId}`;
     const keys = await uploadBundle(ctx, prefix, bundle);
     try {
@@ -429,16 +432,19 @@ export function createExternalSkillService(deps: ExternalSkillServiceDeps) {
         // A concurrent import stored the same content first; ours is unreferenced.
         await Promise.allSettled(keys.map((key) => storage().delete(ctx, key)));
       }
-      const collisions = await collisionsFor(ctx, bundle.name, result.skill.id);
-      return itemFor(
-        result.outcome === "created" ? "imported" : result.outcome,
-        result.skill,
-        result.version,
-        {
-          unsupported: options.unsupported,
-          collisions,
-        },
-      );
+      const skill =
+        enableConfirmed && result.outcome === "created" && result.skill.status === "disabled"
+          ? await repository.setStatus(ctx, result.skill.id, "enabled", options.actor, {
+              highRiskConfirmed: true,
+              riskLevel: "high",
+              versionId: result.version.id,
+            })
+          : result.skill;
+      const collisions = await collisionsFor(ctx, bundle.name, skill.id);
+      return itemFor(result.outcome === "created" ? "imported" : result.outcome, skill, result.version, {
+        unsupported: options.unsupported,
+        collisions,
+      });
     } catch (err) {
       await Promise.allSettled(keys.map((key) => storage().delete(ctx, key)));
       throw err;

@@ -76,7 +76,8 @@ guarantee. Versions stored before the scanner existed get a report derived from
 their `securityNotes`.
 
 **High risk needs a person.** A high-risk first version starts disabled
-(`riskConfirmationRequired: true`). Enabling a high-risk skill, or activating a
+(`riskConfirmationRequired: true`), unless it is imported or uploaded with
+`activate: true` and `confirmHighRisk: true` by someone who may confirm. Enabling a high-risk skill, or activating a
 high-risk version of an enabled skill, needs `confirmHighRisk: true` from a user
 with the admin, owner or operator role; an API key cannot confirm. The audit
 event carries `highRiskConfirmed`, the level and the version.
