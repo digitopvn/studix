@@ -5,6 +5,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { testTenant } from "@studix/core/testing";
 import { describe, expect, it } from "vitest";
 import {
+  containerPath,
   createFilesystemSkillBundleSource,
   createPiTaskWorkspaceProvider,
   createSandboxToolDefinitions,
@@ -128,6 +129,12 @@ describe("sandbox tools", () => {
     // A path that climbs out still resolves inside the container's filesystem.
     await exec(write, { path: "../../etc/evil", content: "x" });
     expect(files.has("/etc/evil")).toBe(true);
+  });
+
+  it("maps the host scratch dir Pi passes as cwd to /work", () => {
+    expect(containerPath("D:\\Temp\\studix-pi-ab12", "D:\\Temp\\studix-pi-ab12")).toBe("/work");
+    expect(containerPath("/tmp/studix-pi-ab12/out/a.mp4", "/tmp/studix-pi-ab12")).toBe("/work/out/a.mp4");
+    expect(containerPath("/tmp/other", "/tmp/studix-pi-ab12")).toBe("/tmp/other");
   });
 });
 

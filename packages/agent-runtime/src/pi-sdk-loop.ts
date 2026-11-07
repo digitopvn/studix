@@ -354,7 +354,7 @@ async function openSession(
     // Custom definitions replace the built-ins of the same name, so every tool runs in the sandbox.
     tools: attempt.workspace ? [...(attempt.tools ?? [])] : [],
     ...(attempt.workspace
-      ? { customTools: createSandboxToolDefinitions(attempt.workspace.sandbox, attempt.tools ?? []) }
+      ? { customTools: createSandboxToolDefinitions(attempt.workspace.sandbox, attempt.tools ?? [], scratch) }
       : {}),
   });
   return session;

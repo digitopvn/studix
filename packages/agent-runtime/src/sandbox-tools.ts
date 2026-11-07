@@ -17,10 +17,22 @@ export function isSandboxTool(name: string): name is SandboxToolName {
   return (SANDBOX_TOOL_NAMES as readonly string[]).includes(name);
 }
 
-/** Every path is resolved inside the container; the host filesystem is never touched by a tool. */
-function containerPath(path: string): string {
+const toPosix = (path: string) =>
   // On a Windows worker Pi resolves paths with win32 rules first (`/work/a` -> `D:\work\a`): map them back.
-  const unixLike = /^[A-Za-z]:[\\/]/.test(path) ? path.slice(2).replaceAll("\\", "/") : path;
+  /^[A-Za-z]:[\\/]/.test(path) ? path.slice(2).replaceAll("\\", "/") : path.replaceAll("\\", "/");
+
+/**
+ * Every path is resolved inside the container; the host filesystem is never touched by a tool. Pi hands
+ * tools its session cwd (the host scratch dir), so that dir and anything under it map to /work.
+ */
+export function containerPath(path: string, hostDir?: string): string {
+  let unixLike = toPosix(path);
+  if (hostDir) {
+    const host = toPosix(hostDir).replace(/\/+$/, "");
+    if (unixLike === host || unixLike.startsWith(`${host}/`)) {
+      unixLike = SANDBOX_WORK_DIR + unixLike.slice(host.length);
+    }
+  }
   return posix.resolve(SANDBOX_WORK_DIR, unixLike);
 }
 
@@ -31,13 +43,16 @@ function containerPath(path: string): string {
 export function createSandboxToolDefinitions(
   sandbox: SandboxSession,
   names: readonly SandboxToolName[],
+  /** Host dir Pi uses as the session cwd; paths under it map to /work. */
+  hostDir?: string,
 ): ToolDefinition[] {
-  const readFile = async (path: string) => sandbox.run(["cat", "--", containerPath(path)]);
+  const at = (path: string) => containerPath(path, hostDir);
+  const readFile = async (path: string) => sandbox.run(["cat", "--", at(path)]);
   const test = async (flag: string, path: string) => {
-    await sandbox.run(["test", flag, containerPath(path)]);
+    await sandbox.run(["test", flag, at(path)]);
   };
   const writeFile = async (path: string, content: string) => {
-    const target = containerPath(path);
+    const target = at(path);
     await sandbox.run(["mkdir", "-p", posix.dirname(target)]);
     await sandbox.run(["sh", "-c", 'cat > "$1"', "sh", target], { stdin: content });
   };
@@ -47,7 +62,7 @@ export function createSandboxToolDefinitions(
         operations: {
           exec: (command, cwd, options) =>
             sandbox.exec(command, {
-              cwd: containerPath(cwd),
+              cwd: at(cwd),
               onData: options.onData,
               ...(options.signal ? { signal: options.signal } : {}),
               ...(options.timeout ? { timeoutSeconds: options.timeout } : {}),
@@ -65,7 +80,7 @@ export function createSandboxToolDefinitions(
         operations: {
           writeFile,
           mkdir: async (dir) => {
-            await sandbox.run(["mkdir", "-p", containerPath(dir)]);
+            await sandbox.run(["mkdir", "-p", at(dir)]);
           },
         },
       }) as unknown as ToolDefinition,
@@ -99,10 +114,7 @@ export function createSandboxToolDefinitions(
             return { isDirectory: () => isDir };
           },
           readdir: async (p) =>
-            (await sandbox.run(["ls", "-A1", "--", containerPath(p)]))
-              .toString("utf8")
-              .split("\n")
-              .filter(Boolean),
+            (await sandbox.run(["ls", "-A1", "--", at(p)])).toString("utf8").split("\n").filter(Boolean),
         },
       }) as unknown as ToolDefinition,
   };
