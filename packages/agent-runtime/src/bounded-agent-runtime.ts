@@ -2,6 +2,7 @@ import type {
   AgentCap,
   AgentRunResult,
   AgentRuntime,
+  AgentStreamEvent,
   AgentTask,
   FundingSource,
   TenantContext,
@@ -69,6 +70,21 @@ export function assertAgentTask(task: AgentTask, now: Date): void {
       details: { cap: "time" satisfies AgentCap },
     });
   }
+}
+
+/** Hands a live event to the task's listener; a failing listener never breaks the run. */
+export function emitAgentEvent(task: Pick<AgentTask, "onEvent">, event: AgentStreamEvent): void {
+  try {
+    task.onEvent?.(event);
+  } catch {
+    // Listeners are best-effort.
+  }
+}
+
+/** Short, printable text of a tool result for a live event. */
+export function eventText(value: unknown, max = 600): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 export function abortReason(signal: AbortSignal): StudixError {
@@ -201,6 +217,7 @@ export function createBoundedAgentRuntime(options: BoundedAgentRuntimeOptions): 
           stop(new StudixError("PROVIDER_ERROR", "agent reported invalid usage", { retryable: false }));
           return;
         }
+        emitAgentEvent(task, { type: "usage", ...usage });
         const over = capExceeded(task, usage);
         if (over) stop(over);
       };

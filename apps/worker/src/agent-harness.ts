@@ -16,6 +16,7 @@ import {
 } from "@studix/agent-runtime";
 import { claudeCredentialKind as credentialKind, type ProviderConnectionService } from "@studix/auth";
 import {
+  type ActivityRepository,
   type AgentRunResult,
   type AgentRuntime,
   type AgentRuntimeName,
@@ -40,6 +41,7 @@ import type { ModelPreferenceRepository, ModelSnapshotRepository } from "@studix
 import { type Clock, type Logger, StudixError, systemClock, toStudixError } from "@studix/shared";
 import type { StageContext } from "@studix/workflow";
 import { z } from "zod";
+import { type AgentEventSink, createAgentEventSink } from "./agent-event-sink.ts";
 
 /** Provider ids recorded on the provider executions of harness runs (same as the planner and decisions). */
 export const HARNESS_PROVIDER: Readonly<Record<AgentRuntimeName, string>> = {
@@ -53,6 +55,8 @@ export interface WorkerAgentHarnessDeps {
   credentials: Pick<ProviderConnectionService, "resolveForExecution">;
   preferences: Pick<ModelPreferenceRepository, "list">;
   snapshots: ModelSnapshotRepository;
+  /** Stores each run's live events with its job for the dashboard chat; omitted, nothing is streamed. */
+  events?: Pick<ActivityRepository, "append">;
   /** Records one provider execution per run, succeeded or not. */
   executions: Pick<UsageRepository, "recordProviderExecution">;
   /** The worker's Claude runtime (STUDIX_CLAUDE_PLANNER). Without it a stage that resolves to Claude fails. */
@@ -378,7 +382,48 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     // Reported on the stage's usage line; it names the runtime that actually ran once a run has started.
     let id = "worker-harness";
     const run = async (ctx: TenantContext, task: AgentTask): Promise<AgentRunResult> => {
-      const choice = await choose(stage, task.skill);
+      const sink = deps.events
+        ? createAgentEventSink(
+            deps.events,
+            stage.ctx,
+            {
+              jobId: stage.job.id,
+              ...(stage.job.projectId ? { projectId: stage.job.projectId } : {}),
+              stage: task.skill,
+            },
+            log,
+          )
+        : undefined;
+      try {
+        return await runWith(ctx, task, sink);
+      } finally {
+        await sink?.flush();
+      }
+    };
+    const runWith = async (
+      ctx: TenantContext,
+      task: AgentTask,
+      sink: AgentEventSink | undefined,
+    ): Promise<AgentRunResult> => {
+      const choice = await choose(stage, task.skill).catch((err: unknown) => {
+        sink?.push({
+          type: "status",
+          status: "failed",
+          runtime: "unknown",
+          error: toStudixError(err).message,
+        });
+        throw err;
+      });
+      if (sink) {
+        const outer = task.onEvent;
+        task = {
+          ...task,
+          onEvent: (event) => {
+            sink.push(event);
+            outer?.(event);
+          },
+        };
+      }
       let runtime: AgentRuntime;
       let model: string | undefined;
       let markRejected: (() => Promise<void>) | undefined;
@@ -407,8 +452,16 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         funding = choice.resolved.bindings[0]?.funding ?? "operator";
       }
       const started = clock.now().getTime();
+      sink?.push({ type: "status", status: "running", runtime: choice.runtime, ...(model ? { model } : {}) });
       try {
         const result = await runtime.run(ctx, task);
+        for (const file of filesOf(result.output)) sink?.push({ type: "artifact", name: file });
+        sink?.push({
+          type: "status",
+          status: "succeeded",
+          runtime: choice.runtime,
+          ...((result.model ?? model) ? { model: result.model ?? model } : {}),
+        });
         funding = result.funding ?? funding;
         const providerExecutionId = await record(stage, task, choice.runtime, {
           model: result.model ?? model,
@@ -428,6 +481,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         return { ...result, funding, ...(providerExecutionId ? { providerExecutionId } : {}) };
       } catch (err) {
         const error = toStudixError(err);
+        sink?.push({ type: "status", status: "failed", runtime: choice.runtime, error: error.message });
         // The Pi loop reports rejected keys itself; the Claude runtime leaves it to its caller.
         if (error.code === "UNAUTHENTICATED" && markRejected) {
           await markRejected().catch((e: unknown) => {
@@ -489,6 +543,14 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
   }
 
   return { runtimeFor, idle };
+}
+
+/** File names (never host paths) of what the agent left in /work/out. */
+function filesOf(output: unknown): string[] {
+  const files = (output as { files?: unknown } | null)?.files;
+  return Array.isArray(files)
+    ? files.filter((f): f is string => typeof f === "string").map((f) => f.split(/[\\/]/).pop() ?? f)
+    : [];
 }
 
 const RequestedModel = z

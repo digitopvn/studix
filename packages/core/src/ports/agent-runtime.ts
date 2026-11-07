@@ -9,6 +9,24 @@ export interface AgentToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+/**
+ * One normalized, already-redacted step of a live agent run, the same for every runtime. Text and reasoning
+ * come as deltas (a runtime that only has whole blocks sends each block as one delta).
+ */
+export type AgentStreamEvent =
+  | { type: "message"; delta: string }
+  | { type: "reasoning"; delta: string }
+  | { type: "tool_start"; id: string; name: string; args?: unknown }
+  | { type: "tool_end"; id: string; name: string; ok: boolean; result?: string }
+  | {
+      type: "usage";
+      turns: number;
+      inputTokens: number;
+      outputTokens: number;
+      costCents: number;
+      model?: string;
+    };
+
 export interface AgentTask {
   /** Skill or template id that framed the task. */
   skill: string;
@@ -23,6 +41,8 @@ export interface AgentTask {
   maxTokens?: number;
   deadlineAt?: Date;
   signal?: AbortSignal;
+  /** Live events of the run; a runtime calls it best-effort and never waits on it. */
+  onEvent?: (event: AgentStreamEvent) => void;
 }
 
 export interface AgentRunResult {

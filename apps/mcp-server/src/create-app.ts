@@ -2,6 +2,7 @@ import { hostHeaderValidation } from "@modelcontextprotocol/express";
 import { StudixError } from "@studix/shared";
 import express, { type Express } from "express";
 import { apiKeyRoutes, connectorRoutes, providerRoutes } from "./api/admin-routes.ts";
+import { agentChatRoutes } from "./api/agent-chat-routes.ts";
 import { requireSession } from "./api/api-context.ts";
 import { mountOAuthDiscovery, oauthRoutes } from "./api/oauth-routes.ts";
 import { platformRoutes, workspaceStorageRoutes } from "./api/platform-routes.ts";
@@ -94,8 +95,9 @@ export function createApp(deps: AppDeps): Express {
   api.use("/connectors", connectorRoutes(deps));
   api.use("/providers", providerRoutes(deps));
   api.use("/platform", platformRoutes(deps));
-  api.use("/skills", skillRoutes(deps));
   api.use("/workspace-storage", workspaceStorageRoutes(deps));
+  api.use("/skills", skillRoutes(deps));
+  api.use(agentChatRoutes(deps));
   api.use(studioRoutes(deps, artifacts));
   api.use(() => {
     throw new StudixError("NOT_FOUND", "Unknown API route");

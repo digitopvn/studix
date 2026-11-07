@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { getModels } from "@mariozechner/pi-ai";
-import type { AgentRunResult, AgentRuntime, ReasoningEffort, TenantContext } from "@studix/core";
+import type {
+  AgentRunResult,
+  AgentRuntime,
+  AgentStreamEvent,
+  ReasoningEffort,
+  TenantContext,
+} from "@studix/core";
 import { type Clock, registerSecret, StudixError } from "@studix/shared";
 import {
   type AgentUsageReport,
   abortReason,
   createBoundedAgentRuntime,
+  emitAgentEvent,
+  eventText,
   withSpend,
 } from "./bounded-agent-runtime.ts";
 import type { PiTaskWorkspace, PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
@@ -104,6 +112,70 @@ function codexFailure(lines: readonly string[], secret: string): StudixError {
   return new StudixError("PROVIDER_ERROR", `Codex failed: ${clean}`);
 }
 
+interface CodexItem {
+  id?: string;
+  type?: string;
+  text?: string;
+  command?: string;
+  aggregated_output?: string;
+  exit_code?: number | null;
+  status?: string;
+  changes?: unknown;
+  server?: string;
+  tool?: string;
+  arguments?: unknown;
+  query?: string;
+}
+
+const CODEX_TOOL_ITEMS: Record<string, string> = {
+  command_execution: "bash",
+  file_change: "edit",
+  mcp_tool_call: "mcp",
+  web_search: "web_search",
+};
+
+/** Live events of one `codex exec --json` line. */
+export function codexStreamEventsOf(line: string): AgentStreamEvent[] {
+  let event: { type?: string; item?: CodexItem };
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return [];
+  }
+  const item = event.item;
+  if (!item?.type) return [];
+  const tool = CODEX_TOOL_ITEMS[item.type];
+  const name = item.type === "mcp_tool_call" ? `${item.server ?? "mcp"}.${item.tool ?? "tool"}` : tool;
+  const args =
+    item.type === "command_execution"
+      ? { command: item.command }
+      : item.type === "file_change"
+        ? { changes: item.changes }
+        : item.type === "web_search"
+          ? { query: item.query }
+          : item.arguments;
+  if (event.type === "item.started" && name && item.id) {
+    return [{ type: "tool_start", id: item.id, name, args }];
+  }
+  if (event.type !== "item.completed") return [];
+  if (item.type === "agent_message" && item.text) return [{ type: "message", delta: item.text }];
+  if (item.type === "reasoning" && item.text) return [{ type: "reasoning", delta: item.text }];
+  if (name && item.id) {
+    const ok = item.status !== "failed" && (item.exit_code ?? 0) === 0;
+    return [
+      { type: "tool_start", id: item.id, name, args },
+      {
+        type: "tool_end",
+        id: item.id,
+        name,
+        ok,
+        result: eventText(item.aggregated_output ?? item.status ?? ""),
+      },
+    ];
+  }
+  return [];
+}
+
 export interface CodexModel {
   id: string;
   name: string;
@@ -175,7 +247,9 @@ export function createCodexAgentRuntime(options: CodexAgentRuntimeOptions): Agen
             pending += chunk.toString("utf8");
             const parts = pending.split("\n");
             pending = parts.pop() ?? "";
-            lines.push(...parts.filter((l) => l.trim()));
+            const fresh = parts.filter((l) => l.trim());
+            lines.push(...fresh);
+            for (const line of fresh) for (const e of codexStreamEventsOf(line)) emitAgentEvent(task, e);
             if (parts.some((l) => l.includes('"turn.completed"'))) report();
           },
         });

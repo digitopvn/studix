@@ -1,4 +1,3 @@
-import { listCodexModels, listPiCatalog } from "@studix/agent-runtime";
 import {
   AGENT_RUNTIMES,
   type AgentHandoffService,
@@ -8,6 +7,7 @@ import {
 import { StudixError } from "@studix/shared";
 import { z } from "zod";
 import { assertReportedModel, ReasoningEffortInput } from "../agent-model-selection.ts";
+import { listAgentRuntimes } from "../agent-runtime-listing.ts";
 import type { NativeTool, ToolContext } from "./native-tools.ts";
 
 const Id = z.string().trim().min(1).max(100);
@@ -141,27 +141,7 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
     input: z.object({}),
     readOnly: true,
     async run(ctx) {
-      const providers = ctx.deps.providers;
-      const { connections } = providers ? await providers.list(ctx.tenant) : { connections: [] };
-      const catalog = new Map(listPiCatalog().map((p) => [p.id, p.models] as const));
-      const models = (runtime: (typeof AGENT_RUNTIMES)[number], provider: string) =>
-        (runtime === "codex" ? listCodexModels() : runtime === "pi" ? (catalog.get(provider) ?? []) : []).map(
-          (m) => ({ id: m.id, reasoning: m.reasoning }),
-        );
-      const runtimes = AGENT_RUNTIMES.map((runtime) => ({
-        runtime,
-        connections: connections
-          .filter((c) => c.runtimes.includes(runtime) && c.status !== "invalid")
-          .map((c) => ({
-            providerConnectionId: c.id,
-            provider: c.provider,
-            label: c.label,
-            owner: c.owner,
-            authMethod: c.authMethod,
-            status: c.status,
-            models: models(runtime, c.provider),
-          })),
-      }));
+      const runtimes = await listAgentRuntimes(ctx.deps.providers, ctx.tenant);
       return { data: { runtimes }, next: [] };
     },
   }),

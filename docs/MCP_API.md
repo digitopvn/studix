@@ -555,6 +555,19 @@ sort field or enum value fails with `VALIDATION`.
 Pages are keyset on (sort column, id), so they neither skip nor repeat a job while the list is paged.
 A cursor is only valid with the sort it came from; reusing it under another sort fails with `VALIDATION`.
 
+## Live agent events (dashboard API only)
+
+The dashboard root (`#/`) is a chat: each message creates a `skill-agent` job (`POST /api/projects` with `workflowTemplate: "skill-agent"` and `agent`), and the page follows that job's agent while it works.
+
+- `GET /api/agent-runtimes` returns the same data as `studix_list_agent_runtimes`: each runtime (`claude`, `codex`, `pi`) with the caller's usable connections and their models. A runtime with no connection cannot run.
+- `GET /api/jobs/:jobId/events` is a Server-Sent Events stream that needs the `project:read` permission.
+  - `event: agent` carries one normalized agent event: `message` and `reasoning` deltas, `tool_start` (`id`, `name`, `args`), `tool_end` (`id`, `name`, `ok`, short `result`), `usage` (turns, tokens, `costCents`), `status` (`running`, `succeeded`, `failed`, with runtime and model) and `artifact` (a file name in `/work/out`).
+  - `event: job` carries the job's status, stage, `spentCents` and `budgetCents` whenever they change.
+  - `event: end` is sent once the job has finished and every event has been sent.
+  - Each agent event has an SSE `id`. Pass `?after=<id>` or `Last-Event-ID` to replay only what came later, so a reload resumes where it stopped.
+
+The worker stores these events with the job as `agent.event` activity rows. They are redacted before they are stored, and large tool arguments keep only a preview, so no secret is streamed. Claude Code and Codex report whole blocks rather than token deltas, so their text arrives a block at a time. Pi streams tokens.
+
 ## Platform settings (dashboard API only)
 
 Storage and media settings are not MCP tools: agents and API keys cannot read
@@ -588,6 +601,12 @@ Storage profiles (same rules; the id is `env` or `stp_…`):
 - `DELETE /api/platform/storage/profiles/:id`: `204`. `CONFLICT` when the
   profile is active or still referenced by assets.
 
+Workspace owners and admins have the same routes under
+`/api/workspace-storage/storage/profiles` for their workspace's own profiles
+([ADR-0023](decisions/0023-workspace-storage-profiles.md)). There `env` is
+**Platform default** (`providerType: "platform"`): activating it makes the
+workspace follow the platform choice again, and it cannot be tested.
+
 ### Workspace media keys (BYOK)
 
 A workspace may bring its own key for each Multix vendor (`sume`, `atlas`,
@@ -600,12 +619,6 @@ may read; only workspace admins (`member:manage`) may write.
 | `GET /api/providers/media-keys`            | none         | `{ storage, canManage, keys: [{ vendor, source, keyHint? }] }` |
 | `PUT /api/providers/media-keys/:vendor`    | `{ apiKey }` | The vendor's view; stores or rotates the workspace key.        |
 | `DELETE /api/providers/media-keys/:vendor` | none         | `source: "platform"`: media calls use the platform key again.  |
-
-Workspace owners and admins have the same routes under
-`/api/workspace-storage/storage/profiles` for their workspace's own profiles
-([ADR-0023](decisions/0023-workspace-storage-profiles.md)). There `env` is
-**Platform default** (`providerType: "platform"`): activating it makes the
-workspace follow the platform choice again, and it cannot be tested.
 
 ### Provider connections: rename and ChatGPT sign-in
 

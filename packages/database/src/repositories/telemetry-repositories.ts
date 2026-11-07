@@ -8,7 +8,7 @@ import type {
   UsageRepository,
 } from "@studix/core";
 import { type Clock, newId, redactDeep, StudixError } from "@studix/shared";
-import { and, desc, eq, gte, lt, type SQL, sql, sum } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, lt, type SQL, sql, sum } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { activityEvents, providerExecutions, usageEvents } from "../schema/telemetry.ts";
 import { beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -250,6 +250,23 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
         .orderBy(desc(activityEvents.id))
         .limit(limit + 1);
       return toPage(rows.map(toActivity), limit);
+    },
+    async listAfter(ctx, query) {
+      const rows = await db
+        .select()
+        .from(activityEvents)
+        .where(
+          scoped(
+            activityEvents,
+            ctx,
+            eq(activityEvents.jobId, query.jobId),
+            eq(activityEvents.name, query.name),
+            query.afterId ? gt(activityEvents.id, query.afterId) : undefined,
+          ),
+        )
+        .orderBy(asc(activityEvents.id))
+        .limit(Math.min(Math.max(query.limit ?? 500, 1), 1000));
+      return rows.map(toActivity);
     },
   };
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me, selectedWorkspace, selectWorkspace } from "./api-client.ts";
 import { AccountPage } from "./pages/account-page.tsx";
+import { AgentChatPage } from "./pages/agent-chat-page.tsx";
 import { ApiKeysPage } from "./pages/api-keys-page.tsx";
 import { AuthPage } from "./pages/auth-page.tsx";
 import { ConnectedAppsPage } from "./pages/connected-apps-page.tsx";
@@ -20,9 +21,10 @@ import { ErrorBanner, Link } from "./ui.tsx";
 import { navigate, useHashRoute } from "./use-hash-route.ts";
 
 const NAV = [
+  { to: "/", label: "New video" },
   { to: "/projects", label: "Projects" },
   { to: "/jobs", label: "Jobs" },
-  { to: "/create", label: "New video" },
+  { to: "/create", label: "Advanced create" },
   { to: "/api-keys", label: "API keys" },
   { to: "/connectors", label: "Connectors" },
   { to: "/connected-apps", label: "Connected apps" },
@@ -32,17 +34,20 @@ const NAV = [
   { to: "/account", label: "Account" },
 ] as const;
 
-type SessionState = { status: "loading" } | { status: "anonymous" } | { status: "ready"; me: Me };
-
 /** Workspace owners and admins manage the workspace's storage; platform operators also the platform's. */
 function canManageStorage(me: Me): boolean {
   return me.role === "operator" || me.role === "owner" || me.role === "admin";
 }
 
+type SessionState = { status: "loading" } | { status: "anonymous" } | { status: "ready"; me: Me };
+
 function Route({ segments, me }: { segments: string[]; me: Me }) {
   const [section, id, view] = segments;
   switch (section) {
     case undefined:
+      return <AgentChatPage />;
+    case "chat":
+      return <AgentChatPage threadId={id} />;
     case "projects":
       if (id && view === "review") return <ProjectReviewPage projectId={id} />;
       return id ? <ProjectDetailPage projectId={id} /> : <ProjectsPage />;
@@ -115,7 +120,7 @@ export function App() {
     } finally {
       selectWorkspace(null);
       setSession({ status: "anonymous" });
-      navigate("/projects");
+      navigate("/");
     }
   }
 
@@ -141,11 +146,13 @@ export function App() {
   }
 
   const { me } = session;
-  const current = segments[0] ?? "projects";
+  const current = segments[0] === "chat" ? "" : (segments[0] ?? "");
   return (
     <div className="shell">
       <header className="topbar">
-        <strong className="brand">Studix</strong>
+        <Link to="/" className="brand">
+          Studix
+        </Link>
         <nav>
           {NAV.filter((item) => !("managersOnly" in item) || canManageStorage(me)).map((item) => (
             <Link key={item.to} to={item.to} className={current === item.to.slice(1) ? "active" : undefined}>

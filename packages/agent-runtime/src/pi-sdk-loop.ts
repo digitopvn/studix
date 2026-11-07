@@ -13,7 +13,13 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { AgentRunResult } from "@studix/core";
 import { registerSecret, StudixError } from "@studix/shared";
-import { type AgentLoop, abortReason, type BoundedAgentTask } from "./bounded-agent-runtime.ts";
+import {
+  type AgentLoop,
+  abortReason,
+  type BoundedAgentTask,
+  emitAgentEvent,
+  eventText,
+} from "./bounded-agent-runtime.ts";
 import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
 import type { PiBindingResolver, PiRunBinding, ReasoningEffort } from "./pi-binding.ts";
 import type { PiTaskWorkspace, PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
@@ -351,6 +357,32 @@ async function runAttempt(
     throwIfAborted(task);
     const active = session;
     unsubscribe = active.subscribe((event) => {
+      if (event.type === "message_update") {
+        const e = event.assistantMessageEvent;
+        if (e.type === "text_delta") emitAgentEvent(task, { type: "message", delta: e.delta });
+        if (e.type === "thinking_delta") emitAgentEvent(task, { type: "reasoning", delta: e.delta });
+      }
+      if (event.type === "tool_execution_start") {
+        emitAgentEvent(task, {
+          type: "tool_start",
+          id: event.toolCallId,
+          name: event.toolName,
+          args: event.args,
+        });
+      }
+      if (event.type === "tool_execution_end") {
+        const content = (event.result as { content?: Array<{ type: string; text?: string }> } | undefined)
+          ?.content;
+        emitAgentEvent(task, {
+          type: "tool_end",
+          id: event.toolCallId,
+          name: event.toolName,
+          ok: !event.isError,
+          result: eventText(
+            Array.isArray(content) ? content.map((c) => c.text ?? `[${c.type}]`).join("\n") : event.result,
+          ),
+        });
+      }
       if (event.type === "message_end" && event.message.role === "assistant") {
         const usage = event.message.usage;
         total.costCents += (usage?.cost?.total ?? 0) * 100;

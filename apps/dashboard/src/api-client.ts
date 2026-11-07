@@ -1021,4 +1021,101 @@ export const api = {
   removeModelPreference: (id: string) => request<void>("DELETE", `/api/providers/models/${enc(id)}`),
   modelPreview: (stage: string) =>
     request<ModelPreview>("GET", `/api/providers/models/preview?stage=${enc(stage)}`),
+  agentRuntimes: () => request<{ runtimes: AgentRuntimeInfo[] }>("GET", "/api/agent-runtimes"),
 };
+
+export interface AgentRuntimeInfo {
+  runtime: AgentRuntimeName;
+  connections: Array<{
+    providerConnectionId: string;
+    provider: string;
+    label: string;
+    owner: "workspace" | "user";
+    authMethod: string;
+    status: ProviderConnectionStatus;
+    models: Array<{ id: string; reasoning: boolean }>;
+  }>;
+}
+
+/** One live event of an agent run (`GET /api/jobs/:id/events`, `event: agent`). */
+export type AgentChatEvent = { stage: string | null; at: string } & (
+  | { type: "message" | "reasoning"; delta: string }
+  | { type: "tool_start"; id: string; name: string; args?: unknown }
+  | { type: "tool_end"; id: string; name: string; ok: boolean; result?: string }
+  | {
+      type: "usage";
+      turns: number;
+      inputTokens: number;
+      outputTokens: number;
+      costCents: number;
+      model?: string;
+    }
+  | {
+      type: "status";
+      status: "running" | "succeeded" | "failed";
+      runtime: string;
+      model?: string;
+      error?: string;
+    }
+  | { type: "artifact"; name: string }
+);
+
+export interface AgentJobStatus {
+  status: string;
+  stage: string | null;
+  progress: number;
+  spentCents: number;
+  budgetCents: number | null;
+  error: { code: string; message: string } | null;
+}
+
+export type AgentStreamMessage =
+  | { kind: "agent"; eventId: string; event: AgentChatEvent }
+  | { kind: "job"; job: AgentJobStatus }
+  | { kind: "end"; status: string };
+
+/**
+ * Follows a job's agent events over SSE with fetch (EventSource cannot send the workspace header). Resumes
+ * after `after`, the id of the last event already shown; resolves when the job ends or `signal` aborts.
+ */
+export async function streamAgentEvents(
+  jobId: string,
+  after: string | undefined,
+  onMessage: (message: AgentStreamMessage) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = { accept: "text/event-stream" };
+  const workspace = selectedWorkspace();
+  if (workspace) headers[WORKSPACE_HEADER] = workspace;
+  const query = after ? `?after=${enc(after)}` : "";
+  const res = await fetch(`/api/jobs/${enc(jobId)}/events${query}`, {
+    headers,
+    credentials: "same-origin",
+    signal,
+  });
+  if (!res.ok || !res.body) throw new ApiError(res.status, `HTTP_${res.status}`, "Cannot follow this run.");
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += value;
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let id = "";
+      let name = "message";
+      let data = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("id: ")) id = line.slice(4);
+        else if (line.startsWith("event: ")) name = line.slice(7);
+        else if (line.startsWith("data: ")) data += line.slice(6);
+      }
+      if (!data) continue;
+      const payload = JSON.parse(data);
+      if (name === "agent") onMessage({ kind: "agent", eventId: id, event: payload as AgentChatEvent });
+      else if (name === "job") onMessage({ kind: "job", job: payload as AgentJobStatus });
+      else if (name === "end") onMessage({ kind: "end", status: String(payload.status) });
+    }
+  }
+}

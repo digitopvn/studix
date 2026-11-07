@@ -1,7 +1,19 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRunResult, AgentRuntime, ReasoningEffort, TenantContext } from "@studix/core";
+import type {
+  AgentRunResult,
+  AgentRuntime,
+  AgentStreamEvent,
+  ReasoningEffort,
+  TenantContext,
+} from "@studix/core";
 import { type Clock, registerSecret, StudixError } from "@studix/shared";
-import { abortReason, createBoundedAgentRuntime, withSpend } from "./bounded-agent-runtime.ts";
+import {
+  abortReason,
+  createBoundedAgentRuntime,
+  emitAgentEvent,
+  eventText,
+  withSpend,
+} from "./bounded-agent-runtime.ts";
 import {
   type ClaudeCredential,
   claudeEffortOf,
@@ -65,6 +77,52 @@ export function claudeStreamUsageOf(lines: readonly string[]) {
   return { usage, result };
 }
 
+interface StreamBlock {
+  type?: string;
+  text?: string;
+  thinking?: string;
+  id?: string;
+  name?: string;
+  input?: unknown;
+  tool_use_id?: string;
+  content?: unknown;
+  is_error?: boolean;
+}
+
+/** Live events of one stream-json line; `names` maps tool_use ids to tool names across lines. */
+export function claudeStreamEventsOf(line: string, names: Map<string, string>): AgentStreamEvent[] {
+  let event: { type?: string; message?: { content?: unknown } };
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return [];
+  }
+  const blocks = Array.isArray(event.message?.content) ? (event.message.content as StreamBlock[]) : [];
+  const out: AgentStreamEvent[] = [];
+  for (const b of blocks) {
+    if (event.type === "assistant" && b.type === "text" && b.text)
+      out.push({ type: "message", delta: b.text });
+    else if (event.type === "assistant" && b.type === "thinking" && b.thinking)
+      out.push({ type: "reasoning", delta: b.thinking });
+    else if (event.type === "assistant" && b.type === "tool_use" && b.id && b.name) {
+      names.set(b.id, b.name);
+      out.push({ type: "tool_start", id: b.id, name: b.name, args: b.input });
+    } else if (event.type === "user" && b.type === "tool_result" && b.tool_use_id) {
+      const content = Array.isArray(b.content)
+        ? (b.content as StreamBlock[]).map((c) => c.text ?? `[${c.type}]`).join("\n")
+        : b.content;
+      out.push({
+        type: "tool_end",
+        id: b.tool_use_id,
+        name: names.get(b.tool_use_id) ?? "tool",
+        ok: b.is_error !== true,
+        result: eventText(content),
+      });
+    }
+  }
+  return out;
+}
+
 function failureOf(result: Record<string, unknown> | undefined, lines: readonly string[], secret: string) {
   const text = String(
     result?.result ?? result?.subtype ?? lines.at(-1) ?? "Claude Code exited without a result",
@@ -121,6 +179,7 @@ export function createClaudeCodeSandboxRuntime(options: ClaudeCodeSandboxRuntime
           `${variable}="$(cat ${TASK_DIR}/credential)"; rm -f ${TASK_DIR}/credential; export ${variable}; ` +
           `DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 exec ${args.join(" ")}`;
         let pending = "";
+        const toolNames = new Map<string, string>();
         const report = () => {
           const { usage } = claudeStreamUsageOf(lines);
           task.reportUsage({ ...usage, costCents: centsOf(usage.costUsd), model: options.model });
@@ -134,6 +193,9 @@ export function createClaudeCodeSandboxRuntime(options: ClaudeCodeSandboxRuntime
             pending = parts.pop() ?? "";
             const fresh = parts.filter((l) => l.trim());
             lines.push(...fresh);
+            for (const line of fresh) {
+              for (const e of claudeStreamEventsOf(line, toolNames)) emitAgentEvent(task, e);
+            }
             if (fresh.some((l) => l.includes('"type":"assistant"') || l.includes('"type":"result"')))
               report();
           },

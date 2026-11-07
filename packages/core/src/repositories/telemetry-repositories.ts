@@ -39,4 +39,9 @@ export interface ActivityRepository {
     ctx: TenantContext,
     query?: PageRequest & { projectId?: string; jobId?: string; traceId?: string },
   ): Promise<Page<ActivityEvent>>;
+  /** A job's events with one name, oldest first, strictly after `afterId` (the replay offset). */
+  listAfter(
+    ctx: TenantContext,
+    query: { jobId: string; name: string; afterId?: string; limit?: number },
+  ): Promise<ActivityEvent[]>;
 }
