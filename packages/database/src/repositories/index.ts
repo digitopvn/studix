@@ -9,6 +9,7 @@ import {
   createAuditRepository,
   createReviewRepository,
 } from "./governance-repositories.ts";
+import { createJobChangeRepository, createWorkspaceWebhookRepository } from "./job-feed-repositories.ts";
 import { createJobStore } from "./job-repository.ts";
 import {
   createModelPreferenceRepository,
@@ -36,6 +37,7 @@ export * from "./asset-repository.ts";
 export * from "./connector-repository.ts";
 export * from "./external-skill-repository.ts";
 export * from "./governance-repositories.ts";
+export * from "./job-feed-repositories.ts";
 export * from "./job-repository.ts";
 export * from "./model-preference-repository.ts";
 export * from "./platform-credential-repository.ts";
@@ -84,6 +86,8 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     rateLimits: createRateLimitRepository(db),
     workspaceSettings: createWorkspaceSettingsRepository(db),
     workspaceMultixSettings: createWorkspaceMultixSettingsRepository(db),
+    jobChanges: createJobChangeRepository(db),
+    workspaceWebhooks: createWorkspaceWebhookRepository(db),
   };
 }
 

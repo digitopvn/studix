@@ -60,6 +60,7 @@ import { z } from "zod";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
+import { createJobWebhookService } from "./job-webhooks.ts";
 import { platformAuditContext } from "./platform-audit-context.ts";
 import { createPlatformSettingsService, fetchWorkerMedia } from "./platform-settings.ts";
 import type {
@@ -303,6 +304,13 @@ export async function composeApp(
 
   const deps: AppDeps = {
     logger,
+    jobChanges: repos.jobChanges,
+    webhooks: createJobWebhookService({
+      repo: repos.workspaceWebhooks,
+      secrets: secretBox,
+      logger,
+      allowLocal: config.STUDIX_WEBHOOK_ALLOW_LOCAL,
+    }),
     publicUrl: config.STUDIX_PUBLIC_URL,
     appUrl: config.STUDIX_APP_URL,
     allowedHosts: allowedHosts(config),

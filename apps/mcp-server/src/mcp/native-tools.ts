@@ -24,6 +24,7 @@ import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.t
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
+import { waitForJobChange } from "./job-notifications.ts";
 import { withMediaExecUrls } from "./media-exec-tool.ts";
 
 /** Native tool names. `studix_cancel_job` is not referenced by core next-hints, so it is named here. */
@@ -41,6 +42,10 @@ export interface ToolContext {
   traceId: string;
   /** Names of every tool listed on this server (for the inspect handshake). */
   toolNames: string[];
+  /** Sends `notifications/progress` when the caller asked for progress (a progressToken). */
+  progress?: (progress: number, total: number, message: string) => Promise<void>;
+  /** Aborted when the client cancels the call. */
+  signal?: AbortSignal;
 }
 
 export interface ToolOutcome {
@@ -63,6 +68,8 @@ export interface NativeTool<I extends z.ZodType = z.ZodType> {
   idempotent?: boolean;
   /** Mutations are recorded in the workspace activity trail. */
   audited?: boolean;
+  /** Tool `_meta`, e.g. the MCP App that renders its result. */
+  meta?: Record<string, unknown>;
   run(ctx: ToolContext, input: z.output<I>): Promise<ToolOutcome>;
 }
 
@@ -263,11 +270,15 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.getJob,
     title: "Get job",
     description:
-      "Job status, stages, progress, error with suggestedAction, and a signed MP4 URL once succeeded.",
-    input: z.object({ jobId: Id }),
+      "Job status, stages, progress, error with suggestedAction, and a signed MP4 URL once succeeded. waitSeconds holds the call until the status changes, with progress notifications.",
+    input: z.object({
+      jobId: Id,
+      waitSeconds: z.number().int().min(0).max(50).optional(),
+    }),
     readOnly: true,
     async run(ctx, input) {
-      const job = await ctx.deps.studio.getJob(ctx.tenant, input.jobId);
+      const found = await ctx.deps.studio.getJob(ctx.tenant, input.jobId);
+      const job = input.waitSeconds ? await waitForJobChange(ctx, found, input.waitSeconds) : found;
       const view = await jobWithVideo(
         ctx.artifacts,
         ctx.tenant,

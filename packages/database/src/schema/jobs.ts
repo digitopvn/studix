@@ -93,6 +93,7 @@ export const jobs = pgTable(
     index("jobs_lease_idx").on(t.leaseExpiresAt).where(sql`${t.status} = 'running'`),
     index("jobs_tenant_idx").on(t.workspaceId, t.organizationId, t.id),
     index("jobs_project_idx").on(t.projectId, t.id),
+    index("jobs_updated_idx").on(t.updatedAt),
   ],
 );
 

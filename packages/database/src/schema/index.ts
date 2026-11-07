@@ -13,3 +13,4 @@ export * from "./telemetry.ts";
 export * from "./tenancy.ts";
 export * from "./workspace-multix-settings.ts";
 export * from "./workspace-settings.ts";
+export * from "./workspace-webhooks.ts";

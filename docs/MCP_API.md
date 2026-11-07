@@ -83,7 +83,8 @@ guide, the per-error value is authoritative.
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `studix_inspect`          | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first.                                                                                    |
 | `studix_create_video`     | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly.                     |
-| `studix_get_job`          | Job stage, progress, recommended next action, and signed preview/final URLs when ready.                                                                                                                                                                |
+| `studix_get_job`          | Job stage, progress, recommended next action, and signed preview/final URLs when ready. `waitSeconds` (max 50) holds the call until the status changes, with progress notifications (see [Job notifications](#job-notifications)).                     |
+| `studix_webhook`          | Get, set or delete the workspace job webhook (see [Job notifications](#job-notifications)). Setting needs owner or admin.                                                                                                                              |
 | `studix_get_project`      | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                                            |
 | `studix_cancel_job`       | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                                               |
 | `studix_retry_job`        | Requeue a `failed` job after its cause is fixed (see [Retrying a failed job](#retrying-a-failed-job)).                                                                                                                                                 |
@@ -340,6 +341,56 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
   run only after the storyboard is `approved`. Otherwise the job fails with
   `APPROVAL_REQUIRED`. A patch that changes a shot puts that shot, its scene
   and the storyboard back in review. "Rendered" never means "approved".
+
+### Review app (MCP Apps)
+
+`studix_create_video` and `studix_get_job` carry tool `_meta` that links them
+to the MCP App `ui://studix/review.html` (`_meta.ui.resourceUri` for MCP Apps
+hosts such as Claude, `openai/outputTemplate` for ChatGPT). The resource is
+served with MIME type `text/html;profile=mcp-app`, and its CSP allows media only
+from the storage origins. Hosts without MCP Apps ignore the `_meta` and show the
+JSON result as before.
+
+The app plays the newest render and shows the storyboard as a timeline and a
+shot list. The user pauses, optionally drags a region on the frame, and sends a
+note. The note becomes a `studix_feedback` call on the selected shot, or on the
+time range with `annotation: {frameMs, region}`. **Approve** calls
+`studix_approve` for a pending approval; an API key gets `FORBIDDEN`, and the
+app then opens `reviewUrl`, where a person approves the storyboard.
+**Re-render** calls `studix_render`. The app reads its data through
+`studix_review` `{projectId}`, which returns the storyboard, timeline, newest
+video and open notes. That tool has `_meta.ui.visibility: ["app"]`, so MCP
+Apps hosts keep it away from the model.
+
+### Job notifications
+
+Polling `studix_get_job` always works. Three ways avoid it:
+
+- **Wait in the call.** `studix_get_job` with `waitSeconds` (at most 50) holds
+  the call until the job changes status or finishes. If the request carries
+  `_meta.progressToken`, Studix sends `notifications/progress` meanwhile
+  (`progress` 0 to 100, `message` the status and stage).
+- **Subscribe to the job resource.** `studix://jobs/{jobId}` (a resource
+  template; `resources/read` returns the job as `studix_get_job` does). Open a
+  `subscriptions/listen` stream (protocol 2026-07-28) that names the URI, and
+  each status or stage change sends `notifications/resources/updated`; then read
+  the resource. The `/mcp` endpoint is stateless, so 2025-era clients cannot
+  hold a `resources/subscribe` session and keep polling. Notifications are
+  per API replica: each replica watches job changes itself.
+- **Webhook.** One per workspace: `studix_webhook` `{action: "get" | "set" |
+  "delete", url?}`, or `GET|PUT|DELETE /api/webhook` (`{url}`). Setting it needs
+  `apikey:manage` (owner or admin) and returns the signing secret `whsec_…`
+  once. The URL must be https and resolve to public addresses
+  (`STUDIX_WEBHOOK_ALLOW_LOCAL=true` allows http and private hosts in local
+  development). Each status or stage change is a POST with body
+  `{type: "job.status", eventId, jobId, projectId, status, stage, progress, at}`
+  and headers `studix-event-id` and `studix-signature: t=<unix>,v1=<hex>`,
+  where `v1` is HMAC-SHA256 of `<t>.<raw body>` with the secret. Delivery is at
+  least once with no retry; dedupe on `studix-event-id` and poll when a post
+  was missed.
+
+MCP Tasks are not offered: the SDK in use (`@modelcontextprotocol/server`
+2.4, protocol 2026-07-28) has dropped them.
 
 ### Agent stage handoff tools
 

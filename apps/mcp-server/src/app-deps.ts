@@ -14,7 +14,7 @@ import type {
   StudioService,
   WorkspaceRepository,
 } from "@studix/core";
-import type { RateLimitRepository } from "@studix/database";
+import type { JobChangeRepository, RateLimitRepository } from "@studix/database";
 import type { ActivityRecorder } from "@studix/observability";
 import type { Logger } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
@@ -28,6 +28,7 @@ import type {
   RegisterMetaTools,
   SkillSummary,
 } from "./ports.ts";
+import type { JobWebhookService } from "./job-webhooks.ts";
 import type { WorkspaceMultixApi } from "./workspace-multix.ts";
 
 /** Product limits and defaults advertised by `studix_inspect` (values come from configuration). */
@@ -104,6 +105,10 @@ export interface AppDeps {
   trustProxy?: number | boolean;
   /** Shared token-bucket store so limits hold across replicas; without it each process keeps its own buckets. */
   rateLimitStore?: RateLimitRepository;
+  /** Cross-tenant job change reads; with it the API pushes MCP resource updates and webhooks. */
+  jobChanges?: JobChangeRepository;
+  /** Per-workspace job webhook; without it the webhook API answers UNAVAILABLE. */
+  webhooks?: JobWebhookService;
   rateLimits?: {
     auth?: TokenBucketOptions;
     mcpIp?: TokenBucketOptions;

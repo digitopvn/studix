@@ -60,6 +60,8 @@ export const ConfigSchema = z
      * private hosts (a MinIO on localhost). Off in every deployed environment: the SSRF guard then refuses them.
      */
     STUDIX_STORAGE_ALLOW_LOCAL_ENDPOINTS: bool.default(false),
+    /** Local development only: job webhooks may target http:// and loopback or private hosts. */
+    STUDIX_WEBHOOK_ALLOW_LOCAL: bool.default(false),
 
     STUDIX_API_KEY_ENV: z
       .string()

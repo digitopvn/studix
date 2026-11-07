@@ -8,6 +8,7 @@ import { mountOAuthDiscovery, oauthRoutes } from "./api/oauth-routes.ts";
 import { platformRoutes, workspaceStorageRoutes } from "./api/platform-routes.ts";
 import { skillRoutes } from "./api/skill-routes.ts";
 import { studioRoutes } from "./api/studio-routes.ts";
+import { webhookRoutes } from "./api/webhook-routes.ts";
 import { type AppDeps, SERVER_VERSION } from "./app-deps.ts";
 import type { ArtifactUrlDeps } from "./artifact-urls.ts";
 import { mountDashboardStatic } from "./http/dashboard-static.ts";
@@ -99,6 +100,7 @@ export function createApp(deps: AppDeps): Express {
   api.use("/skills", skillRoutes(deps));
   api.use(agentChatRoutes(deps));
   api.use(studioRoutes(deps, artifacts));
+  api.use("/webhook", webhookRoutes(deps));
   api.use(() => {
     throw new StudixError("NOT_FOUND", "Unknown API route");
   });
