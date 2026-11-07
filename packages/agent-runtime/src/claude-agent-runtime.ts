@@ -71,6 +71,18 @@ export function claudeEffortOf(effort: ReasoningEffort | undefined): ClaudeEffor
   return effort === "minimal" ? "low" : effort;
 }
 
+/**
+ * The output schema as Claude Code accepts it. Its validator knows no 2020-12 meta-schema, so the
+ * `$schema` key that `z.toJSONSchema` adds makes the process exit before the first model call.
+ */
+export function claudeOutputSchema(
+  schema: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!schema) return undefined;
+  const { $schema: _metaSchema, ...rest } = schema;
+  return rest;
+}
+
 export type ClaudeCredentialKind = "api_key" | "subscription";
 
 export interface ClaudeCredential {
@@ -221,7 +233,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
           instructions: task.instructions,
           input: task.input,
           allowedTools: [...allowed],
-          outputSchema: task.outputSchema,
+          outputSchema: claudeOutputSchema(task.outputSchema),
           maxTurns: task.maxTurns,
           ...(effort ? { effort } : {}),
           maxBudgetUsd: task.maxCostCents / 100,

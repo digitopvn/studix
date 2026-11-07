@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { AgentRunResult, AgentRuntime, ReasoningEffort, TenantContext } from "@studix/core";
 import { type Clock, registerSecret, StudixError } from "@studix/shared";
 import { abortReason, createBoundedAgentRuntime, withSpend } from "./bounded-agent-runtime.ts";
-import { type ClaudeCredential, claudeEffortOf, mapClaudeError } from "./claude-agent-runtime.ts";
+import {
+  type ClaudeCredential,
+  claudeEffortOf,
+  claudeOutputSchema,
+  mapClaudeError,
+} from "./claude-agent-runtime.ts";
 import { sandboxTaskPrompt } from "./codex-agent-runtime.ts";
 import type { PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
 import { SANDBOX_OUTPUT_DIR, SANDBOX_WORK_DIR } from "./sandbox-docker.ts";
@@ -95,7 +100,7 @@ export function createClaudeCodeSandboxRuntime(options: ClaudeCodeSandboxRuntime
         });
         if (task.outputSchema) {
           await sandbox.run(["sh", "-c", `cat > ${TASK_DIR}/schema.json`], {
-            stdin: JSON.stringify(task.outputSchema),
+            stdin: JSON.stringify(claudeOutputSchema(task.outputSchema)),
           });
         }
         const variable = credential.kind === "subscription" ? "CLAUDE_CODE_OAUTH_TOKEN" : "ANTHROPIC_API_KEY";

@@ -108,7 +108,12 @@ describe("claude code sandbox runtime", () => {
       reasoningEffort: "xhigh",
       credential: async () => ({ secret: apiKey, kind: "api_key" }),
     });
-    const out = await runtime.run(testTenant(), task({ outputSchema: { type: "object" } }));
+    const out = await runtime.run(
+      testTenant(),
+      task({ outputSchema: { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object" } }),
+    );
+    // Claude Code rejects the 2020-12 meta-schema and exits before the first call.
+    expect(ws.files.get("/work/.task/schema.json")).toBe('{"type":"object"}');
     expect(out).toMatchObject({
       output: { video: "out/video.mp4", files: ["/host/out/video.mp4"] },
       turns: 2,
