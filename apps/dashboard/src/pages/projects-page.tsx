@@ -1,6 +1,7 @@
 import { type CSSProperties, useState } from "react";
 import { api, type Project } from "../api-client.ts";
 import { ErrorBanner, formatDate, Link, StatusBadge, useAsync } from "../ui.tsx";
+import { ProjectThumbnail } from "./project-thumbnail.tsx";
 import "./projects.css";
 
 const FILTERS = [
@@ -84,6 +85,7 @@ export function ProjectsPage() {
         {items.map((p) => (
           <Link key={p.id} to={`/projects/${p.id}`} className="project-card">
             <span className="poster" style={{ "--h": hue(p.id), aspectRatio: ratio(p) } as CSSProperties}>
+              <ProjectThumbnail projectId={p.id} />
               <span className="poster-format">
                 {p.brief.aspectRatio ?? "16:9"}
                 {p.brief.durationMs ? ` · ${Math.round(p.brief.durationMs / 1000)} s` : ""}

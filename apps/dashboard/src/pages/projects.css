@@ -102,3 +102,21 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+.poster {
+  position: relative;
+}
+.poster-media {
+  position: absolute;
+  inset: 0;
+}
+.poster-media > video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.poster-format {
+  position: relative;
+  z-index: 1;
+}
