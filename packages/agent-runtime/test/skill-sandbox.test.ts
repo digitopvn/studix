@@ -5,6 +5,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { testTenant } from "@studix/core/testing";
 import { describe, expect, it } from "vitest";
 import {
+  changedSkillBundles,
   containerPath,
   createFilesystemSkillBundleSource,
   createPiTaskWorkspaceProvider,
@@ -95,7 +96,7 @@ describe("docker sandbox arguments", () => {
       "--label studix.sandbox=1",
       "--network bridge",
       "--volume /host/work:/work:rw",
-      "--volume /host/skills:/skills:ro",
+      "--volume /host/skills:/skills:rw",
       "--env ELEVENLABS_API_KEY",
     ]) {
       expect(joined).toContain(flag);
@@ -144,15 +145,23 @@ describe("sandbox tools", () => {
 });
 
 describe("skill bundles", () => {
-  it("writes skills under their name and lets the platform copy win a clash", async () => {
+  it("lets the workspace copy win a clash and reports only the skills an agent edited", async () => {
     const root = await mkdtemp(join(tmpdir(), "studix-skills-test-"));
     const mounted = await materializeSkillBundles(
-      [bundle(), bundle({ scope: "platform", description: "Platform copy" })],
+      [
+        bundle({ scope: "platform", description: "Platform copy" }),
+        bundle({ scope: "workspace", description: "Workspace copy" }),
+      ],
       root,
     );
     expect(mounted).toHaveLength(1);
-    expect(mounted[0]).toMatchObject({ name: "motion-video", description: "Platform copy" });
+    expect(mounted[0]).toMatchObject({ name: "motion-video", description: "Workspace copy" });
     expect(await readFile(join(root, "motion-video", "scripts", "run.sh"), "utf8")).toBe("echo hi");
+    expect(await changedSkillBundles(mounted, root)).toEqual([]);
+    await writeFile(join(root, "motion-video", "NOTES.md"), "learned");
+    const changed = await changedSkillBundles(mounted, root);
+    expect(changed.map((c) => c.bundle.name)).toEqual(["motion-video"]);
+    expect(changed[0]?.files.some((f) => f.path === "NOTES.md")).toBe(true);
   });
 
   it("mounts a Windows zip: backslash separators and empty folder entries", async () => {

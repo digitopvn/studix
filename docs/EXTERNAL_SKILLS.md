@@ -126,6 +126,16 @@ files of every enabled workspace and platform skill:
 `{ name, description, scope, version, files: [{ path, content, executable? }] }`.
 Skills whose name is not a lowercase directory name are skipped.
 
+When a workspace skill and a platform skill share a name, the workspace copy is
+mounted. Each task gets its own writable copy under `/skills`, never the shared
+bundle. After a successful run the worker compares each mounted skill with what
+was mounted. A changed skill is stored as a new version of the workspace's own
+skill; for a platform skill this creates a workspace copy that shadows it in
+that workspace only. The edit goes through the same limits and risk scan as an
+upload: a `high` risk version is stored but stays disabled (or inactive) until
+an admin confirms it. The job chat shows an artifact event
+`skill <name> updated (version <id>)`.
+
 ## Limits
 
 Defaults live in `packages/skills/src/external/import-limits.ts`: 50 skills per

@@ -43,8 +43,8 @@ export function isSafeSkillPath(path: string): boolean {
 }
 
 /**
- * Writes the bundles under `root/<name>/...` for a sandbox mount. A platform skill wins a name clash: the
- * operator's copy is the reviewed one. Throws VALIDATION on a bad name or path rather than skipping it, so
+ * Writes the bundles under `root/<name>/...` for a sandbox mount. A workspace skill wins a name clash: it is
+ * the workspace's own copy of the skill (an upload, or an agent's edit of a platform skill). Throws VALIDATION on a bad name or path rather than skipping it, so
  * a broken store entry is visible instead of a silently missing skill.
  */
 export async function materializeSkillBundles(
@@ -59,7 +59,7 @@ export async function materializeSkillBundles(
       });
     }
     const existing = byName.get(bundle.name);
-    if (!existing || (existing.scope === "workspace" && bundle.scope === "platform")) {
+    if (!existing || (existing.scope === "platform" && bundle.scope === "workspace")) {
       byName.set(bundle.name, bundle);
     }
   }
@@ -136,6 +136,44 @@ async function readTree(dir: string, base: string, files: SkillBundleFile[]): Pr
       executable: (info.mode & 0o111) !== 0,
     });
   }
+}
+
+/** Every regular file under a skill directory, symlinks skipped. */
+export async function readSkillFiles(dir: string): Promise<SkillBundleFile[]> {
+  const files: SkillBundleFile[] = [];
+  await readTree(dir, dir, files);
+  return files;
+}
+
+/**
+ * The skills whose files under `root/<name>/` differ from the bundle that was mounted there, with their new
+ * files. A folder entry the mount skipped (an empty file named like a directory) is not a change.
+ */
+export async function changedSkillBundles(
+  mounted: readonly SkillBundle[],
+  root: string,
+): Promise<Array<{ bundle: SkillBundle; files: SkillBundleFile[] }>> {
+  const changed: Array<{ bundle: SkillBundle; files: SkillBundleFile[] }> = [];
+  for (const bundle of mounted) {
+    const files = await readSkillFiles(join(root, bundle.name)).catch(() => undefined);
+    if (!files) continue;
+    const before = new Map(
+      bundle.files
+        .map((f) => ({ ...f, path: f.path.replaceAll("\\", "/") }))
+        .filter(
+          (f, _, all) => !(f.content.byteLength === 0 && all.some((g) => g.path.startsWith(`${f.path}/`))),
+        )
+        .map((f) => [f.path, f.content] as const),
+    );
+    const same =
+      files.length === before.size &&
+      files.every((f) => {
+        const old = before.get(f.path);
+        return old !== undefined && Buffer.compare(Buffer.from(old), Buffer.from(f.content)) === 0;
+      });
+    if (!same) changed.push({ bundle, files });
+  }
+  return changed;
 }
 
 /**

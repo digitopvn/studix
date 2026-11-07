@@ -39,6 +39,7 @@ import { StudixError } from "@studix/shared";
 import { createExternalSkillService, createSkillBundleSource } from "@studix/skills";
 import { createProfileStorageRouterFromConfig } from "@studix/storage";
 import { createAgentArtifactStore } from "./agent-artifact-store.ts";
+import { AGENT_EVENT_ACTIVITY } from "./agent-event-sink.ts";
 import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
 import { createCompositionRunner } from "./composition-runner.ts";
 import { createMediaExecRunner, loadMediaExecSettings } from "./media-exec-runner.ts";
@@ -250,19 +251,52 @@ async function skillSandbox(
   const sandbox = loadSandboxSettings(runtime.env);
   if (!sandbox) return undefined;
   const repos = createRepositories(runtime.db);
+  const service = createExternalSkillService({ repository: repos.externalSkills, storage });
   const skills = sandbox.skillsDir
     ? createFilesystemSkillBundleSource(sandbox.skillsDir)
-    : createSkillBundleSource({
-        repository: repos.externalSkills,
-        service: createExternalSkillService({ repository: repos.externalSkills, storage }),
-        logger: runtime.logger,
-      });
+    : createSkillBundleSource({ repository: repos.externalSkills, service, logger: runtime.logger });
   const credentials = platformCredentials(settings, runtime);
   return createSkillSandbox({
     settings: sandbox,
     workDir: settings.workDir,
     skills,
     storage,
+    ...(sandbox.skillsDir
+      ? {}
+      : {
+          // An agent's edit of a mounted skill becomes a new workspace version, announced in the job's chat.
+          skillEdits: async (ctx, stage, edits) => {
+            for (const edit of edits) {
+              try {
+                const { result, risk } = await service.storeAgentEdit(ctx, {
+                  files: edit.files.map((f) => ({
+                    path: f.path,
+                    bytes: f.content,
+                    ...(f.executable ? { executable: true } : {}),
+                  })),
+                  taskLabel: stage.job.id,
+                });
+                const held = result.riskConfirmationRequired || !result.activated;
+                await repos.activity.append(ctx, {
+                  name: AGENT_EVENT_ACTIVITY,
+                  level: "info",
+                  jobId: stage.job.id,
+                  ...(stage.job.projectId ? { projectId: stage.job.projectId } : {}),
+                  stage: "skill-edit",
+                  attributes: {
+                    type: "artifact",
+                    name: `skill ${edit.name} updated (version ${result.versionId ?? "?"})${held ? `, ${risk} risk: disabled until an admin confirms` : ""}`,
+                  },
+                });
+              } catch (error) {
+                runtime.logger.warn("agent skill edit not stored", {
+                  skill: edit.name,
+                  error: String(error),
+                });
+              }
+            }
+          },
+        }),
     keys: {
       ...(providers ? { workspace: (ctx) => providers.resolveMediaKeys(ctx) } : {}),
       ...(credentials ? { platform: async () => (await credentials.loadValues()).values } : {}),

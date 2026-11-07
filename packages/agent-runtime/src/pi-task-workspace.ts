@@ -11,7 +11,12 @@ import {
   type SandboxLimits,
   type SandboxSession,
 } from "./sandbox-docker.ts";
-import { materializeSkillBundles, type SkillBundleSource } from "./skill-bundle-source.ts";
+import {
+  changedSkillBundles,
+  materializeSkillBundles,
+  type SkillBundleFile,
+  type SkillBundleSource,
+} from "./skill-bundle-source.ts";
 
 /** A skill as the agent first sees it: name and description, with the path of its SKILL.md in the sandbox. */
 export interface SandboxSkillEntry {
@@ -50,6 +55,14 @@ export interface PiTaskWorkspaceOptions {
   outputDir: string;
   /** Parent of the host copies of the skills (default: OS temp). */
   scratchRoot?: string;
+  /**
+   * Stores the skills the agent edited under /skills, called from `collect` (so only after a successful run)
+   * with each changed skill's full new file set. Omitted, edits are dropped with the sandbox.
+   */
+  storeSkillEdits?(
+    ctx: TenantContext,
+    edits: Array<{ name: string; files: SkillBundleFile[] }>,
+  ): Promise<void>;
   /** Downloads one stored input file to a host path; without it a task with input files fails VALIDATION. */
   fetchInput?(ctx: TenantContext, storageKey: string, hostPath: string): Promise<void>;
   /** Caps on what `collect` copies out. */
@@ -163,6 +176,15 @@ export function createPiTaskWorkspaceProvider(options: PiTaskWorkspaceOptions): 
               const target = join(options.outputDir, safe);
               await open.copyOut(file, target);
               copied.push(target);
+            }
+            if (skillsDir && options.storeSkillEdits) {
+              const changed = await changedSkillBundles(mounted, skillsDir);
+              if (changed.length > 0) {
+                await options.storeSkillEdits(
+                  ctx,
+                  changed.map((c) => ({ name: c.bundle.name, files: c.files })),
+                );
+              }
             }
             return copied;
           },

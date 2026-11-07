@@ -32,7 +32,7 @@ export interface SandboxOpenRequest {
   taskId: string;
   /** The task's own provider keys and nothing else. Passed to docker by name, never on its command line. */
   env: Readonly<Record<string, string>>;
-  /** Host directory mounted read-only at /skills, when the task has skills. */
+  /** The task's own copy of its skills, mounted writable at /skills; edits there may be stored as new versions. */
   skillsDir?: string;
   limits: SandboxLimits;
   signal: AbortSignal;
@@ -152,7 +152,7 @@ export function dockerRunArgs(
     "--env",
     `HOME=${SANDBOX_WORK_DIR}/.home`,
   ];
-  if (request.skillsDir) args.push("--volume", `${request.skillsDir}:${SANDBOX_SKILLS_DIR}:ro`);
+  if (request.skillsDir) args.push("--volume", `${request.skillsDir}:${SANDBOX_SKILLS_DIR}:rw`);
   for (const name of Object.keys(request.env).sort()) {
     if (!ENV_NAME.test(name)) {
       throw new StudixError("VALIDATION", `Sandbox env name ${name.slice(0, 40)} is not allowed`, {

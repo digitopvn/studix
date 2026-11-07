@@ -4,6 +4,7 @@ import {
   createPiTaskWorkspaceProvider,
   type PiTaskWorkspaceProvider,
   type SandboxLimits,
+  type SkillBundleFile,
   type SkillBundleSource,
   sweepDockerSandboxes,
 } from "@studix/agent-runtime";
@@ -120,10 +121,16 @@ export async function createSkillSandbox(options: {
   skills?: SkillBundleSource;
   /** Where a task's input files are read from, on the host, before its sandbox starts. */
   storage?: Pick<StorageAdapter, "download">;
+  /** Stores the skills an agent edited under /skills after a successful run of `stage`. */
+  skillEdits?: (
+    ctx: TenantContext,
+    stage: StageContext,
+    edits: Array<{ name: string; files: SkillBundleFile[] }>,
+  ) => Promise<void>;
   keys: SandboxKeySources;
   logger: Logger;
 }): Promise<SkillSandbox> {
-  const { settings, logger, storage } = options;
+  const { settings, logger, storage, skillEdits } = options;
   // Containers a crashed worker left behind; their tasks were already retried or failed.
   const swept = await sweepDockerSandboxes(settings.docker).catch((err: unknown) => {
     logger.warn("skill sandbox sweep failed", { error: String(err) });
@@ -147,6 +154,7 @@ export async function createSkillSandbox(options: {
         driver,
         ...(options.skills ? { skills: options.skills } : {}),
         env: (ctx) => sandboxProviderKeys(options.keys, ctx),
+        ...(skillEdits ? { storeSkillEdits: (ctx, edits) => skillEdits(ctx, stage, edits) } : {}),
         ...(storage
           ? {
               fetchInput: async (ctx: TenantContext, key: string, hostPath: string) => {
