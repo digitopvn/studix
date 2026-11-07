@@ -71,11 +71,30 @@ const SANDBOX_TOOLS = (["bash", "read", "write", "edit", "ls"] as const).map((na
 }));
 
 export const SKILL_AGENT_LIMITS = {
-  maxTurns: 150,
+  maxTurns: 300,
   maxTokens: 4_000_000,
   maxCostCents: 800,
   timeoutMs: 40 * 60_000,
 };
+
+/** Higher effort spends more turns on QA rounds; cost and time caps stay the spending guard. */
+const TURNS_BY_EFFORT: Record<string, number> = {
+  off: 200,
+  minimal: 200,
+  low: 200,
+  medium: 300,
+  high: 400,
+  xhigh: 600,
+};
+
+export function skillAgentLimits(job: { payload?: unknown }) {
+  const effort = (job.payload as { agent?: { reasoningEffort?: string } } | undefined)?.agent
+    ?.reasoningEffort;
+  return {
+    ...SKILL_AGENT_LIMITS,
+    maxTurns: TURNS_BY_EFFORT[effort ?? "medium"] ?? SKILL_AGENT_LIMITS.maxTurns,
+  };
+}
 
 /** What the agent must deliver: 1080p at the brief's aspect ratio and length (16:9, 10 s by default). */
 export function deliveryOf(brief: CreativeBrief): { width: number; height: number; durationMs: number } {
@@ -118,6 +137,7 @@ export function deliveryProblems(
 const runStage = createAgentStage({
   name: SKILL_AGENT_STAGES.run,
   version: 1,
+  limitsFor: skillAgentLimits,
   // The output names files in this job's sandbox, which are gone once the job ends.
   cacheable: false,
   inputSchema: RunInput,

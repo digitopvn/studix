@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { deliveryOf, deliveryProblems, skillAgentPipeline } from "../src/skill-agent/skill-agent-pack.ts";
+import {
+  deliveryOf,
+  deliveryProblems,
+  skillAgentLimits,
+  skillAgentPipeline,
+} from "../src/skill-agent/skill-agent-pack.ts";
 
 const ok = { width: 1920, height: 1080, durationMs: 10_100, audioCodec: "aac" };
 const loud = { integratedLufs: -16.3, truePeakDbtp: -1.5 };
@@ -51,5 +56,14 @@ describe("skill-agent run stage reservation", () => {
 
   it("is never served from the stage cache, since its files live only for the job", () => {
     expect(run.cacheKey({ input: { brief: { prompt: "x" } }, job: { payload: {} } })).toBeUndefined();
+  });
+});
+
+describe("skill-agent turn cap", () => {
+  it("doubles from 300 turns at medium effort to 600 at xhigh", () => {
+    const turns = (reasoningEffort?: string) =>
+      skillAgentLimits({ payload: reasoningEffort ? { agent: { reasoningEffort } } : {} }).maxTurns;
+    expect([turns("low"), turns(), turns("high"), turns("xhigh")]).toEqual([200, 300, 400, 600]);
+    expect(skillAgentLimits({ payload: {} }).maxCostCents).toBe(800);
   });
 });

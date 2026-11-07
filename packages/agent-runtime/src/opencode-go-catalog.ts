@@ -1,4 +1,3 @@
-import { ANTHROPIC_ENDPOINT } from "./anthropic-pi-catalog.ts";
 import type { PiEndpoint } from "./pi-binding.ts";
 
 /*
@@ -53,6 +52,5 @@ export const OPENCODE_GO_ENDPOINT: PiEndpoint = {
 
 /** The endpoint Studix pins for a provider whose SDK catalog is stale, if any. */
 export function pinnedPiEndpoint(provider: string): PiEndpoint | undefined {
-  if (provider === "opencode-go") return OPENCODE_GO_ENDPOINT;
-  return provider === "anthropic" ? ANTHROPIC_ENDPOINT : undefined;
+  return provider === "opencode-go" ? OPENCODE_GO_ENDPOINT : undefined;
 }

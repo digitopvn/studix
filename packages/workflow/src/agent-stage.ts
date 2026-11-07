@@ -31,6 +31,8 @@ export interface AgentStageSpec<I extends z.ZodType, O extends z.ZodType<StageOu
   taskInput(input: z.infer<I>): Record<string, unknown>;
   /** Limits of the first run; each overrun approval doubles every one of them. */
   limits: Omit<AgentStageLimits, "tools">;
+  /** Per-job limits of the first run (for example by the agent's reasoning effort); `limits` otherwise. */
+  limitsFor?(job: StageContext["job"]): Omit<AgentStageLimits, "tools">;
   /** Tools the agent may call (the allowlist); none by default. */
   tools?: AgentToolDefinition[];
   /**
@@ -241,7 +243,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
         await agents.consumeOverrun(latest.id);
       }
       const round = await agents.grantedOverruns();
-      const limits = scaled(spec.limits, 2 ** round);
+      const limits = scaled(spec.limitsFor?.(s.job) ?? spec.limits, 2 ** round);
       const input = spec.taskInput(s.input as z.infer<I>);
 
       if (mode === "host") return runOnHost(s, round, limits, input);
