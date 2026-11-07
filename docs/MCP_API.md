@@ -139,6 +139,12 @@ Behavior notes:
   true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
   each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
 - A stage that finished on its template instead of its agent shows `stages[].fallback` with the
+- `roles: {director?, builder?, qa?}` (`skill-agent` only, each an `agent` object from any catalogue
+  runtime and model, e.g. `pi` + `deepseek-v4.1-flash` as builder): the director writes the script and
+  direction first; the builder makes the video (default: the job's `agent`); QA watches each render,
+  scores taste, motion, brief and audio 0-10 and sends it back with notes below 7, at most 3 rounds.
+  Scores land in the version metadata as `review` and on the job page
+  ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)).
   reason on `studix_get_job`; it is never silent.
 - Each stage on `studix_get_job` carries `stages[].run`, summed from its attempt's usage lines:
   - `runtime`: `claude`, `codex` or `pi` for an agent run; `host` for the MCP client's own agent; `planner` for the legacy planner's model calls; `function` for plain code such as `brief`, `compose` or `finalize`.
@@ -608,6 +614,43 @@ Storage profiles (same rules; the id is `env` or `stp_…`):
   on failure.
 - `PUT /api/platform/storage/profiles/:id` (same body, key pair optional but
   both or neither): Re-probes, with the stored pair when no pair is given.
+### Composition workspaces (client-authored video)
+
+The client AI can author the video itself instead of delegating to a job
+([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)). A composition is a file tree in
+object storage; Studix checks only the outputs a run asks it to check.
+
+| Tool                       | Does                                                                                                                                                            |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `studix_composition_write` | Omit `compositionId` to create one. `files: [{path, text} or {path, base64, contentType?}]` (8 MB each, 50 per call), `delete: [paths]`. Returns the file list. |
+| `studix_composition_run`   | Async job `composition.run`: `command` runs under `sh` in the composition root inside the skill sandbox. Returns `{jobId}`; poll `studix_get_job`.              |
+| `studix_composition_read`  | Without `path`: the file list. With `path`: a signed URL, text inline, and png/jpeg/webp/gif up to 1.5 MB as an image block (frames, contact sheets).           |
+
+The run sandbox has network, Node, Python, ffmpeg, Chromium, the HyperFrames and Remotion CLIs,
+`multix generate` with the workspace's media keys (images, TTS, BGM, SFX via ElevenLabs and others)
+and the enabled skills under `/skills`. Every file the command adds or changes is stored back (1 GB
+each, 200 per run; `node_modules`, `.git` and caches stay behind). `timeoutSeconds` defaults to 900
+(max 3600); compute is billed per started minute against `budgetCents`. It needs `media:exec`
+(write needs `project:write`) and `STUDIX_SANDBOX=docker` on the worker.
+
+`check: {path, width?, height?, durationMs?, durationToleranceMs?, loudnessLufs?}` probes a file after
+an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the
+exit code, log tails, changed files and the check result. The files it wrote are kept either way.
+
+```json
+{
+  "compositionId": "cmp_...",
+  "command": "npx hyperframes render index.html -o out/video.mp4 && ffmpeg -i out/video.mp4 -vf fps=1/2,scale=480:-1,tile=4x2 out/sheet.png",
+  "check": {
+    "path": "out/video.mp4",
+    "width": 1920,
+    "height": 1080,
+    "durationMs": 10000,
+    "loudnessLufs": -16
+  }
+}
+```
+
 - `POST /api/platform/storage/profiles/:id/activate` (body: `{}`): New objects
   go to this profile; `env` reverts to `S3_*`.
 - `POST /api/platform/storage/profiles/:id/test` (body: `{}`): Probe result,

@@ -20,7 +20,12 @@ import {
   type StorageProfileCandidate,
   withSelfHostedSecretsKey,
 } from "@studix/auth";
-import { createDefaultApprovalPolicy, createMediaExecService, StudioService } from "@studix/core";
+import {
+  createCompositionService,
+  createDefaultApprovalPolicy,
+  createMediaExecService,
+  StudioService,
+} from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
 import { createActivityRecorder } from "@studix/observability";
 import {
@@ -344,6 +349,16 @@ export async function composeApp(
       credentials: platformCredentials,
       ...(storageCredentials ? { storageCredentials } : {}),
       ...(config.S3_BUCKET
+    ...(integrations.storage
+      ? {
+          compositions: createCompositionService({
+            storage: integrations.storage,
+            queue: repos.queue,
+            audit: repos.audit,
+            defaults: { jobBudgetCents: config.DEFAULT_JOB_BUDGET_CENTS },
+          }),
+        }
+      : {}),
         ? {
             probeCandidate: async (pair: S3Credentials) => {
               const probe = createS3StorageAdapterFromConfig(config, { credentials: pair });

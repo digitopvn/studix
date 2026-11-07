@@ -1,5 +1,6 @@
 export * from "./agent-stage.ts";
 export * from "./approval-gate.ts";
+export * from "./composition-run-workflow.ts";
 export * from "./creative-gate-stage.ts";
 export * from "./file-digest.ts";
 export * from "./ir-asset-download.ts";

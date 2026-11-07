@@ -12,6 +12,7 @@ import type { ArtifactUrlDeps } from "../artifact-urls.ts";
 import { HTTP_STATUS } from "../http/http-errors.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
+import { COMPOSITION_MCP_TOOLS } from "./composition-tools.ts";
 import { MEDIA_EXEC_MCP_TOOLS } from "./media-exec-tool.ts";
 import { NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
 import { SKILL_MCP_TOOLS } from "./skill-tools.ts";
@@ -61,6 +62,7 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
         title: def.title,
         description: def.description,
         inputSchema: def.input as z.ZodObject,
+    ...COMPOSITION_MCP_TOOLS,
         outputSchema: ToolEnvelopeSchema,
         annotations: {
           readOnlyHint: def.readOnly,

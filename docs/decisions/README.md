@@ -27,5 +27,6 @@ supersedes the old one; accepted ADRs are not rewritten.
 | [0021](0021-codex-agent-runtime-and-chatgpt-login.md)               | Codex agent runtime in the sandbox, ChatGPT sign-in and per-job agent selection             | Accepted |
 | [0022](0022-agentic-video-authoring.md)                             | Agentic video authoring is the main path, with a hard delivery post-check                   | Accepted |
 | [0023](0023-workspace-storage-profiles.md)                          | Workspace storage profiles override the platform choice                                     | Accepted |
+| [0024](0024-client-authoring-and-agent-roles.md)                    | Client-authored compositions and director/builder/QA agent roles                            | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.

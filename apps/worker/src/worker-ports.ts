@@ -39,6 +39,7 @@ import { StudixError } from "@studix/shared";
 import { createExternalSkillService, createSkillBundleSource } from "@studix/skills";
 import { createProfileStorageRouterFromConfig } from "@studix/storage";
 import { createWorkerAgentHarness, type WorkerAgentHarness } from "./agent-harness.ts";
+import { createCompositionRunner } from "./composition-runner.ts";
 import { createMediaExecRunner, loadMediaExecSettings } from "./media-exec-runner.ts";
 import { platformCredentials } from "./pack-services.ts";
 import { type BrandLookup, createGatewayBrandLookup } from "./planner/brand-lookup-enrichment.ts";
@@ -419,6 +420,13 @@ export async function loadWorkerPorts(
   const sandbox = await skillSandbox(settings, runtime, providers, storage);
   const harness = agentHarness(settings, runtime, providers, transport, sandbox);
   const mediaExec = mediaExecPort(settings, runtime, storage, logger);
+  // Composition runs share the skill sandbox (open network, vendor keys, skills) and the media exec price.
+  const compositionRun = sandbox
+    ? {
+        runner: createCompositionRunner({ sandbox, storage, workDir: settings.workDir, logger }),
+        centsPerMinute: loadMediaExecSettings(runtime.env).centsPerMinute,
+      }
+    : undefined;
   return {
     planner: createPlannerRouter({
       default: createVideoPlanner({ decisions, brandLookup, logger }),
@@ -434,6 +442,7 @@ export async function loadWorkerPorts(
     storage,
     ...(harness ? { agentRuntimeFor: (stage) => harness.runtimeFor(stage) } : {}),
     ...(mediaExec ? { mediaExec } : {}),
+    ...(compositionRun ? { compositionRun } : {}),
     close: async () => {
       // Shutdown stops waiting on stages at once; let aborted agent runs finish killing their process.
       const idle = await Promise.all([

@@ -14,6 +14,8 @@ import { createRepositories, type StudixDb } from "@studix/database";
 import { type Clock, type Logger, systemClock } from "@studix/shared";
 import { packPipelines, packRegistry } from "@studix/skills";
 import {
+  type CompositionRunner,
+  createCompositionRunWorkflow,
   createJobExecutor,
   createMediaExecWorkflow,
   createVideoCreateWorkflow,
@@ -66,6 +68,8 @@ export interface WorkerPorts {
   agentRuntimeFor?(stage: StageContext): AgentRuntime | undefined;
   /** Optional: the sandbox of `media.exec` jobs (studix_media_exec). Without it those jobs fail UNAVAILABLE. */
   mediaExec?: { runner: MediaExecRunner; centsPerMinute: number };
+  /** Optional: the skill sandbox of `composition.run` jobs. Without it those jobs fail UNAVAILABLE. */
+  compositionRun?: { runner: CompositionRunner; centsPerMinute: number };
   /** Release adapter resources (HTTP agents, clients) after the pool has drained. */
   close?(): Promise<void>;
 }
@@ -149,6 +153,10 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
       createMediaExecWorkflow({
         ...(deps.mediaExec ? { runner: deps.mediaExec.runner } : {}),
         centsPerMinute: deps.mediaExec?.centsPerMinute ?? 0,
+      }),
+      createCompositionRunWorkflow({
+        ...(deps.compositionRun ? { runner: deps.compositionRun.runner } : {}),
+        centsPerMinute: deps.compositionRun?.centsPerMinute ?? 0,
       }),
     ],
   });
