@@ -4,6 +4,7 @@ import {
   type AgentJobStatus,
   type AgentRuntimeInfo,
   type AgentRuntimeName,
+  type AgentStreamMessage,
   api,
   type CreateVideoRequest,
   type Job,
@@ -179,7 +180,59 @@ function reduce(state: RunState, event: AgentChatEvent): RunState {
   }
 }
 
-const FINAL = new Set(["succeeded", "failed", "cancelled"]);
+export const FINAL = new Set(["succeeded", "failed", "cancelled"]);
+
+/**
+ * One job's live agent run: streams its stored events from the start and folds them into blocks. Reconnects resume
+ * after the last event shown, so a dropped connection never repeats or skips steps.
+ */
+export function useAgentRun(jobId: string, onMessage?: (message: AgentStreamMessage) => void) {
+  const [run, setRun] = useState<RunState>({ blocks: [] });
+  const [job, setJob] = useState<AgentJobStatus>();
+  const [ended, setEnded] = useState(false);
+  const [streamError, setStreamError] = useState<unknown>();
+  const listener = useRef(onMessage);
+  listener.current = onMessage;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let lastId: string | undefined;
+    let done = false;
+    setRun({ blocks: [] });
+    setEnded(false);
+    void (async () => {
+      while (!done && !controller.signal.aborted) {
+        try {
+          await streamAgentEvents(
+            jobId,
+            lastId,
+            (message) => {
+              if (message.kind === "agent") {
+                lastId = message.eventId;
+                setRun((state) => reduce(state, message.event));
+              } else if (message.kind === "job") {
+                setJob(message.job);
+              } else {
+                done = true;
+              }
+              listener.current?.(message);
+            },
+            controller.signal,
+          );
+          setStreamError(undefined);
+        } catch (e) {
+          if (controller.signal.aborted) return;
+          setStreamError(e);
+        }
+        if (!done) await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      if (done && !controller.signal.aborted) setEnded(true);
+    })();
+    return () => controller.abort();
+  }, [jobId]);
+
+  return { run, job, ended, streamError, setStreamError };
+}
 
 function TurnView({
   turn,
@@ -192,54 +245,28 @@ function TurnView({
   onRunning(value: boolean): void;
   onActivity(): void;
 }) {
-  const [run, setRun] = useState<RunState>({ blocks: [] });
-  const [job, setJob] = useState<AgentJobStatus>();
   const [detail, setDetail] = useState<Job>();
-  const [streamError, setStreamError] = useState<unknown>();
   const [stopping, setStopping] = useState(false);
   const callbacks = useRef({ onSummary, onRunning, onActivity });
   callbacks.current = { onSummary, onRunning, onActivity };
+  const { run, job, ended, streamError, setStreamError } = useAgentRun(turn.jobId, (message) => {
+    if (message.kind === "job") callbacks.current.onRunning(!FINAL.has(message.job.status));
+    callbacks.current.onActivity();
+  });
 
   useEffect(() => {
-    const controller = new AbortController();
-    let lastId: string | undefined;
-    let ended = false;
-    setRun({ blocks: [] });
-    void (async () => {
-      // Reconnects resume after the last event shown, so a dropped connection never repeats or skips steps.
-      while (!ended && !controller.signal.aborted) {
-        try {
-          await streamAgentEvents(
-            turn.jobId,
-            lastId,
-            (message) => {
-              if (message.kind === "agent") {
-                lastId = message.eventId;
-                setRun((state) => reduce(state, message.event));
-              } else if (message.kind === "job") {
-                setJob(message.job);
-                callbacks.current.onRunning(!FINAL.has(message.job.status));
-              } else {
-                ended = true;
-              }
-              callbacks.current.onActivity();
-            },
-            controller.signal,
-          );
-          setStreamError(undefined);
-        } catch (e) {
-          if (controller.signal.aborted) return;
-          setStreamError(e);
-        }
-        if (!ended) await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-      if (ended && !controller.signal.aborted) {
-        const { job: full } = await api.job(turn.jobId).catch(() => ({ job: undefined }));
-        if (full) setDetail(full);
-      }
-    })();
-    return () => controller.abort();
-  }, [turn.jobId]);
+    if (!ended) return;
+    let cancelled = false;
+    void api
+      .job(turn.jobId)
+      .then(({ job: full }) => {
+        if (!cancelled) setDetail(full);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [ended, turn.jobId]);
 
   const reply = run.blocks.filter((b) => b.kind === "message").at(-1);
   useEffect(() => {
@@ -322,7 +349,7 @@ function mediaNames(text: string): string[] {
   return [...new Set(text.match(MEDIA) ?? [])].slice(0, 8);
 }
 
-function BlockView({ block }: { block: Block }) {
+export function BlockView({ block }: { block: Block }) {
   if (block.kind === "message") return <div className="chat-bubble chat-text">{block.text}</div>;
   if (block.kind === "reasoning") {
     return (

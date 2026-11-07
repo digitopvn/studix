@@ -1,9 +1,39 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Job } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
+import { BlockView, FINAL, useAgentRun } from "./agent-chat-page.tsx";
 
 const ACTIVE = new Set(["queued", "running", "waiting_approval", "waiting_host"]);
 const POLL_MS = 3000;
+/** Agent run events render as the chat does, not as raw activity rows. */
+const AGENT_EVENT = "agent.event";
+
+/** The job's agent steps with the chat's own blocks: messages, reasoning, tool cards. Oldest first, follows the tail. */
+function AgentRunLog({ jobId }: { jobId: string }) {
+  const { run, job } = useAgentRun(jobId);
+  const end = useRef<HTMLDivElement>(null);
+  const count = run.blocks.length;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll again whenever a block arrives.
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "nearest" });
+  }, [count]);
+  if (count === 0) return null;
+  return (
+    <div className="chat-agent job-agent-log">
+      <div className="chat-meta">
+        <strong>Agent run</strong>
+        <Link to={`/chat/${jobId}`}>Open as chat</Link>
+      </div>
+      {run.blocks.map((block, i) => (
+        <BlockView key={block.kind === "tool" ? block.id : `${block.kind}-${i}`} block={block} />
+      ))}
+      {job && !FINAL.has(job.status) && (
+        <div className="chat-typing" role="status" aria-label="Agent is working" />
+      )}
+      <div ref={end} />
+    </div>
+  );
+}
 
 function durationOf(startedAt?: string, finishedAt?: string): string {
   if (!startedAt) return "";
@@ -194,18 +224,21 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
       )}
       {data && (
         <Section title="Activity">
-          {data.activity.length === 0 ? (
+          <AgentRunLog jobId={jobId} />
+          {data.activity.filter((a) => a.name !== AGENT_EVENT).length === 0 ? (
             <Empty>No activity recorded.</Empty>
           ) : (
             <ul className="list activity">
-              {data.activity.map((a) => (
-                <li key={a.id} className={`level-${a.level}`}>
-                  <span className="muted">{formatDate(a.createdAt)}</span> <code>{a.name}</code>
-                  {a.stage && <span className="muted"> [{a.stage}]</span>}
-                  {a.message && <span> {a.message}</span>}
-                  {a.durationMs !== undefined && <span className="muted"> ({a.durationMs}ms)</span>}
-                </li>
-              ))}
+              {data.activity
+                .filter((a) => a.name !== AGENT_EVENT)
+                .map((a) => (
+                  <li key={a.id} className={`level-${a.level}`}>
+                    <span className="muted">{formatDate(a.createdAt)}</span> <code>{a.name}</code>
+                    {a.stage && <span className="muted"> [{a.stage}]</span>}
+                    {a.message && <span> {a.message}</span>}
+                    {a.durationMs !== undefined && <span className="muted"> ({a.durationMs}ms)</span>}
+                  </li>
+                ))}
             </ul>
           )}
         </Section>
