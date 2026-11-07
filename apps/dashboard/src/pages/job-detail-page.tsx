@@ -8,7 +8,7 @@ import {
   type Stage,
 } from "../api-client.ts";
 import { Empty, ErrorBanner, formatDate, Link, Section, StatusBadge, useAsync } from "../ui.tsx";
-import { BlockView, FINAL, useAgentRun } from "./agent-chat-page.tsx";
+import { BlockView, FINAL, storedMedia, useAgentRun } from "./agent-chat-page.tsx";
 import { formatCents, formatJobAgent, formatStageRuntime, formatStageSpend } from "./job-agent.ts";
 
 const ACTIVE = new Set(["queued", "running", "waiting_approval", "waiting_host"]);
@@ -33,7 +33,11 @@ function AgentRunLog({ jobId, agentRun }: { jobId: string; agentRun: ReturnType<
         <Link to={`/chat/${jobId}`}>Open as chat</Link>
       </div>
       {run.blocks.map((block, i) => (
-        <BlockView key={block.kind === "tool" ? block.id : `${block.kind}-${i}`} block={block} />
+        <BlockView
+          key={block.kind === "tool" ? block.id : `${block.kind}-${i}`}
+          block={block}
+          stored={storedMedia(run.blocks)}
+        />
       ))}
       {job && !FINAL.has(job.status) && (
         <div className="chat-typing" role="status" aria-label="Agent is working" />

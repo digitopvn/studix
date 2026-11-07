@@ -403,8 +403,12 @@ function TurnView({
         {run.blocks.length === 0 && live && (
           <p className="muted chat-wait">Waiting for the agent to start…</p>
         )}
-        {run.blocks.map((block, i) => (
-          <BlockView key={block.kind === "tool" ? block.id : `${block.kind}-${i}`} block={block} />
+        {run.blocks.map((block, i, all) => (
+          <BlockView
+            key={block.kind === "tool" ? block.id : `${block.kind}-${i}`}
+            block={block}
+            stored={storedMedia(all)}
+          />
         ))}
         {live && run.blocks.length > 0 && (
           <div className="chat-typing" role="status" aria-label="Agent is working" />
@@ -427,16 +431,33 @@ function TurnView({
   );
 }
 
+const fileName = (path: string) => path.split(/[?#]/)[0]?.split("/").pop() ?? path;
+
+/**
+ * File name → signed URL of every artifact the run stored, so a sandbox path the agent named (for example
+ * /work/out/video.mp4 in a Bash command) previews once that file was kept.
+ */
+export function storedMedia(blocks: readonly Block[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const b of blocks) {
+    if (b.kind === "artifact" && b.url) map.set(fileName(b.name), b.url);
+  }
+  return map;
+}
+
 function mediaNames(text: string): string[] {
   return [...new Set(text.match(MEDIA) ?? [])].slice(0, 8);
 }
 
 /** Images, video and audio the agent names: a URL plays inline; a sandbox path shows as a name until stored. */
-export function MediaStrip({ names }: { names: string[] }) {
+export function MediaStrip({ names, stored }: { names: string[]; stored?: ReadonlyMap<string, string> }) {
   if (!names.length) return null;
+  const resolved = [
+    ...new Set(names.map((n) => (/^https?:\/\//.test(n) ? n : (stored?.get(fileName(n)) ?? n)))),
+  ];
   return (
     <div className="chat-media">
-      {names.map((name) => {
+      {resolved.map((name) => {
         const ext = /\.(\w+)(?:\?|$)/.exec(name)?.[1]?.toLowerCase() ?? "";
         const label = name.split(/[?#]/)[0]?.split("/").pop() ?? name;
         if (!/^https?:\/\//.test(name)) {
@@ -474,12 +495,12 @@ export function MediaStrip({ names }: { names: string[] }) {
   );
 }
 
-export function BlockView({ block }: { block: Block }) {
+export function BlockView({ block, stored }: { block: Block; stored?: ReadonlyMap<string, string> }) {
   if (block.kind === "message") {
     return (
       <>
         <div className="chat-bubble chat-text">{block.text}</div>
-        <MediaStrip names={mediaNames(block.text)} />
+        <MediaStrip names={mediaNames(block.text)} stored={stored} />
       </>
     );
   }
@@ -521,7 +542,7 @@ export function BlockView({ block }: { block: Block }) {
           </>
         )}
       </details>
-      <MediaStrip names={media} />
+      <MediaStrip names={media} stored={stored} />
     </>
   );
 }

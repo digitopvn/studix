@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type ProjectReview } from "../../api-client.ts";
 import { jobTitle } from "../../shell/job-labels.ts";
 import { formatDate, Link, StatusBadge } from "../../ui.tsx";
-import { BlockView, useAgentRun } from "../agent-chat-page.tsx";
+import { BlockView, storedMedia, useAgentRun } from "../agent-chat-page.tsx";
 
 const PAGE = 8;
 const LIVE = new Set(["queued", "running", "rendering", "waiting", "waiting_approval"]);
@@ -46,6 +46,7 @@ function RunSteps({ job }: { job: ProjectJob }) {
   const [shown, setShown] = useState(PAGE);
   const steps = [...run.blocks].reverse();
   const live = LIVE.has(job.status);
+  const stored = storedMedia(steps);
   return (
     <div className="pv-run-steps">
       {live && <div className="chat-typing" role="status" aria-label="Agent is working" />}
@@ -56,6 +57,7 @@ function RunSteps({ job }: { job: ProjectJob }) {
         <BlockView
           key={block.kind === "tool" ? block.id : `${block.kind}-${steps.length - i}`}
           block={block}
+          stored={stored}
         />
       ))}
       {steps.length > shown && (
