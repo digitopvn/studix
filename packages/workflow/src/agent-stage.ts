@@ -9,7 +9,7 @@ import type {
   Approval,
   FundingSource,
 } from "@studix/core";
-import { AGENT_RUNTIMES, FUNDING_SOURCES, REASONING_EFFORTS } from "@studix/core";
+import { AGENT_RUNTIMES, FUNDING_SOURCES, REASONING_EFFORTS, stageAgentSelection } from "@studix/core";
 import { newId, redactDeep, StudixError, toStudixError } from "@studix/shared";
 import { z } from "zod";
 import { stageCacheKey } from "./stage-runner.ts";
@@ -210,7 +210,15 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
     inputSchema: spec.inputSchema,
     outputSchema: spec.outputSchema,
     retry: "never",
-    cacheKey: (s) => (spec.cacheable === false ? undefined : stageCacheKey(spec.name, spec.version, s.input)),
+    // The agent that runs the stage is part of the key: another runtime, model, effort or connection (a role's or
+    // the job's) must not reuse this output.
+    cacheKey: (s) =>
+      spec.cacheable === false
+        ? undefined
+        : stageCacheKey(spec.name, spec.version, {
+            input: s.input,
+            agent: agentKeyOf(s.job.payload, spec.name),
+          }),
     // Host work costs Studix nothing; an invalid mode is reported by `run`, so the estimate stays conservative.
     // The reservation never exceeds what is left of the job budget: `run` caps the agent at that amount.
     estimateCostCents: (s) =>
@@ -342,4 +350,15 @@ function remainingBudget(job: { budgetCents?: number; spentCents: number }): num
   return job.budgetCents === undefined
     ? Number.POSITIVE_INFINITY
     : Math.max(0, job.budgetCents - job.spentCents);
+}
+
+/** What picks the agent of one stage: its selection (role or job agent), the roles, the mode and the legacy planner. */
+export function agentKeyOf(payload: unknown, stage: string): unknown {
+  const p = (payload ?? {}) as { roles?: unknown; agentMode?: unknown; planner?: unknown };
+  return {
+    selection: stageAgentSelection(payload, stage) ?? null,
+    roles: p.roles ?? null,
+    agentMode: p.agentMode ?? null,
+    planner: p.planner ?? null,
+  };
 }
