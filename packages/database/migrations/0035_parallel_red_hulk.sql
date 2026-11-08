@@ -1,0 +1,1 @@
+CREATE INDEX "activity_events_created_idx" ON "activity_events" USING btree ("created_at") WHERE "activity_events"."name" <> 'agent.event';

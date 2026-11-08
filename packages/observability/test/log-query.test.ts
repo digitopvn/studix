@@ -357,6 +357,53 @@ describe("studix_tail_logs service", () => {
     expect(done.jobDone).toBe(true);
   });
 
+  it("delivers every event of a busy job once across paged and idle polls", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    for (let i = 0; i < 300; i++) {
+      await seed(
+        ctx,
+        { id: `act_${String(i).padStart(4, "0")}`, name: `step.${i}`, jobId: "job_1" },
+        new Date(NOW.getTime() - 5000 + i * 10),
+      );
+    }
+    const got: string[] = [];
+    let cursor: string | undefined;
+    for (let call = 0; call < 12; call++) {
+      const res = await service.tail(ctx, { ...input, ...(cursor ? { cursor } : {}) }, { job: running });
+      got.push(...res.events.map((e) => String(e.name)));
+      cursor = res.nextCursor;
+      if (!cursor) throw new Error("no cursor");
+    }
+    expect(got).toHaveLength(300);
+    expect(new Set(got).size).toBe(300);
+  });
+
+  it("drains a large batch of late events without repeats and keeps the cursor valid", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    await seed(ctx, { id: "act_9000", name: "head", jobId: "job_1" }, new Date(NOW.getTime() - 3000));
+    const first = await service.tail(ctx, input, { job: running });
+    expect(first.events.map((e) => e.name)).toEqual(["head"]);
+    for (let i = 0; i < 150; i++) {
+      await seed(
+        ctx,
+        { id: `act_1${String(i).padStart(3, "0")}`, name: `late.${i}`, jobId: "job_1" },
+        new Date(NOW.getTime() - 2500 + i),
+      );
+    }
+    const got: string[] = [];
+    let cursor = first.nextCursor;
+    for (let call = 0; call < 6; call++) {
+      const res = await service.tail(ctx, { ...input, ...(cursor ? { cursor } : {}) }, { job: running });
+      got.push(...res.events.map((e) => String(e.name)));
+      cursor = res.nextCursor;
+      if (!cursor) throw new Error("no cursor");
+    }
+    expect(got).toHaveLength(150);
+    expect(new Set(got).size).toBe(150);
+  });
+
   it("keeps the cursor small however many events a job writes", async () => {
     const { service, seed } = setup();
     const ctx = owner();

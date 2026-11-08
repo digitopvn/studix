@@ -1,5 +1,5 @@
 {
-  "id": "c215c479-a8d6-4c75-b004-56758c18931c",
+  "id": "8e6187a1-5e1b-41e2-bb7a-91ca806667bc",
   "prevId": "92eb0b17-6d17-4c7c-8cf9-f1e3c492ccfa",
   "version": "7",
   "dialect": "postgresql",
@@ -6136,6 +6136,7 @@
             }
           ],
           "isUnique": false,
+          "where": "\"activity_events\".\"name\" <> 'agent.event'",
           "concurrently": false,
           "method": "btree",
           "with": {}

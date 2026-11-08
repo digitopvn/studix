@@ -421,7 +421,9 @@ database the server runs on. The server answers only for its own environment,
 signed with a key derived from `BETTER_AUTH_SECRET`, so rotating that secret
 invalidates open cursors (clients start again without one). The worker deletes
 activity events older than 7 days at startup and hourly (batches of 2,000, at
-most 100,000 per run, index `activity_events_created_idx`); log lines older
+most 100,000 per run, partial index `activity_events_created_idx`, which leaves
+the job chat out; building it locks writes to `activity_events` for the time it
+takes, so on a large table create it first with `CREATE INDEX CONCURRENTLY`); log lines older
 than that cannot be recovered, and a large first backlog clears over several
 runs. TOSE runtime and
 build logs and Cloudflare Workers logs are not connected: they wait for

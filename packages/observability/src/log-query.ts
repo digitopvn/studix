@@ -29,7 +29,7 @@ const TAIL_POLL_MS = 1000;
  */
 export const TAIL_LOOKBACK_MS = 10_000;
 /** Delivered ids a tail cursor remembers, to tell late events from ones already returned. */
-const MAX_SEEN_IDS = 40;
+const MAX_SEEN_IDS = 60;
 const LATE_READ_LIMIT = 1000;
 /** Concurrent tail calls one workspace may hold open. */
 const MAX_TAILS_PER_WORKSPACE = 4;
@@ -106,8 +106,8 @@ export interface LogTailResult extends LogQueryResult {
   jobDone: boolean;
   jobStatus: string;
   /**
-   * The stream lost events. Writers in other processes can commit late, but each poll re-reads a trailing window and
-   * returns those events, so no loss is detected or expected inside it; this stays false.
+   * An event may have been missed. Writers in other processes can commit late; each poll re-reads a trailing window
+   * and returns those events. This is true only when a very busy job forced that window below its 10 seconds.
    */
   gapDetected: boolean;
 }
@@ -224,6 +224,8 @@ interface CursorPayload {
   seen?: string[];
   /** Tail only: start of the trailing window (epoch ms). */
   floor?: number;
+  /** Tail only: late events up to this id were already returned while more were waiting. */
+  lu?: string;
   from: string;
   to: string;
   exp: number;
@@ -393,6 +395,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
       to: Date;
       afterId: string;
       seen: ReadonlySet<string>;
+      lateAfter?: string | undefined;
       level?: ActivityLevel | undefined;
       services?: readonly LogServiceName[] | undefined;
     },
@@ -410,7 +413,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
     const late: LogEvent[] = [];
     for (const row of rows) {
       window.set(row.id, row.createdAt.getTime());
-      if (row.id > q.afterId || q.seen.has(row.id)) continue;
+      if (row.id > q.afterId || q.seen.has(row.id) || (q.lateAfter !== undefined && row.id <= q.lateAfter))
+        continue;
       const event = normalize(row, q.environment);
       if (wanted && (!event.service || !wanted.includes(event.service))) continue;
       late.push(event);
@@ -661,6 +665,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
         let afterId: string | undefined;
         let floor: number | undefined;
         let seen = new Set<string>();
+        let lateAfter: string | undefined;
         if (input.cursor) {
           const payload = decodeCursor(deps.cursorSecret, input.cursor);
           if (
@@ -674,6 +679,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
           if (payload.exp < current.getTime()) throw invalidCursor("it expired");
           afterId = payload.id || undefined;
           floor = payload.floor;
+          lateAfter = payload.lu;
           seen = new Set(payload.seen ?? []);
         }
         const open = tails.get(ctx.workspaceId) ?? 0;
@@ -710,6 +716,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
         let page: Awaited<ReturnType<typeof fetchActivity>> = { events: [], hasMore: false };
         let jobDone = job.terminal;
         let delivered: LogEvent[] = [];
+        let windowShortened = false;
         for (;;) {
           // Read the job before the events: a job already final here has written everything the read sees.
           job = await options.job(ctx, input.jobId);
@@ -724,6 +731,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
                   to,
                   afterId,
                   seen,
+                  lateAfter,
                   level: input.level,
                   services: input.services,
                 })
@@ -738,26 +746,56 @@ export function createLogService(deps: LogServiceDeps): LogService {
             afterId,
             limit: DEFAULT_LIMIT,
           });
-          const late = (trailing?.late ?? []).slice(0, DEFAULT_LIMIT);
-          const lateCut = (trailing?.late.length ?? 0) > late.length;
-          delivered = [...late, ...page.events];
+          // Late events go first, within the same count and byte bounds as a page.
+          const lateAll = trailing?.late ?? [];
+          const late: LogEvent[] = [];
+          let lateBytes = 0;
+          for (const e of lateAll) {
+            const size = Buffer.byteLength(JSON.stringify(e));
+            if (
+              late.length >= DEFAULT_LIMIT ||
+              (late.length > 0 && lateBytes + size > MAX_RESPONSE_BYTES / 2)
+            )
+              break;
+            late.push(e);
+            lateBytes += size;
+          }
+          const lateCut = lateAll.length > late.length;
+          // While late events are still waiting, the page is left for the next call so the cursor stays where it is.
+          const pageEvents = lateCut ? [] : page.events;
+          delivered = [...late, ...pageEvents];
           jobDone = job.terminal && !page.hasMore && !lateCut;
-          if (page.resumeId) afterId = page.resumeId;
+          if (!lateCut && page.resumeId) afterId = page.resumeId;
           if (lateCut) {
-            // Keep the window where it was so the events not returned yet are found again.
-            for (const e of late) seen.add(e.eventId);
+            // Late events come in id order, so "returned up to here" is one id, however many there are.
+            lateAfter = late[late.length - 1]?.eventId;
+            if (lateAfter === undefined) throw new StudixError("INTERNAL", "late events could not be paged");
+            floor ??= at.getTime() - TAIL_LOOKBACK_MS;
           } else {
-            // Slide the window to the last read and remember which ids in it were delivered or are in the page.
+            lateAfter = undefined;
+          }
+          if (!lateCut) {
+            // The window only moves forward. It keeps the ids delivered at or before the cursor, which is all a late
+            // event can be confused with, newest MAX_SEEN_IDS of them.
             const known = new Map(trailing?.window ?? []);
             for (const e of delivered) known.set(e.eventId, Date.parse(e.timestamp));
-            let nextFloor = at.getTime() - TAIL_LOOKBACK_MS;
-            const inWindow = [...known.entries()]
-              .filter(([, ms]) => ms >= nextFloor)
+            const wanted = Math.max(floor ?? 0, lateCut ? (floor ?? 0) : at.getTime() - TAIL_LOOKBACK_MS);
+            let nextFloor = wanted;
+            const tracked = [...known.entries()]
+              .filter(([id, ms]) => ms >= nextFloor && (afterId === undefined || id <= afterId))
               .sort(([x], [y]) => (x < y ? -1 : 1));
-            const keep = inWindow.slice(-MAX_SEEN_IDS);
-            // More ids than a cursor can carry: the window starts at the oldest id still tracked.
-            if (keep.length < inWindow.length && keep[0]) nextFloor = keep[0][1];
-            seen = new Set(keep.map(([id]) => id));
+            if (tracked.length > MAX_SEEN_IDS) {
+              const keep = tracked.slice(-MAX_SEEN_IDS);
+              // More ids than a cursor can carry: protection starts after the oldest dropped one, and says so.
+              const cut = tracked[tracked.length - MAX_SEEN_IDS - 1];
+              if (cut) {
+                nextFloor = Math.max(nextFloor, cut[1] + 1);
+                if (nextFloor > wanted) windowShortened = true;
+              }
+              seen = new Set(keep.filter(([, ms]) => ms >= nextFloor).map(([id]) => id));
+            } else {
+              seen = new Set(tracked.map(([id]) => id));
+            }
             floor = nextFloor;
           }
           if (delivered.length > 0 || jobDone || options.signal?.aborted) break;
@@ -775,6 +813,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
               h: hash,
               id: cursorId,
               ...(floor !== undefined ? { floor, seen: [...seen].sort() } : {}),
+              ...(lateAfter !== undefined ? { lu: lateAfter } : {}),
               from: current.toISOString(),
               to: current.toISOString(),
               exp: now().getTime() + CURSOR_TTL_MS,
@@ -790,7 +829,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
           sourceStatus: statuses,
           jobDone,
           jobStatus: job.status,
-          gapDetected: false,
+          gapDetected: windowShortened,
         };
       } catch (error) {
         return fail(ctx, "logs.tail", summary, error);

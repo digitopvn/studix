@@ -20,7 +20,7 @@ import {
   inArray,
   lt,
   lte,
-  notInArray,
+  ne,
   or,
   type SQL,
   sql,
@@ -258,12 +258,11 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
         .select({ id: activityEvents.id })
         .from(activityEvents)
         .where(
-          and(
-            lt(activityEvents.createdAt, before),
-            keep.length > 0 ? notInArray(activityEvents.name, [...keep]) : undefined,
-          ),
+          and(lt(activityEvents.createdAt, before), ...keep.map((name) => ne(activityEvents.name, name))),
         )
-        .limit(limit);
+        .limit(limit)
+        // Replicas sweeping at the same moment take different rows instead of waiting on each other.
+        .for("update", { skipLocked: true });
       const removed = await db.delete(activityEvents).where(inArray(activityEvents.id, doomed)).returning({
         id: activityEvents.id,
       });
