@@ -82,10 +82,14 @@ function unauthenticated(message: string): StudixError {
 
 function roleForScopes(scopes: readonly Permission[]): Role | "custom" {
   const set = new Set(scopes);
+  const matches = (perms: readonly Permission[]) =>
+    perms.length === set.size && perms.every((p) => set.has(p));
   for (const role of ROLES) {
-    // A key can never carry logs:system:read, so the operator role is matched without it.
+    // A key can never carry logs:system:read, so the operator role is matched without it. Operator keys made
+    // before log access existed lack logs:read too and still count as operator keys.
     const perms = [...ROLE_PERMISSIONS[role]].filter((p) => p !== "logs:system:read");
-    if (perms.length === set.size && perms.every((p) => set.has(p))) return role;
+    if (matches(perms)) return role;
+    if (role === "operator" && matches(perms.filter((p) => p !== "logs:read"))) return role;
   }
   return "custom";
 }

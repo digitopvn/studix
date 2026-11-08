@@ -213,10 +213,10 @@ function levelsFrom(min: ActivityLevel): ActivityLevel[] {
   return ACTIVITY_LEVELS.slice(ACTIVITY_LEVELS.indexOf(min));
 }
 
-/** Case-insensitive substring match on name or message; LIKE wildcards in the term are literal. */
+/** Case-insensitive substring match on name, message or stored attributes; LIKE wildcards in the term are literal. */
 function textMatch(term: string): SQL {
   const pattern = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-  return sql`(${activityEvents.name} ilike ${pattern} or ${activityEvents.message} ilike ${pattern})`;
+  return sql`(${activityEvents.name} ilike ${pattern} or ${activityEvents.message} ilike ${pattern} or ${activityEvents.attributes}::text ilike ${pattern})`;
 }
 
 export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRepository {

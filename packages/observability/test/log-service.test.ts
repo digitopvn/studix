@@ -17,7 +17,7 @@ function setup(options: { environment?: "production" | "development" } = {}) {
   const activity = createInMemoryActivityRepository(clock);
   const audit = createInMemoryAuditRepository(clock);
   const owner = testTenant({ role: "owner" });
-  const jobs = new Map<string, { workspaceId: string; status: JobStatus }>();
+  const jobs = new Map<string, { workspaceId: string; status: JobStatus; endedAt?: Date }>();
   const sleeps: number[] = [];
   const service = createLogService({
     activity,
@@ -25,7 +25,9 @@ function setup(options: { environment?: "production" | "development" } = {}) {
     jobs: {
       async get(ctx: TenantContext, id: string) {
         const job = jobs.get(id);
-        return job && job.workspaceId === ctx.workspaceId ? ({ id, status: job.status } as Job) : undefined;
+        return job && job.workspaceId === ctx.workspaceId
+          ? ({ id, status: job.status, updatedAt: job.endedAt ?? START } as Job)
+          : undefined;
       },
     },
     environment: options.environment ?? "production",
@@ -271,19 +273,24 @@ describe("studix_query_logs service", () => {
 });
 
 describe("studix_tail_logs service", () => {
-  it("streams a job's events oldest first, then reports done once the job has ended", async () => {
-    const { owner, service, log, jobs } = setup();
+  const SETTLE = 2000;
+
+  it("streams a job's settled events oldest first, then reports done once the job has ended and settled", async () => {
+    const { owner, service, log, jobs, clock } = setup();
     jobs.set("job_1", { workspaceId: owner.workspaceId, status: "running" });
     await log(owner, { jobId: "job_1", message: "a" });
     await log(owner, { jobId: "job_1", message: "b" });
     await log(owner, { jobId: "job_2", message: "other job" });
+    clock.advance(SETTLE);
     const first = await service.tail(owner, { jobId: "job_1", environment: "production" });
     expect(first.events.map((e) => e.message)).toEqual(["a", "b"]);
     expect(first).toMatchObject({ done: false, gapDetected: false, jobStatus: "running" });
     expect(first.coverage).toBe("partial");
 
     await log(owner, { jobId: "job_1", message: "c" });
-    jobs.set("job_1", { workspaceId: owner.workspaceId, status: "succeeded" });
+    clock.advance(SETTLE);
+    jobs.set("job_1", { workspaceId: owner.workspaceId, status: "succeeded", endedAt: clock.now() });
+    clock.advance(SETTLE);
     const second = await service.tail(owner, {
       jobId: "job_1",
       environment: "production",
@@ -299,6 +306,40 @@ describe("studix_tail_logs service", () => {
     expect(third).toMatchObject({ events: [], done: true, jobStatus: "succeeded" });
   });
 
+  it("holds back events newer than the settle margin so a late commit is not skipped", async () => {
+    const { owner, service, log, jobs, clock } = setup();
+    jobs.set("job_1", { workspaceId: owner.workspaceId, status: "running" });
+    await log(owner, { jobId: "job_1", message: "old" });
+    clock.advance(SETTLE + 1);
+    await log(owner, { jobId: "job_1", message: "fresh" });
+    const first = await service.tail(owner, { jobId: "job_1", environment: "production" });
+    expect(first.events.map((e) => e.message)).toEqual(["old"]);
+    clock.advance(SETTLE);
+    const second = await service.tail(owner, {
+      jobId: "job_1",
+      environment: "production",
+      cursor: first.nextCursor,
+    });
+    expect(second.events.map((e) => e.message)).toEqual(["fresh"]);
+  });
+
+  it("does not report done until a finished job has had time for its last events", async () => {
+    const { owner, service, jobs, clock } = setup();
+    jobs.set("job_1", { workspaceId: owner.workspaceId, status: "cancelled", endedAt: clock.now() });
+    const early = await service.tail(owner, { jobId: "job_1", environment: "production" });
+    expect(early).toMatchObject({ events: [], done: false, jobStatus: "cancelled" });
+    clock.advance(SETTLE);
+    const settled = await service.tail(owner, { jobId: "job_1", environment: "production" });
+    expect(settled.done).toBe(true);
+  });
+
+  it("ends for a finished job when the environment is not served, instead of polling forever", async () => {
+    const { owner, service, jobs } = setup({ environment: "development" });
+    jobs.set("job_1", { workspaceId: owner.workspaceId, status: "succeeded" });
+    const result = await service.tail(owner, { jobId: "job_1", environment: "production" });
+    expect(result).toMatchObject({ coverage: "unavailable", done: true });
+  });
+
   it("waits at most waitSeconds, polling at an interval instead of spinning", async () => {
     const { owner, service, jobs, sleeps } = setup();
     jobs.set("job_1", { workspaceId: owner.workspaceId, status: "running" });
@@ -309,15 +350,10 @@ describe("studix_tail_logs service", () => {
     expect(none.events).toEqual([]);
   });
 
-  it("returns as soon as an event arrives during the wait", async () => {
-    const { owner, service, jobs, log, clock } = setup();
+  it("returns as soon as an event settles during the wait", async () => {
+    const { owner, service, jobs, log } = setup();
     jobs.set("job_1", { workspaceId: owner.workspaceId, status: "running" });
-    let polls = 0;
-    const original = clock.advance.bind(clock);
-    clock.advance = (ms: number) => {
-      original(ms);
-      if (++polls === 2) void log(owner, { jobId: "job_1", message: "late" });
-    };
+    await log(owner, { jobId: "job_1", message: "late" });
     const result = await service.tail(owner, { jobId: "job_1", environment: "production", waitSeconds: 10 });
     expect(result.events.map((e) => e.message)).toEqual(["late"]);
   });
@@ -326,6 +362,7 @@ describe("studix_tail_logs service", () => {
     const { owner, service, jobs, log, clock } = setup();
     jobs.set("job_1", { workspaceId: owner.workspaceId, status: "running" });
     await log(owner, { jobId: "job_1", message: "a" });
+    clock.advance(SETTLE);
     const first = await service.tail(owner, { jobId: "job_1", environment: "production" });
     await log(owner, { jobId: "job_1", message: "b" });
     clock.advance(11 * 60_000);
@@ -339,5 +376,38 @@ describe("studix_tail_logs service", () => {
     expect(
       await code(service.tail(owner, { jobId: "job_1", environment: "production", cursor: "nope.nope" })),
     ).toBe("VALIDATION");
+  });
+});
+
+describe("what a log line says", () => {
+  it("shows an allowlisted, redacted summary of attributes when an event has no message", async () => {
+    const { owner, service, activity } = setup();
+    await activity.append(owner, {
+      name: "agent.event",
+      level: "error",
+      attributes: {
+        type: "tool_start",
+        name: "bash",
+        error: "ffmpeg failed with Bearer abcdefghijklmnopqrstuvwx",
+        args: { secret: "never shown" },
+      },
+    });
+    const result = await service.query(owner, base);
+    expect(result.events[0]?.message).toBe(
+      "agent.event type=tool_start name=bash error=ffmpeg failed with Bearer [redacted]",
+    );
+    expect(JSON.stringify(result)).not.toContain("never shown");
+    // The search reaches the same stored text.
+    expect((await service.query(owner, { ...base, search: "ffmpeg" })).events).toHaveLength(1);
+  });
+
+  it("lets page 2 through even when the window began near the 7-day limit", async () => {
+    const { owner, service, log, clock } = setup();
+    for (let i = 0; i < 3; i++) await log(owner);
+    const from = new Date(clock.now().getTime() - LOG_RETENTION_DAYS * 86_400_000 + 60_000);
+    const first = await service.query(owner, { ...base, from, limit: 2 });
+    clock.advance(5 * 60_000);
+    const second = await service.query(owner, { ...base, limit: 2, cursor: first.nextCursor });
+    expect(second.events).toHaveLength(1);
   });
 });

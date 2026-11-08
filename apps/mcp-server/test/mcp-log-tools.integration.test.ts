@@ -141,6 +141,8 @@ describe("studix_query_logs and studix_tail_logs over MCP (Postgres)", () => {
 
   it("tails a job: events, then done once the job has ended", async () => {
     const client = await app.connect(ownerKey);
+    // The tail holds back events newer than its 2 second settle margin.
+    await new Promise((resolve) => setTimeout(resolve, 2100));
     const first = await call(client, "studix_tail_logs", { environment: "development", jobId: jobA });
     expect(eventsOf(first).length).toBe(2);
     expect(first.data).toMatchObject({ done: false, gapDetected: false });
@@ -149,7 +151,7 @@ describe("studix_query_logs and studix_tail_logs over MCP (Postgres)", () => {
       environment: "development",
       jobId: jobA,
       cursor: first.data?.nextCursor,
-      waitSeconds: 2,
+      waitSeconds: 5,
     });
     expect(second.data).toMatchObject({ events: [], done: true, jobStatus: "succeeded" });
     expect(second.next).toEqual([]);

@@ -203,7 +203,8 @@ export function createInMemoryActivityRepository(clock: Clock): ActivityReposito
             (levels === undefined || levels.includes(e.level)) &&
             (term === undefined ||
               e.name.toLowerCase().includes(term) ||
-              (e.message ?? "").toLowerCase().includes(term)) &&
+              (e.message ?? "").toLowerCase().includes(term) ||
+              JSON.stringify(e.attributes).toLowerCase().includes(term)) &&
             (query.cursor === undefined || (ascending ? e.id > query.cursor : e.id < query.cursor)),
         )
         .sort((a, b) => (a.id < b.id ? -1 : 1) * (ascending ? 1 : -1));

@@ -31,6 +31,12 @@ export const LOG_MAX_LIMIT = 200;
 /** A response never carries more event text than this (the rest is a next page). */
 export const LOG_MAX_RESPONSE_BYTES = 64 * 1024;
 const TAIL_POLL_MS = 1000;
+/**
+ * Events of one job come from several processes and get their id before they commit, so a tail holds back
+ * the newest moments (it never moves its cursor past an event that may still be committing), and a job that
+ * just ended is not reported done until its last writers have had the same time to finish.
+ */
+const TAIL_SETTLE_MS = 2000;
 export const LOG_MAX_WAIT_SECONDS = 10;
 
 export const LOG_ENVIRONMENTS = ["production", "development"] as const;
@@ -164,12 +170,47 @@ function validation(message: string, suggestedAction: string): StudixError {
   return new StudixError("VALIDATION", message, { suggestedAction });
 }
 
+const SUMMARY_KEYS = [
+  "type",
+  "status",
+  "name",
+  "tool",
+  "error",
+  "reason",
+  "message",
+  "delta",
+  "text",
+] as const;
+const SUMMARY_VALUE_CHARS = 200;
+
+/**
+ * Most activity events carry no message, only attributes (an agent event is `agent.event` plus its type,
+ * tool, text or failure reason). The line is the event name followed by a short, allowlisted view of those
+ * attributes, so a log reader sees what happened rather than a bare name.
+ */
+function lineOf(event: ActivityEvent): string {
+  if (event.message) return event.message;
+  const parts: string[] = [];
+  for (const key of SUMMARY_KEYS) {
+    const value = event.attributes[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      const text = String(value).replace(/\s+/g, " ").trim();
+      if (text) {
+        parts.push(
+          `${key}=${text.length > SUMMARY_VALUE_CHARS ? `${text.slice(0, SUMMARY_VALUE_CHARS)}…` : text}`,
+        );
+      }
+    }
+  }
+  return parts.length > 0 ? `${event.name} ${parts.join(" ")}` : event.name;
+}
+
 function toLogEvent(event: ActivityEvent, environment: LogEnvironment): LogEvent {
   return {
     eventId: event.id,
     timestamp: event.createdAt.toISOString(),
     level: event.level,
-    message: redact(event.message ?? event.name),
+    message: redact(lineOf(event)),
     environment,
     source: "activity",
     ...(event.projectId ? { projectId: event.projectId } : {}),
@@ -328,6 +369,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
     const bind = binding(ctx, input.environment, filters);
 
     let window: { from: number; to: number } | undefined;
+    let pinnedWindow = false;
     let after: string | undefined;
     if (input.cursor) {
       const read = readLogCursor(deps.secret, input.cursor, bind, now);
@@ -353,6 +395,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
           );
         }
         window = pinned;
+        pinnedWindow = true;
       }
     }
     if (!window) {
@@ -363,7 +406,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
     if (window.from > window.to) {
       throw validation("from must not be after to", "Swap the two timestamps.");
     }
-    if (window.from < now.getTime() - LOG_RETENTION_DAYS * DAY_MS) {
+    // Later pages keep the first page's window, which was valid when the query began.
+    if (!pinnedWindow && window.from < now.getTime() - LOG_RETENTION_DAYS * DAY_MS) {
       throw validation(
         `Logs are available for the last ${LOG_RETENTION_DAYS} days only`,
         `Use a from no earlier than ${new Date(now.getTime() - LOG_RETENTION_DAYS * DAY_MS).toISOString()}.`,
@@ -513,7 +557,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
         sourceStatus,
         gapDetected,
         jobStatus: job.status,
-        done: false,
+        // Nothing here will ever arrive, so a finished job ends the loop instead of polling forever.
+        done: isTerminalJobStatus(job.status),
       };
     }
     if (!usesActivity("all", input.services)) {
@@ -531,9 +576,11 @@ export function createLogService(deps: LogServiceDeps): LogService {
 
     const deadline = clock.now().getTime() + wait * 1000;
     for (;;) {
-      // Status first: events are written before a job finishes, so "finished, nothing new" means done.
       const current = (await deps.jobs.get(ctx, input.jobId)) ?? job;
-      const finished = isTerminalJobStatus(current.status);
+      const nowMs = clock.now().getTime();
+      // A job that ended is "settled" once its last writers (which can log after the status changes) are done.
+      const endedAt = (current.finishedAt ?? current.updatedAt)?.getTime() ?? 0;
+      const settled = isTerminalJobStatus(current.status) && nowMs - endedAt >= TAIL_SETTLE_MS;
       let events: LogEvent[] = [];
       try {
         const page = await deps.activity.list(ctx, {
@@ -542,6 +589,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
           limit: LOG_MAX_LIMIT,
           ...(after ? { cursor: after } : {}),
           since: new Date(now.getTime() - LOG_RETENTION_DAYS * DAY_MS),
+          // Hold back the newest moments so the cursor never passes an event that is still committing.
+          ...(settled ? {} : { until: new Date(nowMs - TAIL_SETTLE_MS) }),
           ...(input.level ? { minLevel: input.level } : {}),
         });
         let bytes = 0;
@@ -568,7 +617,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
       const last = events.at(-1);
       const timedOut = clock.now().getTime() >= deadline || signal?.aborted === true;
       const errored = sourceStatus.activity?.status === "error";
-      if (last || finished || timedOut || errored) {
+      if (last || settled || timedOut || errored) {
         return {
           events,
           nextCursor: next(last?.eventId ?? after),
@@ -576,7 +625,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
           sourceStatus,
           gapDetected,
           jobStatus: current.status,
-          done: finished && events.length === 0 && !errored,
+          done: settled && events.length === 0 && !errored,
         };
       }
       await sleep(Math.min(TAIL_POLL_MS, Math.max(deadline - clock.now().getTime(), 0)), signal);

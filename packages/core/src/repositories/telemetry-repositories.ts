@@ -44,7 +44,7 @@ export interface ActivityFilter {
   until?: Date;
   /** Events at this level or more severe. */
   minLevel?: ActivityLevel;
-  /** Case-insensitive substring of the event name or message. */
+  /** Case-insensitive substring of the event name, message or stored attributes. */
   search?: string;
   order?: "asc" | "desc";
 }

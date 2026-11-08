@@ -102,5 +102,7 @@ export const activityEvents = pgTable(
     index("activity_events_job_idx").on(t.workspaceId, t.jobId, t.id),
     index("activity_events_project_idx").on(t.workspaceId, t.projectId, t.id),
     index("activity_events_trace_idx").on(t.traceId),
+    // Workspace-wide log queries (no job or project filter) page by id newest first.
+    index("activity_events_workspace_idx").on(t.workspaceId, t.id),
   ],
 );
