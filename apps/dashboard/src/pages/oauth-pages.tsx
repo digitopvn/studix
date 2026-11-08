@@ -25,6 +25,7 @@ const SCOPE_DESCRIPTIONS: Record<string, string> = {
   "studix:read": "View projects, jobs and assets in the selected workspace",
   "studix:write":
     "Create and edit projects, request renders, cancel or retry jobs and upload assets (never approve or publish)",
+  "studix:logs": "Read this workspace's runtime logs (workspace owners only)",
   offline_access: "Stay connected without asking you again",
 };
 

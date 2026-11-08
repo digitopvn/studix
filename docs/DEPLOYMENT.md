@@ -411,6 +411,19 @@ page:
 - Custom domain `studix.digitop.ai` is attached to the Worker in Cloudflare.
 - Check: `curl -sI https://studix.digitop.ai` returns `200`.
 
+### Log queries
+
+`studix_query_logs` and `studix_tail_logs` read the activity trail of the
+database the server runs on. The server answers only for its own environment,
+`production` when `NODE_ENV=production` and `development` otherwise; set
+`STUDIX_LOG_ENVIRONMENT` where a development deployment also runs with
+`NODE_ENV=production`, or its logs would be labelled production. Cursors are
+signed with a key derived from `BETTER_AUTH_SECRET`, so rotating that secret
+invalidates open cursors (clients start again without one). TOSE runtime and
+build logs and Cloudflare Workers logs are not connected: they wait for
+project-scoped seven-day retention and safe history and live access on TOSE
+(saasvn/tose-app#545) and for a check of the Cloudflare plan's retention.
+
 ## TOSE environments
 
 Workspace `wearetopgroup`. It hosts other production projects: touch only

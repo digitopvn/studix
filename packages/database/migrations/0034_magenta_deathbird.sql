@@ -1,0 +1,1 @@
+CREATE INDEX "activity_events_window_idx" ON "activity_events" USING btree ("workspace_id","created_at");

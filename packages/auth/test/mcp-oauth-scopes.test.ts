@@ -24,7 +24,7 @@ describe("mcp oauth scopes", () => {
   });
 
   it("advertises read, write and offline access", () => {
-    expect(MCP_SUPPORTED_SCOPES).toEqual(["studix:read", "studix:write", "offline_access"]);
+    expect(MCP_SUPPORTED_SCOPES).toEqual(["studix:read", "studix:write", "studix:logs", "offline_access"]);
   });
 
   it("inserts the resource path into the well-known metadata URL", () => {

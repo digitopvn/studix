@@ -15,6 +15,7 @@ import { AGENT_HANDOFF_MCP_TOOLS } from "./agent-handoff-tools.ts";
 import { COMPOSITION_MCP_TOOLS } from "./composition-tools.ts";
 import { META_TOOL_NAMES } from "./gateway-meta-tools.ts";
 import { registerJobResource, WEBHOOK_MCP_TOOLS } from "./job-notifications.ts";
+import { LOG_MCP_TOOLS } from "./log-tools.ts";
 import { MEDIA_EXEC_MCP_TOOLS } from "./media-exec-tool.ts";
 import { NATIVE_TOOL_NAMES, NATIVE_TOOLS, type NativeTool, type ToolContext } from "./native-tools.ts";
 import { REVIEW_APP_TOOL_META, REVIEW_APP_TOOLS, registerReviewApp } from "./review-app.ts";
@@ -65,6 +66,7 @@ export function buildMcpServer(deps: AppDeps, artifacts: ArtifactUrlDeps, authIn
     ...COMPOSITION_MCP_TOOLS,
     ...REVIEW_APP_TOOLS,
     ...WEBHOOK_MCP_TOOLS,
+    ...LOG_MCP_TOOLS,
   ] as readonly NativeTool[];
   const toolNames = tools.map((t) => t.name);
 

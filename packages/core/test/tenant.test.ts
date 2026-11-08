@@ -35,6 +35,35 @@ describe("authorization matrix", () => {
     expect(can(actor, "job:recover")).toBe(false);
   });
 
+  it("grants log permissions explicitly: owner reads workspace logs, only the operator reads system logs", () => {
+    const user = (role: "operator" | "owner" | "admin" | "editor" | "reviewer" | "viewer") =>
+      ({ type: "user", id: "u", role }) as const;
+    expect(can(user("owner"), "logs:read")).toBe(true);
+    for (const role of ["admin", "editor", "reviewer", "viewer"] as const) {
+      expect(can(user(role), "logs:read")).toBe(false);
+    }
+    for (const role of ["owner", "admin", "editor", "reviewer", "viewer"] as const) {
+      expect(can(user(role), "logs:system:read")).toBe(false);
+    }
+    expect(can(user("operator"), "logs:system:read")).toBe(true);
+  });
+
+  it("no key, delegated agent or system actor can hold system log access", () => {
+    expect(
+      can({ type: "apiKey", id: "k", scopes: ["logs:system:read", "logs:read"] }, "logs:system:read"),
+    ).toBe(false);
+    expect(can({ type: "apiKey", id: "k", scopes: ["logs:read"] }, "logs:read")).toBe(true);
+    const oauth = {
+      type: "oauth",
+      id: "u",
+      clientId: "c",
+      scopes: ["logs:system:read", "logs:read"],
+    } as const;
+    expect(can(oauth, "logs:system:read")).toBe(false);
+    expect(can(oauth, "logs:read")).toBe(true);
+    expect(can({ type: "system", id: "worker" }, "logs:system:read")).toBe(false);
+  });
+
   it("assertPermission throws FORBIDDEN with a suggested action", () => {
     const ctx = testTenant({ scopes: ["project:read"] });
     expect(() => assertPermission(ctx, "project:write")).toThrow(StudixError);

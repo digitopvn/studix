@@ -16,6 +16,8 @@ export const MCP_OAUTH_SCOPES = {
     "media:exec",
     "approval:request",
   ],
+  /** Runtime logs of the workspace; effective only for roles that hold `logs:read` (owners). */
+  "studix:logs": ["logs:read"],
 } as const satisfies Record<string, readonly Permission[]>;
 
 export type McpOAuthScope = keyof typeof MCP_OAUTH_SCOPES;

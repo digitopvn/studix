@@ -15,7 +15,7 @@ import type {
   WorkspaceRepository,
 } from "@studix/core";
 import type { JobChangeRepository, RateLimitRepository } from "@studix/database";
-import type { ActivityRecorder } from "@studix/observability";
+import type { ActivityRecorder, LogService } from "@studix/observability";
 import type { Logger } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
@@ -97,6 +97,8 @@ export interface AppDeps {
   multix?: WorkspaceMultixApi;
   /** Cross-tenant job change reads; with it the API pushes MCP resource updates and webhooks. */
   jobChanges?: JobChangeRepository;
+  /** studix_query_logs / studix_tail_logs; without it those tools answer UNAVAILABLE. */
+  logs?: LogService;
   /** Per-workspace job webhook; without it the webhook API answers UNAVAILABLE. */
   webhooks?: JobWebhookService;
 

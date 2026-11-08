@@ -440,6 +440,29 @@ binary, so the arguments are untrusted. Owner: `packages/core/src/studio/media-e
   and source types, output names and timeout, never argument text or input
   contents. Compute time is metered into the job budget, failed runs included.
 
+## Logs
+
+Owner: `packages/observability` (`log-query.ts`), `apps/mcp-server/src/mcp/log-tools.ts`.
+
+- `studix_query_logs` and `studix_tail_logs` read only the caller's workspace.
+  `logs:read` is held by owners and is not in the admin role or below;
+  `logs:system:read` is held by the platform operator role only and is refused
+  for API keys, OAuth tokens and system actors whatever scopes they carry, so an
+  owner cannot mint a key that reads infrastructure or other tenants' logs.
+  New permissions are not added to the tenant roles automatically.
+- Infrastructure sources (`application`, `build`, `cloudflare`, the
+  `infrastructure` service) are refused to everyone but the operator and are
+  not connected yet; the response says so instead of returning an empty list.
+- Cursors are HMAC-signed with a key derived from the server secret and bound to
+  caller, workspace, filters and a 15 minute expiry. The query window, page size,
+  response bytes and concurrent tails per workspace are bounded.
+- Messages are redacted before they are returned, including whole `Authorization`
+  and `Cookie` header lines. Log text is untrusted data and a prompt-injection
+  surface; the tool results carry a reminder.
+- Every call that reaches the service writes an audit record (`logs.query`, `logs.tail`) for success,
+  denial, validation failure and upstream failure, with filters and counts only.
+  A failed audit write fails the call, so reads cannot bypass the record.
+
 ## Redaction
 
 Owner: `redact()` and the logger in `packages/shared`, spans in

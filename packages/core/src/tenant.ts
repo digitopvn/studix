@@ -33,6 +33,16 @@ export const PERMISSIONS = [
   "approval:decide",
   "publish",
   "audit:read",
+  /**
+   * Read the workspace's own runtime logs (studix_query_logs, studix_tail_logs): only entries the backend
+   * linked to this workspace. Owners hold it; admins and below do not unless a role grants it explicitly.
+   */
+  "logs:read",
+  /**
+   * Read platform-wide and infrastructure logs across tenants. Platform operator only, in an authenticated
+   * operator session: no API key, OAuth client or system actor can hold it, whatever scopes it carries.
+   */
+  "logs:system:read",
   "apikey:manage",
   "member:manage",
 ] as const;
@@ -50,21 +60,27 @@ const EDIT: Permission[] = [
   "approval:request",
 ];
 
-const TENANT_ADMIN: Permission[] = PERMISSIONS.filter((p) => p !== "job:recover");
+/**
+ * Permissions no workspace role gets implicitly. A new permission lands in the tenant roles only when it is
+ * added to a list below, never because `PERMISSIONS` grew.
+ */
+const PLATFORM_ONLY: readonly Permission[] = ["job:recover", "logs:system:read"];
+const TENANT_ADMIN: Permission[] = PERMISSIONS.filter((p) => !PLATFORM_ONLY.includes(p) && p !== "logs:read");
+const TENANT_OWNER: Permission[] = [...TENANT_ADMIN, "logs:read"];
 
 /** Role -> permission matrix. Reviewers may decide approvals but not edit; viewers only read. */
 export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> = {
   operator: new Set(PERMISSIONS),
-  owner: new Set(TENANT_ADMIN),
+  owner: new Set(TENANT_OWNER),
   admin: new Set(TENANT_ADMIN),
   editor: new Set(EDIT),
   reviewer: new Set([...READ, "approval:decide"]),
   viewer: new Set(READ),
 };
 
-/** System actors (workers, schedulers) can do anything except grant human approvals. */
+/** System actors (workers, schedulers) can do anything except grant human approvals or read system logs. */
 const SYSTEM_PERMISSIONS: ReadonlySet<Permission> = new Set(
-  PERMISSIONS.filter((p) => p !== "approval:decide"),
+  PERMISSIONS.filter((p) => p !== "approval:decide" && p !== "logs:system:read"),
 );
 
 export type Actor =
@@ -108,10 +124,13 @@ export function can(actor: Actor, permission: Permission): boolean {
     case "user":
       return ROLE_PERMISSIONS[actor.role]?.has(permission) ?? false;
     case "apiKey":
-      return actor.scopes.includes(permission);
+      // A key proves a scope, not that its holder is the platform operator.
+      return permission !== "logs:system:read" && actor.scopes.includes(permission);
     case "oauth":
       // Delegated agents never act as the platform operator, whatever the user's role.
-      return permission !== "job:recover" && actor.scopes.includes(permission);
+      return (
+        permission !== "job:recover" && permission !== "logs:system:read" && actor.scopes.includes(permission)
+      );
     case "system":
       return SYSTEM_PERMISSIONS.has(permission);
     default:
