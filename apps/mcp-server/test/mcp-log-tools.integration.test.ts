@@ -185,4 +185,50 @@ describe("studix_query_logs and studix_tail_logs (Postgres)", () => {
     expect(outcomes).toContain("forbidden");
     expect(JSON.stringify(audits.items)).not.toContain("abcdefghijklmnopqrstuv");
   });
+
+  it("offers the same log tools to WebMCP and over REST for a signed-in owner, and denies them without logs:read", async () => {
+    const cookie = await app.signUp(`logs-web-${Date.now()}@example.test`);
+    const listed = (await (await app.api("GET", "/api/webmcp/tools", { cookie })).json()) as {
+      tools: Array<{ name: string; inputSchema: unknown }>;
+    };
+    const names = listed.tools.map((t) => t.name);
+    expect(names).toContain("studix_query_logs");
+    expect(names).toContain("studix_tail_logs");
+    const mcpTools = new Map(
+      (await (await app.connect(ownerKey)).listTools()).tools.map((t) => [t.name, t.inputSchema]),
+    );
+    for (const t of listed.tools.filter((x) => x.name.endsWith("_logs"))) {
+      expect(t.inputSchema).toEqual(mcpTools.get(t.name));
+    }
+
+    const web = (await (
+      await app.api("POST", "/api/webmcp/tools/studix_query_logs", {
+        cookie,
+        body: { environment: "development", source: "activity" },
+      })
+    ).json()) as { isError?: boolean; structuredContent: Envelope };
+    expect(web.isError).toBeFalsy();
+    expect(web.structuredContent.data?.coverage).toBe("complete");
+
+    const rest = await app.api("POST", "/api/logs/query", {
+      cookie,
+      body: { environment: "development", source: "activity" },
+    });
+    expect(rest.status).toBe(200);
+    const body = (await rest.json()) as { coverage: string; events: unknown[] };
+    expect(body.coverage).toBe("complete");
+    // The new workspace holds none of tenant A's events.
+    expect(JSON.stringify(body)).not.toContain("provider.error");
+
+    const bad = await app.api("POST", "/api/logs/query", { cookie, body: { environment: "nope" } });
+    expect(bad.status).toBe(400);
+    const tailMissing = await app.api("POST", "/api/logs/tail", {
+      cookie,
+      body: { environment: "development", jobId: jobA },
+    });
+    expect(tailMissing.status).toBe(404);
+    expect((await app.api("POST", "/api/logs/query", { body: { environment: "development" } })).status).toBe(
+      401,
+    );
+  });
 });

@@ -461,7 +461,13 @@ Owner: `packages/observability` (`log-query.ts`), `apps/mcp-server/src/mcp/log-t
   surface; the tool results carry a reminder.
 - Every call that reaches the service writes an audit record (`logs.query`, `logs.tail`) for success,
   denial, validation failure and upstream failure, with filters and counts only.
-  A failed audit write fails the call, so reads cannot bypass the record.
+  A failed audit write fails the call, so reads cannot bypass the record. Calls rejected by the
+  strict argument schema never reach the service and read nothing, so they are not audited; the
+  schema is kept strict rather than loosened to audit them.
+- The REST routes (`/api/logs/*`) and the WebMCP tools run the same service, so they enforce the
+  same permission, redaction and audit.
+- The worker deletes activity events older than 7 days every hour, except the job chat
+  (`agent.event`). Audit, usage and provider records are separate tables and are not touched.
 
 ## Redaction
 

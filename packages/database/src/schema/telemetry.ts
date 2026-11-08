@@ -1,5 +1,6 @@
 import type { ActivityLevel, FundingSource, ProviderExecutionStatus } from "@studix/core";
 import type { StudixErrorPayload } from "@studix/shared";
+import { sql } from "drizzle-orm";
 import { index, integer, jsonb, numeric, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 import { type ActorType, createdAt, id } from "./columns.ts";
 import { jobs } from "./jobs.ts";
@@ -103,5 +104,7 @@ export const activityEvents = pgTable(
     index("activity_events_project_idx").on(t.workspaceId, t.projectId, t.id),
     index("activity_events_trace_idx").on(t.traceId),
     index("activity_events_window_idx").on(t.workspaceId, t.createdAt),
+    /** Serves the retention sweep, which deletes by age across workspaces; the job chat is never swept. */
+    index("activity_events_created_idx").on(t.createdAt).where(sql`${t.name} <> 'agent.event'`),
   ],
 );

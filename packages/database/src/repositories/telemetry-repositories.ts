@@ -1,14 +1,31 @@
-import type {
-  ActivityEvent,
-  ActivityRepository,
-  ProviderExecution,
-  TenantContext,
-  UsageEvent,
-  UsageRange,
-  UsageRepository,
+import {
+  type ActivityEvent,
+  type ActivityRepository,
+  deriveActivityMessage,
+  type ProviderExecution,
+  type TenantContext,
+  type UsageEvent,
+  type UsageRange,
+  type UsageRepository,
 } from "@studix/core";
 import { type Clock, newId, redactDeep, StudixError } from "@studix/shared";
-import { and, asc, desc, eq, gt, gte, ilike, inArray, lt, lte, or, type SQL, sql, sum } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  ilike,
+  inArray,
+  lt,
+  lte,
+  ne,
+  or,
+  type SQL,
+  sql,
+  sum,
+} from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { activityEvents, providerExecutions, usageEvents } from "../schema/telemetry.ts";
 import { beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -209,6 +226,8 @@ function toActivity(row: typeof activityEvents.$inferSelect): ActivityEvent {
 export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRepository {
   return {
     async append(ctx, input) {
+      const attributes = redactDeep(input.attributes);
+      const message = input.message ?? deriveActivityMessage(attributes);
       const rows = await db
         .insert(activityEvents)
         .values({
@@ -216,7 +235,7 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
           ...tenantValues(ctx),
           name: input.name,
           level: input.level,
-          message: input.message ?? null,
+          message: message ?? null,
           projectId: input.projectId ?? null,
           jobId: input.jobId ?? null,
           stage: input.stage ?? null,
@@ -226,11 +245,28 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
           spanId: input.spanId ?? null,
           parentSpanId: input.parentSpanId ?? null,
           durationMs: input.durationMs ?? null,
-          attributes: redactDeep(input.attributes),
+          attributes,
           createdAt: clock.now(),
         })
         .returning();
       return toActivity(first(rows, "activity event"));
+    },
+    async purgeBefore(before, options) {
+      const keep = options.keepNames ?? [];
+      const limit = Math.min(Math.max(options.limit, 1), 10_000);
+      const doomed = db
+        .select({ id: activityEvents.id })
+        .from(activityEvents)
+        .where(
+          and(lt(activityEvents.createdAt, before), ...keep.map((name) => ne(activityEvents.name, name))),
+        )
+        .limit(limit)
+        // Replicas sweeping at the same moment take different rows instead of waiting on each other.
+        .for("update", { skipLocked: true });
+      const removed = await db.delete(activityEvents).where(inArray(activityEvents.id, doomed)).returning({
+        id: activityEvents.id,
+      });
+      return removed.length;
     },
     async list(ctx, query = {}) {
       const limit = pageLimit(query.limit);

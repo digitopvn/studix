@@ -246,6 +246,13 @@
       "when": 1794108122494,
       "tag": "0034_magenta_deathbird",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794109272522,
+      "tag": "0035_parallel_red_hulk",
+      "breakpoints": true
     }
   ]
 }

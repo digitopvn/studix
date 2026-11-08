@@ -14,6 +14,7 @@ import { type ComposedApp, composeApp } from "../src/compose-app.ts";
 import { AGENT_HANDOFF_MCP_TOOLS } from "../src/mcp/agent-handoff-tools.ts";
 import { COMPOSITION_MCP_TOOLS } from "../src/mcp/composition-tools.ts";
 import { WEBHOOK_MCP_TOOLS } from "../src/mcp/job-notifications.ts";
+import { LOG_MCP_TOOLS } from "../src/mcp/log-tools.ts";
 import { MEDIA_EXEC_MCP_TOOLS } from "../src/mcp/media-exec-tool.ts";
 import { NATIVE_TOOLS } from "../src/mcp/native-tools.ts";
 import { REVIEW_APP_TOOLS } from "../src/mcp/review-app.ts";
@@ -165,6 +166,7 @@ describe.skipIf(!toolchain.ok)("E2E video over MCP with a real worker process", 
         ...COMPOSITION_MCP_TOOLS,
         ...REVIEW_APP_TOOLS,
         ...WEBHOOK_MCP_TOOLS,
+        ...LOG_MCP_TOOLS,
       ]
         .map((t) => t.name)
         .concat(META)
