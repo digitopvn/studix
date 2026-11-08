@@ -258,10 +258,10 @@ describe("studix_query_logs service", () => {
     const { service, seed } = setup();
     const ctx = owner();
     const big = "m".repeat(20_000);
-    for (let i = 0; i < 6; i++)
-      await seed(ctx, { name: `e${i}`, message: big }, new Date(NOW.getTime() - (10 - i) * 1000));
+    for (let i = 0; i < 12; i++)
+      await seed(ctx, { name: `e${i}`, message: big }, new Date(NOW.getTime() - (20 - i) * 1000));
     const page = await service.query(ctx, { ...base, limit: 200 });
-    expect(page.events.length).toBeLessThan(6);
+    expect(page.events.length).toBeLessThan(12);
     expect(page.hasMore).toBe(true);
     expect(JSON.stringify(page.events).length).toBeLessThanOrEqual(64 * 1024 + 200);
   });
@@ -356,6 +356,55 @@ describe("studix_tail_logs service", () => {
     expect(
       audited.filter((a) => a.action === "logs.tail").map((a) => (a.data as { outcome: string }).outcome),
     ).toEqual(["forbidden", "validation", "forbidden", "ok", "validation"]);
+  });
+
+  it("does not report the job done before delivering events written as it finished", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    await seed(ctx, { name: "stage.start", jobId: "job_1" }, new Date(NOW.getTime() - 5000));
+    // The job turns final only after the probe has been read once: the final event must still arrive.
+    let reads = 0;
+    const probe: JobProbe = async () => {
+      reads++;
+      if (reads === 2)
+        await seed(ctx, { name: "job.failed", jobId: "job_1" }, new Date(NOW.getTime() - 1000));
+      return reads >= 2 ? { status: "failed", terminal: true } : { status: "running", terminal: false };
+    };
+    const first = await service.tail(ctx, input, { job: probe });
+    const names = first.events.map((e) => e.name);
+    const second = first.jobDone
+      ? first
+      : await service.tail(ctx, { ...input, cursor: first.nextCursor }, { job: probe });
+    expect([...names, ...(second === first ? [] : second.events.map((e) => e.name))]).toEqual([
+      "stage.start",
+      "job.failed",
+    ]);
+  });
+
+  it("gives a cursor while the job runs even before any event exists", async () => {
+    const { service } = setup();
+    const ctx = owner();
+    const first = await service.tail(ctx, input, { job: running });
+    expect(first.events).toEqual([]);
+    expect(first.nextCursor).toBeDefined();
+    const again = await service.tail(ctx, { ...input, cursor: first.nextCursor }, { job: running });
+    expect(again.jobDone).toBe(false);
+  });
+
+  it("says so when a service filter can never match, and truncates huge messages", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    await seed(ctx, { name: "x", message: "m".repeat(20_000) }, new Date(NOW.getTime() - 1000));
+    const worker = await service.query(ctx, { ...base, services: ["worker"], source: "activity" });
+    expect(worker.coverage).toBe("unavailable");
+    expect(worker.sourceStatus[0]?.status).toBe("unavailable");
+    const mixed = await service.query(ctx, { ...base, services: ["worker", "mcp"], source: "activity" });
+    expect(mixed.coverage).toBe("partial");
+    expect(await code(service.tail(ctx, { ...input, services: ["render"] }, { job: running }))).toBe(
+      "VALIDATION",
+    );
+    const all = await service.query(ctx, { ...base, source: "activity" });
+    expect(all.events[0]?.message.length).toBeLessThan(9000);
   });
 
   it("limits concurrent tails per workspace", async () => {

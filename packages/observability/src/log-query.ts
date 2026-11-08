@@ -56,7 +56,7 @@ export interface LogEvent {
 
 export interface SourceStatus {
   source: Exclude<LogSource, "all">;
-  status: "ok" | "unavailable" | "restricted";
+  status: "ok" | "partial" | "unavailable" | "restricted";
   reason?: string;
 }
 
@@ -96,7 +96,7 @@ export interface LogTailResult extends LogQueryResult {
   /** The job reached a final status and every event it produced has been returned. */
   jobDone: boolean;
   jobStatus: string;
-  /** The stream lost events. Always false for the activity source: it is durable and ordered by id. */
+  /** The stream lost events. The activity source has durable ids but cannot prove ordering across writer processes, so this stays false; see docs. */
   gapDetected: boolean;
 }
 
@@ -124,7 +124,7 @@ export interface LogService {
   ): Promise<LogTailResult>;
 }
 
-type Outcome = "ok" | "forbidden" | "validation" | "upstream";
+type Outcome = "ok" | "forbidden" | "validation" | "rate_limited" | "upstream";
 
 /** Sources that read platform infrastructure; only a platform operator may ask for them. */
 const SYSTEM_SOURCES: readonly Exclude<LogSource, "all">[] = ["application", "build", "cloudflare"];
@@ -152,13 +152,22 @@ function serviceOf(name: string): LogServiceName | undefined {
   return undefined;
 }
 
+/** Services an activity event can be attributed to (by its name); worker and render events carry none yet. */
+const SERVICES_WITH_EVENTS: readonly LogServiceName[] = ["api", "mcp"];
+const NO_SERVICE_REASON = "activity events are not attributed to this service yet, so none can match.";
+const MAX_MESSAGE_CHARS = 8 * 1024;
+
+function truncate(text: string): string {
+  return text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS)}… [truncated]` : text;
+}
+
 function normalize(event: ActivityEvent, environment: LogEnvironment): LogEvent {
   const service = serviceOf(event.name);
   return {
     eventId: event.id,
     timestamp: event.createdAt.toISOString(),
     level: event.level,
-    message: redactLogText(event.message ?? event.name),
+    message: truncate(redactLogText(event.message ?? event.name)),
     environment,
     ...(service ? { service } : {}),
     source: "activity",
@@ -288,7 +297,9 @@ export function createLogService(deps: LogServiceDeps): LogService {
         ? "forbidden"
         : code === "VALIDATION"
           ? "validation"
-          : "upstream";
+          : code === "RATE_LIMITED"
+            ? "rate_limited"
+            : "upstream";
     try {
       await audit(ctx, action, outcome, { ...summary, code });
     } catch (auditError) {
@@ -454,9 +465,10 @@ export function createLogService(deps: LogServiceDeps): LogService {
           ) {
             throw invalidCursor("from/to differ from the query it continues");
           }
-          from = new Date(payload.from);
+          // A window that has slid past the retention edge since the first page is clamped, not refused.
+          from = new Date(Math.max(Date.parse(payload.from), current.getTime() - LOG_RETENTION_MS));
           to = new Date(payload.to);
-          afterId = payload.id;
+          afterId = payload.id || undefined;
         } else {
           to = input.to ? parseInstant("to", input.to) : current;
           from = input.from ? parseInstant("from", input.from) : new Date(to.getTime() - DEFAULT_WINDOW_MS);
@@ -483,8 +495,12 @@ export function createLogService(deps: LogServiceDeps): LogService {
         let hasMore = false;
         let lastId: string | undefined;
         if (readsActivity) {
+          const wanted = input.services?.filter((v) => v !== "infrastructure");
+          const matchable = wanted?.filter((v) => SERVICES_WITH_EVENTS.includes(v));
           if (input.environment !== deps.environment) {
             statuses.unshift(mismatch(input.environment));
+          } else if (wanted && wanted.length > 0 && matchable?.length === 0) {
+            statuses.unshift({ source: "activity", status: "unavailable", reason: NO_SERVICE_REASON });
           } else {
             const page = await fetchActivity(ctx, {
               environment: input.environment,
@@ -502,10 +518,21 @@ export function createLogService(deps: LogServiceDeps): LogService {
             events = page.events;
             hasMore = page.hasMore;
             lastId = page.resumeId;
-            statuses.unshift({ source: "activity", status: "ok" });
+            const dropped = wanted?.filter((v) => !SERVICES_WITH_EVENTS.includes(v)) ?? [];
+            statuses.unshift(
+              dropped.length > 0
+                ? {
+                    source: "activity",
+                    status: "partial",
+                    reason: `${dropped.join(", ")}: ${NO_SERVICE_REASON}`,
+                  }
+                : { source: "activity", status: "ok" },
+            );
           }
         }
-        const activityOk = statuses.some((s) => s.source === "activity" && s.status === "ok");
+        const activityOk = statuses.some(
+          (s) => s.source === "activity" && (s.status === "ok" || s.status === "partial"),
+        );
         const allOk = statuses.every((s) => s.status === "ok");
         const coverage: Coverage = allOk ? "complete" : activityOk ? "partial" : "unavailable";
         const nextCursor =
@@ -565,7 +592,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
           }
           if (payload.h !== hash) throw invalidCursor("it belongs to a different tail");
           if (payload.exp < current.getTime()) throw invalidCursor("it expired");
-          afterId = payload.id;
+          afterId = payload.id || undefined;
         }
         const open = tails.get(ctx.workspaceId) ?? 0;
         if (open >= MAX_TAILS_PER_WORKSPACE) {
@@ -576,6 +603,16 @@ export function createLogService(deps: LogServiceDeps): LogService {
         }
         tails.set(ctx.workspaceId, open + 1);
         held = true;
+        const tailServices = input.services?.filter((v) => v !== "infrastructure");
+        if (
+          tailServices &&
+          tailServices.length > 0 &&
+          !tailServices.some((v) => SERVICES_WITH_EVENTS.includes(v))
+        ) {
+          throw new StudixError("VALIDATION", `services: ${NO_SERVICE_REASON}`, {
+            suggestedAction: "Omit services to tail every event of the job.",
+          });
+        }
         // Authorizes the job id: a job outside the caller's workspace is NOT_FOUND here.
         let job = await options.job(ctx, input.jobId);
         if (input.environment !== deps.environment) {
@@ -591,6 +628,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
         let page: Awaited<ReturnType<typeof fetchActivity>> = { events: [], hasMore: false };
         let jobDone = job.terminal;
         for (;;) {
+          // Read the job before the events: a job already final here has written everything the read sees.
+          job = await options.job(ctx, input.jobId);
           const at = now();
           page = await fetchActivity(ctx, {
             environment: input.environment,
@@ -602,8 +641,6 @@ export function createLogService(deps: LogServiceDeps): LogService {
             afterId,
             limit: DEFAULT_LIMIT,
           });
-          // Read the job after the events: a job that finished before the read has no later events.
-          job = await options.job(ctx, input.jobId);
           jobDone = job.terminal && !page.hasMore;
           if (page.resumeId) afterId = page.resumeId;
           if (page.events.length > 0 || jobDone || options.signal?.aborted) break;
@@ -611,21 +648,20 @@ export function createLogService(deps: LogServiceDeps): LogService {
           if (remaining <= 0) break;
           await sleep(Math.min(TAIL_POLL_MS, remaining), options.signal);
         }
-        const cursorId = afterId;
-        const nextCursor =
-          cursorId && !jobDone
-            ? encodeCursor(deps.cursorSecret, {
-                v: 1,
-                o: ctx.organizationId,
-                w: ctx.workspaceId,
-                a: ctx.actor.id,
-                h: hash,
-                id: cursorId,
-                from: current.toISOString(),
-                to: current.toISOString(),
-                exp: now().getTime() + CURSOR_TTL_MS,
-              })
-            : undefined;
+        const cursorId = afterId ?? "";
+        const nextCursor = !jobDone
+          ? encodeCursor(deps.cursorSecret, {
+              v: 1,
+              o: ctx.organizationId,
+              w: ctx.workspaceId,
+              a: ctx.actor.id,
+              h: hash,
+              id: cursorId,
+              from: current.toISOString(),
+              to: current.toISOString(),
+              exp: now().getTime() + CURSOR_TTL_MS,
+            })
+          : undefined;
         const statuses: SourceStatus[] = [{ source: "activity", status: "ok" }, ...sourceStatus];
         await audit(ctx, "logs.tail", "ok", { ...summary, count: page.events.length, jobDone });
         return {

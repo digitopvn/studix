@@ -459,7 +459,7 @@ Owner: `packages/observability` (`log-query.ts`), `apps/mcp-server/src/mcp/log-t
 - Messages are redacted before they are returned, including whole `Authorization`
   and `Cookie` header lines. Log text is untrusted data and a prompt-injection
   surface; the tool results carry a reminder.
-- Every call writes an audit record (`logs.query`, `logs.tail`) for success,
+- Every call that reaches the service writes an audit record (`logs.query`, `logs.tail`) for success,
   denial, validation failure and upstream failure, with filters and counts only.
   A failed audit write fails the call, so reads cannot bypass the record.
 
