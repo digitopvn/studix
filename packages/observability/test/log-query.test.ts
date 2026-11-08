@@ -293,6 +293,21 @@ describe("redactLogText", () => {
   });
 });
 
+describe("FORBIDDEN guidance", () => {
+  it("tells an OAuth client to request the studix:logs scope and an API key which scope to add", async () => {
+    const { service } = setup();
+    const oauth = testTenant({
+      actor: { type: "oauth", id: "oac_1", clientId: "c", scopes: ["asset:read"] },
+    });
+    const err = await service.query(oauth, base).catch((e: StudixError) => e);
+    expect(err).toBeInstanceOf(StudixError);
+    expect((err as StudixError).suggestedAction).toContain("studix:logs");
+    const key = testTenant({ scopes: ["asset:read"] });
+    const keyErr = await service.query(key, base).catch((e: StudixError) => e);
+    expect((keyErr as StudixError).suggestedAction).toContain("logs:read");
+  });
+});
+
 describe("studix_tail_logs service", () => {
   const running: JobProbe = async () => ({ status: "running", terminal: false });
   const input = { ...base, jobId: "job_1" };
@@ -317,6 +332,46 @@ describe("studix_tail_logs service", () => {
     expect(second.jobDone).toBe(true);
     expect(second.jobStatus).toBe("succeeded");
     expect(second.nextCursor).toBeUndefined();
+  });
+
+  it("returns an event another process committed after the cursor passed its id, once", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    await seed(ctx, { id: "act_a", name: "first", jobId: "job_1" }, new Date(NOW.getTime() - 5000));
+    await seed(ctx, { id: "act_c", name: "third", jobId: "job_1" }, new Date(NOW.getTime() - 3000));
+    const first = await service.tail(ctx, input, { job: running });
+    expect(first.events.map((e) => e.name)).toEqual(["first", "third"]);
+    // Written earlier by a process whose ids sort before the cursor, but committed only now.
+    await seed(ctx, { id: "act_b", name: "late", jobId: "job_1" }, new Date(NOW.getTime() - 4000));
+    await seed(ctx, { id: "act_d", name: "fourth", jobId: "job_1" }, new Date(NOW.getTime() - 1000));
+    const second = await service.tail(ctx, { ...input, cursor: first.nextCursor }, { job: running });
+    expect(second.events.map((e) => e.name)).toEqual(["late", "fourth"]);
+    const third = await service.tail(ctx, { ...input, cursor: second.nextCursor }, { job: running });
+    expect(third.events).toEqual([]);
+    const done = await service.tail(
+      ctx,
+      { ...input, cursor: third.nextCursor },
+      { job: async () => ({ status: "succeeded", terminal: true }) },
+    );
+    expect(done.events).toEqual([]);
+    expect(done.jobDone).toBe(true);
+  });
+
+  it("keeps the cursor small however many events a job writes", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    for (let i = 0; i < 120; i++) {
+      await seed(
+        ctx,
+        { id: `act_${String(i).padStart(4, "0")}`, name: `step.${i}`, jobId: "job_1" },
+        new Date(NOW.getTime() - 5000 + i),
+      );
+    }
+    const first = await service.tail(ctx, input, { job: running });
+    expect(first.events).toHaveLength(100);
+    expect((first.nextCursor ?? "").length).toBeLessThan(4000);
+    const second = await service.tail(ctx, { ...input, cursor: first.nextCursor }, { job: running });
+    expect(second.events.map((e) => e.name)).toEqual(Array.from({ length: 20 }, (_, i) => `step.${100 + i}`));
   });
 
   it("waits a bounded time when nothing is new and then returns a cursor", async () => {

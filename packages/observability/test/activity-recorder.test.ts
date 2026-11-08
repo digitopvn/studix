@@ -71,6 +71,7 @@ describe("createActivityRecorder", () => {
       list: () => Promise.reject(new Error("unused")),
       listAfter: () => Promise.reject(new Error("unused")),
       window: () => Promise.reject(new Error("unused")),
+      purgeBefore: () => Promise.reject(new Error("unused")),
     };
     const { recorder, lines } = setup(failing);
     await expect(recorder.record(testTenant(), { name: "job.failed" })).resolves.toBeUndefined();

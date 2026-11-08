@@ -6,10 +6,11 @@ import type {
   AuditRepository,
   ReviewRepository,
 } from "../repositories/governance-repositories.ts";
-import type {
-  ActivityRepository,
-  UsageRange,
-  UsageRepository,
+import {
+  type ActivityRepository,
+  deriveActivityMessage,
+  type UsageRange,
+  type UsageRepository,
 } from "../repositories/telemetry-repositories.ts";
 import { InMemoryTenantTable } from "./in-memory-table.ts";
 
@@ -175,7 +176,12 @@ export function createInMemoryActivityRepository(clock: Clock): ActivityReposito
   const events = new InMemoryTenantTable<ActivityEvent>("act", clock, false);
   return {
     async append(ctx, input) {
-      return events.insert(ctx, input);
+      const message = input.message ?? deriveActivityMessage(input.attributes);
+      return events.insert(ctx, { ...input, ...(message !== undefined ? { message } : {}) });
+    },
+    async purgeBefore(before, options) {
+      const keep = new Set(options.keepNames ?? []);
+      return events.deleteAnyTenant((e) => e.createdAt < before && !keep.has(e.name), options.limit);
     },
     async list(ctx, query = {}) {
       return events.page(

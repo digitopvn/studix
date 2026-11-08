@@ -1,3 +1,4 @@
+import { redact } from "@studix/shared";
 import type { NewRecord } from "../entities/common.ts";
 import type { ActivityEvent, ProviderExecution, UsageEvent } from "../entities/telemetry.ts";
 import type { TenantContext } from "../tenant.ts";
@@ -50,6 +51,28 @@ export interface ActivityWindowQuery {
   limit: number;
 }
 
+/** Events a retention sweep must keep: the job chat is a record users read back, not runtime noise. */
+export const ACTIVITY_RETENTION_KEEP_NAMES: readonly string[] = ["agent.event"];
+
+/**
+ * Derives the short text a log line shows when the writer gave none: the event's own `attributes.message` (or
+ * `text`, `name`, `error`, `delta`, `status`) prefixed by its `type`. Truncated and redacted; never throws.
+ */
+export function deriveActivityMessage(attributes: Record<string, unknown>): string | undefined {
+  const text = (key: string): string | undefined => {
+    const v = attributes[key];
+    return typeof v === "string" && v.trim() ? v.trim() : undefined;
+  };
+  const body =
+    text("message") ?? text("text") ?? text("name") ?? text("error") ?? text("delta") ?? text("status");
+  const type = text("type");
+  const line = [type && type !== body ? type : undefined, body].filter(Boolean).join(": ");
+  if (!line) return undefined;
+  const flat = redact(line).replace(/\s+/g, " ");
+  return flat.length > ACTIVITY_MESSAGE_CHARS ? `${flat.slice(0, ACTIVITY_MESSAGE_CHARS)}…` : flat;
+}
+const ACTIVITY_MESSAGE_CHARS = 240;
+
 /** Append-only activity/trace events shown on dashboards. */
 export interface ActivityRepository {
   append(ctx: TenantContext, input: NewActivityEvent): Promise<ActivityEvent>;
@@ -59,6 +82,11 @@ export interface ActivityRepository {
   ): Promise<Page<ActivityEvent>>;
   /** Events in a time window, oldest first by id, at most `limit`, always inside the context's workspace. */
   window(ctx: TenantContext, query: ActivityWindowQuery): Promise<ActivityEvent[]>;
+  /**
+   * Platform maintenance, not tenant-scoped: deletes up to `limit` events created before `before`, except those
+   * whose name is in `keepNames`. Returns how many were removed; call again until it returns less than `limit`.
+   */
+  purgeBefore(before: Date, options: { limit: number; keepNames?: readonly string[] }): Promise<number>;
   /** A job's events with one name, oldest first, strictly after `afterId` (the replay offset). */
   listAfter(
     ctx: TenantContext,

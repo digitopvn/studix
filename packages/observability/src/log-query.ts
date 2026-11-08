@@ -22,6 +22,15 @@ export const MAX_RESPONSE_BYTES = 64 * 1024;
 const CURSOR_TTL_MS = 15 * 60 * 1000;
 const MAX_TAIL_WAIT_SECONDS = 10;
 const TAIL_POLL_MS = 1000;
+/**
+ * Ids are ordered per writer process, and API, MCP and worker write with independent clocks, so an event can
+ * commit after the tail already passed its id. Each poll therefore re-reads this long a trailing window and
+ * returns any event it has not delivered yet.
+ */
+export const TAIL_LOOKBACK_MS = 10_000;
+/** Delivered ids a tail cursor remembers, to tell late events from ones already returned. */
+const MAX_SEEN_IDS = 40;
+const LATE_READ_LIMIT = 1000;
 /** Concurrent tail calls one workspace may hold open. */
 const MAX_TAILS_PER_WORKSPACE = 4;
 
@@ -96,7 +105,10 @@ export interface LogTailResult extends LogQueryResult {
   /** The job reached a final status and every event it produced has been returned. */
   jobDone: boolean;
   jobStatus: string;
-  /** The stream lost events. The activity source has durable ids but cannot prove ordering across writer processes, so this stays false; see docs. */
+  /**
+   * The stream lost events. Writers in other processes can commit late, but each poll re-reads a trailing window and
+   * returns those events, so no loss is detected or expected inside it; this stays false.
+   */
   gapDetected: boolean;
 }
 
@@ -143,6 +155,22 @@ const HEADER_LINE = /^(\s*(?:cookie|set-cookie|authorization|proxy-authorization
 /** Server-side redaction of one log line: known secret shapes, plus whole auth/cookie header lines. */
 export function redactLogText(text: string): string {
   return redact(text).replace(HEADER_LINE, "$1 [redacted]");
+}
+
+/** FORBIDDEN for callers without `logs:read`, with the next step for the kind of caller (an OAuth client asks for the scope). */
+function assertLogsRead(ctx: TenantContext): void {
+  try {
+    assertPermission(ctx, "logs:read");
+  } catch (error) {
+    if (error instanceof StudixError && error.code === "FORBIDDEN" && ctx.actor.type === "oauth") {
+      throw new StudixError("FORBIDDEN", error.message, {
+        ...(error.details ? { details: error.details } : {}),
+        suggestedAction:
+          'Reconnect the app and grant the "studix:logs" scope. Only a workspace owner can grant it; for other roles ask an owner.',
+      });
+    }
+    throw error;
+  }
 }
 
 /** `service` is known only for events whose name says where they came from; otherwise it is left out. */
@@ -192,6 +220,10 @@ interface CursorPayload {
   h: string;
   /** Last event id returned. */
   id: string;
+  /** Tail only: ids delivered inside the trailing window, newest last. */
+  seen?: string[];
+  /** Tail only: start of the trailing window (epoch ms). */
+  floor?: number;
   from: string;
   to: string;
   exp: number;
@@ -227,6 +259,14 @@ function decodeCursor(secret: string, cursor: string): CursorPayload {
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as CursorPayload;
     if (payload.v !== 1) throw invalidCursor("unknown version");
+    if (
+      payload.seen !== undefined &&
+      (!Array.isArray(payload.seen) ||
+        payload.seen.length > MAX_SEEN_IDS ||
+        payload.seen.some((id) => typeof id !== "string"))
+    ) {
+      throw invalidCursor("malformed");
+    }
     return payload;
   } catch (error) {
     if (error instanceof StudixError) throw error;
@@ -322,7 +362,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
     if (wantsInfra || services?.includes("infrastructure")) {
       assertPermission(ctx, "logs:system:read");
     }
-    assertPermission(ctx, "logs:read");
+    assertLogsRead(ctx);
     const sourceStatus: SourceStatus[] = [];
     const wanted: Exclude<LogSource, "all">[] = source === "all" ? ["activity", ...SYSTEM_SOURCES] : [source];
     for (const s of wanted) {
@@ -338,6 +378,44 @@ export function createLogService(deps: LogServiceDeps): LogService {
       );
     }
     return { readsActivity: wanted.includes("activity"), sourceStatus };
+  }
+
+  /**
+   * Events delivered late: written before the cursor's position in id order but committed after the tail read
+   * past it. Reads the trailing window again and returns what the cursor has not seen, oldest id first.
+   */
+  async function lateEvents(
+    ctx: TenantContext,
+    q: {
+      environment: LogEnvironment;
+      jobId: string;
+      floor: number;
+      to: Date;
+      afterId: string;
+      seen: ReadonlySet<string>;
+      level?: ActivityLevel | undefined;
+      services?: readonly LogServiceName[] | undefined;
+    },
+  ): Promise<{ late: LogEvent[]; window: Map<string, number> }> {
+    const levels = levelsFrom(q.level);
+    const rows = await deps.activity.window(ctx, {
+      from: new Date(q.floor),
+      to: q.to,
+      jobId: q.jobId,
+      ...(levels ? { levels } : {}),
+      limit: LATE_READ_LIMIT,
+    });
+    const wanted: readonly LogServiceName[] | undefined = q.services?.filter((v) => v !== "infrastructure");
+    const window = new Map<string, number>();
+    const late: LogEvent[] = [];
+    for (const row of rows) {
+      window.set(row.id, row.createdAt.getTime());
+      if (row.id > q.afterId || q.seen.has(row.id)) continue;
+      const event = normalize(row, q.environment);
+      if (wanted && (!event.service || !wanted.includes(event.service))) continue;
+      late.push(event);
+    }
+    return { late, window };
   }
 
   async function fetchActivity(
@@ -581,6 +659,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
           tail: true,
         });
         let afterId: string | undefined;
+        let floor: number | undefined;
+        let seen = new Set<string>();
         if (input.cursor) {
           const payload = decodeCursor(deps.cursorSecret, input.cursor);
           if (
@@ -593,6 +673,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
           if (payload.h !== hash) throw invalidCursor("it belongs to a different tail");
           if (payload.exp < current.getTime()) throw invalidCursor("it expired");
           afterId = payload.id || undefined;
+          floor = payload.floor;
+          seen = new Set(payload.seen ?? []);
         }
         const open = tails.get(ctx.workspaceId) ?? 0;
         if (open >= MAX_TAILS_PER_WORKSPACE) {
@@ -627,23 +709,58 @@ export function createLogService(deps: LogServiceDeps): LogService {
         const deadline = current.getTime() + waitSeconds * 1000;
         let page: Awaited<ReturnType<typeof fetchActivity>> = { events: [], hasMore: false };
         let jobDone = job.terminal;
+        let delivered: LogEvent[] = [];
         for (;;) {
           // Read the job before the events: a job already final here has written everything the read sees.
           job = await options.job(ctx, input.jobId);
           const at = now();
+          const to = new Date(at.getTime() + 60_000);
+          const trailing =
+            afterId !== undefined && floor !== undefined
+              ? await lateEvents(ctx, {
+                  environment: input.environment,
+                  jobId: input.jobId,
+                  floor,
+                  to,
+                  afterId,
+                  seen,
+                  level: input.level,
+                  services: input.services,
+                })
+              : undefined;
           page = await fetchActivity(ctx, {
             environment: input.environment,
             from: new Date(at.getTime() - LOG_RETENTION_MS),
-            to: new Date(at.getTime() + 60_000),
+            to,
             level: input.level,
             services: input.services,
             jobId: input.jobId,
             afterId,
             limit: DEFAULT_LIMIT,
           });
-          jobDone = job.terminal && !page.hasMore;
+          const late = (trailing?.late ?? []).slice(0, DEFAULT_LIMIT);
+          const lateCut = (trailing?.late.length ?? 0) > late.length;
+          delivered = [...late, ...page.events];
+          jobDone = job.terminal && !page.hasMore && !lateCut;
           if (page.resumeId) afterId = page.resumeId;
-          if (page.events.length > 0 || jobDone || options.signal?.aborted) break;
+          if (lateCut) {
+            // Keep the window where it was so the events not returned yet are found again.
+            for (const e of late) seen.add(e.eventId);
+          } else {
+            // Slide the window to the last read and remember which ids in it were delivered or are in the page.
+            const known = new Map(trailing?.window ?? []);
+            for (const e of delivered) known.set(e.eventId, Date.parse(e.timestamp));
+            let nextFloor = at.getTime() - TAIL_LOOKBACK_MS;
+            const inWindow = [...known.entries()]
+              .filter(([, ms]) => ms >= nextFloor)
+              .sort(([x], [y]) => (x < y ? -1 : 1));
+            const keep = inWindow.slice(-MAX_SEEN_IDS);
+            // More ids than a cursor can carry: the window starts at the oldest id still tracked.
+            if (keep.length < inWindow.length && keep[0]) nextFloor = keep[0][1];
+            seen = new Set(keep.map(([id]) => id));
+            floor = nextFloor;
+          }
+          if (delivered.length > 0 || jobDone || options.signal?.aborted) break;
           const remaining = deadline - now().getTime();
           if (remaining <= 0) break;
           await sleep(Math.min(TAIL_POLL_MS, remaining), options.signal);
@@ -657,15 +774,16 @@ export function createLogService(deps: LogServiceDeps): LogService {
               a: ctx.actor.id,
               h: hash,
               id: cursorId,
+              ...(floor !== undefined ? { floor, seen: [...seen].sort() } : {}),
               from: current.toISOString(),
               to: current.toISOString(),
               exp: now().getTime() + CURSOR_TTL_MS,
             })
           : undefined;
         const statuses: SourceStatus[] = [{ source: "activity", status: "ok" }, ...sourceStatus];
-        await audit(ctx, "logs.tail", "ok", { ...summary, count: page.events.length, jobDone });
+        await audit(ctx, "logs.tail", "ok", { ...summary, count: delivered.length, jobDone });
         return {
-          events: page.events,
+          events: delivered,
           ...(nextCursor ? { nextCursor } : {}),
           hasMore: page.hasMore,
           coverage: "complete",

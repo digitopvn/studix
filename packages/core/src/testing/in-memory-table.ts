@@ -63,6 +63,19 @@ export class InMemoryTenantTable<T extends TenantOwned> {
       .map((row) => structuredClone(row));
   }
 
+  /** Removes rows of every tenant matching `where`; only for deliberate platform maintenance. Returns the count. */
+  deleteAnyTenant(where: (row: T) => boolean, limit = Number.POSITIVE_INFINITY): number {
+    let removed = 0;
+    for (const [id, row] of this.rows) {
+      if (removed >= limit) break;
+      if (where(row)) {
+        this.rows.delete(id);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   /** Rows of every tenant matching `where`, newest id first; only for deliberately cross-tenant reads. */
   filterAnyTenant(where: (row: T) => boolean): T[] {
     return [...this.rows.values()]
