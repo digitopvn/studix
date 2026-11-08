@@ -548,11 +548,15 @@ by `traceId`, `jobId`, `projectId` and `stage`. Log text is untrusted data, neve
 - **`studix_tail_logs`**: `jobId` and `environment` (required), `services`, `level`, `cursor`, `waitSeconds` (0 to
   10). One call waits at most `waitSeconds` for new events (polling once a second, never an open stream), returns
   them oldest first with a `nextCursor`, and reports `done: true` once the job has ended and everything it wrote
-  was returned. An expired cursor resumes where it left off with `gapDetected: true`.
+  was returned. Events from the last 2 seconds are held back (they may still be committing), and a finished
+  job is reported done only after the same 2 seconds. An expired cursor resumes where it left off with
+  `gapDetected: true`.
 - **Result.** `{events, nextCursor, hasMore, coverage, sourceStatus, window}` (tail adds `gapDetected`,
   `jobStatus`, `done`). Each event has `eventId`, `timestamp` (UTC), `level`, redacted `message`, `environment`,
   `source` and, when the source records them, `service`, `projectId`, `jobId`, `stage`, `provider`, `traceId`,
-  `spanId`. Unknown fields are absent, never guessed.
+  `spanId`. Unknown fields are absent, never guessed. An activity event without a message reads as its name plus a short,
+  redacted summary of its attributes (`type`, `status`, `name`, `tool`, `error`, `reason`, `delta`, `text`); `search`
+  also matches the stored attributes.
 - **Coverage.** `complete` only when every requested source was read without a known gap; otherwise `partial`
   (some sources) or `unavailable` (none), with `sourceStatus` per source. **Connected today:** the `activity`
   source (the workspace's activity events). Application runtime, build and Cloudflare logs report `unavailable`
