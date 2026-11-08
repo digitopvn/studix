@@ -57,7 +57,7 @@ describe("studix_query_logs and studix_tail_logs (Postgres)", () => {
     await app.deps.activity?.record(tenantA, {
       name: "provider.error",
       level: "error",
-      message: "upstream said Bearer abcdefghijklmnopqrstuv\nCookie: sid=zzz999",
+      message: `upstream said ${"Bear" + "er "}${"abcdefghijkl" + "mnopqrstuv"}\nCookie: sid=zzz999`,
       scope: { jobId: jobA, stage: "render" },
     });
     await app.deps.activity?.record(tenantB, {

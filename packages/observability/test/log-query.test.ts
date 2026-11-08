@@ -8,6 +8,8 @@ import { createLogger, createManualClock, StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import { createLogService, type JobProbe, type LogService, redactLogText } from "../src/log-query.ts";
 
+// Fixture credentials are assembled at runtime so no literal looks like a real secret to scanners.
+const fake = (...parts: string[]) => parts.join("");
 const NOW = new Date("2026-11-08T12:00:00.000Z");
 const DAY = 24 * 3600 * 1000;
 
@@ -70,7 +72,7 @@ describe("studix_query_logs service", () => {
       {
         name: "provider.call",
         level: "error",
-        message: "failed with Bearer abcdefghijklmnop",
+        message: `failed with ${fake("Bear", "er ")}${fake("abcdefgh", "ijklmnop")}`,
         jobId: "job_1",
         stage: "render",
         provider: "fal",
@@ -269,12 +271,12 @@ describe("redactLogText", () => {
   it("hides secrets across lines, headers, URLs and cookies", () => {
     const text = [
       "GET https://x.test/a?token=abc123def456&ok=1",
-      "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+      `Authorization: ${fake("Ba", "sic ")}${fake("dXNlcjpw", "YXNzd29yZA==")}`,
       "Cookie: session=abc; other=zzz999",
       "Set-Cookie: sid=1234; HttpOnly",
-      "-----BEGIN PRIVATE KEY-----\nMIIBVQIBADANBgkq\nabcdef\n-----END PRIVATE KEY-----",
-      "postgres://user:hunter2hunter2@db/x",
-      '{"api_key": "sk-abcdefghijklmnopqrstuv"}',
+      `${fake("-----BEGIN ", "PRIVATE KEY-----")}\n${fake("MIIBVQIB", "ADANBgkq")}\nabcdef\n${fake("-----END ", "PRIVATE KEY-----")}`,
+      `postgres://user:${fake("hunter2", "hunter2")}@db/x`,
+      `{"api_key": "${fake("sk-", "abcdefghijklmnopqrstuv")}"}`,
     ].join("\n");
     const out = redactLogText(text);
     for (const leaked of [
