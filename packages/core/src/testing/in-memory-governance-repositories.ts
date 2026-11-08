@@ -1,11 +1,18 @@
 import { type Clock, StudixError } from "@studix/shared";
 import type { Approval, Review } from "../entities/review.ts";
-import type { ActivityEvent, AuditEvent, ProviderExecution, UsageEvent } from "../entities/telemetry.ts";
+import {
+  ACTIVITY_LEVELS,
+  type ActivityEvent,
+  type AuditEvent,
+  type ProviderExecution,
+  type UsageEvent,
+} from "../entities/telemetry.ts";
 import type {
   ApprovalRepository,
   AuditRepository,
   ReviewRepository,
 } from "../repositories/governance-repositories.ts";
+import { pageLimit, toPage } from "../repositories/pagination.ts";
 import type {
   ActivityRepository,
   UsageRange,
@@ -178,14 +185,29 @@ export function createInMemoryActivityRepository(clock: Clock): ActivityReposito
       return events.insert(ctx, input);
     },
     async list(ctx, query = {}) {
-      return events.page(
-        ctx,
-        query,
-        (e) =>
-          (query.projectId === undefined || e.projectId === query.projectId) &&
-          (query.jobId === undefined || e.jobId === query.jobId) &&
-          (query.traceId === undefined || e.traceId === query.traceId),
-      );
+      const limit = pageLimit(query.limit);
+      const ascending = query.order === "asc";
+      const term = query.search?.toLowerCase();
+      const levels = query.minLevel
+        ? ACTIVITY_LEVELS.slice(ACTIVITY_LEVELS.indexOf(query.minLevel))
+        : undefined;
+      const rows = events
+        .filter(
+          ctx,
+          (e) =>
+            (query.projectId === undefined || e.projectId === query.projectId) &&
+            (query.jobId === undefined || e.jobId === query.jobId) &&
+            (query.traceId === undefined || e.traceId === query.traceId) &&
+            (query.since === undefined || e.createdAt >= query.since) &&
+            (query.until === undefined || e.createdAt <= query.until) &&
+            (levels === undefined || levels.includes(e.level)) &&
+            (term === undefined ||
+              e.name.toLowerCase().includes(term) ||
+              (e.message ?? "").toLowerCase().includes(term)) &&
+            (query.cursor === undefined || (ascending ? e.id > query.cursor : e.id < query.cursor)),
+        )
+        .sort((a, b) => (a.id < b.id ? -1 : 1) * (ascending ? 1 : -1));
+      return toPage(rows.slice(0, limit + 1), limit);
     },
     async listAfter(ctx, query) {
       return events

@@ -450,6 +450,16 @@ resources prefixed `studix-`.
   `STUDIX_API_KEY_ENV` (`live` in production, `staging` in dev) and
   `STUDIX_TRUST_PROXY`.
 
+### Reading logs over MCP
+
+`studix_query_logs` and `studix_tail_logs` read the workspace's activity events from the app's own database; the
+environment they answer for is the server's (`NODE_ENV=production` is `production`, anything else is
+`development`), and cursors are signed with `BETTER_AUTH_SECRET`, so every replica must share it. TOSE runtime
+and build logs and Cloudflare Worker logs are **not connected**: those sources report `unavailable`. Connecting
+them needs project-scoped seven-day retention and safe history/live access from TOSE (platform dependency in
+#290) and a check of the Cloudflare plan's retention and sampling; until then do not describe log coverage as
+complete. The 7-day limit is enforced on the query side only; it does not delete older rows.
+
 ### TOSE access
 
 - When to use: any TOSE API or CLI call outside CI (runbook, backup, rollback).

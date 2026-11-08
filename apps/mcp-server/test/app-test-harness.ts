@@ -21,7 +21,7 @@ import {
   type TenantContext,
 } from "@studix/core";
 import { createTestDatabase, insertTestUser, type TestDatabase } from "@studix/database/testing";
-import { createActivityRecorder } from "@studix/observability";
+import { createActivityRecorder, createLogService } from "@studix/observability";
 import { MULTIX_KEY_NAMES, MULTIX_KEY_SLOTS } from "@studix/providers";
 import { createLogger, newId, systemClock } from "@studix/shared";
 import type { AppDeps } from "../src/app-deps.ts";
@@ -151,6 +151,15 @@ export async function startTestApp(overrides: Partial<AppDeps> = {}): Promise<Te
       knownModel: (provider, modelId) => findPiModel(provider, modelId) !== undefined,
     }),
     activity: createActivityRecorder(repos.activity, { logger }),
+    logs: createLogService({
+      activity: repos.activity,
+      jobs: repos.jobs,
+      projects: repos.projects,
+      audit: repos.audit,
+      environment: "development",
+      secret: TEST_SECRET,
+      logger,
+    }),
     readiness: [{ name: "database", check: async () => void (await db.client`select 1`) }],
     agentHandoffs: createAgentHandoffService({
       handoffs: repos.agentHandoffs,

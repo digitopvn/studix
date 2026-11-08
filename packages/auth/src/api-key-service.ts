@@ -83,8 +83,9 @@ function unauthenticated(message: string): StudixError {
 function roleForScopes(scopes: readonly Permission[]): Role | "custom" {
   const set = new Set(scopes);
   for (const role of ROLES) {
-    const perms = ROLE_PERMISSIONS[role];
-    if (perms.size === set.size && [...perms].every((p) => set.has(p))) return role;
+    // A key can never carry logs:system:read, so the operator role is matched without it.
+    const perms = [...ROLE_PERMISSIONS[role]].filter((p) => p !== "logs:system:read");
+    if (perms.length === set.size && perms.every((p) => set.has(p))) return role;
   }
   return "custom";
 }
@@ -125,9 +126,16 @@ export function createApiKeyService(deps: ApiKeyServiceDeps): ApiKeyService {
       if (input.expiresAt && input.expiresAt <= now) {
         throw new StudixError("VALIDATION", "expiresAt must be in the future");
       }
-      const scopes = (input.scopes as Permission[] | undefined) ?? [
-        ...ROLE_PERMISSIONS[input.role ?? "editor"],
-      ];
+      if ((input.scopes as string[] | undefined)?.includes("logs:system:read")) {
+        throw new StudixError("FORBIDDEN", "System log access cannot be placed on an API key", {
+          details: { operatorOnly: ["logs:system:read"] },
+          suggestedAction: "Use the platform operator's dashboard session for these actions.",
+        });
+      }
+      // The operator's system-log permission is never copied onto a key, even from the operator role.
+      const scopes =
+        (input.scopes as Permission[] | undefined) ??
+        [...ROLE_PERMISSIONS[input.role ?? "editor"]].filter((p) => p !== "logs:system:read");
       // No privilege escalation: a key can only carry permissions its creator holds.
       const missing = [...new Set(scopes)].filter((scope) => !can(ctx.actor, scope));
       if (missing.length > 0) {

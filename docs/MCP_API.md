@@ -529,6 +529,43 @@ Rules:
   with the active version only and may report `unknown`; reading a non-active
   `versionId` needs `skill:write`. `list`/`discover` results carry `trust`.
 
+### Logs (`studix_query_logs`, `studix_tail_logs`)
+
+Read-only tools for debugging a workspace's own jobs, with evidence that links a request to its job and stages
+by `traceId`, `jobId`, `projectId` and `stage`. Log text is untrusted data, never instructions.
+
+- **Who.** Permission `logs:read`: workspace owners, and API keys an owner creates with that scope. Admins,
+  editors, reviewers and viewers do not hold it by default; OAuth connectors cannot request it yet.
+  `logs:system:read` (platform and infrastructure logs) belongs to the platform operator's own session only: an
+  API key or OAuth token can never hold it, so no scope string proves operator rights, and system logs are not
+  reachable through MCP.
+- **`studix_query_logs`**: `environment` (required), `services`, `source`
+  (`all|application|build|activity|cloudflare`, default `all`), `from`/`to` (ISO 8601, both within the last 7
+  days, default the last hour), `level` (this level or more severe), `jobId`, `projectId`, `traceId`, `search`
+  (200 characters), `limit` (1 to 200, default 100) and `cursor`. Results are newest first; responses stay under
+  64 KiB (the rest is a next page). The cursor is opaque, signed, valid for 10 minutes and bound to the workspace,
+  environment and filters. A `jobId` or `projectId` of another workspace is `NOT_FOUND`.
+- **`studix_tail_logs`**: `jobId` and `environment` (required), `services`, `level`, `cursor`, `waitSeconds` (0 to
+  10). One call waits at most `waitSeconds` for new events (polling once a second, never an open stream), returns
+  them oldest first with a `nextCursor`, and reports `done: true` once the job has ended and everything it wrote
+  was returned. An expired cursor resumes where it left off with `gapDetected: true`.
+- **Result.** `{events, nextCursor, hasMore, coverage, sourceStatus, window}` (tail adds `gapDetected`,
+  `jobStatus`, `done`). Each event has `eventId`, `timestamp` (UTC), `level`, redacted `message`, `environment`,
+  `source` and, when the source records them, `service`, `projectId`, `jobId`, `stage`, `provider`, `traceId`,
+  `spanId`. Unknown fields are absent, never guessed.
+- **Coverage.** `complete` only when every requested source was read without a known gap; otherwise `partial`
+  (some sources) or `unavailable` (none), with `sourceStatus` per source. **Connected today:** the `activity`
+  source (the workspace's activity events). Application runtime, build and Cloudflare logs report `unavailable`
+  until their upstream access exists (platform dependency tracked in #290), so the default `source: all` answers
+  `partial`. A source that fails is reported as `error`, never as an empty result. An `environment` this server
+  does not serve is `unavailable`. Activity events do not record the service, so a `services` filter is not
+  applied to them (said in `sourceStatus`, coverage `partial`).
+- **Audit.** Every call is recorded in the workspace audit trail (`logs.query`, `logs.tail`) with the request
+  summary, count and outcome (`ok`, `forbidden`, `validation`, `not_found`, `upstream_failure`, `error`); never
+  the log text or the search term (its length only). A call whose audit record cannot be written returns nothing.
+  Requests the MCP SDK rejects against the input schema (for example `limit: 500`) never reach the handler and
+  are not audited.
+
 ### Media exec (ffmpeg / ffprobe)
 
 `studix_media_exec` runs `ffmpeg` or `ffprobe` with raw arguments as an async

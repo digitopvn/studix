@@ -5,6 +5,7 @@ import {
   assertRelativeStorageKey,
   assertTenantContext,
   can,
+  ROLE_PERMISSIONS,
   type TenantContext,
   tenantObjectKey,
 } from "../src/index.ts";
@@ -33,6 +34,55 @@ describe("authorization matrix", () => {
     expect(can(actor, "project:write")).toBe(false);
     expect(can(actor, "approval:decide")).toBe(false);
     expect(can(actor, "job:recover")).toBe(false);
+  });
+
+  it("logs:read belongs to owners only; logs:system:read to no key, token, system actor or tenant role", () => {
+    const role = (r: "operator" | "owner" | "admin" | "editor" | "reviewer" | "viewer") =>
+      ({ type: "user", id: "u", role: r }) as const;
+    expect(can(role("owner"), "logs:read")).toBe(true);
+    for (const r of ["admin", "editor", "reviewer", "viewer"] as const) {
+      expect(can(role(r), "logs:read")).toBe(false);
+    }
+    for (const r of ["owner", "admin", "editor", "reviewer", "viewer"] as const) {
+      expect(can(role(r), "logs:system:read")).toBe(false);
+    }
+    expect(can(role("operator"), "logs:system:read")).toBe(true);
+    expect(can({ type: "apiKey", id: "k", scopes: ["logs:read"] }, "logs:read")).toBe(true);
+    expect(can({ type: "apiKey", id: "k", scopes: ["logs:system:read"] }, "logs:system:read")).toBe(false);
+    const oauth = {
+      type: "oauth",
+      id: "u",
+      clientId: "c",
+      scopes: ["logs:system:read", "logs:read"],
+    } as const;
+    expect(can(oauth, "logs:system:read")).toBe(false);
+    expect(can(oauth, "logs:read")).toBe(true);
+    expect(can({ type: "system", id: "worker" }, "logs:system:read")).toBe(false);
+  });
+
+  it("gives admins every permission they had before log access existed, and nothing newer by default", () => {
+    const admin = [...ROLE_PERMISSIONS.admin].sort();
+    expect(admin).toEqual(
+      [
+        "workspace:read",
+        "project:read",
+        "project:write",
+        "job:cancel",
+        "job:retry",
+        "asset:read",
+        "asset:write",
+        "skill:read",
+        "skill:write",
+        "media:exec",
+        "approval:request",
+        "approval:decide",
+        "publish",
+        "audit:read",
+        "apikey:manage",
+        "member:manage",
+      ].sort(),
+    );
+    expect([...ROLE_PERMISSIONS.owner].sort()).toEqual([...admin, "logs:read"].sort());
   });
 
   it("assertPermission throws FORBIDDEN with a suggested action", () => {

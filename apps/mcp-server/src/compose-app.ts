@@ -27,7 +27,7 @@ import {
   StudioService,
 } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
-import { createActivityRecorder } from "@studix/observability";
+import { createActivityRecorder, createLogService } from "@studix/observability";
 import {
   createMultixProviderFromConfig,
   createWorkspaceMultixProviders,
@@ -171,6 +171,7 @@ export async function composeApp(
     costThresholdCents: config.APPROVAL_COST_THRESHOLD_CENTS,
   });
   const activity = createActivityRecorder(repos.activity, { logger });
+  const dashboardSecretValue = dashboardSecret(config, logger);
   const secretBox = config.STUDIX_SECRETS_KEY
     ? createSecretBox(
         parseSecretKey(config.STUDIX_SECRETS_KEY),
@@ -253,7 +254,7 @@ export async function composeApp(
   const dashboardAuth = createDashboardAuth({
     db: handle.db,
     directory: repos.directory,
-    secret: dashboardSecret(config, logger),
+    secret: dashboardSecretValue,
     baseUrl: config.STUDIX_APP_URL,
     trustedOrigins: [config.STUDIX_PUBLIC_URL],
     sso: ssoClients(config),
@@ -326,6 +327,15 @@ export async function composeApp(
     claudePlanner: config.STUDIX_CLAUDE_PLANNER,
     features,
     activity,
+    logs: createLogService({
+      activity: repos.activity,
+      jobs: repos.jobs,
+      projects: repos.projects,
+      audit: repos.audit,
+      environment: config.NODE_ENV === "production" ? "production" : "development",
+      secret: dashboardSecretValue,
+      logger,
+    }),
     readiness: [
       {
         name: "database",

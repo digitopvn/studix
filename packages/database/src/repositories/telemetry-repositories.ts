@@ -1,14 +1,16 @@
-import type {
-  ActivityEvent,
-  ActivityRepository,
-  ProviderExecution,
-  TenantContext,
-  UsageEvent,
-  UsageRange,
-  UsageRepository,
+import {
+  ACTIVITY_LEVELS,
+  type ActivityEvent,
+  type ActivityLevel,
+  type ActivityRepository,
+  type ProviderExecution,
+  type TenantContext,
+  type UsageEvent,
+  type UsageRange,
+  type UsageRepository,
 } from "@studix/core";
 import { type Clock, newId, redactDeep, StudixError } from "@studix/shared";
-import { and, asc, desc, eq, gt, gte, lt, type SQL, sql, sum } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lt, lte, type SQL, sql, sum } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { activityEvents, providerExecutions, usageEvents } from "../schema/telemetry.ts";
 import { beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -206,6 +208,17 @@ function toActivity(row: typeof activityEvents.$inferSelect): ActivityEvent {
   };
 }
 
+/** The levels at or above `min`. */
+function levelsFrom(min: ActivityLevel): ActivityLevel[] {
+  return ACTIVITY_LEVELS.slice(ACTIVITY_LEVELS.indexOf(min));
+}
+
+/** Case-insensitive substring match on name or message; LIKE wildcards in the term are literal. */
+function textMatch(term: string): SQL {
+  const pattern = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  return sql`(${activityEvents.name} ilike ${pattern} or ${activityEvents.message} ilike ${pattern})`;
+}
+
 export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRepository {
   return {
     async append(ctx, input) {
@@ -234,6 +247,7 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
     },
     async list(ctx, query = {}) {
       const limit = pageLimit(query.limit);
+      const ascending = query.order === "asc";
       const rows = await db
         .select()
         .from(activityEvents)
@@ -241,13 +255,21 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
           scoped(
             activityEvents,
             ctx,
-            beforeCursor(activityEvents.id, query.cursor),
+            query.cursor === undefined
+              ? undefined
+              : ascending
+                ? gt(activityEvents.id, query.cursor)
+                : lt(activityEvents.id, query.cursor),
             query.projectId ? eq(activityEvents.projectId, query.projectId) : undefined,
             query.jobId ? eq(activityEvents.jobId, query.jobId) : undefined,
             query.traceId ? eq(activityEvents.traceId, query.traceId) : undefined,
+            query.since ? gte(activityEvents.createdAt, query.since) : undefined,
+            query.until ? lte(activityEvents.createdAt, query.until) : undefined,
+            query.minLevel ? inArray(activityEvents.level, levelsFrom(query.minLevel)) : undefined,
+            query.search ? textMatch(query.search) : undefined,
           ),
         )
-        .orderBy(desc(activityEvents.id))
+        .orderBy(ascending ? asc(activityEvents.id) : desc(activityEvents.id))
         .limit(limit + 1);
       return toPage(rows.map(toActivity), limit);
     },

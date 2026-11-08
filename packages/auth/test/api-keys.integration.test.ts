@@ -16,6 +16,8 @@ import { hashApiKey } from "../src/api-key-format.ts";
 import { createApiKeyService } from "../src/api-key-service.ts";
 
 const SKILL_SCOPES: ReadonlySet<string> = new Set(["skill:read", "skill:write"]);
+/** Log access came after every migration here, so a key from those days never held it. */
+const LOG_SCOPES: ReadonlySet<string> = new Set(["logs:read", "logs:system:read"]);
 const MEDIA_EXEC_MIGRATION = "0033_api_key_media_exec_scope.sql";
 
 const db = withTestDatabase();
@@ -132,7 +134,12 @@ describe("api key scopes after job:retry joined the role matrix", () => {
     const admin = await issue(
       "old-admin",
       PERMISSIONS.filter(
-        (p) => p !== "job:retry" && p !== "job:recover" && !SKILL_SCOPES.has(p) && p !== "media:exec",
+        (p) =>
+          p !== "job:retry" &&
+          p !== "job:recover" &&
+          !SKILL_SCOPES.has(p) &&
+          p !== "media:exec" &&
+          !LOG_SCOPES.has(p),
       ),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
@@ -159,8 +166,8 @@ describe("api key scopes after job:retry joined the role matrix", () => {
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
     expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
     expect(byId.get(editor.id)?.scopes).toContain("job:retry");
-    // owner and admin share one permission set; the label is the first role that matches.
-    expect(byId.get(admin.id)).toMatchObject({ role: "owner" });
+    // These keys predate log access, so their set is exactly the admin role (owners also hold logs:read).
+    expect(byId.get(admin.id)).toMatchObject({ role: "admin" });
     expect(byId.get(custom.id)).toMatchObject({ role: "custom", scopes: ["project:read", "job:cancel"] });
     expect(byId.get(already.id)?.scopes).toEqual(["project:read", "job:retry"]);
     expect(byId.get(reviewer.id)).toMatchObject({ role: "reviewer" });
@@ -190,7 +197,9 @@ describe("api key scopes as job:recover joined the admin roles, then moved to op
     const admin = await issue(
       "old-admin",
       [
-        ...PERMISSIONS.filter((p) => p !== "job:recover" && !SKILL_SCOPES.has(p) && p !== "media:exec"),
+        ...PERMISSIONS.filter(
+          (p) => p !== "job:recover" && !SKILL_SCOPES.has(p) && p !== "media:exec" && !LOG_SCOPES.has(p),
+        ),
       ].reverse(),
     );
     const editor = await issue("editor", [
@@ -224,8 +233,8 @@ describe("api key scopes as job:recover joined the admin roles, then moved to op
     await db.current.client.unsafe(readFileSync(join(MIGRATIONS_FOLDER, MEDIA_EXEC_MIGRATION), "utf8"));
 
     const byId = new Map((await keys.list(ctx)).map((k) => [k.id, k]));
-    // The admin key is an owner/admin key again: owner and admin share one set, labelled by the first match.
-    expect(byId.get(admin.id)).toMatchObject({ role: "owner" });
+    // The key is an admin key again; owners differ from admins by logs:read, which this key never held.
+    expect(byId.get(admin.id)).toMatchObject({ role: "admin" });
     expect(byId.get(admin.id)?.scopes).not.toContain("job:recover");
     expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
     expect(byId.get(custom.id)?.scopes).toEqual(["project:read"]);
@@ -259,7 +268,9 @@ describe("api key scopes as skill:read and skill:write joined the role matrix", 
     const admin = await issue(
       "admin",
       [
-        ...PERMISSIONS.filter((p) => p !== "job:recover" && !SKILL_SCOPES.has(p) && p !== "media:exec"),
+        ...PERMISSIONS.filter(
+          (p) => p !== "job:recover" && !SKILL_SCOPES.has(p) && p !== "media:exec" && !LOG_SCOPES.has(p),
+        ),
       ].reverse(),
     );
     const custom = await issue("custom", ["project:read", "job:cancel"]);
@@ -276,7 +287,7 @@ describe("api key scopes as skill:read and skill:write joined the role matrix", 
     expect(byId.get(viewer.id)?.scopes).not.toContain("skill:write");
     expect(byId.get(editor.id)).toMatchObject({ role: "editor" });
     expect(byId.get(editor.id)?.scopes).toContain("skill:write");
-    expect(byId.get(admin.id)).toMatchObject({ role: "owner" });
+    expect(byId.get(admin.id)).toMatchObject({ role: "admin" });
     expect(byId.get(admin.id)?.scopes.filter((s) => s === "skill:read")).toHaveLength(1);
     expect(byId.get(custom.id)).toMatchObject({ role: "custom", scopes: ["project:read", "job:cancel"] });
   });

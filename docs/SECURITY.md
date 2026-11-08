@@ -440,6 +440,25 @@ binary, so the arguments are untrusted. Owner: `packages/core/src/studio/media-e
   and source types, output names and timeout, never argument text or input
   contents. Compute time is metered into the job budget, failed runs included.
 
+## Logs access
+
+Owner: `packages/observability/src/log-service.ts`, tools in `apps/mcp-server/src/mcp/log-tools.ts`.
+
+- Permissions are granted explicitly in `packages/core/src/tenant.ts`: `logs:read` to owners (and to API keys
+  carrying the scope); never to admin or below by default, and a new permission is never picked up by filtering
+  the full list. `logs:system:read` is held only by the `operator` role in a user session: `can()` denies it to
+  API keys, OAuth tokens and system actors whatever their scopes, and API key creation refuses it.
+- Tenant boundary: every read is scoped to the caller's workspace by the repository; a `jobId`/`projectId` of
+  another workspace is `NOT_FOUND`. Cursors are HMAC-signed (server secret), expire after 10 minutes and are
+  bound to workspace, environment and filters, so they cannot be reused or edited to widen a query.
+- Bounds: 7-day window, 200 events and 64 KiB per response, tail waits at most 10 seconds. There is no shell,
+  no arbitrary URL, project slug or command from the client, and no infrastructure token reaches a client.
+- Messages are redacted when written and again when read. Log text is a prompt-injection surface: tool
+  descriptions say it is untrusted data.
+- Every access is audited, including refusals and failures, without log text or the search term.
+- Not built yet (needs the platform dependency in #290): reading infrastructure logs, and an operator-bound
+  service credential for system logs over MCP.
+
 ## Redaction
 
 Owner: `redact()` and the logger in `packages/shared`, spans in

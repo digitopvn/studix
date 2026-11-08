@@ -15,7 +15,7 @@ import type {
   WorkspaceRepository,
 } from "@studix/core";
 import type { JobChangeRepository, RateLimitRepository } from "@studix/database";
-import type { ActivityRecorder } from "@studix/observability";
+import type { ActivityRecorder, LogService } from "@studix/observability";
 import type { Logger } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
@@ -79,6 +79,8 @@ export interface AppDeps {
   metaTools?: RegisterMetaTools;
   /** Activity/trace recorder for MCP and API mutations (best effort). */
   activity?: ActivityRecorder;
+  /** studix_query_logs / studix_tail_logs; without it those tools answer UNAVAILABLE. */
+  logs?: LogService;
   /** Checks run by /readyz (database ping, storage, ...). */
   readiness?: ReadinessCheck[];
   /** Workflow templates listed by `studix_inspect`. */

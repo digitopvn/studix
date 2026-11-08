@@ -1,5 +1,5 @@
 import type { NewRecord } from "../entities/common.ts";
-import type { ActivityEvent, ProviderExecution, UsageEvent } from "../entities/telemetry.ts";
+import type { ActivityEvent, ActivityLevel, ProviderExecution, UsageEvent } from "../entities/telemetry.ts";
 import type { TenantContext } from "../tenant.ts";
 import type { Page, PageRequest } from "./pagination.ts";
 
@@ -30,15 +30,31 @@ export interface UsageRepository {
   ): Promise<Page<ProviderExecution>>;
 }
 
+/**
+ * Filters of an activity listing. `cursor` is the id of the last event seen: newest first it pages to older
+ * events, with `order: "asc"` it pages to newer ones.
+ */
+export interface ActivityFilter {
+  projectId?: string;
+  jobId?: string;
+  traceId?: string;
+  /** Inclusive lower bound on the event time. */
+  since?: Date;
+  /** Inclusive upper bound on the event time. */
+  until?: Date;
+  /** Events at this level or more severe. */
+  minLevel?: ActivityLevel;
+  /** Case-insensitive substring of the event name or message. */
+  search?: string;
+  order?: "asc" | "desc";
+}
+
 export type NewActivityEvent = NewRecord<ActivityEvent>;
 
 /** Append-only activity/trace events shown on dashboards. */
 export interface ActivityRepository {
   append(ctx: TenantContext, input: NewActivityEvent): Promise<ActivityEvent>;
-  list(
-    ctx: TenantContext,
-    query?: PageRequest & { projectId?: string; jobId?: string; traceId?: string },
-  ): Promise<Page<ActivityEvent>>;
+  list(ctx: TenantContext, query?: PageRequest & ActivityFilter): Promise<Page<ActivityEvent>>;
   /** A job's events with one name, oldest first, strictly after `afterId` (the replay offset). */
   listAfter(
     ctx: TenantContext,
