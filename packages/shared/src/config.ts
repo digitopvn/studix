@@ -63,6 +63,13 @@ export const ConfigSchema = z
     /** Local development only: job webhooks may target http:// and loopback or private hosts. */
     STUDIX_WEBHOOK_ALLOW_LOCAL: bool.default(false),
 
+    /**
+     * Which environment this deployment's logs are, as `studix_query_logs` names it. Defaults to
+     * production when NODE_ENV is production, else development; set it where a deployed development
+     * environment also runs with NODE_ENV=production.
+     */
+    STUDIX_LOG_ENVIRONMENT: z.enum(["production", "development"]).optional(),
+
     STUDIX_API_KEY_ENV: z
       .string()
       .regex(/^[a-z0-9]{2,8}$/, "2-8 lowercase alphanumerics")

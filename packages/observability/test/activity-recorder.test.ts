@@ -70,6 +70,7 @@ describe("createActivityRecorder", () => {
       append: () => Promise.reject(new Error("connection lost to postgres://u:pw1234567@db/x")),
       list: () => Promise.reject(new Error("unused")),
       listAfter: () => Promise.reject(new Error("unused")),
+      window: () => Promise.reject(new Error("unused")),
     };
     const { recorder, lines } = setup(failing);
     await expect(recorder.record(testTenant(), { name: "job.failed" })).resolves.toBeUndefined();

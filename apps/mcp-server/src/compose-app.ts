@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createPiKeyTester, findPiModel, isRuntimeKeyProvider } from "@studix/agent-runtime";
 import {
@@ -27,7 +27,7 @@ import {
   StudioService,
 } from "@studix/core";
 import { createDb, createRepositories, migrate } from "@studix/database";
-import { createActivityRecorder } from "@studix/observability";
+import { createActivityRecorder, createLogService } from "@studix/observability";
 import {
   createMultixProviderFromConfig,
   createWorkspaceMultixProviders,
@@ -250,10 +250,11 @@ export async function composeApp(
       jobMaxAttempts: config.JOB_MAX_ATTEMPTS,
     },
   });
+  const authSecret = dashboardSecret(config, logger);
   const dashboardAuth = createDashboardAuth({
     db: handle.db,
     directory: repos.directory,
-    secret: dashboardSecret(config, logger),
+    secret: authSecret,
     baseUrl: config.STUDIX_APP_URL,
     trustedOrigins: [config.STUDIX_PUBLIC_URL],
     sso: ssoClients(config),
@@ -337,6 +338,14 @@ export async function composeApp(
     ],
     skills: overrides.skills ?? integrations.skills,
     jobChanges: repos.jobChanges,
+    logs: createLogService({
+      activity: repos.activity,
+      audit: repos.audit,
+      environment:
+        config.STUDIX_LOG_ENVIRONMENT ?? (config.NODE_ENV === "production" ? "production" : "development"),
+      cursorSecret: createHmac("sha256", authSecret).update("studix-log-cursor").digest("base64url"),
+      logger,
+    }),
     webhooks: createJobWebhookService({
       repo: repos.workspaceWebhooks,
       secrets: secretBox,

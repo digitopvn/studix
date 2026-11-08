@@ -187,6 +187,26 @@ export function createInMemoryActivityRepository(clock: Clock): ActivityReposito
           (query.traceId === undefined || e.traceId === query.traceId),
       );
     },
+    async window(ctx, query) {
+      const needle = query.search?.toLowerCase();
+      return events
+        .filter(
+          ctx,
+          (e) =>
+            e.createdAt >= query.from &&
+            e.createdAt <= query.to &&
+            (query.levels === undefined || query.levels.includes(e.level)) &&
+            (query.projectId === undefined || e.projectId === query.projectId) &&
+            (query.jobId === undefined || e.jobId === query.jobId) &&
+            (query.traceId === undefined || e.traceId === query.traceId) &&
+            (needle === undefined ||
+              e.name.toLowerCase().includes(needle) ||
+              (e.message ?? "").toLowerCase().includes(needle)) &&
+            (query.afterId === undefined || e.id > query.afterId),
+        )
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+        .slice(0, query.limit);
+    },
     async listAfter(ctx, query) {
       return events
         .filter(

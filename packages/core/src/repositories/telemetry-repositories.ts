@@ -32,6 +32,24 @@ export interface UsageRepository {
 
 export type NewActivityEvent = NewRecord<ActivityEvent>;
 
+/** A bounded, filtered read of activity events for log queries. */
+export interface ActivityWindowQuery {
+  /** Inclusive lower bound on `createdAt`. */
+  from: Date;
+  /** Inclusive upper bound on `createdAt`. */
+  to: Date;
+  /** Only these levels. */
+  levels?: readonly ActivityEvent["level"][];
+  projectId?: string;
+  jobId?: string;
+  traceId?: string;
+  /** Case-insensitive substring of the event name or message (wildcards are literal). */
+  search?: string;
+  /** Strictly after this event id (the resume offset). */
+  afterId?: string;
+  limit: number;
+}
+
 /** Append-only activity/trace events shown on dashboards. */
 export interface ActivityRepository {
   append(ctx: TenantContext, input: NewActivityEvent): Promise<ActivityEvent>;
@@ -39,6 +57,8 @@ export interface ActivityRepository {
     ctx: TenantContext,
     query?: PageRequest & { projectId?: string; jobId?: string; traceId?: string },
   ): Promise<Page<ActivityEvent>>;
+  /** Events in a time window, oldest first by id, at most `limit`, always inside the context's workspace. */
+  window(ctx: TenantContext, query: ActivityWindowQuery): Promise<ActivityEvent[]>;
   /** A job's events with one name, oldest first, strictly after `afterId` (the replay offset). */
   listAfter(
     ctx: TenantContext,
