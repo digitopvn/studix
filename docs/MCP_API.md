@@ -420,14 +420,20 @@ the first event. API, MCP and worker write events with their own clocks, so a
 cursor does not hold an id offset: it holds the time of the newest event
 delivered and the ids delivered in the 15 seconds before it. The next call
 re-reads that trailing window and drops what was already returned, so an event
-another process committed late still arrives, once. An event that lands more
-than 15 seconds after a newer one was delivered is not recovered. Events are
-ordered by time, then id. Cursors are about 3 KB at most (the `cursor` argument
-accepts 4000 characters).
+another process committed late still arrives, once, as long as it lands within
+15 seconds of the newest event already delivered (by its own timestamp). Later
+than that, or older than what a burst forced the cursor to forget, it is not
+recovered. A cursor remembers at most 200 delivered ids: when more than that
+were delivered inside the window, it stops re-reading before the oldest one
+forgotten, so paging still ends and never repeats an event. The position never
+moves past the server's clock, so a writer with a fast clock cannot hide events.
+Events are ordered by time, then id. Cursors are about 3 KB at most (the
+`cursor` argument accepts 4000 characters).
 
 Events written without a message (the worker's agent events keep their text in
 attributes) get a short redacted one-line message when they are stored, for
-example `tool bash started` or `agent failed (claude): ...`, so tails show more
+example `tool bash started` or `agent failed (claude): ...`, with `Cookie:` and
+`Authorization:` header values masked before the text is flattened, so tails show more
 than event names. Events stored before that change keep their bare name.
 
 A denied call says how to get access: an OAuth client is told to reconnect and

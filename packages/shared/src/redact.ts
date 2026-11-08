@@ -34,6 +34,13 @@ const KEY_VALUE =
 const SECRET_FIELD =
   /^(api[_-]?key|apikey|secret|.*[_-]secret|password|passwd|token|.*[_-]token|access[_-]?token|refresh[_-]?token|authorization|cookie|set-cookie|x-api-key|client[_-]?secret|private[_-]?key|.*Secret|.*Token|.*Password|.*ApiKey)$/i;
 
+const HEADER_LINE = /^(\s*(?:cookie|set-cookie|authorization|proxy-authorization|x-api-key)\s*:).*$/gim;
+
+/** Replaces the whole value of auth/cookie header lines (`Cookie: a=1; b=2`), which `redact` only trims to one token. */
+export function redactHeaderLines(text: string): string {
+  return text.replace(HEADER_LINE, "$1 [redacted]");
+}
+
 const SECRET_HEADER = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key)$/i;
 
 /** Environment variable names whose values are treated as secrets. */

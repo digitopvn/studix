@@ -422,8 +422,9 @@ signed with a key derived from `BETTER_AUTH_SECRET`, so rotating that secret
 invalidates open cursors (clients start again without one). Every worker deletes
 activity events older than 7 days (all except `agent.event`) at startup and
 hourly, in batches of 5,000 with `FOR UPDATE SKIP LOCKED`, so several workers
-share the work; the `activity_events_created_idx` index (migration 0035) serves
-it. A large backlog is cleared over several runs (up to 100,000 rows per run).
+share the work; the partial `activity_events_purge_idx` index (migrations 0035 and 0036, built
+without `CONCURRENTLY`, a short write lock on `activity_events`) serves it and
+skips the kept chat rows. A large backlog is cleared over several runs (up to 100,000 rows per run).
 TOSE runtime and
 build logs and Cloudflare Workers logs are not connected: they wait for
 project-scoped seven-day retention and safe history and live access on TOSE

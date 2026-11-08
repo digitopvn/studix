@@ -52,11 +52,16 @@ export function webmcpRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     const def = tools.find((t) => t.name === req.params.name);
     if (!def) throw new StudixError("NOT_FOUND", "Unknown WebMCP tool");
     const traceId = crypto.randomUUID().replaceAll("-", "");
+    // A closed tab ends a waiting call (a log tail) instead of holding its slot until the wait runs out.
+    const abort = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) abort.abort();
+    });
     // The reply is the same CallToolResult `/mcp` returns, so the browser hands it to the agent unchanged.
     try {
       const args = parseBody(def.input, req.body, def.name);
       const outcome = await def.run(
-        { deps, artifacts, tenant, traceId, toolNames: [...WEBMCP_TOOL_NAMES] },
+        { deps, artifacts, tenant, traceId, toolNames: [...WEBMCP_TOOL_NAMES], signal: abort.signal },
         args,
       );
       if (def.audited) {

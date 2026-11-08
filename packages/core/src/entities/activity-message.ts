@@ -1,16 +1,18 @@
-import { redact } from "@studix/shared";
+import { redact, redactHeaderLines } from "@studix/shared";
 
 /** Longest message derived from an event's attributes; log tails show it instead of the bare event name. */
 const MAX_DERIVED_CHARS = 200;
 const TEXT_KEYS = ["message", "error", "reason", "summary"] as const;
 
 function text(value: unknown): string | undefined {
-  if (typeof value === "string") return value.trim() || undefined;
-  if (value && typeof value === "object") {
-    const nested = (value as { message?: unknown }).message;
-    if (typeof nested === "string") return nested.trim() || undefined;
-  }
-  return undefined;
+  const raw =
+    typeof value === "string"
+      ? value
+      : value && typeof value === "object" && typeof (value as { message?: unknown }).message === "string"
+        ? (value as { message: string }).message
+        : undefined;
+  // Header lines are masked while they still start a line; a prefix added later would hide them.
+  return raw ? redactHeaderLines(raw).trim() || undefined : undefined;
 }
 
 function short(value: string): string {
@@ -61,5 +63,6 @@ function describe(attributes: Record<string, unknown>): string | undefined {
  */
 export function deriveActivityMessage(attributes: Record<string, unknown>): string | undefined {
   const summary = describe(attributes);
-  return summary ? short(redact(summary)) : undefined;
+  // Header lines go first: flattening newlines would hide them from the line-anchored rule.
+  return summary ? short(redactHeaderLines(redact(redactHeaderLines(summary)))) : undefined;
 }

@@ -9,7 +9,7 @@ import {
   can,
   type TenantContext,
 } from "@studix/core";
-import { type Logger, redact, StudixError } from "@studix/shared";
+import { type Logger, redact, redactHeaderLines, StudixError } from "@studix/shared";
 
 /** Logs are never readable beyond this age, whatever the sources still hold. */
 export const LOG_RETENTION_MS = 7 * 24 * 3600 * 1000;
@@ -147,11 +147,9 @@ function levelsFrom(min: ActivityLevel | undefined): ActivityLevel[] | undefined
   return ACTIVITY_LEVELS.filter((l) => LEVEL_ORDER[l] >= LEVEL_ORDER[min]);
 }
 
-const HEADER_LINE = /^(\s*(?:cookie|set-cookie|authorization|proxy-authorization|x-api-key)\s*:).*$/gim;
-
 /** Server-side redaction of one log line: known secret shapes, plus whole auth/cookie header lines. */
 export function redactLogText(text: string): string {
-  return redact(text).replace(HEADER_LINE, "$1 [redacted]");
+  return redactHeaderLines(redact(text));
 }
 
 /** `service` is known only for events whose name says where they came from; otherwise it is left out. */
@@ -211,6 +209,11 @@ interface Position {
   at: number;
   /** Digests of delivered ids whose time is within the trailing window of `at`. */
   seen: ReadonlySet<string>;
+  /**
+   * Nothing before this time (ms) is read again. It rises when more events were delivered inside the window
+   * than a cursor can remember, so every delivered event at or after it is remembered and paging always ends.
+   */
+  floor: number;
 }
 
 function digest(id: string): string {
@@ -242,6 +245,8 @@ interface CursorPayload {
   at: number;
   /** Packed digests of the ids returned inside the trailing window of `at`. */
   s: string;
+  /** Read floor in ms (see `Position.floor`). */
+  fl: number;
   from: string;
   to: string;
   exp: number;
@@ -413,7 +418,10 @@ export function createLogService(deps: LogServiceDeps): LogService {
     const events: LogEvent[] = [];
     let bytes = 0;
     let hasMore = false;
+    // A writer with a fast clock must not drag the position past events other writers stamp correctly.
+    const clockCeiling = now().getTime();
     let at = q.after?.at ?? 0;
+    let floor = q.after?.floor ?? 0;
     const seen = new Set(q.after?.seen);
     // Digest -> event time, for every id that may still fall inside the next trailing window.
     const recent = new Map<string, number>();
@@ -422,11 +430,11 @@ export function createLogService(deps: LogServiceDeps): LogService {
       const ms = row.createdAt.getTime();
       seen.add(d);
       recent.set(d, ms);
-      if (ms > at) at = ms;
+      if (ms > at) at = Math.min(ms, Math.max(clockCeiling, at));
     };
     // A service filter is applied after the read, so keep reading until the page is full or rows run out.
     for (let round = 0; round < 10 && !hasMore; round++) {
-      const readFrom = at > 0 ? Math.max(q.from.getTime(), at - TRAILING_WINDOW_MS) : q.from.getTime();
+      const readFrom = at > 0 ? Math.max(q.from.getTime(), at - TRAILING_WINDOW_MS, floor) : q.from.getTime();
       const inWindow = [...recent.values()].filter((ms) => ms >= at - TRAILING_WINDOW_MS).length;
       const readLimit = Math.min(q.limit + 1 + Math.max(inWindow, q.after?.seen.size ?? 0), 1000);
       const rows = await deps.activity.window(ctx, {
@@ -464,12 +472,15 @@ export function createLogService(deps: LogServiceDeps): LogService {
       if (round === 9) hasMore = true;
     }
     if (at === 0) return { events, hasMore };
-    const kept = [...recent.entries()]
-      .filter(([, ms]) => ms >= at - TRAILING_WINDOW_MS)
-      .sort((x, y) => y[1] - x[1])
-      .slice(0, MAX_SEEN_IDS)
-      .map(([d]) => d);
-    return { events, position: { at, seen: new Set(kept) }, hasMore };
+    const inside = [...recent.entries()]
+      .filter(([, ms]) => ms >= Math.max(at - TRAILING_WINDOW_MS, floor))
+      .sort((x, y) => y[1] - x[1]);
+    const kept = inside.slice(0, MAX_SEEN_IDS);
+    const dropped = inside.slice(MAX_SEEN_IDS);
+    // More delivered ids than a cursor holds: stop reading before the oldest forgotten one, so none repeats.
+    for (const [, ms] of dropped) floor = Math.max(floor, ms + 1);
+    const keptIds = kept.filter(([, ms]) => ms >= floor).map(([d]) => d);
+    return { events, position: { at, seen: new Set(keptIds), floor }, hasMore };
   }
 
   function mismatch(environment: LogEnvironment): SourceStatus {
@@ -541,7 +552,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
           // A window that has slid past the retention edge since the first page is clamped, not refused.
           from = new Date(Math.max(Date.parse(payload.from), current.getTime() - LOG_RETENTION_MS));
           to = new Date(payload.to);
-          after = payload.at > 0 ? { at: payload.at, seen: unpackSeen(payload.s) } : undefined;
+          after =
+            payload.at > 0 ? { at: payload.at, seen: unpackSeen(payload.s), floor: payload.fl } : undefined;
         } else {
           to = input.to ? parseInstant("to", input.to) : current;
           from = input.from ? parseInstant("from", input.from) : new Date(to.getTime() - DEFAULT_WINDOW_MS);
@@ -618,6 +630,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
                 h: hash,
                 at: position.at,
                 s: packSeen(position.seen),
+                fl: position.floor,
                 from: from.toISOString(),
                 to: to.toISOString(),
                 exp: current.getTime() + CURSOR_TTL_MS,
@@ -666,7 +679,8 @@ export function createLogService(deps: LogServiceDeps): LogService {
           }
           if (payload.h !== hash) throw invalidCursor("it belongs to a different tail");
           if (payload.exp < current.getTime()) throw invalidCursor("it expired");
-          after = payload.at > 0 ? { at: payload.at, seen: unpackSeen(payload.s) } : undefined;
+          after =
+            payload.at > 0 ? { at: payload.at, seen: unpackSeen(payload.s), floor: payload.fl } : undefined;
         }
         const open = tails.get(ctx.workspaceId) ?? 0;
         if (open >= MAX_TAILS_PER_WORKSPACE) {
@@ -731,6 +745,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
               h: hash,
               at: after?.at ?? 0,
               s: after ? packSeen(after.seen) : "",
+              fl: after?.floor ?? 0,
               from: current.toISOString(),
               to: current.toISOString(),
               exp: now().getTime() + CURSOR_TTL_MS,

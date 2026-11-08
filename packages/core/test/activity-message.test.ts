@@ -25,6 +25,15 @@ describe("deriveActivityMessage", () => {
     expect(long?.length).toBeLessThanOrEqual(201);
   });
 
+  it("hides the whole value of cookie and authorization lines, also on a first line behind a prefix", () => {
+    expect(deriveActivityMessage({ type: "message", delta: "Cookie: sid=1; auth=zzz999" })).toBe(
+      "agent: Cookie: [redacted]",
+    );
+    expect(deriveActivityMessage({ message: "failed\nCookie: sid=1; auth=zzz999\nnext" })).toBe(
+      "failed Cookie: [redacted] next",
+    );
+  });
+
   it("reads plain message-like attributes and otherwise says nothing", () => {
     expect(deriveActivityMessage({ reason: "quota exceeded" })).toBe("quota exceeded");
     expect(deriveActivityMessage({ error: { message: "provider down" } })).toBe("provider down");

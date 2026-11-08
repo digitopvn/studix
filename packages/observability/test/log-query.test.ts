@@ -171,6 +171,28 @@ describe("studix_query_logs service", () => {
     expect(seen.sort()).toEqual(Array.from({ length: 7 }, (_, i) => `same.${i}`));
   });
 
+  it("pages a burst denser than a cursor can remember to the end, with no repeats and no gaps", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    const start = NOW.getTime() - 60_000;
+    // 500 events inside 14 s: more than the ids one cursor holds plus a page.
+    for (let i = 0; i < 500; i++) {
+      await seed(ctx, { name: `burst.${String(i).padStart(3, "0")}` }, new Date(start + i * 28));
+    }
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const result = await service.query(ctx, { ...base, limit: 100, ...(cursor ? { cursor } : {}) });
+      seen.push(...result.events.map((e) => e.name ?? ""));
+      cursor = result.nextCursor;
+      pages++;
+    } while (cursor && pages < 30);
+    expect(pages).toBeLessThan(30);
+    expect(seen).toHaveLength(500);
+    expect(new Set(seen).size).toBe(500);
+  });
+
   it("rejects a cursor that is tampered with, reused for other filters, or issued to another caller", async () => {
     const { service, seed } = setup();
     const ctx = owner();
@@ -441,6 +463,27 @@ describe("studix_tail_logs service", () => {
     expect(second.events.map((e) => e.name)).toEqual(["api.late"]);
     const third = await service.tail(ctx, { ...input, cursor: second.nextCursor }, { job: running });
     expect(third.events).toEqual([]);
+  });
+
+  it("lets a tail of a busy job finish: the job turns done once every event was delivered", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    const start = NOW.getTime() - 30_000;
+    for (let i = 0; i < 450; i++) {
+      await seed(ctx, { name: `busy.${i}`, jobId: "job_1" }, new Date(start + i * 25));
+    }
+    const done: JobProbe = async () => ({ status: "succeeded", terminal: true });
+    let cursor: string | undefined;
+    let delivered = 0;
+    let finished = false;
+    for (let call = 0; call < 20 && !finished; call++) {
+      const result = await service.tail(ctx, { ...input, ...(cursor ? { cursor } : {}) }, { job: done });
+      delivered += result.events.length;
+      cursor = result.nextCursor;
+      finished = result.jobDone;
+    }
+    expect(finished).toBe(true);
+    expect(delivered).toBe(450);
   });
 
   it("does not look back past the trailing window", async () => {
