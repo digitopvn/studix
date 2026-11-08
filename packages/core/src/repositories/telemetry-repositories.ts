@@ -45,8 +45,6 @@ export interface ActivityWindowQuery {
   traceId?: string;
   /** Case-insensitive substring of the event name or message (wildcards are literal). */
   search?: string;
-  /** Strictly after this event id (the resume offset). */
-  afterId?: string;
   limit: number;
 }
 
@@ -57,11 +55,30 @@ export interface ActivityRepository {
     ctx: TenantContext,
     query?: PageRequest & { projectId?: string; jobId?: string; traceId?: string },
   ): Promise<Page<ActivityEvent>>;
-  /** Events in a time window, oldest first by id, at most `limit`, always inside the context's workspace. */
+  /**
+   * Events in a time window, oldest first by (`createdAt`, id), at most `limit`, always inside the context's
+   * workspace. Ids are monotonic per writer process only, so callers that resume a read re-read a short trailing
+   * window and drop what they already delivered, rather than trusting an id offset.
+   */
   window(ctx: TenantContext, query: ActivityWindowQuery): Promise<ActivityEvent[]>;
   /** A job's events with one name, oldest first, strictly after `afterId` (the replay offset). */
   listAfter(
     ctx: TenantContext,
     query: { jobId: string; name: string; afterId?: string; limit?: number },
   ): Promise<ActivityEvent[]>;
+}
+
+/** Activity names that are never purged: records users read back later (for example a job's chat transcript). */
+export interface ActivityPurgeOptions {
+  keepNames: readonly string[];
+  /** Rows deleted per statement, so a large backlog never holds one long lock. */
+  batchSize?: number;
+  /** Stop after this many batches; the next run continues. */
+  maxBatches?: number;
+}
+
+/** Maintenance of the activity table across every workspace (not tenant-scoped, never exposed to tenants). */
+export interface ActivityRetention {
+  /** Deletes events created before `before`, except those named in `keepNames`. Returns the number deleted. */
+  purgeBefore(before: Date, options: ActivityPurgeOptions): Promise<number>;
 }

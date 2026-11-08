@@ -1,14 +1,32 @@
-import type {
-  ActivityEvent,
-  ActivityRepository,
-  ProviderExecution,
-  TenantContext,
-  UsageEvent,
-  UsageRange,
-  UsageRepository,
+import {
+  type ActivityEvent,
+  type ActivityRepository,
+  type ActivityRetention,
+  deriveActivityMessage,
+  type ProviderExecution,
+  type TenantContext,
+  type UsageEvent,
+  type UsageRange,
+  type UsageRepository,
 } from "@studix/core";
 import { type Clock, newId, redactDeep, StudixError } from "@studix/shared";
-import { and, asc, desc, eq, gt, gte, ilike, inArray, lt, lte, or, type SQL, sql, sum } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  ilike,
+  inArray,
+  lt,
+  lte,
+  notInArray,
+  or,
+  type SQL,
+  sql,
+  sum,
+} from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { activityEvents, providerExecutions, usageEvents } from "../schema/telemetry.ts";
 import { beforeCursor, first, opt, pageLimit, scoped, tenantValues, toPage } from "./helpers.ts";
@@ -209,6 +227,8 @@ function toActivity(row: typeof activityEvents.$inferSelect): ActivityEvent {
 export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRepository {
   return {
     async append(ctx, input) {
+      const attributes = redactDeep(input.attributes);
+      const message = input.message ?? deriveActivityMessage(attributes);
       const rows = await db
         .insert(activityEvents)
         .values({
@@ -216,7 +236,7 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
           ...tenantValues(ctx),
           name: input.name,
           level: input.level,
-          message: input.message ?? null,
+          message: message ?? null,
           projectId: input.projectId ?? null,
           jobId: input.jobId ?? null,
           stage: input.stage ?? null,
@@ -226,7 +246,7 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
           spanId: input.spanId ?? null,
           parentSpanId: input.parentSpanId ?? null,
           durationMs: input.durationMs ?? null,
-          attributes: redactDeep(input.attributes),
+          attributes,
           createdAt: clock.now(),
         })
         .returning();
@@ -269,10 +289,9 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
             pattern
               ? or(ilike(activityEvents.name, pattern), ilike(activityEvents.message, pattern))
               : undefined,
-            query.afterId ? gt(activityEvents.id, query.afterId) : undefined,
           ),
         )
-        .orderBy(asc(activityEvents.id))
+        .orderBy(asc(activityEvents.createdAt), asc(activityEvents.id))
         .limit(Math.min(Math.max(query.limit, 1), 1000));
       return rows.map(toActivity);
     },
@@ -292,6 +311,37 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
         .orderBy(asc(activityEvents.id))
         .limit(Math.min(Math.max(query.limit ?? 500, 1), 1000));
       return rows.map(toActivity);
+    },
+  };
+}
+
+const DEFAULT_PURGE_BATCH = 5_000;
+const DEFAULT_PURGE_BATCHES = 20;
+
+export function createActivityRetention(db: StudixDb): ActivityRetention {
+  return {
+    async purgeBefore(before, options) {
+      const batchSize = Math.min(Math.max(options.batchSize ?? DEFAULT_PURGE_BATCH, 1), 50_000);
+      const maxBatches = Math.max(options.maxBatches ?? DEFAULT_PURGE_BATCHES, 1);
+      const keep =
+        options.keepNames.length > 0 ? notInArray(activityEvents.name, [...options.keepNames]) : undefined;
+      let deleted = 0;
+      for (let batch = 0; batch < maxBatches; batch++) {
+        // SKIP LOCKED: two workers sweeping at once split the rows instead of waiting on each other.
+        const result = await db.execute(sql`
+          DELETE FROM ${activityEvents}
+          WHERE ${activityEvents.id} IN (
+            SELECT ${activityEvents.id} FROM ${activityEvents}
+            WHERE ${and(lt(activityEvents.createdAt, before), keep)}
+            ORDER BY ${activityEvents.createdAt}
+            LIMIT ${batchSize}
+            FOR UPDATE SKIP LOCKED
+          )`);
+        const count = result.count;
+        deleted += count;
+        if (count < batchSize) break;
+      }
+      return deleted;
     },
   };
 }

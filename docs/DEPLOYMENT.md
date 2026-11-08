@@ -419,7 +419,12 @@ database the server runs on. The server answers only for its own environment,
 `STUDIX_LOG_ENVIRONMENT` where a development deployment also runs with
 `NODE_ENV=production`, or its logs would be labelled production. Cursors are
 signed with a key derived from `BETTER_AUTH_SECRET`, so rotating that secret
-invalidates open cursors (clients start again without one). TOSE runtime and
+invalidates open cursors (clients start again without one). Every worker deletes
+activity events older than 7 days (all except `agent.event`) at startup and
+hourly, in batches of 5,000 with `FOR UPDATE SKIP LOCKED`, so several workers
+share the work; the `activity_events_created_idx` index (migration 0035) serves
+it. A large backlog is cleared over several runs (up to 100,000 rows per run).
+TOSE runtime and
 build logs and Cloudflare Workers logs are not connected: they wait for
 project-scoped seven-day retention and safe history and live access on TOSE
 (saasvn/tose-app#545) and for a check of the Cloudflare plan's retention.

@@ -103,5 +103,7 @@ export const activityEvents = pgTable(
     index("activity_events_project_idx").on(t.workspaceId, t.projectId, t.id),
     index("activity_events_trace_idx").on(t.traceId),
     index("activity_events_window_idx").on(t.workspaceId, t.createdAt),
+    // Retention sweeps across workspaces by age alone.
+    index("activity_events_created_idx").on(t.createdAt),
   ],
 );

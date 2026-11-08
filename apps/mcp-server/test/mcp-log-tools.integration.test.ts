@@ -178,6 +178,43 @@ describe("studix_query_logs and studix_tail_logs (Postgres)", () => {
     expect(forged.error?.code).toBe("VALIDATION");
   });
 
+  it("offers the same tools over WebMCP and REST to a signed-in owner, with the same limits", async () => {
+    const cookie = await app.signUp(`logs-web-${Date.now()}@example.test`);
+    const listed = (await (await app.api("GET", "/api/webmcp/tools", { cookie })).json()) as {
+      tools: Array<{ name: string }>;
+    };
+    expect(listed.tools.map((t) => t.name)).toEqual(
+      expect.arrayContaining(["studix_query_logs", "studix_tail_logs"]),
+    );
+    const web = (await (
+      await app.api("POST", "/api/webmcp/tools/studix_query_logs", {
+        cookie,
+        body: { environment: "development", source: "activity" },
+      })
+    ).json()) as { structuredContent?: Envelope };
+    expect(web.structuredContent?.status).toBe("ok");
+
+    const rest = await app.api("POST", "/api/logs/query", {
+      cookie,
+      body: { environment: "development", source: "activity" },
+    });
+    expect(rest.status).toBe(200);
+    expect(((await rest.json()) as { coverage: string }).coverage).toBe("complete");
+    const strict = await app.api("POST", "/api/logs/query", {
+      cookie,
+      body: { environment: "development", limit: 1000 },
+    });
+    expect(strict.status).toBe(400);
+    const tail = await app.api("POST", "/api/logs/tail", {
+      cookie,
+      body: { environment: "development", jobId: jobB },
+    });
+    expect(tail.status).toBe(404);
+    expect((await app.api("POST", "/api/logs/query", { body: { environment: "development" } })).status).toBe(
+      401,
+    );
+  });
+
   it("audits successful and denied calls without log text", async () => {
     const audits = await app.db.repos.audit.list(tenantA, { subjectType: "logs", limit: 100 });
     const outcomes = audits.items.map((a) => (a.data as { outcome?: string }).outcome);

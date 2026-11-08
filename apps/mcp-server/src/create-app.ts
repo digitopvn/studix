@@ -4,6 +4,7 @@ import express, { type Express } from "express";
 import { apiKeyRoutes, connectorRoutes, providerRoutes } from "./api/admin-routes.ts";
 import { agentChatRoutes } from "./api/agent-chat-routes.ts";
 import { requireSession } from "./api/api-context.ts";
+import { logRoutes } from "./api/log-routes.ts";
 import { mountOAuthDiscovery, oauthRoutes } from "./api/oauth-routes.ts";
 import { platformRoutes, workspaceStorageRoutes } from "./api/platform-routes.ts";
 import { skillRoutes } from "./api/skill-routes.ts";
@@ -100,6 +101,7 @@ export function createApp(deps: AppDeps): Express {
   api.use("/workspace-storage", workspaceStorageRoutes(deps));
   api.use("/skills", skillRoutes(deps));
   api.use("/webhook", webhookRoutes(deps));
+  api.use(logRoutes(deps, artifacts));
   api.use(agentChatRoutes(deps));
   api.use(studioRoutes(deps, artifacts));
   api.use(webmcpRoutes(deps, artifacts));

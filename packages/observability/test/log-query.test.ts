@@ -6,7 +6,13 @@ import {
 } from "@studix/core/testing";
 import { createLogger, createManualClock, StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
-import { createLogService, type JobProbe, type LogService, redactLogText } from "../src/log-query.ts";
+import {
+  createLogService,
+  type JobProbe,
+  type LogService,
+  redactLogText,
+  TRAILING_WINDOW_MS,
+} from "../src/log-query.ts";
 
 // Fixture credentials are assembled at runtime so no literal looks like a real secret to scanners.
 const fake = (...parts: string[]) => parts.join("");
@@ -149,6 +155,22 @@ describe("studix_query_logs service", () => {
     expect(third.nextCursor).toBeUndefined();
   });
 
+  it("pages through events that share a timestamp without losing or repeating any", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    const t = new Date(NOW.getTime() - 10_000);
+    for (let i = 0; i < 7; i++) await seed(ctx, { name: `same.${i}` }, t);
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const result = await service.query(ctx, { ...base, limit: 3, ...(cursor ? { cursor } : {}) });
+      seen.push(...result.events.map((e) => e.name ?? ""));
+      cursor = result.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen.sort()).toEqual(Array.from({ length: 7 }, (_, i) => `same.${i}`));
+  });
+
   it("rejects a cursor that is tampered with, reused for other filters, or issued to another caller", async () => {
     const { service, seed } = setup();
     const ctx = owner();
@@ -209,6 +231,30 @@ describe("studix_query_logs service", () => {
     expect(result.coverage).toBe("unavailable");
     expect(result.events).toEqual([]);
     expect(result.sourceStatus[0]).toMatchObject({ source: "cloudflare", status: "unavailable" });
+  });
+
+  it("tells each kind of denied caller how to get access", async () => {
+    const { service } = setup();
+    const hint = async (ctx: TenantContext) => {
+      try {
+        await service.query(ctx, base);
+      } catch (error) {
+        return error instanceof StudixError ? error.suggestedAction : undefined;
+      }
+      return undefined;
+    };
+    const oauth = testTenant({
+      organizationId: "org_a",
+      workspaceId: "wsp_a",
+      actor: { type: "oauth", id: "usr_1", clientId: "cli_1", scopes: [] },
+    });
+    expect(await hint(oauth)).toContain("studix:logs");
+    expect(await hint(testTenant({ organizationId: "org_a", workspaceId: "wsp_a", scopes: [] }))).toContain(
+      "logs:read",
+    );
+    expect(
+      await hint(testTenant({ organizationId: "org_a", workspaceId: "wsp_a", role: "admin" })),
+    ).toContain("workspace owner");
   });
 
   it("does not present another environment's question as an empty result", async () => {
@@ -379,6 +425,33 @@ describe("studix_tail_logs service", () => {
       "stage.start",
       "job.failed",
     ]);
+  });
+
+  it("delivers an event another process committed late, once, and never repeats delivered ones", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    const at = (ms: number) => new Date(NOW.getTime() - ms);
+    await seed(ctx, { name: "worker.a", jobId: "job_1" }, at(5000));
+    await seed(ctx, { name: "worker.b", jobId: "job_1" }, at(3000));
+    const first = await service.tail(ctx, input, { job: running });
+    expect(first.events.map((e) => e.name)).toEqual(["worker.a", "worker.b"]);
+    // The API process had stamped this event before worker.b, but its write only landed now.
+    await seed(ctx, { name: "api.late", jobId: "job_1" }, at(4000));
+    const second = await service.tail(ctx, { ...input, cursor: first.nextCursor }, { job: running });
+    expect(second.events.map((e) => e.name)).toEqual(["api.late"]);
+    const third = await service.tail(ctx, { ...input, cursor: second.nextCursor }, { job: running });
+    expect(third.events).toEqual([]);
+  });
+
+  it("does not look back past the trailing window", async () => {
+    const { service, seed } = setup();
+    const ctx = owner();
+    const at = (ms: number) => new Date(NOW.getTime() - ms);
+    await seed(ctx, { name: "newest", jobId: "job_1" }, at(1000));
+    const first = await service.tail(ctx, input, { job: running });
+    await seed(ctx, { name: "ancient", jobId: "job_1" }, at(1000 + TRAILING_WINDOW_MS + 1));
+    const second = await service.tail(ctx, { ...input, cursor: first.nextCursor }, { job: running });
+    expect(second.events).toEqual([]);
   });
 
   it("gives a cursor while the job runs even before any event exists", async () => {

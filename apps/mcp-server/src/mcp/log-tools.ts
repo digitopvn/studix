@@ -27,7 +27,7 @@ const QueryInput = z.strictObject({
   traceId: Id.optional(),
   search: z.string().max(MAX_SEARCH_CHARS).optional(),
   limit: z.number().int().min(1).max(200).optional().describe("Default 100."),
-  cursor: z.string().max(2000).optional().describe("nextCursor of the previous call, with the same filters."),
+  cursor: z.string().max(4000).optional().describe("nextCursor of the previous call, with the same filters."),
 });
 
 const TailInput = z.strictObject({
@@ -35,7 +35,7 @@ const TailInput = z.strictObject({
   jobId: Id,
   services: Services.optional(),
   level: Level.optional().describe("Minimum level."),
-  cursor: z.string().max(2000).optional().describe("nextCursor of the previous call."),
+  cursor: z.string().max(4000).optional().describe("nextCursor of the previous call."),
   waitSeconds: z.number().int().min(0).max(10).optional().describe("Wait up to this long for new events."),
 });
 

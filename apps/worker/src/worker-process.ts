@@ -1,4 +1,4 @@
-import { createDb, type StudixDb } from "@studix/database";
+import { createActivityRetention, createDb, type StudixDb } from "@studix/database";
 import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } from "@studix/shared";
 import {
   createStorageWriteCheck,
@@ -6,6 +6,7 @@ import {
   S3StorageAdapter,
   type StorageProbeResult,
 } from "@studix/storage";
+import { sweepActivityEvents } from "./activity-retention-sweep.ts";
 import { databaseReady, waitForDatabase } from "./database-readiness.ts";
 import { type HealthServer, startHealthServer } from "./health-server.ts";
 import {
@@ -218,8 +219,18 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
         },
         (err) => logger.warn("work directory sweep failed", { error: String(err) }),
       );
+    const activityRetention = createActivityRetention(handle.db);
+    const sweepActivity = () =>
+      sweepActivityEvents(activityRetention, logger).then(
+        () => undefined,
+        (err) => logger.warn("activity retention sweep failed", { error: String(err) }),
+      );
     void sweep();
-    sweepTimer = setInterval(() => void sweep(), 3_600_000);
+    void sweepActivity();
+    sweepTimer = setInterval(() => {
+      void sweep();
+      void sweepActivity();
+    }, 3_600_000);
     sweepTimer.unref();
   } catch (err) {
     await shutdown();

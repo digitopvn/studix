@@ -3,6 +3,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { AppDeps } from "../app-deps.ts";
 import type { ArtifactUrlDeps } from "../artifact-urls.ts";
+import { LOG_MCP_TOOLS } from "../mcp/log-tools.ts";
 import { NATIVE_TOOLS, type NativeTool } from "../mcp/native-tools.ts";
 import { errorEnvelope, okEnvelope } from "../mcp/tool-envelope.ts";
 import { parseBody, sessionOf } from "./api-context.ts";
@@ -19,10 +20,14 @@ export const WEBMCP_TOOL_NAMES = [
   "studix_render",
   "studix_cancel_job",
   "studix_retry_job",
+  "studix_query_logs",
+  "studix_tail_logs",
 ] as const;
 
 function webTools(): NativeTool[] {
-  const byName = new Map((NATIVE_TOOLS as readonly NativeTool[]).map((t) => [t.name, t]));
+  const byName = new Map(
+    ([...NATIVE_TOOLS, ...LOG_MCP_TOOLS] as readonly NativeTool[]).map((t) => [t.name, t]),
+  );
   return WEBMCP_TOOL_NAMES.flatMap((name) => byName.get(name) ?? []);
 }
 

@@ -450,6 +450,13 @@ Owner: `packages/observability` (`log-query.ts`), `apps/mcp-server/src/mcp/log-t
   for API keys, OAuth tokens and system actors whatever scopes they carry, so an
   owner cannot mint a key that reads infrastructure or other tenants' logs.
   New permissions are not added to the tenant roles automatically.
+- The same tools run over WebMCP and `POST /api/logs/*` for a dashboard session
+  through the same definitions, so the permission check, redaction and audit
+  record are identical. Cursors carry only a time and short id digests, signed
+  and bound to caller, workspace and filters.
+- Activity older than 7 days is deleted by the worker hourly, except the job
+  chat transcript; audit events are never deleted. Schema rejections happen
+  before a tool runs and read nothing, so they leave no `logs.*` record.
 - Infrastructure sources (`application`, `build`, `cloudflare`, the
   `infrastructure` service) are refused to everyone but the operator and are
   not connected yet; the response says so instead of returning an empty list.

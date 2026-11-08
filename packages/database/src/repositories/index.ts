@@ -23,7 +23,11 @@ import { createRenderRepository, createWorkflowRunRepository } from "./render-wo
 import { createRevisionRepository, createStageCacheRepository } from "./revision-repositories.ts";
 import { createStorageProfileRepository } from "./storage-profile-repository.ts";
 import { createStoryboardRepository } from "./storyboard-repository.ts";
-import { createActivityRepository, createUsageRepository } from "./telemetry-repositories.ts";
+import {
+  createActivityRepository,
+  createActivityRetention,
+  createUsageRepository,
+} from "./telemetry-repositories.ts";
 import {
   createApiKeyRepository,
   createTenantDirectory,
@@ -76,6 +80,7 @@ export function createRepositories(db: StudixDb, options: { clock?: Clock } = {}
     audit: createAuditRepository(db, clock),
     usage: createUsageRepository(db, clock),
     activity: createActivityRepository(db, clock),
+    activityRetention: createActivityRetention(db),
     connectors: createConnectorRepository(db, clock),
     externalSkills: createExternalSkillRepository(db, clock),
     providerConnections: createProviderConnectionRepository(db, clock),

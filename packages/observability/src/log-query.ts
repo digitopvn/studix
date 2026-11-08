@@ -20,6 +20,15 @@ export const MAX_SEARCH_CHARS = 200;
 /** Response size bound for one call. */
 export const MAX_RESPONSE_BYTES = 64 * 1024;
 const CURSOR_TTL_MS = 15 * 60 * 1000;
+/**
+ * Writer processes (API, MCP, worker) stamp events with their own clocks and ids, so an event committed late can
+ * sort before one already delivered. A resumed read therefore starts this far before the last delivered event
+ * and drops the ids it already returned.
+ */
+export const TRAILING_WINDOW_MS = 15_000;
+/** Delivered ids a cursor remembers; older ones fall outside the trailing window anyway. */
+const MAX_SEEN_IDS = 200;
+const SEEN_DIGEST_CHARS = 8;
 const MAX_TAIL_WAIT_SECONDS = 10;
 const TAIL_POLL_MS = 1000;
 /** Concurrent tail calls one workspace may hold open. */
@@ -181,8 +190,47 @@ function normalize(event: ActivityEvent, environment: LogEnvironment): LogEvent 
   };
 }
 
+/** `logs:read` with a denial that tells each kind of caller how to get access, instead of a generic role hint. */
+function assertLogsRead(ctx: TenantContext): void {
+  if (can(ctx.actor, "logs:read")) return;
+  const actor = ctx.actor;
+  throw new StudixError("FORBIDDEN", "Missing permission logs:read", {
+    details: { permission: "logs:read", actorType: actor.type },
+    suggestedAction:
+      actor.type === "oauth"
+        ? 'Logs are for workspace owners. If the connected user is an owner, reconnect this app and approve the "studix:logs" scope; otherwise ask a workspace owner.'
+        : actor.type === "apiKey"
+          ? 'Logs are for workspace owners. An owner can create an API key with the "logs:read" scope; keys made before that scope existed do not carry it.'
+          : "Logs are for workspace owners. Ask a workspace owner to read them.",
+  });
+}
+
+/** Where a read stopped: the newest delivered event time and the ids delivered inside the trailing window. */
+interface Position {
+  /** `createdAt` of the newest event delivered, in ms. */
+  at: number;
+  /** Digests of delivered ids whose time is within the trailing window of `at`. */
+  seen: ReadonlySet<string>;
+}
+
+function digest(id: string): string {
+  return createHash("sha256").update(id).digest("base64url").slice(0, SEEN_DIGEST_CHARS);
+}
+
+function packSeen(seen: Iterable<string>): string {
+  return [...seen].join("");
+}
+
+function unpackSeen(packed: string): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i + SEEN_DIGEST_CHARS <= packed.length; i += SEEN_DIGEST_CHARS) {
+    out.add(packed.slice(i, i + SEEN_DIGEST_CHARS));
+  }
+  return out;
+}
+
 interface CursorPayload {
-  v: 1;
+  v: 2;
   /** Tenant the cursor was issued to. */
   o: string;
   w: string;
@@ -190,8 +238,10 @@ interface CursorPayload {
   a: string;
   /** Hash of the filters it continues. */
   h: string;
-  /** Last event id returned. */
-  id: string;
+  /** Position: time of the newest event returned (ms), 0 before any. */
+  at: number;
+  /** Packed digests of the ids returned inside the trailing window of `at`. */
+  s: string;
   from: string;
   to: string;
   exp: number;
@@ -226,7 +276,7 @@ function decodeCursor(secret: string, cursor: string): CursorPayload {
   }
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as CursorPayload;
-    if (payload.v !== 1) throw invalidCursor("unknown version");
+    if (payload.v !== 2) throw invalidCursor("unknown version");
     return payload;
   } catch (error) {
     if (error instanceof StudixError) throw error;
@@ -322,7 +372,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
     if (wantsInfra || services?.includes("infrastructure")) {
       assertPermission(ctx, "logs:system:read");
     }
-    assertPermission(ctx, "logs:read");
+    assertLogsRead(ctx);
     const sourceStatus: SourceStatus[] = [];
     const wanted: Exclude<LogSource, "all">[] = source === "all" ? ["activity", ...SYSTEM_SOURCES] : [source];
     for (const s of wanted) {
@@ -352,35 +402,52 @@ export function createLogService(deps: LogServiceDeps): LogService {
       projectId?: string | undefined;
       traceId?: string | undefined;
       search?: string | undefined;
-      afterId?: string | undefined;
+      after?: Position | undefined;
       limit: number;
     },
-  ): Promise<{ events: LogEvent[]; resumeId?: string; hasMore: boolean }> {
+  ): Promise<{ events: LogEvent[]; position?: Position; hasMore: boolean }> {
     const levels = levelsFrom(q.level);
     const wantedServices: readonly LogServiceName[] | undefined = q.services?.filter(
       (s) => s !== "infrastructure",
     );
     const events: LogEvent[] = [];
     let bytes = 0;
-    let cursor = q.afterId;
     let hasMore = false;
+    let at = q.after?.at ?? 0;
+    const seen = new Set(q.after?.seen);
+    // Digest -> event time, for every id that may still fall inside the next trailing window.
+    const recent = new Map<string, number>();
+    const consume = (row: ActivityEvent) => {
+      const d = digest(row.id);
+      const ms = row.createdAt.getTime();
+      seen.add(d);
+      recent.set(d, ms);
+      if (ms > at) at = ms;
+    };
     // A service filter is applied after the read, so keep reading until the page is full or rows run out.
     for (let round = 0; round < 10 && !hasMore; round++) {
+      const readFrom = at > 0 ? Math.max(q.from.getTime(), at - TRAILING_WINDOW_MS) : q.from.getTime();
+      const inWindow = [...recent.values()].filter((ms) => ms >= at - TRAILING_WINDOW_MS).length;
+      const readLimit = Math.min(q.limit + 1 + Math.max(inWindow, q.after?.seen.size ?? 0), 1000);
       const rows = await deps.activity.window(ctx, {
-        from: q.from,
+        from: new Date(readFrom),
         to: q.to,
         ...(levels ? { levels } : {}),
         ...(q.jobId ? { jobId: q.jobId } : {}),
         ...(q.projectId ? { projectId: q.projectId } : {}),
         ...(q.traceId ? { traceId: q.traceId } : {}),
         ...(q.search ? { search: q.search } : {}),
-        ...(cursor ? { afterId: cursor } : {}),
-        limit: q.limit + 1,
+        limit: readLimit,
       });
       for (const row of rows) {
+        const d = digest(row.id);
+        if (seen.has(d)) {
+          recent.set(d, row.createdAt.getTime());
+          continue;
+        }
         const event = normalize(row, q.environment);
         if (wantedServices && (!event.service || !wantedServices.includes(event.service))) {
-          cursor = row.id;
+          consume(row);
           continue;
         }
         const size = Buffer.byteLength(JSON.stringify(event));
@@ -390,13 +457,19 @@ export function createLogService(deps: LogServiceDeps): LogService {
         }
         events.push(event);
         bytes += size;
-        cursor = row.id;
+        consume(row);
       }
-      if (rows.length <= q.limit) break;
-      // More rows exist after a full read that ended without filling the page: keep going (bounded).
+      if (rows.length < readLimit) break;
+      // The read was full and the page is not: more rows exist after it. Keep going (bounded).
       if (round === 9) hasMore = true;
     }
-    return { events, ...(cursor ? { resumeId: cursor } : {}), hasMore };
+    if (at === 0) return { events, hasMore };
+    const kept = [...recent.entries()]
+      .filter(([, ms]) => ms >= at - TRAILING_WINDOW_MS)
+      .sort((x, y) => y[1] - x[1])
+      .slice(0, MAX_SEEN_IDS)
+      .map(([d]) => d);
+    return { events, position: { at, seen: new Set(kept) }, hasMore };
   }
 
   function mismatch(environment: LogEnvironment): SourceStatus {
@@ -446,7 +519,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
         });
         let from: Date;
         let to: Date;
-        let afterId: string | undefined;
+        let after: Position | undefined;
         if (input.cursor) {
           const payload = decodeCursor(deps.cursorSecret, input.cursor);
           if (
@@ -468,7 +541,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
           // A window that has slid past the retention edge since the first page is clamped, not refused.
           from = new Date(Math.max(Date.parse(payload.from), current.getTime() - LOG_RETENTION_MS));
           to = new Date(payload.to);
-          afterId = payload.id || undefined;
+          after = payload.at > 0 ? { at: payload.at, seen: unpackSeen(payload.s) } : undefined;
         } else {
           to = input.to ? parseInstant("to", input.to) : current;
           from = input.from ? parseInstant("from", input.from) : new Date(to.getTime() - DEFAULT_WINDOW_MS);
@@ -493,7 +566,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
         const statuses = [...sourceStatus];
         let events: LogEvent[] = [];
         let hasMore = false;
-        let lastId: string | undefined;
+        let position: Position | undefined;
         if (readsActivity) {
           const wanted = input.services?.filter((v) => v !== "infrastructure");
           const matchable = wanted?.filter((v) => SERVICES_WITH_EVENTS.includes(v));
@@ -512,12 +585,12 @@ export function createLogService(deps: LogServiceDeps): LogService {
               projectId: input.projectId,
               traceId: input.traceId,
               search: input.search,
-              afterId,
+              after,
               limit,
             });
             events = page.events;
             hasMore = page.hasMore;
-            lastId = page.resumeId;
+            position = page.position;
             const dropped = wanted?.filter((v) => !SERVICES_WITH_EVENTS.includes(v)) ?? [];
             statuses.unshift(
               dropped.length > 0
@@ -536,14 +609,15 @@ export function createLogService(deps: LogServiceDeps): LogService {
         const allOk = statuses.every((s) => s.status === "ok");
         const coverage: Coverage = allOk ? "complete" : activityOk ? "partial" : "unavailable";
         const nextCursor =
-          hasMore && lastId
+          hasMore && position
             ? encodeCursor(deps.cursorSecret, {
-                v: 1,
+                v: 2,
                 o: ctx.organizationId,
                 w: ctx.workspaceId,
                 a: ctx.actor.id,
                 h: hash,
-                id: lastId,
+                at: position.at,
+                s: packSeen(position.seen),
                 from: from.toISOString(),
                 to: to.toISOString(),
                 exp: current.getTime() + CURSOR_TTL_MS,
@@ -580,7 +654,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
           l: input.level ?? null,
           tail: true,
         });
-        let afterId: string | undefined;
+        let after: Position | undefined;
         if (input.cursor) {
           const payload = decodeCursor(deps.cursorSecret, input.cursor);
           if (
@@ -592,7 +666,7 @@ export function createLogService(deps: LogServiceDeps): LogService {
           }
           if (payload.h !== hash) throw invalidCursor("it belongs to a different tail");
           if (payload.exp < current.getTime()) throw invalidCursor("it expired");
-          afterId = payload.id || undefined;
+          after = payload.at > 0 ? { at: payload.at, seen: unpackSeen(payload.s) } : undefined;
         }
         const open = tails.get(ctx.workspaceId) ?? 0;
         if (open >= MAX_TAILS_PER_WORKSPACE) {
@@ -638,25 +712,25 @@ export function createLogService(deps: LogServiceDeps): LogService {
             level: input.level,
             services: input.services,
             jobId: input.jobId,
-            afterId,
+            after,
             limit: DEFAULT_LIMIT,
           });
           jobDone = job.terminal && !page.hasMore;
-          if (page.resumeId) afterId = page.resumeId;
+          if (page.position) after = page.position;
           if (page.events.length > 0 || jobDone || options.signal?.aborted) break;
           const remaining = deadline - now().getTime();
           if (remaining <= 0) break;
           await sleep(Math.min(TAIL_POLL_MS, remaining), options.signal);
         }
-        const cursorId = afterId ?? "";
         const nextCursor = !jobDone
           ? encodeCursor(deps.cursorSecret, {
-              v: 1,
+              v: 2,
               o: ctx.organizationId,
               w: ctx.workspaceId,
               a: ctx.actor.id,
               h: hash,
-              id: cursorId,
+              at: after?.at ?? 0,
+              s: after ? packSeen(after.seen) : "",
               from: current.toISOString(),
               to: current.toISOString(),
               exp: now().getTime() + CURSOR_TTL_MS,

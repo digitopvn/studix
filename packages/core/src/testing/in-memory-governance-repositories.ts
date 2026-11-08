@@ -1,4 +1,5 @@
 import { type Clock, StudixError } from "@studix/shared";
+import { deriveActivityMessage } from "../entities/activity-message.ts";
 import type { Approval, Review } from "../entities/review.ts";
 import type { ActivityEvent, AuditEvent, ProviderExecution, UsageEvent } from "../entities/telemetry.ts";
 import type {
@@ -175,7 +176,8 @@ export function createInMemoryActivityRepository(clock: Clock): ActivityReposito
   const events = new InMemoryTenantTable<ActivityEvent>("act", clock, false);
   return {
     async append(ctx, input) {
-      return events.insert(ctx, input);
+      const message = input.message ?? deriveActivityMessage(input.attributes);
+      return events.insert(ctx, message === undefined ? input : { ...input, message });
     },
     async list(ctx, query = {}) {
       return events.page(
@@ -201,10 +203,9 @@ export function createInMemoryActivityRepository(clock: Clock): ActivityReposito
             (query.traceId === undefined || e.traceId === query.traceId) &&
             (needle === undefined ||
               e.name.toLowerCase().includes(needle) ||
-              (e.message ?? "").toLowerCase().includes(needle)) &&
-            (query.afterId === undefined || e.id > query.afterId),
+              (e.message ?? "").toLowerCase().includes(needle)),
         )
-        .sort((a, b) => (a.id < b.id ? -1 : 1))
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
         .slice(0, query.limit);
     },
     async listAfter(ctx, query) {
