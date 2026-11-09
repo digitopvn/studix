@@ -627,18 +627,55 @@ The client AI can author the video itself instead of delegating to a job
 ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)). A composition is a file tree in
 object storage; Studix checks only the outputs a run asks it to check.
 
-| Tool                       | Does                                                                                                                                                            |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `studix_composition_write` | Omit `compositionId` to create one. `files: [{path, text} or {path, base64, contentType?}]` (8 MB each, 50 per call), `delete: [paths]`. Returns the file list. |
-| `studix_composition_run`   | Async job `composition.run`: `command` runs under `sh` in the composition root inside the skill sandbox. Returns `{jobId}`; poll `studix_get_job`.              |
-| `studix_composition_read`  | Without `path`: the file list. With `path`: a signed URL, text inline, and png/jpeg/webp/gif up to 1.5 MB as an image block (frames, contact sheets).           |
+| Tool                               | Does                                                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `studix_composition_write`         | Omit `compositionId` to create one. `files: [{path, text} or {path, base64, contentType?}]` (8 MB each, 50 per call), `delete: [paths]`. Returns the file list. |
+| `studix_composition_run`           | Async job `composition.run`: `command` runs under `sh` in the composition root inside the skill sandbox. Returns `{jobId}`; poll `studix_get_job`.              |
+| `studix_composition_attach_render` | Register a rendered MP4 as a playable render of a project (see below).                                                                                          |
+| `studix_composition_read`          | Without `path`: the file list. With `path`: a signed URL, text inline, and png/jpeg/webp/gif up to 1.5 MB as an image block (frames, contact sheets).           |
+
+`studix_composition_attach_render` takes `{compositionId, path, projectId, preset?}`. It copies the MP4 under
+`renders/` and records it as the project's render with an asset (kind `render`) and version, so
+`studix_get_project` and the dashboard play it (the run job itself has no project, so `studix_get_job`
+does not show it). The project needs a current version, and repeating the call for the same file, preset
+and version returns the same render (`replayed: true`).
 
 The run sandbox has network, Node, Python, ffmpeg, Chromium, the HyperFrames and Remotion CLIs,
 `multix generate` with the workspace's media keys (images, TTS, BGM, SFX via ElevenLabs and others)
-and the enabled skills under `/skills`. Every file the command adds or changes is stored back (1 GB
-each, 200 per run; `node_modules`, `.git` and caches stay behind). `timeoutSeconds` defaults to 900
+and the enabled skills under `/skills`. `timeoutSeconds` defaults to 900
 (max 3600); compute is billed per started minute against `budgetCents`. It needs `media:exec`
 (write needs `project:write`) and `STUDIX_SANDBOX=docker` on the worker.
+
+#### What persists between runs
+
+Every run is an ephemeral sandbox. Nothing survives it except the composition's stored files, so a
+second run sees exactly the file list `studix_composition_read` returns, never the first run's
+container, home directory, global installs or `node_modules`.
+
+- **Copied in:** every stored file, at the same relative path under the working directory
+  (the composition root).
+- **Stored back:** each regular file under the root whose modification time is newer than the start
+  of the command, listed in the job result's `changed[]` (`path`, `bytes`, `sha256`,
+  `contentType`). A file the command only read is not stored again. Files that keep their original
+  timestamps (`tar -x`, `unzip`, `cp -p`, `rsync -a`) and symlinks are not stored; `touch` extracted
+  files if they must persist.
+- **Skipped silently:** anything under `node_modules`, `.git`, `.cache`, `.npm`, `__pycache__` or
+  `.venv`; files of 1 GiB or more; paths outside the root (`~`, `/tmp`); and any path that is not a
+  valid composition path: at most 240 characters, and every segment starts with an ASCII letter,
+  digit or `_` and then uses only ASCII letters, digits and `_ . @ + -` (so hidden names, spaces and
+  accented names are dropped without an error).
+- **Count limits:** a run stores at most 200 files (it keeps 200, in no guaranteed order, and the log
+  says how many it skipped). A run that would take the composition over 400 files fails with
+  `VALIDATION` and does not add its files to the file list.
+- **Deletes do not persist:** removing a file in a run leaves its stored copy, and it is back in the
+  next run. Delete stored files with `studix_composition_write` and `delete: [paths]`.
+- **Persist a generated project** by creating it inside the root, for example
+  `npx hyperframes init my-video` (the directory lands at `my-video/` and is stored back), or move it
+  there before the command ends. A project initialised in `~` or `/tmp` is gone when the run ends. Its
+  dependencies are not kept: run the install again at the start of the next command
+  (`cd my-video && npm install && npx hyperframes render ...`).
+- **Limits on writes** through `studix_composition_write` are separate: 8 MB per file, 50 per call.
+  Larger media must be generated or downloaded inside a run.
 
 `check: {path, width?, height?, durationMs?, durationToleranceMs?, audio?, loudnessLufs?, frames?}` probes a file after
 an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the

@@ -76,6 +76,7 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
       "studix_approve",
       "studix_attach_media_job",
       "studix_cancel_job",
+      "studix_composition_attach_render",
       "studix_composition_read",
       "studix_composition_run",
       "studix_composition_write",

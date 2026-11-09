@@ -359,6 +359,9 @@ export async function composeApp(
           compositions: createCompositionService({
             storage: integrations.storage,
             queue: repos.queue,
+            projects: repos.projects,
+            renders: repos.renders,
+            assets: repos.assets,
             audit: repos.audit,
             defaults: { jobBudgetCents: config.DEFAULT_JOB_BUDGET_CENTS },
           }),
