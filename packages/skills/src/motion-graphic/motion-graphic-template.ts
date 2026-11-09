@@ -25,7 +25,9 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 4;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 5;
+
+const DEFAULT_GRAPHIC_NAME = "Motion graphic";
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -270,7 +272,9 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     });
   }
   const baseBrand: BrandKit = brief.brand ?? {
-    name: truncateText(brief.title ?? style.name, 120),
+    // A style profile's name is a look, not a brand: with no brand and no title the name is neutral and
+    // the closing card shows no brand line.
+    name: truncateText(brief.title ?? DEFAULT_GRAPHIC_NAME, 120),
     palette: {
       primary: style.palette.accent,
       accent: style.palette.accent,
@@ -287,6 +291,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       background: offBlack(baseBrand.palette.background),
     },
   };
+  const showBrandLine = Boolean(brief.brand || brief.title);
   const logo = brand.logoAssetId
     ? options.assets?.find((a) => a.id === brand.logoAssetId && a.kind === "image")
     : undefined;
@@ -310,20 +315,22 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
     if (i === last) {
-      shots.push({
-        id: "cta-logo",
-        type: "logo",
-        startMs: 0,
-        durationMs,
-        ...(logo ? { assetId: logo.id } : { text: truncateText(brand.name, 60) }),
-        style: {
-          textStyle: "heading",
-          color: inkOn(brand.palette, fill, "accent"),
-          align: "center",
-          region: "top",
-        },
-        animation: { enter, durationMs: 400 },
-      });
+      if (showBrandLine || logo) {
+        shots.push({
+          id: "cta-logo",
+          type: "logo",
+          startMs: 0,
+          durationMs,
+          ...(logo ? { assetId: logo.id } : { text: truncateText(brand.name, 60) }),
+          style: {
+            textStyle: "heading",
+            color: inkOn(brand.palette, fill, "accent"),
+            align: "center",
+            region: "top",
+          },
+          animation: { enter, durationMs: 400 },
+        });
+      }
       shots.push({
         id: "cta-text",
         type: "cta",

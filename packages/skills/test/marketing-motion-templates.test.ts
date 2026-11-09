@@ -441,3 +441,20 @@ describe("pack pipelines", () => {
     expect(mg.some((s) => s.name.includes("i2v"))).toBe(false);
   });
 });
+
+describe("motion graphic closing card brand line", () => {
+  const ctaShots = (input: Record<string, unknown>) =>
+    motionGraphicTemplate(input).scenes.find((s) => s.id === "cta")?.shots ?? [];
+
+  it("shows no brand line when the brief has no brand or title, and never a style name", () => {
+    const ir = motionGraphicTemplate({ prompt: "A hologram interface", keyMessages: ["Fast"] });
+    expect(ir.scenes.find((s) => s.id === "cta")?.shots.map((s) => s.id)).toEqual(["cta-text"]);
+    expect(JSON.stringify(ir)).not.toMatch(/Holographic HUD/);
+    expect(validateVideoIR(ir).ok).toBe(true);
+  });
+
+  it("uses the brief title as the brand line when there is no brand", () => {
+    const logo = ctaShots({ prompt: "x", title: "Lá Mây" }).find((s) => s.id === "cta-logo");
+    expect(logo).toMatchObject({ type: "logo", text: "Lá Mây" });
+  });
+});
