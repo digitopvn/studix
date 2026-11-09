@@ -108,6 +108,15 @@ describe("attaching a composition render to a project", () => {
     expect(again.render.id).toBe(first.render.id);
     expect(again.assetId).toBe(first.assetId);
     expect((await env.repos.renders.listByProject(ctx, project.id)).items).toHaveLength(1);
+
+    // Another preset, or the file attached to a newer project version, is a new render.
+    const preview = await service.attachRender(ctx, { ...input, preset: "preview" });
+    expect(preview.replayed).toBe(false);
+    expect(preview.render.id).not.toBe(first.render.id);
+    await env.repos.projects.update(ctx, project.id, { currentVersionId: "pver_next" });
+    const next = await service.attachRender(ctx, input);
+    expect(next.replayed).toBe(false);
+    expect(next.render.versionId).toBe("pver_next");
   });
 
   it("refuses a project without a version, a missing file and a non-MP4", async () => {

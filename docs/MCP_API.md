@@ -636,8 +636,9 @@ object storage; Studix checks only the outputs a run asks it to check.
 
 `studix_composition_attach_render` takes `{compositionId, path, projectId, preset?}`. It copies the MP4 under
 `renders/` and records it as the project's render with an asset (kind `render`) and version, so
-`studix_get_project`, `studix_get_job` and the dashboard play it. The project needs a current version, and
-repeating the call returns the same render (`replayed: true`).
+`studix_get_project` and the dashboard play it (the run job itself has no project, so `studix_get_job`
+does not show it). The project needs a current version, and repeating the call for the same file, preset
+and version returns the same render (`replayed: true`).
 
 The run sandbox has network, Node, Python, ffmpeg, Chromium, the HyperFrames and Remotion CLIs,
 `multix generate` with the workspace's media keys (images, TTS, BGM, SFX via ElevenLabs and others)

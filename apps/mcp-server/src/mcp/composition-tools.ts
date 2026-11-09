@@ -159,7 +159,7 @@ export const COMPOSITION_MCP_TOOLS = [
     name: COMPOSITION_TOOL_NAMES.attachRender,
     title: "Attach composition render to a project",
     description:
-      "Register a rendered MP4 of a composition (after studix_composition_run) as a playable render of a project: it gets an asset, version and preview, so studix_get_project and the dashboard play it. Safe to repeat.",
+      "Register a rendered MP4 of a composition (after studix_composition_run) as a playable render of a project: it gets an asset, version and preview, so studix_get_project and the dashboard play it. Safe to repeat for the same file, preset and project version.",
     input: AttachInput,
     readOnly: false,
     audited: true,

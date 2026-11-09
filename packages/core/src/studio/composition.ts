@@ -224,7 +224,7 @@ export interface CompositionServiceDeps {
   queue: JobQueue;
   /** Needed by `attachRender` only. */
   projects?: Pick<ProjectRepository, "get">;
-  renders?: Pick<RenderRepository, "get" | "create">;
+  renders?: Pick<RenderRepository, "listByProject" | "create" | "update">;
   assets?: Pick<AssetRepository, "create" | "addVersion" | "getVersion">;
   audit: Pick<AuditRepository, "append">;
   defaults: { jobBudgetCents: number };
@@ -345,59 +345,70 @@ export function createCompositionService(deps: CompositionServiceDeps) {
           suggestedAction: "Attach the rendered .mp4 (for example out/video.mp4).",
         });
       }
-      const renderId = `rnd_${createHash("sha256")
-        .update([project.id, manifest.id, file.path, file.sha256].join("\n"))
+      // The storage key is the idempotency key: same file, project, preset and version means the same render.
+      // The render id itself stays a sortable id, because renders are listed newest first by id.
+      const keyHash = createHash("sha256")
+        .update(
+          [project.id, project.currentVersionId, manifest.id, file.path, file.sha256, request.preset].join(
+            "\n",
+          ),
+        )
         .digest("hex")
-        .slice(0, 26)}`;
-      const existing = await renders.get(ctx, renderId);
-      if (existing) {
-        const version = existing.assetVersionId
-          ? await assets.getVersion(ctx, existing.assetVersionId)
-          : undefined;
-        return { render: existing, ...(version ? { assetId: version.assetId } : {}), replayed: true };
-      }
-      const source = await storage.get(ctx, compositionFileKey(manifest.id, file.path));
-      const storageKey = `renders/${renderId}/${request.preset}.mp4`;
-      const stored = await storage.put(ctx, storageKey, source.body, {
-        contentType: "video/mp4",
-        sha256: file.sha256,
-      });
+        .slice(0, 26);
+      const storageKey = `renders/attached-${keyHash}/${request.preset}.mp4`;
       const createdBy = actorRef(ctx.actor);
-      const name = file.path.split("/").pop() ?? "video.mp4";
-      const asset = await assets.create(ctx, {
-        projectId: project.id,
-        kind: "render",
-        name,
-        createdBy,
-      });
-      const version = await assets.addVersion(ctx, {
-        assetId: asset.id,
-        storageKey,
-        sha256: stored.sha256,
-        mime: "video/mp4",
-        bytes: stored.bytes,
-        provenance: { source: "rendered", provider: "composition", createdAt: new Date().toISOString() },
-        createdBy,
-      });
-      const render = await renders.create(ctx, {
-        id: renderId,
-        projectId: project.id,
-        versionId: project.currentVersionId,
-        preset: request.preset,
-        spec: resolveRenderSpec(request.preset),
-        status: "succeeded",
-        assetVersionId: version.id,
-        storageKey,
-        completedAt: new Date(),
-      });
+      const existing = (await renders.listByProject(ctx, project.id, { limit: 100 })).items.find(
+        (r) => r.storageKey === storageKey,
+      );
+      let render = existing;
+      if (!render) {
+        const source = await storage.get(ctx, compositionFileKey(manifest.id, file.path));
+        await storage.put(ctx, storageKey, source.body, { contentType: "video/mp4", sha256: file.sha256 });
+        render = await renders.create(ctx, {
+          id: newId("rnd"),
+          projectId: project.id,
+          versionId: project.currentVersionId,
+          preset: request.preset,
+          spec: resolveRenderSpec(request.preset),
+          status: "succeeded",
+          storageKey,
+          completedAt: new Date(),
+        });
+      }
+      // A retry after a failure between the steps completes the asset instead of repeating the copy.
+      let assetId: string | undefined;
+      if (render.assetVersionId) {
+        assetId = (await assets.getVersion(ctx, render.assetVersionId))?.assetId;
+      } else {
+        const asset = await assets.create(ctx, {
+          projectId: project.id,
+          kind: "render",
+          name: file.path.split("/").pop() ?? "video.mp4",
+          createdBy,
+        });
+        const version = await assets.addVersion(ctx, {
+          assetId: asset.id,
+          storageKey,
+          sha256: file.sha256,
+          mime: "video/mp4",
+          bytes: file.bytes,
+          provenance: { source: "rendered", provider: "composition", createdAt: new Date().toISOString() },
+          createdBy,
+        });
+        render = await renders.update(ctx, render.id, { assetVersionId: version.id });
+        assetId = asset.id;
+      }
+      if (existing && existing.assetVersionId) {
+        return { render, ...(assetId ? { assetId } : {}), replayed: true };
+      }
       await deps.audit.append(ctx, {
         actor: createdBy,
         action: "composition.render_attached",
         subjectType: "render",
         subjectId: render.id,
-        data: { compositionId: manifest.id, path: file.path, projectId: project.id, bytes: stored.bytes },
+        data: { compositionId: manifest.id, path: file.path, projectId: project.id, bytes: file.bytes },
       });
-      return { render, assetId: asset.id, replayed: false };
+      return { render, ...(assetId ? { assetId } : {}), replayed: false };
     },
 
     /** Queues one command in the skill sandbox over the composition's files. */
