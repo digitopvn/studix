@@ -119,7 +119,7 @@ export const FrameQaInput = z.strictObject({
   samples: z.number().int().min(2).max(16).optional(),
   /** Width of the outer band, in percent of the frame, that text should stay out of; 0 turns the check off. */
   safeMarginPct: z.number().min(0).max(20).optional(),
-  /** Write `contact-sheet.png` to the run's output directory (default true; skipped without one). */
+  /** Write `contact-sheet.png` to the run's output directory (default false; only kept when the caller sets `outputDir`). */
   contactSheet: z.boolean().optional(),
 });
 export const FrameQaOutput = z.object({

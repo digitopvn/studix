@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { isStudixError, StudixError, type StudixErrorPayload } from "@studix/shared";
 import type { z } from "zod";
 import {
@@ -217,7 +218,7 @@ export async function collectEvidence(
       m["frames.blankSamples"] = result.blankSamples + result.blackSamples;
       m["frames.marginSamples"] = result.marginSamples;
       m["frames.staticPairs"] = result.staticPairs;
-      const contactSheet = outputs.find((f) => f.endsWith(result.contactSheet?.file ?? "\0")) ?? null;
+      const contactSheet = outputs.find((f) => basename(f) === result.contactSheet?.file) ?? null;
       return { findings: result.flags, data: { ...result, contactSheetPath: contactSheet } };
     });
     items.push(item);

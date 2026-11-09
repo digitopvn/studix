@@ -11,18 +11,18 @@ treated as texture, not as text).
 """
 from __future__ import annotations
 
-import subprocess
 import struct
 import zlib
 from pathlib import Path
 
 import numpy as np
 
-from .ff import INPUT_GUARD, _preexec, ffmpeg_bin, ffprobe_json
+from . import ff
+from .ff import ffprobe_json, input_args
 from .probe import summarize
 from .sandbox import Deadline, Media, Outputs, ToolError
 
-PROXY_W, PROXY_H = 320, 180
+LONG_SIDE, SHORT_SIDE = 320, 180  # proxy size; portrait renders get 180x320 so they are not squashed
 BLACK_LUMA = 16.0
 BLANK_STD = 2.0
 EDGE_STRENGTH = 40.0
@@ -33,27 +33,36 @@ DEFAULT_SAMPLES, MAX_SAMPLES = 6, 16
 DEFAULT_MARGIN_PCT = 5.0
 
 
-def sample_times(duration: float, count: int) -> list[float]:
-    """Mid-slice timestamps: one per equal slice, so the first and last frames (fades) are never the sample."""
-    return [round(duration * (i + 0.5) / count, 3) for i in range(count)]
+def frame_times(path: Path, deadline: Deadline) -> list[float]:
+    """Presentation times of the video frames, sorted, from the packet index (no decoding). The end of the
+    *video* is read from here, because a container may be longer than its picture (audio tail) and MKV/WebM carry
+    no per-stream duration."""
+    result = ff.run([ff.ffprobe_bin(), "-v", "error", *ff.INPUT_GUARD, "-select_streams", "v:0",
+                     "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(path)], deadline)
+    times = set()
+    for line in result.stdout.decode("utf-8", "replace").splitlines():
+        try:
+            times.add(round(float(line.strip().rstrip(",")), 6))
+        except ValueError:
+            continue
+    return sorted(times)
 
 
-def _frame_rgb(path: Path, t: float, deadline: Deadline) -> np.ndarray:
-    argv = [ffmpeg_bin(), "-nostdin", "-hide_banner", "-nostats", "-v", "error", "-ss", f"{t:.3f}",
-            *INPUT_GUARD, "-i", str(path), "-map", "0:v:0", "-frames:v", "1",
-            "-vf", f"scale={PROXY_W}:{PROXY_H}", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
-    try:
-        proc = subprocess.run(argv, capture_output=True, timeout=deadline.remaining(), preexec_fn=_preexec(),
-                              check=False)
-    except FileNotFoundError as err:
-        raise ToolError("UNAVAILABLE", f"{argv[0]} is not installed or not on PATH") from err
-    except subprocess.TimeoutExpired as err:
-        raise ToolError("TIMEOUT", f"ffmpeg exceeded the {deadline.seconds:g}s deadline") from err
-    size = PROXY_W * PROXY_H * 3
-    if proc.returncode != 0 or len(proc.stdout) < size:
-        tail = proc.stderr.decode("utf-8", "replace")[-1500:]
-        raise ToolError("INTERNAL", f"ffmpeg returned no frame at {t:.3f}s", {"stderr": tail})
-    return np.frombuffer(proc.stdout[:size], np.uint8).reshape(PROXY_H, PROXY_W, 3)
+def pick_times(frames: list[float], count: int) -> list[float]:
+    """One real frame time per equal slice (the middle one), so the first and last frames (fades) are not the
+    sample and every pick is a distinct frame the decoder can reach."""
+    n = len(frames)
+    return [frames[min(n - 1, int((i + 0.5) * n / count))] for i in range(count)]
+
+
+def _frame_rgb(path: Path, t: float, size: tuple[int, int], deadline: Deadline) -> np.ndarray:
+    w, h = size
+    # Seek a millisecond before the frame so rounding never lands after it.
+    proc = ff.ffmpeg(["-v", "error", *input_args(path, seek=max(0.0, t - 0.001)), "-map", "0:v:0", "-frames:v", "1",
+                      "-vf", f"scale={w}:{h}", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], deadline)
+    if len(proc.stdout) < w * h * 3:
+        raise ToolError("INTERNAL", f"ffmpeg returned no frame at {t:.3f}s")
+    return np.frombuffer(proc.stdout[:w * h * 3], np.uint8).reshape(h, w, 3)
 
 
 def _gray(rgb: np.ndarray) -> np.ndarray:
@@ -94,32 +103,39 @@ def _png(rgb: np.ndarray) -> bytes:
 
 
 def contact_sheet(frames: list[np.ndarray]) -> tuple[bytes, int, int]:
+    fh, fw, _ = frames[0].shape
     cols = min(SHEET_COLUMNS, len(frames))
     rows = -(-len(frames) // cols)
-    sheet = np.full((rows * PROXY_H, cols * PROXY_W, 3), 24, np.uint8)
+    sheet = np.full((rows * fh, cols * fw, 3), 24, np.uint8)
     for i, f in enumerate(frames):
         r, c = divmod(i, cols)
-        sheet[r * PROXY_H:(r + 1) * PROXY_H, c * PROXY_W:(c + 1) * PROXY_W] = f
+        sheet[r * fh:(r + 1) * fh, c * fw:(c + 1) * fw] = f
     return _png(sheet), cols, rows
 
 
 def run(payload: dict, media: Media, deadline: Deadline, outputs: Outputs) -> dict:
     path = media.path(payload.get("media"))
     count = payload.get("samples", DEFAULT_SAMPLES)
-    margin = float(payload.get("safeMarginPct", DEFAULT_MARGIN_PCT))
+    margin = payload.get("safeMarginPct", DEFAULT_MARGIN_PCT)
     if not isinstance(count, int) or isinstance(count, bool) or not 2 <= count <= MAX_SAMPLES:
         raise ToolError("VALIDATION", f"samples must be an integer from 2 to {MAX_SAMPLES}")
-    if not 0 <= margin <= 20:
-        raise ToolError("VALIDATION", "safeMarginPct must be between 0 and 20")
+    if isinstance(margin, bool) or not isinstance(margin, (int, float)) or not 0 <= margin <= 20:
+        raise ToolError("VALIDATION", "safeMarginPct must be a number between 0 and 20")
+    margin = float(margin)
     video = summarize(ffprobe_json(path, deadline))["video"]
     if video is None:
         raise ToolError("VALIDATION", "file has no video stream", {"media": payload.get("media")})
-    duration = video["durationS"]
-    if not duration or duration <= 0:
-        raise ToolError("VALIDATION", "video has no readable duration", {"media": payload.get("media")})
+    available = frame_times(path, deadline)
+    if len(available) < 2:
+        raise ToolError("VALIDATION", "video has fewer than 2 frames to compare", {"media": payload.get("media")})
+    count = min(count, len(available))
+    portrait = video["height"] > video["width"]
+    size = (SHORT_SIDE, LONG_SIDE) if portrait else (LONG_SIDE, SHORT_SIDE)
+    fps = video["fps"] or 24.0
+    duration = round(available[-1] + 1 / fps, 3)
 
-    times = sample_times(duration, count)
-    frames = [_frame_rgb(path, t, deadline) for t in times]
+    times = pick_times(available, count)
+    frames = [_frame_rgb(path, t, size, deadline) for t in times]
     grays = [_gray(f) for f in frames]
 
     samples, flags = [], []
@@ -143,11 +159,11 @@ def run(payload: dict, media: Media, deadline: Deadline, outputs: Outputs) -> di
             flags.append(f"{times[i]:.2f}s to {times[i + 1]:.2f}s: the scene did not change")
 
     sheet = None
-    if outputs.root is not None and payload.get("contactSheet", True):
+    if outputs.root is not None and payload.get("contactSheet", False):
         png, cols, rows = contact_sheet(frames)
         name = "contact-sheet.png"
         outputs.path(name).write_bytes(png)
-        sheet = {"file": name, "columns": cols, "rows": rows, "frameWidth": PROXY_W, "frameHeight": PROXY_H}
+        sheet = {"file": name, "columns": cols, "rows": rows, "frameWidth": size[0], "frameHeight": size[1]}
     return {
         "durationS": duration,
         "safeMarginPct": margin,

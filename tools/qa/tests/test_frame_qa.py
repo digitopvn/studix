@@ -15,7 +15,7 @@ def _clip(path, vf: str, *, source="testsrc2=s=320x180:r=24:d=4"):
 
 def test_a_moving_picture_passes_and_writes_a_contact_sheet(tmp_path, ffmpeg_available):
     out = tmp_path / "out"
-    r = result("frame-qa", {"media": "v", "samples": SAMPLES, "safeMarginPct": 0}, {"v": av_file(tmp_path / "a.mkv", audio=None, video="testsrc2=s=320x180:r=24:d=4")}, out_dir=out)
+    r = result("frame-qa", {"media": "v", "samples": SAMPLES, "safeMarginPct": 0, "contactSheet": True}, {"v": av_file(tmp_path / "a.mkv", audio=None, video="testsrc2=s=320x180:r=24:d=4")}, out_dir=out)
     assert (r["blankSamples"], r["blackSamples"], r["staticPairs"]) == (0, 0, 0)
     assert len(r["samples"]) == SAMPLES
     sheet = out / r["contactSheet"]["file"]
@@ -97,3 +97,75 @@ def test_glyph_coverage_normalises_decomposed_input_and_rejects_non_fonts(tmp_pa
     junk = tmp_path / "x.ttf"
     junk.write_bytes(b"not a font")
     assert run_tool("glyph-coverage", {"font": "f", "texts": ["a"]}, {"f": junk})["error"]["code"] == "VALIDATION"
+
+
+def test_short_clips_and_a_container_longer_than_its_picture_still_sample(tmp_path, ffmpeg_available):
+    short = _clip(tmp_path / "short.mp4", "null", source="testsrc2=s=320x180:r=24:d=1")
+    r = result("frame-qa", {"media": "v", "samples": 16}, {"v": short})
+    assert len(r["samples"]) == 16 and all(s["kind"] == "ok" for s in r["samples"])
+    # 2 s of picture, 6 s of audio in Matroska: the container is 6 s long, the picture is not.
+    tail = tmp_path / "tail.mkv"
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=24:d=2", "-f", "lavfi", "-i", "sine=f=440:d=6",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", str(tail))
+    r = result("frame-qa", {"media": "v", "samples": 16}, {"v": tail})
+    assert abs(r["durationS"] - 2.0) < 0.1 and r["blackSamples"] == 0
+    one = tmp_path / "one.mp4"
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=24:d=1", "-frames:v", "1", "-c:v", "libx264", str(one))
+    assert run_tool("frame-qa", {"media": "v"}, {"v": one})["error"]["code"] == "VALIDATION"
+
+
+def test_portrait_renders_keep_their_aspect_in_the_sheet(tmp_path, ffmpeg_available):
+    out = tmp_path / "out"
+    clip = _clip(tmp_path / "p.mp4", "null", source="testsrc2=s=180x320:r=24:d=2")
+    r = result("frame-qa", {"media": "v", "samples": 2, "contactSheet": True}, {"v": clip}, out_dir=out)
+    assert (r["contactSheet"]["frameWidth"], r["contactSheet"]["frameHeight"]) == (180, 320)
+    assert (out / "contact-sheet.png").exists()
+
+
+def test_the_contact_sheet_is_off_unless_asked_for(tmp_path, ffmpeg_available):
+    out = tmp_path / "out"
+    r = result("frame-qa", {"media": "v"}, {"v": av_file(tmp_path / "a.mkv", audio=None)}, out_dir=out)
+    assert r["contactSheet"] is None and not out.exists()
+
+
+def test_crafted_fonts_cost_no_more_than_the_text_asks_for(tmp_path):
+    import time
+
+    def sfnt(sub, platform=3, encoding=10):
+        cmap = struct.pack(">HHHHI", 0, 1, platform, encoding, 12) + sub
+        return struct.pack(">4sHHHH", b"\x00\x01\x00\x00", 1, 16, 0, 0) + struct.pack(">4sIII", b"cmap", 0, 28, len(cmap)) + cmap
+
+    # 40 format-12 groups, each one covering a million code points: a walk over the ranges would exhaust memory.
+    groups = b"".join(struct.pack(">III", i * 0x100000, i * 0x100000 + 0xFFFFF, 1) for i in range(40))
+    huge = tmp_path / "huge.ttf"
+    huge.write_bytes(sfnt(struct.pack(">HHIII", 12, 0, 16 + len(groups), 0, 40) + groups))
+    started = time.monotonic()
+    r = result("glyph-coverage", {"font": "f", "texts": ["Chào"]}, {"f": huge})
+    assert time.monotonic() - started < 5 and r["missingCount"] == 0
+    # Format 4: 4000 segments each spanning 0..0xFFFE.
+    n = 4000
+    body = (struct.pack(f">{n}H", *[0xFFFE] * n) + b"\x00\x00" + struct.pack(f">{n}H", *[0] * n)
+            + struct.pack(f">{n}h", *[0] * n) + struct.pack(f">{n}H", *[0] * n))
+    wide = tmp_path / "wide.ttf"
+    wide.write_bytes(sfnt(struct.pack(">HHHHHHH", 4, 14 + len(body), 0, n * 2, 0, 0, 0) + body, 3, 1))
+    started = time.monotonic()
+    result("glyph-coverage", {"font": "f", "texts": ["Chào"]}, {"f": wide})
+    assert time.monotonic() - started < 5
+
+
+def test_malformed_font_headers_are_validation_errors(tmp_path):
+    for name, blob in {"short": b"\x00\x01\x00\x00", "ttc": b"ttcf" + bytes(8) + struct.pack(">I", 10**6),
+                       "cut": struct.pack(">4sHHHH", b"\x00\x01\x00\x00", 3, 0, 0, 0)}.items():
+        path = tmp_path / f"{name}.ttf"
+        path.write_bytes(blob)
+        assert run_tool("glyph-coverage", {"font": "f", "texts": ["a"]}, {"f": path})["error"]["code"] == "VALIDATION", name
+
+
+def test_a_group_that_starts_at_glyph_zero_still_covers_its_other_letters(tmp_path):
+    sub = struct.pack(">HHIII", 12, 0, 28, 0, 1) + struct.pack(">III", 0x61, 0x62, 0)  # a -> .notdef, b -> glyph 1
+    cmap = struct.pack(">HHHHI", 0, 1, 3, 10, 12) + sub
+    font = tmp_path / "z.ttf"
+    font.write_bytes(struct.pack(">4sHHHH", b"\x00\x01\x00\x00", 1, 16, 0, 0)
+                     + struct.pack(">4sIII", b"cmap", 0, 28, len(cmap)) + cmap)
+    r = result("glyph-coverage", {"font": "f", "texts": ["ab"]}, {"f": font})
+    assert [m["char"] for m in r["missing"]] == ["a"]
