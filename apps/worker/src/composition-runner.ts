@@ -126,8 +126,14 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
         if (paths.length > COMPOSITION_LIMITS.runFiles) {
           output += `\n[studix] stored the first ${COMPOSITION_LIMITS.runFiles} of ${paths.length} changed files`;
         }
+        const storing = paths.slice(0, COMPOSITION_LIMITS.runFiles);
+        // Refuse a run that would pass the file cap before any stored blob is overwritten.
+        mergeManifest(
+          await loadCompositionManifest(deps.storage, ctx, manifest.id),
+          storing.map((path) => ({ path, bytes: 0, sha256: "", contentType: "" })),
+        );
         const changed: CompositionFile[] = [];
-        for (const [i, path] of paths.slice(0, COMPOSITION_LIMITS.runFiles).entries()) {
+        for (const [i, path] of storing.entries()) {
           const local = join(host, `f${i}`);
           await box.copyOut(`${ROOT}/${path}`, local);
           const { sha256, bytes } = await sha256File(local);
