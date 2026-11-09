@@ -9,6 +9,6 @@ if [ -z "${STUDIX_RUNNER_TOKEN:-}" ]; then
   exit 1
 fi
 # Container args (e.g. `--port 7072`, set per sidecar by deploy/tose/worker-sidecars.ts) pass through to the runner.
-exec env -u STUDIX_RUNNER_TOKEN tini -- node /opt/pi-runner/apps/pi-runner/src/main.ts --token-stdin "$@" <<EOF
+exec env -u STUDIX_RUNNER_TOKEN tini -- node /opt/pi-runner/apps/pi-runner/src/main.ts --token-stdin --sweep "$@" <<EOF
 $STUDIX_RUNNER_TOKEN
 EOF

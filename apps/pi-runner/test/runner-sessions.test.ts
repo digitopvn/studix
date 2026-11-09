@@ -116,7 +116,7 @@ describe("pi-runner sessions and exec", () => {
     const listing = await client.exec(sessionId, { argv: ["ls", "-A", client.scratch] });
     expect(listing.stdout).toBe("");
     const dirs = await client.exec(sessionId, { command: "ls -A" });
-    expect(dirs.stdout.split("\n").filter(Boolean).sort()).toEqual([".home", "in", "out"]);
+    expect(dirs.stdout.split("\n").filter(Boolean).sort()).toEqual([".home", ".tmp", "in", "out"]);
   });
 });
 

@@ -4,7 +4,7 @@
  * process group with setsid (the /proc sweep) or a directory it made unreadable (the chmod retry of the wipe).
  */
 import { spawn } from "node:child_process";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -27,6 +27,12 @@ async function listPids(): Promise<number[]> {
   return entries.filter((name) => /^\d+$/.test(name)).map(Number);
 }
 
+/** A zombie is dead already; it only waits for its parent (tini) to reap it. */
+async function isZombie(pid: number): Promise<boolean> {
+  const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => "");
+  return /\) Z /.test(stat);
+}
+
 /**
  * Linux only: SIGKILL every process of the container except the runner and pid 1 (tini; killing it would end the
  * container). kill(-1) reaches every process this uid may signal in the PID namespace in one call, so a fork
@@ -38,7 +44,10 @@ export async function sweepProcesses(budgetMs = 10_000): Promise<boolean> {
   const spared = new Set([1, process.pid, process.ppid]);
   const deadline = Date.now() + budgetMs;
   for (;;) {
-    const alive = (await listPids()).filter((pid) => !spared.has(pid) && signal(pid, 0));
+    const alive: number[] = [];
+    for (const pid of await listPids()) {
+      if (!spared.has(pid) && signal(pid, 0) && !(await isZombie(pid))) alive.push(pid);
+    }
     if (alive.length === 0) return true;
     if (Date.now() > deadline) return false;
     signal(-1, "SIGKILL");

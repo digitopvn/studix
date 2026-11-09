@@ -72,7 +72,7 @@ describe("pi-runner lifecycle", () => {
       if (result instanceof Response) expect(result.status).not.toBe(200);
       const next = await client.openId();
       const listing = await client.exec(next, { command: "ls -A" });
-      expect(listing.stdout.split("\n").filter(Boolean).sort()).toEqual([".home", "in", "out"]);
+      expect(listing.stdout.split("\n").filter(Boolean).sort()).toEqual([".home", ".tmp", "in", "out"]);
     } finally {
       await client.stop();
     }
@@ -99,6 +99,41 @@ describe("pi-runner lifecycle", () => {
       const result = await client.exec(id, { command: "sleep 0.3; echo ok", timeoutSeconds: 1e9 });
       expect(result.exit).toEqual({ exitCode: 0, signal: null, timedOut: false });
       expect(result.stdout).toBe("ok\n");
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("closes a session past a single path's cap and points TMPDIR into the work dir", async () => {
+    const capped = await startTestRunner({ diskCheckMs: 100, maxDiskMb: 100 });
+    try {
+      const stopped = await startTestRunner({
+        diskCheckMs: 100,
+        pathCapsMb: [{ path: capped.scratch, maxMb: 0.5 }],
+      });
+      try {
+        const id = await stopped.openId();
+        const env = await stopped.exec(id, { command: 'echo "$TMPDIR"; test -d "$TMPDIR" && echo exists' });
+        expect(env.stdout).toBe(`${stopped.work}/.tmp\nexists\n`);
+        await stopped.exec(id, {
+          argv: ["sh", "-c", 'head -c 1048576 /dev/zero > "$1/big"', "sh", capped.scratch],
+        });
+        await waitFor(async () => (await stopped.exec(id, { command: "true" })).status === 410);
+        const gone = await stopped.exec(id, { command: "true" });
+        expect(gone.stderr).toContain(`disk cap of ${capped.scratch}`);
+      } finally {
+        await stopped.stop();
+      }
+    } finally {
+      await capped.stop();
+    }
+  });
+
+  it("answers 410, never 404, for a session the runner does not know", async () => {
+    const client = await startTestRunner();
+    try {
+      expect((await client.exec("unknown", { command: "true" })).status).toBe(410);
+      expect((await client.getFile("unknown", `${client.work}/x`)).status).toBe(410);
     } finally {
       await client.stop();
     }

@@ -6,7 +6,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { RunnerLimits } from "../../../packages/agent-runtime/src/sandbox-runner-protocol.ts";
@@ -16,7 +16,7 @@ import { emptyDir, emptyIfExists, killGroup, measureDiskBytes, sweepProcesses } 
 export interface RunnerPaths {
   work: string;
   skills: string;
-  /** Writable scratch paths wiped between sessions and counted by the disk cap (/tmp, /var/tmp, /dev/shm). */
+  /** Writable scratch paths wiped between sessions and counted by the disk cap (/tmp, /var/tmp, /run/lock, /home/node). */
   scratch: readonly string[];
 }
 
@@ -25,6 +25,8 @@ export interface SessionConfig {
   /** Kill every other process of the container on cleanup (production, Linux, the runner alone in its PID ns). */
   sweepProcesses: boolean;
   maxDiskBytes: number;
+  /** Tighter caps on single paths (TOSE's 1 GiB /tmp), checked with the total. */
+  pathCaps?: readonly { path: string; maxBytes: number }[];
   diskCheckMs: number;
   /** The runner's environment, the source of the toolchain variables a command inherits. */
   baseEnv: NodeJS.ProcessEnv;
@@ -47,12 +49,12 @@ export interface Session {
 interface LiveSession extends Session {
   openedAt: number;
   children: Map<number, Promise<void>>;
-  /** In-flight file transfers: close aborts them and waits, so no upload writes after the wipe. */
-  transfers: Map<IncomingMessage, Promise<void>>;
+  /** In-flight file transfers: close aborts them and waits for their handlers, so no upload writes after the wipe. */
+  transfers: Map<IncomingMessage, Promise<unknown>>;
   timers: NodeJS.Timeout[];
 }
 
-export type SessionLookup = { session: Session } | { status: 404 | 410; error: string };
+export type SessionLookup = { session: Session } | { status: 410; error: string };
 
 const CLOSED_MEMORY = 64;
 
@@ -113,9 +115,32 @@ export function createSessionManager(config: SessionConfig) {
   async function checkDisk(session: LiveSession): Promise<void> {
     const { work, skills, scratch } = config.paths;
     const bytes = await measureDiskBytes([work, skills, ...scratch]);
-    if (session.closed || bytes === null || bytes <= config.maxDiskBytes) return;
-    log("disk_cap", { sessionId: session.id, taskId: session.taskId, bytes, maxBytes: config.maxDiskBytes });
-    await close(session.id, "disk cap");
+    if (session.closed) return;
+    if (bytes !== null && bytes > config.maxDiskBytes) {
+      log("disk_cap", {
+        sessionId: session.id,
+        taskId: session.taskId,
+        bytes,
+        maxBytes: config.maxDiskBytes,
+      });
+      await close(session.id, "disk cap");
+      return;
+    }
+    for (const cap of config.pathCaps ?? []) {
+      const used = await measureDiskBytes([cap.path]);
+      if (session.closed) return;
+      if (used !== null && used > cap.maxBytes) {
+        log("disk_cap", {
+          sessionId: session.id,
+          taskId: session.taskId,
+          path: cap.path,
+          bytes: used,
+          maxBytes: cap.maxBytes,
+        });
+        await close(session.id, `disk cap of ${cap.path}`);
+        return;
+      }
+    }
   }
 
   function scheduleDiskCheck(session: LiveSession): void {
@@ -168,7 +193,7 @@ export function createSessionManager(config: SessionConfig) {
       current = session;
       try {
         await Promise.all([emptyDir(work), emptyDir(skills)]);
-        for (const sub of ["out", "in", ".home"]) await mkdir(join(work, sub), { recursive: true });
+        for (const sub of ["out", "in", ".home", ".tmp"]) await mkdir(join(work, sub), { recursive: true });
       } catch (error) {
         if (!session.closed) {
           session.closed = true;
@@ -188,7 +213,8 @@ export function createSessionManager(config: SessionConfig) {
       if (current && current.id === id && !current.closed) return { session: current };
       const reason = closedReasons.get(id);
       if (reason !== undefined) return { status: 410, error: `session closed: ${reason}` };
-      return { status: 404, error: "no such session" };
+      // 410 too: after a runner restart the worker must read "session gone", never confuse it with a missing file.
+      return { status: 410, error: "session closed: no such session" };
     },
 
     /** Registers a spawned command (its pid is its process group) so close kills it. */
@@ -201,12 +227,16 @@ export function createSessionManager(config: SessionConfig) {
       void exited.then(() => live.children.delete(pid));
     },
 
-    /** Registers a file transfer of the session; close aborts it (destroys the request) and waits for res. */
-    trackTransfer(session: Session, req: IncomingMessage, res: ServerResponse): void {
+    /** Registers a file transfer's handler; close aborts it (destroys the request) and waits for the handler. */
+    trackTransfer<T>(session: Session, req: IncomingMessage, handler: Promise<T>): Promise<T> {
       const live = session as LiveSession;
-      const done = new Promise<void>((resolve) => res.once("close", () => resolve()));
+      const done = handler.then(
+        () => undefined,
+        () => undefined,
+      );
       live.transfers.set(req, done);
       void done.then(() => live.transfers.delete(req));
+      return handler;
     },
 
     close,

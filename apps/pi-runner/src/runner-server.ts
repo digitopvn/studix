@@ -46,6 +46,8 @@ export interface RunnerOptions {
   /** Kill every other process in the container on cleanup; only for the runner alone in its PID namespace. */
   sweepProcesses?: boolean;
   maxDiskMb?: number;
+  /** See SessionConfig.pathCaps (in MB here). */
+  pathCapsMb?: readonly { path: string; maxMb: number }[];
   maxFileMb?: number;
   diskCheckMs?: number;
   version?: string;
@@ -74,6 +76,7 @@ export function createRunner(options: RunnerOptions): Runner {
     sweepProcesses: options.sweepProcesses ?? false,
     maxDiskBytes: (options.maxDiskMb ?? DEFAULT_MAX_DISK_MB) * MB,
     diskCheckMs: options.diskCheckMs ?? 2_000,
+    pathCaps: (options.pathCapsMb ?? []).map((c) => ({ path: c.path, maxBytes: c.maxMb * MB })),
     baseEnv: env,
     onFatal: options.onFatal,
   });
@@ -144,9 +147,14 @@ export function createRunner(options: RunnerOptions): Runner {
       return;
     }
     if (action === "file" && (method === "PUT" || method === "GET")) {
-      sessions.trackTransfer(found.session, req, res);
-      if (method === "PUT") return putFile(req, res, url.searchParams.get("path"), roots, maxFileBytes);
-      return getFile(res, url.searchParams.get("path"), roots, maxFileBytes);
+      const path = url.searchParams.get("path");
+      return sessions.trackTransfer(
+        found.session,
+        req,
+        method === "PUT"
+          ? putFile(req, res, path, roots, maxFileBytes)
+          : getFile(res, path, roots, maxFileBytes),
+      );
     }
     throw new HttpError(405, "method not allowed");
   }

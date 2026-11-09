@@ -47,6 +47,9 @@ export function buildChildEnv(
   }
   env.PATH ??= "/usr/local/bin:/usr/bin:/bin";
   env.HOME = home;
+  // Temp files go under /work with the rest of the session, not to /tmp: TOSE caps a sidecar's /tmp at 1 GiB and
+  // evicts the whole Pod past it. Tools that ignore TMPDIR still meet the runner's separate /tmp cap.
+  env.TMPDIR = `${home.replace(/\/\.home$/, "")}/.tmp`;
   return { ...env, ...sessionEnv };
 }
 

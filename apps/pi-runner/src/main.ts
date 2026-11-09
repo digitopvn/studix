@@ -77,10 +77,16 @@ async function main(): Promise<void> {
     maxDiskMb,
     maxFileMb,
     version: process.env.STUDIX_RUNNER_VERSION || "dev",
-    // /home/node: the image user's home; HOME points into /work, but a command can still write there.
-    scratchRoots: ["/tmp", "/var/tmp", "/dev/shm", "/home/node"],
-    // The /proc sweep assumes the runner owns its PID namespace (one container, shareProcessNamespace off).
-    sweepProcesses: process.platform === "linux",
+    // Every path uid 1000 can write in the image besides /work and /skills (`find / -xdev -writable -type d`):
+    // /home/node is the image user's home (HOME points into /work, but a command can still write there).
+    // Not /dev/shm: Kubernetes shares it (and IPC) across the Pod's containers, so wiping it here would delete
+    // another runner's live files. What a session leaves there (at most the Pod's 64 MiB) stays: see ADR-0025.
+    scratchRoots: ["/tmp", "/var/tmp", "/run/lock", "/home/node"],
+    // TOSE mounts a 1 GiB /tmp per sidecar and evicts the Pod past it; TMPDIR points elsewhere, this backs it up.
+    pathCapsMb: [{ path: "/tmp", maxMb: 768 }],
+    // The /proc sweep kills every other process of this uid it can see, so it runs only when the image's
+    // entrypoint says the runner owns its PID namespace with tini as pid 1 (never on a developer's machine).
+    sweepProcesses: process.platform === "linux" && process.argv.includes("--sweep") && process.pid !== 1,
     // A session's processes or files that cleanup could not remove must not reach the next session: exit, so
     // the container restarts and the kernel kills everything left in its PID namespace.
     onFatal: () => process.exit(1),
