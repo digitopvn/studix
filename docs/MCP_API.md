@@ -627,11 +627,18 @@ The client AI can author the video itself instead of delegating to a job
 ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)). A composition is a file tree in
 object storage; Studix checks only the outputs a run asks it to check.
 
-| Tool                       | Does                                                                                                                                                            |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `studix_composition_write` | Omit `compositionId` to create one. `files: [{path, text} or {path, base64, contentType?}]` (8 MB each, 50 per call), `delete: [paths]`. Returns the file list. |
-| `studix_composition_run`   | Async job `composition.run`: `command` runs under `sh` in the composition root inside the skill sandbox. Returns `{jobId}`; poll `studix_get_job`.              |
-| `studix_composition_read`  | Without `path`: the file list. With `path`: a signed URL, text inline, and png/jpeg/webp/gif up to 1.5 MB as an image block (frames, contact sheets).           |
+| Tool                               | Does                                                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `studix_composition_write`         | Omit `compositionId` to create one. `files: [{path, text} or {path, base64, contentType?}]` (8 MB each, 50 per call), `delete: [paths]`. Returns the file list. |
+| `studix_composition_run`           | Async job `composition.run`: `command` runs under `sh` in the composition root inside the skill sandbox. Returns `{jobId}`; poll `studix_get_job`.              |
+| `studix_composition_attach_render` | Register a rendered MP4 as a playable render of a project (see below).                                                                                          |
+| `studix_composition_read`          | Without `path`: the file list. With `path`: a signed URL, text inline, and png/jpeg/webp/gif up to 1.5 MB as an image block (frames, contact sheets).           |
+
+`studix_composition_attach_render` takes `{compositionId, path, projectId, preset?}`. It copies the MP4 under
+`renders/` and records it as the project's render with an asset (kind `render`) and version, so
+`studix_get_project` and the dashboard play it (the run job itself has no project, so `studix_get_job`
+does not show it). The project needs a current version, and repeating the call for the same file, preset
+and version returns the same render (`replayed: true`).
 
 The run sandbox has network, Node, Python, ffmpeg, Chromium, the HyperFrames and Remotion CLIs,
 `multix generate` with the workspace's media keys (images, TTS, BGM, SFX via ElevenLabs and others)

@@ -22,6 +22,7 @@ export const COMPOSITION_TOOL_NAMES = {
   write: "studix_composition_write",
   read: "studix_composition_read",
   run: "studix_composition_run",
+  attachRender: "studix_composition_attach_render",
 } as const;
 
 function service(ctx: ToolContext): CompositionService {
@@ -69,6 +70,13 @@ const RunInput = z.object({
     .string()
     .regex(/^[A-Za-z0-9._:-]{1,200}$/)
     .optional(),
+});
+
+const AttachInput = z.object({
+  compositionId: CompositionId,
+  path: CompositionPath.describe("The rendered MP4 in the composition, e.g. out/video.mp4"),
+  projectId: z.string().min(1).max(100).describe("The project that should show this render."),
+  preset: z.enum(["preview", "final"]).optional().describe("Default final."),
 });
 
 const summary = (manifest: { id: string; title?: string; files: { path: string; bytes: number }[] }) => ({
@@ -147,4 +155,33 @@ export const COMPOSITION_MCP_TOOLS = [
       };
     },
   } satisfies NativeTool<typeof RunInput>,
+  {
+    name: COMPOSITION_TOOL_NAMES.attachRender,
+    title: "Attach composition render to a project",
+    description:
+      "Register a rendered MP4 of a composition (after studix_composition_run) as a playable render of a project: it gets an asset, version and preview, so studix_get_project and the dashboard play it. Safe to repeat for the same file, preset and project version.",
+    input: AttachInput,
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      const { render, assetId, replayed } = await service(ctx).attachRender(ctx.tenant, input);
+      return {
+        data: {
+          renderId: render.id,
+          projectId: render.projectId,
+          ...(assetId ? { assetId } : {}),
+          ...(render.assetVersionId ? { assetVersionId: render.assetVersionId } : {}),
+          status: render.status,
+          replayed,
+        },
+        next: [
+          {
+            tool: STUDIX_TOOLS.getProject,
+            arguments: { projectId: render.projectId },
+            reason: "The render is listed with a signed playback URL.",
+          },
+        ],
+      };
+    },
+  } satisfies NativeTool<typeof AttachInput>,
 ] as const;
