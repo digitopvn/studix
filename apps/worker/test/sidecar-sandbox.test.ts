@@ -72,9 +72,17 @@ describe("sidecar allowlist of every workspace", () => {
     ).not.toThrow();
   });
 
+  it("reports hashes of a listed allowlist on /readyz, and none for *", async () => {
+    const { sidecarWorkspaceHashes, workspaceHash } = await import("../src/skill-sandbox.ts");
+    expect(sidecarWorkspaceHashes(loadSidecarSettings(base))).toEqual([workspaceHash("ws_trusted")]);
+    expect(
+      sidecarWorkspaceHashes(loadSidecarSettings({ ...base, STUDIX_SANDBOX_SIDECAR_WORKSPACES: "*" })),
+    ).toBeUndefined();
+  });
+
   it("refuses * mixed with workspace ids", () => {
     expect(() => loadSidecarSettings({ ...base, STUDIX_SANDBOX_SIDECAR_WORKSPACES: "*,ws_trusted" })).toThrow(
-      expect.objectContaining({ code: "VALIDATION", message: expect.stringContaining("mixes *") }),
+      expect.objectContaining({ code: "VALIDATION", message: expect.stringContaining("must be * alone") }),
     );
   });
 });

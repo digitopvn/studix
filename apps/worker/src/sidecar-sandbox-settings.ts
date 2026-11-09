@@ -94,7 +94,7 @@ export function loadSidecarSettings(env: NodeJS.ProcessEnv): SidecarSettings {
     if (workspaces.length > 1) {
       throw invalid(
         "STUDIX_SANDBOX_SIDECAR_WORKSPACES",
-        `mixes ${ALL_WORKSPACES} with workspace ids`,
+        `must be ${ALL_WORKSPACES} alone`,
         `Set it to ${ALL_WORKSPACES} alone to open the runners to every workspace, or list workspace ids only.`,
       );
     }
