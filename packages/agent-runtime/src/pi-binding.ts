@@ -1,5 +1,6 @@
 import {
   type ActorRef,
+  actingUserId,
   type BillingSource,
   connectionFunding,
   type FundingSource,
@@ -85,8 +86,8 @@ export interface ProviderBindingResolverOptions {
   credentials: PiCredentialSource;
   preferences: PiPreferenceSource;
   /**
-   * The person the job runs for, taken from the job record (never from a client). Personal connections
-   * and preferences resolve only for this user.
+   * Who the job runs for, taken from the job record (never from a client). Personal connections and
+   * preferences resolve only for the user it acts for (`actingUserId`).
    */
   requestedBy: ActorRef;
   /** This job's earlier resolution for the stage. A retry reuses it; it never re-resolves. */
@@ -121,7 +122,8 @@ export function noModelSelected(stage: string): StudixError {
  * and status for every connection, so a key enabled only for `claude` never reaches Pi.
  */
 export function createProviderBindingResolver(options: ProviderBindingResolverOptions): PiBindingResolver {
-  const userId = options.requestedBy.type === "user" ? options.requestedBy.id : undefined;
+  // A job an OAuth client created runs for that client's user, so the user's own defaults apply to it.
+  const userId = actingUserId(options.requestedBy);
 
   return {
     async resolve(ctx, request) {
