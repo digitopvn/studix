@@ -4,7 +4,7 @@
  * must stay under a root too, so a link a session planted cannot point a read or write elsewhere.
  */
 import { randomBytes } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { constants, createWriteStream } from "node:fs";
 import { mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, isAbsolute, join, normalize } from "node:path";
@@ -101,12 +101,17 @@ export async function getFile(
     throw error;
   }
   // Open before answering: an unreadable file (mode 000) must be an error status, never a 200 cut short.
+  // O_NONBLOCK: a FIFO swapped in after the resolve would otherwise block a libuv thread forever; it opens at
+  // once and is refused by the isFile check below. O_NOFOLLOW: a symlink swapped in after the resolve fails.
   let handle: Awaited<ReturnType<typeof open>>;
   try {
-    handle = await open(resolved, "r");
+    handle = await open(resolved, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
   } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
     if (isMissing(error)) throw new HttpError(404, "file not found");
-    throw new HttpError(403, "file is not readable");
+    if (code === "EACCES" || code === "EPERM") throw new HttpError(403, "file is not readable");
+    if (code === "ELOOP") throw new HttpError(400, "path is not a regular file");
+    throw error;
   }
   const info = await handle.stat().catch(async (error: unknown) => {
     await handle.close();

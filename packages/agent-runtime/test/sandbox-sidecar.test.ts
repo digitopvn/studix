@@ -362,6 +362,40 @@ describe("sidecar sandbox driver", () => {
 });
 
 describe("skill sync from a runner", () => {
+  it("keeps the host skills when the listing fails (an unreadable directory)", async () => {
+    const host = await mkdtemp(join(tmpdir(), "sidecar-sync-"));
+    await mkdir(join(host, "demo"), { recursive: true });
+    await writeFile(join(host, "demo", "SKILL.md"), "old");
+    const session = {
+      async run() {
+        throw new Error("find: '/skills/demo/locked': Permission denied");
+      },
+      async copyOut() {},
+    } as unknown as SandboxSession;
+    expect(await syncSkillsFromRunner(session, host)).toMatchObject({ synced: false });
+    expect(await readFile(join(host, "demo", "SKILL.md"), "utf8")).toBe("old");
+  });
+
+  it("replaces a directory the task turned into a file", async () => {
+    const host = await mkdtemp(join(tmpdir(), "sidecar-sync-"));
+    await mkdir(join(host, "demo", "x"), { recursive: true });
+    await writeFile(join(host, "demo", "x", "inner.txt"), "old");
+    const session = {
+      async run(argv: readonly string[]) {
+        if (argv.includes("-newer")) return Buffer.from("demo/x\0");
+        return Buffer.from("3 644 demo/x\0");
+      },
+      async copyOut(_path: string, hostPath: string) {
+        await writeFile(hostPath, "new");
+      },
+    } as unknown as SandboxSession;
+    expect(await syncSkillsFromRunner(session, host)).toEqual({ synced: true });
+    expect(await readFile(join(host, "demo", "x"), "utf8")).toBe("new");
+    expect((await readdir(tmpdir())).filter((n) => n.startsWith(`${host.split("/").pop()}.sync-`))).toEqual(
+      [],
+    );
+  });
+
   it("downloads changed and new files, deletes removed ones, and keeps modes", async () => {
     const host = await mkdtemp(join(tmpdir(), "sidecar-sync-"));
     await mkdir(join(host, "demo"), { recursive: true });

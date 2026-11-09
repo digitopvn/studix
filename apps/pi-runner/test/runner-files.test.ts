@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmod } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestRunner } from "./runner-test-client.ts";
@@ -37,6 +38,14 @@ describe("pi-runner file routes", () => {
       await chmod(path, 0o600);
     },
   );
+
+  it("refuses a FIFO at once instead of blocking on it", async () => {
+    const path = `${client.work}/pipe`;
+    execFileSync("mkfifo", [path]);
+    const started = Date.now();
+    expect((await client.getFile(id, path)).status).toBe(400);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
 
   it("refuses paths outside the roots, unnormalized paths and symlink escapes", async () => {
     expect((await client.getFile(id, "/etc/hosts")).status).toBe(403);

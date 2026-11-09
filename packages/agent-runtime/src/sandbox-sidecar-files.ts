@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from "node:fs";
-import { chmod, lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -167,15 +167,27 @@ function parseListing(text: string): RemoteFile[] {
  * changed. Returns a reason instead when the tree is past SKILL_SYNC_LIMITS; the host directory is then left
  * as it was opened, so no edit is stored.
  */
+/** A stopped or cancelled session is the task's failure, never just "skill edits not kept". */
+function isTaskFailure(error: unknown): boolean {
+  return (
+    error instanceof SessionGoneError ||
+    (error instanceof StudixError && (error.code === "TIMEOUT" || error.code === "CANCELLED"))
+  );
+}
+
 export async function syncSkillsFromRunner(
   session: Pick<SandboxSession, "copyOut" | "run">,
   hostDir: string,
 ): Promise<{ synced: true } | { synced: false; reason: string }> {
-  const remote = parseListing(
-    (await session.run(["find", SANDBOX_SKILLS_DIR, "-type", "f", "-printf", "%s %m %P\\0"])).toString(
-      "utf8",
-    ),
-  ).filter((f) => isSafeSkillPath(f.path));
+  let listing: Buffer;
+  try {
+    listing = await session.run(["find", SANDBOX_SKILLS_DIR, "-type", "f", "-printf", "%s %m %P\\0"]);
+  } catch (error) {
+    // find exits non-zero on an unreadable directory; its partial listing would delete the host files under it.
+    if (isTaskFailure(error)) throw error;
+    return { synced: false, reason: `the skills could not be listed: ${String(error).slice(0, 200)}` };
+  }
+  const remote = parseListing(listing.toString("utf8")).filter((f) => isSafeSkillPath(f.path));
   const newer = new Set(
     (
       await session
@@ -198,38 +210,37 @@ export async function syncSkillsFromRunner(
   // Download into a staging dir first: one unreadable file must leave hostDir exactly as it was opened, never
   // half synced (the caller stores whatever differs from the opened skills).
   const local = await hostFiles(hostDir);
-  const staging = `${hostDir}.sync-${process.pid}-${Date.now()}`;
-  const fetched: RemoteFile[] = [];
+  const staging = await mkdtemp(`${hostDir}.sync-`);
   try {
-    for (const file of remote) {
-      if (local.has(file.path) && !newer.has(file.path)) continue;
-      const staged = join(staging, ...file.path.split("/"));
-      await mkdir(dirname(staged), { recursive: true });
-      await session.copyOut(`${SANDBOX_SKILLS_DIR}/${file.path}`, staged);
-      fetched.push(file);
+    const fetched: RemoteFile[] = [];
+    try {
+      for (const file of remote) {
+        if (local.has(file.path) && !newer.has(file.path)) continue;
+        const staged = join(staging, ...file.path.split("/"));
+        await mkdir(dirname(staged), { recursive: true });
+        await session.copyOut(`${SANDBOX_SKILLS_DIR}/${file.path}`, staged);
+        fetched.push(file);
+      }
+    } catch (error) {
+      if (isTaskFailure(error)) throw error;
+      return { synced: false, reason: `a file could not be read: ${String(error).slice(0, 200)}` };
     }
-  } catch (error) {
+    const wanted = new Set(remote.map((f) => f.path));
+    for (const rel of local.keys()) {
+      if (!wanted.has(rel)) await rm(join(hostDir, ...rel.split("/")), { force: true });
+    }
+    for (const file of fetched) {
+      const target = join(hostDir, ...file.path.split("/"));
+      await mkdir(dirname(target), { recursive: true });
+      // A directory the task replaced with a file is left empty by the deletes above; clear it for the rename.
+      await rm(target, { recursive: true, force: true });
+      await rename(join(staging, ...file.path.split("/")), target);
+    }
+    for (const file of remote) {
+      await chmod(join(hostDir, ...file.path.split("/")), file.mode & 0o111 ? 0o755 : 0o644);
+    }
+  } finally {
     await rm(staging, { recursive: true, force: true });
-    // A stopped or cancelled session is the task's failure, not one bad file.
-    if (
-      error instanceof SessionGoneError ||
-      (error instanceof StudixError && (error.code === "TIMEOUT" || error.code === "CANCELLED"))
-    )
-      throw error;
-    return { synced: false, reason: `a file could not be read: ${String(error).slice(0, 200)}` };
-  }
-  const wanted = new Set(remote.map((f) => f.path));
-  for (const rel of local.keys()) {
-    if (!wanted.has(rel)) await rm(join(hostDir, ...rel.split("/")), { force: true });
-  }
-  for (const file of fetched) {
-    const target = join(hostDir, ...file.path.split("/"));
-    await mkdir(dirname(target), { recursive: true });
-    await rename(join(staging, ...file.path.split("/")), target);
-  }
-  await rm(staging, { recursive: true, force: true });
-  for (const file of remote) {
-    await chmod(join(hostDir, ...file.path.split("/")), file.mode & 0o111 ? 0o755 : 0o644);
   }
   return { synced: true };
 }
