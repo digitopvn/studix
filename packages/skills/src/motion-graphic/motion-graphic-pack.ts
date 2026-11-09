@@ -206,20 +206,16 @@ const AccentOutput = IrOutput.extend({ warning: z.string().max(500).optional() }
 /**
  * One SFX accent where the CTA card lands, for a graphic with a voice-over. No music: the voice carries the
  * graphic. A provider with no sound-effect model, or a call that cannot be made (UNAVAILABLE: no key, no
- * price), skips the accent with a warning instead of failing the job. The cache key is the one this stage
- * had when it also voiced the graphic (such a cached output still holds that older voice-over, which the
- * voice stage replaces); a provider that lists no SFX model keys apart, so a skip is not reused once it does.
+ * price), skips the accent with a warning instead of failing the job; the runner never caches a warned
+ * output, so a skipped accent is retried next run. The cache key is the one this stage had when it also
+ * voiced the graphic (such a cached output still holds that older voice-over, which the voice stage
+ * replaces), so a paid accent is reused.
  */
 export const motionGraphicAccentStage: StageDefinition = {
   name: MG_STAGES.accent,
   knowledge: ["sound"],
   outputSchema: AccentOutput,
-  cacheKey: async (s) =>
-    stageCacheKey(MG_STAGES.accent, 2, {
-      ir: irOf(s),
-      media: s.services.media?.id ?? null,
-      ...((await sfxListed(s)) ? {} : { sfx: "unlisted" }),
-    }),
+  cacheKey: (s) => stageCacheKey(MG_STAGES.accent, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) => {
     try {
       return await estimateMediaCents(s, await accentRequests(s));
