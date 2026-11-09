@@ -28,7 +28,8 @@ pod (saasvn/tose-app#533, [project-sidecars](https://github.com/saasvn/tose-app/
   no privilege escalation and no service account token. The sandbox's PID and wall-time caps still come from
   `STUDIX_SANDBOX_PIDS` and `STUDIX_SANDBOX_WALL_SECONDS`.
 - The backend is allowed only for workspaces listed in `STUDIX_SANDBOX_SIDECAR_WORKSPACES`; any other workspace
-  gets `FORBIDDEN`.
+  gets `FORBIDDEN`. The value `*` alone opens it to every workspace of the server. That is an operator's explicit
+  choice to accept the risks below for all tenants, and the worker logs a warning at startup when it is set.
 - The runner API listens on loopback only; the kubelet's probe gets `GET /healthz` alone on a second listener at
   the API port + 100, since probes call the Pod IP. A worker resets each runner on first use, closing a session a
   previous worker process left, and asks a runner to drop the session of an open it gave up on.
@@ -69,7 +70,7 @@ everything a process in the runner can reach.
   Each runner holds only its own token.
 - Egress is open: skill code can reach the internet and cluster-internal addresses.
 - Non-goal: a same-Pod sidecar is not strong isolation between hostile tenants. The backend is gated to
-  allowlisted, trusted workspaces for that reason.
+  allowlisted, trusted workspaces for that reason, unless the operator sets the allowlist to `*`.
 - Residual risks: the kernel is shared with the worker, egress is open, and processes inside one runner share a
   uid, so processes of one session can touch that session's files and each other.
 

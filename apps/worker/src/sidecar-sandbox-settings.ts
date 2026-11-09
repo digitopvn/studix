@@ -10,8 +10,11 @@ import { StudixError } from "@studix/shared";
 
 export interface SidecarSettings {
   runners: SidecarRunnerConfig[];
-  /** Workspace ids allowed to run tasks on the runners; the runners cannot cut egress, so access is opt-in. */
-  workspaces: ReadonlySet<string>;
+  /**
+   * Workspace ids allowed to run tasks on the runners; the runners cannot cut egress, so access is opt-in.
+   * "all" when the operator set `*`: every workspace of this server may use them.
+   */
+  workspaces: ReadonlySet<string> | "all";
 }
 
 /** TOSE allows three sidecars; a few more leave room for other hosts without inviting misconfiguration. */
@@ -19,6 +22,8 @@ const MAX_RUNNERS = 8;
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const MIN_TOKEN_CHARS = 32;
 const WORKSPACE_ID = /^[\w-]{1,100}$/;
+/** The allowlist value that opens the runners to every workspace. Only valid alone. */
+export const ALL_WORKSPACES = "*";
 
 function invalid(variable: string, message: string, suggestedAction: string): StudixError {
   return new StudixError("VALIDATION", `Invalid sandbox configuration: ${variable} ${message}`, {
@@ -85,12 +90,22 @@ export function loadSidecarSettings(env: NodeJS.ProcessEnv): SidecarSettings {
     throw invalid("STUDIX_SANDBOX_RUNNERS", "lists a runner twice", "List each runner address once.");
   }
   const workspaces = list(env.STUDIX_SANDBOX_SIDECAR_WORKSPACES);
+  if (workspaces.includes(ALL_WORKSPACES)) {
+    if (workspaces.length > 1) {
+      throw invalid(
+        "STUDIX_SANDBOX_SIDECAR_WORKSPACES",
+        `must be ${ALL_WORKSPACES} alone`,
+        `Set it to ${ALL_WORKSPACES} alone to open the runners to every workspace, or list workspace ids only.`,
+      );
+    }
+    return { runners, workspaces: "all" };
+  }
   const bad = workspaces.findIndex((w) => !WORKSPACE_ID.test(w));
   if (workspaces.length === 0 || bad >= 0) {
     throw invalid(
       "STUDIX_SANDBOX_SIDECAR_WORKSPACES",
-      workspaces.length === 0 ? "is required" : `entry ${bad + 1} is not a workspace id (no wildcards)`,
-      "List the ids of the trusted workspaces that may run skill tasks on the sidecar runners.",
+      workspaces.length === 0 ? "is required" : `entry ${bad + 1} is not a workspace id`,
+      `List the ids of the trusted workspaces that may run skill tasks on the sidecar runners, or ${ALL_WORKSPACES} for all.`,
     );
   }
   return { runners, workspaces: new Set(workspaces) };
@@ -98,7 +113,7 @@ export function loadSidecarSettings(env: NodeJS.ProcessEnv): SidecarSettings {
 
 /** The sidecar runners keep open egress, so only allowlisted workspaces may open one. No other backend is tried. */
 export function assertSidecarWorkspace(settings: SidecarSettings, ctx: TenantContext): void {
-  if (settings.workspaces.has(ctx.workspaceId)) return;
+  if (settings.workspaces === "all" || settings.workspaces.has(ctx.workspaceId)) return;
   throw new StudixError("FORBIDDEN", "The skill runner is limited to trusted workspaces on this server", {
     retryable: false,
     suggestedAction:

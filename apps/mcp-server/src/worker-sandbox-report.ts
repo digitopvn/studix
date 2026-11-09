@@ -21,7 +21,10 @@ export interface WorkerSandboxSnapshot {
   backend: "docker" | "sidecar";
   runners?: number;
   ready: number;
-  /** sha256 hex prefixes of the allowlisted workspace ids (apps/worker/src/skill-sandbox.ts workspaceHash). */
+  /**
+   * sha256 hex prefixes of the allowlisted workspace ids (apps/worker/src/skill-sandbox.ts workspaceHash).
+   * Absent when the worker's allowlist is `*`, so every workspace is allowed.
+   */
   workspaceHashes?: string[];
 }
 

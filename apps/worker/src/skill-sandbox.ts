@@ -143,6 +143,14 @@ export function workspaceHash(workspaceId: string): string {
   return createHash("sha256").update(workspaceId, "utf8").digest("hex").slice(0, 16);
 }
 
+/**
+ * The allowlist as `/readyz` reports it: hashes of the listed workspace ids, or undefined when the allowlist is
+ * `*`, which the app's sandbox report reads as "every workspace".
+ */
+export function sidecarWorkspaceHashes(sidecar: Pick<SidecarSettings, "workspaces">): string[] | undefined {
+  return sidecar.workspaces === "all" ? undefined : [...sidecar.workspaces].map(workspaceHash);
+}
+
 /** The sidecar driver with its runner monitor; no docker sweep runs in this mode. */
 function sidecarDriver(sidecar: SidecarSettings, logger: Logger) {
   const monitor = startSidecarRunnerMonitor(sidecar, logger);
@@ -150,13 +158,23 @@ function sidecarDriver(sidecar: SidecarSettings, logger: Logger) {
     runners: sidecar.runners,
     logger: logger.child({ component: "skill-runner" }),
   });
+  const allowlist = sidecar.workspaces;
   logger.info("skill sandbox ready", {
     backend: "sidecar",
     runners: sidecar.runners.length,
-    workspaces: sidecar.workspaces.size,
+    workspaces: allowlist === "all" ? "all" : allowlist.size,
   });
-  const workspaceHashes = [...sidecar.workspaces].map(workspaceHash);
-  return { driver, status: () => ({ ...monitor.status(), workspaceHashes }) };
+  if (allowlist === "all") {
+    logger.warn("skill runners open to every workspace", {
+      reason:
+        "STUDIX_SANDBOX_SIDECAR_WORKSPACES is *; runner egress is open, so any tenant's skill code can reach the network",
+    });
+  }
+  const workspaceHashes = sidecarWorkspaceHashes(sidecar);
+  return {
+    driver,
+    status: () => ({ ...monitor.status(), ...(workspaceHashes ? { workspaceHashes } : {}) }),
+  };
 }
 
 export async function createSkillSandbox(options: {
