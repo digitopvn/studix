@@ -22,6 +22,7 @@ import {
   type AgentRuntime,
   type AgentRuntimeName,
   type AgentTask,
+  actingUserId,
   connectionFunding,
   FUNDING_SOURCES,
   type FundingSource,
@@ -161,9 +162,9 @@ function codexOff(stage: string): StudixError {
 /**
  * Runs harness-mode agent stages inside the worker, on the job's own provider connection (ADR 0016). The
  * runtime is chosen per job and stage: a job that selected the Claude planner runs its agent stages on that
- * Anthropic connection; otherwise the stage's pinned snapshot, otherwise the most specific model preference
- * of either runtime (Pi on a tie). Nothing is chosen means the stage fails UNAVAILABLE; no operator key is
- * ever substituted. The bounded runtimes enforce the stage caps (ADR 0015). Every run is recorded as a
+ * Anthropic connection; otherwise the stage's pinned snapshot; a job that selected Pi runs on Pi; otherwise
+ * the most specific model preference of either runtime (Pi on a tie). Nothing is chosen means the stage
+ * fails UNAVAILABLE; no operator key is ever substituted. The bounded runtimes enforce the stage caps (ADR 0015). Every run is recorded as a
  * provider execution, and its id rides on the result (or on the error's spend) so the stage bills the
  * run's real tokens and cost against it.
  */
@@ -250,8 +251,14 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     if (pinnedClaude) {
       return { runtime: "claude", connectionId: pinnedClaude.connectionId, model: pinnedClaude.modelId };
     }
+    // A job that asked for Pi runs on Pi: on its own model when it named one (pinned as a job request, so a
+    // retry reuses it), else on the preferred Pi model. A Claude preference never takes such a job over.
+    if (agent.success ? agent.data.runtime === "pi" : jobModelRequest(job.payload, name).request?.choice) {
+      return resolvePi(stage, name);
+    }
 
-    const userId = job.createdBy.type === "user" ? job.createdBy.id : undefined;
+    // A job an OAuth client created runs for that client's user, so the user's own defaults apply.
+    const userId = actingUserId(job.createdBy);
     const preferences = await deps.preferences.list(ctx, userId ? { userId } : {});
     const query = { stage: name, ...(userId ? { userId } : {}) };
     const pi = resolveModelSelection(preferences, { ...query, runtime: "pi" });
