@@ -635,10 +635,34 @@ object storage; Studix checks only the outputs a run asks it to check.
 
 The run sandbox has network, Node, Python, ffmpeg, Chromium, the HyperFrames and Remotion CLIs,
 `multix generate` with the workspace's media keys (images, TTS, BGM, SFX via ElevenLabs and others)
-and the enabled skills under `/skills`. Every file the command adds or changes is stored back (1 GB
-each, 200 per run; `node_modules`, `.git` and caches stay behind). `timeoutSeconds` defaults to 900
+and the enabled skills under `/skills`. `timeoutSeconds` defaults to 900
 (max 3600); compute is billed per started minute against `budgetCents`. It needs `media:exec`
 (write needs `project:write`) and `STUDIX_SANDBOX=docker` on the worker.
+
+#### What persists between runs
+
+Every run is an ephemeral sandbox. Nothing survives it except the composition's stored files, so a
+second run sees exactly the file list `studix_composition_read` returns, never the first run's
+container, home directory, global installs or `node_modules`.
+
+- **Copied in:** every stored file, at the same relative path under the working directory
+  (the composition root).
+- **Stored back:** each file the command added or changed under the root, listed in the job result's
+  `changed[]` (`path`, `bytes`, `sha256`, `contentType`). A file the command only read is not stored again. Limits: 1 GB per file, 200 files per
+  run (the rest are reported in the log tail), 400 files per composition.
+- **Not stored:** anything under `node_modules`, `.git`, `.cache`, `.npm`, `__pycache__` or `.venv`;
+  paths outside the composition root (`~`, `/tmp`); and any path that is not a valid
+  composition path (no hidden `.` segments, only letters, digits and `_ . @ + -`, at most 240
+  characters, so a name with a space is skipped without an error).
+- **Deletes do not persist:** removing a file in a run leaves its stored copy, and it is back in the
+  next run. Delete stored files with `studix_composition_write` and `delete: [paths]`.
+- **Persist a generated project** by creating it inside the root, for example
+  `npx hyperframes init my-video` (the directory lands at `my-video/` and is stored back), or move it
+  there before the command ends. A project initialised in `~` or `/tmp` is gone when the run ends. Its
+  dependencies are not kept: run the install again at the start of the next command
+  (`cd my-video && npm ci && npx hyperframes render ...`).
+- **Limits on writes** through `studix_composition_write` are separate: 8 MB per file, 50 per call.
+  Larger media must be generated or downloaded inside a run.
 
 `check: {path, width?, height?, durationMs?, durationToleranceMs?, loudnessLufs?}` probes a file after
 an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the
