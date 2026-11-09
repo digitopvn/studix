@@ -3,11 +3,15 @@
  * skill sandbox's tools inside the worker's own pod (docs/DEPLOYMENT.md#skill-sandbox-worker, ADR-0025).
  * Pure and dependency-free so deploy.ts and its test can both import it.
  *
- * Contract with the runner (packages/agent-runtime/src/sandbox-runner-protocol.ts, RUNNER_ENV): the
- * container reads STUDIX_RUNNER_TOKEN and STUDIX_RUNNER_PORT. TOSE copies each from a key of the
- * project's own env, so the project needs STUDIX_RUNNER_<n>_TOKEN and STUDIX_RUNNER_<n>_PORT for every
- * runner (the worker reads the tokens too; the port key just mirrors the 7070+n listen port).
+ * Contract with the runner (packages/agent-runtime/src/sandbox-runner-protocol.ts): the container reads
+ * STUDIX_RUNNER_TOKEN, which TOSE copies from the project env key STUDIX_RUNNER_<n>_TOKEN (the worker reads
+ * the same key). The API port is fixed here as a container arg (`--port 7070+n`), so no env typo can make two
+ * runners collide; the kubelet probes GET /healthz on the API port + RUNNER_HEALTH_PORT_OFFSET, the one
+ * listener the runner opens on the Pod IP. The runner's disk and file caps default to fit TOSE's sidecar
+ * storage limits (2 GiB ephemeral, 1 GiB /tmp), so nothing else is passed.
  */
+
+import { RUNNER_HEALTH_PORT_OFFSET } from "../../packages/agent-runtime/src/sandbox-runner-protocol.ts";
 
 export const MAX_WORKER_RUNNERS = 3;
 const BASE_PORT = 7070;
@@ -34,6 +38,7 @@ export interface WorkerSidecar {
   port: number;
   health_path: string;
   run_as_user: number;
+  args: string[];
   env: { name: string; from_env: string }[];
 }
 
@@ -60,13 +65,11 @@ export function buildWorkerSidecars(options: WorkerSidecarOptions): WorkerSideca
       ...(registryCredentialId ? { registry_credential_id: registryCredentialId } : {}),
       cpu,
       ram,
-      port: runnerPort(n),
+      port: runnerPort(n) + RUNNER_HEALTH_PORT_OFFSET,
       health_path: "/healthz",
       run_as_user: 1000,
-      env: [
-        { name: "STUDIX_RUNNER_TOKEN", from_env: `STUDIX_RUNNER_${n}_TOKEN` },
-        { name: "STUDIX_RUNNER_PORT", from_env: `STUDIX_RUNNER_${n}_PORT` },
-      ],
+      args: ["--port", String(runnerPort(n))],
+      env: [{ name: "STUDIX_RUNNER_TOKEN", from_env: `STUDIX_RUNNER_${n}_TOKEN` }],
     };
   });
 }

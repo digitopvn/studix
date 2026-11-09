@@ -29,10 +29,13 @@ pod (saasvn/tose-app#533, [project-sidecars](https://github.com/saasvn/tose-app/
   `STUDIX_SANDBOX_PIDS` and `STUDIX_SANDBOX_WALL_SECONDS`.
 - The backend is allowed only for workspaces listed in `STUDIX_SANDBOX_SIDECAR_WORKSPACES`; any other workspace
   gets `FORBIDDEN`.
+- The runner API listens on loopback only; the kubelet's probe gets `GET /healthz` alone on a second listener at
+  the API port + 100, since probes call the Pod IP. A worker resets each runner on first use, closing a session a
+  previous worker process left, and asks a runner to drop the session of an open it gave up on.
 - `studix_media_exec` is unavailable on this backend because it needs an offline sandbox and sidecars have open
   egress. `studix_composition_run` works.
 - CI builds the runner image next to the app image and `deploy/tose/deploy.ts` saves the worker's `sidecars`
-  with its digest before deploying the worker ([DEPLOYMENT.md](../DEPLOYMENT.md#skill-sandbox-worker)). Production
+  with its digest before deploying any project ([DEPLOYMENT.md](../DEPLOYMENT.md#skill-sandbox-worker)). Production
   is unchanged until it opts in.
 
 ## Consequences
@@ -51,8 +54,11 @@ pod (saasvn/tose-app#533, [project-sidecars](https://github.com/saasvn/tose-app/
 Protected: the database URL, storage keys, secrets box and model keys held by the worker. Exposed to skill code:
 everything a process in the runner can reach.
 
-- The runner receives no database, model or storage secret and no Kubernetes token. It gets only the
-  task's media vendor keys, passed per session, and its own bearer token.
+- The runner receives no database or storage secret, no worker-held model key and no Kubernetes token. It gets
+  the task's media vendor keys, passed per session, and its own bearer token. Exception, the same as on Docker:
+  a task that runs the `codex` or `claude` CLI inside the sandbox has that task's own model credential written
+  under `/work` for the CLI to read (`codex-agent-runtime.ts`, `claude-code-sandbox-runtime.ts`); it is wiped
+  when the session closes. A Pi task's model key never leaves the worker.
 - Containers of one pod share a network namespace, so a process in a runner can reach the worker's loopback
   ports (`/healthz`, `/readyz`) and the other runners. The bearer token, not `127.0.0.1`, authorizes a runner call.
   Each runner holds only its own token.

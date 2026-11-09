@@ -339,34 +339,39 @@ Worker variables:
 | `STUDIX_RUNNER_1_TOKEN`, `STUDIX_RUNNER_2_TOKEN` | One bearer token per runner, at least 32 characters; the worker reads all of them              |
 | `STUDIX_SANDBOX_SIDECAR_WORKSPACES`              | Comma-separated workspace ids allowed to use the backend; any other workspace gets `FORBIDDEN` |
 
-Runner environment, set by TOSE from the project's env (`env: [{name, from_env}]`):
+Runner `n` listens for the worker on `127.0.0.1:<7070 + n>` (container args `--port 7070+n`, set by CI) and
+answers the kubelet's probe, `GET /healthz` only, on `0.0.0.0:<7170 + n>`, the sidecar's declared `port`. Its
+environment, set by TOSE from the project's env (`env: [{name, from_env}]`):
 
-| Variable                    | Source key in the project env | Meaning                             |
-| --------------------------- | ----------------------------- | ----------------------------------- |
-| `STUDIX_RUNNER_TOKEN`       | `STUDIX_RUNNER_<n>_TOKEN`     | Bearer token of this runner only    |
-| `STUDIX_RUNNER_PORT`        | `STUDIX_RUNNER_<n>_PORT`      | Loopback listen port, `7070 + n`    |
-| `STUDIX_RUNNER_MAX_DISK_MB` | not set by CI                 | Disk cap of a session, default 8192 |
-| `STUDIX_RUNNER_MAX_FILE_MB` | not set by CI                 | Cap of one transferred file         |
+| Variable                    | Source key in the project env | Meaning                                                  |
+| --------------------------- | ----------------------------- | -------------------------------------------------------- |
+| `STUDIX_RUNNER_TOKEN`       | `STUDIX_RUNNER_<n>_TOKEN`     | Bearer token of this runner only                         |
+| `STUDIX_RUNNER_MAX_DISK_MB` | not set by CI                 | Disk cap of a session, default 1536 (below TOSE's 2 GiB) |
+| `STUDIX_RUNNER_MAX_FILE_MB` | not set by CI                 | Cap of one transferred file, default 1024                |
+
+TOSE gives each sidecar a 1 GiB `/tmp` and a 2 GiB ephemeral-storage limit; the kubelet evicts the whole pod,
+worker included, past it. The defaults keep a session under that. A runner that cannot kill or wipe what a
+session left exits, so its container restarts clean.
 
 One-time setup of the worker project (dev: `studix-worker`), with `tose env push` as in
 [TOSE environments](#tose-environments): `STUDIX_SANDBOX=sidecar`, `STUDIX_SANDBOX_RUNNERS`,
-`STUDIX_SANDBOX_SIDECAR_WORKSPACES`, and for each runner `n` the keys `STUDIX_RUNNER_<n>_TOKEN` (a fresh random
-value of at least 32 characters) and `STUDIX_RUNNER_<n>_PORT` (`7070 + n`). TOSE refuses a sidecar whose
+`STUDIX_SANDBOX_SIDECAR_WORKSPACES`, and for each runner `n` the key `STUDIX_RUNNER_<n>_TOKEN` (a fresh random
+value of at least 32 characters). TOSE refuses a sidecar whose
 `from_env` key is missing from the project env. The workspace must also be allowed to use sidecars on the TOSE
 side (`PROJECT_SIDECARS_WORKSPACES`).
 
 After that CI manages the sidecars. With `STUDIX_DEPLOY_IMAGE=1` and the environment variable
 `TOSE_WORKER_RUNNERS` set (see [CI deploy](#ci-deploy)), the `image` job also builds and pushes the runner image
 and `deploy/tose/deploy.ts` saves the worker's `sidecars` (`pi-runner-1` to `pi-runner-n`, digest-pinned, with the
-registry credential, `/healthz` probes, uid 1000) through `PUT /projects/<worker>` just before the worker deploys.
+registry credential, `/healthz` probes, uid 1000) through `PUT /projects/<worker>` before any project deploys.
 The runner image is a separate GHCR package: give the registry credential's token `read:packages` on it. Sidecars
 need image mode; with `TOSE_WORKER_RUNNERS` set in branch mode the script fails before deploying anything. When
 `TOSE_WORKER_RUNNERS` is unset the script never sends `sidecars`, so a project keeps whatever it has (production
 today: none).
 
 Verify after a deploy: the worker pod lists every container as ready in the TOSE status; the logs of a runner are
-`GET .../logs?container=pi-runner-1`; and from the worker container `curl -s http://127.0.0.1:7071/healthz`
-answers `{"ok":true}`. Then run a `skill-agent` job from an allowlisted workspace.
+`GET .../logs?container=pi-runner-1`; and the worker logs `skill runners checked` with every runner ready. On its
+first task each runner is reset, closing any session a previous worker process left. Then run a `skill-agent` job from an allowlisted workspace.
 
 Rollback: unset `TOSE_WORKER_RUNNERS`, set `STUDIX_SANDBOX=off` and redeploy the worker. Unsetting alone does not
 remove the sidecars, because an omitted `sidecars` keeps them; remove them with `PUT /projects/<worker>` and

@@ -400,9 +400,10 @@ or a path guard as a security boundary:
   it. Without `STUDIX_SANDBOX=docker` such a stage fails `VALIDATION`
   ([ADR-0018](decisions/0018-skill-sandbox.md)).
 - On TOSE (`STUDIX_SANDBOX=sidecar`, [ADR-0025](decisions/0025-sidecar-skill-runner.md)) the same tools run in
-  a `pi-runner` sidecar of the worker's pod instead. The runner holds no database, model or storage secret and no
-  Kubernetes token, only the task's media vendor keys passed per session and its own bearer token (32 characters
-  or more, one per runner). Containers of a pod share a network namespace, so skill code in a session can reach
+  a `pi-runner` sidecar of the worker's pod instead. The runner holds no database or storage secret, no
+  worker-held model key and no Kubernetes token, only the task's media vendor keys passed per session and its own
+  bearer token (32 characters or more, one per runner). As on Docker, a task that runs the `codex` or `claude` CLI
+  in the sandbox has its own model credential written under `/work` for that CLI, wiped when the session closes. Containers of a pod share a network namespace, so skill code in a session can reach
   the internet and the worker's loopback ports; the token, not `127.0.0.1`, is the authorization for a runner.
   This is not strong isolation between hostile tenants, so the backend is gated to workspaces listed in
   `STUDIX_SANDBOX_SIDECAR_WORKSPACES` (any other workspace gets `FORBIDDEN`) and is meant for trusted or

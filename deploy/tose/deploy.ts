@@ -127,7 +127,6 @@ async function setRunnerSidecars(project: string): Promise<void> {
 
 async function deploy(project: string): Promise<void> {
   const started = Date.now();
-  if (runnerCount !== undefined && project === workerProject) await setRunnerSidecars(project);
   // Not retried: a POST that timed out may still have started a deploy, and a retry would start a second one.
   let deployment = unwrapDeployment(
     image
@@ -185,6 +184,10 @@ if (runnerCount !== undefined) {
     cpu: process.env.TOSE_RUNNER_CPU || "1.5",
     ram: process.env.TOSE_RUNNER_RAM || "3",
   });
+}
+if (runnerCount !== undefined) {
+  // Before any rollout: a refused sidecar setting must stop the run before the app is already live.
+  await setRunnerSidecars(workerProject as string);
 }
 if (image) {
   // The image is exactly the pushed commit and rolls out in a minute or two, so keep the safe order:

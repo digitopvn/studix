@@ -5,10 +5,15 @@ const image = `ghcr.io/digitopvn/studix-pi-runner@sha256:${"a".repeat(64)}`;
 const base = { count: 2, image, registryCredentialId: "cred-1", cpu: "1.5", ram: "3" };
 
 describe("buildWorkerSidecars", () => {
-  it("builds one named, port-distinct runner per count with its own token and port keys", () => {
+  it("builds one named, port-distinct runner per count with its own token key", () => {
     const sidecars = buildWorkerSidecars(base);
     expect(sidecars.map((s) => s.name)).toEqual(["pi-runner-1", "pi-runner-2"]);
-    expect(sidecars.map((s) => s.port)).toEqual([7071, 7072]);
+    // The declared port is the probe listener (API port + 100); the API port is fixed by the args.
+    expect(sidecars.map((s) => s.port)).toEqual([7171, 7172]);
+    expect(sidecars.map((s) => s.args)).toEqual([
+      ["--port", "7071"],
+      ["--port", "7072"],
+    ]);
     expect(sidecars[1]).toMatchObject({
       image,
       registry_credential_id: "cred-1",
@@ -16,10 +21,7 @@ describe("buildWorkerSidecars", () => {
       ram: "3",
       health_path: "/healthz",
       run_as_user: 1000,
-      env: [
-        { name: "STUDIX_RUNNER_TOKEN", from_env: "STUDIX_RUNNER_2_TOKEN" },
-        { name: "STUDIX_RUNNER_PORT", from_env: "STUDIX_RUNNER_2_PORT" },
-      ],
+      env: [{ name: "STUDIX_RUNNER_TOKEN", from_env: "STUDIX_RUNNER_2_TOKEN" }],
     });
     expect(runnerPort(1)).toBe(7071);
   });
