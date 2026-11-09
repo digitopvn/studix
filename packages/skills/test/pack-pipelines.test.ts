@@ -858,6 +858,20 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(h.generate.mock.calls.map(([, r]) => r.kind)).not.toContain("music");
   });
 
+  it("skips the music bed with a warning when the media provider cannot make one", async () => {
+    const h = harness({ agent: mockAgent({ storyboard }).runtime, unavailableKinds: ["music"] });
+    const { job, outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.audio?.map((t) => t.kind)).not.toContain("music");
+    const stages = await h.jobs.listStages(ctx, job.id);
+    const music = stages.find((st) => st.name === MG_STAGES.music);
+    expect(music?.output?.warning).toMatch(/Music bed skipped: .*ELEVENLABS_API_KEY/);
+  });
+
   it("falls back to the template, billed, when the agent's voice-over overruns the length", async () => {
     const long = "một hai ba bốn năm sáu bảy tám chín mười ".repeat(4).trim();
     const beats = storyboard.beats.map((b) => ({ ...b, voiceover: long }));
