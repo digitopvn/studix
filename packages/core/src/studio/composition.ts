@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
 import { newId, StudixError } from "@studix/shared";
+import { RenderPreset, resolveRenderSpec } from "@studix/video-ir";
 import { z } from "zod";
-import { JOB_KINDS } from "../entities/job.ts";
+import { JOB_KINDS, type Render } from "../entities/job.ts";
 import type { JobQueue } from "../ports/job-queue.ts";
 import type { StorageAdapter } from "../ports/storage-adapter.ts";
+import type { AssetRepository } from "../repositories/asset-repository.ts";
 import type { AuditRepository } from "../repositories/governance-repositories.ts";
+import type { RenderRepository } from "../repositories/job-repository.ts";
+import type { ProjectRepository } from "../repositories/project-repository.ts";
 import { actorRef, assertPermission, type TenantContext } from "../tenant.ts";
 import { toJobView } from "./job-view.ts";
 
@@ -204,9 +208,24 @@ export async function saveCompositionManifest(
   await storage.put(ctx, compositionManifestKey(manifest.id), body, { contentType: "application/json" });
 }
 
+/** Registers a rendered MP4 of a composition as a playable render of a project. */
+export const CompositionAttachRequest = z
+  .object({
+    compositionId: CompositionId,
+    path: CompositionPath.describe("The rendered MP4 in the composition, e.g. out/video.mp4"),
+    projectId: z.string().min(1).max(100),
+    preset: RenderPreset.default("final"),
+  })
+  .strict();
+export type CompositionAttachRequest = z.input<typeof CompositionAttachRequest>;
+
 export interface CompositionServiceDeps {
   storage: Pick<StorageAdapter, "get" | "head" | "put" | "delete" | "signedUrl">;
   queue: JobQueue;
+  /** Needed by `attachRender` only. */
+  projects?: Pick<ProjectRepository, "get">;
+  renders?: Pick<RenderRepository, "get" | "create">;
+  assets?: Pick<AssetRepository, "create" | "addVersion" | "getVersion">;
   audit: Pick<AuditRepository, "append">;
   defaults: { jobBudgetCents: number };
 }
@@ -286,6 +305,99 @@ export function createCompositionService(deps: CompositionServiceDeps) {
           : { file, url, image: { mimeType: file.contentType, data: buf.toString("base64") } };
       }
       return { file, url };
+    },
+
+    /**
+     * Copies a rendered MP4 of the composition under `renders/` and records it as the project's render, with
+     * an asset and version, so the project, its jobs and the dashboard play it. Idempotent for the same file.
+     */
+    async attachRender(
+      ctx: TenantContext,
+      input: CompositionAttachRequest,
+    ): Promise<{ render: Render; assetId?: string; replayed: boolean }> {
+      assertPermission(ctx, "project:write");
+      const { projects, renders, assets } = deps;
+      if (!projects || !renders || !assets) {
+        throw new StudixError("UNAVAILABLE", "Attaching renders is not configured on this server", {
+          retryable: false,
+        });
+      }
+      const request = CompositionAttachRequest.parse(input);
+      const project = await projects.get(ctx, request.projectId);
+      if (!project) throw new StudixError("NOT_FOUND", `project ${request.projectId} not found`);
+      if (!project.currentVersionId) {
+        throw new StudixError("CONFLICT", "The project has no version to attach a render to", {
+          retryable: false,
+          suggestedAction: "Create the project with a spec (studix_create_video) or wait for planning.",
+        });
+      }
+      const manifest = await loadCompositionManifest(storage, ctx, request.compositionId);
+      const file = manifest.files.find((f) => f.path === request.path);
+      if (!file) {
+        throw new StudixError("NOT_FOUND", `${request.path} is not in composition ${manifest.id}`, {
+          retryable: false,
+          details: { files: manifest.files.slice(0, 50).map((f) => f.path) },
+        });
+      }
+      if (file.contentType !== "video/mp4") {
+        throw new StudixError("VALIDATION", `${file.path} is ${file.contentType}, not an MP4 video`, {
+          retryable: false,
+          suggestedAction: "Attach the rendered .mp4 (for example out/video.mp4).",
+        });
+      }
+      const renderId = `rnd_${createHash("sha256")
+        .update([project.id, manifest.id, file.path, file.sha256].join("\n"))
+        .digest("hex")
+        .slice(0, 26)}`;
+      const existing = await renders.get(ctx, renderId);
+      if (existing) {
+        const version = existing.assetVersionId
+          ? await assets.getVersion(ctx, existing.assetVersionId)
+          : undefined;
+        return { render: existing, ...(version ? { assetId: version.assetId } : {}), replayed: true };
+      }
+      const source = await storage.get(ctx, compositionFileKey(manifest.id, file.path));
+      const storageKey = `renders/${renderId}/${request.preset}.mp4`;
+      const stored = await storage.put(ctx, storageKey, source.body, {
+        contentType: "video/mp4",
+        sha256: file.sha256,
+      });
+      const createdBy = actorRef(ctx.actor);
+      const name = file.path.split("/").pop() ?? "video.mp4";
+      const asset = await assets.create(ctx, {
+        projectId: project.id,
+        kind: "render",
+        name,
+        createdBy,
+      });
+      const version = await assets.addVersion(ctx, {
+        assetId: asset.id,
+        storageKey,
+        sha256: stored.sha256,
+        mime: "video/mp4",
+        bytes: stored.bytes,
+        provenance: { source: "rendered", provider: "composition", createdAt: new Date().toISOString() },
+        createdBy,
+      });
+      const render = await renders.create(ctx, {
+        id: renderId,
+        projectId: project.id,
+        versionId: project.currentVersionId,
+        preset: request.preset,
+        spec: resolveRenderSpec(request.preset),
+        status: "succeeded",
+        assetVersionId: version.id,
+        storageKey,
+        completedAt: new Date(),
+      });
+      await deps.audit.append(ctx, {
+        actor: createdBy,
+        action: "composition.render_attached",
+        subjectType: "render",
+        subjectId: render.id,
+        data: { compositionId: manifest.id, path: file.path, projectId: project.id, bytes: stored.bytes },
+      });
+      return { render, assetId: asset.id, replayed: false };
     },
 
     /** Queues one command in the skill sandbox over the composition's files. */
