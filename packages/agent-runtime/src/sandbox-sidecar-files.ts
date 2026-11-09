@@ -162,11 +162,6 @@ function parseListing(text: string): RemoteFile[] {
   return files;
 }
 
-/**
- * Makes `hostDir` match the sandbox's /skills: deletes what the task removed, downloads what it added or
- * changed. Returns a reason instead when the tree is past SKILL_SYNC_LIMITS; the host directory is then left
- * as it was opened, so no edit is stored.
- */
 /** A stopped or cancelled session is the task's failure, never just "skill edits not kept". */
 function isTaskFailure(error: unknown): boolean {
   return (
@@ -175,6 +170,12 @@ function isTaskFailure(error: unknown): boolean {
   );
 }
 
+/**
+ * Makes `hostDir` match the sandbox's /skills: deletes what the task removed, downloads what it added or
+ * changed. Returns a reason instead when the tree is past SKILL_SYNC_LIMITS or a file cannot be listed or
+ * read; the host directory is then left
+ * as it was opened, so no edit is stored.
+ */
 export async function syncSkillsFromRunner(
   session: Pick<SandboxSession, "copyOut" | "run">,
   hostDir: string,

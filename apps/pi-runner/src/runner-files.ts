@@ -98,6 +98,8 @@ export async function getFile(
     resolved = await resolveInside(path, roots);
   } catch (error) {
     if (isMissing(error)) throw new HttpError(404, "file not found");
+    if ((error as NodeJS.ErrnoException).code === "ENOTDIR")
+      throw new HttpError(400, "path is not a regular file");
     throw error;
   }
   // Open before answering: an unreadable file (mode 000) must be an error status, never a 200 cut short.
@@ -110,7 +112,9 @@ export async function getFile(
     const code = (error as NodeJS.ErrnoException).code;
     if (isMissing(error)) throw new HttpError(404, "file not found");
     if (code === "EACCES" || code === "EPERM") throw new HttpError(403, "file is not readable");
-    if (code === "ELOOP") throw new HttpError(400, "path is not a regular file");
+    // ELOOP: a symlink; ENXIO: a socket; ENOTDIR: a parent swapped for a file. None is a regular file.
+    if (code === "ELOOP" || code === "ENXIO" || code === "ENOTDIR")
+      throw new HttpError(400, "path is not a regular file");
     throw error;
   }
   const info = await handle.stat().catch(async (error: unknown) => {
