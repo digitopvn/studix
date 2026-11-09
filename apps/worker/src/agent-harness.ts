@@ -472,7 +472,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         throw new StudixError("VALIDATION", "Input files need a tool-using task in the skill sandbox", {
           retryable: false,
           suggestedAction:
-            "Give the task the read or bash tool, and run the worker with STUDIX_SANDBOX=docker.",
+            "Give the task the read or bash tool, and run the worker with a skill sandbox (STUDIX_SANDBOX=docker, or sidecar on hosts without Docker).",
         });
       }
       if (choice.runtime === "claude") {

@@ -37,7 +37,11 @@ export function agentChatRoutes(deps: AppDeps): Router {
 
   router.get("/agent-runtimes", async (_req, res) => {
     const { ctx } = sessionOf(res);
-    res.json({ runtimes: await listAgentRuntimes(deps.providers, ctx) });
+    const [runtimes, sandbox] = await Promise.all([
+      listAgentRuntimes(deps.providers, ctx),
+      deps.workerSandbox?.(),
+    ]);
+    res.json({ runtimes, ...(sandbox ? { sandbox } : {}) });
   });
 
   router.get("/jobs/:jobId/events", async (req, res) => {

@@ -44,6 +44,17 @@ export interface WorkerMediaStatus {
   vendors: Record<string, boolean>;
 }
 
+/** What `/readyz` reports about the skill sandbox: backend and runner readiness, never an address or token. */
+export interface WorkerSandboxStatus {
+  backend: "docker" | "sidecar";
+  /** Sidecar only: configured runners, how many answered /v1/info, and their image versions. */
+  runners?: number;
+  ready?: number;
+  versions?: string[];
+  /** Why agent tasks with tools cannot run right now; absent when they can. */
+  reason?: string;
+}
+
 /** Concrete adapters the worker runs stages with; supplied by the process entry (or tests). */
 export interface WorkerPorts {
   planner: Planner;
@@ -61,6 +72,8 @@ export interface WorkerPorts {
   speech?: SpeechProbe;
   /** Optional: safe media readiness (Multix executable and which vendor keys exist) reported by `/readyz`. */
   mediaStatus?(): Promise<WorkerMediaStatus>;
+  /** Optional: skill sandbox readiness reported by `/readyz`; absent while the sandbox is off. */
+  sandboxStatus?(): WorkerSandboxStatus;
   /**
    * Optional: the in-worker agent harness for an agent stage of a job. Without it agent stages run only in
    * host mode (the MCP client's agent completes them).

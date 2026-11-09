@@ -71,6 +71,7 @@ import type {
   SkillSummary,
 } from "./ports.ts";
 import { seedDefaultSkills } from "./seed-default-skills.ts";
+import { createWorkerSandboxReader } from "./worker-sandbox-report.ts";
 import { createWorkspaceMultixApi } from "./workspace-multix.ts";
 
 /** App-role settings that are not part of the shared config schema. */
@@ -344,6 +345,9 @@ export async function composeApp(
       allowLocal: config.STUDIX_WEBHOOK_ALLOW_LOCAL,
     }),
     agentHandoffs: integrations.agentHandoffs,
+    ...(appEnv.STUDIX_WORKER_HEALTH_URL
+      ? { workerSandbox: createWorkerSandboxReader(appEnv.STUDIX_WORKER_HEALTH_URL) }
+      : {}),
     mediaExec: createMediaExecService({
       queue: repos.queue,
       assets: repos.assets,

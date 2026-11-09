@@ -218,6 +218,8 @@ export function createPiTaskWorkspaceProvider(options: PiTaskWorkspaceOptions): 
             }
             if (options.previewDir) await copyPreviews(open, options.previewDir);
             if (skillsDir && options.storeSkillEdits) {
+              // A copied-in /skills (sidecar runner) is brought back first; a mounted one already is the host dir.
+              if (open.syncSkillsOut) await open.syncSkillsOut(skillsDir);
               const changed = await changedSkillBundles(mounted, skillsDir);
               if (changed.length > 0) {
                 await options.storeSkillEdits(

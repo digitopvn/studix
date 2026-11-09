@@ -249,7 +249,8 @@ function sandboxToolsOf(
   if (!workspace) {
     throw new StudixError("VALIDATION", "The Pi runtime runs task tools only inside a skill sandbox", {
       retryable: false,
-      suggestedAction: "Enable the skill sandbox on the worker (STUDIX_SANDBOX=docker) or remove the tools.",
+      suggestedAction:
+        "Enable the skill sandbox on the worker (STUDIX_SANDBOX=docker, or sidecar on hosts without Docker) or remove the tools.",
     });
   }
   return [...new Set(names)] as SandboxToolName[];

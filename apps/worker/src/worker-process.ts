@@ -133,6 +133,8 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
             : {}),
           // Reported, not gating, like storage: the dashboard compares it with the app's own check.
           ...(media ? { media } : {}),
+          // Reported, not gating: a down skill runner fails only the agent tasks that need it.
+          ...(ports?.sandboxStatus ? { sandbox: ports.sandboxStatus() } : {}),
         },
       };
     },

@@ -57,6 +57,11 @@ export interface SandboxSession {
   copyOut(containerPath: string, hostPath: string): Promise<void>;
   /** Streams a host file into the container, creating its parent directories. */
   copyIn(hostPath: string, containerPath: string): Promise<void>;
+  /**
+   * Brings the sandbox's /skills back into the host directory it was opened with, for a backend that copies
+   * skills in instead of mounting them. Absent when /skills is the host directory itself (docker).
+   */
+  syncSkillsOut?(hostDir: string): Promise<void>;
   close(): Promise<void>;
 }
 
