@@ -225,7 +225,8 @@ Lý do của các ràng buộc:
   retry tìm lại file đã trả tiền thay vì sinh lại. Thư mục bị xóa ở `finalize`; job fail giữ nó cho lần
   retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
 - Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent, bỏ qua kèm `warning` khi
-  thiếu provider SFX), `motion-graphic.voice` (voice),
+  thiếu provider SFX), `motion-graphic.voice` (voice), `motion-graphic.music` (music, bỏ qua kèm `warning` khi thiếu
+  provider/key),
   `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).
 
