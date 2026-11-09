@@ -116,6 +116,11 @@ Behavior notes:
   does not count), `renderPreset`, `planner`,
   `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
   handoff tools below) and `agent`.
+- `brief.voiceover: false` asks for a voiceless video: no spoken voice-over, no
+  captions read from it and no sound accent, so no speech provider is needed.
+  `motion-graphic` and `marketing-video` honour it (marketing ads keep their
+  music and SFX); `brand-intro` has no voice-over either way. It defaults to
+  true.
 - `agent: {runtime, providerConnectionId, model?, reasoningEffort?}` picks the
   runtime of the job's agent stages: `pi`, `claude` or `codex`. The connection
   must belong to the workspace (or be yours), be usable and be enabled for that
@@ -147,7 +152,10 @@ Behavior notes:
   Scores land in the version metadata as `review` and on the job page
   ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)).
 - A stage that finished on its template instead of its agent shows `stages[].fallback` with the
-  reason on `studix_get_job`; it is never silent.
+  reason on `studix_get_job`; it is never silent. A job that names its `agent` (or `planner`) never
+  falls back: an agent that cannot run fails the job with `UNAVAILABLE`.
+- A stage that skipped an optional part instead of failing the job shows `stages[].warning`, for
+  example the motion-graphic SFX accent when the media provider has no sound-effect model or key.
 - Each stage on `studix_get_job` carries `stages[].run`, summed from its attempt's usage lines:
   - `runtime`: `claude`, `codex` or `pi` for an agent run; `host` for the MCP client's own agent; `planner` for the legacy planner's model calls; `function` for plain code such as `brief`, `compose` or `finalize`.
   - The `model`, `reasoningEffort` and `connectionLabel` it ran on.
@@ -194,7 +202,14 @@ Behavior notes:
   (6 to 60 s, default 15 s) in the style profile that best matches the brief,
   with a generated voice-over, one SFX accent where the CTA card lands and
   burned captions, then renders, QA-gates and uploads it in one job. It has no
-  image-to-video and no music.
+  image-to-video; a music bed is added only when the agent's storyboard asks
+  for one. A script derived from the brief (hook, messages, call to action) is
+  fitted to the length: message cards go from the last one back, then the
+  longest spoken lines are shortened, while the hook, the call to action and
+  the on-screen text stay. With `brief.voiceover: false` it needs no speech
+  provider and makes on-screen text only. A missing SFX model or key skips the
+  accent with a warning; a voice-over that cannot be generated still fails the
+  job.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action
