@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   mergeManifest,
 } from "@studix/core";
 import { testTenant } from "@studix/core/testing";
+import { createLogger } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import { compositionCheckProblems, createCompositionRunner } from "../src/composition-runner.ts";
 
@@ -55,6 +56,45 @@ describe("composition runs", () => {
     const manifest = { id: "cmp_1", files: [file("index.html"), file("old.png")] } as never;
     const merged = mergeManifest(manifest, [file("out/video.mp4")], ["old.png"]);
     expect(merged.files.map((f) => f.path).sort()).toEqual(["index.html", "out/video.mp4"]);
+  });
+
+  it("stores none of the files a killed command wrote and keeps the log tail", async () => {
+    const id = "cmp_killed1";
+    const manifest = { id, files: [], updatedAt: "2026-01-01T00:00:00.000Z" };
+    // Every key put here, with its body as text (the manifest is the only object to begin with).
+    const objects = new Map<string, string>([[compositionManifestKey(id), JSON.stringify(manifest)]]);
+    const storage = {
+      head: async (_ctx: unknown, key: string) => objects.has(key),
+      get: async (_ctx: unknown, key: string) => ({
+        body: new Blob([objects.get(key) ?? ""]).stream(),
+      }),
+      put: async (_ctx: unknown, key: string, body: unknown) => {
+        objects.set(key, body instanceof Uint8Array ? new TextDecoder().decode(body) : "file");
+      },
+    };
+    const box = {
+      run: async (argv: string[]) => Buffer.from(argv[0] === "find" ? "7 out/video-only.mp4\n" : ""),
+      exec: async (_cmd: string, opts: { onData?: (chunk: Buffer) => void }) => {
+        opts.onData?.(Buffer.from("rendering frame 900/1800"));
+        return { exitCode: null };
+      },
+      copyOut: async (_from: string, to: string) => writeFile(to, "partial"),
+    };
+    const runner = createCompositionRunner({
+      sandbox: {
+        forStage: () => ({ open: async () => ({ sandbox: box, close: async () => undefined }) }),
+      } as never,
+      storage: storage as never,
+      workDir: await mkdtemp(join(tmpdir(), "cmp-run-")),
+      logger: createLogger({}, { level: "error", write: () => {} }),
+    });
+    const stage = { ctx: {}, job: { id: "job_1" }, signal: new AbortController().signal } as never;
+    const result = await runner.run(stage, { compositionId: id, command: "render", timeoutSeconds: 480 });
+    expect(result.exitCode).toBeNull();
+    expect(result.changed).toEqual([]);
+    expect(result.log).toContain("rendering frame 900/1800");
+    expect(result.log).toContain("not stored, may be incomplete: out/video-only.mp4");
+    expect([...objects.keys()]).toEqual([compositionManifestKey(id)]);
   });
 });
 

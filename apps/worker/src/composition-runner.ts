@@ -30,7 +30,8 @@ import type { SkillSandbox } from "./skill-sandbox.ts";
 /*
  * The worker side of `composition.run`: the composition's files are copied into the job's skill sandbox (open
  * network, the workspace's media vendor keys, the enabled skills under /skills), the command runs in
- * /work/c, and every file it added or changed is stored back. Dependency and cache folders stay behind.
+ * /work/c, and every file it added or changed is stored back. Dependency and cache folders stay behind, and
+ * nothing is stored when the command was killed before it exited.
  */
 
 const ROOT = "/work/c";
@@ -138,13 +139,20 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           else if (Number(line.slice(0, sep)) > COMPOSITION_LIMITS.runFileBytes) tooBig.push(path);
           else paths.push(path);
         }
+        // A killed command (no exit code) may have been mid-write: its files can be truncated (an mp4 without
+        // its moov atom), so none are stored and the stored composition stays as it was before the run.
+        const killed = exitCode === null;
+        if (killed) {
+          output += `\n[studix] killed after ${Math.round(durationMs / 1000)}s (timeout ${request.timeoutSeconds}s)`;
+          if (paths.length > 0) output += `; not stored, may be incomplete: ${nameSome(paths)}`;
+        }
         if (badName.length > 0) {
           output += `\n[studix] not stored, invalid path: ${nameSome(badName)}`;
         }
         if (tooBig.length > 0) {
           output += `\n[studix] not stored, over ${COMPOSITION_LIMITS.runFileBytes} bytes: ${nameSome(tooBig)}`;
         }
-        if (paths.length > COMPOSITION_LIMITS.runFiles) {
+        if (!killed && paths.length > COMPOSITION_LIMITS.runFiles) {
           output += `\n[studix] stored the first ${COMPOSITION_LIMITS.runFiles} of ${paths.length} changed files; not stored: ${nameSome(paths.slice(COMPOSITION_LIMITS.runFiles))}`;
         }
         // Refuse before storing anything: a run that cannot fit must leave the composition untouched.
@@ -152,7 +160,7 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           assertCompositionFits(
             compositionCountAfter(
               await loadCompositionManifest(deps.storage, ctx, manifest.id),
-              paths.slice(0, COMPOSITION_LIMITS.runFiles),
+              killed ? [] : paths.slice(0, COMPOSITION_LIMITS.runFiles),
             ),
           );
         } catch (err) {
@@ -169,7 +177,7 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           }
           throw err;
         }
-        const storing = paths.slice(0, COMPOSITION_LIMITS.runFiles);
+        const storing = killed ? [] : paths.slice(0, COMPOSITION_LIMITS.runFiles);
         // Refuse a run that would pass the file cap before any stored blob is overwritten.
         mergeManifest(
           await loadCompositionManifest(deps.storage, ctx, manifest.id),
@@ -192,9 +200,11 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           );
           changed.push({ path, bytes, sha256, contentType });
         }
-        // Re-read so a write made while the command ran is kept.
-        const latest = await loadCompositionManifest(deps.storage, ctx, manifest.id);
-        await saveCompositionManifest(deps.storage, ctx, mergeManifest(latest, changed));
+        if (!killed) {
+          // Re-read so a write made while the command ran is kept.
+          const latest = await loadCompositionManifest(deps.storage, ctx, manifest.id);
+          await saveCompositionManifest(deps.storage, ctx, mergeManifest(latest, changed));
+        }
         const result: CompositionRunResult = {
           exitCode,
           durationMs,
