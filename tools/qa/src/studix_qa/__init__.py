@@ -7,6 +7,8 @@ from collections.abc import Callable
 from . import (
     black_frames,
     depth_maps,
+    frame_qa,
+    glyph_coverage,
     judge_reports,
     loudness,
     mix_buses,
@@ -29,4 +31,6 @@ TOOLS: dict[str, Callable] = {
     "depth-maps": depth_maps.run,
     "shot-boundaries": shot_boundaries.run,
     "speech-activity": speech_activity.run,
+    "frame-qa": frame_qa.run,
+    "glyph-coverage": glyph_coverage.run,
 }

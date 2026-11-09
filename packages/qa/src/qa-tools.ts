@@ -111,6 +111,66 @@ export const SyncOutput = z.object({
 });
 export type SyncResult = z.infer<typeof SyncOutput>;
 
+// ---------------------------------------------------------------- frame-qa
+
+export const FrameQaInput = z.strictObject({
+  media: MediaRef,
+  /** Frames sampled at the middle of equal slices of the render. */
+  samples: z.number().int().min(2).max(16).optional(),
+  /** Width of the outer band, in percent of the frame, that text should stay out of; 0 turns the check off. */
+  safeMarginPct: z.number().min(0).max(20).optional(),
+  /** Write `contact-sheet.png` to the run's output directory (default true; skipped without one). */
+  contactSheet: z.boolean().optional(),
+});
+export const FrameQaOutput = z.object({
+  durationS: z.number(),
+  safeMarginPct: z.number(),
+  samples: z.array(
+    z.object({
+      index: z.number().int(),
+      tS: z.number(),
+      meanLuma: z.number(),
+      lumaStd: z.number(),
+      kind: z.enum(["ok", "black", "blank"]),
+      marginEdgeRatio: nullableNumber,
+      outsideSafeMargin: z.boolean(),
+    }),
+  ),
+  pairs: z.array(
+    z.object({ from: z.number().int(), to: z.number().int(), meanAbsDiff: z.number(), static: z.boolean() }),
+  ),
+  blankSamples: z.number().int(),
+  blackSamples: z.number().int(),
+  marginSamples: z.number().int(),
+  staticPairs: z.number().int(),
+  flags: z.array(z.string()),
+  contactSheet: z
+    .object({
+      file: z.string(),
+      columns: z.number().int(),
+      rows: z.number().int(),
+      frameWidth: z.number().int(),
+      frameHeight: z.number().int(),
+    })
+    .nullable(),
+});
+export type FrameQaResult = z.infer<typeof FrameQaOutput>;
+
+// ---------------------------------------------------------------- glyph-coverage
+
+export const GlyphCoverageInput = z.strictObject({
+  /** Grant id of a TTF or OTF file. */
+  font: MediaRef,
+  texts: z.array(z.string().max(2000)).min(1).max(200),
+});
+export const GlyphCoverageOutput = z.object({
+  checked: z.number().int(),
+  missing: z.array(z.object({ char: z.string(), codepoint: z.string(), count: z.number().int() })),
+  missingCount: z.number().int(),
+  vietnameseMissing: z.number().int(),
+});
+export type GlyphCoverageResult = z.infer<typeof GlyphCoverageOutput>;
+
 // ---------------------------------------------------------------- prescan
 
 const MixEvent = z.strictObject({
@@ -401,6 +461,24 @@ export const QA_TOOLS = {
     timeoutMs: 2 * 60_000,
     memoryMb: 4096,
     image: "speech",
+  }),
+  frameQa: tool({
+    name: "frame-qa",
+    description:
+      "Sampled frames of a render: black or blank frames, content in the safe margin, scenes that do not change, and a contact sheet.",
+    input: FrameQaInput,
+    output: FrameQaOutput,
+    mediaRefs: one,
+    timeoutMs: 5 * 60_000,
+  }),
+  glyphCoverage: tool({
+    name: "glyph-coverage",
+    description:
+      "Characters of some text that a TTF or OTF font has no glyph for (Vietnamese letters named).",
+    input: GlyphCoverageInput,
+    output: GlyphCoverageOutput,
+    mediaRefs: (input: { font: string }) => [input.font],
+    timeoutMs: 60_000,
   }),
   shotBoundaries: tool({
     name: "shot-boundaries",

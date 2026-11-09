@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { knowledgeCatalog } from "@studix/skills";
@@ -7,6 +7,7 @@ import type { StageContext } from "@studix/workflow";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bindHardChecks,
+  collectEvidence,
   createQaStages,
   defaultHardChecks,
   type QaGateRunOptions,
@@ -150,6 +151,59 @@ describe.skipIf(!status.ok)(
       expect(evidence.blocking).toBe(false);
       expect(evidence.items.map((i) => i.source)).toEqual(["prescan.audio", "judge-reports"]);
       expect(evidence.items[1]!.findings.some((f) => f.includes("verdict FAIL"))).toBe(true);
+    });
+  },
+);
+
+describe.skipIf(!status.ok)(
+  `QA frame evidence on real media${status.ok ? "" : ` (skipped: ${status.reason})`}`,
+  () => {
+    let dir: string;
+    const run: QaGateRunOptions = { toolchain: resolveQaToolchain() };
+    beforeAll(() => {
+      dir = mkdtempSync(join(tmpdir(), "studix-qa-frames-"));
+      run.sandboxRoot = join(dir, "sandboxes");
+    });
+    afterAll(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("flags a flat grey render, keeps the contact sheet, and never blocks", async () => {
+      const file = join(dir, "grey.mp4");
+      ffmpeg([
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=0x808080:s=320x180:r=24:d=3",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        file,
+      ]);
+      const outputDir = join(dir, "sheets");
+      const report = await collectEvidence(file, { frames: { samples: 3, outputDir } }, run);
+      const item = report.items[0]!;
+      expect(report.blocking).toBe(false);
+      expect(item.source).toBe("frame-qa");
+      expect(item.ok).toBe(true);
+      expect(item.findings.filter((f) => f.includes("blank frame"))).toHaveLength(3);
+      const data = item.data as { staticPairs: number; contactSheetPath: string | null };
+      expect(data.staticPairs).toBe(2);
+      expect(data.contactSheetPath).toBe(join(outputDir, "contact-sheet.png"));
+      expect(existsSync(data.contactSheetPath!)).toBe(true);
+    });
+
+    it("records a tool failure as a not-ok item instead of throwing", async () => {
+      const report = await collectEvidence(
+        join(dir, "missing.mp4"),
+        { frames: {}, glyphs: { font: join(dir, "missing.ttf"), texts: ["Chào"] } },
+        run,
+      );
+      expect(report.items.map((i) => [i.source, i.ok])).toEqual([
+        ["frame-qa", false],
+        ["glyph-coverage", false],
+      ]);
     });
   },
 );

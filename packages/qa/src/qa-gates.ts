@@ -110,6 +110,13 @@ export interface EvidenceRequest {
   mixBuses?: Omit<z.input<typeof MixBusesInput>, "stems"> & {
     stems: Partial<Record<"beds" | "hits" | "vo" | "music", string>>;
   };
+  /**
+   * Sample frames across the render: black or blank frames, content inside the safe margin and scenes that do
+   * not change. With `outputDir`, a contact sheet PNG of the samples is written there (path in `data`).
+   */
+  frames?: { samples?: number; safeMarginPct?: number; outputDir?: string };
+  /** Text the render shows and the TTF or OTF it is set in: characters the font cannot draw (Vietnamese letters named). */
+  glyphs?: { font: string; texts: string[] };
   /** AI reviewer reports to consolidate. Their verdict is evidence, never a gate. */
   judgeReports?: z.input<typeof JudgeReportsInput>;
   /** Evidence-layer checks over the evidence metrics; recorded, never blocking. */
@@ -117,7 +124,7 @@ export interface EvidenceRequest {
 }
 
 export interface EvidenceItem {
-  source: "prescan.picture" | "prescan.audio" | "mix-buses" | "judge-reports";
+  source: "prescan.picture" | "prescan.audio" | "mix-buses" | "judge-reports" | "frame-qa" | "glyph-coverage";
   /** Whether the tool produced a result; a failed tool is recorded, not raised. */
   ok: boolean;
   findings: string[];
@@ -197,6 +204,38 @@ export async function collectEvidence(
       return { findings: result.fails, data: result.shots };
     });
     if (item.ok) m["mixBuses.fails"] = item.findings.length;
+    items.push(item);
+  }
+  if (request.frames) {
+    const { outputDir, ...input } = request.frames;
+    const item = await collect("frame-qa", async () => {
+      const { result, outputs } = await runQaTool(
+        QA_TOOLS.frameQa,
+        { media: "media", ...input, contactSheet: outputDir !== undefined },
+        { ...options, ...(outputDir !== undefined && { outputDir }) },
+      );
+      m["frames.blankSamples"] = result.blankSamples + result.blackSamples;
+      m["frames.marginSamples"] = result.marginSamples;
+      m["frames.staticPairs"] = result.staticPairs;
+      const contactSheet = outputs.find((f) => f.endsWith(result.contactSheet?.file ?? "\0")) ?? null;
+      return { findings: result.flags, data: { ...result, contactSheetPath: contactSheet } };
+    });
+    items.push(item);
+  }
+  if (request.glyphs) {
+    const { font, texts } = request.glyphs;
+    const item = await collect("glyph-coverage", async () => {
+      const { result } = await runQaTool(
+        QA_TOOLS.glyphCoverage,
+        { font: "font", texts },
+        { ...run, media: { font } },
+      );
+      m["glyphs.missing"] = result.missingCount;
+      return {
+        findings: result.missing.map((c) => `no glyph for ${c.codepoint} "${c.char}" (${c.count}x)`),
+        data: result,
+      };
+    });
     items.push(item);
   }
   if (request.judgeReports) {

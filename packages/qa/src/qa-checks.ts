@@ -35,6 +35,10 @@ export const QA_METRICS = [
   "prescan.audioFlags",
   "mixBuses.fails",
   "judge.failedRenders",
+  "frames.blankSamples",
+  "frames.marginSamples",
+  "frames.staticPairs",
+  "glyphs.missing",
 ] as const;
 export type QaMetric = (typeof QA_METRICS)[number];
 

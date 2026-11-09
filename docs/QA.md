@@ -83,20 +83,42 @@ Gate này chỉ chạy lớp `hard`. Nó không thu evidence và không có stag
 Mỗi tool là một module trong `tools/qa/src/studix_qa/`, bọc phía TS bằng một `QaTool` có
 schema zod cho input và output (`qa-tools.ts`).
 
-| Tool              | Lớp      | Đo gì                                                                             | Timeout | Bộ nhớ |
-| ----------------- | -------- | --------------------------------------------------------------------------------- | ------- | ------ |
-| `probe`           | hard     | ffprobe: container, stream, fps, duration, size                                   | 60 s    | 4 GiB  |
-| `loudness`        | hard     | Integrated LUFS, true peak, LRA (`ebur128=peak=true`)                             | 10 min  | 4 GiB  |
-| `black-frames`    | hard     | Đoạn đen đầu, cuối, giữa trên proxy 160x90                                        | 10 min  | 4 GiB  |
-| `sync`            | hard     | Lệch start và duration giữa audio và video trong container                        | 60 s    | 4 GiB  |
-| `prescan`         | evidence | Wedge, still hold, black, cut, click, dropout, transient (`qa-prescan`)           | 15 min  | 4 GiB  |
-| `mix-buses`       | evidence | Mức bus beds/hits/vo/music theo shot (`audit-mix-buses`)                          | 10 min  | 8 GiB  |
-| `judge-reports`   | evidence | Gộp report của AI reviewer (`qa-gate-check`)                                      | 60 s    | 4 GiB  |
-| `shot-boundaries` | evidence | Pop luma, histogram, diff ở từng cut theo chế độ biên shot (`qa-shot-boundaries`) | 10 min  | 4 GiB  |
-| `depth-maps`      | evidence | Depth map PNG bằng Depth Anything V2 Small; chỉ image `depth`                     | 15 min  | 8 GiB  |
-| `speech-activity` | gate SFX | Thời lượng tiếng nói trong một file audio (Silero VAD); chỉ image `speech`        | 2 min   | 4 GiB  |
+| Tool              | Lớp      | Đo gì                                                                                                | Timeout | Bộ nhớ |
+| ----------------- | -------- | ---------------------------------------------------------------------------------------------------- | ------- | ------ |
+| `probe`           | hard     | ffprobe: container, stream, fps, duration, size                                                      | 60 s    | 4 GiB  |
+| `loudness`        | hard     | Integrated LUFS, true peak, LRA (`ebur128=peak=true`)                                                | 10 min  | 4 GiB  |
+| `black-frames`    | hard     | Đoạn đen đầu, cuối, giữa trên proxy 160x90                                                           | 10 min  | 4 GiB  |
+| `sync`            | hard     | Lệch start và duration giữa audio và video trong container                                           | 60 s    | 4 GiB  |
+| `prescan`         | evidence | Wedge, still hold, black, cut, click, dropout, transient (`qa-prescan`)                              | 15 min  | 4 GiB  |
+| `mix-buses`       | evidence | Mức bus beds/hits/vo/music theo shot (`audit-mix-buses`)                                             | 10 min  | 8 GiB  |
+| `judge-reports`   | evidence | Gộp report của AI reviewer (`qa-gate-check`)                                                         | 60 s    | 4 GiB  |
+| `shot-boundaries` | evidence | Pop luma, histogram, diff ở từng cut theo chế độ biên shot (`qa-shot-boundaries`)                    | 10 min  | 4 GiB  |
+| `depth-maps`      | evidence | Depth map PNG bằng Depth Anything V2 Small; chỉ image `depth`                                        | 15 min  | 8 GiB  |
+| `frame-qa`        | evidence | Khung hình lấy mẫu: đen, trống (phẳng), nội dung trong lề an toàn, cảnh không đổi, contact sheet PNG | 5 min   | 4 GiB  |
+| `glyph-coverage`  | evidence | Ký tự của một đoạn text mà font TTF/OTF không có glyph (gọi tên chữ tiếng Việt)                      | 1 min   | 4 GiB  |
+| `speech-activity` | gate SFX | Thời lượng tiếng nói trong một file audio (Silero VAD); chỉ image `speech`                           | 2 min   | 4 GiB  |
 
 Nguồn port và golden test ghi ở [PORTING.md](PORTING.md#port-record-tool-qa).
+
+## Kiểm tra khung hình (Implemented, evidence)
+
+Hard gate chỉ đo file; `collectEvidence` có thêm hai request để reviewer thấy hình thật:
+
+- `frames: { samples?, safeMarginPct?, outputDir? }` chạy `frame-qa`: lấy 2 đến 16 khung (mặc định 6) ở giữa
+  các lát thời gian bằng nhau, trên proxy 320x180. Mỗi mẫu được gắn `black` (luma trung bình dưới 16), `blank`
+  (khung phẳng, độ lệch chuẩn luma dưới 2: thiếu layer hay asset không tải được) và `outsideSafeMargin`
+  (cạnh sắc thưa trong dải lề `safeMarginPct`, mặc định 5%, mà text hay bị cắt). Cặp mẫu liền kề có chênh lệch
+  luma tuyệt đối trung bình dưới 0,5 là `static` (cảnh không đổi). Có `outputDir` thì `contact-sheet.png` được
+  ghi ở đó, đường dẫn nằm trong `data.contactSheetPath`.
+- `glyphs: { font, texts }` chạy `glyph-coverage`: đọc `cmap` của font TTF/OTF (không đọc WOFF), chuẩn hóa NFC rồi
+  liệt kê ký tự không có glyph. Đây là cách bắt lỗi chữ tiếng Việt: pixel không phân biệt được ô vuông tofu với
+  thiết kế, nên kiểm trên text và font.
+- Thiếu audio khi đã yêu cầu vẫn do hard check `has-audio` (`requireAudio`) chặn, không lặp lại ở đây.
+
+Đây là heuristic, nên chỉ là evidence (`blocking: false`), metric `frames.blankSamples` (đen hoặc trống),
+`frames.marginSamples`, `frames.staticPairs`, `glyphs.missing`. Cảnh tĩnh có chủ ý (title hold) cũng ra
+`static`; ảnh full-bleed có cạnh khắp khung (hơn 25% dải lề) được coi là texture, không bị báo là text. Chưa pack
+hay worker nào gọi hai request này; stage `qa_check` nối chúng qua `evidence: () => ({ frames, glyphs })`.
 
 ## Sandbox và giới hạn
 
