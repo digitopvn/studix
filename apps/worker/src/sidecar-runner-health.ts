@@ -10,7 +10,10 @@ import type { WorkerSandboxStatus } from "./wiring.ts";
  * "skill runners checked" is logged again whenever a later refresh changes how many runners are ready.
  */
 
-/** About 2 minutes: a new Pod's runner sidecars pull a large image and probe their toolchain before answering. */
+/**
+ * At least 2 minutes (40 x 3 s, longer when probes time out): a new Pod's runner sidecars pull a large image and
+ * probe their toolchain before answering. Startup never waits on it.
+ */
 const STARTUP_ATTEMPTS = 40;
 const STARTUP_INTERVAL_MS = 3_000;
 /** `/readyz` refreshes the probe in the background at most this often. */
@@ -61,7 +64,7 @@ export function startSidecarRunnerMonitor(
   function report(health: SidecarRunnerHealth[]): void {
     if (last.ready === reportedReady) return;
     reportedReady = last.ready;
-    const log = last.ready === 0 ? logger.warn.bind(logger) : logger.info.bind(logger);
+    const log = (last.ready ?? 0) < (last.runners ?? 0) || last.ready === 0 ? logger.warn.bind(logger) : logger.info.bind(logger);
     log("skill runners checked", {
       ready: last.ready,
       runners: last.runners,
