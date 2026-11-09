@@ -1,12 +1,14 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  assertCompositionFits,
   COMPOSITION_LIMITS,
   type CompositionCheck,
   type CompositionFile,
   CompositionPath,
   type CompositionRunResult,
   compositionContentType,
+  compositionCountAfter,
   compositionFileKey,
   loadCompositionManifest,
   mergeManifest,
@@ -73,6 +75,12 @@ export function compositionCheckProblems(
   return problems;
 }
 
+function nameSome(paths: readonly string[], max = 10): string {
+  return paths.length > max
+    ? `${paths.slice(0, max).join(", ")} and ${paths.length - max} more`
+    : paths.join(", ");
+}
+
 export function createCompositionRunner(deps: CompositionRunnerDeps): CompositionRunner {
   const log = deps.logger.child({ component: "composition-run" });
   return {
@@ -123,9 +131,35 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           .toString("utf8")
           .split("\n")
           .filter((p) => p && !SKIPPED.test(p) && CompositionPath.safeParse(p).success);
-        if (paths.length > COMPOSITION_LIMITS.runFiles) {
-          output += `\n[studix] stored the first ${COMPOSITION_LIMITS.runFiles} of ${paths.length} changed files`;
+        const oversize = await box.run([
+          "find",
+          ROOT,
+          "-type",
+          "f",
+          "-newer",
+          STAMP,
+          "-size",
+          `+${Math.floor(COMPOSITION_LIMITS.runFileBytes / 1024) - 1}k`,
+          "-printf",
+          "%P\\n",
+        ]);
+        const tooBig = oversize
+          .toString("utf8")
+          .split("\n")
+          .filter((p) => p && !SKIPPED.test(p));
+        if (tooBig.length > 0) {
+          output += `\n[studix] not stored, over ${COMPOSITION_LIMITS.runFileBytes} bytes: ${nameSome(tooBig)}`;
         }
+        if (paths.length > COMPOSITION_LIMITS.runFiles) {
+          output += `\n[studix] stored the first ${COMPOSITION_LIMITS.runFiles} of ${paths.length} changed files; not stored: ${nameSome(paths.slice(COMPOSITION_LIMITS.runFiles))}`;
+        }
+        // Refuse before storing anything: a run that cannot fit must leave the composition untouched.
+        assertCompositionFits(
+          compositionCountAfter(
+            await loadCompositionManifest(deps.storage, ctx, manifest.id),
+            paths.slice(0, COMPOSITION_LIMITS.runFiles),
+          ),
+        );
         const changed: CompositionFile[] = [];
         for (const [i, path] of paths.slice(0, COMPOSITION_LIMITS.runFiles).entries()) {
           const local = join(host, `f${i}`);
