@@ -136,6 +136,36 @@ describe("sidecar readiness report", () => {
     monitor.stop();
   });
 
+  it("reports a runner on another protocol version as down, with the reason in the log only", async () => {
+    const { startSidecarRunnerMonitor } = await import("../src/sidecar-runner-health.ts");
+    const { loadSidecarSettings } = await import("../src/sidecar-sandbox-settings.ts");
+    const fakeFetch = (async () =>
+      new Response(
+        JSON.stringify({ protocol: 99, version: "old", busy: false, toolchain: {}, startedAt: "" }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      )) as unknown as typeof fetch;
+    const lines: Array<[string, Record<string, unknown>]> = [];
+    const record = (msg: string, fields?: Record<string, unknown>) => void lines.push([msg, fields ?? {}]);
+    const logger = { debug: record, info: record, warn: record, error: record } as unknown as Logger;
+    const monitor = startSidecarRunnerMonitor(loadSidecarSettings(base), logger, {
+      fetch: fakeFetch,
+      attempts: 1,
+    });
+    await monitor.started;
+    const [, fields] = lines.find(([m]) => m === "skill runners checked") ?? [];
+    expect(fields).toMatchObject({ ready: 0, runners: 2 });
+    expect(JSON.stringify(fields?.down)).toMatch(/protocol 99/);
+    expect(monitor.status()).toMatchObject({
+      ready: 0,
+      reason: expect.stringContaining("No skill runner is ready"),
+    });
+    expect(JSON.stringify(monitor.status())).not.toContain("protocol 99");
+    monitor.stop();
+  });
+
   it("stays silent on refreshes before the startup probe has reported", async () => {
     const { startSidecarRunnerMonitor } = await import("../src/sidecar-runner-health.ts");
     const { loadSidecarSettings } = await import("../src/sidecar-sandbox-settings.ts");
