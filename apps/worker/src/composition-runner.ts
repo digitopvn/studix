@@ -115,38 +115,22 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           },
         });
         const durationMs = Date.now() - started;
-        const listing = await box.run([
-          "find",
-          ROOT,
-          "-type",
-          "f",
-          "-newer",
-          STAMP,
-          "-size",
-          `-${Math.floor(COMPOSITION_LIMITS.runFileBytes / 1024)}k`,
-          "-printf",
-          "%P\\n",
-        ]);
-        const paths = listing
-          .toString("utf8")
-          .split("\n")
-          .filter((p) => p && !SKIPPED.test(p) && CompositionPath.safeParse(p).success);
-        const oversize = await box.run([
-          "find",
-          ROOT,
-          "-type",
-          "f",
-          "-newer",
-          STAMP,
-          "-size",
-          `+${Math.floor(COMPOSITION_LIMITS.runFileBytes / 1024) - 1}k`,
-          "-printf",
-          "%P\\n",
-        ]);
-        const tooBig = oversize
-          .toString("utf8")
-          .split("\n")
-          .filter((p) => p && !SKIPPED.test(p));
+        const listing = await box.run(["find", ROOT, "-type", "f", "-newer", STAMP, "-printf", "%s %P\\n"]);
+        const paths: string[] = [];
+        const tooBig: string[] = [];
+        const badName: string[] = [];
+        for (const line of listing.toString("utf8").split("\n")) {
+          const sep = line.indexOf(" ");
+          if (sep < 1) continue;
+          const path = line.slice(sep + 1);
+          if (SKIPPED.test(path)) continue;
+          if (!CompositionPath.safeParse(path).success) badName.push(path);
+          else if (Number(line.slice(0, sep)) > COMPOSITION_LIMITS.runFileBytes) tooBig.push(path);
+          else paths.push(path);
+        }
+        if (badName.length > 0) {
+          output += `\n[studix] not stored, invalid path: ${nameSome(badName)}`;
+        }
         if (tooBig.length > 0) {
           output += `\n[studix] not stored, over ${COMPOSITION_LIMITS.runFileBytes} bytes: ${nameSome(tooBig)}`;
         }
@@ -154,12 +138,27 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           output += `\n[studix] stored the first ${COMPOSITION_LIMITS.runFiles} of ${paths.length} changed files; not stored: ${nameSome(paths.slice(COMPOSITION_LIMITS.runFiles))}`;
         }
         // Refuse before storing anything: a run that cannot fit must leave the composition untouched.
-        assertCompositionFits(
-          compositionCountAfter(
-            await loadCompositionManifest(deps.storage, ctx, manifest.id),
-            paths.slice(0, COMPOSITION_LIMITS.runFiles),
-          ),
-        );
+        try {
+          assertCompositionFits(
+            compositionCountAfter(
+              await loadCompositionManifest(deps.storage, ctx, manifest.id),
+              paths.slice(0, COMPOSITION_LIMITS.runFiles),
+            ),
+          );
+        } catch (err) {
+          if (err instanceof StudixError && err.code === "VALIDATION") {
+            throw new StudixError(
+              "VALIDATION",
+              `${err.message}; this run produced ${paths.length} changed files and stored none`,
+              {
+                retryable: false,
+                suggestedAction: err.suggestedAction,
+                details: { ...err.details, changedFiles: paths.length, exitCode, log: output.slice(-2000) },
+              },
+            );
+          }
+          throw err;
+        }
         const changed: CompositionFile[] = [];
         for (const [i, path] of paths.slice(0, COMPOSITION_LIMITS.runFiles).entries()) {
           const local = join(host, `f${i}`);

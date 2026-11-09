@@ -247,6 +247,14 @@ export function createCompositionService(deps: CompositionServiceDeps) {
             updatedAt: new Date().toISOString(),
           };
       const written: CompositionFile[] = [];
+      // Refuse before storing or deleting anything, so a write over the cap leaves the composition unchanged.
+      const removing = new Set(input.delete ?? []);
+      assertCompositionFits(
+        compositionCountAfter(
+          { files: manifest.files.filter((f) => !removing.has(f.path)) },
+          (input.files ?? []).map((f) => f.path),
+        ),
+      );
       for (const file of input.files ?? []) {
         const bytes =
           "text" in file

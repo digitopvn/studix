@@ -1,7 +1,14 @@
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { COMPOSITION_LIMITS, compositionFileKey, compositionManifestKey, mergeManifest } from "@studix/core";
+import {
+  assertCompositionFits,
+  COMPOSITION_LIMITS,
+  compositionCountAfter,
+  compositionFileKey,
+  compositionManifestKey,
+  mergeManifest,
+} from "@studix/core";
 import { testTenant } from "@studix/core/testing";
 import { describe, expect, it } from "vitest";
 import { compositionCheckProblems, createCompositionRunner } from "../src/composition-runner.ts";
@@ -70,7 +77,10 @@ describe("composition run limits", () => {
     };
     const box = {
       async run(argv: string[]) {
-        if (argv[0] === "find") return Buffer.from(produced.map((p) => `${p}\n`).join(""));
+        if (argv[0] === "find")
+          return Buffer.from(
+            produced.map((p) => `${p.startsWith("big/") ? 2_000_000_000 : 3} ${p}\n`).join(""),
+          );
         return Buffer.alloc(0);
       },
       async exec() {
@@ -117,5 +127,29 @@ describe("composition run limits", () => {
     } as never);
     expect(result.changed.map((c) => c.path)).toEqual(["f0.txt", "new-a.txt"]);
     expect(puts).toContain(compositionFileKey(id, "new-a.txt"));
+    expect(result.log).not.toContain("not stored");
+  });
+
+  it("names files it does not store and keeps the log when a run is refused", async () => {
+    const { runner, stage, puts } = setup(
+      Array.from({ length: COMPOSITION_LIMITS.files }, (_, i) => `f${i}.txt`),
+      ["big/movie.mp4", "new-a.txt"],
+    );
+    const err = await runner
+      .run(stage, { compositionId: id, command: "true", timeoutSeconds: 60 } as never)
+      .catch((e) => e);
+    expect(err).toMatchObject({ code: "VALIDATION" });
+    expect(err.message).toContain("stored none");
+    expect(JSON.stringify(err.details)).toContain("big/movie.mp4");
+    expect(puts).toEqual([]);
+  });
+});
+
+describe("composition file cap", () => {
+  it("counts an overwritten path once and refuses past the cap", () => {
+    const files = [file("a.txt"), file("b.txt")];
+    expect(compositionCountAfter({ files }, ["a.txt", "c.txt"])).toBe(3);
+    expect(() => assertCompositionFits(COMPOSITION_LIMITS.files)).not.toThrow();
+    expect(() => assertCompositionFits(COMPOSITION_LIMITS.files + 1)).toThrow(/at most/);
   });
 });
