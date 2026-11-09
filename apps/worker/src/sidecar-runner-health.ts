@@ -6,10 +6,15 @@ import type { WorkerSandboxStatus } from "./wiring.ts";
 /*
  * Runner readiness of the sidecar sandbox. At startup the worker asks every runner for /v1/info, retrying
  * for a while because Kubernetes may start the sidecars after the worker; it never fails startup, since a
- * task on a down runner fails on its own with an actionable UNAVAILABLE. `/readyz` reports the last result.
+ * task on a down runner fails on its own with an actionable UNAVAILABLE. `/readyz` reports the last result, and
+ * "skill runners checked" is logged again whenever a later refresh changes how many runners are ready.
  */
 
-const STARTUP_ATTEMPTS = 10;
+/**
+ * At least 2 minutes (40 x 3 s, longer when probes time out): a new Pod's runner sidecars pull a large image and
+ * probe their toolchain before answering. Startup never waits on it.
+ */
+const STARTUP_ATTEMPTS = 40;
 const STARTUP_INTERVAL_MS = 3_000;
 /** `/readyz` refreshes the probe in the background at most this often. */
 const REFRESH_INTERVAL_MS = 30_000;
@@ -42,7 +47,7 @@ export function summarizeRunnerHealth(health: readonly SidecarRunnerHealth[]): W
 export function startSidecarRunnerMonitor(
   settings: SidecarSettings,
   logger: Logger,
-  options: { fetch?: FetchLike; attempts?: number; intervalMs?: number } = {},
+  options: { fetch?: FetchLike; attempts?: number; intervalMs?: number; refreshMs?: number } = {},
 ): SidecarRunnerMonitor {
   const probe = () => probeSidecarRunners(settings.runners, options.fetch ? { fetch: options.fetch } : {});
   let last: WorkerSandboxStatus = {
@@ -53,6 +58,23 @@ export function startSidecarRunnerMonitor(
     reason: "The skill runners have not answered yet.",
   };
   let checkedAt = Date.now();
+  let reportedReady: number | undefined;
+
+  /** One log line per change in readiness, with the cause of every runner that is down. */
+  function report(health: SidecarRunnerHealth[]): void {
+    if (last.ready === reportedReady) return;
+    reportedReady = last.ready;
+    const log = (last.ready ?? 0) < (last.runners ?? 0) || last.ready === 0 ? logger.warn.bind(logger) : logger.info.bind(logger);
+    log("skill runners checked", {
+      ready: last.ready,
+      runners: last.runners,
+      versions: last.versions,
+      toolchain: health.find((h) => h.ok)?.toolchain ?? {},
+      ...(health.some((h) => !h.ok)
+        ? { down: health.filter((h) => !h.ok).map((h) => ({ runner: h.runner, error: h.error })) }
+        : {}),
+    });
+  }
   let inFlight = false;
   let stopped = false;
 
@@ -64,16 +86,7 @@ export function startSidecarRunnerMonitor(
       checkedAt = Date.now();
       const done = health.every((h) => h.ok) || i === attempts;
       if (done) {
-        const log = last.ready === 0 ? logger.warn.bind(logger) : logger.info.bind(logger);
-        log("skill runners checked", {
-          ready: last.ready,
-          runners: last.runners,
-          versions: last.versions,
-          toolchain: health.find((h) => h.ok)?.toolchain ?? {},
-          ...(health.some((h) => !h.ok)
-            ? { down: health.filter((h) => !h.ok).map((h) => ({ runner: h.runner, error: h.error })) }
-            : {}),
-        });
+        report(health);
         return;
       }
       await new Promise((resolve) =>
@@ -88,11 +101,12 @@ export function startSidecarRunnerMonitor(
       stopped = true;
     },
     status() {
-      if (!inFlight && Date.now() - checkedAt >= REFRESH_INTERVAL_MS) {
+      if (!inFlight && Date.now() - checkedAt >= (options.refreshMs ?? REFRESH_INTERVAL_MS)) {
         inFlight = true;
         probe()
           .then((health) => {
             last = summarizeRunnerHealth(health);
+            if (reportedReady !== undefined) report(health);
           })
           .catch(() => undefined)
           .finally(() => {

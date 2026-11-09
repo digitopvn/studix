@@ -1,6 +1,6 @@
 import { testTenant } from "@studix/core/testing";
 import type { Logger } from "@studix/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMediaExecRunner, loadMediaExecSettings } from "../src/media-exec-runner.ts";
 import { assertSidecarWorkspace, loadSidecarSettings } from "../src/sidecar-sandbox-settings.ts";
 import { loadSandboxSettings } from "../src/skill-sandbox.ts";
@@ -100,5 +100,63 @@ describe("sidecar readiness report", () => {
     expect(JSON.stringify(status)).not.toContain("127.0.0.1");
     const { createHash } = await import("node:crypto");
     expect(workspaceHash("ws_x")).toBe(createHash("sha256").update("ws_x").digest("hex").slice(0, 16));
+  });
+
+  it("logs again when runners that were down at startup become ready", async () => {
+    const { startSidecarRunnerMonitor } = await import("../src/sidecar-runner-health.ts");
+    const { loadSidecarSettings } = await import("../src/sidecar-sandbox-settings.ts");
+    let up = false;
+    const fakeFetch = (async () => {
+      if (!up) throw new TypeError("fetch failed");
+      return new Response(
+        JSON.stringify({ protocol: 1, version: "v1", busy: false, toolchain: {}, startedAt: "" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    const lines: Array<[string, Record<string, unknown>]> = [];
+    const record = (msg: string, fields?: Record<string, unknown>) => void lines.push([msg, fields ?? {}]);
+    const logger = { debug: record, info: record, warn: record, error: record } as unknown as Logger;
+    const monitor = startSidecarRunnerMonitor(loadSidecarSettings(base), logger, {
+      fetch: fakeFetch,
+      attempts: 1,
+      refreshMs: 0,
+    });
+    const checked = () => lines.filter(([m]) => m === "skill runners checked").map(([, f]) => f.ready);
+    await monitor.started;
+    expect(checked()).toEqual([0]);
+    up = true;
+    monitor.status();
+    await vi.waitFor(() => expect(monitor.status()).toMatchObject({ ready: 2 }));
+    expect(checked()).toEqual([0, 2]);
+    // A refresh that changes nothing logs nothing.
+    monitor.status();
+    await new Promise((r) => setTimeout(r, 20));
+    monitor.status();
+    expect(checked()).toEqual([0, 2]);
+    monitor.stop();
+  });
+
+  it("stays silent on refreshes before the startup probe has reported", async () => {
+    const { startSidecarRunnerMonitor } = await import("../src/sidecar-runner-health.ts");
+    const { loadSidecarSettings } = await import("../src/sidecar-sandbox-settings.ts");
+    const lines: string[] = [];
+    const record = (msg: string) => void lines.push(msg);
+    const logger = { debug: record, info: record, warn: record, error: record } as unknown as Logger;
+    const fakeFetch = (async () => {
+      throw new TypeError("fetch failed");
+    }) as unknown as typeof fetch;
+    const monitor = startSidecarRunnerMonitor(loadSidecarSettings(base), logger, {
+      fetch: fakeFetch,
+      attempts: 3,
+      intervalMs: 30,
+      refreshMs: 0,
+    });
+    monitor.status();
+    await new Promise((r) => setTimeout(r, 10));
+    monitor.status();
+    expect(lines.filter((m) => m === "skill runners checked")).toHaveLength(0);
+    await monitor.started;
+    expect(lines.filter((m) => m === "skill runners checked")).toHaveLength(1);
+    monitor.stop();
   });
 });
