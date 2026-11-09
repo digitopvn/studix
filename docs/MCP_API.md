@@ -562,8 +562,8 @@ job's `result` holds `exitCode`, `durationMs`, truncated `stdout` / `stderr`,
 `json` (parsed ffprobe output when stdout is JSON) and `outputs` with
 `assetId`, `name`, `contentType`, `bytes`, `sha256` and a signed `url`. A
 non-zero exit fails the job with `VALIDATION` and the stderr tail in
-`error.message` (`details.exitCode`, `details.stderrTail`); the time is still
-billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
+`error.message` (`details.exitCode`, `details.stderrTail`); a tool killed at its
+`timeoutSeconds` fails with `TIMEOUT` instead. The time is still billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
 
 ```json
 {
@@ -680,6 +680,9 @@ container, home directory, global installs or `node_modules`.
 `check: {path, width?, height?, durationMs?, durationToleranceMs?, audio?, loudnessLufs?, frames?}` probes a file after
 an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the
 exit code, the tail of the combined log (`logTail`), changed files and the check result. The files it wrote are kept either way.
+A command killed before it exits (`exitCode: null`) stores none of its files, since they may be truncated. It fails with
+`TIMEOUT` when it ran for the whole `timeoutSeconds` (not retryable as is: raise `timeoutSeconds`, render at a lower
+resolution or fps, or split the render), otherwise with `UNAVAILABLE` (the sandbox lost the session; run it again).
 
 `audio: true` requires an audible audio track (`loudnessLufs` implies it). `frames: {samples?, safeMarginPct?,
 motion?, vietnamese?}` also looks at the picture: it decodes `samples` frames (2-12, default 5) at evenly spaced
