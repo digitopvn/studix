@@ -42,6 +42,24 @@ describe("worker sandbox report", () => {
     expect(other).not.toHaveProperty("ready");
   });
 
+  it("allows every workspace when the worker reports no hashes (allowlist *), but none for an empty list", async () => {
+    const open = await fetchWorkerSandbox(
+      "http://w",
+      answer({ sandbox: { backend: "sidecar", runners: 2, ready: 2 } }),
+    );
+    expect(reportForWorkspace(open!, "ws_anyone")).toEqual({
+      backend: "sidecar",
+      available: true,
+      runners: 2,
+      ready: 2,
+    });
+    const none = await fetchWorkerSandbox(
+      "http://w",
+      answer({ sandbox: { backend: "sidecar", runners: 2, ready: 2, workspaceHashes: [] } }),
+    );
+    expect(reportForWorkspace(none!, "ws_anyone")).toMatchObject({ available: false });
+  });
+
   it("treats docker as available and ignores a missing or unknown block", async () => {
     const docker = await fetchWorkerSandbox("http://w", answer({ sandbox: { backend: "docker" } }));
     expect(reportForWorkspace(docker!, "ws_a")).toEqual({ backend: "docker", available: true });

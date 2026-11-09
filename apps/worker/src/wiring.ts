@@ -53,7 +53,8 @@ export interface WorkerSandboxStatus {
   versions?: string[];
   /**
    * Sidecar only: the allowlisted workspaces, each as the first 16 hex chars of sha256(workspace id), so the app
-   * can tell a workspace whether its tasks may use the runners without /readyz listing workspace ids.
+   * can tell a workspace whether its tasks may use the runners without /readyz listing workspace ids. Absent when
+   * the allowlist is `*`: every workspace may use them.
    */
   workspaceHashes?: string[];
   /** Why agent tasks with tools cannot run right now; absent when they can. Never an address or a runner error. */

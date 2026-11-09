@@ -407,7 +407,8 @@ or a path guard as a security boundary:
   the internet and the worker's loopback ports; the token, not `127.0.0.1`, is the authorization for a runner.
   This is not strong isolation between hostile tenants, so the backend is gated to workspaces listed in
   `STUDIX_SANDBOX_SIDECAR_WORKSPACES` (any other workspace gets `FORBIDDEN`) and is meant for trusted or
-  internal use. Residual risks: shared kernel, open egress, processes of one session sharing a uid, and the Pod-wide
+  internal use. Setting it to `*` opens the runners to every workspace; the operator then accepts these risks for
+  all tenants, and the worker logs `skill runners open to every workspace` at startup. Residual risks: shared kernel, open egress, processes of one session sharing a uid, and the Pod-wide
   `/dev/shm` and IPC namespace, which the runners cannot wipe without deleting another runner's live files.
   TOSE drops all capabilities, forces non-root, the default seccomp profile and `allowPrivilegeEscalation: false`
   (so the image's setuid binaries such as `su` cannot gain privileges), and mounts no service account token.
