@@ -144,10 +144,18 @@ const fallback = (fallbackReason: string): { output: MotionStoryboardOutput } =>
 /** An agent that cannot run at all (no model, no harness) spent nothing; anything else is a real failure. */
 const unavailable = (err: unknown) => err instanceof StudixError && err.code === "UNAVAILABLE";
 
-/** Whether the job named the agent its stages run on (`agent`, or the legacy Claude `planner`). */
-const agentChosen = (payload: unknown) =>
-  stageAgentSelection(payload, MG_STORYBOARD_STAGE) !== undefined ||
-  (payload as { planner?: unknown } | undefined)?.planner != null;
+/**
+ * Whether the job named the agent its stages run on: `agent`, or the legacy fields the harness still honours
+ * (a top-level Pi `agentModel`, or the Claude `planner`).
+ */
+const agentChosen = (payload: unknown) => {
+  const legacy = payload as { planner?: unknown; agentModel?: unknown } | undefined;
+  return (
+    stageAgentSelection(payload, MG_STORYBOARD_STAGE) !== undefined ||
+    legacy?.agentModel != null ||
+    legacy?.planner != null
+  );
+};
 
 /**
  * Brief -> script and storyboard, written by the workspace's agent (harness or MCP host) from the motion

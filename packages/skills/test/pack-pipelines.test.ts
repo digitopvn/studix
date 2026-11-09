@@ -890,7 +890,10 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(0);
   });
 
-  it("fails instead of falling back when the job named an agent that cannot run", async () => {
+  it.each([
+    ["agent", { agent: { runtime: "pi", connectionId: "conn_1", provider: "openai" } }],
+    ["legacy agentModel", { agentModel: { connectionId: "conn_1", provider: "openai", modelId: "gpt-5" } }],
+  ])("fails instead of falling back when the job named an agent (%s) that cannot run", async (_, chosen) => {
     const runtime: AgentRuntime = {
       id: "none",
       run: async () => {
@@ -898,9 +901,8 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
       },
     };
     const h = harness({ agent: runtime });
-    const agent = { runtime: "pi", connectionId: "conn_1", provider: "openai" };
     const { outcome } = await h.run(
-      { workflowTemplate: "motion-graphic", agent },
+      { workflowTemplate: "motion-graphic", ...chosen },
       await newProject(h, "motion-graphic", graphic),
     );
     expect(h.failureOf(outcome)).toEqual({
