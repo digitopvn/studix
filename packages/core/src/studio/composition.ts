@@ -156,6 +156,27 @@ export function compositionContentType(path: string): string {
   return CONTENT_TYPES[ext] ?? "application/octet-stream";
 }
 
+/** Refuses a composition that would hold more than the file cap. */
+export function assertCompositionFits(fileCount: number): void {
+  if (fileCount > COMPOSITION_LIMITS.files) {
+    throw new StudixError("VALIDATION", `A composition holds at most ${COMPOSITION_LIMITS.files} files`, {
+      retryable: false,
+      details: { files: fileCount, limit: COMPOSITION_LIMITS.files },
+      suggestedAction: "Delete renders or frames you no longer need (delete: [paths]).",
+    });
+  }
+}
+
+/** The file count a composition would have after a merge, without changing it. */
+export function compositionCountAfter(
+  manifest: Pick<CompositionManifest, "files">,
+  paths: readonly string[],
+): number {
+  const all = new Set(manifest.files.map((f) => f.path));
+  for (const p of paths) all.add(p);
+  return all.size;
+}
+
 /** Merges written or changed files into a manifest, newest wins, sorted by path. */
 export function mergeManifest(
   manifest: CompositionManifest,
@@ -166,12 +187,7 @@ export function mergeManifest(
   const byPath = new Map(manifest.files.map((f) => [f.path, f]));
   for (const path of remove) byPath.delete(path);
   for (const f of files) byPath.set(f.path, f);
-  if (byPath.size > COMPOSITION_LIMITS.files) {
-    throw new StudixError("VALIDATION", `A composition holds at most ${COMPOSITION_LIMITS.files} files`, {
-      retryable: false,
-      suggestedAction: "Delete renders or frames you no longer need (delete: [paths]).",
-    });
-  }
+  assertCompositionFits(byPath.size);
   return {
     ...manifest,
     files: [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)),
@@ -250,6 +266,14 @@ export function createCompositionService(deps: CompositionServiceDeps) {
             updatedAt: new Date().toISOString(),
           };
       const written: CompositionFile[] = [];
+      // Refuse before storing or deleting anything, so a write over the cap leaves the composition unchanged.
+      const removing = new Set(input.delete ?? []);
+      assertCompositionFits(
+        compositionCountAfter(
+          { files: manifest.files.filter((f) => !removing.has(f.path)) },
+          (input.files ?? []).map((f) => f.path),
+        ),
+      );
       for (const file of input.files ?? []) {
         const bytes =
           "text" in file
