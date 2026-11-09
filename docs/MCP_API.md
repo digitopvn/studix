@@ -646,25 +646,32 @@ global caches, environment changes. The next run starts from the stored files ag
 a command generated (for example `npx hyperframes init my-video`) is available to later runs only
 if its files were stored.
 
-- **Stored:** regular files the command created or modified, up to 1 GB each and 200 per run (a
-  longer list is cut and the log says so). They are listed in `changed[]` of the job result and
-  show up in `studix_composition_read`. A composition holds at most 400 files.
+- **Stored:** regular files whose modification time is later than the start of the run, up to 200
+  per run (a longer list is cut and the log says so). They are listed in `changed[]` of the job
+  result and show up in `studix_composition_read`. A composition holds at most 400 files; a run that
+  would go over it fails with `VALIDATION` and stores nothing, so delete files first.
 - **Not stored:** unchanged files (they are stored already, so they are not in `changed[]`),
-  anything under `node_modules`, `.git`, `.cache`, `.npm`, `__pycache__` or `.venv`, and files whose
-  path is not a plain relative path: each segment starts with a letter, digit or `_` and contains only
-  letters, digits and `._@+-` (no spaces, no hidden `.files`), 240 characters at most.
+  anything under `node_modules`, `.git`, `.cache`, `.npm`, `__pycache__` or `.venv`, files of 1 GB or
+  more (skipped without a log line), and files whose path is not a plain relative path: each
+  segment starts with an ASCII letter, digit or `_` and contains only ASCII letters, digits and
+  `._@+-` (no spaces, no hidden `.files`, no accented letters), 240 characters at most.
+- **Old timestamps are not stored:** tools that keep the source's modification time (`tar x`,
+  `unzip`, `cp -p`, `rsync -a`, `wget`, `curl -R`) can produce files that miss `changed[]`. Run
+  `touch` on them afterwards.
+- **Deletes and renames do not persist:** removing or moving a file inside a run leaves the stored
+  copy, which comes back in the next run. Use `studix_composition_write` with `delete: [paths]`.
 - **Persist a generated project:** run its generator inside the composition root, check that its
   files appear in `changed[]`, and run `npm install` (or similar) again at the start of each
-  later command, because `node_modules` is not kept. Rename or delete files that the rules above
-  would drop.
+  later command, because `node_modules` is not kept.
 - **Not in `changed[]` means not stored:** if a later run cannot find a directory, it was not in
   `changed[]` of the run that should have created it.
-- **Writes from outside:** `studix_composition_write` files persist the same way (8 MB each); a
-  run that overlaps a write keeps both.
+- **Writes from outside:** `studix_composition_write` files persist the same way (8 MB each). Do not
+  write to a composition while a run on it is in flight: both update the same file list, and one
+  can overwrite the other's entries.
 
 `check: {path, width?, height?, durationMs?, durationToleranceMs?, loudnessLufs?}` probes a file after
 an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the
-exit code, the tail of the combined log (`logTail`), changed files and the check result. The files it wrote are kept either way.
+exit code, the tail of the combined log (`logTail`), changed files and the check result. The files it wrote are kept either way (unless the composition would pass 400 files).
 
 ```json
 {

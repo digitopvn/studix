@@ -93,8 +93,12 @@ describe("files kept between composition runs", () => {
       defaults: { jobBudgetCents: 0 },
     });
     const { id } = await service.write(ctx, { files: [{ path: "index.html", text: "<html></html>" }] });
-    const put = (fs: Map<string, { bytes: Buffer; t: number }>, t: () => number, path: string) =>
-      fs.set(`/work/c/${path}`, { bytes: Buffer.from(path), t: t() });
+    const put = (
+      fs: Map<string, { bytes: Buffer; t: number }>,
+      t: () => number,
+      path: string,
+      content = path,
+    ) => fs.set(`/work/c/${path}`, { bytes: Buffer.from(content), t: t() });
     const { sandbox, fs } = fakeSandbox({
       init: (files, t) => {
         for (const path of [
@@ -108,7 +112,10 @@ describe("files kept between composition runs", () => {
           put(files, t, path);
         }
       },
-      "cat my-video/package.json": () => undefined,
+      update: (files, t) => {
+        put(files, t, "my-video/package.json", "v2");
+        put(files, t, "my-video/new.txt");
+      },
     });
     const workDir = mkdtempSync(join(tmpdir(), "studix-cmp-"));
     try {
@@ -135,13 +142,23 @@ describe("files kept between composition runs", () => {
 
       // A fresh sandbox for the second run: nothing survives in it except the stored files.
       fs.clear();
-      const second = await runner.run(stage, request("cat my-video/package.json"));
-      expect(second.changed).toEqual([]);
-      expect([...fs.keys()].sort()).toEqual([
-        "/work/c/index.html",
-        "/work/c/my-video/package.json",
-        "/work/c/my-video/src/index.html",
+      const second = await runner.run(stage, request("update"));
+      // The stored files were copied in with their stored bytes; only what the command wrote is changed.
+      expect(second.changed.map((f) => f.path).sort()).toEqual(["my-video/new.txt", "my-video/package.json"]);
+      expect(fs.get("/work/c/index.html")?.bytes.toString()).toBe("<html></html>");
+      expect(fs.get("/work/c/my-video/src/index.html")?.bytes.toString()).toBe("my-video/src/index.html");
+      const stored = await loadCompositionManifest(storage, ctx, id);
+      expect(stored.files.map((f) => f.path)).toEqual([
+        "index.html",
+        "my-video/new.txt",
+        "my-video/package.json",
+        "my-video/src/index.html",
       ]);
+      const pkg = stored.files.find((f) => f.path === "my-video/package.json");
+      expect(pkg?.bytes).toBe(2);
+      expect(
+        (await storage.get(ctx, "compositions/" + id + "/files/my-video/package.json")).body,
+      ).toBeDefined();
     } finally {
       rmSync(workDir, { recursive: true, force: true });
     }
