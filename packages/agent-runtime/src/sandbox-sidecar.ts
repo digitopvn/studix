@@ -43,15 +43,6 @@ const RESET_TIMEOUT_MS = 60_000;
 /** How long `open` keeps retrying while every runner is unreachable (a restarting runner) before failing. */
 const ALL_DOWN_GRACE_MS = 60_000;
 
-/** Waits for `promise`, but rejects as soon as `signal` aborts; the promise itself keeps running. */
-function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-  });
-}
 const FIRST_RETRY_MS = 250;
 const MAX_RETRY_MS = 2_000;
 
@@ -84,31 +75,43 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
    * First contact with each runner closes whatever session it still holds: the runners belong to this Pod's
    * worker alone, so such a session was left by a previous worker process (a crash, a redeploy) and would
    * otherwise keep the runner busy until its wall time. Once per runner per process, shared by concurrent opens
-   * so one open never resets a session another just got.
+   * so one open never resets a session another just got. It carries no caller's signal: one task's cancel must
+   * not fail the others.
    */
-  const reclaimed = new Map<number, Promise<void>>();
+  const reclaims = new Map<number, Promise<void>>();
+  const reclaimedRunners = new Set<number>();
+  /** A failed reset, handed once to the next open on that runner, which then starts a new one. */
+  const reclaimFailures = new Map<number, unknown>();
   let next = 0;
 
-  function reclaim(client: RunnerClient, signal: AbortSignal): Promise<void> {
-    let pending = reclaimed.get(client.number);
-    if (!pending) {
-      // Shared by every open waiting on this runner, so it carries no caller's signal: one task's cancel must
-      // not fail the others. Each caller stops waiting on its own signal instead (untilAborted below).
-      pending = (async () => {
+  /**
+   * "ready" once the runner was reclaimed; "pending" while its reset runs, so the caller tries another runner
+   * instead of waiting up to RESET_TIMEOUT_MS behind one slow reset; throws the reset's failure once.
+   */
+  function reclaim(client: RunnerClient): "ready" | "pending" {
+    const n = client.number;
+    if (reclaimedRunners.has(n)) return "ready";
+    const failure = reclaimFailures.get(n);
+    if (reclaimFailures.delete(n)) throw failure;
+    if (!reclaims.has(n)) {
+      const pending = (async () => {
         const res = await client.request(RUNNER_ROUTES.reset, {
           method: "POST",
           timeoutMs: RESET_TIMEOUT_MS,
         });
-        if (res.status !== 204 && res.status !== 200)
-          throw await runnerStatusError(client.number, "reset", res);
+        if (res.status !== 204 && res.status !== 200) throw await runnerStatusError(n, "reset", res);
         await res.body?.cancel().catch(() => undefined);
-        options.logger?.info("skill runner reclaimed", { runner: client.number });
+        options.logger?.info("skill runner reclaimed", { runner: n });
       })();
-      reclaimed.set(client.number, pending);
-      // A failed reset is retried by the next open.
-      pending.catch(() => reclaimed.delete(client.number));
+      reclaims.set(n, pending);
+      pending
+        .then(
+          () => reclaimedRunners.add(n),
+          (error: unknown) => reclaimFailures.set(n, error),
+        )
+        .finally(() => reclaims.delete(n));
     }
-    return untilAborted(pending, signal);
+    return "pending";
   }
 
   /** Best effort: the runner may have accepted an open whose answer never arrived; free it for that task. */
@@ -128,7 +131,7 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
       await client.info(signal);
       verified.add(client.number);
     }
-    await reclaim(client, signal);
+    if (reclaim(client) === "pending") return "busy" as const;
     let res: Response;
     try {
       res = await client.request(RUNNER_ROUTES.open, {

@@ -234,6 +234,17 @@ describe("sidecar sandbox driver", () => {
     await session.close();
   });
 
+  it("opens on an idle runner while another runner's first reset is still running", async () => {
+    const slow = await fakeRunner({ slowReset: 5_000 });
+    const fast = await fakeRunner();
+    const started = Date.now();
+    const session = await open([slow.url, fast.url]);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(fast.seen.opens).toHaveLength(1);
+    expect(slow.seen.opens).toHaveLength(0);
+    await session.close();
+  });
+
   it("keeps a huge command timeout from firing at once", async () => {
     const runner = await fakeRunner();
     const session = await open([runner.url]);
