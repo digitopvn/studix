@@ -635,10 +635,32 @@ object storage; Studix checks only the outputs a run asks it to check.
 
 The run sandbox has network, Node, Python, ffmpeg, Chromium, the HyperFrames and Remotion CLIs,
 `multix generate` with the workspace's media keys (images, TTS, BGM, SFX via ElevenLabs and others)
-and the enabled skills under `/skills`. Every file the command adds or changes is stored back (1 GB
-each, 200 per run; `node_modules`, `.git` and caches stay behind). `timeoutSeconds` defaults to 900
+and the enabled skills under `/skills`. `timeoutSeconds` defaults to 900
 (max 3600); compute is billed per started minute against `budgetCents`. It needs `media:exec`
 (write needs `project:write`) and `STUDIX_SANDBOX=docker` on the worker.
+
+**What persists between runs.** Every run is an ephemeral sandbox: Studix copies the composition's
+stored files into `/work/c`, runs the command there, and stores back only what the command added
+or changed. Everything else is gone when the run ends: files outside `/work/c`, installed packages,
+global caches, environment changes. The next run starts from the stored files again, so a project
+a command generated (for example `npx hyperframes init my-video`) is available to later runs only
+if its files were stored.
+
+- **Stored:** regular files the command created or modified, up to 1 GB each and 200 per run (a
+  longer list is cut and the log says so). They are listed in `changed[]` of the job result and
+  show up in `studix_composition_read`. A composition holds at most 400 files.
+- **Not stored:** unchanged files (they are stored already, so they are not in `changed[]`),
+  anything under `node_modules`, `.git`, `.cache`, `.npm`, `__pycache__` or `.venv`, and files whose
+  path is not a plain relative path: each segment starts with a letter, digit or `_` and contains only
+  letters, digits and `._@+-` (no spaces, no hidden `.files`), 240 characters at most.
+- **Persist a generated project:** run its generator inside the composition root, check that its
+  files appear in `changed[]`, and run `npm install` (or similar) again at the start of each
+  later command, because `node_modules` is not kept. Rename or delete files that the rules above
+  would drop.
+- **Not in `changed[]` means not stored:** if a later run cannot find a directory, it was not in
+  `changed[]` of the run that should have created it.
+- **Writes from outside:** `studix_composition_write` files persist the same way (8 MB each); a
+  run that overlaps a write keeps both.
 
 `check: {path, width?, height?, durationMs?, durationToleranceMs?, loudnessLufs?}` probes a file after
 an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the

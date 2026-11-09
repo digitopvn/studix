@@ -118,7 +118,7 @@ export const COMPOSITION_MCP_TOOLS = [
     name: COMPOSITION_TOOL_NAMES.run,
     title: "Run in composition",
     description:
-      "Async: run a shell command over a composition in the skill sandbox (Node, Python, ffmpeg, Chromium, HyperFrames, Remotion, Multix, /skills). Changed files are stored back. Poll studix_get_job.",
+      "Async: run a shell command over a composition in the skill sandbox (Node, Python, ffmpeg, Chromium, HyperFrames, Remotion, Multix, /skills). Each run is an ephemeral sandbox: only files the command added or changed (changed[], plain relative paths, no node_modules or dot-folders, 200 per run) are stored and visible to the next run; reinstall packages each run. Poll studix_get_job.",
     input: RunInput,
     readOnly: false,
     audited: true,
