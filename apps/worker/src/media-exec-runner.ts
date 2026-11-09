@@ -186,8 +186,29 @@ export interface MediaExecRunnerDeps {
   driver?: SandboxDriver;
 }
 
+/** media.exec relies on `--network none`; a sidecar runner keeps the Pod's network, so it never runs there. */
+export function mediaExecNeedsDocker(): StudixError {
+  return new StudixError(
+    "UNAVAILABLE",
+    "media.exec needs a network-isolated sandbox, and the sidecar skill runner (STUDIX_SANDBOX=sidecar) cannot cut egress",
+    {
+      retryable: false,
+      details: { backend: "sidecar" },
+      suggestedAction:
+        "Run media.exec on a worker with STUDIX_SANDBOX=docker on a host with Docker, or use composition.run for ffmpeg work in the skill sandbox.",
+    },
+  );
+}
+
 export function createMediaExecRunner(deps: MediaExecRunnerDeps): MediaExecRunner {
   const { settings } = deps;
+  if (deps.sandbox.sidecar && !deps.driver) {
+    return {
+      async run() {
+        throw mediaExecNeedsDocker();
+      },
+    };
+  }
   const driver =
     deps.driver ??
     createDockerSandboxDriver({

@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-07
+- Extended by [ADR-0025](0025-sidecar-skill-runner.md) (sidecar backend for the TOSE worker)
 
 ## Context
 

@@ -91,6 +91,8 @@ export interface WorkerAgentHarnessDeps {
     stage: StageContext,
     hostPath: string,
   ) => Promise<{ assetId: string; storageKey: string; url: string; contentType: string } | undefined>;
+  /** Host paths of the media a stage run left outside /work/out, stored as preview artifacts. */
+  previewFiles?: (stage: StageContext) => Promise<string[]>;
 }
 
 export interface WorkerAgentHarness {
@@ -470,7 +472,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         throw new StudixError("VALIDATION", "Input files need a tool-using task in the skill sandbox", {
           retryable: false,
           suggestedAction:
-            "Give the task the read or bash tool, and run the worker with STUDIX_SANDBOX=docker.",
+            "Give the task the read or bash tool, and run the worker with a skill sandbox (STUDIX_SANDBOX=docker, or sidecar on hosts without Docker).",
         });
       }
       if (choice.runtime === "claude") {
@@ -514,6 +516,12 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
             return undefined;
           });
           sink?.push({ type: "artifact", name, ...stored });
+        }
+        // Media the agent made along the way (outside /work/out): stored for review, never a result.
+        for (const hostPath of (await deps.previewFiles?.(stage).catch(() => [])) ?? []) {
+          const name = hostPath.split(/[\\/]/).pop() ?? hostPath;
+          const stored = await deps.storeArtifact?.(ctx, stage, hostPath).catch(() => undefined);
+          if (stored) sink?.push({ type: "artifact", name, preview: true, ...stored });
         }
         sink?.push({
           type: "status",

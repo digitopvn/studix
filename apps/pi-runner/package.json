@@ -1,0 +1,10 @@
+{
+  "name": "@studix/pi-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pod-local sidecar that runs one agent task's tool commands (docs/decisions/0025-sidecar-skill-runner.md).",
+  "scripts": {
+    "start": "node src/main.ts"
+  }
+}

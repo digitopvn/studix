@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type ClaudeAgentTransport,
@@ -51,7 +52,12 @@ import { prepareClaudeSandboxRoot } from "./planner/claude-sandbox.ts";
 import { createExecutionSink } from "./planner/execution-sink.ts";
 import { createVideoPlanner } from "./planner/video-planner.ts";
 import { createWorkspaceModelDecisions } from "./planner/workspace-model-decisions.ts";
-import { createSkillSandbox, loadSandboxSettings, type SkillSandbox } from "./skill-sandbox.ts";
+import {
+  createSkillSandbox,
+  loadSandboxSettings,
+  type SkillSandbox,
+  sandboxPreviewDir,
+} from "./skill-sandbox.ts";
 import type { WorkerPorts } from "./wiring.ts";
 import type { WorkerPortsRuntime } from "./worker-process.ts";
 import type { WorkerSettings } from "./worker-settings.ts";
@@ -233,13 +239,18 @@ function agentHarness(
           piWorkspace: (stage) => sandbox.forStage(stage),
           codex: { defaultModel: settings.codexModel },
           storeArtifact: createAgentArtifactStore({ storage, assets: repos.assets }),
+          previewFiles: async (stage) => {
+            const dir = sandboxPreviewDir(settings.workDir, stage);
+            const names = await readdir(dir).catch(() => []);
+            return names.map((n) => join(dir, n));
+          },
         }
       : {}),
   });
 }
 
 /**
- * The skill sandbox (STUDIX_SANDBOX=docker) with the enabled skills of each tenant: from a local directory
+ * The skill sandbox (STUDIX_SANDBOX=docker or sidecar) with the enabled skills of each tenant: from a local directory
  * when STUDIX_SANDBOX_SKILLS_DIR is set, else from the skill store.
  */
 async function skillSandbox(
@@ -306,7 +317,10 @@ async function skillSandbox(
   });
 }
 
-/** The sandbox of `media.exec` jobs: the skill sandbox image with no network, on when STUDIX_SANDBOX=docker. */
+/**
+ * The sandbox of `media.exec` jobs: the skill sandbox image with no network, on when STUDIX_SANDBOX=docker.
+ * With STUDIX_SANDBOX=sidecar its jobs fail with an explicit UNAVAILABLE (no network isolation there).
+ */
 function mediaExecPort(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
@@ -483,6 +497,7 @@ export async function loadWorkerPorts(
     storage,
     ...(harness ? { agentRuntimeFor: (stage) => harness.runtimeFor(stage) } : {}),
     ...(mediaExec ? { mediaExec } : {}),
+    ...(sandbox ? { sandboxStatus: () => sandbox.status() } : {}),
     ...(compositionRun ? { compositionRun } : {}),
     close: async () => {
       // Shutdown stops waiting on stages at once; let aborted agent runs finish killing their process.

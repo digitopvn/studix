@@ -24,6 +24,8 @@ export type HarnessAgentEvent =
       /** Short-lived signed URL for previews. */
       url?: string;
       contentType?: string;
+      /** A file the agent made along the way, kept for review only; the chat previews it where it is named. */
+      preview?: boolean;
     };
 
 export interface AgentEventSink {

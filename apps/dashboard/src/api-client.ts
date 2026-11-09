@@ -1136,7 +1136,7 @@ export type AgentChatEvent = { stage: string | null; at: string } & (
       model?: string;
       error?: string;
     }
-  | { type: "artifact"; name: string; url?: string; contentType?: string }
+  | { type: "artifact"; name: string; url?: string; contentType?: string; preview?: boolean }
 );
 
 export interface AgentJobStatus {
