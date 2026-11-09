@@ -155,7 +155,7 @@ Behavior notes:
   reason on `studix_get_job`; it is never silent. A job that names its `agent` (or `planner`) never
   falls back: an agent that cannot run fails the job with `UNAVAILABLE`.
 - A stage that skipped an optional part instead of failing the job shows `stages[].warning`, for
-  example the motion-graphic SFX accent when the media provider has no sound-effect model or key.
+  example the motion-graphic SFX accent or music bed when the media provider has no model or key for it.
 - Each stage on `studix_get_job` carries `stages[].run`, summed from its attempt's usage lines:
   - `runtime`: `claude`, `codex` or `pi` for an agent run; `host` for the MCP client's own agent; `planner` for the legacy planner's model calls; `function` for plain code such as `brief`, `compose` or `finalize`.
   - The `model`, `reasoningEffort` and `connectionLabel` it ran on.
