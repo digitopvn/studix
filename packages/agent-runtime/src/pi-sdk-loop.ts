@@ -458,7 +458,7 @@ async function runAttempt(
   attempt = {
     ...attempt,
     onSandboxCap: (err) => {
-      sandboxCap ??= agentCapError("time", "The skill sandbox reached its wall time", {
+      sandboxCap ??= agentCapError("time", "The skill sandbox was stopped (wall time reached)", {
         ...err.details,
       });
       void session?.abort();
@@ -514,8 +514,9 @@ async function runAttempt(
     });
 
     await active.prompt(buildPrompt(task));
-    if (sandboxCap) throw sandboxCap;
+    // A cancel or another cap closes the sandbox too: their reason wins over the sandbox's own error.
     throwIfAborted(task);
+    if (sandboxCap) throw sandboxCap;
     const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
     if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");
     if (reply.stopReason === "error" || reply.stopReason === "aborted") {

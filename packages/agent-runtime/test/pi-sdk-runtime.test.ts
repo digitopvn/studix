@@ -5,6 +5,7 @@ import { testTenant } from "@studix/core/testing";
 import { StudixError } from "@studix/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  agentCapOf,
   agentSpendOf,
   cheapestPiModel,
   createPiKeyTester,
@@ -234,6 +235,87 @@ describe("Pi SDK runtime", () => {
     await expect(running).rejects.toMatchObject({ code: "CANCELLED" });
     await new Promise((r) => setTimeout(r, 80));
     expect(seen).toHaveLength(0);
+  });
+
+  it("ends the run with the time cap when the sandbox was closed by its wall time", async () => {
+    const toolServer = createServer(async (req, res) => {
+      await readBody(req);
+      toolCalls++;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      const base = { id: `c${toolCalls}`, object: "chat.completion.chunk", model: "m" };
+      const send = (choice: object, extra: object = {}) =>
+        res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, ...choice }], ...extra })}\n\n`);
+      send({ delta: { role: "assistant", content: "" }, finish_reason: null });
+      send({
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              id: `t${toolCalls}`,
+              type: "function",
+              function: { name: "bash", arguments: JSON.stringify({ command: "echo hi" }) },
+            },
+          ],
+        },
+        finish_reason: null,
+      });
+      send(
+        { delta: {}, finish_reason: "tool_calls" },
+        { usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 } },
+      );
+      res.end("data: [DONE]\n\n");
+    });
+    let toolCalls = 0;
+    await new Promise<void>((r) => toolServer.listen(0, "127.0.0.1", r));
+    try {
+      const url = `http://127.0.0.1:${(toolServer.address() as AddressInfo).port}/v1`;
+      const bound = (connectionId: string) =>
+        binding({ connectionId, endpoint: { ...binding().endpoint!, baseUrl: url } });
+      let execs = 0;
+      const sandbox = {
+        id: "s",
+        exec: async () => {
+          execs++;
+          throw new StudixError("TIMEOUT", "The sandbox was stopped", {
+            retryable: false,
+            details: { cap: "time" },
+          });
+        },
+        run: async () => Buffer.from(""),
+        copyOut: async () => {},
+        copyIn: async () => {},
+        close: async () => {},
+      };
+      const workspace = {
+        open: async () => ({
+          sandbox,
+          skills: [],
+          inputs: [],
+          collect: async () => [],
+          close: async () => {},
+        }),
+      };
+      const runtime = createPiSdkAgentRuntime({
+        resolver: staticResolver(bound("pcon_a"), bound("pcon_b")),
+        workspace,
+        turnRetry: false,
+      } as never);
+      const err = await runtime
+        .run(
+          testTenant(),
+          task({
+            maxTurns: 10,
+            tools: [{ name: "bash", description: "Run a command", inputSchema: { type: "object" } }],
+          }),
+        )
+        .catch((e: unknown) => e);
+      expect(agentCapOf(err)).toBe("time");
+      // The model is not called again after the closed sandbox, and no fallback binding is tried.
+      expect(toolCalls).toBe(1);
+      expect(execs).toBe(1);
+    } finally {
+      await new Promise<void>((r) => toolServer.close(() => r()));
+    }
   });
 
   it("rejects tools", async () => {

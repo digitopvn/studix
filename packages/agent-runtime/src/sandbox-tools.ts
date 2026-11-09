@@ -37,8 +37,8 @@ export function containerPath(path: string, hostDir?: string): string {
   return posix.resolve(SANDBOX_WORK_DIR, unixLike);
 }
 
-/** The error a sandbox raises once a cap closed it (`details.cap` is set), as opposed to an ordinary tool failure. */
-export function sandboxCapError(err: unknown): StudixError | undefined {
+/** The error a sandbox raises once its wall time closed it, as opposed to an ordinary tool failure. */
+function sandboxCapError(err: unknown): StudixError | undefined {
   return err instanceof StudixError && err.details?.cap === "time" ? err : undefined;
 }
 
@@ -59,12 +59,9 @@ function withCapReport(sandbox: SandboxSession, onCap: (err: StudixError) => voi
       }
     };
   return {
-    id: sandbox.id,
+    ...sandbox,
     exec: watch(sandbox.exec.bind(sandbox)),
     run: watch(sandbox.run.bind(sandbox)),
-    copyOut: watch(sandbox.copyOut.bind(sandbox)),
-    copyIn: watch(sandbox.copyIn.bind(sandbox)),
-    close: () => sandbox.close(),
   };
 }
 
