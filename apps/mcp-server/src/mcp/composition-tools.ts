@@ -22,6 +22,7 @@ export const COMPOSITION_TOOL_NAMES = {
   write: "studix_composition_write",
   read: "studix_composition_read",
   run: "studix_composition_run",
+  attachRender: "studix_composition_attach_render",
 } as const;
 
 function service(ctx: ToolContext): CompositionService {
@@ -62,13 +63,20 @@ const RunInput = z.object({
     ),
   timeoutSeconds: z.number().int().min(1).max(COMPOSITION_LIMITS.maxTimeoutSeconds).optional(),
   check: CompositionCheck.optional().describe(
-    "Output check after the command: size, duration, loudness of a rendered file. The job fails when it misses.",
+    "Output check after the command: size, duration, audio and loudness of a rendered file; `frames` also samples the picture (black or blank frames, safe margins, motion, Vietnamese font) and stores a contact sheet at `check.contactSheet`. The job fails when it misses.",
   ),
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),
   idempotencyKey: z
     .string()
     .regex(/^[A-Za-z0-9._:-]{1,200}$/)
     .optional(),
+});
+
+const AttachInput = z.object({
+  compositionId: CompositionId,
+  path: CompositionPath.describe("The rendered MP4 in the composition, e.g. out/video.mp4"),
+  projectId: z.string().min(1).max(100).describe("The project that should show this render."),
+  preset: z.enum(["preview", "final"]).optional().describe("Default final."),
 });
 
 const summary = (manifest: { id: string; title?: string; files: { path: string; bytes: number }[] }) => ({
@@ -118,7 +126,7 @@ export const COMPOSITION_MCP_TOOLS = [
     name: COMPOSITION_TOOL_NAMES.run,
     title: "Run in composition",
     description:
-      "Async: run a shell command over a composition in the skill sandbox (Node, Python, ffmpeg, Chromium, HyperFrames, Remotion, Multix, /skills). Changed files are stored back. Poll studix_get_job.",
+      "Async: run a shell command in a fresh sandbox holding the composition's stored files (Node, Python, ffmpeg, Chromium, HyperFrames). Only files it adds or changes are kept. Poll studix_get_job.",
     input: RunInput,
     readOnly: false,
     audited: true,
@@ -147,4 +155,33 @@ export const COMPOSITION_MCP_TOOLS = [
       };
     },
   } satisfies NativeTool<typeof RunInput>,
+  {
+    name: COMPOSITION_TOOL_NAMES.attachRender,
+    title: "Attach composition render to a project",
+    description:
+      "Register a composition's rendered MP4 as a playable project render (asset, version, preview) for studix_get_project and the dashboard. Safe to repeat for one file, preset and version.",
+    input: AttachInput,
+    readOnly: false,
+    audited: true,
+    async run(ctx, input) {
+      const { render, assetId, replayed } = await service(ctx).attachRender(ctx.tenant, input);
+      return {
+        data: {
+          renderId: render.id,
+          projectId: render.projectId,
+          ...(assetId ? { assetId } : {}),
+          ...(render.assetVersionId ? { assetVersionId: render.assetVersionId } : {}),
+          status: render.status,
+          replayed,
+        },
+        next: [
+          {
+            tool: STUDIX_TOOLS.getProject,
+            arguments: { projectId: render.projectId },
+            reason: "The render is listed with a signed playback URL.",
+          },
+        ],
+      };
+    },
+  } satisfies NativeTool<typeof AttachInput>,
 ] as const;

@@ -1,5 +1,12 @@
-import { JOB_KINDS, type MediaExecRequest, type MediaExecResult, parseMediaExecRequest } from "@studix/core";
+import {
+  JOB_KINDS,
+  MEDIA_EXEC_LIMITS,
+  type MediaExecRequest,
+  type MediaExecResult,
+  parseMediaExecRequest,
+} from "@studix/core";
 import { StudixError } from "@studix/shared";
+import { killedCommandError } from "./killed-command-error.ts";
 import { StageFailedAfterSpend } from "./stage-signals.ts";
 import type { StageContext, StageUsage, WorkflowDefinition } from "./workflow-types.ts";
 
@@ -54,6 +61,20 @@ export function createMediaExecWorkflow(deps: MediaExecWorkflowDeps): WorkflowDe
               metadata: { tool: request.tool, exitCode: result.exitCode },
             },
           ];
+          // A killed tool never exited: its timeout is TIMEOUT, an earlier kill (sandbox lost) UNAVAILABLE.
+          // A tool that itself exits 124 is not killed and stays a VALIDATION failure below.
+          if (result.killed) {
+            throw new StageFailedAfterSpend(
+              killedCommandError({
+                subject: request.tool,
+                timeoutSeconds: request.timeoutSeconds,
+                maxTimeoutSeconds: MEDIA_EXEC_LIMITS.maxTimeoutSeconds,
+                durationMs: result.durationMs,
+                details: { exitCode: result.exitCode, stderrTail: result.stderr.slice(-STDERR_TAIL).trim() },
+              }),
+              usage,
+            );
+          }
           if (result.exitCode !== 0) {
             const tail = result.stderr.slice(-STDERR_TAIL).trim();
             throw new StageFailedAfterSpend(

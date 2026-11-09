@@ -5,6 +5,7 @@ export * from "./creative-gate-stage.ts";
 export * from "./file-digest.ts";
 export * from "./ir-asset-download.ts";
 export * from "./job-executor.ts";
+export { reachedTimeout } from "./killed-command-error.ts";
 export * from "./media-exec-workflow.ts";
 export * from "./retry-backoff.ts";
 export * from "./stage-runner.ts";

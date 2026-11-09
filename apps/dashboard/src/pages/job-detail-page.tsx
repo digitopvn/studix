@@ -191,6 +191,7 @@ function StageTimeline({ job, live }: { job: Job; live: Record<string, LiveStage
           {s.fallback && (
             <p className="banner banner-warning">Agent did not run, used the template: {s.fallback}</p>
           )}
+          {s.warning && <p className="banner banner-warning">{s.warning}</p>}
         </li>
       ))}
     </ol>

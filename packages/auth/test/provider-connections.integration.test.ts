@@ -197,6 +197,31 @@ describe("provider connections over Postgres", () => {
         svc.resolveForExecution(t.worker, { connectionId: alice.id, requestedBy: bobRef, runtime: "claude" }),
       ),
     ).toBe("FORBIDDEN");
+    // An OAuth client acting for Alice runs her key and sees it; an API key never does.
+    const aliceApp = { type: "oauth" as const, id: aliceRef.id };
+    expect(
+      (
+        await svc.resolveForExecution(t.worker, {
+          connectionId: alice.id,
+          requestedBy: aliceApp,
+          runtime: "claude",
+        })
+      ).apiKey,
+    ).toBe(KEY_B);
+    const appCtx = {
+      ...t.alice,
+      actor: { ...aliceApp, clientId: "app", scopes: ["workspace:read", "project:write"] },
+    };
+    expect((await svc.list(appCtx as TenantContext)).connections.map((c) => c.id)).toContain(alice.id);
+    expect(
+      await codeOf(
+        svc.resolveForExecution(t.worker, {
+          connectionId: alice.id,
+          requestedBy: { type: "apiKey", id: "key_x" },
+          runtime: "claude",
+        }),
+      ),
+    ).toBe("FORBIDDEN");
     expect(
       await codeOf(
         svc.resolveForExecution(t.viewer, { connectionId: ws.id, requestedBy: bobRef, runtime: "claude" }),

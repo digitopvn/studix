@@ -95,6 +95,15 @@ export function actorRef(actor: Actor): ActorRef {
   return { type: actor.type, id: actor.id };
 }
 
+/**
+ * The person an actor works for: a signed-in user, or the user an OAuth client acts for. That person's
+ * personal keys and model preferences apply to the actor's work. API keys and system actors act for the
+ * workspace, never for a person, so they get none.
+ */
+export function actingUserId(actor: ActorRef): string | undefined {
+  return actor.type === "user" || actor.type === "oauth" ? actor.id : undefined;
+}
+
 export function isRole(value: unknown): value is Role {
   return typeof value === "string" && (ROLES as readonly string[]).includes(value);
 }

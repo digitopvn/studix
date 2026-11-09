@@ -207,7 +207,8 @@ export interface StageDefinition {
    * interchangeable outputs. When the runner has a stage cache holding the key for the tenant, the cached
    * output is reused and the stage is neither run, approval-gated, budget-checked nor charged again.
    * Return undefined to skip the cache for one run. Only stages with portable outputs (no worker-local
-   * paths) may declare a key.
+   * paths) may declare a key. An output that carries a `warning` is a degraded result (e.g. a skipped
+   * optional step): it is neither cached nor reused, so the next run tries the full work again.
    */
   cacheKey?(stage: StageContext): string | undefined | Promise<string | undefined>;
   /**

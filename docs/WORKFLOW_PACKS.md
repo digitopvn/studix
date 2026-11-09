@@ -224,7 +224,8 @@ Lý do của các ràng buộc:
   (`stageMediaDir`, `<workRoot>/<jobId>/media/<stage>`), không phải work dir của attempt, nên stage được
   retry tìm lại file đã trả tiền thay vì sinh lại. Thư mục bị xóa ở `finalize`; job fail giữ nó cho lần
   retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
-- Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (voice và một SFX),
+- Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent, bỏ qua kèm `warning` khi
+  thiếu provider SFX), `motion-graphic.voice` (voice),
   `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).
 
@@ -297,8 +298,14 @@ image-to-video, audio, render, QA và publish.
 
 Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prompt. Style profile được chọn theo
 `tone`, `objective` và prompt, hoặc theo `directions[0].visualStyle` nếu trùng id một profile trong
-[`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Toàn bộ
-dòng voice-over (hook, tối đa bốn message, CTA) phải vừa ngân sách từ của độ dài.
+[`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
+template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
+từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
+nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do
+`directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
+lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`
+cũng tôn trọng field này. Thiếu model hay key SFX thì accent bị bỏ qua và stage ghi `warning`, job vẫn
+chạy tiếp.
 
 ```json
 {

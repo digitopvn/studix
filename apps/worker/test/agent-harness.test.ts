@@ -117,6 +117,7 @@ function createWorld(
     spentCents?: number;
     executionsDown?: boolean;
     tools?: boolean;
+    createdBy?: ActorRef;
   } = {},
 ) {
   const ctx: TenantContext = testTenant();
@@ -239,7 +240,7 @@ function createWorld(
     kind: "video.create",
     status: "running",
     payload: options.payload ?? {},
-    createdBy: requester,
+    createdBy: options.createdBy ?? requester,
     attempts: 1,
     spentCents: options.spentCents ?? 0,
     budgetCents: 500,
@@ -441,6 +442,41 @@ describe("worker agent harness", () => {
     expect(agentLine(result.usage).costCents).toBeCloseTo(3);
     expect(tools.sandboxRuns[0]).toMatchObject({ model: "claude-opus-test", reasoningEffort: "xhigh" });
     expect(tools.transport.requests).toEqual([]);
+  });
+
+  it("runs a job's own Pi agent on its model without any preference, and a retry reuses that pin", async () => {
+    const world = createWorld({
+      payload: {
+        agent: { runtime: "pi", connectionId: "pcon_openai", provider: "openai", modelId: "gpt-job-model" },
+      },
+    });
+    const line = agentLine((await world.run()).usage);
+    expect(line.metadata).toMatchObject({ runtime: "pi", model: "openai/gpt-job-model" });
+    expect(world.pinned.get(`job_harness:pi:${STAGE}`)).toMatchObject({
+      source: "job-request",
+      connectionId: "pcon_openai",
+      modelId: "gpt-job-model",
+    });
+    // Preferences added later, even a more specific Claude one, never move the job off its own model.
+    world.preferences.push(
+      preference({ modelId: "gpt-preferred" }),
+      preference({ runtime: "claude", connectionId: "pcon_claude", provider: "anthropic", stage: STAGE }),
+    );
+    expect(agentLine((await world.run()).usage).metadata).toMatchObject({ model: "openai/gpt-job-model" });
+    expect(world.transport.requests).toHaveLength(0);
+  });
+
+  it("resolves the user's own default for a job an OAuth client created for them", async () => {
+    const world = createWorld({
+      preferences: [preference({ connectionId: "pcon_mine", scope: { type: "user", userId: requester.id } })],
+      createdBy: { type: "oauth", id: requester.id },
+    });
+    const line = agentLine((await world.run()).usage);
+    expect(line.funding).toBe("member");
+    expect(world.pinned.get(`job_harness:pi:${STAGE}`)).toMatchObject({
+      source: "user-default",
+      connectionId: "pcon_mine",
+    });
   });
 
   it("fails UNAVAILABLE without a chosen model, and never pays for anything", async () => {

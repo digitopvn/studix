@@ -1,6 +1,18 @@
-import { mergeManifest } from "@studix/core";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  assertCompositionFits,
+  COMPOSITION_LIMITS,
+  compositionCountAfter,
+  compositionFileKey,
+  compositionManifestKey,
+  mergeManifest,
+} from "@studix/core";
+import { testTenant } from "@studix/core/testing";
+import { createLogger } from "@studix/shared";
 import { describe, expect, it } from "vitest";
-import { compositionCheckProblems } from "../src/composition-runner.ts";
+import { compositionCheckProblems, createCompositionRunner } from "../src/composition-runner.ts";
 
 const file = (path: string) => ({ path, bytes: 1, sha256: "x", contentType: "text/plain" });
 
@@ -24,9 +36,176 @@ describe("composition runs", () => {
     expect(problems).toHaveLength(5);
   });
 
+  it("requires an audible track when audio is requested", () => {
+    const check = { path: "out/v.mp4", durationToleranceMs: 500, audio: true };
+    const probe = { width: 1920, height: 1080, durationMs: 1000 };
+    expect(compositionCheckProblems(check, probe, undefined)).toEqual(["no audio track"]);
+    expect(compositionCheckProblems(check, { ...probe, audioCodec: "aac" }, undefined)).toEqual([
+      "audio is silent",
+    ]);
+    expect(
+      compositionCheckProblems(
+        check,
+        { ...probe, audioCodec: "aac" },
+        { integratedLufs: -18, truePeakDbtp: -3 },
+      ),
+    ).toEqual([]);
+  });
+
   it("merges run output into the manifest, keeping files written meanwhile", () => {
     const manifest = { id: "cmp_1", files: [file("index.html"), file("old.png")] } as never;
     const merged = mergeManifest(manifest, [file("out/video.mp4")], ["old.png"]);
     expect(merged.files.map((f) => f.path).sort()).toEqual(["index.html", "out/video.mp4"]);
+  });
+
+  it("stores none of the files a killed command wrote and keeps the log tail", async () => {
+    const id = "cmp_killed1";
+    const manifest = { id, files: [], updatedAt: "2026-01-01T00:00:00.000Z" };
+    // Every key put here, with its body as text (the manifest is the only object to begin with).
+    const objects = new Map<string, string>([[compositionManifestKey(id), JSON.stringify(manifest)]]);
+    const storage = {
+      head: async (_ctx: unknown, key: string) => objects.has(key),
+      get: async (_ctx: unknown, key: string) => ({
+        body: new Blob([objects.get(key) ?? ""]).stream(),
+      }),
+      put: async (_ctx: unknown, key: string, body: unknown) => {
+        objects.set(key, body instanceof Uint8Array ? new TextDecoder().decode(body) : "file");
+      },
+    };
+    const box = {
+      run: async (argv: string[]) => Buffer.from(argv[0] === "find" ? "7 out/video-only.mp4\n" : ""),
+      exec: async (_cmd: string, opts: { onData?: (chunk: Buffer) => void }) => {
+        opts.onData?.(Buffer.from("rendering frame 900/1800"));
+        return { exitCode: null };
+      },
+      copyOut: async (_from: string, to: string) => writeFile(to, "partial"),
+    };
+    const runner = createCompositionRunner({
+      sandbox: {
+        forStage: () => ({ open: async () => ({ sandbox: box, close: async () => undefined }) }),
+      } as never,
+      storage: storage as never,
+      workDir: await mkdtemp(join(tmpdir(), "cmp-run-")),
+      logger: createLogger({}, { level: "error", write: () => {} }),
+    });
+    const stage = { ctx: {}, job: { id: "job_1" }, signal: new AbortController().signal } as never;
+    const result = await runner.run(stage, { compositionId: id, command: "render", timeoutSeconds: 480 });
+    expect(result.exitCode).toBeNull();
+    expect(result.changed).toEqual([]);
+    expect(result.log).toContain("rendering frame 900/1800");
+    expect(result.log).toContain("not stored, may be incomplete: out/video-only.mp4");
+    expect([...objects.keys()]).toEqual([compositionManifestKey(id)]);
+  });
+});
+
+describe("composition run limits", () => {
+  const ctx = testTenant();
+  const id = "cmp_limit01";
+
+  function setup(existing: string[], produced: string[]) {
+    const store = new Map<string, Uint8Array>();
+    const puts: string[] = [];
+    const manifest = {
+      id,
+      files: existing.map((p) => ({ ...file(p), sha256: "old" })),
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    store.set(compositionManifestKey(id), new TextEncoder().encode(JSON.stringify(manifest)));
+    for (const p of existing) store.set(compositionFileKey(id, p), new TextEncoder().encode("old"));
+    const storage = {
+      async put(_c: unknown, key: string, body: unknown) {
+        puts.push(key);
+        const bytes = body instanceof Uint8Array ? body : new TextEncoder().encode("new");
+        store.set(key, bytes);
+        return {} as never;
+      },
+      async get(_c: unknown, key: string) {
+        const bytes = store.get(key) as Uint8Array;
+        return {
+          body: new Response(bytes as BlobPart).body as ReadableStream<Uint8Array>,
+          contentType: "x",
+          bytes: bytes.length,
+        };
+      },
+      async head(_c: unknown, key: string) {
+        return store.has(key) ? ({} as never) : undefined;
+      },
+    };
+    const box = {
+      async run(argv: string[]) {
+        if (argv[0] === "find")
+          return Buffer.from(
+            produced.map((p) => `${p.startsWith("big/") ? 2_000_000_000 : 3} ${p}\n`).join(""),
+          );
+        return Buffer.alloc(0);
+      },
+      async exec() {
+        return { exitCode: 0 };
+      },
+      async copyOut(_from: string, to: string) {
+        await writeFile(to, "new");
+      },
+    };
+    const sandbox = {
+      forStage: () => ({ open: async () => ({ sandbox: box, close: async () => undefined }) }),
+    };
+    const runner = createCompositionRunner({
+      sandbox: sandbox as never,
+      storage: storage as never,
+      workDir: join(tmpdir(), `studix-cmp-${process.pid}`),
+      logger: { child: () => ({ info() {} }) } as never,
+    });
+    const stage = { ctx, job: { id: "job_x" }, signal: new AbortController().signal } as never;
+    return { runner, stage, store, puts };
+  }
+
+  it("leaves the composition untouched when the run would exceed the file cap", async () => {
+    const existing = Array.from({ length: COMPOSITION_LIMITS.files - 1 }, (_, i) => `f${i}.txt`);
+    const { runner, stage, store, puts } = setup(existing, ["f0.txt", "new-a.txt", "new-b.txt"]);
+    const before = new TextDecoder().decode(store.get(compositionManifestKey(id)));
+    await expect(
+      runner.run(stage, { compositionId: id, command: "true", timeoutSeconds: 60 } as never),
+    ).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+    expect(puts).toEqual([]);
+    expect(new TextDecoder().decode(store.get(compositionFileKey(id, "f0.txt")))).toBe("old");
+    expect(new TextDecoder().decode(store.get(compositionManifestKey(id)))).toBe(before);
+  });
+
+  it("stores the run when it fits, counting overwritten paths once", async () => {
+    const existing = Array.from({ length: COMPOSITION_LIMITS.files - 1 }, (_, i) => `f${i}.txt`);
+    const { runner, stage, puts } = setup(existing, ["f0.txt", "new-a.txt"]);
+    const result = await runner.run(stage, {
+      compositionId: id,
+      command: "true",
+      timeoutSeconds: 60,
+    } as never);
+    expect(result.changed.map((c) => c.path)).toEqual(["f0.txt", "new-a.txt"]);
+    expect(puts).toContain(compositionFileKey(id, "new-a.txt"));
+    expect(result.log).not.toContain("not stored");
+  });
+
+  it("names files it does not store and keeps the log when a run is refused", async () => {
+    const { runner, stage, puts } = setup(
+      Array.from({ length: COMPOSITION_LIMITS.files }, (_, i) => `f${i}.txt`),
+      ["big/movie.mp4", "new-a.txt"],
+    );
+    const err = await runner
+      .run(stage, { compositionId: id, command: "true", timeoutSeconds: 60 } as never)
+      .catch((e) => e);
+    expect(err).toMatchObject({ code: "VALIDATION" });
+    expect(err.message).toContain("stored none");
+    expect(JSON.stringify(err.details)).toContain("big/movie.mp4");
+    expect(puts).toEqual([]);
+  });
+});
+
+describe("composition file cap", () => {
+  it("counts an overwritten path once and refuses past the cap", () => {
+    const files = [file("a.txt"), file("b.txt")];
+    expect(compositionCountAfter({ files }, ["a.txt", "c.txt"])).toBe(3);
+    expect(() => assertCompositionFits(COMPOSITION_LIMITS.files)).not.toThrow();
+    expect(() => assertCompositionFits(COMPOSITION_LIMITS.files + 1)).toThrow(/at most/);
   });
 });

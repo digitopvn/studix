@@ -116,6 +116,11 @@ Behavior notes:
   does not count), `renderPreset`, `planner`,
   `workflowTemplate`, `agentMode` (`harness` or `host`, see the agent stage
   handoff tools below) and `agent`.
+- `brief.voiceover: false` asks for a voiceless video: no spoken voice-over, no
+  captions read from it and no sound accent, so no speech provider is needed.
+  `motion-graphic` and `marketing-video` honour it (marketing ads keep their
+  music and SFX); `brand-intro` has no voice-over either way. It defaults to
+  true.
 - `agent: {runtime, providerConnectionId, model?, reasoningEffort?}` picks the
   runtime of the job's agent stages: `pi`, `claude` or `codex`. The connection
   must belong to the workspace (or be yours), be usable and be enabled for that
@@ -147,7 +152,10 @@ Behavior notes:
   Scores land in the version metadata as `review` and on the job page
   ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)).
 - A stage that finished on its template instead of its agent shows `stages[].fallback` with the
-  reason on `studix_get_job`; it is never silent.
+  reason on `studix_get_job`; it is never silent. A job that names its `agent` (or `planner`) never
+  falls back: an agent that cannot run fails the job with `UNAVAILABLE`.
+- A stage that skipped an optional part instead of failing the job shows `stages[].warning`, for
+  example the motion-graphic SFX accent when the media provider has no sound-effect model or key.
 - Each stage on `studix_get_job` carries `stages[].run`, summed from its attempt's usage lines:
   - `runtime`: `claude`, `codex` or `pi` for an agent run; `host` for the MCP client's own agent; `planner` for the legacy planner's model calls; `function` for plain code such as `brief`, `compose` or `finalize`.
   - The `model`, `reasoningEffort` and `connectionLabel` it ran on.
@@ -194,7 +202,15 @@ Behavior notes:
   (6 to 60 s, default 15 s) in the style profile that best matches the brief,
   with a generated voice-over, one SFX accent where the CTA card lands and
   burned captions, then renders, QA-gates and uploads it in one job. It has no
-  image-to-video and no music.
+  image-to-video; a music bed is added only when the agent's storyboard asks
+  for one. A script derived from the brief (hook, messages, call to action) is
+  fitted to the length: message cards go from the last one back, then the
+  longest spoken lines are shortened. The hook and call-to-action cards and the
+  on-screen text are kept, but their spoken text may be shortened, the call to
+  action last. With `brief.voiceover: false` it needs no speech
+  provider and makes on-screen text only. A missing SFX model or key skips the
+  accent with a warning; a voice-over that cannot be generated still fails the
+  job.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action
@@ -261,7 +277,10 @@ Behavior notes:
   - Refused at creation with `UNAVAILABLE` when the operator has not enabled
     `STUDIX_CLAUDE_PLANNER`, or when the connection is missing, revoked or in
     another workspace; `FORBIDDEN` when it is someone else's personal key.
-    A job created with an `stx_` key can use workspace keys only.
+    A job created with an `stx_` key can use workspace keys only. An AI client
+    connected through OAuth acts for its user, so it can run that user's
+    personal keys and defaults, but only a signed-in user can add, change or
+    remove them.
   - There is no fallback: if Claude cannot plan (rejected key, budget, invalid
     output), the job fails with that error instead of using the default planner.
 - Publishing is gated: a publish job waits in `waiting_approval` until a human
@@ -558,12 +577,15 @@ paths, URLs, protocol prefixes (`concat:`, `file:`, `subfile,`) and the options
 Studix adds `-hide_banner -nostdin` and `-protocol_whitelist file,pipe` itself.
 
 The tool returns `{jobId, status, replayed}`; poll `studix_get_job`. A finished
-job's `result` holds `exitCode`, `durationMs`, truncated `stdout` / `stderr`,
-`json` (parsed ffprobe output when stdout is JSON) and `outputs` with
+job's `result` holds `exitCode`, `killed`, `durationMs`, truncated `stdout` /
+`stderr`, `json` (parsed ffprobe output when stdout is JSON) and `outputs` with
 `assetId`, `name`, `contentType`, `bytes`, `sha256` and a signed `url`. A
 non-zero exit fails the job with `VALIDATION` and the stderr tail in
-`error.message` (`details.exitCode`, `details.stderrTail`); the time is still
-billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
+`error.message` (`details.exitCode`, `details.stderrTail`). A tool the sandbox
+killed (`details.killed: true`, `details.exitCode: 124`) fails instead: with
+`TIMEOUT` (not retryable; raise `timeoutSeconds` or lighten the work) when it ran
+for its whole `timeoutSeconds`, or with `UNAVAILABLE` (retryable; run it again)
+when it was killed earlier because the sandbox stopped. The time is still billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
 
 ```json
 {
@@ -627,22 +649,71 @@ The client AI can author the video itself instead of delegating to a job
 ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)). A composition is a file tree in
 object storage; Studix checks only the outputs a run asks it to check.
 
-| Tool                       | Does                                                                                                                                                            |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `studix_composition_write` | Omit `compositionId` to create one. `files: [{path, text} or {path, base64, contentType?}]` (8 MB each, 50 per call), `delete: [paths]`. Returns the file list. |
-| `studix_composition_run`   | Async job `composition.run`: `command` runs under `sh` in the composition root inside the skill sandbox. Returns `{jobId}`; poll `studix_get_job`.              |
-| `studix_composition_read`  | Without `path`: the file list. With `path`: a signed URL, text inline, and png/jpeg/webp/gif up to 1.5 MB as an image block (frames, contact sheets).           |
+| Tool                               | Does                                                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `studix_composition_write`         | Omit `compositionId` to create one. `files: [{path, text} or {path, base64, contentType?}]` (8 MB each, 50 per call), `delete: [paths]`. Returns the file list. |
+| `studix_composition_run`           | Async job `composition.run`: `command` runs under `sh` in the composition root inside the skill sandbox. Returns `{jobId}`; poll `studix_get_job`.              |
+| `studix_composition_attach_render` | Register a rendered MP4 as a playable render of a project (see below).                                                                                          |
+| `studix_composition_read`          | Without `path`: the file list. With `path`: a signed URL, text inline, and png/jpeg/webp/gif up to 1.5 MB as an image block (frames, contact sheets).           |
+
+`studix_composition_attach_render` takes `{compositionId, path, projectId, preset?}`. It copies the MP4 under
+`renders/` and records it as the project's render with an asset (kind `render`) and version, so
+`studix_get_project` and the dashboard play it (the run job itself has no project, so `studix_get_job`
+does not show it). The project needs a current version, and repeating the call for the same file, preset
+and version returns the same render (`replayed: true`).
 
 The run sandbox has network, Node, Python, ffmpeg, Chromium, the HyperFrames and Remotion CLIs,
 `multix generate` with the workspace's media keys (images, TTS, BGM, SFX via ElevenLabs and others)
-and the enabled skills under `/skills`. Every file the command adds or changes is stored back (1 GB
-each, 200 per run; `node_modules`, `.git` and caches stay behind). `timeoutSeconds` defaults to 900
+and the enabled skills under `/skills`. `timeoutSeconds` defaults to 900
 (max 3600); compute is billed per started minute against `budgetCents`. It needs `media:exec`
 (write needs `project:write`) and `STUDIX_SANDBOX=docker` on the worker.
 
-`check: {path, width?, height?, durationMs?, durationToleranceMs?, loudnessLufs?}` probes a file after
+#### What persists between runs
+
+Every run is an ephemeral sandbox. Nothing survives it except the composition's stored files, so a
+second run sees exactly the file list `studix_composition_read` returns, never the first run's
+container, home directory, global installs or `node_modules`.
+
+- **Copied in:** every stored file, at the same relative path under the working directory
+  (the composition root).
+- **Stored back:** each regular file under the root whose modification time is newer than the start
+  of the command, listed in the job result's `changed[]` (`path`, `bytes`, `sha256`,
+  `contentType`). A file the command only read is not stored again. Files that keep their original
+  timestamps (`tar -x`, `unzip`, `cp -p`, `rsync -a`) and symlinks are not stored; `touch` extracted
+  files if they must persist.
+- **Skipped silently:** anything under `node_modules`, `.git`, `.cache`, `.npm`, `__pycache__` or
+  `.venv`; files of 1 GiB or more; paths outside the root (`~`, `/tmp`); and any path that is not a
+  valid composition path: at most 240 characters, and every segment starts with an ASCII letter,
+  digit or `_` and then uses only ASCII letters, digits and `_ . @ + -` (so hidden names, spaces and
+  accented names are dropped without an error).
+- **Count limits:** a run stores at most 200 files (it keeps 200, in no guaranteed order, and the log
+  says how many it skipped). A run that would take the composition over 400 files fails with
+  `VALIDATION` and does not add its files to the file list.
+- **Deletes do not persist:** removing a file in a run leaves its stored copy, and it is back in the
+  next run. Delete stored files with `studix_composition_write` and `delete: [paths]`.
+- **Persist a generated project** by creating it inside the root, for example
+  `npx hyperframes init my-video` (the directory lands at `my-video/` and is stored back), or move it
+  there before the command ends. A project initialised in `~` or `/tmp` is gone when the run ends. Its
+  dependencies are not kept: run the install again at the start of the next command
+  (`cd my-video && npm install && npx hyperframes render ...`).
+- **Limits on writes** through `studix_composition_write` are separate: 8 MB per file, 50 per call.
+  Larger media must be generated or downloaded inside a run.
+
+`check: {path, width?, height?, durationMs?, durationToleranceMs?, audio?, loudnessLufs?, frames?}` probes a file after
 an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the
 exit code, the tail of the combined log (`logTail`), changed files and the check result. The files it wrote are kept either way.
+A command killed before it exits (`exitCode: null`) stores none of its files, since they may be truncated. It fails with
+`TIMEOUT` when it ran for the whole `timeoutSeconds` (not retryable as is: raise `timeoutSeconds`, render at a lower
+resolution or fps, or split the render), otherwise with `UNAVAILABLE` (the sandbox lost the session; run it again).
+
+`audio: true` requires an audible audio track (`loudnessLufs` implies it). `frames: {samples?, safeMarginPct?,
+motion?, vietnamese?}` also looks at the picture: it decodes `samples` frames (2-12, default 5) at evenly spaced
+times and fails on a black or a blank (single flat colour) frame. The rest is opt-in, because a deliberate hold or a
+full-bleed photo is legitimate: `safeMarginPct` flags content inside that outer band of the frame (it assumes a
+background that is plain at the edge), `motion` flags consecutive samples that look identical, and `vietnamese`
+requires a font with Vietnamese coverage in the render sandbox (glyphs themselves are not read from pixels). The
+check always stores a contact sheet at `qa/<file>-contact-sheet.jpg` and returns its path as `check.contactSheet`;
+read it with `studix_composition_read` to see the frames.
 
 ```json
 {

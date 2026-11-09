@@ -355,6 +355,8 @@ export interface StageView {
   error?: StudixErrorPayload;
   /** Set when the stage finished on a fallback instead of its agent, with the reason. Never silent. */
   fallback?: string;
+  /** Set when the stage succeeded but skipped an optional part (e.g. a decorative sound effect), with why. */
+  warning?: string;
   /** QA rounds when the job has a `qa` role: scores 0-10, verdict and notes per round. */
   review?: StageReviewView;
   /** What the attempt ran on and spent; absent while a stage runs and has booked nothing yet. */
