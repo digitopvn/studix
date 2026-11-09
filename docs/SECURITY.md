@@ -409,7 +409,8 @@ or a path guard as a security boundary:
   `STUDIX_SANDBOX_SIDECAR_WORKSPACES` (any other workspace gets `FORBIDDEN`) and is meant for trusted or
   internal use. Residual risks: shared kernel, open egress, processes of one session sharing a uid, and the Pod-wide
   `/dev/shm` and IPC namespace, which the runners cannot wipe without deleting another runner's live files.
-  TOSE drops all capabilities, forces non-root and the default seccomp profile, and mounts no service account token.
+  TOSE drops all capabilities, forces non-root, the default seccomp profile and `allowPrivilegeEscalation: false`
+  (so the image's setuid binaries such as `su` cannot gain privileges), and mounts no service account token.
   `studix_media_exec` is refused on this backend because it needs an offline sandbox.
 - A ChatGPT sign-in for Codex uses the device-code flow: the browser talks to
   OpenAI, Studix only holds a sealed, 15-minute flow token bound to the user and
