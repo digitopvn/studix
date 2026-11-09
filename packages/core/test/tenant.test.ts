@@ -1,6 +1,7 @@
 import { StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import {
+  actingUserId,
   assertPermission,
   assertRelativeStorageKey,
   assertTenantContext,
@@ -33,6 +34,13 @@ describe("authorization matrix", () => {
     expect(can(actor, "project:write")).toBe(false);
     expect(can(actor, "approval:decide")).toBe(false);
     expect(can(actor, "job:recover")).toBe(false);
+  });
+
+  it("an oauth client acts for its user, while api keys and system actors act for no person", () => {
+    expect(actingUserId({ type: "user", id: "usr_a" })).toBe("usr_a");
+    expect(actingUserId({ type: "oauth", id: "usr_a" })).toBe("usr_a");
+    expect(actingUserId({ type: "apiKey", id: "key_a" })).toBeUndefined();
+    expect(actingUserId({ type: "system", id: "worker" })).toBeUndefined();
   });
 
   it("assertPermission throws FORBIDDEN with a suggested action", () => {

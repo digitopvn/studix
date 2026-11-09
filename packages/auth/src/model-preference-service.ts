@@ -1,6 +1,7 @@
 import {
   type AgentRuntimeName,
   type AuditRepository,
+  actingUserId,
   actorRef,
   assertPermission,
   can,
@@ -112,6 +113,7 @@ export interface ModelPreferenceServiceDeps {
 
 const SUBJECT = "model_preference";
 
+/** The signed-in user. Only they save or remove their personal preferences; delegated clients do not. */
 function userId(ctx: TenantContext): string | undefined {
   return ctx.actor.type === "user" ? ctx.actor.id : undefined;
 }
@@ -178,8 +180,9 @@ export function createModelPreferenceService(deps: ModelPreferenceServiceDeps): 
     return { connectionId: connection.id, provider: connection.provider, modelId: choice.modelId };
   };
 
+  /** Workspace entries plus the acting user's own, which also apply to an OAuth client acting for them. */
   const visible = async (ctx: TenantContext, runtime?: AgentRuntimeName) =>
-    deps.preferences.list(ctx, { userId: userId(ctx), ...(runtime ? { runtime } : {}) });
+    deps.preferences.list(ctx, { userId: actingUserId(ctx.actor), ...(runtime ? { runtime } : {}) });
 
   return {
     async list(ctx) {
@@ -260,7 +263,7 @@ export function createModelPreferenceService(deps: ModelPreferenceServiceDeps): 
       const resolved = resolveModelSelection(await visible(ctx, input.runtime), {
         runtime: input.runtime,
         stage: input.stage,
-        userId: userId(ctx),
+        userId: actingUserId(ctx.actor),
       });
       if (!resolved) return { runtime: input.runtime, stage: input.stage };
       let problem: string | undefined;

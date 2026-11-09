@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertPublicHttpsUrl, fetchPublicUrl, shellQuote } from "../src/media-exec-runner.ts";
+import { assertPublicHttpsUrl, fetchPublicUrl, killedNote, shellQuote } from "../src/media-exec-runner.ts";
 
 describe("media exec URL inputs", () => {
   it.each([
@@ -32,5 +32,12 @@ describe("shellQuote", () => {
   it("keeps every argument one literal word", () => {
     expect(shellQuote("a b")).toBe("'a b'");
     expect(shellQuote("it's $(rm -rf /)")).toBe(`'it'\\''s $(rm -rf /)'`);
+  });
+});
+
+describe("killedNote", () => {
+  it("names the timeout only when the tool ran for all of it", () => {
+    expect(killedNote(60_000, 60)).toBe("[studix] killed after 60s timeout");
+    expect(killedNote(5_000, 60)).toBe("[studix] the command was killed");
   });
 });

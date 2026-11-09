@@ -183,6 +183,30 @@ describe("stage cache", () => {
     expect(runs).toContain("document");
   });
 
+  it("a warned (degraded) output is not cached, so the next run tries the full work again", async () => {
+    const stageCache = createInMemoryStageCache(clock);
+    const put = vi.spyOn(stageCache, "put");
+    let runs = 0;
+    const workflow: WorkflowDefinition = {
+      kind: "test.per-node",
+      stages: [
+        {
+          name: "accent",
+          cacheKey: () => stageCacheKey("accent", 1, "same"),
+          run: async () => {
+            runs += 1;
+            return { output: { warning: "SFX accent skipped: no key" } };
+          },
+        },
+      ],
+      result: () => ({}),
+    };
+    await run(makeJob("job_1", loadIr()), workflow, { stageCache });
+    await run(makeJob("job_2", loadIr()), workflow, { stageCache });
+    expect(put).not.toHaveBeenCalled();
+    expect(runs).toBe(2);
+  });
+
   it("an input that fails the stage input schema fails the job without running anything", async () => {
     const runs: string[] = [];
     const queue = await run(

@@ -194,6 +194,8 @@ export interface Stage {
   error?: StudixErrorPayload;
   /** The stage used its template because the agent did not run, with the reason. */
   fallback?: string;
+  /** The stage skipped an optional part (e.g. a sound effect) instead of failing, with the reason. */
+  warning?: string;
   /** QA rounds when the job has a `qa` role. */
   review?: {
     rounds: { scores: Record<string, number>; overall: number; verdict: string; notes: string }[];

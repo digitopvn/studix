@@ -23,7 +23,7 @@ import {
 } from "@studix/core";
 import { type Logger, StudixError } from "@studix/shared";
 import { blockedAddressReason, guardedLookup, sha256File } from "@studix/storage";
-import type { MediaExecRunner } from "@studix/workflow";
+import { type MediaExecRunner, reachedTimeout } from "@studix/workflow";
 import { z } from "zod";
 import type { SandboxSettings } from "./skill-sandbox.ts";
 
@@ -72,6 +72,16 @@ export function loadMediaExecSettings(env: NodeJS.ProcessEnv): MediaExecSettings
 /** POSIX single-quote quoting: the argument reaches the tool as one argv entry, never shell syntax. */
 export function shellQuote(arg: string): string {
   return `'${arg.replaceAll("'", `'\\''`)}'`;
+}
+
+/** The exit code reported for a tool the sandbox killed (the `timeout(1)` convention). */
+const KILLED_EXIT_CODE = 124;
+
+/** The stderr line for a killed tool: a timeout only when it ran for its whole `timeoutSeconds`. */
+export function killedNote(durationMs: number, timeoutSeconds: number): string {
+  return reachedTimeout(durationMs, timeoutSeconds)
+    ? `[studix] killed after ${timeoutSeconds}s timeout`
+    : "[studix] the command was killed";
 }
 
 function assetKind(contentType: string): AssetKind {
@@ -302,15 +312,14 @@ export function createMediaExecRunner(deps: MediaExecRunnerDeps): MediaExecRunne
 
         const stdout = await readLog(session, "/work/.stdout", false);
         const stderr = await readLog(session, "/work/.stderr", true);
-        const timedOut = exitCode === null;
+        const killed = exitCode === null;
         const result: MediaExecResult = {
           tool: request.tool,
-          exitCode: timedOut ? 124 : exitCode,
+          exitCode: killed ? KILLED_EXIT_CODE : exitCode,
+          killed,
           durationMs,
           stdout: stdout.text,
-          stderr: timedOut
-            ? `${stderr.text}\n[studix] killed after ${request.timeoutSeconds}s timeout`
-            : stderr.text,
+          stderr: killed ? `${stderr.text}\n${killedNote(durationMs, request.timeoutSeconds)}` : stderr.text,
           stdoutTruncated: stdout.truncated,
           stderrTruncated: stderr.truncated,
           outputs: [],

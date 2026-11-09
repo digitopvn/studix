@@ -1,10 +1,12 @@
 import {
+  COMPOSITION_LIMITS,
   type CompositionRunRequest,
   type CompositionRunResult,
   JOB_KINDS,
   CompositionRunRequest as Request,
 } from "@studix/core";
 import { StudixError } from "@studix/shared";
+import { killedCommandError } from "./killed-command-error.ts";
 import { StageFailedAfterSpend } from "./stage-signals.ts";
 import type { StageContext, StageUsage, WorkflowDefinition } from "./workflow-types.ts";
 
@@ -25,7 +27,8 @@ const TAIL = 3000;
 
 /**
  * `composition.run`: one stage, never retried (a failed command fails the same way again). A non-zero exit
- * or a failed output check fails the job with the log tail; the files it wrote are kept either way.
+ * or a failed output check fails the job VALIDATION with the log tail, keeping the files it wrote. A killed
+ * command (no exit code) fails TIMEOUT or UNAVAILABLE and the runner stores none of its files.
  */
 export function createCompositionRunWorkflow(deps: CompositionRunWorkflowDeps): WorkflowDefinition {
   const requestOf = (s: StageContext) => Request.parse((s.job.payload as { request?: unknown }).request);
@@ -58,6 +61,18 @@ export function createCompositionRunWorkflow(deps: CompositionRunWorkflowDeps): 
               metadata: { exitCode: result.exitCode, changed: result.changed.length },
             },
           ];
+          if (result.exitCode === null) {
+            throw new StageFailedAfterSpend(
+              killedCommandError({
+                subject: "The command",
+                timeoutSeconds: request.timeoutSeconds,
+                maxTimeoutSeconds: COMPOSITION_LIMITS.maxTimeoutSeconds,
+                durationMs: result.durationMs,
+                details: { exitCode: null, logTail: result.log.slice(-TAIL), changed: [] },
+              }),
+              usage,
+            );
+          }
           const failure =
             result.exitCode !== 0
               ? `The command exited with code ${result.exitCode}`

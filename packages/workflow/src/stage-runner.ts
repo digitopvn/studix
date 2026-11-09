@@ -272,6 +272,11 @@ function matchesOutput(stage: StageDefinition, output: StageOutput): boolean {
   return stage.outputSchema ? stage.outputSchema.safeParse(output).success : true;
 }
 
+/** A stage output with a warning is degraded (an optional step was skipped): retry it, never reuse it. */
+function degraded(output: StageOutput): boolean {
+  return typeof output.warning === "string" && output.warning.length > 0;
+}
+
 /** Latest succeeded output per stage name (any attempt): the checkpoints a resumed job starts from. */
 function checkpoints(stages: Stage[]): Record<string, StageOutput> {
   const done = new Map<string, { attempt: number; output: StageOutput }>();
@@ -438,7 +443,7 @@ export async function runStages(
     const cacheKey = deps.stageCache ? await stage.cacheKey?.(sctx) : undefined;
     if (cacheKey !== undefined && deps.stageCache) {
       const hit = await deps.stageCache.get(ctx, stage.name, cacheKey);
-      if (hit && matchesOutput(stage, hit.output)) {
+      if (hit && matchesOutput(stage, hit.output) && !degraded(hit.output)) {
         const at = deps.clock.now();
         await fenced(
           queue.writeStage(job, workerId, {
@@ -642,7 +647,8 @@ export async function runStages(
     );
     outputs[stage.name] = output;
     // After the fenced checkpoint, so a worker that lost the job never publishes its result to the cache.
-    if (cacheKey !== undefined && deps.stageCache) {
+    // A degraded output is not cached, so the next run retries the skipped step.
+    if (cacheKey !== undefined && deps.stageCache && !degraded(output)) {
       await deps.stageCache.put(ctx, { stage: stage.name, cacheKey, output, jobId: job.id });
     }
     if (job.budgetCents !== undefined && spentCents > job.budgetCents) {

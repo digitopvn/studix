@@ -3,6 +3,7 @@ import {
   AGENT_RUNTIMES,
   type AgentRuntimeName,
   type AuditRepository,
+  actingUserId,
   actorRef,
   assertPermission,
   type BillingSource,
@@ -437,17 +438,27 @@ function associatedData(ctx: TenantContext, id: string): string {
   return `${ctx.organizationId}/${ctx.workspaceId}/${SUBJECT}/${id}`;
 }
 
+/** The signed-in user. Only they add, connect or change their personal keys; delegated clients do not. */
 function userId(ctx: TenantContext): string | undefined {
   return ctx.actor.type === "user" ? ctx.actor.id : undefined;
 }
 
+/** A personal key is its owner's to see and run, also through an OAuth client acting for them. */
 function isMine(ctx: TenantContext, row: ProviderConnectionRecord): boolean {
-  return row.ownerType === "user" && row.ownerUserId === userId(ctx);
+  return ownedBy(row, ctx.actor);
 }
 
-/** Workspace keys are managed by admins; a personal key by its owner (admins may still remove it). */
+/** True when `actor` is, or acts for, the owner of a personal key. API keys and system actors never are. */
+function ownedBy(row: ProviderConnectionRecord, actor: ActorRef): boolean {
+  const user = actingUserId(actor);
+  return row.ownerType === "user" && user !== undefined && row.ownerUserId === user;
+}
+
+/** Workspace keys are managed by admins; a personal key by its signed-in owner (admins may still remove it). */
 function canManage(ctx: TenantContext, row: ProviderConnectionRecord): boolean {
-  return row.ownerType === "workspace" ? can(ctx.actor, "member:manage") : isMine(ctx, row);
+  return row.ownerType === "workspace"
+    ? can(ctx.actor, "member:manage")
+    : userId(ctx) !== undefined && isMine(ctx, row);
 }
 
 function canSee(ctx: TenantContext, row: ProviderConnectionRecord): boolean {
@@ -699,7 +710,8 @@ export function createProviderConnectionService(
         retryable: false,
       });
     }
-    if (row.ownerType === "user" && !(requestedBy.type === "user" && requestedBy.id === row.ownerUserId)) {
+    // The owner's own jobs, including those an OAuth client created for them; never an API key's.
+    if (row.ownerType === "user" && !ownedBy(row, requestedBy)) {
       throw new StudixError("FORBIDDEN", `A personal ${name} key can only be used by its owner`, {
         retryable: false,
         suggestedAction: "Use a workspace key or your own personal key.",
