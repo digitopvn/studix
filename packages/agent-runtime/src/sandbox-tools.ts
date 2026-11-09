@@ -7,6 +7,7 @@ import {
   createWriteToolDefinition,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { StudixError } from "@studix/shared";
 import { SANDBOX_WORK_DIR, type SandboxSession } from "./sandbox-docker.ts";
 
 /** Tool names a task may ask for; each one runs inside the task's sandbox. */
@@ -36,6 +37,37 @@ export function containerPath(path: string, hostDir?: string): string {
   return posix.resolve(SANDBOX_WORK_DIR, unixLike);
 }
 
+/** The error a sandbox raises once a cap closed it (`details.cap` is set), as opposed to an ordinary tool failure. */
+export function sandboxCapError(err: unknown): StudixError | undefined {
+  return err instanceof StudixError && err.details?.cap === "time" ? err : undefined;
+}
+
+/**
+ * Reports the first cap error a sandbox call fails with to `onCap` and still rethrows it, so the run
+ * can stop instead of handing a closed sandbox's error back to the model call after call.
+ */
+function withCapReport(sandbox: SandboxSession, onCap: (err: StudixError) => void): SandboxSession {
+  const watch =
+    <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+    async (...args: A): Promise<R> => {
+      try {
+        return await fn(...args);
+      } catch (err) {
+        const cap = sandboxCapError(err);
+        if (cap) onCap(cap);
+        throw err;
+      }
+    };
+  return {
+    id: sandbox.id,
+    exec: watch(sandbox.exec.bind(sandbox)),
+    run: watch(sandbox.run.bind(sandbox)),
+    copyOut: watch(sandbox.copyOut.bind(sandbox)),
+    copyIn: watch(sandbox.copyIn.bind(sandbox)),
+    close: () => sandbox.close(),
+  };
+}
+
 /**
  * Pi's own tool definitions (same schemas, prompts and truncation) with their file and shell operations
  * delegated to the sandbox. Registered as custom tools, they replace the built-ins of the same name.
@@ -45,7 +77,10 @@ export function createSandboxToolDefinitions(
   names: readonly SandboxToolName[],
   /** Host dir Pi uses as the session cwd; paths under it map to /work. */
   hostDir?: string,
+  /** Called with the cap error when the sandbox has been closed by a cap (wall time). */
+  onCap?: (err: StudixError) => void,
 ): ToolDefinition[] {
+  if (onCap) sandbox = withCapReport(sandbox, onCap);
   const at = (path: string) => containerPath(path, hostDir);
   const readFile = async (path: string) => sandbox.run(["cat", "--", at(path)]);
   const test = async (flag: string, path: string) => {

@@ -17,6 +17,7 @@ import { registerSecret, StudixError } from "@studix/shared";
 import {
   type AgentLoop,
   abortReason,
+  agentCapError,
   type BoundedAgentTask,
   emitAgentEvent,
   eventText,
@@ -262,6 +263,8 @@ interface AttemptOptions {
   workspace?: PiTaskWorkspace;
   tools?: SandboxToolName[];
   turnRetry?: false | typeof PI_TURN_RETRY;
+  /** Called when a sandbox call fails because a cap closed the sandbox; the run then ends with that cap. */
+  onSandboxCap?: (err: StudixError) => void;
 }
 
 /**
@@ -412,7 +415,14 @@ async function openSession(
     // Custom definitions replace the built-ins of the same name, so every tool runs in the sandbox.
     tools: attempt.workspace ? [...(attempt.tools ?? [])] : [],
     ...(attempt.workspace
-      ? { customTools: createSandboxToolDefinitions(attempt.workspace.sandbox, attempt.tools ?? [], scratch) }
+      ? {
+          customTools: createSandboxToolDefinitions(
+            attempt.workspace.sandbox,
+            attempt.tools ?? [],
+            scratch,
+            attempt.onSandboxCap,
+          ),
+        }
       : {}),
   });
   return session;
@@ -443,6 +453,17 @@ async function runAttempt(
   let unsubscribe: (() => void) | undefined;
   const scratch = await mkdtemp(join(attempt.scratchRoot ?? tmpdir(), "studix-pi-"));
   const onAbort = () => void session?.abort();
+  // A closed sandbox cannot recover: stop the session at the first failing call, and fail with its cap.
+  let sandboxCap: StudixError | undefined;
+  attempt = {
+    ...attempt,
+    onSandboxCap: (err) => {
+      sandboxCap ??= agentCapError("time", "The skill sandbox reached its wall time", {
+        ...err.details,
+      });
+      void session?.abort();
+    },
+  };
   task.signal.addEventListener("abort", onAbort, { once: true });
 
   try {
@@ -493,6 +514,7 @@ async function runAttempt(
     });
 
     await active.prompt(buildPrompt(task));
+    if (sandboxCap) throw sandboxCap;
     throwIfAborted(task);
     const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
     if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");
