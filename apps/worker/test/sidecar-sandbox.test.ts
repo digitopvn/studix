@@ -83,3 +83,22 @@ describe("media.exec on the sidecar backend", () => {
     });
   });
 });
+
+describe("sidecar readiness report", () => {
+  it("keeps runner errors and addresses out of /readyz, and hashes workspaces like the app", async () => {
+    const { summarizeRunnerHealth } = await import("../src/sidecar-runner-health.ts");
+    const { workspaceHash } = await import("../src/skill-sandbox.ts");
+    const status = summarizeRunnerHealth([
+      {
+        runner: 1,
+        url: "http://127.0.0.1:7071",
+        ok: false,
+        error: "Skill runner 1 at http://127.0.0.1:7071 refused",
+      },
+    ]);
+    expect(status).toMatchObject({ backend: "sidecar", runners: 1, ready: 0 });
+    expect(JSON.stringify(status)).not.toContain("127.0.0.1");
+    const { createHash } = await import("node:crypto");
+    expect(workspaceHash("ws_x")).toBe(createHash("sha256").update("ws_x").digest("hex").slice(0, 16));
+  });
+});

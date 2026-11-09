@@ -51,7 +51,12 @@ export interface WorkerSandboxStatus {
   runners?: number;
   ready?: number;
   versions?: string[];
-  /** Why agent tasks with tools cannot run right now; absent when they can. */
+  /**
+   * Sidecar only: the allowlisted workspaces, each as the first 16 hex chars of sha256(workspace id), so the app
+   * can tell a workspace whether its tasks may use the runners without /readyz listing workspace ids.
+   */
+  workspaceHashes?: string[];
+  /** Why agent tasks with tools cannot run right now; absent when they can. Never an address or a runner error. */
   reason?: string;
 }
 

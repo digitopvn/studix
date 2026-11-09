@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import {
   createDockerSandboxDriver,
@@ -137,6 +138,11 @@ export interface SkillSandbox {
   status(): WorkerSandboxStatus;
 }
 
+/** Shared with the app (apps/mcp-server/src/worker-sandbox-report.ts): sha256 hex prefix of a workspace id. */
+export function workspaceHash(workspaceId: string): string {
+  return createHash("sha256").update(workspaceId, "utf8").digest("hex").slice(0, 16);
+}
+
 /** The sidecar driver with its runner monitor; no docker sweep runs in this mode. */
 function sidecarDriver(sidecar: SidecarSettings, logger: Logger) {
   const monitor = startSidecarRunnerMonitor(sidecar, logger);
@@ -149,7 +155,8 @@ function sidecarDriver(sidecar: SidecarSettings, logger: Logger) {
     runners: sidecar.runners.length,
     workspaces: sidecar.workspaces.size,
   });
-  return { driver, status: () => monitor.status() };
+  const workspaceHashes = [...sidecar.workspaces].map(workspaceHash);
+  return { driver, status: () => ({ ...monitor.status(), workspaceHashes }) };
 }
 
 export async function createSkillSandbox(options: {

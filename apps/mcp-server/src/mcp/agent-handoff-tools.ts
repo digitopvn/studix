@@ -143,7 +143,7 @@ export const AGENT_HANDOFF_MCP_TOOLS = [
     async run(ctx) {
       const [runtimes, sandbox] = await Promise.all([
         listAgentRuntimes(ctx.deps.providers, ctx.tenant),
-        ctx.deps.workerSandbox?.(),
+        ctx.deps.workerSandbox?.(ctx.tenant.workspaceId),
       ]);
       return { data: { runtimes, ...(sandbox ? { sandbox } : {}) }, next: [] };
     },

@@ -74,6 +74,20 @@ export function createSidecarSession(input: {
     if (closed) throw stopped();
   };
 
+  /** A file transfer; the runner having closed the session (410) or the session closing reads as stopped. */
+  async function whileOpen<T>(transfer: () => Promise<T>): Promise<T> {
+    try {
+      return await transfer();
+    } catch (error) {
+      if (error instanceof SessionGoneError) {
+        await close("runner-lost");
+        throw stopped();
+      }
+      if (closed) throw stopped();
+      throw error;
+    }
+  }
+
   /** One command, cancelled by the caller's signal, the session closing, or a missing EXIT past its timeout. */
   async function execute(
     request: RunnerExecRequest,
@@ -147,11 +161,11 @@ export function createSidecarSession(input: {
     },
     async copyOut(containerPath, hostPath) {
       assertOpen();
-      await getRunnerFile(client, sessionId, containerPath, hostPath, life.signal);
+      await whileOpen(() => getRunnerFile(client, sessionId, containerPath, hostPath, life.signal));
     },
     async copyIn(hostPath, containerPath) {
       assertOpen();
-      await putRunnerFile(client, sessionId, hostPath, containerPath, life.signal);
+      await whileOpen(() => putRunnerFile(client, sessionId, hostPath, containerPath, life.signal));
     },
     async syncSkillsOut(hostDir) {
       assertOpen();

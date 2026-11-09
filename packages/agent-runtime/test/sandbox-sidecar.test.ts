@@ -22,10 +22,29 @@ const TOKEN = "t".repeat(40);
 const limits = { cpus: 1, memoryMb: 512, pids: 64, wallTimeMs: 60_000 };
 
 /** A minimal pi-runner: one session at a time, files in memory, `command` run by the local sh. */
-async function fakeRunner(options: { busy?: boolean; protocol?: number } = {}) {
+async function fakeRunner(
+  options: {
+    /** Held by another task of this worker: a reset does not free it. */
+    busy?: boolean;
+    /** Left by a previous worker process: a reset frees it. */
+    orphan?: boolean;
+    protocol?: number;
+    /** Answer exec and file calls with 410, as when the runner closed the session itself. */
+    gone?: boolean;
+    /** Never answer the open request (the worker gives up on it). */
+    hangOpen?: boolean;
+  } = {},
+) {
   const files = new Map<string, Buffer>();
-  const seen = { auth: [] as string[], deletes: 0, opens: [] as unknown[], argv: [] as string[][] };
-  let session: string | undefined = options.busy ? "other" : undefined;
+  const seen = {
+    auth: [] as string[],
+    deletes: 0,
+    resets: 0,
+    abandoned: [] as string[],
+    opens: [] as unknown[],
+    argv: [] as string[][],
+  };
+  let session: string | undefined = options.busy ? "other" : options.orphan ? "orphan" : undefined;
   const body = async (req: IncomingMessage) => {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
@@ -47,8 +66,18 @@ async function fakeRunner(options: { busy?: boolean; protocol?: number } = {}) {
         }),
       );
     }
+    if (url.pathname === "/v1/reset" && req.method === "POST") {
+      seen.resets++;
+      if (session === "orphan" || session === "s1") session = undefined;
+      return void res.writeHead(204).end();
+    }
+    if (url.pathname === "/v1/sessions" && req.method === "DELETE") {
+      seen.abandoned.push(url.searchParams.get("taskId") ?? "");
+      return void res.writeHead(204).end();
+    }
     if (url.pathname === "/v1/sessions" && req.method === "POST") {
       seen.opens.push(JSON.parse((await body(req)).toString("utf8")));
+      if (options.hangOpen) return;
       if (session) return void res.writeHead(409).end();
       session = "s1";
       res.writeHead(201, { "content-type": "application/json" });
@@ -58,6 +87,11 @@ async function fakeRunner(options: { busy?: boolean; protocol?: number } = {}) {
       seen.deletes++;
       session = undefined;
       return void res.writeHead(204).end();
+    }
+    if (options.gone && url.pathname.startsWith("/v1/sessions/s1/")) {
+      await body(req);
+      res.writeHead(410, { "content-type": "application/json" });
+      return void res.end(JSON.stringify({ error: "session closed: disk cap" }));
     }
     if (url.pathname === "/v1/sessions/s1/file") {
       const path = url.searchParams.get("path") ?? "";
@@ -170,7 +204,41 @@ describe("sidecar sandbox driver", () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(250);
     const abort = new AbortController();
     setTimeout(() => abort.abort(), 100);
-    await expect(open([a.url], { signal: abort.signal })).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    await expect(open([a.url], { signal: abort.signal })).rejects.toMatchObject({ code: "CANCELLED" });
+  });
+
+  it("reclaims a session a previous worker left on its runner, once per runner", async () => {
+    const runner = await fakeRunner({ orphan: true });
+    const driver = createSidecarSandboxDriver({ runners: [{ url: runner.url, token: TOKEN }] });
+    const request = { taskId: "task-1", env: {}, limits, signal: new AbortController().signal };
+    const first = await driver.open(request);
+    await first.close();
+    const second = await driver.open(request);
+    expect(runner.seen.resets).toBe(1);
+    await second.close();
+  });
+
+  it("frees the runner for the task when the worker gives up on an open", async () => {
+    const runner = await fakeRunner({ hangOpen: true });
+    const abort = new AbortController();
+    setTimeout(() => abort.abort(), 200);
+    await expect(open([runner.url], { signal: abort.signal })).rejects.toMatchObject({ code: "CANCELLED" });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(runner.seen.abandoned).toEqual(["task-1"]);
+  });
+
+  it("treats a session the runner closed itself (410) as a stopped sandbox", async () => {
+    const runner = await fakeRunner({ gone: true });
+    const dir = await mkdtemp(join(tmpdir(), "sidecar-gone-"));
+    await writeFile(join(dir, "in.bin"), "x");
+    const stoppedError = { code: "TIMEOUT", message: "The sandbox was stopped" };
+    const s1 = await open([runner.url]);
+    await expect(s1.exec("true")).rejects.toMatchObject(stoppedError);
+    const s2 = await open([runner.url]);
+    await expect(s2.copyIn(join(dir, "in.bin"), "/work/in/a")).rejects.toMatchObject(stoppedError);
+    const s3 = await open([runner.url]);
+    await expect(s3.copyOut("/work/in/a", join(dir, "o"))).rejects.toMatchObject(stoppedError);
+    await s3.close();
   });
 
   it("names the runner URL, never its token, when it cannot be reached", async () => {

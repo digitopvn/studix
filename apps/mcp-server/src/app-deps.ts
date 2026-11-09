@@ -87,7 +87,7 @@ export interface AppDeps {
   /** Host-agent handoff of agent stages; without it the agent task tools answer UNAVAILABLE. */
   agentHandoffs?: AgentHandoffService;
   /** The worker's skill sandbox readiness (STUDIX_WORKER_HEALTH_URL), shown by studix_list_agent_runtimes. */
-  workerSandbox?: () => Promise<WorkerSandboxReport | undefined>;
+  workerSandbox?: (workspaceId: string) => Promise<WorkerSandboxReport | undefined>;
   /** studix_media_exec (ffmpeg/ffprobe jobs); without it the tool answers UNAVAILABLE. */
   mediaExec?: MediaExecService;
   /** studix_composition_* (client-authored videos); without it those tools answer UNAVAILABLE. */

@@ -22,9 +22,9 @@ export interface SidecarRunnerMonitor {
   stop(): void;
 }
 
+/** The runner errors (addresses, HTTP answers) go to the worker log only; /readyz may be read from outside. */
 export function summarizeRunnerHealth(health: readonly SidecarRunnerHealth[]): WorkerSandboxStatus {
   const ready = health.filter((h) => h.ok);
-  const firstError = health.find((h) => !h.ok)?.error;
   return {
     backend: "sidecar",
     runners: health.length,
@@ -32,7 +32,8 @@ export function summarizeRunnerHealth(health: readonly SidecarRunnerHealth[]): W
     versions: [...new Set(ready.map((h) => h.version ?? "unknown"))],
     ...(ready.length === 0
       ? {
-          reason: `No skill runner is ready${firstError ? `: ${firstError}` : ""}. Agent tasks with tools fail until one is.`,
+          reason:
+            "No skill runner is ready; agent tasks with tools fail until one is. The worker log line 'skill runners checked' has the cause.",
         }
       : {}),
   };

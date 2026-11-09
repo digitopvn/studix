@@ -6,8 +6,13 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { StudixError } from "@studix/shared";
 import { SANDBOX_SKILLS_DIR, SANDBOX_WORK_DIR, type SandboxSession } from "./sandbox-docker.ts";
-import { RUNNER_ROUTES } from "./sandbox-runner-protocol.ts";
-import { type RunnerClient, runnerStatusError } from "./sandbox-sidecar-client.ts";
+import { RUNNER_ROUTES, RUNNER_SESSION_GONE_STATUS } from "./sandbox-runner-protocol.ts";
+import {
+  isSessionGone,
+  type RunnerClient,
+  runnerStatusError,
+  SessionGoneError,
+} from "./sandbox-sidecar-client.ts";
 import { isSafeSkillPath } from "./skill-bundle-source.ts";
 
 /*
@@ -44,6 +49,10 @@ export async function putRunnerFile(
     duplex: "half",
     signal,
   } as RequestInit);
+  if (isSessionGone(res)) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new SessionGoneError();
+  }
   if (!res.ok) {
     const cause = await runnerStatusError(client.number, "store a file", res);
     throw new StudixError("UNAVAILABLE", `Could not copy an input file into the sandbox: ${cause.message}`, {
@@ -63,6 +72,11 @@ export async function getRunnerFile(
   signal: AbortSignal,
 ): Promise<void> {
   const res = await client.request(fileUrl(sessionId, path), { method: "GET", signal });
+  // A 404 here is a missing file; only 410 says the session itself is gone.
+  if (res.status === RUNNER_SESSION_GONE_STATUS) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new SessionGoneError();
+  }
   if (res.status === 404 || res.status === 413 || !res.ok || !res.body) {
     const reason =
       res.status === 404

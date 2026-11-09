@@ -41,6 +41,12 @@ const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,127}$/;
 const FIRST_RETRY_MS = 250;
 const MAX_RETRY_MS = 2_000;
 
+function cancelled(): StudixError {
+  return new StudixError("CANCELLED", "The task was cancelled while waiting for a skill runner", {
+    retryable: false,
+  });
+}
+
 function allBusy(count: number, unreachable: number): StudixError {
   const down = unreachable > 0 ? ` (${unreachable} cannot be reached)` : "";
   return new StudixError("UNAVAILABLE", `All ${count} skill runners are busy${down}`, {
@@ -60,7 +66,46 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
   const clients = options.runners.map((r, i) => createRunnerClient(i + 1, r, fetchImpl));
   /** Runners whose protocol was checked; reset when one cannot be reached (it may come back as another build). */
   const verified = new Set<number>();
+  /**
+   * First contact with each runner closes whatever session it still holds: the runners belong to this Pod's
+   * worker alone, so such a session was left by a previous worker process (a crash, a redeploy) and would
+   * otherwise keep the runner busy until its wall time. Once per runner per process, shared by concurrent opens
+   * so one open never resets a session another just got.
+   */
+  const reclaimed = new Map<number, Promise<void>>();
   let next = 0;
+
+  function reclaim(client: RunnerClient, signal: AbortSignal): Promise<void> {
+    let pending = reclaimed.get(client.number);
+    if (!pending) {
+      pending = (async () => {
+        const res = await client.request(RUNNER_ROUTES.reset, {
+          method: "POST",
+          signal,
+          timeoutMs: RUNNER_CONTROL_TIMEOUT_MS,
+        });
+        if (res.status !== 204 && res.status !== 200)
+          throw await runnerStatusError(client.number, "reset", res);
+        await res.body?.cancel().catch(() => undefined);
+        options.logger?.info("skill runner reclaimed", { runner: client.number });
+      })();
+      reclaimed.set(client.number, pending);
+      // A failed reset is retried by the next open.
+      pending.catch(() => reclaimed.delete(client.number));
+    }
+    return pending;
+  }
+
+  /** Best effort: the runner may have accepted an open whose answer never arrived; free it for that task. */
+  function abandon(client: RunnerClient, taskId: string): void {
+    void client
+      .request(RUNNER_ROUTES.sessionsByTask(taskId), {
+        method: "DELETE",
+        timeoutMs: RUNNER_CONTROL_TIMEOUT_MS,
+      })
+      .then((res) => res.body?.cancel())
+      .catch(() => undefined);
+  }
 
   /** One attempt on one runner: a session id, "busy", or a thrown error. */
   async function tryOpen(client: RunnerClient, body: RunnerOpenRequest, signal: AbortSignal) {
@@ -68,21 +113,29 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
       await client.info(signal);
       verified.add(client.number);
     }
-    const res = await client.request(RUNNER_ROUTES.open, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal,
-      timeoutMs: RUNNER_CONTROL_TIMEOUT_MS,
-    });
+    await reclaim(client, signal);
+    let res: Response;
+    try {
+      res = await client.request(RUNNER_ROUTES.open, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+        timeoutMs: RUNNER_CONTROL_TIMEOUT_MS,
+      });
+    } catch (error) {
+      abandon(client, body.taskId);
+      throw error;
+    }
     if (res.status === 409) {
       await res.body?.cancel().catch(() => undefined);
       return "busy" as const;
     }
     if (res.status !== 201 && res.status !== 200)
       throw await runnerStatusError(client.number, "open a session", res);
-    const { sessionId } = (await res.json()) as RunnerOpenResponse;
+    const { sessionId } = (await res.json().catch(() => ({}))) as Partial<RunnerOpenResponse>;
     if (typeof sessionId !== "string" || !sessionId) {
+      abandon(client, body.taskId);
       throw new StudixError("UNAVAILABLE", `Skill runner ${client.number} returned no session id`, {
         retryable: true,
       });
@@ -104,7 +157,7 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
           if (result === "busy") busy++;
           else return { client, sessionId: result };
         } catch (error) {
-          if (request.signal.aborted) throw allBusy(clients.length, 0);
+          if (request.signal.aborted) throw cancelled();
           // A runner that is down (or still starting) is skipped; any other answer is a real failure.
           if (!(error instanceof StudixError && error.code === "UNAVAILABLE" && error.retryable)) throw error;
           verified.delete(client.number);
@@ -113,7 +166,8 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
       }
       if (busy === 0 && lastDown) throw lastDown;
       const unreachable = clients.length - busy;
-      if (request.signal.aborted || Date.now() + delay > deadline) throw allBusy(clients.length, unreachable);
+      if (request.signal.aborted) throw cancelled();
+      if (Date.now() + delay > deadline) throw allBusy(clients.length, unreachable);
       await sleep(delay, undefined, { signal: request.signal }).catch(() => undefined);
       delay = Math.min(delay * 2, MAX_RETRY_MS);
     }

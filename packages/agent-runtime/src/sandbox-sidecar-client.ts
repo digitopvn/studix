@@ -9,6 +9,7 @@ import {
   RUNNER_EXEC_HEADER,
   RUNNER_PROTOCOL_VERSION,
   RUNNER_ROUTES,
+  RUNNER_SESSION_GONE_STATUS,
   type RunnerExecRequest,
   type RunnerExitStatus,
   type RunnerInfo,
@@ -32,6 +33,11 @@ export type FetchLike = typeof fetch;
 /** Control requests (info, open, close) are short; a runner that does not answer in time is treated as down. */
 export const RUNNER_CONTROL_TIMEOUT_MS = 10_000;
 
+/*
+ * Long transfers and silent commands vs. fetch's built-in timeouts (undici: 300 s for headers, 300 s between body
+ * chunks): the runner flushes exec headers at once and sends a keepalive frame every RUNNER_KEEPALIVE_MS, and a
+ * file streams continuously over loopback, so neither timeout fires on healthy work.
+ */
 export interface RunnerClient {
   /** 1-based position in STUDIX_SANDBOX_RUNNERS, used in messages and logs. */
   readonly number: number;
@@ -60,8 +66,20 @@ function runnerRefusedToken(number: number): StudixError {
 
 /** An unexpected HTTP answer; the body is a short runner message, never a secret. */
 export async function runnerStatusError(number: number, what: string, res: Response): Promise<StudixError> {
-  if (res.status === 401 || res.status === 403) return runnerRefusedToken(number);
+  // 401 is the token; 403 is the runner's path policy (a path outside /work and /skills), reported as such below.
+  if (res.status === 401) return runnerRefusedToken(number);
   const text = (await res.text().catch(() => "")).trim().slice(0, 300);
+  if (res.status === 403) {
+    return new StudixError(
+      "VALIDATION",
+      `Skill runner ${number} refused to ${what}: ${text || "path not allowed"}`,
+      {
+        retryable: false,
+        details: { runner: number, status: 403 },
+        suggestedAction: "Use paths under /work or /skills inside the sandbox.",
+      },
+    );
+  }
   return new StudixError(
     "UNAVAILABLE",
     `Skill runner ${number} failed to ${what}: HTTP ${res.status}${text ? ` ${text}` : ""}`,
@@ -164,7 +182,7 @@ export async function runnerExec(
       suggestedAction: "Write long content to a file with the write tool, then run a short command.",
     });
   }
-  if (res.status === 404) {
+  if (isSessionGone(res)) {
     await res.body?.cancel().catch(() => undefined);
     throw new SessionGoneError();
   }
@@ -192,6 +210,11 @@ export async function runnerExec(
   return status
     ? { status, complete: true }
     : { status: { exitCode: null, signal: null, timedOut: false }, complete: false };
+}
+
+/** 404 (runner restarted, session unknown) or 410 (the runner closed it: wall time, disk cap, reset). */
+export function isSessionGone(res: Response): boolean {
+  return res.status === 404 || res.status === RUNNER_SESSION_GONE_STATUS;
 }
 
 /** The runner no longer knows the session (it closed it at its own wall time, or restarted). */
