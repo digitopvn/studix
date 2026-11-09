@@ -47,9 +47,10 @@ export function createSandboxToolDefinitions(
   /** Host dir Pi uses as the session cwd; paths under it map to /work. */
   hostDir?: string,
   /**
-   * Called with the error when a tool fails because the sandbox reached a cap (`details.cap`, today the wall
-   * time). The error is still thrown to the model's tool call; the caller ends the run so the model is not
-   * left calling tools that can no longer work.
+   * Called with the error when the bash, read or write tool fails because the sandbox was stopped
+   * (`details.cap`). The error is still thrown to the model's tool call; the caller ends the run so the model
+   * is not left calling tools that can no longer work. The edit and ls tools wrap or swallow their
+   * errors, so for them the next bash, read or write call (or the result collection) ends the run.
    */
   onSandboxCap?: (error: StudixError) => void,
 ): ToolDefinition[] {
@@ -129,7 +130,7 @@ export function createSandboxToolDefinitions(
 }
 
 /** A tool error that carries a sandbox cap (the sandbox is gone), as opposed to an ordinary failing command. */
-export function isSandboxCapError(error: unknown): error is StudixError {
+function isSandboxCapError(error: unknown): error is StudixError {
   return error instanceof StudixError && error.details?.cap === "time";
 }
 

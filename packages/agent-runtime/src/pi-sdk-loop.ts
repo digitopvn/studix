@@ -457,7 +457,7 @@ async function runAttempt(
   let sandboxCap: StudixError | undefined;
   const onSandboxCap = (error: StudixError) => {
     if (sandboxCap) return;
-    sandboxCap = agentCapError("time", "The skill sandbox reached its wall time and was stopped", {
+    sandboxCap = agentCapError("time", "The skill sandbox was stopped before the task finished", {
       reason: error.message,
     });
     void session?.abort();
