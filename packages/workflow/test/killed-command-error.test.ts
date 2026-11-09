@@ -61,18 +61,20 @@ describe("killed sandbox commands", () => {
     expect(error.code).toBe("VALIDATION");
   });
 
-  it("reports a media exec killed at its timeout as TIMEOUT", async () => {
-    const result: MediaExecResult = {
+  function mediaExec(result: Partial<MediaExecResult>) {
+    const full: MediaExecResult = {
       tool: "ffmpeg",
       exitCode: 124,
+      killed: true,
       durationMs: 60_500,
       stdout: "",
-      stderr: "\n[studix] killed after 60s timeout",
+      stderr: "",
       stdoutTruncated: false,
       stderrTruncated: false,
       outputs: [],
+      ...result,
     };
-    const workflow = createMediaExecWorkflow({ centsPerMinute: 1, runner: { run: async () => result } });
+    const workflow = createMediaExecWorkflow({ centsPerMinute: 1, runner: { run: async () => full } });
     const stage = stageOf({
       tool: "ffmpeg",
       args: ["-i", "{in:v.mp4}", "{out:o.mp4}"],
@@ -80,8 +82,25 @@ describe("killed sandbox commands", () => {
       outputs: [{ name: "o.mp4" }],
       timeoutSeconds: 60,
     });
-    const { error } = await failure(workflow.stages[0]?.run(stage) as Promise<unknown>);
+    return failure(workflow.stages[0]?.run(stage) as Promise<unknown>);
+  }
+
+  it("reports a media exec killed at its timeout as TIMEOUT", async () => {
+    const { error } = await mediaExec({});
     expect(error.code).toBe("TIMEOUT");
     expect(error.message).toBe("ffmpeg was killed after 60s timeout");
+    expect(error.details).toMatchObject({ exitCode: 124, killed: true });
+  });
+
+  it("reports a media exec killed before its timeout as UNAVAILABLE, retryable", async () => {
+    const { error } = await mediaExec({ durationMs: 5_000 });
+    expect(error.code).toBe("UNAVAILABLE");
+    expect(error.retryable).toBe(true);
+    expect(error.details).toMatchObject({ reason: "sandbox-lost" });
+  });
+
+  it("keeps a tool that itself exits 124 a VALIDATION failure", async () => {
+    const { error } = await mediaExec({ killed: false, durationMs: 60_500 });
+    expect(error.code).toBe("VALIDATION");
   });
 });

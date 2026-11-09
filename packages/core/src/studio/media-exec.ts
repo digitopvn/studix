@@ -274,7 +274,10 @@ export function mediaExecContentType(name: string, given?: string): string {
 /** What `studix_get_job` shows for a finished `media.exec` job (stored as the job result). */
 export interface MediaExecResult {
   tool: MediaExecTool;
+  /** The tool's exit code; 124 (the `timeout(1)` convention) when it was killed and never exited. */
   exitCode: number;
+  /** True when the sandbox killed the tool (its timeout, or the sandbox stopping); false when it exited. */
+  killed: boolean;
   durationMs: number;
   stdout: string;
   stderr: string;

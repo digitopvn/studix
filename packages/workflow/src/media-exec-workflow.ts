@@ -6,7 +6,7 @@ import {
   parseMediaExecRequest,
 } from "@studix/core";
 import { StudixError } from "@studix/shared";
-import { killedCommandError, reachedTimeout } from "./killed-command-error.ts";
+import { killedCommandError } from "./killed-command-error.ts";
 import { StageFailedAfterSpend } from "./stage-signals.ts";
 import type { StageContext, StageUsage, WorkflowDefinition } from "./workflow-types.ts";
 
@@ -27,8 +27,6 @@ export interface MediaExecWorkflowDeps {
 }
 
 const STDERR_TAIL = 2000;
-/** The exit code the runner reports for a tool it killed (the `timeout(1)` convention). */
-const KILLED_EXIT_CODE = 124;
 
 /** `media.exec`: one stage, never retried automatically (a failed command fails the same way again). */
 export function createMediaExecWorkflow(deps: MediaExecWorkflowDeps): WorkflowDefinition {
@@ -63,17 +61,16 @@ export function createMediaExecWorkflow(deps: MediaExecWorkflowDeps): WorkflowDe
               metadata: { tool: request.tool, exitCode: result.exitCode },
             },
           ];
-          if (
-            result.exitCode === KILLED_EXIT_CODE &&
-            reachedTimeout(result.durationMs, request.timeoutSeconds)
-          ) {
+          // A killed tool never exited: its timeout is TIMEOUT, an earlier kill (sandbox lost) UNAVAILABLE.
+          // A tool that itself exits 124 is not killed and stays a VALIDATION failure below.
+          if (result.killed) {
             throw new StageFailedAfterSpend(
               killedCommandError({
                 subject: request.tool,
                 timeoutSeconds: request.timeoutSeconds,
                 maxTimeoutSeconds: MEDIA_EXEC_LIMITS.maxTimeoutSeconds,
                 durationMs: result.durationMs,
-                details: { exitCode: null, stderrTail: result.stderr.slice(-STDERR_TAIL).trim() },
+                details: { exitCode: result.exitCode, stderrTail: result.stderr.slice(-STDERR_TAIL).trim() },
               }),
               usage,
             );

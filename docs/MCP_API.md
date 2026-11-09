@@ -573,12 +573,15 @@ paths, URLs, protocol prefixes (`concat:`, `file:`, `subfile,`) and the options
 Studix adds `-hide_banner -nostdin` and `-protocol_whitelist file,pipe` itself.
 
 The tool returns `{jobId, status, replayed}`; poll `studix_get_job`. A finished
-job's `result` holds `exitCode`, `durationMs`, truncated `stdout` / `stderr`,
-`json` (parsed ffprobe output when stdout is JSON) and `outputs` with
+job's `result` holds `exitCode`, `killed`, `durationMs`, truncated `stdout` /
+`stderr`, `json` (parsed ffprobe output when stdout is JSON) and `outputs` with
 `assetId`, `name`, `contentType`, `bytes`, `sha256` and a signed `url`. A
 non-zero exit fails the job with `VALIDATION` and the stderr tail in
-`error.message` (`details.exitCode`, `details.stderrTail`); a tool killed at its
-`timeoutSeconds` fails with `TIMEOUT` instead. The time is still billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
+`error.message` (`details.exitCode`, `details.stderrTail`). A tool the sandbox
+killed (`details.killed: true`, `details.exitCode: 124`) fails instead: with
+`TIMEOUT` (not retryable; raise `timeoutSeconds` or lighten the work) when it ran
+for its whole `timeoutSeconds`, or with `UNAVAILABLE` (retryable; run it again)
+when it was killed earlier because the sandbox stopped. The time is still billed. Jobs show on the dashboard Jobs page as kind `media.exec`.
 
 ```json
 {
