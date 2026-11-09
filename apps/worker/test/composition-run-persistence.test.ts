@@ -48,8 +48,8 @@ function fakeSandbox(scripts: Map<string, Script>): SkillSandbox {
               if (argv[0] === "find") {
                 const listed = [...fs.files]
                   .filter(([, f]) => f.version > fs.stamp)
-                  .map(([p]) => p.slice(ROOT.length));
-                return Buffer.from(listed.map((p) => `${p}\n`).join(""));
+                  .map(([p, f]) => `${f.bytes.length} ${p.slice(ROOT.length)}`);
+                return Buffer.from(listed.map((line) => `${line}\n`).join(""));
               }
               const text = argv.join(" ");
               if (text.includes("touch")) fs.stamp = fs.version;

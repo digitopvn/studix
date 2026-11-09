@@ -35,6 +35,22 @@ describe("composition runs", () => {
     expect(problems).toHaveLength(5);
   });
 
+  it("requires an audible track when audio is requested", () => {
+    const check = { path: "out/v.mp4", durationToleranceMs: 500, audio: true };
+    const probe = { width: 1920, height: 1080, durationMs: 1000 };
+    expect(compositionCheckProblems(check, probe, undefined)).toEqual(["no audio track"]);
+    expect(compositionCheckProblems(check, { ...probe, audioCodec: "aac" }, undefined)).toEqual([
+      "audio is silent",
+    ]);
+    expect(
+      compositionCheckProblems(
+        check,
+        { ...probe, audioCodec: "aac" },
+        { integratedLufs: -18, truePeakDbtp: -3 },
+      ),
+    ).toEqual([]);
+  });
+
   it("merges run output into the manifest, keeping files written meanwhile", () => {
     const manifest = { id: "cmp_1", files: [file("index.html"), file("old.png")] } as never;
     const merged = mergeManifest(manifest, [file("out/video.mp4")], ["old.png"]);

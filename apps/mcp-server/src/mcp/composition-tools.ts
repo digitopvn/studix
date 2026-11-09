@@ -63,7 +63,7 @@ const RunInput = z.object({
     ),
   timeoutSeconds: z.number().int().min(1).max(COMPOSITION_LIMITS.maxTimeoutSeconds).optional(),
   check: CompositionCheck.optional().describe(
-    "Output check after the command: size, duration, loudness of a rendered file. The job fails when it misses.",
+    "Output check after the command: size, duration, audio and loudness of a rendered file; `frames` also samples the picture (black or blank frames, safe margins, motion, Vietnamese font) and stores a contact sheet at `check.contactSheet`. The job fails when it misses.",
   ),
   budgetCents: z.number().int().min(0).max(10_000_000).optional(),
   idempotencyKey: z
