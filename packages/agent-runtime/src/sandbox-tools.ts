@@ -7,6 +7,8 @@ import {
   createWriteToolDefinition,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { StudixError } from "@studix/shared";
+import { agentCapOf } from "./bounded-agent-runtime.ts";
 import { SANDBOX_WORK_DIR, type SandboxSession } from "./sandbox-docker.ts";
 
 /** Tool names a task may ask for; each one runs inside the task's sandbox. */
@@ -45,6 +47,11 @@ export function createSandboxToolDefinitions(
   names: readonly SandboxToolName[],
   /** Host dir Pi uses as the session cwd; paths under it map to /work. */
   hostDir?: string,
+  /**
+   * Called with the error when a tool fails because the sandbox reached a cap (its wall time). The model
+   * cannot recover from that, so the caller ends the run instead of letting it retry against a closed sandbox.
+   */
+  onCap?: (error: StudixError) => void,
 ): ToolDefinition[] {
   const at = (path: string) => containerPath(path, hostDir);
   const readFile = async (path: string) => sandbox.run(["cat", "--", at(path)]);
@@ -118,5 +125,22 @@ export function createSandboxToolDefinitions(
         },
       }) as unknown as ToolDefinition,
   };
-  return names.map((name) => all[name]());
+  return names.map((name) => withCapGuard(all[name](), onCap));
+}
+
+/** Reports a tool failure that carries a cap to `onCap` before the error goes back to the model. */
+function withCapGuard(tool: ToolDefinition, onCap?: (error: StudixError) => void): ToolDefinition {
+  if (!onCap) return tool;
+  const execute = tool.execute.bind(tool);
+  return {
+    ...tool,
+    execute: async (...args: Parameters<ToolDefinition["execute"]>) => {
+      try {
+        return await execute(...args);
+      } catch (error) {
+        if (error instanceof StudixError && agentCapOf(error) === "time") onCap(error);
+        throw error;
+      }
+    },
+  } as ToolDefinition;
 }

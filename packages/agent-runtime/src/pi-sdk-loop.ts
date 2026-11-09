@@ -262,6 +262,8 @@ interface AttemptOptions {
   workspace?: PiTaskWorkspace;
   tools?: SandboxToolName[];
   turnRetry?: false | typeof PI_TURN_RETRY;
+  /** Called when a sandbox tool fails with a cap, so the run can end with it. */
+  onCap?: (error: StudixError) => void;
 }
 
 /**
@@ -412,7 +414,14 @@ async function openSession(
     // Custom definitions replace the built-ins of the same name, so every tool runs in the sandbox.
     tools: attempt.workspace ? [...(attempt.tools ?? [])] : [],
     ...(attempt.workspace
-      ? { customTools: createSandboxToolDefinitions(attempt.workspace.sandbox, attempt.tools ?? [], scratch) }
+      ? {
+          customTools: createSandboxToolDefinitions(
+            attempt.workspace.sandbox,
+            attempt.tools ?? [],
+            scratch,
+            attempt.onCap,
+          ),
+        }
       : {}),
   });
   return session;
@@ -444,9 +453,15 @@ async function runAttempt(
   const scratch = await mkdtemp(join(attempt.scratchRoot ?? tmpdir(), "studix-pi-"));
   const onAbort = () => void session?.abort();
   task.signal.addEventListener("abort", onAbort, { once: true });
+  // A closed sandbox fails every later tool call; the first such failure ends the run with its cap.
+  let capError: StudixError | undefined;
+  const onCap = (error: StudixError) => {
+    capError ??= error;
+    void session?.abort();
+  };
 
   try {
-    session = await openSession(binding, scratch, attempt);
+    session = await openSession(binding, scratch, { ...attempt, onCap });
     // The abort may have fired while the session was being built, before there was anything to abort.
     throwIfAborted(task);
     const active = session;
@@ -492,7 +507,10 @@ async function runAttempt(
       }
     });
 
-    await active.prompt(buildPrompt(task));
+    await active.prompt(buildPrompt(task)).catch((error) => {
+      throw capError ?? error;
+    });
+    if (capError) throw capError;
     throwIfAborted(task);
     const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
     if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");

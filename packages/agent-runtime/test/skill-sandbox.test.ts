@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { testTenant } from "@studix/core/testing";
+import { StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import {
   changedSkillBundles,
@@ -135,6 +136,30 @@ describe("sandbox tools", () => {
     // A path that climbs out still resolves inside the container's filesystem.
     await exec(write, { path: "../../etc/evil", content: "x" });
     expect(files.has("/etc/evil")).toBe(true);
+  });
+
+  it("reports a wall-time failure from the sandbox to the caller and still returns it to Pi", async () => {
+    const { session } = fakeSandbox();
+    const stopped = new StudixError("TIMEOUT", "The sandbox was stopped", {
+      retryable: false,
+      details: { cap: "time" },
+    });
+    session.exec = async () => {
+      throw stopped;
+    };
+    const seen: StudixError[] = [];
+    const [bash] = createSandboxToolDefinitions(session, ["bash"], undefined, (e) => seen.push(e));
+    const ctx = { sessionManager: SessionManager.inMemory() } as never;
+    // biome-ignore lint/suspicious/noExplicitAny: Pi tool execute signatures are generic.
+    const run = (bash as any).execute(
+      "c1",
+      { command: "echo hi" },
+      new AbortController().signal,
+      () => {},
+      ctx,
+    );
+    await expect(run).rejects.toBe(stopped);
+    expect(seen).toEqual([stopped]);
   });
 
   it("maps the host scratch dir Pi passes as cwd to /work", () => {
