@@ -297,20 +297,21 @@ is never published.
 
 The `skill-agent` pack, and any agent stage that asks for `bash`, `read`, `write`, `edit` or `ls`, runs
 its tools in a per-task Docker container
-([ADR-0018](decisions/0018-skill-sandbox.md)). It is off by default.
+([ADR-0018](decisions/0018-skill-sandbox.md)), or, on TOSE, in a `pi-runner` sidecar of the worker's pod
+([ADR-0025](decisions/0025-sidecar-skill-runner.md)). It is off by default.
 
-| Variable                      | Default                | Meaning                                                                        |
-| ----------------------------- | ---------------------- | ------------------------------------------------------------------------------ |
-| `STUDIX_SANDBOX`              | `off`                  | `docker` turns it on; the worker needs a Docker daemon                         |
-| `STUDIX_SANDBOX_IMAGE`        | `studix-sandbox:local` | Image built from `docker/sandbox.Dockerfile`                                   |
-| `STUDIX_SANDBOX_NETWORK`      | `bridge`               | Docker network of the containers (egress is open)                              |
-| `STUDIX_SANDBOX_CPUS`         | `2`                    | CPU cap per task                                                               |
-| `STUDIX_SANDBOX_MEMORY_MB`    | `4096`                 | Memory cap per task, no swap                                                   |
-| `STUDIX_SANDBOX_PIDS`         | `512`                  | Process cap per task                                                           |
-| `STUDIX_SANDBOX_WALL_SECONDS` | `1800`                 | Wall-time cap of one container                                                 |
-| `STUDIX_SANDBOX_SKILLS_DIR`   | unset                  | Local skills (`<dir>/{platform,workspace}/<name>/`) instead of the skill store |
-| `DOCKER_BIN`                  | `docker`               | Docker CLI path                                                                |
-| `STUDIX_CODEX_MODEL`          | `gpt-5.5`              | Default model of the `codex` agent runtime when the job names none             |
+| Variable                      | Default                | Meaning                                                                                 |
+| ----------------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
+| `STUDIX_SANDBOX`              | `off`                  | `docker` turns it on (the worker needs a Docker daemon); `sidecar` uses runner sidecars |
+| `STUDIX_SANDBOX_IMAGE`        | `studix-sandbox:local` | Image built from `docker/sandbox.Dockerfile`                                            |
+| `STUDIX_SANDBOX_NETWORK`      | `bridge`               | Docker network of the containers (egress is open)                                       |
+| `STUDIX_SANDBOX_CPUS`         | `2`                    | CPU cap per task                                                                        |
+| `STUDIX_SANDBOX_MEMORY_MB`    | `4096`                 | Memory cap per task, no swap                                                            |
+| `STUDIX_SANDBOX_PIDS`         | `512`                  | Process cap per task                                                                    |
+| `STUDIX_SANDBOX_WALL_SECONDS` | `1800`                 | Wall-time cap of one container                                                          |
+| `STUDIX_SANDBOX_SKILLS_DIR`   | unset                  | Local skills (`<dir>/{platform,workspace}/<name>/`) instead of the skill store          |
+| `DOCKER_BIN`                  | `docker`               | Docker CLI path                                                                         |
+| `STUDIX_CODEX_MODEL`          | `gpt-5.5`              | Default model of the `codex` agent runtime when the job names none                      |
 
 The `codex` runtime runs `codex exec` inside this sandbox, so it needs `STUDIX_SANDBOX=docker`. The image
 pins the Codex CLI with the `CODEX_VERSION` build argument of `docker/sandbox.Dockerfile`. A Claude agent's
@@ -320,6 +321,57 @@ Build the image with `docker compose --profile sandbox build sandbox-image`. It 
 commit and chrome-headless-shell as the Studix image; bump both together. The container receives only
 the task's media vendor keys (every name in `MULTIX_ENV_KEY_NAMES`). The self-host `worker` service does not mount
 the Docker socket, so run a sandboxed worker on a host with Docker until that wiring exists.
+
+#### Sidecar backend (TOSE)
+
+`STUDIX_SANDBOX=sidecar` keeps the Pi session in the worker and runs the tools in a pool of `pi-runner`
+containers in the same pod. The runner image is the `pi-runner` target of `docker/sandbox.Dockerfile`
+(`--build-arg STUDIX_RUNNER_VERSION=<sha>`), published as `ghcr.io/digitopvn/studix-pi-runner`. The wire
+contract is `packages/agent-runtime/src/sandbox-runner-protocol.ts`. `STUDIX_SANDBOX_PIDS` and
+`STUDIX_SANDBOX_WALL_SECONDS` apply as for Docker; CPU and RAM come from the sidecar spec instead of
+`STUDIX_SANDBOX_CPUS` and `_MEMORY_MB`. `studix_media_exec` is unavailable on this backend.
+
+Worker variables:
+
+| Variable                                         | Meaning                                                                                        |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `STUDIX_SANDBOX_RUNNERS`                         | Comma-separated runner URLs, `http://127.0.0.1:7071,http://127.0.0.1:7072` (port `7070 + n`)   |
+| `STUDIX_RUNNER_1_TOKEN`, `STUDIX_RUNNER_2_TOKEN` | One bearer token per runner, at least 32 characters; the worker reads all of them              |
+| `STUDIX_SANDBOX_SIDECAR_WORKSPACES`              | Comma-separated workspace ids allowed to use the backend; any other workspace gets `FORBIDDEN` |
+
+Runner environment, set by TOSE from the project's env (`env: [{name, from_env}]`):
+
+| Variable                    | Source key in the project env | Meaning                             |
+| --------------------------- | ----------------------------- | ----------------------------------- |
+| `STUDIX_RUNNER_TOKEN`       | `STUDIX_RUNNER_<n>_TOKEN`     | Bearer token of this runner only    |
+| `STUDIX_RUNNER_PORT`        | `STUDIX_RUNNER_<n>_PORT`      | Loopback listen port, `7070 + n`    |
+| `STUDIX_RUNNER_MAX_DISK_MB` | not set by CI                 | Disk cap of a session, default 8192 |
+| `STUDIX_RUNNER_MAX_FILE_MB` | not set by CI                 | Cap of one transferred file         |
+
+One-time setup of the worker project (dev: `studix-worker`), with `tose env push` as in
+[TOSE environments](#tose-environments): `STUDIX_SANDBOX=sidecar`, `STUDIX_SANDBOX_RUNNERS`,
+`STUDIX_SANDBOX_SIDECAR_WORKSPACES`, and for each runner `n` the keys `STUDIX_RUNNER_<n>_TOKEN` (a fresh random
+value of at least 32 characters) and `STUDIX_RUNNER_<n>_PORT` (`7070 + n`). TOSE refuses a sidecar whose
+`from_env` key is missing from the project env. The workspace must also be allowed to use sidecars on the TOSE
+side (`PROJECT_SIDECARS_WORKSPACES`).
+
+After that CI manages the sidecars. With `STUDIX_DEPLOY_IMAGE=1` and the environment variable
+`TOSE_WORKER_RUNNERS` set (see [CI deploy](#ci-deploy)), the `image` job also builds and pushes the runner image
+and `deploy/tose/deploy.ts` saves the worker's `sidecars` (`pi-runner-1` to `pi-runner-n`, digest-pinned, with the
+registry credential, `/healthz` probes, uid 1000) through `PUT /projects/<worker>` just before the worker deploys.
+The runner image is a separate GHCR package: give the registry credential's token `read:packages` on it. Sidecars
+need image mode; with `TOSE_WORKER_RUNNERS` set in branch mode the script fails before deploying anything. When
+`TOSE_WORKER_RUNNERS` is unset the script never sends `sidecars`, so a project keeps whatever it has (production
+today: none).
+
+Verify after a deploy: the worker pod lists every container as ready in the TOSE status; the logs of a runner are
+`GET .../logs?container=pi-runner-1`; and from the worker container `curl -s http://127.0.0.1:7071/healthz`
+answers `{"ok":true}`. Then run a `skill-agent` job from an allowlisted workspace.
+
+Rollback: unset `TOSE_WORKER_RUNNERS`, set `STUDIX_SANDBOX=off` and redeploy the worker. Unsetting alone does not
+remove the sidecars, because an omitted `sidecars` keeps them; remove them with `PUT /projects/<worker>` and
+`{"sidecars": []}`. A runbook rollback of the worker (see [Rollback](#rollback)) changes only the worker's image
+and keeps the sidecars.
 
 Secrets are injected by the platform's secret store (TOSE project secrets,
 Cloudflare secrets, local `.env`), never baked into the image.
@@ -522,14 +574,16 @@ A started rollout is never cancelled; a newer push queues behind it.
 The GitHub environments `dev` and `production` hold what the job needs, and
 each accepts deployments only from its own branch:
 
-| Kind     | Name                                      | Value                             |
-| -------- | ----------------------------------------- | --------------------------------- |
-| Secret   | `TOSE_API_KEY`                            | TOSE API key for `wearetopgroup`  |
-| Variable | `TOSE_WORKSPACE`                          | `wearetopgroup`                   |
-| Variable | `TOSE_APP_PROJECT`, `TOSE_WORKER_PROJECT` | the environment's projects        |
-| Variable | `STUDIX_APP_URL`                          | the environment's public origin   |
-| Variable | `STUDIX_DEPLOY_IMAGE`                     | `1` for image mode (optional)     |
-| Variable | `TOSE_REGISTRY_CREDENTIAL_ID`             | TOSE GHCR credential (image mode) |
+| Kind     | Name                                      | Value                                                                           |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------------- |
+| Secret   | `TOSE_API_KEY`                            | TOSE API key for `wearetopgroup`                                                |
+| Variable | `TOSE_WORKSPACE`                          | `wearetopgroup`                                                                 |
+| Variable | `TOSE_APP_PROJECT`, `TOSE_WORKER_PROJECT` | the environment's projects                                                      |
+| Variable | `STUDIX_APP_URL`                          | the environment's public origin                                                 |
+| Variable | `STUDIX_DEPLOY_IMAGE`                     | `1` for image mode (optional)                                                   |
+| Variable | `TOSE_REGISTRY_CREDENTIAL_ID`             | TOSE GHCR credential (image mode)                                               |
+| Variable | `TOSE_WORKER_RUNNERS`                     | `1` to `3` runner sidecars for the worker; image mode only; unset in production |
+| Variable | `TOSE_RUNNER_CPU`, `TOSE_RUNNER_RAM`      | Cores (default `1.5`) and GiB (default `3`) per runner                          |
 
 To redeploy without a push, run the workflow manually (**Run workflow** on the
 branch). Env-only changes need no build: `tose redeploy <project> -y`.

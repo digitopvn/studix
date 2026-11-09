@@ -399,6 +399,16 @@ or a path guard as a security boundary:
   keys, passed by name; database, storage, secrets-box and model keys never enter
   it. Without `STUDIX_SANDBOX=docker` such a stage fails `VALIDATION`
   ([ADR-0018](decisions/0018-skill-sandbox.md)).
+- On TOSE (`STUDIX_SANDBOX=sidecar`, [ADR-0025](decisions/0025-sidecar-skill-runner.md)) the same tools run in
+  a `pi-runner` sidecar of the worker's pod instead. The runner holds no database, model or storage secret and no
+  Kubernetes token, only the task's media vendor keys passed per session and its own bearer token (32 characters
+  or more, one per runner). Containers of a pod share a network namespace, so skill code in a session can reach
+  the internet and the worker's loopback ports; the token, not `127.0.0.1`, is the authorization for a runner.
+  This is not strong isolation between hostile tenants, so the backend is gated to workspaces listed in
+  `STUDIX_SANDBOX_SIDECAR_WORKSPACES` (any other workspace gets `FORBIDDEN`) and is meant for trusted or
+  internal use. Residual risks: shared kernel, open egress, and processes of one session sharing a uid.
+  TOSE drops all capabilities, forces non-root and the default seccomp profile, and mounts no service account token.
+  `studix_media_exec` is refused on this backend because it needs an offline sandbox.
 - A ChatGPT sign-in for Codex uses the device-code flow: the browser talks to
   OpenAI, Studix only holds a sealed, 15-minute flow token bound to the user and
   workspace that started it. The resulting tokens are stored sealed like an API
