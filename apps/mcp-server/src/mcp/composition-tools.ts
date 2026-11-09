@@ -126,7 +126,7 @@ export const COMPOSITION_MCP_TOOLS = [
     name: COMPOSITION_TOOL_NAMES.run,
     title: "Run in composition",
     description:
-      "Async: run a shell command over a composition in the skill sandbox (Node, Python, ffmpeg, Chromium, HyperFrames, Remotion, Multix, /skills). Each run starts in a fresh sandbox: only the composition's stored files are copied in, and only files the command adds or changes (not node_modules, .git, caches, files that keep old timestamps, or paths whose segments do not start with an ASCII letter/digit/_ and use only [A-Za-z0-9_.@+-]) are stored back; deletes do not persist. Generate projects inside the composition root. Poll studix_get_job.",
+      "Async: run a shell command in a fresh sandbox holding the composition's stored files (Node, Python, ffmpeg, Chromium, HyperFrames). Only files it adds or changes are kept. Poll studix_get_job.",
     input: RunInput,
     readOnly: false,
     audited: true,
@@ -159,7 +159,7 @@ export const COMPOSITION_MCP_TOOLS = [
     name: COMPOSITION_TOOL_NAMES.attachRender,
     title: "Attach composition render to a project",
     description:
-      "Register a rendered MP4 of a composition (after studix_composition_run) as a playable render of a project: it gets an asset, version and preview, so studix_get_project and the dashboard play it. Safe to repeat for the same file, preset and project version.",
+      "Register a composition's rendered MP4 as a playable project render (asset, version, preview) for studix_get_project and the dashboard. Safe to repeat for one file, preset and version.",
     input: AttachInput,
     readOnly: false,
     audited: true,
