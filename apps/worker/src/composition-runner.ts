@@ -163,16 +163,18 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           changed,
         };
         if (request.check && exitCode === 0) {
-          // Fonts live in the sandbox that rendered the file, so ask it before it closes.
-          const vietnameseFont = request.check.frames?.vietnamese
-            ? (
-                await box
-                  .run(["sh", "-c", "fc-list ':lang=vi' family 2>/dev/null | head -n 1"])
-                  .catch(() => Buffer.alloc(0))
-              )
-                .toString("utf8")
-                .trim().length > 0
-            : true;
+          // Fonts live in the sandbox that rendered the file, so ask it before it closes. A probe that
+          // fails to run says nothing about the fonts, so it never fails the check.
+          let vietnameseFont: boolean | undefined = true;
+          if (request.check.frames?.vietnamese) {
+            vietnameseFont = await box
+              .run(["sh", "-c", "fc-list ':lang=vi' family 2>/dev/null | head -n 1"], { signal })
+              .then((out) => out.toString("utf8").trim().length > 0)
+              .catch((err) => {
+                if (err instanceof StudixError && err.code === "CANCELLED") throw err;
+                return undefined;
+              });
+          }
           result.check = await check(request.check, paths, host, vietnameseFont);
         }
         log.info("composition run finished", { jobId: job.id, exitCode, changed: changed.length });
@@ -188,39 +190,54 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
         local: string,
         durationMs: number,
         dir: string,
-        vietnameseFont: boolean,
+        vietnameseFont: boolean | undefined,
       ) {
         const frames = spec.frames as NonNullable<CompositionCheck["frames"]>;
         const options = { ffmpegPath: process.env.FFMPEG_PATH, signal, workDir: join(dir, "frames") };
         const seen = await checkFrames(local, durationMs, { ...frames, ...options });
         const problems = [...seen.problems];
-        if (frames.vietnamese && !vietnameseFont) {
+        if (frames.vietnamese && vietnameseFont === false) {
           problems.push(
-            "no installed font covers Vietnamese in the render sandbox: accented text will render as empty boxes",
+            "no installed system font covers Vietnamese in the render sandbox: accented text that relies on system fonts will render as empty boxes (fonts loaded with @font-face are not checked)",
           );
         }
         const sheet = join(dir, "contact-sheet.jpg");
-        const bytes = await writeContactSheet(local, durationMs, frames.samples, sheet, options);
-        const stem = spec.path.replace(/\.[^./]+$/, "");
-        const path = `qa/${stem.replace(/\//g, "-")}-contact-sheet.jpg`;
+        let bytes: number;
+        try {
+          bytes = await writeContactSheet(local, durationMs, frames.samples, sheet, options);
+        } catch (err) {
+          if (err instanceof StudixError && (err.code === "CANCELLED" || err.code === "TIMEOUT")) throw err;
+          return { problems };
+        }
         const { sha256 } = await sha256File(sheet);
+        const stem = spec.path.replace(/\.[^./]+$/, "").replace(/\//g, "__");
+        let path = `qa/${stem}-contact-sheet.jpg`;
+        if (!CompositionPath.safeParse(path).success) path = `qa/contact-sheet-${sha256.slice(0, 12)}.jpg`;
         const contentType = "image/jpeg";
+        const latest = await loadCompositionManifest(deps.storage, ctx, manifest.id);
+        let merged: ReturnType<typeof mergeManifest>;
+        try {
+          merged = mergeManifest(latest, [{ path, bytes, sha256, contentType }]);
+        } catch {
+          // The composition is full: the check still reports, just without a sheet.
+          return { problems };
+        }
         await deps.storage.put(
           ctx,
           compositionFileKey(manifest.id, path),
           { filePath: sheet },
           { contentType, sha256 },
         );
-        const latest = await loadCompositionManifest(deps.storage, ctx, manifest.id);
-        await saveCompositionManifest(
-          deps.storage,
-          ctx,
-          mergeManifest(latest, [{ path, bytes, sha256, contentType }]),
-        );
+        await saveCompositionManifest(deps.storage, ctx, merged);
         return { problems, contactSheet: path };
       }
 
-      async function check(spec: CompositionCheck, written: string[], dir: string, vietnameseFont: boolean) {
+      async function check(
+        spec: CompositionCheck,
+        written: string[],
+        dir: string,
+        vietnameseFont: boolean | undefined,
+      ) {
         const local = join(dir, "check-target");
         // The stored copy: written by this run, or by an earlier one.
         const exists =
@@ -230,6 +247,11 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
           );
         if (!exists) return { path: spec.path, passed: false, problems: [`${spec.path} does not exist`] };
         await deps.storage.download(ctx, compositionFileKey(manifest.id, spec.path), local);
+        let probed: {
+          probe: Awaited<ReturnType<FfmpegProbe["probe"]>>;
+          loudness: LoudnessMeasurement | undefined;
+          problems: string[];
+        };
         try {
           const probe = await new FfmpegProbe({ ffprobePath: process.env.FFPROBE_PATH }).probe(local, signal);
           const loudness =
@@ -237,23 +259,26 @@ export function createCompositionRunner(deps: CompositionRunnerDeps): Compositio
               ? await measureLoudness(local, { ffmpegPath: process.env.FFMPEG_PATH, signal })
               : undefined;
           const problems = compositionCheckProblems(spec, probe, loudness);
-          let contactSheet: string | undefined;
-          if (spec.frames) {
-            const seen = await lookAtFrames(spec, local, probe.durationMs, dir, vietnameseFont);
-            problems.push(...seen.problems);
-            contactSheet = seen.contactSheet;
-          }
-          return {
-            path: spec.path,
-            passed: problems.length === 0,
-            problems,
-            probe: { ...probe, ...(loudness ? { loudness } : {}) } as Record<string, unknown>,
-            ...(contactSheet ? { contactSheet } : {}),
-          };
+          probed = { probe, loudness, problems };
         } catch (err) {
           if (err instanceof StudixError && err.code === "CANCELLED") throw err;
           return { path: spec.path, passed: false, problems: [`not a playable media file: ${String(err)}`] };
         }
+        // Frame and storage errors are not "unplayable": they surface as the errors they are.
+        const { probe, loudness, problems } = probed;
+        let contactSheet: string | undefined;
+        if (spec.frames) {
+          const seen = await lookAtFrames(spec, local, probe.durationMs, dir, vietnameseFont);
+          problems.push(...seen.problems);
+          contactSheet = seen.contactSheet;
+        }
+        return {
+          path: spec.path,
+          passed: problems.length === 0,
+          problems,
+          probe: { ...probe, ...(loudness ? { loudness } : {}) } as Record<string, unknown>,
+          ...(contactSheet ? { contactSheet } : {}),
+        };
       }
     },
   };

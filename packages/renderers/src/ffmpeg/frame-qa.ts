@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { StudixError } from "@studix/shared";
 import { runFfmpeg } from "./run-process.ts";
 
 /*
@@ -14,8 +15,10 @@ const H = 90;
 const CONTRAST = 40;
 /** Mean luma under this (0-255) with almost no spread is a black frame. */
 const BLACK_MEAN = 12;
-/** Luma spread (standard deviation) under this is a blank frame, whatever its colour. */
-const BLANK_SPREAD = 3;
+/** A pixel counts as drawn when it differs this much from the frame's median luma (a small caption is faint). */
+const DRAWN_DELTA = 4;
+/** Fewer drawn pixels than this share of the thumbnail is a blank frame, whatever its colour. */
+const BLANK_SHARE = 0.001;
 /** Mean absolute luma change between two samples under this is "did not change". */
 const STATIC_DIFF = 0.5;
 /** Share of margin pixels that may differ from the background before content counts as inside the margin. */
@@ -57,7 +60,7 @@ const clock = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 export function analyseGrayFrame(
   gray: Uint8Array,
   safeMarginPct?: number,
-): { meanLuma: number; spread: number; edgeContent: number; marginContent: number } {
+): { meanLuma: number; spread: number; drawn: number; edgeContent: number; marginContent: number } {
   const n = gray.length;
   let sum = 0;
   for (const v of gray) sum += v;
@@ -65,6 +68,11 @@ export function analyseGrayFrame(
   let variance = 0;
   for (const v of gray) variance += (v - mean) ** 2;
   const spread = Math.sqrt(variance / n);
+  const sorted = Uint8Array.from(gray).sort();
+  const median = sorted[Math.floor(n / 2)] as number;
+  let drawnPixels = 0;
+  for (const v of gray) if (Math.abs(v - median) > DRAWN_DELTA) drawnPixels++;
+  const drawn = drawnPixels / n;
 
   // Background = the median of the outermost ring: text and graphics rarely start at the very edge.
   const ring: number[] = [];
@@ -96,7 +104,7 @@ export function analyseGrayFrame(
     }
     marginContent = inBand / total;
   }
-  return { meanLuma: mean, spread, edgeContent, marginContent };
+  return { meanLuma: mean, spread, drawn, edgeContent, marginContent };
 }
 
 /** Mean absolute luma difference between two thumbnails. */
@@ -123,7 +131,7 @@ export function frameProblems(
       meanLuma: Math.round(a.meanLuma * 10) / 10,
       spread: Math.round(a.spread * 10) / 10,
     });
-    if (a.spread < BLANK_SPREAD) {
+    if (a.drawn < BLANK_SHARE) {
       problems.push(
         a.meanLuma < BLACK_MEAN
           ? `black frame at ${at}`
@@ -186,12 +194,26 @@ export async function checkFrames(
   await mkdir(options.workDir, { recursive: true });
   const out = join(options.workDir, "frame.gray");
   const frames: Uint8Array[] = [];
+  const keptTimes: number[] = [];
+  const missing: string[] = [];
   try {
-    for (const t of times) frames.push(await grayFrame(file, t, out, options));
+    for (const t of times) {
+      try {
+        frames.push(await grayFrame(file, t, out, options));
+        keptTimes.push(t);
+      } catch (err) {
+        // A cancel or a timeout is not a verdict on the file.
+        if (err instanceof StudixError && (err.code === "CANCELLED" || err.code === "TIMEOUT")) throw err;
+        missing.push(
+          `no video frame at ${clock(t)} (audio-only file, or the video is shorter than the file?)`,
+        );
+      }
+    }
   } finally {
     await rm(out, { force: true }).catch(() => undefined);
   }
-  return frameProblems(times, frames, options);
+  const seen = frameProblems(keptTimes, frames, options);
+  return { samples: seen.samples, problems: [...missing, ...seen.problems] };
 }
 
 /** Tile the sample frames (about 320 px wide each, three per row) into one JPEG. Returns its byte size. */
@@ -222,7 +244,7 @@ export async function writeContactSheet(
           "-y",
           join(dir, `f${i + 1}.png`),
         ],
-        options,
+        { ...options, timeoutMs: 60_000 },
       );
     }
     const cols = Math.min(3, samples);
@@ -242,7 +264,7 @@ export async function writeContactSheet(
         "-y",
         out,
       ],
-      options,
+      { ...options, timeoutMs: 60_000 },
     );
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);

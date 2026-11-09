@@ -29,6 +29,13 @@ describe("frame problems", () => {
     expect(frameProblems(t, [good, good], { safeMarginPct: 5 }).problems).toEqual([]);
   });
 
+  it("does not call a sparse title card blank", () => {
+    // A faint 20x2 caption on white: tiny global spread, but something is drawn.
+    const f = flat(235);
+    for (let y = 44; y < 46; y++) for (let x = 70; x < 90; x++) f[y * W + x] = 200;
+    expect(frameProblems([1000], [f], {}).problems).toEqual([]);
+  });
+
   it("reports samples that do not change only when motion is requested", () => {
     const a = withBox(20, 40, 30, 120, 60);
     const b = withBox(20, 50, 30, 130, 60);
