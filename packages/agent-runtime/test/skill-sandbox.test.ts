@@ -138,6 +138,31 @@ describe("sandbox tools", () => {
     expect(files.has("/etc/evil")).toBe(true);
   });
 
+  it("reports a wall-time failure even from a tool that swallows it, and after a command killed in flight", async () => {
+    const { session } = fakeSandbox();
+    const stopped = new StudixError("TIMEOUT", "The sandbox was stopped", {
+      retryable: false,
+      details: { cap: "time" },
+    });
+    let closed = false;
+    session.run = async () => {
+      if (closed) throw stopped;
+      return Buffer.from("");
+    };
+    session.exec = async () => {
+      closed = true;
+      return { exitCode: null };
+    };
+    const seen: StudixError[] = [];
+    const [bash] = createSandboxToolDefinitions(session, ["bash"], undefined, (e) => seen.push(e));
+    const ctx = { sessionManager: SessionManager.inMemory() } as never;
+    // biome-ignore lint/suspicious/noExplicitAny: Pi tool execute signatures are generic.
+    await (bash as any)
+      .execute("c1", { command: "sleep 99" }, new AbortController().signal, () => {}, ctx)
+      .catch(() => undefined);
+    expect(seen).toEqual([stopped]);
+  });
+
   it("reports a wall-time failure from the sandbox to the caller and still returns it to Pi", async () => {
     const { session } = fakeSandbox();
     const stopped = new StudixError("TIMEOUT", "The sandbox was stopped", {

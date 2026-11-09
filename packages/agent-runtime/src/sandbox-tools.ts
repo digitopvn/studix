@@ -7,7 +7,7 @@ import {
   createWriteToolDefinition,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { StudixError } from "@studix/shared";
+import type { StudixError } from "@studix/shared";
 import { agentCapOf } from "./bounded-agent-runtime.ts";
 import { SANDBOX_WORK_DIR, type SandboxSession } from "./sandbox-docker.ts";
 
@@ -43,7 +43,7 @@ export function containerPath(path: string, hostDir?: string): string {
  * delegated to the sandbox. Registered as custom tools, they replace the built-ins of the same name.
  */
 export function createSandboxToolDefinitions(
-  sandbox: SandboxSession,
+  rawSandbox: SandboxSession,
   names: readonly SandboxToolName[],
   /** Host dir Pi uses as the session cwd; paths under it map to /work. */
   hostDir?: string,
@@ -53,6 +53,7 @@ export function createSandboxToolDefinitions(
    */
   onCap?: (error: StudixError) => void,
 ): ToolDefinition[] {
+  const sandbox = onCap ? withCapReport(rawSandbox, onCap) : rawSandbox;
   const at = (path: string) => containerPath(path, hostDir);
   const readFile = async (path: string) => sandbox.run(["cat", "--", at(path)]);
   const test = async (flag: string, path: string) => {
@@ -125,22 +126,32 @@ export function createSandboxToolDefinitions(
         },
       }) as unknown as ToolDefinition,
   };
-  return names.map((name) => withCapGuard(all[name](), onCap));
+  return names.map((name) => all[name]());
 }
 
-/** Reports a tool failure that carries a cap to `onCap` before the error goes back to the model. */
-function withCapGuard(tool: ToolDefinition, onCap?: (error: StudixError) => void): ToolDefinition {
-  if (!onCap) return tool;
-  const execute = tool.execute.bind(tool);
+/**
+ * Reports a wall-time failure at the sandbox operation itself, before Pi's tools can swallow or re-wrap it
+ * (`ls` and `edit` turn it into a plain "not found"). A command killed in flight reports no error, so a
+ * `null` exit code is followed by a probe that fails the same way once the sandbox has closed.
+ */
+function withCapReport(sandbox: SandboxSession, onCap: (error: StudixError) => void): SandboxSession {
+  const report = async <T>(op: () => Promise<T>): Promise<T> => {
+    try {
+      return await op();
+    } catch (error) {
+      if (agentCapOf(error) === "time") onCap(error as StudixError);
+      throw error;
+    }
+  };
+  const run: SandboxSession["run"] = (argv, options) => report(() => sandbox.run(argv, options));
   return {
-    ...tool,
-    execute: async (...args: Parameters<ToolDefinition["execute"]>) => {
-      try {
-        return await execute(...args);
-      } catch (error) {
-        if (error instanceof StudixError && agentCapOf(error) === "time") onCap(error);
-        throw error;
-      }
-    },
-  } as ToolDefinition;
+    ...sandbox,
+    run,
+    exec: (command, options) =>
+      report(async () => {
+        const result = await sandbox.exec(command, options);
+        if (result.exitCode === null) await sandbox.run(["true"]);
+        return result;
+      }),
+  };
 }

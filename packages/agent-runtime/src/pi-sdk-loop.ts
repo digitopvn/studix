@@ -453,11 +453,11 @@ async function runAttempt(
   const scratch = await mkdtemp(join(attempt.scratchRoot ?? tmpdir(), "studix-pi-"));
   const onAbort = () => void session?.abort();
   task.signal.addEventListener("abort", onAbort, { once: true });
-  // A closed sandbox fails every later tool call; the first such failure ends the run with its cap.
+  // A closed sandbox fails every later tool call; the first wall-time failure ends the run with its cap.
   let capError: StudixError | undefined;
   const onCap = (error: StudixError) => {
     capError ??= error;
-    void session?.abort();
+    session?.abort().catch(() => undefined);
   };
 
   try {
