@@ -17,6 +17,7 @@ import { registerSecret, StudixError } from "@studix/shared";
 import {
   type AgentLoop,
   abortReason,
+  agentCapError,
   type BoundedAgentTask,
   emitAgentEvent,
   eventText,
@@ -295,6 +296,7 @@ async function openSession(
   binding: PiRunBinding,
   scratch: string,
   attempt: AttemptOptions = {},
+  onSandboxCap?: (error: StudixError) => void,
 ): Promise<PiSession> {
   // No auth.json, no models.json, no catalog download: the runtime knows only this binding's key.
   const modelRuntime = await ModelRuntime.create({
@@ -412,7 +414,14 @@ async function openSession(
     // Custom definitions replace the built-ins of the same name, so every tool runs in the sandbox.
     tools: attempt.workspace ? [...(attempt.tools ?? [])] : [],
     ...(attempt.workspace
-      ? { customTools: createSandboxToolDefinitions(attempt.workspace.sandbox, attempt.tools ?? [], scratch) }
+      ? {
+          customTools: createSandboxToolDefinitions(
+            attempt.workspace.sandbox,
+            attempt.tools ?? [],
+            scratch,
+            onSandboxCap,
+          ),
+        }
       : {}),
   });
   return session;
@@ -444,9 +453,18 @@ async function runAttempt(
   const scratch = await mkdtemp(join(attempt.scratchRoot ?? tmpdir(), "studix-pi-"));
   const onAbort = () => void session?.abort();
   task.signal.addEventListener("abort", onAbort, { once: true });
+  // Set when a tool reports the sandbox reached its cap: nothing can run any more, so the run ends there.
+  let sandboxCap: StudixError | undefined;
+  const onSandboxCap = (error: StudixError) => {
+    if (sandboxCap) return;
+    sandboxCap = agentCapError("time", "The skill sandbox reached its wall time and was stopped", {
+      reason: error.message,
+    });
+    void session?.abort();
+  };
 
   try {
-    session = await openSession(binding, scratch, attempt);
+    session = await openSession(binding, scratch, attempt, onSandboxCap);
     // The abort may have fired while the session was being built, before there was anything to abort.
     throwIfAborted(task);
     const active = session;
@@ -493,6 +511,7 @@ async function runAttempt(
     });
 
     await active.prompt(buildPrompt(task));
+    if (sandboxCap) throw sandboxCap;
     throwIfAborted(task);
     const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
     if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");

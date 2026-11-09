@@ -7,6 +7,7 @@ import {
   createWriteToolDefinition,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { StudixError } from "@studix/shared";
 import { SANDBOX_WORK_DIR, type SandboxSession } from "./sandbox-docker.ts";
 
 /** Tool names a task may ask for; each one runs inside the task's sandbox. */
@@ -45,6 +46,12 @@ export function createSandboxToolDefinitions(
   names: readonly SandboxToolName[],
   /** Host dir Pi uses as the session cwd; paths under it map to /work. */
   hostDir?: string,
+  /**
+   * Called with the error when a tool fails because the sandbox reached a cap (`details.cap`, today the wall
+   * time). The error is still thrown to the model's tool call; the caller ends the run so the model is not
+   * left calling tools that can no longer work.
+   */
+  onSandboxCap?: (error: StudixError) => void,
 ): ToolDefinition[] {
   const at = (path: string) => containerPath(path, hostDir);
   const readFile = async (path: string) => sandbox.run(["cat", "--", at(path)]);
@@ -118,5 +125,26 @@ export function createSandboxToolDefinitions(
         },
       }) as unknown as ToolDefinition,
   };
-  return names.map((name) => all[name]());
+  return names.map((name) => withCapReport(all[name](), onSandboxCap));
+}
+
+/** A tool error that carries a sandbox cap (the sandbox is gone), as opposed to an ordinary failing command. */
+export function isSandboxCapError(error: unknown): error is StudixError {
+  return error instanceof StudixError && error.details?.cap === "time";
+}
+
+function withCapReport(tool: ToolDefinition, onCap?: (error: StudixError) => void): ToolDefinition {
+  if (!onCap) return tool;
+  const execute = tool.execute.bind(tool) as (...args: unknown[]) => Promise<unknown>;
+  return {
+    ...tool,
+    execute: (async (...args: unknown[]) => {
+      try {
+        return await execute(...args);
+      } catch (error) {
+        if (isSandboxCapError(error)) onCap(error);
+        throw error;
+      }
+    }) as ToolDefinition["execute"],
+  };
 }
