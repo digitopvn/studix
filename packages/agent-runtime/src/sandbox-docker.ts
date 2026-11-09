@@ -269,7 +269,7 @@ export function createDockerSandboxDriver(options: DockerSandboxOptions): Sandbo
           const kill = () => child.kill("SIGKILL");
           opts.signal?.addEventListener("abort", kill, { once: true });
           const timeout = opts.timeoutSeconds
-            ? setTimeout(kill, Math.max(1, opts.timeoutSeconds) * 1000)
+            ? setTimeout(kill, Math.min(Math.max(1, opts.timeoutSeconds) * 1000, 2_147_483_647))
             : undefined;
           try {
             return await new Promise<{ exitCode: number | null }>((resolve, reject) => {

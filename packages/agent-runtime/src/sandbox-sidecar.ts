@@ -38,6 +38,20 @@ export interface SidecarSandboxOptions {
 }
 
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,127}$/;
+/** A reset waits for the runner's whole cleanup (kill, wipe), which can outlast a control call. */
+const RESET_TIMEOUT_MS = 60_000;
+/** How long `open` keeps retrying while every runner is unreachable (a restarting runner) before failing. */
+const ALL_DOWN_GRACE_MS = 60_000;
+
+/** Waits for `promise`, but rejects as soon as `signal` aborts; the promise itself keeps running. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
 const FIRST_RETRY_MS = 250;
 const MAX_RETRY_MS = 2_000;
 
@@ -78,11 +92,12 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
   function reclaim(client: RunnerClient, signal: AbortSignal): Promise<void> {
     let pending = reclaimed.get(client.number);
     if (!pending) {
+      // Shared by every open waiting on this runner, so it carries no caller's signal: one task's cancel must
+      // not fail the others. Each caller stops waiting on its own signal instead (untilAborted below).
       pending = (async () => {
         const res = await client.request(RUNNER_ROUTES.reset, {
           method: "POST",
-          signal,
-          timeoutMs: RUNNER_CONTROL_TIMEOUT_MS,
+          timeoutMs: RESET_TIMEOUT_MS,
         });
         if (res.status !== 204 && res.status !== 200)
           throw await runnerStatusError(client.number, "reset", res);
@@ -93,7 +108,7 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
       // A failed reset is retried by the next open.
       pending.catch(() => reclaimed.delete(client.number));
     }
-    return pending;
+    return untilAborted(pending, signal);
   }
 
   /** Best effort: the runner may have accepted an open whose answer never arrived; free it for that task. */
@@ -146,6 +161,7 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
   async function acquire(request: SandboxOpenRequest, body: RunnerOpenRequest) {
     const deadline = Date.now() + (options.acquireTimeoutMs ?? request.limits.wallTimeMs);
     let delay = FIRST_RETRY_MS;
+    let allDownSince: number | undefined;
     for (;;) {
       let busy = 0;
       let lastDown: StudixError | undefined;
@@ -164,7 +180,13 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
           lastDown = error;
         }
       }
-      if (busy === 0 && lastDown) throw lastDown;
+      // Every runner unreachable: wait a little (a runner restarting after a fatal cleanup), then fail clearly.
+      if (busy === 0 && lastDown) {
+        allDownSince ??= Date.now();
+        if (Date.now() - allDownSince > ALL_DOWN_GRACE_MS || Date.now() + delay > deadline) throw lastDown;
+      } else {
+        allDownSince = undefined;
+      }
       const unreachable = clients.length - busy;
       if (request.signal.aborted) throw cancelled();
       if (Date.now() + delay > deadline) throw allBusy(clients.length, unreachable);

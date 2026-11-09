@@ -44,8 +44,13 @@ pod (saasvn/tose-app#533, [project-sidecars](https://github.com/saasvn/tose-app/
 - Sidecar CPU and RAM count toward the pod's billing and the workspace quota. A pool of two runners at the default
   1.5 cores and 3 GiB reserves 3 cores and 6 GiB on top of the worker.
 - A crash-looping runner makes the whole pod unready, so a bad runner image blocks the worker rollout.
-- Containers of a pod share no volume. File exchange (skills in, outputs out) goes through the runner's HTTP API,
-  which has a per-file cap (`STUDIX_RUNNER_MAX_FILE_MB`) and a disk cap (`STUDIX_RUNNER_MAX_DISK_MB`).
+- The worker and the runners share no volume. File exchange (skills in, outputs out) goes through the runner's HTTP
+  API, which has a per-file cap (`STUDIX_RUNNER_MAX_FILE_MB`), a disk cap (`STUDIX_RUNNER_MAX_DISK_MB`) and a
+  768 MB cap on `/tmp` (TOSE gives each sidecar a 1 GiB `/tmp` and evicts the Pod past it). Commands get
+  `TMPDIR=/work/.tmp`, so most temp files count against the session's work dir instead.
+- Kubernetes shares `/dev/shm` and IPC across every container of a Pod. The runners neither wipe nor count it, so
+  files one session leaves there (at most the Pod's 64 MiB) stay visible to later and concurrent sessions on any
+  runner. Chrome and HyperFrames run with `--disable-dev-shm-usage` and keep nothing there.
 - Rollback is configuration: unset `TOSE_WORKER_RUNNERS` and set `STUDIX_SANDBOX=off`. A TOSE runbook rollback
   changes only the worker's own image and keeps the sidecars.
 

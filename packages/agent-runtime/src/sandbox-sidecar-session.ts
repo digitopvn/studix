@@ -19,6 +19,8 @@ export type SidecarCloseReason = "closed" | "aborted" | "wall-time" | "runner-lo
 
 /** Grace past a command's own timeout before the worker gives up on the runner's EXIT frame. */
 const EXEC_TIMEOUT_GRACE_MS = 15_000;
+/** setTimeout's ceiling; a larger delay fires at once (AbortSignal.timeout throws past 2^32). */
+const MAX_TIMER_MS = 2_147_483_647;
 
 function stopped(): StudixError {
   return new StudixError("TIMEOUT", "The sandbox was stopped", {
@@ -46,17 +48,15 @@ export function createSidecarSession(input: {
     clearTimeout(timer);
     input.signal.removeEventListener("abort", onAbort);
     life.abort();
-    if (reason !== "runner-lost") {
-      await client
-        .request(RUNNER_ROUTES.session(sessionId), { method: "DELETE", timeoutMs: RUNNER_CONTROL_TIMEOUT_MS })
-        .then((res) => res.body?.cancel())
-        .catch((error: unknown) =>
-          input.logger?.warn("skill runner session close failed", {
-            runner: client.number,
-            error: String(error),
-          }),
-        );
-    }
+    await client
+      .request(RUNNER_ROUTES.session(sessionId), { method: "DELETE", timeoutMs: RUNNER_CONTROL_TIMEOUT_MS })
+      .then((res) => res.body?.cancel())
+      .catch((error: unknown) =>
+        input.logger?.warn("skill runner session close failed", {
+          runner: client.number,
+          error: String(error),
+        }),
+      );
     input.logger?.info("skill runner session closed", {
       runner: client.number,
       taskId: input.taskId,
@@ -96,7 +96,10 @@ export function createSidecarSession(input: {
     assertOpen();
     const signals = [life.signal, opts.signal].filter((s): s is AbortSignal => Boolean(s));
     if (request.timeoutSeconds) {
-      signals.push(AbortSignal.timeout(Math.max(1, request.timeoutSeconds) * 1000 + EXEC_TIMEOUT_GRACE_MS));
+      // Past the session's wall time the session closes anyway; clamping also keeps the timer in range.
+      const ms =
+        Math.min(Math.max(1, request.timeoutSeconds) * 1000, input.wallTimeMs) + EXEC_TIMEOUT_GRACE_MS;
+      signals.push(AbortSignal.timeout(Math.min(ms, MAX_TIMER_MS)));
     }
     const signal = AbortSignal.any(signals);
     try {

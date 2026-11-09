@@ -33,6 +33,8 @@ async function fakeRunner(
     gone?: boolean;
     /** Never answer the open request (the worker gives up on it). */
     hangOpen?: boolean;
+    /** Delay the reset answer, as a runner busy cleaning up. */
+    slowReset?: number;
   } = {},
 ) {
   const files = new Map<string, Buffer>();
@@ -68,6 +70,7 @@ async function fakeRunner(
     }
     if (url.pathname === "/v1/reset" && req.method === "POST") {
       seen.resets++;
+      if (options.slowReset) await new Promise((r) => setTimeout(r, options.slowReset));
       if (session === "orphan" || session === "s1") session = undefined;
       return void res.writeHead(204).end();
     }
@@ -218,6 +221,27 @@ describe("sidecar sandbox driver", () => {
     await second.close();
   });
 
+  it("does not fail other opens when the task that started the shared reset is cancelled", async () => {
+    const runner = await fakeRunner({ slowReset: 300 });
+    const driver = createSidecarSandboxDriver({ runners: [{ url: runner.url, token: TOKEN }] });
+    const first = new AbortController();
+    const a = driver.open({ taskId: "a", env: {}, limits, signal: first.signal });
+    const b = driver.open({ taskId: "b", env: {}, limits, signal: new AbortController().signal });
+    setTimeout(() => first.abort(), 50);
+    await expect(a).rejects.toMatchObject({ code: "CANCELLED" });
+    const session = await b;
+    expect(runner.seen.resets).toBe(1);
+    await session.close();
+  });
+
+  it("keeps a huge command timeout from firing at once", async () => {
+    const runner = await fakeRunner();
+    const session = await open([runner.url]);
+    const { exitCode } = await session.exec("sleep 0.2; exit 4", { timeoutSeconds: 3_600_000 });
+    expect(exitCode).toBe(4);
+    await session.close();
+  });
+
   it("frees the runner for the task when the worker gives up on an open", async () => {
     const runner = await fakeRunner({ hangOpen: true });
     const abort = new AbortController();
@@ -242,7 +266,7 @@ describe("sidecar sandbox driver", () => {
   });
 
   it("names the runner URL, never its token, when it cannot be reached", async () => {
-    const error = await open(["http://127.0.0.1:1"]).catch((e: unknown) => e);
+    const error = await open(["http://127.0.0.1:1"], { acquireTimeoutMs: 1_000 }).catch((e: unknown) => e);
     expect(error).toMatchObject({ code: "UNAVAILABLE", retryable: true });
     const text = JSON.stringify(error) + String((error as { suggestedAction?: string }).suggestedAction);
     expect(text).toContain("http://127.0.0.1:1");
