@@ -220,6 +220,9 @@ two auth methods are separate and are never used as each other's fallback:
   - A personal key belongs to its user. It is released for execution only for
     jobs that user created, and never as a fallback for anyone else. Removing the
     member from the workspace revokes their personal keys.
+  - An AI client connected through OAuth acts for its user, so it can run that
+    user's personal keys and defaults, but only a signed-in user can add, change
+    or remove them.
 - **Running Claude in the worker.** A job uses a key only when it selected that
   connection (`planner.providerConnectionId`). The key is opened in the worker
   for that run and passed to the Agent SDK subprocess only as

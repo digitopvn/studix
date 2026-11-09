@@ -205,8 +205,9 @@ Behavior notes:
   image-to-video; a music bed is added only when the agent's storyboard asks
   for one. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
-  longest spoken lines are shortened, while the hook, the call to action and
-  the on-screen text stay. With `brief.voiceover: false` it needs no speech
+  longest spoken lines are shortened. The hook and call-to-action cards and the
+  on-screen text are kept, but their spoken text may be shortened, the call to
+  action last. With `brief.voiceover: false` it needs no speech
   provider and makes on-screen text only. A missing SFX model or key skips the
   accent with a warning; a voice-over that cannot be generated still fails the
   job.
@@ -276,7 +277,10 @@ Behavior notes:
   - Refused at creation with `UNAVAILABLE` when the operator has not enabled
     `STUDIX_CLAUDE_PLANNER`, or when the connection is missing, revoked or in
     another workspace; `FORBIDDEN` when it is someone else's personal key.
-    A job created with an `stx_` key can use workspace keys only.
+    A job created with an `stx_` key can use workspace keys only. An AI client
+    connected through OAuth acts for its user, so it can run that user's
+    personal keys and defaults, but only a signed-in user can add, change or
+    remove them.
   - There is no fallback: if Claude cannot plan (rejected key, budget, invalid
     output), the job fails with that error instead of using the default planner.
 - Publishing is gated: a publish job waits in `waiting_approval` until a human

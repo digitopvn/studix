@@ -300,7 +300,8 @@ Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prom
 `tone`, `objective` và prompt, hoặc theo `directions[0].visualStyle` nếu trùng id một profile trong
 [`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
-từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất; hook, CTA và chữ trên màn hình giữ nguyên. Beat do
+từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
+nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do
 `directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
 lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`
 cũng tôn trọng field này. Thiếu model hay key SFX thì accent bị bỏ qua và stage ghi `warning`, job vẫn
