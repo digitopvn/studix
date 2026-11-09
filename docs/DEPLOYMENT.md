@@ -366,8 +366,12 @@ and `deploy/tose/deploy.ts` saves the worker's `sidecars` (`pi-runner-1` to `pi-
 registry credential, `/healthz` probes, uid 1000) through `PUT /projects/<worker>` before any project deploys.
 The runner image is a separate GHCR package: give the registry credential's token `read:packages` on it. Sidecars
 need image mode; with `TOSE_WORKER_RUNNERS` set in branch mode the script fails before deploying anything. When
-`TOSE_WORKER_RUNNERS` is unset the script never sends `sidecars`, so a project keeps whatever it has (production
-today: none).
+`TOSE_WORKER_RUNNERS` is unset the script never sends `sidecars`, so a project keeps whatever it has.
+
+Size the pool to the worker's `WORKER_CONCURRENCY` (default 1): a job holds one runner for its whole run, so a
+runner beyond the concurrency stays idle but is still billed. Both environments run one runner and a 1 CPU / 2 GiB
+worker container; the worker only orchestrates, while commands run in the runner. Raise `TOSE_WORKER_RUNNERS`,
+`STUDIX_SANDBOX_RUNNERS` and `WORKER_CONCURRENCY` together.
 
 Verify after a deploy: the worker pod lists every container as ready in the TOSE status; the logs of a runner are
 `GET .../logs?container=pi-runner-1`; and the worker logs `skill runners checked` with every runner ready. On its
@@ -579,16 +583,16 @@ A started rollout is never cancelled; a newer push queues behind it.
 The GitHub environments `dev` and `production` hold what the job needs, and
 each accepts deployments only from its own branch:
 
-| Kind     | Name                                      | Value                                                                           |
-| -------- | ----------------------------------------- | ------------------------------------------------------------------------------- |
-| Secret   | `TOSE_API_KEY`                            | TOSE API key for `wearetopgroup`                                                |
-| Variable | `TOSE_WORKSPACE`                          | `wearetopgroup`                                                                 |
-| Variable | `TOSE_APP_PROJECT`, `TOSE_WORKER_PROJECT` | the environment's projects                                                      |
-| Variable | `STUDIX_APP_URL`                          | the environment's public origin                                                 |
-| Variable | `STUDIX_DEPLOY_IMAGE`                     | `1` for image mode (optional)                                                   |
-| Variable | `TOSE_REGISTRY_CREDENTIAL_ID`             | TOSE GHCR credential (image mode)                                               |
-| Variable | `TOSE_WORKER_RUNNERS`                     | `1` to `3` runner sidecars for the worker; image mode only; unset in production |
-| Variable | `TOSE_RUNNER_CPU`, `TOSE_RUNNER_RAM`      | Cores (default `1.5`) and GiB (default `3`) per runner                          |
+| Kind     | Name                                      | Value                                                                                  |
+| -------- | ----------------------------------------- | -------------------------------------------------------------------------------------- |
+| Secret   | `TOSE_API_KEY`                            | TOSE API key for `wearetopgroup`                                                       |
+| Variable | `TOSE_WORKSPACE`                          | `wearetopgroup`                                                                        |
+| Variable | `TOSE_APP_PROJECT`, `TOSE_WORKER_PROJECT` | the environment's projects                                                             |
+| Variable | `STUDIX_APP_URL`                          | the environment's public origin                                                        |
+| Variable | `STUDIX_DEPLOY_IMAGE`                     | `1` for image mode (optional)                                                          |
+| Variable | `TOSE_REGISTRY_CREDENTIAL_ID`             | TOSE GHCR credential (image mode)                                                      |
+| Variable | `TOSE_WORKER_RUNNERS`                     | `1` to `3` runner sidecars for the worker; image mode only; match `WORKER_CONCURRENCY` |
+| Variable | `TOSE_RUNNER_CPU`, `TOSE_RUNNER_RAM`      | Cores (default `1.5`) and GiB (default `3`) per runner                                 |
 
 To redeploy without a push, run the workflow manually (**Run workflow** on the
 branch). Env-only changes need no build: `tose redeploy <project> -y`.
