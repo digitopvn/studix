@@ -103,6 +103,12 @@ function fallbackOf(stage: Stage): { fallback?: string } {
   return { fallback: typeof out.fallbackReason === "string" ? out.fallbackReason : "agent unavailable" };
 }
 
+/** A stage output's `warning`: an optional part the stage skipped instead of failing the job. */
+function warningOf(stage: Stage): { warning?: string } {
+  const warning = stage.output?.warning;
+  return typeof warning === "string" && warning !== "" ? { warning } : {};
+}
+
 /** QA rounds of a reviewed agent stage (skill-agent roles): each round's scores, verdict and notes. */
 function reviewOf(stage: Stage): { review?: StageReviewView } {
   const review = (stage.output as { review?: { rounds?: unknown } } | undefined)?.review;
@@ -155,6 +161,7 @@ export function toJobView(job: Job, stages: Stage[], approval?: Approval, spend?
       finishedAt: s.finishedAt,
       error: s.error,
       ...fallbackOf(s),
+      ...warningOf(s),
       ...reviewOf(s),
       ...stageRun(s, spend),
     })),

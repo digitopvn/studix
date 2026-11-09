@@ -1,4 +1,5 @@
 import { rm } from "node:fs/promises";
+import { StudixError, toStudixError } from "@studix/shared";
 import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
 import {
   irOf,
@@ -18,8 +19,10 @@ import {
   billedOnFailure,
   estimateMediaCents,
   generateStoredMedia,
+  type StoredMedia,
   type StoredMediaRequest,
 } from "../stored-media.ts";
+import { truncateText } from "../vietnamese-safe-text.ts";
 import { type VoiceLine, voiceLines, voiceLineTrack, withVoiceover } from "../voice-lines.ts";
 import {
   MG_STORYBOARD_STAGE,
@@ -49,8 +52,10 @@ export const motionGraphicSkill: Skill = {
   description:
     "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16): the workspace's agent writes the script and " +
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
-    "falling back to brief-derived kinetic cards without an agent; a generated voice-over with one SFX " +
-    "accent on the CTA card and burned captions. No image-to-video.",
+    "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
+    "generated voice-over with burned captions and one SFX accent on the CTA card, skipped with a warning " +
+    "when no SFX provider is set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
+    "makes a voiceless graphic (on-screen text only). No image-to-video.",
   version: 1,
   get inputSchema() {
     creativeBriefSchema ??= exportJsonSchemas()["creative-brief"];
@@ -160,10 +165,32 @@ async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMed
   return { ...r, maxCostCents: Math.max(5, Math.ceil(estimate * 2)) };
 }
 
+/** A media call that could not be made at all (no provider, no key, no price); nothing was spent on it. */
+const unavailable = (err: unknown) => err instanceof StudixError && err.code === "UNAVAILABLE";
+
+/**
+ * Whether the media provider lists a sound-effect model. A probe that fails counts as listed, so the call
+ * itself decides.
+ */
+async function sfxListed(s: StageContext): Promise<boolean> {
+  const media = s.services.media;
+  if (!media) return false;
+  try {
+    return (await media.capabilities()).some((c) => c.kind === "sfx" && c.models.length > 0);
+  } catch {
+    return true;
+  }
+}
+
 /** The SFX accent of a graphic that has a script; none for a graphic without one (it has no voice to lead). */
 async function accentRequests(s: StageContext): Promise<StoredMediaRequest[]> {
-  return voiceoverOf(irOf(s)) ? [await capped(s, sfxRequest(s).request)] : [];
+  return voiceoverOf(irOf(s)) && (await sfxListed(s)) ? [await capped(s, sfxRequest(s).request)] : [];
 }
+
+/** The graphic without its accent, and why: the accent is decoration, so a missing provider never fails the job. */
+const withoutAccent = (ir: VideoIR, reason: string) => ({
+  output: { ir, warning: truncateText(`SFX accent skipped: ${reason}`, 500) },
+});
 
 async function voiceRequests(
   s: StageContext,
@@ -173,23 +200,47 @@ async function voiceRequests(
   );
 }
 
+/** The accent stage output: the IR, and a warning when the accent was skipped. */
+const AccentOutput = IrOutput.extend({ warning: z.string().max(500).optional() });
+
 /**
  * One SFX accent where the CTA card lands, for a graphic with a voice-over. No music: the voice carries the
- * graphic. The cache key is the one this stage had when it also voiced the graphic: such a cached output
- * still holds that older voice-over, which the voice stage replaces.
+ * graphic. A provider with no sound-effect model, or a call that cannot be made (UNAVAILABLE: no key, no
+ * price), skips the accent with a warning instead of failing the job. The cache key is the one this stage
+ * had when it also voiced the graphic (such a cached output still holds that older voice-over, which the
+ * voice stage replaces); a provider that lists no SFX model keys apart, so a skip is not reused once it does.
  */
 export const motionGraphicAccentStage: StageDefinition = {
   name: MG_STAGES.accent,
   knowledge: ["sound"],
-  outputSchema: IrOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.accent, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
-  estimateCostCents: async (s) => estimateMediaCents(s, await accentRequests(s)),
+  outputSchema: AccentOutput,
+  cacheKey: async (s) =>
+    stageCacheKey(MG_STAGES.accent, 2, {
+      ir: irOf(s),
+      media: s.services.media?.id ?? null,
+      ...((await sfxListed(s)) ? {} : { sfx: "unlisted" }),
+    }),
+  estimateCostCents: async (s) => {
+    try {
+      return await estimateMediaCents(s, await accentRequests(s));
+    } catch (err) {
+      if (unavailable(err)) return 0;
+      throw err;
+    }
+  },
   async run(s) {
     const ir = irOf(s);
-    const [request] = await accentRequests(s);
-    if (!request) return { output: { ir } };
+    if (!voiceoverOf(ir)) return { output: { ir } };
+    if (!(await sfxListed(s))) return withoutAccent(ir, "the media provider has no sound-effect model");
     const workDir = await stageWorkDir(s, MG_STAGES.accent);
-    const sfx = await generateStoredMedia(s, MG_STAGES.accent, request);
+    let sfx: StoredMedia;
+    try {
+      sfx = await generateStoredMedia(s, MG_STAGES.accent, await capped(s, sfxRequest(s).request));
+    } catch (err) {
+      if (!unavailable(err)) throw err;
+      await rm(workDir, { recursive: true, force: true });
+      return withoutAccent(ir, toStudixError(err).message);
+    }
     const accentAt = sfxRequest(s).at;
     const accentRoom = Math.max(1, ir.format.durationMs - accentAt);
     const next = {

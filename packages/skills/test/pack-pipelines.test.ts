@@ -147,6 +147,8 @@ function harness(
     uncached?: () => readonly string[];
     /** The in-worker agent; the worker runs no agent services when omitted. */
     agent?: AgentRuntime;
+    /** Media kinds whose calls fail before anything is spent, as with a missing provider key. */
+    unavailableKinds?: readonly string[];
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -157,6 +159,11 @@ function harness(
   const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
   const real = media.generate.bind(media);
   media.generate = async (c, request) => {
+    if (options.unavailableKinds?.includes(request.kind)) {
+      throw new StudixError("UNAVAILABLE", "multix is missing a key or setting: ELEVENLABS_API_KEY", {
+        retryable: false,
+      });
+    }
     // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
     for (const name of ["image", "video", "audio"]) {
       const value = request.params?.[name];
@@ -276,7 +283,7 @@ function harness(
   }
   /** The outcome with the job's failure, so a failed expectation says why the job failed. */
   const failureOf = (outcome: unknown) => ({ outcome, failure: queue.fail.mock.calls.at(-1)?.[2] });
-  return { run, failureOf, projects, renders, storage, renderer, generate, usage, qaCalls, queue };
+  return { run, failureOf, jobs, projects, renders, storage, renderer, generate, usage, qaCalls, queue };
 }
 
 async function newProject(h: ReturnType<typeof harness>, workflowTemplate: string, b: unknown = brief) {
@@ -723,6 +730,41 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(h.generate).not.toHaveBeenCalled();
     expect(h.qaCalls).toHaveLength(2);
   });
+
+  it("makes a voiceless graphic with no voice, captions or accent when the brief asks for none", async () => {
+    const h = harness();
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic cho Lá Mây",
+      durationMs: 10_000,
+      keyMessages: ["Trà hái tay mỗi sớm", "Giao tận nơi"],
+      voiceover: false,
+    });
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.generate).not.toHaveBeenCalled();
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.metadata?.voiceover).toBeUndefined();
+    expect(ir.captions).toBeUndefined();
+    expect(ir.audio ?? []).toEqual([]);
+    expect(ir.scenes.map((sc) => sc.id)).toEqual(["hook", "message-1", "message-2", "cta"]);
+    expect(h.qaCalls).toEqual([expect.objectContaining({ requireAudio: false })]);
+  });
+
+  it("skips the SFX accent with a warning when the media provider cannot make one", async () => {
+    const h = harness({ unavailableKinds: ["sfx"] });
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic cho Lá Mây",
+      durationMs: 10_000,
+      keyMessages: ["Trà hái tay mỗi sớm"],
+    });
+    const { job, outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.audio?.map((t) => t.kind)).toEqual(["voiceover", "voiceover", "voiceover"]);
+    const stages = await h.jobs.listStages(ctx, job.id);
+    const accent = stages.find((st) => st.name === MG_STAGES.accent);
+    expect(accent?.output?.warning).toMatch(/SFX accent skipped: .*ELEVENLABS_API_KEY/);
+  });
 });
 
 describe("motion-graphic storyboard agent (mock agent)", () => {
@@ -846,6 +888,27 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(ir.metadata?.storyboard).toBe("template");
     expect(h.generate.mock.calls.map(([, r]) => r.kind)).not.toContain("music");
     expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(0);
+  });
+
+  it("fails instead of falling back when the job named an agent that cannot run", async () => {
+    const runtime: AgentRuntime = {
+      id: "none",
+      run: async () => {
+        throw new StudixError("UNAVAILABLE", "No model is configured for agent stage", { retryable: false });
+      },
+    };
+    const h = harness({ agent: runtime });
+    const agent = { runtime: "pi", connectionId: "conn_1", provider: "openai" };
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic", agent },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({
+      outcome: "failed",
+      failure: expect.objectContaining({ code: "UNAVAILABLE" }),
+    });
+    expect(h.renderer.rendered).toHaveLength(0);
+    expect(h.generate).not.toHaveBeenCalled();
   });
 
   it("fails the job on an agent output that breaks the schema instead of silently using the template", async () => {

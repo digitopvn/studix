@@ -47,6 +47,11 @@ export const CreativeBrief = z.object({
   aspectRatio: AspectRatio.optional(),
   /** Length of the video, or of each variant when the brief has `directions`. */
   durationMs: z.number().int().min(1000).max(600_000).optional(),
+  /**
+   * Whether the video has a spoken voice-over (default true). False makes a voiceless video: no voice, no
+   * captions read from it and no sound accent laid under it. Honoured by `motion-graphic`.
+   */
+  voiceover: z.boolean().optional(),
   brand: BrandKit.optional(),
   /** Storage keys or URLs of reference material supplied by the user. */
   references: z.array(z.string().min(1).max(2048)).max(20).optional(),

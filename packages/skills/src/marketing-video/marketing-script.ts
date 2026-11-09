@@ -151,7 +151,8 @@ export function marketingScript(input: unknown): MarketingScript {
         ...(times[i] as { startMs: number; durationMs: number }),
         visual: truncateText(beat.visual, 600),
         ...(beat.onScreen ? { onScreen: truncateText(beat.onScreen, 120) } : {}),
-        ...(beat.voiceover ? { voiceover: beat.voiceover } : {}),
+        // A voiceless brief speaks no line, so the ads get no voice-over and no captions read from it.
+        ...(beat.voiceover && brief.voiceover !== false ? { voiceover: beat.voiceover } : {}),
       }),
     );
     const voiceover = scriptBeats

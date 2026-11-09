@@ -349,7 +349,39 @@ describe("motion graphic", () => {
     expect(ir.brand?.palette.foreground).toBe("#ffffff");
   });
 
-  it("builds a valid captioned IR with its voice-over script and rejects one that cannot fit", () => {
+  it("fits a derived script into the length, keeping the hook and the call to action", () => {
+    const brief = {
+      prompt: "Studix intro",
+      title: "Studix makes videos for your agents",
+      aspectRatio: "16:9" as const,
+      durationMs: 10_000,
+      keyMessages: ["Briefs become motion graphics in minutes", "Every render passes a quality gate"],
+      callToAction: "Try Studix free today",
+    };
+    // 6 + 6 + 6 + 4 words: 22, within the 28 a 10 s graphic holds, so nothing is cut.
+    expect(wordCount(motionGraphicTemplate(brief).metadata?.voiceover as string)).toBe(22);
+    const long = {
+      ...brief,
+      keyMessages: [...brief.keyMessages, "Agents call one tool, then poll it"],
+    };
+    // 29 words, one over: the last message card goes, the hook and the call to action stay.
+    const ir = motionGraphicTemplate(long);
+    const script = ir.metadata?.voiceover as string;
+    expect(wordCount(script)).toBeLessThanOrEqual(28);
+    expect(script.endsWith("Try Studix free today")).toBe(true);
+    expect(ir.scenes.map((sc) => sc.id)).toEqual(["hook", "message-1", "message-2", "cta"]);
+    // A hook and call to action too long to say whole are cut in their voice only; the card keeps its words.
+    const hook =
+      "Studix turns one short brief into a finished kinetic motion graphic with voice captions and sound";
+    const cut = motionGraphicTemplate({ ...brief, title: hook, durationMs: 6_000, keyMessages: [] });
+    const said = String(cut.metadata?.voiceover);
+    expect(wordCount(said)).toBe(16);
+    expect(said.endsWith("Try Studix free today")).toBe(true);
+    const title = cut.scenes[0]?.shots[0];
+    expect(title && "text" in title ? title.text?.replace(/\s+/g, " ") : undefined).toBe(hook);
+  });
+
+  it("builds a valid captioned IR with its voice-over script and rejects beats that cannot fit", () => {
     const ir = motionGraphicTemplate({
       prompt: "Lá Mây",
       durationMs: 12_000,
@@ -361,9 +393,11 @@ describe("motion graphic", () => {
     expect(ir.captions?.cues.every((c) => wordCount(c.text) <= MAX_CAPTION_WORDS)).toBe(true);
     expect(ir.scenes.at(-1)?.role).toBe("cta");
     const long = Array.from({ length: 60 }, () => "trà").join(" ");
-    expect(codeOf(() => motionGraphicTemplate({ prompt: "x", durationMs: 6_000, keyMessages: [long] }))).toBe(
-      "VALIDATION",
-    );
+    const beats = [{ visual: "Chữ lớn", voiceover: long }, { visual: "Logo" }];
+    const direction = { id: "d1", name: "Một", concept: "Trà", beats };
+    expect(
+      codeOf(() => motionGraphicTemplate({ prompt: "x", durationMs: 6_000, directions: [direction] })),
+    ).toBe("VALIDATION");
   });
 
   it("gives a long hook the time it takes to say, not an even split with a short call to action", () => {
