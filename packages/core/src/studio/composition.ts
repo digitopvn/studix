@@ -80,6 +80,23 @@ export const CompositionCheck = z
     durationToleranceMs: z.number().int().min(0).max(60_000).default(500),
     /** Integrated loudness target (LUFS, +/-2 LU) and true peak <= -1 dBTP; requires an audio track. */
     loudnessLufs: z.number().min(-40).max(-5).optional(),
+    /** The file must carry an audible audio track (loudnessLufs implies it). */
+    audio: z.boolean().optional(),
+    /**
+     * Look at the picture: a few frames are sampled and a contact sheet is stored next to the file. Fails on
+     * black or blank frames. Opt in to the rest: `safeMarginPct` flags content inside that outer band,
+     * `motion` flags samples that do not change, `vietnamese` requires a font with Vietnamese coverage in the
+     * render sandbox.
+     */
+    frames: z
+      .object({
+        samples: z.number().int().min(2).max(12).default(5),
+        safeMarginPct: z.number().min(1).max(20).optional(),
+        motion: z.boolean().optional(),
+        vietnamese: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type CompositionCheck = z.output<typeof CompositionCheck>;
@@ -106,7 +123,14 @@ export interface CompositionRunResult {
   log: string;
   /** Files the command added or changed, now stored in the composition. */
   changed: CompositionFile[];
-  check?: { path: string; passed: boolean; problems: string[]; probe?: Record<string, unknown> };
+  check?: {
+    path: string;
+    passed: boolean;
+    problems: string[];
+    probe?: Record<string, unknown>;
+    /** Composition path of the stored contact sheet (JPEG); read it with studix_composition_read. */
+    contactSheet?: string;
+  };
 }
 
 export const compositionPrefix = (id: string) => `compositions/${id}`;

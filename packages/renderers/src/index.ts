@@ -24,6 +24,17 @@ export {
   probeMismatches,
   type StreamFacts,
 } from "./ffmpeg/ffmpeg-probe.ts";
+export {
+  analyseGrayFrame,
+  checkFrames,
+  type FrameQaOptions,
+  type FrameQaResult,
+  type FrameSample,
+  frameDifference,
+  frameProblems,
+  sampleTimesMs,
+  writeContactSheet,
+} from "./ffmpeg/frame-qa.ts";
 export { GRADE_LOOKS, type GradeLook, gradeFilter, isGradeLook } from "./ffmpeg/grade.ts";
 export {
   LOUDNESS_TARGET,

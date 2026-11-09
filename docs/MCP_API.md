@@ -640,9 +640,18 @@ each, 200 per run; `node_modules`, `.git` and caches stay behind). `timeoutSecon
 (max 3600); compute is billed per started minute against `budgetCents`. It needs `media:exec`
 (write needs `project:write`) and `STUDIX_SANDBOX=docker` on the worker.
 
-`check: {path, width?, height?, durationMs?, durationToleranceMs?, loudnessLufs?}` probes a file after
+`check: {path, width?, height?, durationMs?, durationToleranceMs?, audio?, loudnessLufs?, frames?}` probes a file after
 an exit 0: a miss (or a non-zero exit) fails the job with `VALIDATION` and `details` holding the
 exit code, the tail of the combined log (`logTail`), changed files and the check result. The files it wrote are kept either way.
+
+`audio: true` requires an audible audio track (`loudnessLufs` implies it). `frames: {samples?, safeMarginPct?,
+motion?, vietnamese?}` also looks at the picture: it decodes `samples` frames (2-12, default 5) at evenly spaced
+times and fails on a black or a blank (single flat colour) frame. The rest is opt-in, because a deliberate hold or a
+full-bleed photo is legitimate: `safeMarginPct` flags content inside that outer band of the frame (it assumes a
+background that is plain at the edge), `motion` flags consecutive samples that look identical, and `vietnamese`
+requires a font with Vietnamese coverage in the render sandbox (glyphs themselves are not read from pixels). The
+check always stores a contact sheet at `qa/<file>-contact-sheet.jpg` and returns its path as `check.contactSheet`;
+read it with `studix_composition_read` to see the frames.
 
 ```json
 {
