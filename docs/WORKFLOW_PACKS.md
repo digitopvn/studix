@@ -225,7 +225,8 @@ Lý do của các ràng buộc:
   retry tìm lại file đã trả tiền thay vì sinh lại. Thư mục bị xóa ở `finalize`; job fail giữ nó cho lần
   retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
 - Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent, bỏ qua kèm `warning` khi
-  thiếu provider SFX), `motion-graphic.voice` (voice),
+  thiếu provider SFX), `motion-graphic.voice` (voice), `motion-graphic.music` (music, bỏ qua kèm `warning` khi thiếu
+  provider/key),
   `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).
 
@@ -304,7 +305,7 @@ từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất. Card h
 nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do
 `directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
 lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`
-cũng tôn trọng field này. Thiếu model hay key SFX thì accent bị bỏ qua và stage ghi `warning`, job vẫn
+cũng tôn trọng field này. Thiếu model hay key SFX/nhạc thì SFX accent và music bed bị bỏ qua, stage ghi `warning`, job vẫn
 chạy tiếp.
 
 ```json

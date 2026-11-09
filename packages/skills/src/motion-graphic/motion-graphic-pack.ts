@@ -53,8 +53,8 @@ export const motionGraphicSkill: Skill = {
     "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16): the workspace's agent writes the script and " +
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
-    "generated voice-over with burned captions and one SFX accent on the CTA card, skipped with a warning " +
-    "when no SFX provider is set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
+    "generated voice-over with burned captions and one SFX accent on the CTA card; the accent and music bed " +
+    "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). No image-to-video.",
   version: 1,
   get inputSchema() {
@@ -200,7 +200,7 @@ async function voiceRequests(
   );
 }
 
-/** The accent stage output: the IR, and a warning when the accent was skipped. */
+/** The output of a decorative audio stage: the IR, and a warning when its audio was skipped. */
 const AccentOutput = IrOutput.extend({ warning: z.string().max(500).optional() });
 
 /**
@@ -326,22 +326,49 @@ async function musicRequests(s: StageContext): Promise<StoredMediaRequest[]> {
 /** Music level under the voice-over: a bed, not a lead. */
 const MUSIC_VOLUME = 0.18;
 
+/** The graphic without its music bed, and why: the bed is decoration, so a missing provider never fails the job. */
+const withoutMusic = (ir: VideoIR, reason: string) => ({
+  output: { ir, warning: truncateText(`Music bed skipped: ${reason}`, 500) },
+});
+
 /**
  * An instrumental bed under the whole graphic, only when the agent's storyboard asked for one (a template
- * graphic has none). Its own stage, so a re-voice does not pay for the music again.
+ * graphic has none). Its own stage, so a re-voice does not pay for the music again. A call that cannot be
+ * made (UNAVAILABLE: no key, no price, no music model) skips the bed with a warning instead of failing the
+ * job; the runner never caches a warned output, so the bed is retried next run.
  */
 export const motionGraphicMusicStage: StageDefinition = {
   name: MG_STAGES.music,
   knowledge: ["sound"],
-  outputSchema: IrOutput,
+  outputSchema: AccentOutput,
   cacheKey: (s) => stageCacheKey(MG_STAGES.music, 1, { ir: irOf(s), media: s.services.media?.id ?? null }),
-  estimateCostCents: async (s) => estimateMediaCents(s, await musicRequests(s)),
+  estimateCostCents: async (s) => {
+    try {
+      return await estimateMediaCents(s, await musicRequests(s));
+    } catch (err) {
+      if (unavailable(err)) return 0;
+      throw err;
+    }
+  },
   async run(s) {
     const ir = irOf(s);
-    const [request] = await musicRequests(s);
+    let request: StoredMediaRequest | undefined;
+    try {
+      [request] = await musicRequests(s);
+    } catch (err) {
+      if (!unavailable(err)) throw err;
+      return withoutMusic(ir, toStudixError(err).message);
+    }
     if (!request) return { output: { ir } };
     const workDir = await stageWorkDir(s, MG_STAGES.music);
-    const music = await generateStoredMedia(s, MG_STAGES.music, request);
+    let music: StoredMedia;
+    try {
+      music = await generateStoredMedia(s, MG_STAGES.music, request);
+    } catch (err) {
+      if (!unavailable(err)) throw err;
+      await rm(workDir, { recursive: true, force: true });
+      return withoutMusic(ir, toStudixError(err).message);
+    }
     const next = {
       ...ir,
       assets: [...ir.assets.filter((a) => a.id !== music.asset.id), music.asset],
