@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -35,6 +35,8 @@ async function fakeRunner(
     hangOpen?: boolean;
     /** Delay the reset answer, as a runner busy cleaning up. */
     slowReset?: number;
+    /** Answer every reset with 500, as a runner whose cleanup keeps failing. */
+    failReset?: boolean;
   } = {},
 ) {
   const files = new Map<string, Buffer>();
@@ -71,6 +73,7 @@ async function fakeRunner(
     if (url.pathname === "/v1/reset" && req.method === "POST") {
       seen.resets++;
       if (options.slowReset) await new Promise((r) => setTimeout(r, options.slowReset));
+      if (options.failReset) return void res.writeHead(500).end("cleanup failed");
       if (session === "orphan" || session === "s1") session = undefined;
       return void res.writeHead(204).end();
     }
@@ -245,6 +248,16 @@ describe("sidecar sandbox driver", () => {
     await session.close();
   });
 
+  it("reports the runner's reset failure, not 'all busy', when its reset keeps failing", async () => {
+    const runner = await fakeRunner({ failReset: true });
+    await expect(open([runner.url], { acquireTimeoutMs: 1_500 })).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+      message: expect.stringContaining("failed to reset"),
+    });
+    expect(runner.seen.resets).toBeGreaterThanOrEqual(2);
+    expect(runner.seen.opens).toHaveLength(0);
+  });
+
   it("keeps a huge command timeout from firing at once", async () => {
     const runner = await fakeRunner();
     const session = await open([runner.url]);
@@ -362,8 +375,8 @@ describe("skill sync from a runner", () => {
     };
     const session = {
       async run(argv: readonly string[]) {
-        if (argv.includes("-newer")) return Buffer.from("demo/SKILL.md\n");
-        return Buffer.from("3 644 demo/SKILL.md\n4 644 demo/same.txt\n4 755 demo/tool.sh\n");
+        if (argv.includes("-newer")) return Buffer.from("demo/SKILL.md\0");
+        return Buffer.from("3 644 demo/SKILL.md\x004 644 demo/same.txt\x004 755 demo/tool.sh\0");
       },
       async copyOut(path: string, hostPath: string) {
         await writeFile(hostPath, remote[path.replace("/skills/", "")] ?? "");
@@ -373,5 +386,33 @@ describe("skill sync from a runner", () => {
     expect(await readFile(join(host, "demo", "SKILL.md"), "utf8")).toBe("new");
     await expect(stat(join(host, "demo", "gone.txt"))).rejects.toThrow();
     expect((await stat(join(host, "demo", "tool.sh"))).mode & 0o111).not.toBe(0);
+  });
+
+  it("leaves the host skills untouched when one file cannot be read, and handles newline names", async () => {
+    const host = await mkdtemp(join(tmpdir(), "sidecar-sync-"));
+    await mkdir(join(host, "demo"), { recursive: true });
+    await writeFile(join(host, "demo", "SKILL.md"), "old");
+    await writeFile(join(host, "demo", "gone.txt"), "x");
+    const copied: string[] = [];
+    const session = {
+      async run(argv: readonly string[]) {
+        if (argv.includes("-newer")) return Buffer.from("demo/SKILL.md\0demo/a\nb.txt\0demo/locked\0");
+        return Buffer.from("3 644 demo/SKILL.md\x001 644 demo/a\nb.txt\x001 0 demo/locked\0");
+      },
+      async copyOut(path: string, hostPath: string) {
+        if (path.endsWith("/locked"))
+          throw new Error("Skill runner 1 refused to download: file is not readable");
+        copied.push(path);
+        await writeFile(hostPath, "new");
+      },
+    } as unknown as SandboxSession;
+    const result = await syncSkillsFromRunner(session, host);
+    expect(result).toMatchObject({ synced: false, reason: expect.stringContaining("could not be read") });
+    expect(copied).toContain("/skills/demo/a\nb.txt");
+    expect(await readFile(join(host, "demo", "SKILL.md"), "utf8")).toBe("old");
+    expect(await readFile(join(host, "demo", "gone.txt"), "utf8")).toBe("x");
+    expect((await readdir(tmpdir())).filter((n) => n.startsWith(`${host.split("/").pop()}.sync-`))).toEqual(
+      [],
+    );
   });
 });

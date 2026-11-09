@@ -174,7 +174,7 @@ export function createSidecarSession(input: {
       assertOpen();
       const result = await syncSkillsFromRunner(session, hostDir);
       if (!result.synced) {
-        input.logger?.warn("skill edits not kept: the skills grew past the sync limit", {
+        input.logger?.warn("skill edits not kept", {
           runner: client.number,
           taskId: input.taskId,
           reason: result.reason,

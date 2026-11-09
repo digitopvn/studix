@@ -4,8 +4,8 @@
  * must stay under a root too, so a link a session planted cannot point a read or write elsewhere.
  */
 import { randomBytes } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, isAbsolute, join, normalize } from "node:path";
 import { Transform } from "node:stream";
@@ -100,11 +100,25 @@ export async function getFile(
     if (isMissing(error)) throw new HttpError(404, "file not found");
     throw error;
   }
-  const info = await stat(resolved);
-  if (!info.isFile()) throw new HttpError(400, "path is not a regular file");
-  if (info.size > maxBytes) throw new HttpError(413, "file exceeds the size cap");
+  // Open before answering: an unreadable file (mode 000) must be an error status, never a 200 cut short.
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(resolved, "r");
+  } catch (error) {
+    if (isMissing(error)) throw new HttpError(404, "file not found");
+    throw new HttpError(403, "file is not readable");
+  }
+  const info = await handle.stat().catch(async (error: unknown) => {
+    await handle.close();
+    throw error;
+  });
+  if (!info.isFile() || info.size > maxBytes) {
+    await handle.close();
+    if (!info.isFile()) throw new HttpError(400, "path is not a regular file");
+    throw new HttpError(413, "file exceeds the size cap");
+  }
   res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(info.size) });
-  await pipeline(createReadStream(resolved), res).catch(() => {
+  await pipeline(handle.createReadStream(), res).catch(() => {
     // The client went away mid-download; the response is already committed, nothing more to send.
     res.destroy();
   });

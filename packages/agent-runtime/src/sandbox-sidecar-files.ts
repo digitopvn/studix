@@ -147,10 +147,11 @@ interface RemoteFile {
   mode: number;
 }
 
+/** Records end with NUL, not newline: a file name may contain a newline. */
 function parseListing(text: string): RemoteFile[] {
   const files: RemoteFile[] = [];
-  for (const line of text.split("\n")) {
-    const match = /^(\d+) ([0-7]+) (.+)$/.exec(line);
+  for (const line of text.split("\0")) {
+    const match = /^(\d+) ([0-7]+) (.+)$/s.exec(line);
     if (match)
       files.push({
         size: Number(match[1]),
@@ -171,18 +172,18 @@ export async function syncSkillsFromRunner(
   hostDir: string,
 ): Promise<{ synced: true } | { synced: false; reason: string }> {
   const remote = parseListing(
-    (await session.run(["find", SANDBOX_SKILLS_DIR, "-type", "f", "-printf", "%s %m %P\\n"])).toString(
+    (await session.run(["find", SANDBOX_SKILLS_DIR, "-type", "f", "-printf", "%s %m %P\\0"])).toString(
       "utf8",
     ),
   ).filter((f) => isSafeSkillPath(f.path));
   const newer = new Set(
     (
       await session
-        .run(["find", SANDBOX_SKILLS_DIR, "-type", "f", "-newer", SKILLS_STAMP, "-printf", "%P\\n"])
-        .catch(() => Buffer.from(remote.map((f) => f.path).join("\n")))
+        .run(["find", SANDBOX_SKILLS_DIR, "-type", "f", "-newer", SKILLS_STAMP, "-printf", "%P\\0"])
+        .catch(() => Buffer.from(remote.map((f) => f.path).join("\0")))
     )
       .toString("utf8")
-      .split("\n")
+      .split("\0")
       .filter(Boolean),
   );
   const total = remote.reduce((sum, f) => sum + f.size, 0);
@@ -194,18 +195,41 @@ export async function syncSkillsFromRunner(
   if (tooBig)
     return { synced: false, reason: `a file is larger than ${SKILL_SYNC_LIMITS.maxFileBytes} bytes` };
 
+  // Download into a staging dir first: one unreadable file must leave hostDir exactly as it was opened, never
+  // half synced (the caller stores whatever differs from the opened skills).
   const local = await hostFiles(hostDir);
+  const staging = `${hostDir}.sync-${process.pid}-${Date.now()}`;
+  const fetched: RemoteFile[] = [];
+  try {
+    for (const file of remote) {
+      if (local.has(file.path) && !newer.has(file.path)) continue;
+      const staged = join(staging, ...file.path.split("/"));
+      await mkdir(dirname(staged), { recursive: true });
+      await session.copyOut(`${SANDBOX_SKILLS_DIR}/${file.path}`, staged);
+      fetched.push(file);
+    }
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true });
+    // A stopped or cancelled session is the task's failure, not one bad file.
+    if (
+      error instanceof SessionGoneError ||
+      (error instanceof StudixError && (error.code === "TIMEOUT" || error.code === "CANCELLED"))
+    )
+      throw error;
+    return { synced: false, reason: `a file could not be read: ${String(error).slice(0, 200)}` };
+  }
   const wanted = new Set(remote.map((f) => f.path));
   for (const rel of local.keys()) {
     if (!wanted.has(rel)) await rm(join(hostDir, ...rel.split("/")), { force: true });
   }
-  for (const file of remote) {
+  for (const file of fetched) {
     const target = join(hostDir, ...file.path.split("/"));
-    if (!local.has(file.path) || newer.has(file.path)) {
-      await mkdir(dirname(target), { recursive: true });
-      await session.copyOut(`${SANDBOX_SKILLS_DIR}/${file.path}`, target);
-    }
-    await chmod(target, file.mode & 0o111 ? 0o755 : 0o644);
+    await mkdir(dirname(target), { recursive: true });
+    await rename(join(staging, ...file.path.split("/")), target);
+  }
+  await rm(staging, { recursive: true, force: true });
+  for (const file of remote) {
+    await chmod(join(hostDir, ...file.path.split("/")), file.mode & 0o111 ? 0o755 : 0o644);
   }
   return { synced: true };
 }

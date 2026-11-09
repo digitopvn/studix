@@ -1,3 +1,4 @@
+import { chmod } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestRunner } from "./runner-test-client.ts";
 
@@ -25,6 +26,17 @@ describe("pi-runner file routes", () => {
     expect(await res.text()).toBe("hello");
     expect((await client.getFile(id, `${client.work}/in/missing`)).status).toBe(404);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "answers an unreadable file with an error status, not a cut-off 200",
+    async () => {
+      const path = `${client.work}/locked.txt`;
+      expect((await client.putFile(id, path, "secret")).status).toBe(200);
+      await chmod(path, 0o000);
+      expect((await client.getFile(id, path)).status).toBe(403);
+      await chmod(path, 0o600);
+    },
+  );
 
   it("refuses paths outside the roots, unnormalized paths and symlink escapes", async () => {
     expect((await client.getFile(id, "/etc/hosts")).status).toBe(403);

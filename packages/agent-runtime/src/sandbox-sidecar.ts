@@ -80,19 +80,21 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
    */
   const reclaims = new Map<number, Promise<void>>();
   const reclaimedRunners = new Set<number>();
-  /** A failed reset, handed once to the next open on that runner, which then starts a new one. */
+  /**
+   * The last failure of a runner's reset, kept until a reset succeeds. A retryable one makes the runner count as
+   * down every round (so the all-down grace ends with the real error, not "all busy"); a non-retryable one is
+   * thrown to one open only.
+   */
   const reclaimFailures = new Map<number, unknown>();
   let next = 0;
 
   /**
    * "ready" once the runner was reclaimed; "pending" while its reset runs, so the caller tries another runner
-   * instead of waiting up to RESET_TIMEOUT_MS behind one slow reset; throws the reset's failure once.
+   * instead of waiting up to RESET_TIMEOUT_MS behind one slow reset; throws while the last reset failed.
    */
   function reclaim(client: RunnerClient): "ready" | "pending" {
     const n = client.number;
     if (reclaimedRunners.has(n)) return "ready";
-    const failure = reclaimFailures.get(n);
-    if (reclaimFailures.delete(n)) throw failure;
     if (!reclaims.has(n)) {
       const pending = (async () => {
         const res = await client.request(RUNNER_ROUTES.reset, {
@@ -106,10 +108,18 @@ export function createSidecarSandboxDriver(options: SidecarSandboxOptions): Sand
       reclaims.set(n, pending);
       pending
         .then(
-          () => reclaimedRunners.add(n),
+          () => {
+            reclaimFailures.delete(n);
+            reclaimedRunners.add(n);
+          },
           (error: unknown) => reclaimFailures.set(n, error),
         )
         .finally(() => reclaims.delete(n));
+    }
+    if (reclaimFailures.has(n)) {
+      const failure = reclaimFailures.get(n);
+      if (!(failure instanceof StudixError && failure.retryable)) reclaimFailures.delete(n);
+      throw failure;
     }
     return "pending";
   }
