@@ -28,27 +28,23 @@ async function listPids(): Promise<number[]> {
 }
 
 /**
- * Linux only: SIGKILL every process of the container except the runner, its parent and pid 1 (tini; killing it
- * would end the container). Repeats while new processes appear (a fork racing the kill), then waits briefly
- * for the killed ones to be reaped so the wipe does not race a dying writer.
+ * Linux only: SIGKILL every process of the container except the runner and pid 1 (tini; killing it would end the
+ * container). kill(-1) reaches every process this uid may signal in the PID namespace in one call, so a fork
+ * racing the sweep is caught by the next round. Repeats until none is left (killed ones reaped by tini) or the
+ * budget runs out. Returns false when processes survive; the caller must not hand the runner to a new session.
  */
-export async function sweepProcesses(): Promise<number> {
-  if (process.platform !== "linux") return 0;
+export async function sweepProcesses(budgetMs = 10_000): Promise<boolean> {
+  if (process.platform !== "linux") return true;
   const spared = new Set([1, process.pid, process.ppid]);
-  let killed = 0;
-  for (let round = 0; round < 5; round++) {
-    const targets = (await listPids()).filter((pid) => !spared.has(pid));
-    const hit = targets.filter((pid) => signal(pid, "SIGKILL"));
-    killed += hit.length;
-    if (hit.length === 0) break;
-    await delay(50);
-  }
-  for (let wait = 0; wait < 40; wait++) {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
     const alive = (await listPids()).filter((pid) => !spared.has(pid) && signal(pid, 0));
-    if (alive.length === 0) break;
+    if (alive.length === 0) return true;
+    if (Date.now() > deadline) return false;
+    signal(-1, "SIGKILL");
+    for (const pid of alive) signal(pid, "SIGKILL");
     await delay(50);
   }
-  return killed;
 }
 
 function run(command: string, args: string[]): Promise<{ code: number | null; stdout: string }> {

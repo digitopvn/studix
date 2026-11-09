@@ -8,6 +8,7 @@ if [ -z "${STUDIX_RUNNER_TOKEN:-}" ]; then
   echo '{"event":"start_failed","error":"STUDIX_RUNNER_TOKEN is not set"}'
   exit 1
 fi
-exec env -u STUDIX_RUNNER_TOKEN tini -- node /opt/pi-runner/apps/pi-runner/src/main.ts --token-stdin <<EOF
+# Container args (e.g. `--port 7072`, set per sidecar by deploy/tose/worker-sidecars.ts) pass through to the runner.
+exec env -u STUDIX_RUNNER_TOKEN tini -- node /opt/pi-runner/apps/pi-runner/src/main.ts --token-stdin "$@" <<EOF
 $STUDIX_RUNNER_TOKEN
 EOF

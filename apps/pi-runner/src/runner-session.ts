@@ -6,6 +6,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { RunnerLimits } from "../../../packages/agent-runtime/src/sandbox-runner-protocol.ts";
@@ -27,6 +28,12 @@ export interface SessionConfig {
   diskCheckMs: number;
   /** The runner's environment, the source of the toolchain variables a command inherits. */
   baseEnv: NodeJS.ProcessEnv;
+  /**
+   * Called when cleanup could not kill or wipe what a session left, so the next session would inherit it.
+   * Production exits the process: the container restarts and the kernel kills everything in its PID namespace.
+   * Unset (tests), the failure is logged and the runner stays usable.
+   */
+  onFatal?: (reason: string) => void;
 }
 
 export interface Session {
@@ -40,6 +47,8 @@ export interface Session {
 interface LiveSession extends Session {
   openedAt: number;
   children: Map<number, Promise<void>>;
+  /** In-flight file transfers: close aborts them and waits, so no upload writes after the wipe. */
+  transfers: Map<IncomingMessage, Promise<void>>;
   timers: NodeJS.Timeout[];
 }
 
@@ -53,9 +62,20 @@ export function createSessionManager(config: SessionConfig) {
   const closedReasons = new Map<string, string>();
 
   async function cleanup(): Promise<void> {
-    if (config.sweepProcesses) await sweepProcesses();
+    if (config.sweepProcesses && !(await sweepProcesses())) {
+      throw new Error("processes of the previous session survived the sweep");
+    }
     const { work, skills, scratch } = config.paths;
     await Promise.all([emptyDir(work), emptyDir(skills), ...scratch.map((dir) => emptyIfExists(dir))]);
+  }
+
+  async function cleanupOrDie(): Promise<void> {
+    try {
+      await cleanup();
+    } catch (error) {
+      log("cleanup_failed", { error: String(error) });
+      config.onFatal?.(String(error));
+    }
   }
 
   function remember(id: string, reason: string): void {
@@ -70,10 +90,14 @@ export function createSessionManager(config: SessionConfig) {
     remember(id, reason);
     for (const timer of session.timers) clearTimeout(timer);
     for (const pgid of session.children.keys()) killGroup(pgid);
+    for (const req of session.transfers.keys()) req.destroy();
     cleaning = (async () => {
-      // Wait for the killed commands to exit (bounded), so their streams end before the paths are wiped.
-      await Promise.race([Promise.all(session.children.values()), delay(5_000)]);
-      await cleanup().catch((error: unknown) => log("cleanup_failed", { error: String(error) }));
+      // Wait for the killed commands and aborted transfers to end (bounded), so nothing writes after the wipe.
+      await Promise.race([
+        Promise.all([...session.children.values(), ...session.transfers.values()]),
+        delay(5_000),
+      ]);
+      await cleanupOrDie();
       log("close", {
         sessionId: id,
         taskId: session.taskId,
@@ -113,6 +137,19 @@ export function createSessionManager(config: SessionConfig) {
     /** Startup crash recovery: whatever a previous runner process left behind is killed and wiped. */
     recover: cleanup,
 
+    /** Closes the open session when it belongs to taskId (an open the worker gave up on). */
+    async closeByTask(taskId: string): Promise<void> {
+      if (current && current.taskId === taskId && !current.closed)
+        await close(current.id, "abandoned by worker");
+      else if (cleaning) await cleaning;
+    },
+
+    /** Closes whatever session is open (a restarted worker reclaiming its runners). */
+    async reset(): Promise<void> {
+      if (current && !current.closed) await close(current.id, "reset by worker");
+      else if (cleaning) await cleaning;
+    },
+
     /** Opens the session, or returns null when the runner is busy. */
     async open(taskId: string, env: Record<string, string>, limits: RunnerLimits): Promise<Session | null> {
       if (current || cleaning) return null;
@@ -125,6 +162,7 @@ export function createSessionManager(config: SessionConfig) {
         closed: false,
         openedAt: Date.now(),
         children: new Map(),
+        transfers: new Map(),
         timers: [],
       };
       current = session;
@@ -132,10 +170,14 @@ export function createSessionManager(config: SessionConfig) {
         await Promise.all([emptyDir(work), emptyDir(skills)]);
         for (const sub of ["out", "in", ".home"]) await mkdir(join(work, sub), { recursive: true });
       } catch (error) {
-        session.closed = true;
-        current = null;
+        if (!session.closed) {
+          session.closed = true;
+          current = null;
+        }
         throw error;
       }
+      // Closed by closeByTask/reset while preparing: the worker already gave up on this open.
+      if (session.closed) return null;
       session.timers.push(setTimeout(() => void close(session.id, "wall time"), limits.wallTimeMs));
       scheduleDiskCheck(session);
       log("open", { sessionId: session.id, taskId, pids: limits.pids, wallTimeMs: limits.wallTimeMs });
@@ -157,6 +199,14 @@ export function createSessionManager(config: SessionConfig) {
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
       live.children.set(pid, exited);
       void exited.then(() => live.children.delete(pid));
+    },
+
+    /** Registers a file transfer of the session; close aborts it (destroys the request) and waits for res. */
+    trackTransfer(session: Session, req: IncomingMessage, res: ServerResponse): void {
+      const live = session as LiveSession;
+      const done = new Promise<void>((resolve) => res.once("close", () => resolve()));
+      live.transfers.set(req, done);
+      void done.then(() => live.transfers.delete(req));
     },
 
     close,

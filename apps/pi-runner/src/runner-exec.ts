@@ -9,9 +9,11 @@ import {
   decodeExecHeader,
   encodeFrame,
   FRAME_EXIT,
+  FRAME_KEEPALIVE,
   FRAME_STDERR,
   FRAME_STDOUT,
   RUNNER_EXEC_HEADER,
+  RUNNER_KEEPALIVE_MS,
   type RunnerExitStatus,
 } from "../../../packages/agent-runtime/src/sandbox-runner-protocol.ts";
 import { checkPath } from "./runner-files.ts";
@@ -21,8 +23,10 @@ import { killGroup } from "./runner-sweep.ts";
 
 /** How long the EXIT frame waits for a background process that still holds stdout/stderr open. */
 const STDIO_GRACE_MS = 2_000;
-/** Floor of the per-uid process cap; see runCommand. */
+/** Floor of the per-uid process cap; see runExec. */
 const MIN_NPROC = 4096;
+/** setTimeout's ceiling (about 24.8 days); a larger delay would fire at once. The session wall time ends sooner. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 interface ExecPlan {
   argv: string[];
@@ -60,7 +64,7 @@ export function parseExec(
   return {
     argv: hasCommand ? ["sh", "-c", command] : (argv as string[]),
     cwd: cwd === undefined ? work : checkPath(cwd, roots),
-    timeoutMs: timeoutSeconds === undefined ? null : Math.ceil(timeoutSeconds * 1000),
+    timeoutMs: timeoutSeconds === undefined ? null : Math.min(MAX_TIMER_MS, Math.ceil(timeoutSeconds * 1000)),
   };
 }
 
@@ -97,10 +101,16 @@ export function runExec(
   }
   sessions.track(session, child);
   res.writeHead(200, { "content-type": "application/octet-stream", "cache-control": "no-store" });
+  // Headers now and a keepalive frame on every quiet interval: a command silent for minutes (a render) must not
+  // look like a dead connection to the worker's HTTP client.
+  res.flushHeaders();
 
   let finished = false;
   let timedOut = false;
   const timers: NodeJS.Timeout[] = [];
+  const keepalive = setInterval(() => {
+    if (!finished && !res.destroyed) res.write(encodeFrame(FRAME_KEEPALIVE, new Uint8Array(0)));
+  }, RUNNER_KEEPALIVE_MS);
 
   const forward = (type: number) => (chunk: Buffer) => {
     if (finished || res.destroyed) return;
@@ -123,6 +133,7 @@ export function runExec(
   const finish = (code: number | null, signal: NodeJS.Signals | null) => {
     if (finished) return;
     finished = true;
+    clearInterval(keepalive);
     for (const timer of timers) clearTimeout(timer);
     child.stdout.destroy();
     child.stderr.destroy();

@@ -1,6 +1,7 @@
 /*
  * studix-pi-runner entry point: `node apps/pi-runner/src/main.ts [--token-stdin]` (Node type stripping, no build,
- * no npm dependency). Listens on 127.0.0.1:$STUDIX_RUNNER_PORT (7071) inside the Pod.
+ * no npm dependency). The API listens on 127.0.0.1:$STUDIX_RUNNER_PORT (7071) inside the Pod; GET /healthz alone is
+ * also served on 0.0.0.0 at that port + RUNNER_HEALTH_PORT_OFFSET (7171) for the kubelet's probes.
  *
  * The token. Session commands run as the runner's own uid, so they can read /proc/<pid>/environ of every
  * process in the container, pid 1 included, and deleting a variable from process.env does not change what
@@ -17,9 +18,10 @@
 import {
   RUNNER_DEFAULT_PORT,
   RUNNER_ENV,
+  RUNNER_HEALTH_PORT_OFFSET,
 } from "../../../packages/agent-runtime/src/sandbox-runner-protocol.ts";
 import { log } from "./runner-env.ts";
-import { createRunner, MIN_TOKEN_LENGTH } from "./runner-server.ts";
+import { createRunner, DEFAULT_MAX_DISK_MB, DEFAULT_MAX_FILE_MB, MIN_TOKEN_LENGTH } from "./runner-server.ts";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -29,8 +31,13 @@ async function readStdin(): Promise<string> {
     .replace(/\r?\n$/, "");
 }
 
-function positiveNumber(name: string, fallback: number): number {
-  const raw = process.env[name];
+/** `--port <n>` (the container args) wins over STUDIX_RUNNER_PORT. */
+function portArg(): string | undefined {
+  const at = process.argv.indexOf("--port");
+  return at >= 0 ? process.argv[at + 1] : undefined;
+}
+
+function positiveNumber(name: string, fallback: number, raw = process.env[name]): number {
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number`);
@@ -54,10 +61,12 @@ async function main(): Promise<void> {
   let maxDiskMb: number;
   let maxFileMb: number;
   try {
-    port = positiveNumber(RUNNER_ENV.port, RUNNER_DEFAULT_PORT);
+    port = positiveNumber(RUNNER_ENV.port, RUNNER_DEFAULT_PORT, portArg() ?? process.env[RUNNER_ENV.port]);
     if (!Number.isInteger(port) || port > 65_535) throw new Error(`${RUNNER_ENV.port} must be a TCP port`);
-    maxDiskMb = positiveNumber(RUNNER_ENV.maxDiskMb, 8192);
-    maxFileMb = positiveNumber(RUNNER_ENV.maxFileMb, 2048);
+    if (port + RUNNER_HEALTH_PORT_OFFSET > 65_535)
+      throw new Error(`${RUNNER_ENV.port} leaves no room for the health port`);
+    maxDiskMb = positiveNumber(RUNNER_ENV.maxDiskMb, DEFAULT_MAX_DISK_MB);
+    maxFileMb = positiveNumber(RUNNER_ENV.maxFileMb, DEFAULT_MAX_FILE_MB);
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
@@ -68,9 +77,13 @@ async function main(): Promise<void> {
     maxDiskMb,
     maxFileMb,
     version: process.env.STUDIX_RUNNER_VERSION || "dev",
-    scratchRoots: ["/tmp", "/var/tmp", "/dev/shm"],
+    // /home/node: the image user's home; HOME points into /work, but a command can still write there.
+    scratchRoots: ["/tmp", "/var/tmp", "/dev/shm", "/home/node"],
     // The /proc sweep assumes the runner owns its PID namespace (one container, shareProcessNamespace off).
     sweepProcesses: process.platform === "linux",
+    // A session's processes or files that cleanup could not remove must not reach the next session: exit, so
+    // the container restarts and the kernel kills everything left in its PID namespace.
+    onFatal: () => process.exit(1),
   });
 
   let stopping = false;

@@ -35,32 +35,38 @@ export async function startTestRunner(overrides: Partial<RunnerOptions> = {}) {
     port: 0,
     roots: { work: join(base, "work"), skills: join(base, "skills") },
     scratchRoots: [scratch],
+    health: null,
     // The token sits in the source env on purpose: the child env must filter it out.
     env: { ...process.env, STUDIX_RUNNER_TOKEN: TOKEN },
     ...overrides,
   });
-  const { port } = await runner.start();
+  const { port, healthPort } = await runner.start();
   const url = `http://127.0.0.1:${port}`;
   const auth = { authorization: `Bearer ${TOKEN}` };
   const work = await realpath(join(base, "work"));
 
   const client = {
     url,
+    healthPort,
+    runner,
     base,
     scratch,
     work,
     auth,
-    async open(env: Record<string, string> = {}, wallTimeMs = 60_000): Promise<Response> {
+    async open(env: Record<string, string> = {}, wallTimeMs = 60_000, taskId = "task-1"): Promise<Response> {
       return fetch(`${url}${RUNNER_ROUTES.open}`, {
         method: "POST",
         headers: { ...auth, "content-type": "application/json" },
-        body: JSON.stringify({ taskId: "task-1", env, limits: { pids: PIDS, wallTimeMs } }),
+        body: JSON.stringify({ taskId, env, limits: { pids: PIDS, wallTimeMs } }),
       });
     },
     async openId(env: Record<string, string> = {}): Promise<string> {
       const res = await client.open(env);
       if (res.status !== 201) throw new Error(`open failed: ${res.status} ${await res.text()}`);
       return ((await res.json()) as { sessionId: string }).sessionId;
+    },
+    post(path: string, method = "POST"): Promise<Response> {
+      return fetch(`${url}${path}`, { method, headers: auth });
     },
     close(id: string): Promise<Response> {
       return fetch(`${url}${RUNNER_ROUTES.session(id)}`, { method: "DELETE", headers: auth });

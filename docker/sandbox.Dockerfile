@@ -102,7 +102,10 @@ RUN echo '{"type":"module","private":true}' > /opt/pi-runner/package.json \
  && chown -R root:root /opt/pi-runner \
  && chmod -R a+rX,go-w /opt/pi-runner \
  && mkdir -p /work /skills \
- && chown 1000:1000 /work /skills
+ && chown 1000:1000 /work /skills \
+ # The runner wipes /tmp and /var/tmp between sessions and at start; build leftovers owned by root (such as
+ # Node's compile cache) cannot be removed by uid 1000 and would stop it from starting.
+ && rm -rf /tmp/* /tmp/.[!.]* /var/tmp/* /var/tmp/.[!.]*
 ARG STUDIX_RUNNER_VERSION=dev
 ENV STUDIX_RUNNER_VERSION=${STUDIX_RUNNER_VERSION}
 USER 1000:1000

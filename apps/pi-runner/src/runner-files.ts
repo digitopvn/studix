@@ -44,6 +44,13 @@ export async function putFile(
   roots: readonly string[],
   maxBytes: number,
 ): Promise<void> {
+  // An aborted upload (client gone, or the session closed under it) must fail the write, not leave it hanging.
+  const aborted = new Promise<never>((_resolve, reject) => {
+    req.once("close", () => {
+      if (!req.complete) reject(new HttpError(499, "upload aborted"));
+    });
+  });
+  aborted.catch(() => {});
   const path = checkPath(rawPath, roots);
   if (roots.includes(path)) throw new HttpError(400, "path is a root directory");
   const declared = Number(req.headers["content-length"]);
@@ -64,10 +71,13 @@ export async function putFile(
   // request would cut the socket before the 413 reaches the worker.
   req.pipe(limiter);
   try {
-    await pipeline(limiter, createWriteStream(temp, { flags: "wx", mode: 0o644 }));
+    const writing = pipeline(limiter, createWriteStream(temp, { flags: "wx", mode: 0o644 }));
+    writing.catch(() => {}); // when aborted wins the race, the destroyed pipeline's rejection is expected
+    await Promise.race([writing, aborted]);
     await rename(temp, target);
   } catch (error) {
     req.unpipe(limiter);
+    limiter.destroy();
     await rm(temp, { force: true });
     if (error instanceof HttpError) res.setHeader("connection", "close");
     throw error;

@@ -14,15 +14,25 @@ export const RUNNER_PROTOCOL_VERSION = 1;
 /** Bearer token header value prefix. Every route except GET /healthz needs `Authorization: Bearer <token>`. */
 export const RUNNER_AUTH_SCHEME = "Bearer";
 
-/** Default TCP port; the runner listens on 127.0.0.1 only (pod-local). */
+/** Default TCP port; the runner API listens on 127.0.0.1 only (pod-local). */
 export const RUNNER_DEFAULT_PORT = 7071;
+
+/**
+ * Kubernetes probes call the Pod IP, never loopback, so GET /healthz is ALSO served on 0.0.0.0 at
+ * API port + this offset (7171 for 7071). That listener serves /healthz and nothing else; the sidecar's declared
+ * `port` (the probe target) is this one.
+ */
+export const RUNNER_HEALTH_PORT_OFFSET = 100;
 
 /** Environment of the runner container. */
 export const RUNNER_ENV = {
   /** Shared secret with the worker. Required; the runner refuses to start without one of >= 32 chars. */
   token: "STUDIX_RUNNER_TOKEN",
   port: "STUDIX_RUNNER_PORT",
-  /** Cap on the bytes a session may keep under its writable paths; the session is killed past it. */
+  /**
+   * Cap on the bytes a session may keep under its writable paths; the session is killed past it. Default 1536:
+   * TOSE evicts the whole Pod when a sidecar passes its 2 GiB ephemeral-storage limit, so stay well below it.
+   */
   maxDiskMb: "STUDIX_RUNNER_MAX_DISK_MB",
   /** Cap on one uploaded or downloaded file. */
   maxFileMb: "STUDIX_RUNNER_MAX_FILE_MB",
@@ -38,6 +48,16 @@ export const RUNNER_ROUTES = {
   open: "/v1/sessions",
   /** DELETE: kills the session's processes and wipes its paths. Idempotent. */
   session: (id: string) => `/v1/sessions/${encodeURIComponent(id)}`,
+  /**
+   * DELETE `?taskId=<id>`: closes the current session only when it was opened for that task (204 either way).
+   * The worker calls it when an open request failed or was cancelled after the runner may have accepted it.
+   */
+  sessionsByTask: (taskId: string) => `/v1/sessions?taskId=${encodeURIComponent(taskId)}`,
+  /**
+   * POST: closes whatever session is open (204). Each runner belongs to exactly one worker (its Pod's), so a worker
+   * calls this at startup: any session still open was orphaned by the previous worker process.
+   */
+  reset: "/v1/reset",
   /**
    * POST: runs one command. Request header RUNNER_EXEC_HEADER carries base64url(JSON RunnerExecRequest); the
    * request body is the command's stdin (empty for none). The response streams frames (encodeFrame) until one
@@ -103,6 +123,18 @@ export const FRAME_STDOUT = 1;
 export const FRAME_STDERR = 2;
 /** Payload: JSON RunnerExitStatus. Always the last frame. */
 export const FRAME_EXIT = 3;
+/**
+ * Empty payload, sent about every 15 s while a command runs, so a silent command (a long render) never trips the
+ * worker's HTTP body timeout. The runner also flushes the response headers before the first output. Ignore it.
+ */
+export const FRAME_KEEPALIVE = 4;
+export const RUNNER_KEEPALIVE_MS = 15_000;
+
+/**
+ * Status 410 on any session route: the runner itself closed that session (wall time, disk cap, reset). The body is
+ * `{ "error": "session closed: <reason>" }`. The worker treats it like the docker driver's stopped sandbox.
+ */
+export const RUNNER_SESSION_GONE_STATUS = 410;
 const FRAME_HEADER_BYTES = 5;
 
 export function encodeFrame(type: number, payload: Uint8Array): Uint8Array {
