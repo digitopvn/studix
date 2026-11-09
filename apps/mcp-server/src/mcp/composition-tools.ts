@@ -118,7 +118,7 @@ export const COMPOSITION_MCP_TOOLS = [
     name: COMPOSITION_TOOL_NAMES.run,
     title: "Run in composition",
     description:
-      "Async: run a shell command over a composition in the skill sandbox (Node, Python, ffmpeg, Chromium, HyperFrames, Remotion, Multix, /skills). Each run starts in a fresh sandbox: only the composition's stored files are copied in, and only files the command adds or changes (not node_modules, .git, caches, dot-folders or names outside [A-Za-z0-9_.@+-]) are stored back; deletes do not persist. Generate projects inside the composition root. Poll studix_get_job.",
+      "Async: run a shell command over a composition in the skill sandbox (Node, Python, ffmpeg, Chromium, HyperFrames, Remotion, Multix, /skills). Each run starts in a fresh sandbox: only the composition's stored files are copied in, and only files the command adds or changes (not node_modules, .git, caches, files that keep old timestamps, or paths whose segments do not start with an ASCII letter/digit/_ and use only [A-Za-z0-9_.@+-]) are stored back; deletes do not persist. Generate projects inside the composition root. Poll studix_get_job.",
     input: RunInput,
     readOnly: false,
     audited: true,

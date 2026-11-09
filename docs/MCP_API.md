@@ -647,20 +647,26 @@ container, home directory, global installs or `node_modules`.
 
 - **Copied in:** every stored file, at the same relative path under the working directory
   (the composition root).
-- **Stored back:** each file the command added or changed under the root, listed in the job result's
-  `changed[]` (`path`, `bytes`, `sha256`, `contentType`). A file the command only read is not stored again. Limits: 1 GB per file, 200 files per
-  run (the rest are reported in the log tail), 400 files per composition.
-- **Not stored:** anything under `node_modules`, `.git`, `.cache`, `.npm`, `__pycache__` or `.venv`;
-  paths outside the composition root (`~`, `/tmp`); and any path that is not a valid
-  composition path (no hidden `.` segments, only letters, digits and `_ . @ + -`, at most 240
-  characters, so a name with a space is skipped without an error).
+- **Stored back:** each regular file under the root whose modification time is newer than the start
+  of the command, listed in the job result's `changed[]` (`path`, `bytes`, `sha256`,
+  `contentType`). A file the command only read is not stored again. Files that keep their original
+  timestamps (`tar -x`, `unzip`, `cp -p`, `rsync -a`) and symlinks are not stored; `touch` extracted
+  files if they must persist.
+- **Skipped silently:** anything under `node_modules`, `.git`, `.cache`, `.npm`, `__pycache__` or
+  `.venv`; files of 1 GiB or more; paths outside the root (`~`, `/tmp`); and any path that is not a
+  valid composition path: at most 240 characters, and every segment starts with an ASCII letter,
+  digit or `_` and then uses only ASCII letters, digits and `_ . @ + -` (so hidden names, spaces and
+  accented names are dropped without an error).
+- **Count limits:** a run stores at most 200 files (it keeps 200, in no guaranteed order, and the log
+  says how many it skipped). A run that would take the composition over 400 files fails with
+  `VALIDATION` and does not add its files to the file list.
 - **Deletes do not persist:** removing a file in a run leaves its stored copy, and it is back in the
   next run. Delete stored files with `studix_composition_write` and `delete: [paths]`.
 - **Persist a generated project** by creating it inside the root, for example
   `npx hyperframes init my-video` (the directory lands at `my-video/` and is stored back), or move it
   there before the command ends. A project initialised in `~` or `/tmp` is gone when the run ends. Its
   dependencies are not kept: run the install again at the start of the next command
-  (`cd my-video && npm ci && npx hyperframes render ...`).
+  (`cd my-video && npm install && npx hyperframes render ...`).
 - **Limits on writes** through `studix_composition_write` are separate: 8 MB per file, 50 per call.
   Larger media must be generated or downloaded inside a run.
 

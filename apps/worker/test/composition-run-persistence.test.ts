@@ -3,6 +3,7 @@ import { copyFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  COMPOSITION_LIMITS,
   compositionFileKey,
   createCompositionService,
   loadCompositionManifest,
@@ -89,7 +90,7 @@ describe("files that persist between composition runs", () => {
   });
   afterEach(() => rmSync(workDir, { recursive: true, force: true }));
 
-  it("keeps what a run wrote (but not dependency folders) for the next run, and starts every run fresh", async () => {
+  it("keeps what a run wrote (but not dependency folders) for the next run (the fake opens a new sandbox per run)", async () => {
     const storage = new InMemoryStorageAdapter();
     const service = createCompositionService({
       storage,
@@ -106,7 +107,9 @@ describe("files that persist between composition runs", () => {
         (fs) => {
           fs.write(`${ROOT}my-video/index.html`, "<h1>generated</h1>");
           fs.write(`${ROOT}node_modules/dep/index.js`, "module.exports = 1");
-          fs.write(`${ROOT}.cache/blob`, "cache");
+          fs.write(`${ROOT}sub/node_modules/x/y.js`, "nested dependency");
+          fs.write(`${ROOT}sub/${"__py"}cache__/x.pyc`, "bytecode");
+          fs.write(`${ROOT}.hidden/blob`, "hidden");
           fs.write(`${ROOT}scratch/with space.txt`, "unstorable name");
         },
       ],
@@ -147,5 +150,40 @@ describe("files that persist between composition runs", () => {
     await runner.run(stage, request("remove"));
     const afterRemove = await loadCompositionManifest(storage, ctx, id);
     expect(afterRemove.files.map((f) => f.path)).toContain("index.html");
+  });
+
+  it("fails a run that would pass the file cap without touching stored files", async () => {
+    const storage = new InMemoryStorageAdapter();
+    const service = createCompositionService({
+      storage,
+      queue: {} as never,
+      audit: { append: async () => undefined } as never,
+      defaults: { jobBudgetCents: 0 },
+    });
+    const { id } = await service.write(ctx, {
+      files: Array.from({ length: COMPOSITION_LIMITS.files }, (_, i) => ({ path: `f${i}.txt`, text: "old" })),
+    });
+    const scripts = new Map<string, Script>([
+      [
+        "overflow",
+        (fs) => {
+          fs.write(`${ROOT}f0.txt`, "new");
+          fs.write(`${ROOT}extra.txt`, "extra");
+        },
+      ],
+    ]);
+    const runner = createCompositionRunner({
+      sandbox: fakeSandbox(scripts),
+      storage,
+      workDir,
+      logger: createLogger({}, { level: "error", write: () => {} }),
+    });
+    const stage = { ctx, job: { id: "job_cap" }, signal: new AbortController().signal } as StageContext;
+    await expect(
+      runner.run(stage, { compositionId: id, command: "overflow", timeoutSeconds: 60 }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    const kept = await storage.get(ctx, compositionFileKey(id, "f0.txt"));
+    expect(await new Response(kept.body).text()).toBe("old");
+    expect((await loadCompositionManifest(storage, ctx, id)).files).toHaveLength(COMPOSITION_LIMITS.files);
   });
 });
