@@ -101,4 +101,33 @@ describe("sidecar readiness report", () => {
     const { createHash } = await import("node:crypto");
     expect(workspaceHash("ws_x")).toBe(createHash("sha256").update("ws_x").digest("hex").slice(0, 16));
   });
+
+  it("logs again when runners that were down at startup become ready", async () => {
+    const { startSidecarRunnerMonitor } = await import("../src/sidecar-runner-health.ts");
+    const { loadSidecarSettings } = await import("../src/sidecar-sandbox-settings.ts");
+    let up = false;
+    const fakeFetch = (async () => {
+      if (!up) throw new TypeError("fetch failed");
+      return new Response(
+        JSON.stringify({ protocol: 1, version: "v1", busy: false, toolchain: {}, startedAt: "" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    const lines: Array<[string, Record<string, unknown>]> = [];
+    const record = (msg: string, fields?: Record<string, unknown>) => void lines.push([msg, fields ?? {}]);
+    const logger = { debug: record, info: record, warn: record, error: record } as unknown as Logger;
+    const monitor = startSidecarRunnerMonitor(loadSidecarSettings(base), logger, {
+      fetch: fakeFetch,
+      attempts: 1,
+      refreshMs: 0,
+    });
+    await monitor.started;
+    expect(lines.at(-1)?.[1]).toMatchObject({ ready: 0 });
+    up = true;
+    monitor.status();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(monitor.status()).toMatchObject({ ready: 2 });
+    expect(lines.filter(([m]) => m === "skill runners checked").map(([, f]) => f.ready)).toEqual([0, 2]);
+    monitor.stop();
+  });
 });
