@@ -27,10 +27,18 @@ async function listPids(): Promise<number[]> {
   return entries.filter((name) => /^\d+$/.test(name)).map(Number);
 }
 
+/**
+ * True when a /proc/<pid>/stat line reports state Z. The command name between the parentheses is chosen by the
+ * process itself and may contain ") Z ", so the state is read after the LAST ")" only.
+ */
+export function statIsZombie(stat: string): boolean {
+  const end = stat.lastIndexOf(")");
+  return end >= 0 && stat.slice(end + 1, end + 3) === " Z";
+}
+
 /** A zombie is dead already; it only waits for its parent (tini) to reap it. */
 async function isZombie(pid: number): Promise<boolean> {
-  const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => "");
-  return /\) Z /.test(stat);
+  return statIsZombie(await readFile(`/proc/${pid}/stat`, "utf8").catch(() => ""));
 }
 
 /**
@@ -43,6 +51,8 @@ export async function sweepProcesses(budgetMs = 10_000): Promise<boolean> {
   if (process.platform !== "linux") return true;
   const spared = new Set([1, process.pid, process.ppid]);
   const deadline = Date.now() + budgetMs;
+  // Always one kill(-1) first: whatever a process looks like in /proc, it gets the signal at least once.
+  signal(-1, "SIGKILL");
   for (;;) {
     const alive: number[] = [];
     for (const pid of await listPids()) {
