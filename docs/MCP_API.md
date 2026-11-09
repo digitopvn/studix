@@ -540,7 +540,7 @@ the worker. Threat model: [SECURITY.md](SECURITY.md#media-exec).
 [ADR-0025](decisions/0025-sidecar-skill-runner.md)) the sandbox is not offline, so `studix_media_exec` is
 unavailable and returns an error that names the backend; use `studix_composition_run` instead, which works on both
 backends. The sidecar backend also runs agent tools and compositions only for workspaces on the worker's
-allowlist; any other workspace gets `FORBIDDEN`.
+allowlist (which the operator may set to every workspace); any other workspace gets `FORBIDDEN`.
 
 | Argument         | Notes                                                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------ |

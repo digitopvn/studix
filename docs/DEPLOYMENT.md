@@ -337,7 +337,7 @@ Worker variables:
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
 | `STUDIX_SANDBOX_RUNNERS`                         | Comma-separated runner URLs, `http://127.0.0.1:7071,http://127.0.0.1:7072` (port `7070 + n`)   |
 | `STUDIX_RUNNER_1_TOKEN`, `STUDIX_RUNNER_2_TOKEN` | One bearer token per runner, at least 32 characters; the worker reads all of them              |
-| `STUDIX_SANDBOX_SIDECAR_WORKSPACES`              | Comma-separated workspace ids allowed to use the backend; any other workspace gets `FORBIDDEN` |
+| `STUDIX_SANDBOX_SIDECAR_WORKSPACES`              | Comma-separated workspace ids allowed to use the backend; any other workspace gets `FORBIDDEN`. `*` alone allows every workspace (see [SECURITY](SECURITY.md)) |
 
 Runner `n` listens for the worker on `127.0.0.1:<7070 + n>` (container args `--port 7070+n`, set by CI) and
 answers the kubelet's probe, `GET /healthz` only, on `0.0.0.0:<7170 + n>`, the sidecar's declared `port`. Its

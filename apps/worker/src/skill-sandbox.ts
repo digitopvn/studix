@@ -150,13 +150,25 @@ function sidecarDriver(sidecar: SidecarSettings, logger: Logger) {
     runners: sidecar.runners,
     logger: logger.child({ component: "skill-runner" }),
   });
+  const allowlist = sidecar.workspaces;
+  const all = allowlist === "all";
   logger.info("skill sandbox ready", {
     backend: "sidecar",
     runners: sidecar.runners.length,
-    workspaces: sidecar.workspaces.size,
+    workspaces: allowlist === "all" ? "all" : allowlist.size,
   });
-  const workspaceHashes = [...sidecar.workspaces].map(workspaceHash);
-  return { driver, status: () => ({ ...monitor.status(), workspaceHashes }) };
+  if (all) {
+    logger.warn("skill runners open to every workspace", {
+      reason:
+        "STUDIX_SANDBOX_SIDECAR_WORKSPACES is *; runner egress is open, so any tenant's skill code can reach the network",
+    });
+  }
+  // No hashes means "every workspace" to the app's sandbox report.
+  const workspaceHashes = allowlist === "all" ? undefined : [...allowlist].map(workspaceHash);
+  return {
+    driver,
+    status: () => ({ ...monitor.status(), ...(workspaceHashes ? { workspaceHashes } : {}) }),
+  };
 }
 
 export async function createSkillSandbox(options: {

@@ -34,7 +34,7 @@ describe("sidecar sandbox settings", () => {
     [{ STUDIX_RUNNER_2_TOKEN: undefined }, "STUDIX_RUNNER_2_TOKEN"],
     [{ STUDIX_RUNNER_1_TOKEN: "short-secret-value" }, "STUDIX_RUNNER_1_TOKEN"],
     [{ STUDIX_SANDBOX_SIDECAR_WORKSPACES: "" }, "STUDIX_SANDBOX_SIDECAR_WORKSPACES"],
-    [{ STUDIX_SANDBOX_SIDECAR_WORKSPACES: "*" }, "STUDIX_SANDBOX_SIDECAR_WORKSPACES"],
+    [{ STUDIX_SANDBOX_SIDECAR_WORKSPACES: "ws_*" }, "STUDIX_SANDBOX_SIDECAR_WORKSPACES"],
   ])("refuses %o naming %s, never the value", (override, variable) => {
     const error = (() => {
       try {
@@ -59,6 +59,22 @@ describe("sidecar sandbox settings", () => {
         retryable: false,
         message: "The skill runner is limited to trusted workspaces on this server",
       }),
+    );
+  });
+});
+
+describe("sidecar allowlist of every workspace", () => {
+  it("opens the runners to any workspace with * alone", () => {
+    const settings = loadSidecarSettings({ ...base, STUDIX_SANDBOX_SIDECAR_WORKSPACES: " * " });
+    expect(settings.workspaces).toBe("all");
+    expect(() =>
+      assertSidecarWorkspace(settings, { ...testTenant(), workspaceId: "ws_anyone" }),
+    ).not.toThrow();
+  });
+
+  it("refuses * mixed with workspace ids", () => {
+    expect(() => loadSidecarSettings({ ...base, STUDIX_SANDBOX_SIDECAR_WORKSPACES: "*,ws_trusted" })).toThrow(
+      expect.objectContaining({ code: "VALIDATION", message: expect.stringContaining("mixes *") }),
     );
   });
 });
