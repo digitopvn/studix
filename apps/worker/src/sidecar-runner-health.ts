@@ -64,7 +64,10 @@ export function startSidecarRunnerMonitor(
   function report(health: SidecarRunnerHealth[]): void {
     if (last.ready === reportedReady) return;
     reportedReady = last.ready;
-    const log = (last.ready ?? 0) < (last.runners ?? 0) || last.ready === 0 ? logger.warn.bind(logger) : logger.info.bind(logger);
+    const log =
+      (last.ready ?? 0) < (last.runners ?? 0) || last.ready === 0
+        ? logger.warn.bind(logger)
+        : logger.info.bind(logger);
     log("skill runners checked", {
       ready: last.ready,
       runners: last.runners,
