@@ -6,7 +6,7 @@ import { defineConfig } from "vitest/config";
  * - integration: needs DATABASE_URL / S3_* from `docker compose up -d postgres minio` (`*.integration.test.ts`).
  * - live: calls paid third-party APIs; collected only when STUDIX_LIVE=1 (`*.live.test.ts`).
  */
-const roots = ["packages/*/test", "apps/*/test"];
+const roots = ["packages/*/test", "apps/*/test", "deploy/*/test"];
 const files = (suffix: string) => roots.map((root) => `${root}/**/*${suffix}`);
 const liveEnabled = process.env.STUDIX_LIVE === "1";
 

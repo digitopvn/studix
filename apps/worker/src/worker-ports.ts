@@ -250,7 +250,7 @@ function agentHarness(
 }
 
 /**
- * The skill sandbox (STUDIX_SANDBOX=docker) with the enabled skills of each tenant: from a local directory
+ * The skill sandbox (STUDIX_SANDBOX=docker or sidecar) with the enabled skills of each tenant: from a local directory
  * when STUDIX_SANDBOX_SKILLS_DIR is set, else from the skill store.
  */
 async function skillSandbox(
@@ -317,7 +317,10 @@ async function skillSandbox(
   });
 }
 
-/** The sandbox of `media.exec` jobs: the skill sandbox image with no network, on when STUDIX_SANDBOX=docker. */
+/**
+ * The sandbox of `media.exec` jobs: the skill sandbox image with no network, on when STUDIX_SANDBOX=docker.
+ * With STUDIX_SANDBOX=sidecar its jobs fail with an explicit UNAVAILABLE (no network isolation there).
+ */
 function mediaExecPort(
   settings: WorkerSettings,
   runtime: WorkerPortsRuntime,
@@ -494,6 +497,7 @@ export async function loadWorkerPorts(
     storage,
     ...(harness ? { agentRuntimeFor: (stage) => harness.runtimeFor(stage) } : {}),
     ...(mediaExec ? { mediaExec } : {}),
+    ...(sandbox ? { sandboxStatus: () => sandbox.status() } : {}),
     ...(compositionRun ? { compositionRun } : {}),
     close: async () => {
       // Shutdown stops waiting on stages at once; let aborted agent runs finish killing their process.

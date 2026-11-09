@@ -33,6 +33,7 @@ jobs:
       packages: write
     outputs:
       image: ${{ steps.out.outputs.image }}
+      runner_image: ${{ steps.runner_out.outputs.image }}
     steps:
       - id: ref
         if: vars.STUDIX_DEPLOY_IMAGE == '1'
@@ -57,6 +58,23 @@ jobs:
       - id: out
         if: vars.STUDIX_DEPLOY_IMAGE == '1'
         run: echo "image=${{ steps.ref.outputs.ref }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+      # The skill-sandbox runner sidecars of the worker (docs/DEPLOYMENT.md#skill-sandbox-worker). Built only
+      # when the environment variable TOSE_WORKER_RUNNERS is set, so production pays no build time.
+      - id: runner_build
+        if: vars.STUDIX_DEPLOY_IMAGE == '1' && vars.TOSE_WORKER_RUNNERS != ''
+        uses: docker/build-push-action@v6
+        with:
+          platforms: linux/amd64
+          push: true
+          file: docker/sandbox.Dockerfile
+          target: pi-runner
+          build-args: STUDIX_RUNNER_VERSION=${{ github.sha }}
+          tags: ${{ steps.ref.outputs.ref }}-pi-runner:${{ github.sha }}
+          cache-from: type=gha,scope=pi-runner
+          cache-to: type=gha,scope=pi-runner,mode=max
+      - id: runner_out
+        if: vars.STUDIX_DEPLOY_IMAGE == '1' && vars.TOSE_WORKER_RUNNERS != ''
+        run: echo "image=${{ steps.ref.outputs.ref }}-pi-runner@${{ steps.runner_build.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: image
@@ -85,6 +103,11 @@ jobs:
           WORKER_PROJECT: ${{ vars.TOSE_WORKER_PROJECT }}
           TOSE_IMAGE: ${{ needs.image.outputs.image }}
           TOSE_REGISTRY_CREDENTIAL_ID: ${{ vars.TOSE_REGISTRY_CREDENTIAL_ID }}
+          # Runner sidecars of the worker; unset (production) leaves the worker's sidecars untouched.
+          TOSE_WORKER_RUNNERS: ${{ vars.TOSE_WORKER_RUNNERS }}
+          TOSE_RUNNER_CPU: ${{ vars.TOSE_RUNNER_CPU }}
+          TOSE_RUNNER_RAM: ${{ vars.TOSE_RUNNER_RAM }}
+          STUDIX_RUNNER_IMAGE: ${{ needs.image.outputs.runner_image }}
           # Lets the script skip a build when the branch moved past the pushed commit.
           EXPECTED_SHA: ${{ github.sha }}
           GITHUB_TOKEN: ${{ github.token }}

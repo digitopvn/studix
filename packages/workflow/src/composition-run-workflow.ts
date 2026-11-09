@@ -42,7 +42,8 @@ export function createCompositionRunWorkflow(deps: CompositionRunWorkflowDeps): 
           if (!deps.runner) {
             throw new StudixError("UNAVAILABLE", "This worker has no skill sandbox", {
               retryable: false,
-              suggestedAction: "Set STUDIX_SANDBOX=docker on the worker.",
+              suggestedAction:
+                "Set STUDIX_SANDBOX=docker (or sidecar on hosts without Docker) on the worker.",
             });
           }
           const result = await deps.runner.run(s, request);

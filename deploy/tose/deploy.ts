@@ -11,8 +11,14 @@
  * has moved on (the newer push's own run deploys it after its CI) and fails if TOSE still built
  * another commit, so an unexpected commit never goes out unnoticed.
  * TOSE_DEPLOY_TIMEOUT_SECONDS bounds the wait per project (default 1800).
+ * With TOSE_WORKER_RUNNERS (1 to 3) the worker project also gets that many `pi-runner` sidecars
+ * (docs/DEPLOYMENT.md#skill-sandbox-worker): the script sets them with STUDIX_RUNNER_IMAGE (a digest built by
+ * CI) just before deploying WORKER_PROJECT, and needs image mode. Unset, `sidecars` is never sent, so
+ * whatever the project has stays as it is. TOSE_RUNNER_CPU / TOSE_RUNNER_RAM size each runner.
  * Never prints the API key; logs project, deployment id, commit and status only.
  */
+
+import { buildWorkerSidecars } from "./worker-sidecars.ts";
 
 const API = process.env.TOSE_API_URL ?? "https://api-v2.tose.sh";
 const apiKey = required("TOSE_API_KEY");
@@ -22,6 +28,8 @@ const expectedSha = process.env.EXPECTED_SHA;
 const image = process.env.TOSE_IMAGE;
 if (image && !/@sha256:[0-9a-f]{64}$/.test(image)) throw new Error("TOSE_IMAGE must be pinned by digest");
 const registryCredentialId = process.env.TOSE_REGISTRY_CREDENTIAL_ID || undefined;
+const runnerCount = process.env.TOSE_WORKER_RUNNERS ? Number(process.env.TOSE_WORKER_RUNNERS) : undefined;
+const workerProject = process.env.WORKER_PROJECT;
 const timeoutSeconds = Number(process.env.TOSE_DEPLOY_TIMEOUT_SECONDS ?? 1800);
 if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
   throw new Error("TOSE_DEPLOY_TIMEOUT_SECONDS must be a positive number");
@@ -64,7 +72,7 @@ async function call(method: string, path: string, body: object = {}): Promise<un
   const res = await fetch(`${API}/api/workspaces/${workspace}/projects/${path}`, {
     method,
     headers: { "X-API-Key": apiKey, "Content-Type": "application/json" },
-    body: method === "POST" ? JSON.stringify(body) : undefined,
+    body: method === "POST" || method === "PUT" ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(60_000),
   });
   const text = await res.text();
@@ -101,6 +109,20 @@ async function branchTip(): Promise<string | undefined> {
   });
   if (!res.ok) throw new Error(`GitHub branch lookup: HTTP ${res.status}`);
   return ((await res.json()) as { commit: { sha: string } }).commit.sha;
+}
+
+/** Saves the worker's runner sidecars; TOSE applies them on the deploy that follows. */
+async function setRunnerSidecars(project: string): Promise<void> {
+  const runnerImage = required("STUDIX_RUNNER_IMAGE");
+  const sidecars = buildWorkerSidecars({
+    count: runnerCount as number,
+    image: runnerImage,
+    registryCredentialId,
+    cpu: process.env.TOSE_RUNNER_CPU || "1.5",
+    ram: process.env.TOSE_RUNNER_RAM || "3",
+  });
+  await call("PUT", project, { sidecars });
+  console.log(`${project}: ${sidecars.length} runner sidecar(s) set, ${runnerImage}`);
 }
 
 async function deploy(project: string): Promise<void> {
@@ -150,6 +172,23 @@ async function deploy(project: string): Promise<void> {
 
 const projects = process.argv.slice(2);
 if (projects.length === 0) throw new Error("usage: node deploy/tose/deploy.ts <project>...");
+if (runnerCount !== undefined) {
+  // Validate before any rollout starts, so a bad setting never leaves the app deployed and the worker not.
+  if (!image) throw new Error("TOSE_WORKER_RUNNERS needs image mode (TOSE_IMAGE)");
+  if (!workerProject || !projects.includes(workerProject)) {
+    throw new Error("TOSE_WORKER_RUNNERS needs WORKER_PROJECT to be one of the deployed projects");
+  }
+  buildWorkerSidecars({
+    count: runnerCount,
+    image: required("STUDIX_RUNNER_IMAGE"),
+    cpu: process.env.TOSE_RUNNER_CPU || "1.5",
+    ram: process.env.TOSE_RUNNER_RAM || "3",
+  });
+}
+if (runnerCount !== undefined) {
+  // Before any rollout: a refused sidecar setting must stop the run before the app is already live.
+  await setRunnerSidecars(workerProject as string);
+}
 if (image) {
   // The image is exactly the pushed commit and rolls out in a minute or two, so keep the safe order:
   // the app applies migrations on start, then the worker.

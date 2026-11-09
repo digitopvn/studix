@@ -4,6 +4,11 @@
 # skill may call (Python 3, Node, ffmpeg, Chromium for HyperFrames, git, curl and the multix CLI).
 #
 #   docker build -f docker/sandbox.Dockerfile -t studix-sandbox:local .
+#
+# The `pi-runner` target is the same toolchain plus the studix-pi-runner server: the sidecar a Pod-local worker
+# talks to over HTTP when there is no Docker daemon (docs/decisions/0025-sidecar-skill-runner.md).
+#
+#   docker build -f docker/sandbox.Dockerfile --target pi-runner -t studix-pi-runner:local .
 
 # The multix CLI at the same pinned commit as the Studix image (MULTIX_COMMIT in Dockerfile).
 FROM node:22-bookworm-slim AS multix
@@ -25,7 +30,7 @@ RUN set -eu; \
     rm -rf .git /root/.npm; \
     node dist/cli.js --version
 
-FROM node:22-bookworm-slim
+FROM node:22-bookworm-slim AS sandbox
 
 ENV HYPERFRAMES_NO_TELEMETRY=1 \
     HYPERFRAMES_NO_UPDATE_CHECK=1 \
@@ -81,3 +86,36 @@ WORKDIR /work
 USER 1000:1000
 # The worker runs it with `--init` and `sleep infinity`, then `docker exec`s each tool call.
 CMD ["sleep", "infinity"]
+
+# The sidecar runner: one session at a time, every route but /healthz behind a bearer token, 127.0.0.1 only.
+# Its code is root-owned and read-only to uid 1000, the uid every session command runs as.
+FROM sandbox AS pi-runner
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tini \
+ && rm -rf /var/lib/apt/lists/*
+# Mirror the repo layout so the runner's relative import of the wire contract resolves; Node runs the .ts files
+# with type stripping, so there is no build step and no npm dependency.
+COPY packages/agent-runtime/src/sandbox-runner-protocol.ts /opt/pi-runner/packages/agent-runtime/src/sandbox-runner-protocol.ts
+COPY apps/pi-runner/src /opt/pi-runner/apps/pi-runner/src
+RUN echo '{"type":"module","private":true}' > /opt/pi-runner/package.json \
+ && chown -R root:root /opt/pi-runner \
+ && chmod -R a+rX,go-w /opt/pi-runner \
+ && mkdir -p /work /skills \
+ && chown 1000:1000 /work /skills \
+ # The runner wipes /tmp and /var/tmp between sessions and at start; build leftovers owned by root (such as
+ # Node's compile cache) cannot be removed by uid 1000 and would stop it from starting.
+ && rm -rf /tmp/* /tmp/.[!.]* /var/tmp/* /var/tmp/.[!.]*
+ARG STUDIX_RUNNER_VERSION=dev
+ENV STUDIX_RUNNER_VERSION=${STUDIX_RUNNER_VERSION}
+USER 1000:1000
+WORKDIR /work
+EXPOSE 7071
+# entrypoint.sh moves STUDIX_RUNNER_TOKEN from the environment to the runner's stdin, then execs
+# `tini -- node main.ts` without it, so no /proc/*/environ in the container (pid 1 included) holds the token.
+ENTRYPOINT ["/bin/sh", "/opt/pi-runner/apps/pi-runner/src/entrypoint.sh"]
+CMD []
+
+# The default target stays the plain sandbox image, so `docker compose --profile sandbox build sandbox-image`
+# and `docker build -f docker/sandbox.Dockerfile .` keep building it.
+FROM sandbox
