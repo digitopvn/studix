@@ -272,7 +272,7 @@ export function createDockerSandboxDriver(options: DockerSandboxOptions): Sandbo
             ? setTimeout(kill, Math.min(Math.max(1, opts.timeoutSeconds) * 1000, 2_147_483_647))
             : undefined;
           try {
-            return await new Promise<{ exitCode: number | null }>((resolve, reject) => {
+            const result = await new Promise<{ exitCode: number | null }>((resolve, reject) => {
               child.stdout?.on("data", (c: Buffer) => opts.onData?.(c));
               child.stderr?.on("data", (c: Buffer) => opts.onData?.(c));
               child.once("error", reject);
@@ -280,6 +280,9 @@ export function createDockerSandboxDriver(options: DockerSandboxOptions): Sandbo
               if (opts.stdin !== undefined) child.stdin?.end(opts.stdin);
               else child.stdin?.end();
             });
+            // The sandbox closing kills the command; that is the cap, not a command that died by itself.
+            if (closed) assertOpen();
+            return result;
           } finally {
             if (timeout) clearTimeout(timeout);
             opts.signal?.removeEventListener("abort", kill);

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { testTenant } from "@studix/core/testing";
+import { StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
 import {
   changedSkillBundles,
@@ -135,6 +136,31 @@ describe("sandbox tools", () => {
     // A path that climbs out still resolves inside the container's filesystem.
     await exec(write, { path: "../../etc/evil", content: "x" });
     expect(files.has("/etc/evil")).toBe(true);
+  });
+
+  it("reports a stopped sandbox (cap time) to the run and still fails the tool call", async () => {
+    const { session } = fakeSandbox();
+    const stopped = new StudixError("TIMEOUT", "The sandbox was stopped", {
+      retryable: false,
+      details: { cap: "time" },
+    });
+    session.exec = async () => {
+      throw stopped;
+    };
+    const seen: StudixError[] = [];
+    const [bash] = createSandboxToolDefinitions(session, ["bash"], undefined, (e) => seen.push(e));
+    const ctx = { sessionManager: SessionManager.inMemory() } as never;
+    const run = (command: string) =>
+      // biome-ignore lint/suspicious/noExplicitAny: Pi tool execute signatures are generic.
+      (bash as any).execute("c", { command }, new AbortController().signal, () => {}, ctx);
+    await expect(run("echo hi")).rejects.toBe(stopped);
+    expect(seen).toEqual([stopped]);
+    // An ordinary failing command is not a cap and is not reported.
+    session.exec = async () => {
+      throw new Error("boom");
+    };
+    await expect(run("false")).rejects.toThrow("boom");
+    expect(seen).toHaveLength(1);
   });
 
   it("maps the host scratch dir Pi passes as cwd to /work", () => {

@@ -29,7 +29,10 @@ interface Seen {
 let server: Server;
 let baseUrl = "";
 const seen: Seen[] = [];
-let respond: (seen: Seen) => { status: number; text?: string } = () => ({ status: 200, text: '{"ok":true}' });
+let respond: (seen: Seen) => { status: number; text?: string; bashCommand?: string } = () => ({
+  status: 200,
+  text: '{"ok":true}',
+});
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -63,9 +66,20 @@ beforeAll(async () => {
         `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", model: "m", choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`,
       );
     chunk({ role: "assistant", content: "" });
-    chunk({ content: plan.text ?? "" });
+    if (plan.bashCommand) {
+      chunk({
+        tool_calls: [
+          {
+            index: 0,
+            id: "call_1",
+            type: "function",
+            function: { name: "bash", arguments: JSON.stringify({ command: plan.bashCommand }) },
+          },
+        ],
+      });
+    } else chunk({ content: plan.text ?? "" });
     res.write(
-      `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1000000, completion_tokens: 0, total_tokens: 1000000 } })}\n\n`,
+      `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", model: "m", choices: [{ index: 0, delta: {}, finish_reason: plan.bashCommand ? "tool_calls" : "stop" }], usage: { prompt_tokens: 1000000, completion_tokens: 0, total_tokens: 1000000 } })}\n\n`,
     );
     res.end("data: [DONE]\n\n");
   });
@@ -102,6 +116,53 @@ const task = (over: Partial<AgentTask> = {}): AgentTask => ({
   maxCostCents: 500,
   maxTurns: 3,
   ...over,
+});
+
+describe("Pi SDK runtime with a stopped sandbox", () => {
+  it("ends the run with the time cap, without a fallback attempt or collecting results", async () => {
+    seen.length = 0;
+    respond = () => ({ status: 200, bashCommand: "echo hi" });
+    let collected = false;
+    const stopped = new StudixError("TIMEOUT", "The sandbox was stopped", {
+      retryable: false,
+      details: { cap: "time" },
+    });
+    const workspace = {
+      sandbox: {
+        id: "sb",
+        exec: async () => {
+          throw stopped;
+        },
+        run: async () => {
+          throw stopped;
+        },
+      },
+      skills: [],
+      inputs: [],
+      collect: async () => {
+        collected = true;
+        return [];
+      },
+      close: async () => {},
+    };
+    const runtime = createPiSdkAgentRuntime({
+      resolver: staticResolver(binding(), binding({ connectionId: "pcon_2" })),
+      workspace: { open: async () => workspace as never },
+    });
+    const error = await runtime
+      .run(
+        testTenant(),
+        task({
+          tools: [{ name: "bash", description: "Run a command", inputSchema: { type: "object" } }],
+          maxTurns: 10,
+          maxCostCents: 10_000,
+        }),
+      )
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: "TIMEOUT", details: { cap: "time" } });
+    expect(seen).toHaveLength(1);
+    expect(collected).toBe(false);
+  });
 });
 
 describe("Pi SDK runtime", () => {
