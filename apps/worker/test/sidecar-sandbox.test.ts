@@ -165,7 +165,8 @@ describe("sidecar readiness report", () => {
     expect(level).toBe("warn");
     expect(fields).toMatchObject({ ready: 0, runners: 2 });
     expect(fields?.down).toHaveLength(2);
-    for (const down of fields?.down as Array<{ error: string }>) expect(down.error).toMatch(/protocol 99/);
+    for (const down of (fields?.down ?? []) as Array<{ error: string }>)
+      expect(down.error).toMatch(/protocol 99/);
     expect(monitor.status()).toMatchObject({
       ready: 0,
       versions: [],
