@@ -147,19 +147,28 @@ describe("sidecar readiness report", () => {
           headers: { "content-type": "application/json" },
         },
       )) as unknown as typeof fetch;
-    const lines: Array<[string, Record<string, unknown>]> = [];
-    const record = (msg: string, fields?: Record<string, unknown>) => void lines.push([msg, fields ?? {}]);
-    const logger = { debug: record, info: record, warn: record, error: record } as unknown as Logger;
+    const lines: Array<[string, string, Record<string, unknown>]> = [];
+    const at = (level: string) => (msg: string, fields?: Record<string, unknown>) =>
+      void lines.push([level, msg, fields ?? {}]);
+    const logger = {
+      debug: at("debug"),
+      info: at("info"),
+      warn: at("warn"),
+      error: at("error"),
+    } as unknown as Logger;
     const monitor = startSidecarRunnerMonitor(loadSidecarSettings(base), logger, {
       fetch: fakeFetch,
       attempts: 1,
     });
     await monitor.started;
-    const [, fields] = lines.find(([m]) => m === "skill runners checked") ?? [];
+    const [level, , fields] = lines.find(([, m]) => m === "skill runners checked") ?? [];
+    expect(level).toBe("warn");
     expect(fields).toMatchObject({ ready: 0, runners: 2 });
-    expect(JSON.stringify(fields?.down)).toMatch(/protocol 99/);
+    expect(fields?.down).toHaveLength(2);
+    for (const down of fields?.down as Array<{ error: string }>) expect(down.error).toMatch(/protocol 99/);
     expect(monitor.status()).toMatchObject({
       ready: 0,
+      versions: [],
       reason: expect.stringContaining("No skill runner is ready"),
     });
     expect(JSON.stringify(monitor.status())).not.toContain("protocol 99");
