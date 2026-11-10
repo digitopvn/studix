@@ -132,6 +132,25 @@ describe("dashboard JSON API (Better Auth session, Postgres)", () => {
     expect(cancelled.status).toBe(200);
   });
 
+  it("refuses a marketing-video brief without copy and passes key messages and the call to action on", async () => {
+    const before = (await (await app.api("GET", "/api/projects", { cookie: alice })).json()).items.length;
+    const body = { prompt: "Quảng cáo quán cà phê", workflowTemplate: "marketing-video" };
+    const refused = await app.api("POST", "/api/projects", { cookie: alice, body });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: { code: "VALIDATION" } });
+    expect((await (await app.api("GET", "/api/projects", { cookie: alice })).json()).items).toHaveLength(
+      before,
+    );
+
+    const created = await app.api("POST", "/api/projects", {
+      cookie: alice,
+      body: { ...body, keyMessages: ["Cà phê rang tại chỗ"], callToAction: "Ghé quán" },
+    });
+    expect(created.status).toBe(201);
+    const { project } = await created.json();
+    expect(project.brief).toMatchObject({ keyMessages: ["Cà phê rang tại chỗ"], callToAction: "Ghé quán" });
+  });
+
   it("retries a failed job over POST /api/jobs/:id/retry; other tenants get 404, other states 409", async () => {
     const body = { prompt: "Retry route", aspectRatio: "9:16", idempotencyKey: "dash-retry" };
     const { job } = await (await app.api("POST", "/api/projects", { cookie: alice, body })).json();

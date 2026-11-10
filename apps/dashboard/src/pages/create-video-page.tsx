@@ -11,9 +11,12 @@ const EFFORTS: ReasoningEffort[] = ["off", "minimal", "low", "medium", "high", "
 export function CreateVideoPage() {
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
+  const [messages, setMessages] = useState("");
+  const [callToAction, setCallToAction] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("9:16");
   const [seconds, setSeconds] = useState(8);
-  const [language, setLanguage] = useState("en");
+  // "" = detected from the copy, so Vietnamese key messages are not read as English.
+  const [language, setLanguage] = useState("");
   const [pack, setPack] = useState("");
   const [renderPreset, setRenderPreset] = useState<"preview" | "final">("final");
   // "" = the workspace's default agent; otherwise "runtime:connectionId".
@@ -37,6 +40,16 @@ export function CreateVideoPage() {
   // One key per form instance: a double submit or a retry after a network error returns the same job.
   const [idempotencyKey] = useState(() => `dash-${crypto.randomUUID()}`);
 
+  const keyMessages = messages
+    .split("\n")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  // Only marketing-video takes its spoken copy from the form; other packs draft theirs from the prompt,
+  // and a key message would stop the brand-intro pack from drafting its brief.
+  const marketing = pack === "marketing-video";
+  // A marketing ad speaks its copy: without a key message there is nothing to open it with.
+  const needsMessages = marketing && keyMessages.length === 0;
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -47,7 +60,9 @@ export function CreateVideoPage() {
         title: title.trim() || undefined,
         aspectRatio,
         durationMs: Math.round(seconds * 1000),
-        language,
+        ...(language ? { language } : {}),
+        ...(marketing && keyMessages.length ? { keyMessages } : {}),
+        ...(marketing && callToAction.trim() ? { callToAction: callToAction.trim() } : {}),
         idempotencyKey,
         renderPreset,
         ...(pack ? { workflowTemplate: pack } : {}),
@@ -83,6 +98,24 @@ export function CreateVideoPage() {
             placeholder="Brand intro for Acme Coffee: logo reveal, slogan 'Wake up bold', warm palette."
           />
         </label>
+        {marketing && (
+          <>
+            <label>
+              Key messages (one per line, in the order spoken; the first opens the ad)
+              <textarea
+                required
+                rows={3}
+                value={messages}
+                onChange={(e) => setMessages(e.target.value)}
+                placeholder="Roasted in house every morning"
+              />
+            </label>
+            <label>
+              Call to action (optional)
+              <input value={callToAction} maxLength={200} onChange={(e) => setCallToAction(e.target.value)} />
+            </label>
+          </>
+        )}
         <label>
           Title (optional)
           <input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
@@ -110,6 +143,7 @@ export function CreateVideoPage() {
           <label>
             Language
             <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+              <option value="">Detect from text</option>
               <option value="en">English</option>
               <option value="vi">Tiếng Việt</option>
             </select>
@@ -185,7 +219,7 @@ export function CreateVideoPage() {
           )}
         </div>
         <ErrorBanner error={error} />
-        <button type="submit" disabled={busy || prompt.trim() === ""}>
+        <button type="submit" disabled={busy || prompt.trim() === "" || needsMessages}>
           {busy ? "Starting..." : "Create video"}
         </button>
       </form>

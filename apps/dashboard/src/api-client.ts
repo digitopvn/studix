@@ -620,6 +620,9 @@ export interface CreateVideoRequest {
   aspectRatio?: "16:9" | "9:16" | "1:1";
   durationMs?: number;
   language?: string;
+  /** Lines the video should say, in order; marketing-video opens its ad with the first. */
+  keyMessages?: string[];
+  callToAction?: string;
   budgetCents?: number;
   idempotencyKey?: string;
   planner?: PlannerSelection;

@@ -92,13 +92,69 @@ describe("marketing script", () => {
 
   it("clamps the length and rejects a brief without directions or with an overlong voice-over", () => {
     expect(marketingScript({ ...brief, durationMs: 2_000 }).durationMs).toBe(10_000);
-    expect(codeOf(() => marketingScript({ ...brief, directions: undefined }))).toBe("VALIDATION");
+    expect(
+      codeOf(() =>
+        marketingScript({ ...brief, brand: undefined, keyMessages: undefined, directions: undefined }),
+      ),
+    ).toBe("VALIDATION");
     const long = Array.from({ length: voiceoverWordBudget(20_000) + 1 }, () => "trà").join(" ");
     const over = {
       ...brief,
       directions: [{ ...brief.directions[0], beats: [{ visual: "a", voiceover: long }, { visual: "b" }] }],
     };
     expect(codeOf(() => marketingScript(over))).toBe("VALIDATION");
+  });
+
+  it("draws one ad from the brief when it names no directions, never speaking the prompt", () => {
+    const script = marketingScript({
+      prompt: "Video quảng cáo dọc 15 giây cho quán cà phê Mây Rang",
+      durationMs: 15_000,
+      keyMessages: ["Cà phê rang tại chỗ", "View đồi thông", "Mua 1 tặng 1 cuối tuần"],
+      callToAction: "Ghé Mây Rang cuối tuần này",
+    });
+    expect(script.ads).toHaveLength(1);
+    const ad = script.ads[0];
+    expect(ad?.id).toBe("ad-1-main");
+    expect(ad?.beats.map((b) => b.voiceover)).toEqual([
+      "Cà phê rang tại chỗ",
+      "View đồi thông",
+      "Mua 1 tặng 1 cuối tuần",
+      "Ghé Mây Rang cuối tuần này",
+    ]);
+    expect(ad?.voiceover).not.toContain("Video quảng cáo");
+    // Without key messages the brand name opens the ad.
+    const branded = marketingScript({ ...brief, directions: undefined });
+    expect(branded.ads[0]?.beats[0]?.voiceover).toBe("Lá Mây");
+  });
+
+  it("trims key messages, skips blank ones and speaks a long first message whole", () => {
+    const hook = Array.from({ length: 30 }, () => "trà").join(" ");
+    const script = marketingScript({
+      prompt: "Quảng cáo trà",
+      durationMs: 30_000,
+      keyMessages: ["   ", `  ${hook}  `, "  Giao nhanh  "],
+      callToAction: "",
+    });
+    const beats = script.ads[0]?.beats ?? [];
+    expect(beats.map((b) => b.voiceover)).toEqual([hook, "Giao nhanh", "Tìm hiểu ngay"]);
+    // A direction without messages of its own takes the brief's, cleaned the same way.
+    const directed = marketingScript({
+      ...brief,
+      keyMessages: ["  ", "Trà\n\nngon"],
+      directions: [{ id: "a", name: "A", concept: "Ấm trà buổi sáng." }],
+    });
+    expect(directed.ads[0]?.beats.map((b) => b.voiceover)).toContain("Trà ngon");
+  });
+
+  it("lets the marketing pack refuse an unscriptable brief before a job is queued", () => {
+    const pack = packRegistry.packs().find((p) => p.id === "marketing-video");
+    expect(codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà", keyMessages: ["   "] }))).toBe(
+      "VALIDATION",
+    );
+    expect(codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà" }))).toBe("VALIDATION");
+    expect(
+      codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà", keyMessages: ["Trà ngon"] })),
+    ).toBeUndefined();
   });
 
   it("derives visuals that describe the scene, never the words the overlay sets", () => {

@@ -255,8 +255,14 @@ với `include: ["schemas"]` trả cùng schema. Thương hiệu trong mẫu là
 
 ### marketing-video
 
-Pack bắt buộc `brief.directions` (1 đến 6, mỗi direction một quảng cáo). Prompt trơn không có direction
-fail `VALIDATION` ở stage script. Voice-over mỗi quảng cáo phải vừa ngân sách từ theo độ dài (khoảng ba từ
+Mỗi phần tử của `brief.directions` (1 đến 6) thành một quảng cáo. Brief không có direction thì pack tự
+dựng một quảng cáo từ chính brief: `keyMessages[0]` (hoặc `brand.name` khi không có key message) làm hook,
+hai key message kế tiếp làm thông điệp (beat dựng sẵn chỉ chứa tối đa hai, phần dư bị bỏ), prompt làm
+concept. Prompt không bao giờ được đọc thành lời vì nó là
+yêu cầu gửi Studix. Brief không có direction, key message lẫn brand name bị từ chối `VALIDATION` ngay lúc
+tạo job (`studix_create_video` hoặc dashboard), trước khi có project hay job nào. Form tạo video trên
+dashboard có ô key message (bắt buộc với pack này) và call to action.
+Voice-over mỗi quảng cáo phải vừa ngân sách từ theo độ dài (khoảng ba từ
 mỗi giây, `voiceoverWordBudget` trong
 [`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Bản đọc dài hơn beat được xử lý như ở
 `motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
@@ -385,7 +391,7 @@ còn lại. Bảng chung cho client: [MCP_API.md](MCP_API.md#troubleshooting).
 | `VALIDATION` "Unknown workflowTemplate ..." khi gọi `studix_create_video`                                         | Id không có trong registry; `details.available` liệt kê id đã đăng ký                                                         | Dùng một id trong danh sách; pack mới phải được đăng ký ở `skill-registry.ts`                                                        |
 | Job `failed` với `VALIDATION` "Unknown workflowTemplate ..."                                                      | Project được tạo với pack mà registry của worker không có (`packPipelines`), ví dụ app và worker chạy hai phiên bản khác nhau | Deploy cùng phiên bản cho app và worker                                                                                              |
 | `VALIDATION` "Invalid input for stage ..."                                                                        | `inputSchema` không parse được `{ payload, outputs }`; `details.issues` chỉ field                                             | Sửa payload, hoặc stage trước không tạo output stage này cần (thứ tự pipeline sai)                                                   |
-| `VALIDATION` "A marketing-video brief needs at least one creative direction"                                      | Gửi prompt trơn cho `marketing-video`                                                                                         | Gửi `brief.directions` như [mẫu](#marketing-video)                                                                                   |
+| `VALIDATION` "A marketing-video brief needs creative directions or key messages"                                  | Gửi prompt trơn cho `marketing-video`                                                                                         | Gửi `brief.keyMessages` hoặc `brief.directions` như [mẫu](#marketing-video)                                                          |
 | `VALIDATION` "Voice-over is longer than a ...s ad can hold" (hoặc "graphic")                                      | Voice-over vượt ngân sách từ; `details.wordBudget`                                                                            | Rút gọn hook, message, CTA hoặc tăng `durationMs`                                                                                    |
 | `APPROVAL_REQUIRED` "Stage ... needs an approved storyboard"                                                      | Stage có `requiresApprovedStoryboard` chạy khi storyboard chưa `approved`; `details.storyboardStatus`                         | Thành viên workspace duyệt storyboard trên trang review, rồi gọi `studix_render`                                                     |
 | `APPROVAL_REQUIRED` "G<n> needs a person's approval"                                                              | Approval policy miễn `creative.gate`, cấu hình sai                                                                            | Giữ `creative.gate` trong nhóm luôn cần duyệt của policy                                                                             |
