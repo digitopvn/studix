@@ -162,7 +162,8 @@ describe("retrying a failed job", () => {
     const requeued = await repos.queue.retry(ctx, job.id);
     expect(requeued).toMatchObject({ id: job.id, status: "queued", error: undefined, finishedAt: undefined });
     expect(requeued.maxAttempts).toBeGreaterThan(requeued.attempts);
-    expect(requeued.deadlineAt!.getTime()).toBeGreaterThan(Date.now() + 30_000);
+    // The window restarts at the next claim, not now.
+    expect(requeued.deadlineRemainingMs).toBeGreaterThan(30_000);
 
     expect((await w.runOnce())?.outcome).toBe("succeeded");
     // The finished stage is not run again, the paid call is collected, the decided gate is not re-asked.

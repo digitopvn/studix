@@ -194,7 +194,13 @@ describe("StudioService.createVideoProject", () => {
     expect(job?.deadlineAt).toBeUndefined();
     expect(job?.deadlineRemainingMs).toBe(60 * 60_000);
     const plain = await repos.jobs.get(ctx, (await studio.createVideoProject(ctx, { brief })).job.id);
-    expect(plain?.deadlineAt).toBeInstanceOf(Date);
+    expect(plain?.deadlineAt).toBeUndefined();
+    expect(plain?.deadlineRemainingMs).toBeGreaterThan(0);
+    const explicit = await studio.createVideoProject(ctx, {
+      brief,
+      deadlineAt: new Date(Date.now() + 5 * 60_000),
+    });
+    expect((await repos.jobs.get(ctx, explicit.job.id))?.deadlineAt).toBeInstanceOf(Date);
   });
 
   it("rejects deadlines in the past", async () => {

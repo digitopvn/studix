@@ -51,6 +51,12 @@ const gatingRequest = (alias: string): SQL => {
 
 type JobSet = Partial<typeof jobs.$inferInsert>;
 
+/** Which jobs a claim may take. */
+export interface ClaimOptions {
+  /** Leave out jobs that hold a slot for a long agent run (the `skill-agent` workflow template). */
+  skipLongAgentJobs?: boolean;
+}
+
 /** A gated action's pending approval request, opened on behalf of a claimed attempt. */
 export interface ApprovalRequest {
   action: ApprovalAction;
@@ -118,7 +124,7 @@ export interface WorkerJobQueue {
    * Claim the next runnable job: queued and due, or running with an expired lease (its worker died).
    * Increments attempts; jobs at maxAttempts are never claimed (see failExhaustedLeases).
    */
-  claim(workerId: string): Promise<Job | undefined>;
+  claim(workerId: string, options?: ClaimOptions): Promise<Job | undefined>;
   heartbeat(job: Job, workerId: string): Promise<HeartbeatResult>;
   /**
    * Fenced writes: each applies only while `workerId` still holds the job at this attempt (running,
@@ -315,7 +321,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
   return {
     leaseMs: options.leaseMs,
 
-    async claim(workerId) {
+    async claim(workerId, claimOptions = {}) {
       const now = clock.now();
       const candidate = db
         .select({ id: jobs.id })
@@ -327,6 +333,10 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
               and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, sql`now()`)),
             ),
             lt(jobs.attempts, jobs.maxAttempts),
+            claimOptions.skipLongAgentJobs
+              ? // A job on an existing version only plans, renders and uploads: it is not a long agent run.
+                sql`(coalesce(${jobs.payload}->>'workflowTemplate', '') <> 'skill-agent' or ${jobs.payload}->>'versionId' is not null)`
+              : undefined,
           ),
         )
         .orderBy(asc(jobs.runAfter), asc(jobs.id))

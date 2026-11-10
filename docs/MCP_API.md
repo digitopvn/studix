@@ -175,8 +175,12 @@ Behavior notes:
   claims the job after the approval or host submission. A job created already
   waiting at a gate starts its deadline at its first claim. A review can take
   as long as the approval stays valid (7 days) without failing the job with
-  `TIMEOUT`; a stage that runs past the remaining budget still does. Retry
-  backoff and queue wait still count. While paused, the job view has no
+  `TIMEOUT`; a stage that runs past the remaining budget still does. A job
+  created without its own `deadlineSeconds` or `deadlineAt` also starts its
+  default window at its first claim, and a retried job starts its window again
+  at its next claim, so time spent queued behind another job never expires it; a
+  deadline the caller sets stays an absolute time from creation. Retry backoff
+  still counts. While paused, the job view has no
   `deadlineAt` and reports the budget left as `deadlineRemainingMs`. When
   deploying, drain old workers before new ones park jobs: an old worker claims
   a paused job without re-arming its deadline.
