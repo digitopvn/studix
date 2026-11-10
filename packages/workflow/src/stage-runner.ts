@@ -16,7 +16,7 @@ import {
   type StageCacheRepository,
   type TenantContext,
 } from "@studix/core";
-import { type Clock, type Logger, StudixError, toStudixError } from "@studix/shared";
+import { type Clock, type Logger, StudixError, storableJson, toStudixError } from "@studix/shared";
 import { AssetRef, contentDigest, type StoryboardReviewStatus } from "@studix/video-ir";
 import { type ApprovalGateDeps, checkApprovalGate } from "./approval-gate.ts";
 import { StageFailedAfterSpend, StageSuspended } from "./stage-signals.ts";
@@ -636,20 +636,23 @@ export async function runStages(
 
     spentCents = toBudgetCents(await deps.ledger.jobCostCents(ctx, job.id));
     await fenced(queue.updateProgress(job, workerId, { spentCents, progress: (index + 1) / total }));
+    // Agent text can hold what Postgres refuses (NUL, half an emoji). Cleaned once here, so the checkpoint,
+    // the cache, the job result and every later stage see the same output, before and after a resume.
+    const stored = storableJson(output);
     await fenced(
       queue.writeStage(job, workerId, {
         name: stage.name,
         status: "succeeded",
-        output,
+        output: stored,
         startedAt,
         finishedAt: deps.clock.now(),
       }),
     );
-    outputs[stage.name] = output;
+    outputs[stage.name] = stored;
     // After the fenced checkpoint, so a worker that lost the job never publishes its result to the cache.
     // A degraded output is not cached, so the next run retries the skipped step.
-    if (cacheKey !== undefined && deps.stageCache && !degraded(output)) {
-      await deps.stageCache.put(ctx, { stage: stage.name, cacheKey, output, jobId: job.id });
+    if (cacheKey !== undefined && deps.stageCache && !degraded(stored)) {
+      await deps.stageCache.put(ctx, { stage: stage.name, cacheKey, output: stored, jobId: job.id });
     }
     if (job.budgetCents !== undefined && spentCents > job.budgetCents) {
       throw budgetError(

@@ -183,6 +183,41 @@ describe("stage cache", () => {
     expect(runs).toContain("document");
   });
 
+  it("cleans agent text Postgres refuses once, for the checkpoint, the cache, later stages and the result", async () => {
+    const stageCache = createInMemoryStageCache(clock);
+    const put = vi.spyOn(stageCache, "put");
+    const R = String.fromCharCode(0xfffd);
+    let seen: unknown;
+    const workflow: WorkflowDefinition = {
+      kind: "test.per-node",
+      stages: [
+        {
+          name: "agent",
+          cacheKey: () => stageCacheKey("agent", 1, "text"),
+          run: async () => ({ output: { text: "png\u0000 cut \uD83D" } }),
+        },
+        {
+          name: "next",
+          run: async (s) => {
+            seen = s.outputs.agent;
+            return { output: {} };
+          },
+        },
+      ],
+      result: (outputs) => ({ text: (outputs.agent as { text: string }).text }),
+    };
+    const queue = await run(makeJob("job_1", loadIr()), workflow, { stageCache });
+    const clean = { text: `png${R} cut ${R}` };
+    expect(queue.writeStage).toHaveBeenCalledWith(
+      expect.anything(),
+      "worker-1",
+      expect.objectContaining({ name: "agent", output: clean }),
+    );
+    expect(put).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ output: clean }));
+    expect(seen).toEqual(clean);
+    expect(queue.complete).toHaveBeenCalledWith(expect.anything(), "worker-1", clean);
+  });
+
   it("a warned (degraded) output is not cached, so the next run tries the full work again", async () => {
     const stageCache = createInMemoryStageCache(clock);
     const put = vi.spyOn(stageCache, "put");
