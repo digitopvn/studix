@@ -372,6 +372,23 @@ describe("motion graphic", () => {
     expect(style.id).toEqual(expect.any(String));
   });
 
+  it("keeps the style profile's name off screen when the brief has no brand or title", () => {
+    const ir = motionGraphicTemplate({
+      prompt: "Video giới thiệu Lá Mây",
+      keyMessages: ["Trà hái tay mỗi sớm"],
+      callToAction: "Ghé Lá Mây hôm nay",
+    });
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const cta = ir.scenes.find((s) => s.id === "cta");
+    expect(cta?.shots.map((s) => s.id)).toEqual(["cta-text"]);
+    // No title or direction: the hook is the prompt, and it names the graphic.
+    expect(ir.title).toBe("Video giới thiệu Lá Mây");
+    expect(ir.brand?.name).toBe("Video giới thiệu Lá Mây");
+    const titled = motionGraphicTemplate({ prompt: "Video giới thiệu Lá Mây", title: "Lá Mây" });
+    const logo = titled.scenes.find((s) => s.id === "cta")?.shots.find((s) => s.id === "cta-logo");
+    expect(logo).toMatchObject({ text: "Lá Mây" });
+  });
+
   it("sets every line in a colour that reads on its scene", () => {
     const ir = motionGraphicTemplate({
       prompt: "Lá Mây",

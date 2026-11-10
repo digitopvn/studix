@@ -225,3 +225,15 @@ describe("price ceilings of providers multix cannot price", () => {
     expect(plan.priced).toBe(false);
   });
 });
+
+describe("multix cost policy for Sume jobs", () => {
+  it("accepts the highest listed price for images and keeps videos on a proven ceiling", async () => {
+    const image = await planMultixRequest(
+      { kind: "image", model: "sume:nano-banana-2.1", params: { aspectRatio: "9:16" }, prompt: "a tea shop" },
+      undefined,
+      context,
+    );
+    expect(image.costPolicy).toBe("estimate");
+    expect((await plan("sume:seedance-2-mini", { durationMs: 5000 })).costPolicy).toBeUndefined();
+  });
+});
