@@ -58,6 +58,7 @@ describe("planAudioClips", () => {
         volume: 0.6,
         fadeInMs: 0,
         fadeOutMs: 1000,
+        rate: 1,
       },
       // 9000ms requested from 1000ms is cut at the 8000ms video end.
       expect.objectContaining({ id: "vo", startMs: 1000, durationMs: 7000, fadeInMs: 5000, fadeOutMs: 0 }),
@@ -120,6 +121,46 @@ describe("planAudioClips", () => {
   });
 });
 
+describe("sped-up tracks", () => {
+  const sources = new Map<string, AudioSourceInfo>([["/m/music.mp3", { hasAudio: true, durationMs: 3161 }]]);
+
+  it("reads rate × duration of the source and speeds it up with atempo, pitch kept", () => {
+    const ir = promoWithClip();
+    ir.audio = [
+      {
+        id: "vo",
+        kind: "voiceover",
+        assetId: "music",
+        startMs: 1000,
+        durationMs: 2900,
+        volume: 1,
+        playbackRate: 1.09,
+      },
+    ];
+    const [clip] = planAudioClips(ir, files, sources);
+    expect(clip).toMatchObject({ id: "vo", durationMs: 2900, rate: 1.09 });
+    expect(audioMixGraph([clip!], 8000).split(";")[0]).toContain(
+      "atrim=start=0.000:duration=3.161,asetpts=PTS-STARTPTS,atempo=1.0900,",
+    );
+  });
+
+  it("clamps a sped-up clip to what its source can fill", () => {
+    const ir = promoWithClip();
+    ir.audio = [
+      {
+        id: "vo",
+        kind: "voiceover",
+        assetId: "music",
+        startMs: 0,
+        durationMs: 4000,
+        volume: 1,
+        playbackRate: 1.1,
+      },
+    ];
+    expect(planAudioClips(ir, files, sources)[0]?.durationMs).toBe(2873);
+  });
+});
+
 describe("audioMixGraph", () => {
   it("trims, levels, fades and delays every clip, then sums without normalisation to the exact length", () => {
     const graph = audioMixGraph(
@@ -134,6 +175,7 @@ describe("audioMixGraph", () => {
           volume: 0.5,
           fadeInMs: 300,
           fadeOutMs: 500,
+          rate: 1,
         },
         {
           id: "b",
@@ -145,6 +187,7 @@ describe("audioMixGraph", () => {
           volume: 1,
           fadeInMs: 0,
           fadeOutMs: 0,
+          rate: 1,
         },
       ],
       4000,
