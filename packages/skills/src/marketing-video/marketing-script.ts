@@ -8,8 +8,8 @@ import {
   validateCreativeBrief,
 } from "@studix/video-ir";
 import { z } from "zod";
-import { wordCount } from "../caption-chunks.ts";
-import { detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
+import { spokenLength, wordCount } from "../caption-chunks.ts";
+import { detectLanguage, normalizeText, truncateText } from "../vietnamese-safe-text.ts";
 
 export const MARKETING_SCRIPT_VERSION = 1;
 /** Length of one ad when the brief names none. */
@@ -66,6 +66,19 @@ export type MarketingScript = z.infer<typeof MarketingScript>;
 
 const DEFAULT_CTA: Record<"vi" | "en", string> = { vi: "Tìm hiểu ngay", en: "Learn more" };
 
+/**
+ * Most a take is sped up (pitch kept) to fit its room when it runs past the tolerance: about 12% stays a
+ * natural read. A longer take is too long a line, and the stage fails.
+ */
+export const MAX_VOICE_SPEEDUP = 1.12;
+
+/** Milliseconds a line takes to say at the budget's pace, from its `spokenLength`; whole ms, rounded up. */
+export function spokenMs(text: string, language?: string): number {
+  // In whole tenths of a word, so 5.7 words is 1900ms, not the 1901 a float division rounds up to.
+  const tenths = Math.round(spokenLength(text, language) * 10);
+  return Math.ceil((tenths * 100) / VO_WORDS_PER_SECOND);
+}
+
 /** Words of voice-over an ad of `durationMs` can hold. */
 export function voiceoverWordBudget(durationMs: number): number {
   return Math.floor(((durationMs - 2 * VO_PAD_MS) / 1000) * VO_WORDS_PER_SECOND);
@@ -80,7 +93,10 @@ const MESSAGE_SHOTS = ["Close-up detail shot", "Medium shot"] as const;
  * type; put into an image prompt, the model paints them as garbled lettering.
  */
 function derivedBeats(direction: CreativeDirection, brief: CreativeBrief, cta: string) {
-  const messages = (direction.keyMessages ?? brief.keyMessages ?? []).slice(0, MESSAGE_SHOTS.length);
+  const messages = (direction.keyMessages ?? brief.keyMessages ?? [])
+    .map(normalizeText)
+    .filter(Boolean)
+    .slice(0, MESSAGE_SHOTS.length);
   const hook = direction.hook ?? direction.name;
   return [
     { visual: `Wide establishing shot. ${direction.concept}`, onScreen: hook, voiceover: hook },
@@ -96,6 +112,35 @@ function derivedBeats(direction: CreativeDirection, brief: CreativeBrief, cta: s
       voiceover: cta,
     },
   ];
+}
+
+/**
+ * The one ad of a brief that names no directions, drawn from the brief itself: the first key message is
+ * the hook, the next two are the messages (the derived beats hold no more) and the prompt is the concept.
+ * The hook is spoken, so it comes from copy the user wrote for the audience (a key message, else the brand
+ * name), never from the prompt, which is an instruction to Studix. Throws VALIDATION when the brief has
+ * neither.
+ */
+function briefDirection(brief: CreativeBrief): CreativeDirection {
+  const [first, ...rest] = (brief.keyMessages ?? []).map(normalizeText).filter(Boolean);
+  const brand = brief.brand?.name?.trim();
+  const hook = first ?? brand;
+  if (!hook) {
+    throw new StudixError("VALIDATION", "A marketing-video brief needs creative directions or key messages", {
+      retryable: false,
+      details: { field: "directions" },
+      suggestedAction:
+        "Add brief.keyMessages (the first one opens the ad), or brief.directions: one { id, name, concept } " +
+        "per ad (see studix_inspect schemas).",
+    });
+  }
+  return {
+    id: "main",
+    name: truncateText(brand || hook, 120),
+    concept: truncateText(brief.prompt, 1000),
+    hook,
+    keyMessages: rest,
+  };
 }
 
 /**
@@ -115,20 +160,14 @@ function beatTimes(count: number, totalMs: number): Array<{ startMs: number; dur
 }
 
 /**
- * Script of a marketing brief: one ad per creative direction, each `durationMs` long (default 20s, 9:16,
- * Vietnamese when the copy is). Deterministic. Throws VALIDATION when the brief has no directions, or when
- * an ad's voice-over does not fit the word budget, before anything is generated or charged.
+ * Script of a marketing brief: one ad per creative direction (one drawn from the brief when it names none),
+ * each `durationMs` long (default 20s, 9:16, Vietnamese when the copy is). Deterministic. Throws VALIDATION
+ * when no direction can be drawn, or when an ad's voice-over does not fit the word budget, before anything
+ * is generated or charged.
  */
 export function marketingScript(input: unknown): MarketingScript {
   const brief = unwrapValidation(validateCreativeBrief(input), "creative brief");
-  const directions = brief.directions ?? [];
-  if (directions.length === 0) {
-    throw new StudixError("VALIDATION", "A marketing-video brief needs at least one creative direction", {
-      retryable: false,
-      details: { field: "directions" },
-      suggestedAction: "Add brief.directions: one { id, name, concept } per ad (see studix_inspect schemas).",
-    });
-  }
+  const directions = brief.directions ?? [briefDirection(brief)];
   const aspectRatio: AspectRatio = brief.aspectRatio ?? "9:16";
   const durationMs = Math.min(
     MARKETING_MAX_MS,
@@ -140,8 +179,9 @@ export function marketingScript(input: unknown): MarketingScript {
   const wordBudget = voiceoverWordBudget(durationMs);
 
   const overBudget: Array<{ direction: string; words: number }> = [];
+  const overBeats: Array<{ direction: string; beat: string; roomMs: number; line: string }> = [];
   const ads = directions.map((direction, index): ScriptAd => {
-    const cta = direction.callToAction ?? brief.callToAction ?? DEFAULT_CTA[lang];
+    const cta = direction.callToAction || brief.callToAction?.trim() || DEFAULT_CTA[lang];
     const beats = direction.beats ?? derivedBeats(direction, brief, cta);
     const times = beatTimes(beats.length, durationMs);
     const id = `ad-${index + 1}-${direction.id}`.slice(0, 40).replace(/-+$/, "");
@@ -160,7 +200,21 @@ export function marketingScript(input: unknown): MarketingScript {
       .filter(Boolean)
       .join(" ");
     const words = wordCount(voiceover);
-    if (words > wordBudget) overBudget.push({ direction: direction.id, words });
+    const spoken = spokenLength(voiceover, language);
+    if (spoken > wordBudget) overBudget.push({ direction: direction.id, words: spoken });
+    // Each beat's line must fit where its captions run (the beat less the lead-in and closing pads), with
+    // the speed-up the voice stage may give a take, exactly as that stage checks after the paid clips;
+    // refusing it here costs nothing.
+    for (const beat of scriptBeats) {
+      if (!beat.voiceover) continue;
+      const roomMs =
+        beat.durationMs -
+        (beat.startMs === 0 ? VO_PAD_MS : 0) -
+        (beat.startMs + beat.durationMs >= durationMs ? VO_PAD_MS : 0);
+      if (spokenMs(beat.voiceover, language) > Math.floor(roomMs * MAX_VOICE_SPEEDUP)) {
+        overBeats.push({ direction: direction.id, beat: beat.id, roomMs, line: beat.voiceover.slice(0, 60) });
+      }
+    }
     return {
       id,
       name: direction.name,
@@ -176,7 +230,16 @@ export function marketingScript(input: unknown): MarketingScript {
     throw new StudixError("VALIDATION", `Voice-over is longer than a ${durationMs / 1000}s ad can hold`, {
       retryable: false,
       details: { wordBudget, overBudget },
-      suggestedAction: `Cut each ad's voice-over to at most ${wordBudget} words (about ${VO_WORDS_PER_SECOND} words a second).`,
+      suggestedAction: `Cut each ad's voice-over to at most ${wordBudget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables).`,
+    });
+  }
+  if (overBeats.length > 0) {
+    throw new StudixError("VALIDATION", "A voice-over line is longer than its beat can hold", {
+      retryable: false,
+      details: { overBeats },
+      suggestedAction:
+        "Shorten the listed lines (about three words a second; an English word or brand name counts by its " +
+        "syllables), or lengthen the ad.",
     });
   }
   return { version: MARKETING_SCRIPT_VERSION, language, aspectRatio, durationMs, wordBudget, ads };

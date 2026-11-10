@@ -135,7 +135,8 @@ const agentStageFor = (repair?: Repair) =>
       "the brief best. Write three to six beats: a hook that stops the scroll first, the call to action last. " +
       "Each beat has a short on-screen line (a headline, not the voice-over repeated), the line spoken over " +
       "it, the visual of the card, its entrance preset and a weight for its length. The whole voice-over must " +
-      "stay within `wordBudget` words. When `voiceover` is false nothing is spoken: the on-screen lines carry " +
+      "stay within `wordBudget` words, where a Vietnamese syllable is one word and an English word or brand " +
+      'name counts about two thirds of a word per syllable ("AI-native" is about three). When `voiceover` is false nothing is spoken: the on-screen lines carry " +
       "the message alone, each beat's `voiceover` just repeats its on-screen line, and the weights give every " +
       "card time to be read. Keep the brief's language (Vietnamese keeps its diacritics) and its " +
       "facts; invent no claims, prices or names. Set `music` to a short prompt for an instrumental bed that " +

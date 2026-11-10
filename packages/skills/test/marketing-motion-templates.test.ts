@@ -14,6 +14,7 @@ import {
   packPipelines,
   packRegistry,
   resolveMotionStyle,
+  spokenLength,
   variantIr,
   voiceoverWordBudget,
   wordCount,
@@ -92,13 +93,73 @@ describe("marketing script", () => {
 
   it("clamps the length and rejects a brief without directions or with an overlong voice-over", () => {
     expect(marketingScript({ ...brief, durationMs: 2_000 }).durationMs).toBe(10_000);
-    expect(codeOf(() => marketingScript({ ...brief, directions: undefined }))).toBe("VALIDATION");
+    expect(
+      codeOf(() =>
+        marketingScript({ ...brief, brand: undefined, keyMessages: undefined, directions: undefined }),
+      ),
+    ).toBe("VALIDATION");
     const long = Array.from({ length: voiceoverWordBudget(20_000) + 1 }, () => "trà").join(" ");
     const over = {
       ...brief,
       directions: [{ ...brief.directions[0], beats: [{ visual: "a", voiceover: long }, { visual: "b" }] }],
     };
     expect(codeOf(() => marketingScript(over))).toBe("VALIDATION");
+  });
+
+  it("draws one ad from the brief when it names no directions, never speaking the prompt", () => {
+    const script = marketingScript({
+      prompt: "Video quảng cáo dọc 15 giây cho quán cà phê Mây Rang",
+      durationMs: 15_000,
+      keyMessages: ["Cà phê rang tại chỗ", "View đồi thông", "Mua 1 tặng 1 cuối tuần"],
+      callToAction: "Ghé Mây Rang cuối tuần này",
+    });
+    expect(script.ads).toHaveLength(1);
+    const ad = script.ads[0];
+    expect(ad?.id).toBe("ad-1-main");
+    expect(ad?.beats.map((b) => b.voiceover)).toEqual([
+      "Cà phê rang tại chỗ",
+      "View đồi thông",
+      "Mua 1 tặng 1 cuối tuần",
+      "Ghé Mây Rang cuối tuần này",
+    ]);
+    expect(ad?.voiceover).not.toContain("Video quảng cáo");
+    // Without key messages the brand name opens the ad.
+    const branded = marketingScript({ ...brief, directions: undefined });
+    expect(branded.ads[0]?.beats[0]?.voiceover).toBe("Lá Mây");
+  });
+
+  it("trims key messages, skips blank ones and never cuts a long first message short", () => {
+    const script = marketingScript({
+      prompt: "Quảng cáo trà",
+      durationMs: 30_000,
+      keyMessages: ["   ", "  Trà ngon mỗi sáng  ", "  Giao nhanh  "],
+      callToAction: "",
+    });
+    const beats = script.ads[0]?.beats ?? [];
+    expect(beats.map((b) => b.voiceover)).toEqual(["Trà ngon mỗi sáng", "Giao nhanh", "Tìm hiểu ngay"]);
+    // A hook too long for its beat is refused whole, not spoken cut short.
+    const hook = Array.from({ length: 30 }, () => "trà").join(" ");
+    expect(() =>
+      marketingScript({ prompt: "Quảng cáo trà", durationMs: 30_000, keyMessages: [hook, "Giao nhanh"] }),
+    ).toThrow(/longer than its beat/);
+    // A direction without messages of its own takes the brief's, cleaned the same way.
+    const directed = marketingScript({
+      ...brief,
+      keyMessages: ["  ", "Trà\n\nngon"],
+      directions: [{ id: "a", name: "A", concept: "Ấm trà buổi sáng." }],
+    });
+    expect(directed.ads[0]?.beats.map((b) => b.voiceover)).toContain("Trà ngon");
+  });
+
+  it("lets the marketing pack refuse an unscriptable brief before a job is queued", () => {
+    const pack = packRegistry.packs().find((p) => p.id === "marketing-video");
+    expect(codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà", keyMessages: ["   "] }))).toBe(
+      "VALIDATION",
+    );
+    expect(codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà" }))).toBe("VALIDATION");
+    expect(
+      codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà", keyMessages: ["Trà ngon"] })),
+    ).toBeUndefined();
   });
 
   it("derives visuals that describe the scene, never the words the overlay sets", () => {
@@ -375,7 +436,9 @@ describe("motion graphic", () => {
       "Studix turns one short brief into a finished kinetic motion graphic with voice captions and sound";
     const cut = motionGraphicTemplate({ ...brief, title: hook, durationMs: 6_000, keyMessages: [] });
     const said = String(cut.metadata?.voiceover);
-    expect(wordCount(said)).toBe(16);
+    // Cut by spoken length: the 16 words a 6 s graphic holds, English counted by its syllables.
+    expect(spokenLength(said)).toBeLessThanOrEqual(voiceoverWordBudget(6_000));
+    expect(spokenLength(said)).toBeGreaterThan(voiceoverWordBudget(6_000) - 2);
     expect(said.endsWith("Try Studix free today")).toBe(true);
     const title = cut.scenes[0]?.shots[0];
     expect(title && "text" in title ? title.text?.replace(/\s+/g, " ") : undefined).toBe(hook);
@@ -415,6 +478,129 @@ describe("motion graphic", () => {
     for (const line of voiceLines(ir)) {
       expect(line.roomMs).toBeGreaterThanOrEqual((wordCount(line.text) / VO_WORDS_PER_SECOND) * 1000);
     }
+  });
+});
+
+describe("spoken length", () => {
+  it("counts a Vietnamese syllable as a word and a loanword or brand by its syllables", () => {
+    expect(spokenLength("Cà phê rang tại chỗ, view đồi thông Đà Lạt")).toBe(10);
+    expect(spokenLength("Mua 1 tặng 1 cuối tuần")).toBe(6);
+    // Read on prod in 2.6 s: five whitespace words, about eight words of speech at three a second.
+    expect(spokenLength("Studix là studio video AI-native.")).toBeCloseTo(7.7, 1);
+    expect(spokenLength("Studix turns one brief into a finished video")).toBe(8);
+    expect(spokenLength("")).toBe(0);
+  });
+
+  it("reads unaccented Vietnamese, capitals and prices for what they take to say", () => {
+    expect(spokenLength("Mua mot tang mot cuoi tuan nay", "vi")).toBe(7);
+    expect(spokenLength("MUA NGAY HÔM NAY")).toBe(4);
+    expect(spokenLength("Try MCP now")).toBeCloseTo(3.3, 1);
+    expect(spokenLength("Giá chỉ 99.000đ")).toBe(8);
+    expect(spokenLength("Giảm 50% hôm nay")).toBe(7);
+    expect(spokenLength("Cà phê".normalize("NFD"))).toBe(2);
+  });
+
+  it("reads sale dates as two numbers, phone numbers a digit at a time and amounts by their places", () => {
+    expect(spokenLength("12.12", "vi")).toBe(4);
+    expect(spokenLength("11/11", "vi")).toBe(4);
+    expect(spokenLength("Gọi ngay 0901 234 567")).toBe(12);
+    expect(spokenLength("Gọi 0901234567")).toBe(11);
+    expect(spokenLength("Hotline 1900-1234")).toBeCloseTo(9.3, 1);
+    expect(spokenLength("10.000.000đ")).toBe(5);
+    expect(spokenLength("Lãi 4,5%")).toBe(6);
+    expect(spokenLength("Gọi 0901.234.567")).toBe(11);
+    expect(spokenLength("+84 901 234 567")).toBe(11);
+    expect(spokenLength("1900.6868")).toBe(8);
+    // A year range is two years and "đến", never a phone number; a decimal point is a word too.
+    expect(spokenLength("2024-2025")).toBe(15);
+    expect(spokenLength("Thu Đông 2024 2025")).toBe(17);
+    expect(spokenLength("12.5%")).toBe(6);
+    expect(spokenLength("4.9 sao", "vi")).toBe(4);
+    // All in capitals, a word is read as a word; a run with no vowel is still spelled out.
+    expect(spokenLength("SALE SẬP SÀN TV")).toBeCloseTo(4.7, 1);
+  });
+
+  it("keeps a 15s sale ad with a date hook and a phone call to action", () => {
+    const ad = {
+      ...brief,
+      durationMs: 15_000,
+      callToAction: "Gọi ngay 0901 234 567",
+      directions: [
+        {
+          id: "sale",
+          name: "Sale 12.12",
+          concept: "Flash sale trên sàn thương mại điện tử",
+          hook: "Săn sale 12.12 trên Shopee",
+          keyMessages: ["Giảm đến 50% toàn bộ cửa hàng", "Miễn phí vận chuyển"],
+        },
+      ],
+    };
+    const script = marketingScript(ad);
+    expect(script.ads[0]?.beats).toHaveLength(4);
+    expect(script.ads[0]?.beats.at(-1)?.voiceover).toBe("Gọi ngay 0901 234 567");
+  });
+
+  it("refuses a marketing beat whose line its beat cannot hold, before any paid stage", () => {
+    const hook = "Studix là studio video AI-native cho marketer bận rộn mỗi ngày";
+    const ad = { ...brief, directions: [{ ...brief.directions[0], hook }] };
+    const err = (() => {
+      try {
+        marketingScript(ad);
+      } catch (e) {
+        return e as StudixError;
+      }
+    })();
+    expect(err?.code).toBe("VALIDATION");
+    expect(err?.message).toContain("longer than its beat");
+  });
+
+  it("refuses a storyboard whose cards, rounded up to 100ms, need more than the length", () => {
+    // 10 + 10 + 8 words fit the 28-word budget of 10 s, but the cards need 3700 + 3400 + 3000 ms.
+    const words = (n: number) => Array.from({ length: n }, () => "bốn").join(" ");
+    const err = (() => {
+      try {
+        motionGraphicTemplate(
+          { prompt: "Giới thiệu Studix", language: "vi", durationMs: 10_000, aspectRatio: "16:9" },
+          {
+            storyboard: {
+              styleProfile: "apple-clean",
+              beats: [10, 10, 8].map((n, i) => ({
+                onScreen: `C${i}`,
+                voiceover: words(n),
+                enter: "fade",
+                weight: 1,
+              })),
+              music: null,
+            } as never,
+          },
+        );
+      } catch (e) {
+        return e as StudixError;
+      }
+    })();
+    expect(err?.code).toBe("VALIDATION");
+    expect(err?.details).toMatchObject({ words: 28, neededMs: 10_100, totalMs: 10_000 });
+  });
+
+  it("gives a motion-graphic card the time a mixed-language line takes to say", () => {
+    const line = "Studix là studio video AI-native.";
+    const ir = motionGraphicTemplate(
+      { prompt: "Giới thiệu Studix", language: "vi", durationMs: 10_000, aspectRatio: "16:9" },
+      {
+        storyboard: {
+          styleProfile: "apple-clean",
+          beats: [
+            { onScreen: "Studix", voiceover: "Từ một brief tới video hoàn chỉnh", enter: "fade", weight: 1 },
+            { onScreen: "AI-native", voiceover: line, enter: "fade", weight: 1 },
+            { onScreen: "Render", voiceover: "Agent lên kịch bản, dựng và render", enter: "fade", weight: 1 },
+            { onScreen: "Thử ngay", voiceover: "Thử Studix ngay", enter: "fade", weight: 1 },
+          ],
+          music: null,
+        } as never,
+      },
+    );
+    const room = voiceLines(ir).find((l) => l.text === line)?.roomMs ?? 0;
+    expect(room).toBeGreaterThanOrEqual((spokenLength(line, "vi") / VO_WORDS_PER_SECOND) * 1000);
   });
 });
 

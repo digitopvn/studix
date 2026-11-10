@@ -301,6 +301,8 @@ export const NATIVE_TOOLS = [
     async run(ctx, input) {
       const brief = input.brief ?? { prompt: input.prompt };
       const pack = resolveWorkflowPack(packRegistry, input.workflowTemplate);
+      // A spec skips the pack's script, so only a brief-driven job is checked against it.
+      if (input.spec === undefined) pack.checkBrief?.(brief);
       const planner =
         input.agent?.runtime === "claude"
           ? { runtime: "claude" as const, providerConnectionId: input.agent.providerConnectionId }

@@ -28,6 +28,7 @@ import {
 } from "@studix/workflow";
 import { z } from "zod";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
+import { detectLanguage } from "../vietnamese-safe-text.ts";
 
 /*
  * Skill agent: the job's agent (Pi or Claude Code) makes the whole video itself in the skill sandbox, following the
@@ -440,7 +441,7 @@ export const skillAgentComposeStage: StageDefinition = {
     const ir: VideoIR = {
       schemaVersion: VIDEO_IR_SCHEMA_VERSION,
       title: brief.title ?? brief.prompt.slice(0, 200),
-      language: brief.language ?? "vi",
+      language: brief.language ?? detectLanguage(brief.prompt),
       format: {
         aspectRatio: aspectOf(probe.width, probe.height),
         width: probe.width,
@@ -546,7 +547,7 @@ export const skillAgentSkill: Skill = {
     return {
       schemaVersion: VIDEO_IR_SCHEMA_VERSION,
       title: (brief.title ?? brief.prompt).slice(0, 200),
-      language: brief.language ?? "vi",
+      language: brief.language ?? detectLanguage(brief.prompt),
       format: { aspectRatio: "16:9", width: 1920, height: 1080, fps: 30, durationMs },
       assets: [],
       scenes: [scene],
