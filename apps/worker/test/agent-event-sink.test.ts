@@ -32,17 +32,6 @@ describe("agent event sink", () => {
     expect(after.map((r) => r.attributes.type)).toEqual(["tool_start", "reasoning"]);
   });
 
-  it("stores a tool result read from a binary file, with each NUL replaced", async () => {
-    const activity = createInMemoryActivityRepository(systemClock);
-    const ctx = testTenant();
-    const sink = createAgentEventSink(activity, ctx, { jobId: "job_nul", stage: "s" }, logger);
-    sink.push({ type: "tool_end", id: "r", name: "read", ok: true, result: "\u0089PNG\r\n\u0000\u0000IHDR" });
-    await sink.flush();
-    const [row] = await activity.listAfter(ctx, { jobId: "job_nul", name: AGENT_EVENT_ACTIVITY });
-    expect(row?.attributes.result).toBe("\u0089PNG\r\n\uFFFD\uFFFDIHDR");
-    expect(JSON.stringify(row?.attributes)).not.toContain("\\u0000");
-  });
-
   it("keeps only a preview of large tool arguments and redacts secrets", async () => {
     const activity = createInMemoryActivityRepository(systemClock);
     const ctx = testTenant();

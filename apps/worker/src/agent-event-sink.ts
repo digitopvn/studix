@@ -48,20 +48,6 @@ function compact(event: HarnessAgentEvent): Record<string, unknown> {
 const MAX_DELTA_CHARS = 4_000;
 
 /**
- * Postgres refuses U+0000 in text and jsonb, and a tool that read a binary file (an image) returns it: such
- * an event would not be stored at all. Each NUL becomes U+FFFD, as other undecodable bytes already are.
- */
-function withoutNul(value: unknown): unknown {
-  if (typeof value === "string")
-    return value.includes("\u0000") ? value.replaceAll("\u0000", "\uFFFD") : value;
-  if (Array.isArray(value)) return value.map(withoutNul);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, withoutNul(v)]));
-  }
-  return value;
-}
-
-/**
  * Stores one stage run's events with its job, in order. Text and reasoning deltas are merged for a moment so a
  * token stream becomes a few rows; any other event flushes them first. Everything is redacted before it is stored.
  */
@@ -76,7 +62,7 @@ export function createAgentEventSink(
   let timer: NodeJS.Timeout | undefined;
 
   const write = (event: HarnessAgentEvent) => {
-    const attributes = withoutNul(redactDeep(compact(event))) as Record<string, unknown>;
+    const attributes = redactDeep(compact(event)) as Record<string, unknown>;
     chain = chain.then(() =>
       activity
         .append(ctx, {

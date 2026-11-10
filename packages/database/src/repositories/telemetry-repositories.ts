@@ -7,7 +7,7 @@ import type {
   UsageRange,
   UsageRepository,
 } from "@studix/core";
-import { type Clock, newId, redactDeep, StudixError } from "@studix/shared";
+import { type Clock, newId, redactDeep, StudixError, storableJson, storableText } from "@studix/shared";
 import { and, asc, desc, eq, gt, gte, lt, type SQL, sql, sum } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { activityEvents, providerExecutions, usageEvents } from "../schema/telemetry.ts";
@@ -216,7 +216,7 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
           ...tenantValues(ctx),
           name: input.name,
           level: input.level,
-          message: input.message ?? null,
+          message: input.message === undefined ? null : storableText(input.message),
           projectId: input.projectId ?? null,
           jobId: input.jobId ?? null,
           stage: input.stage ?? null,
@@ -226,7 +226,8 @@ export function createActivityRepository(db: StudixDb, clock: Clock): ActivityRe
           spanId: input.spanId ?? null,
           parentSpanId: input.parentSpanId ?? null,
           durationMs: input.durationMs ?? null,
-          attributes: redactDeep(input.attributes),
+          // Agent output reaches these columns: text Postgres refuses would drop the whole event.
+          attributes: storableJson(redactDeep(input.attributes)),
           createdAt: clock.now(),
         })
         .returning();
