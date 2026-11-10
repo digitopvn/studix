@@ -585,4 +585,5 @@ export const skillAgentPack: WorkflowPack = {
   templates: [skillAgentSkill],
   stages: [directorStage, runStage, qaStage, skillAgentComposeStage],
   pipeline: skillAgentPipeline,
+  needsAgentModel: true,
 };

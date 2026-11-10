@@ -17,6 +17,7 @@ import { z } from "zod";
 import {
   AgentInput,
   AgentRolesInput,
+  assertDefaultAgentModel,
   resolveAgentRoles,
   resolveAgentSelection,
 } from "../agent-model-selection.ts";
@@ -122,6 +123,13 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     await assertPlannerSelection(deps, ctx, planner);
     // A job a planner runs never resolves a Pi default, so only the rest need one.
     const agent = body.agent ? await resolveAgentSelection(deps, ctx, body.agent, !planner) : undefined;
+    await assertDefaultAgentModel(deps, ctx, {
+      pack,
+      agent,
+      planner,
+      agentMode: undefined,
+      spec: undefined,
+    });
     const roles = await resolveAgentRoles(deps, ctx, body.roles);
     const result = await deps.studio.createVideoProject(ctx, {
       brief: {

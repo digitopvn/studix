@@ -46,6 +46,11 @@ export interface WorkflowPack {
    * run the engine's default plan -> render chain.
    */
   pipeline?: PackPipeline;
+  /**
+   * True when a new job of this pack reaches an agent stage that has no template fallback, so a job created
+   * without an agent fails there unless a default model applies to its caller.
+   */
+  needsAgentModel?: boolean;
 }
 
 export interface PackRegistry {
