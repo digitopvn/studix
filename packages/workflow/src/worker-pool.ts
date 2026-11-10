@@ -8,6 +8,12 @@ export interface WorkerPoolOptions {
   /** Process-level worker id (e.g. pod name); each loop claims as `<workerId>/<n>`. */
   workerId: string;
   concurrency: number;
+  /**
+   * Slots kept free of long agent runs (default 1 when `concurrency` is at least 2, otherwise 0). The last
+   * `reservedLightSlots` loops never claim a `skill-agent` job, so a render or media job always has a slot
+   * and does not wait out an agent run that can take an hour.
+   */
+  reservedLightSlots?: number;
   logger: Logger;
   /** Idle wait between claims when the queue is empty. */
   pollIntervalMs?: number;
@@ -39,6 +45,13 @@ export interface WorkerPool {
 export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1) {
     throw new RangeError("concurrency must be a positive integer");
+  }
+  const reserved = Math.min(
+    options.reservedLightSlots ?? (options.concurrency >= 2 ? 1 : 0),
+    options.concurrency - 1,
+  );
+  if (!Number.isInteger(reserved) || reserved < 0) {
+    throw new RangeError("reservedLightSlots must be a non-negative integer");
   }
   const pollMs = options.pollIntervalMs ?? 1000;
   const sweepMs = options.sweepIntervalMs ?? 5000;
@@ -85,11 +98,12 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
 
   const loop = async (index: number) => {
     const workerId = `${options.workerId}/${index}`;
+    const claimOptions = { skipLongAgentJobs: index >= options.concurrency - reserved };
     while (running) {
       try {
         if (index === 0) await sweep();
         const claimRequestedAt = Date.now();
-        const job = await queue.claim(workerId);
+        const job = await queue.claim(workerId, claimOptions);
         lastContact = new Date();
         if (!job) {
           await sleep(pollMs);
@@ -124,7 +138,11 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
       if (shutdown.signal.aborted) throw new Error("worker pool was shut down; create a new pool");
       running = true;
       loops = Array.from({ length: options.concurrency }, (_, i) => loop(i));
-      logger.info("worker pool started", { workerId: options.workerId, concurrency: options.concurrency });
+      logger.info("worker pool started", {
+        workerId: options.workerId,
+        concurrency: options.concurrency,
+        reservedLightSlots: reserved,
+      });
     },
 
     async stop(graceMs = 30_000) {

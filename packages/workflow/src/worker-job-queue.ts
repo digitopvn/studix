@@ -24,7 +24,7 @@ import {
   toJob,
   upsertStageRow,
 } from "@studix/database";
-import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared";
+import { type Clock, type StudixErrorPayload, storableJson, systemClock } from "@studix/shared";
 import { and, asc, eq, inArray, lt, lte, ne, or, type SQL, sql } from "drizzle-orm";
 
 const { jobs, approvals, stages, agentHandoffs } = schema;
@@ -50,6 +50,12 @@ const gatingRequest = (alias: string): SQL => {
 };
 
 type JobSet = Partial<typeof jobs.$inferInsert>;
+
+/** Which jobs a claim may take. */
+export interface ClaimOptions {
+  /** Leave out jobs that hold a slot for a long agent run (the `skill-agent` workflow template). */
+  skipLongAgentJobs?: boolean;
+}
 
 /** A gated action's pending approval request, opened on behalf of a claimed attempt. */
 export interface ApprovalRequest {
@@ -118,7 +124,7 @@ export interface WorkerJobQueue {
    * Claim the next runnable job: queued and due, or running with an expired lease (its worker died).
    * Increments attempts; jobs at maxAttempts are never claimed (see failExhaustedLeases).
    */
-  claim(workerId: string): Promise<Job | undefined>;
+  claim(workerId: string, options?: ClaimOptions): Promise<Job | undefined>;
   heartbeat(job: Job, workerId: string): Promise<HeartbeatResult>;
   /**
    * Fenced writes: each applies only while `workerId` still holds the job at this attempt (running,
@@ -299,7 +305,14 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
   const finish = async (job: Job, workerId: string, set: JobSet): Promise<boolean> => {
     const rows = await db
       .update(jobs)
-      .set({ ...set, lockedBy: null, leaseExpiresAt: null, updatedAt: clock.now() })
+      .set({
+        ...set,
+        // A failure message can quote agent output; text Postgres cannot store would lose the outcome.
+        ...(set.error ? { error: storableJson(set.error) } : {}),
+        lockedBy: null,
+        leaseExpiresAt: null,
+        updatedAt: clock.now(),
+      })
       .where(owned(job, workerId))
       .returning({ id: jobs.id });
     return rows.length === 1;
@@ -308,7 +321,7 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
   return {
     leaseMs: options.leaseMs,
 
-    async claim(workerId) {
+    async claim(workerId, claimOptions = {}) {
       const now = clock.now();
       const candidate = db
         .select({ id: jobs.id })
@@ -320,6 +333,10 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
               and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, sql`now()`)),
             ),
             lt(jobs.attempts, jobs.maxAttempts),
+            claimOptions.skipLongAgentJobs
+              ? // A job on an existing version only plans, renders and uploads: it is not a long agent run.
+                sql`(coalesce(${jobs.payload}->>'workflowTemplate', '') <> 'skill-agent' or ${jobs.payload}->>'versionId' is not null)`
+              : undefined,
           ),
         )
         .orderBy(asc(jobs.runAfter), asc(jobs.id))

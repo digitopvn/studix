@@ -77,6 +77,32 @@ describe("StudioService.createVideoProject", () => {
     expect(view.stages[1]).not.toHaveProperty("fallback");
   });
 
+  it("tells a queued job's caller its place in line and how many jobs hold a slot", async () => {
+    const { studio, repos } = createInMemoryStudio();
+    const ctx = testTenant();
+    const first = await studio.createVideoProject(ctx, { brief });
+    const second = await studio.createVideoProject(ctx, { brief: { ...brief, prompt: "second" } });
+    expect(first.job.queue).toBeUndefined();
+    const view = await studio.getJob(ctx, second.job.id);
+    expect(view.queue).toMatchObject({ position: 2, running: 0 });
+    expect(view.queue?.reason).toContain("position 2");
+    const running = await repos.jobs.get(ctx, first.job.id);
+    await repos.jobs.update(ctx, first.job.id, {
+      status: "running",
+      lockedBy: "w/0",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+      attempts: (running?.attempts ?? 0) + 1,
+    });
+    const behind = await studio.getJob(ctx, second.job.id);
+    expect(behind.queue).toMatchObject({ position: 1, running: 1 });
+    expect(behind.queue?.reason).toContain("1 job holds the worker slots");
+    expect((await studio.getJob(ctx, first.job.id)).queue).toBeUndefined();
+    // A lease that ran out (crashed worker) is reclaimed first, so it counts ahead and holds no slot.
+    await repos.jobs.update(ctx, first.job.id, { leaseExpiresAt: new Date(0) });
+    const reclaim = await studio.getJob(ctx, second.job.id);
+    expect(reclaim.queue).toMatchObject({ position: 2, running: 0 });
+  });
+
   it("carries the agent mode into the job payload and rejects unknown modes", async () => {
     const { studio, repos } = createInMemoryStudio();
     const ctx = testTenant();
@@ -168,7 +194,13 @@ describe("StudioService.createVideoProject", () => {
     expect(job?.deadlineAt).toBeUndefined();
     expect(job?.deadlineRemainingMs).toBe(60 * 60_000);
     const plain = await repos.jobs.get(ctx, (await studio.createVideoProject(ctx, { brief })).job.id);
-    expect(plain?.deadlineAt).toBeInstanceOf(Date);
+    expect(plain?.deadlineAt).toBeUndefined();
+    expect(plain?.deadlineRemainingMs).toBeGreaterThan(0);
+    const explicit = await studio.createVideoProject(ctx, {
+      brief,
+      deadlineAt: new Date(Date.now() + 5 * 60_000),
+    });
+    expect((await repos.jobs.get(ctx, explicit.job.id))?.deadlineAt).toBeInstanceOf(Date);
   });
 
   it("rejects deadlines in the past", async () => {

@@ -138,7 +138,9 @@ export async function createVideoProject(
     idempotencyKey: input.idempotencyKey,
     budgetCents,
     deadlineAt,
-    ...(agentAuthored ? { deadlineFromClaim: true } : {}),
+    // A default window starts at the first claim, so time queued behind other jobs never eats it; a
+    // deadline the caller chose stays the absolute time they asked for.
+    ...(input.deadlineAt === undefined ? { deadlineFromClaim: true } : {}),
     maxAttempts: defaults.jobMaxAttempts,
     initialStatus: requirement.required ? "waiting_approval" : "queued",
     createdBy,
