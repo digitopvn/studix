@@ -1,4 +1,4 @@
-import type { ProviderConnectionService, ProviderConnectionView } from "@studix/auth";
+import type { ModelPreferenceService, ProviderConnectionService, ProviderConnectionView } from "@studix/auth";
 import { testTenant } from "@studix/core/testing";
 import { StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
@@ -57,5 +57,42 @@ describe("agent selection preflight", () => {
     await expect(select("pcon_missing")).rejects.toMatchObject({ code: "VALIDATION" });
     await expect(select("pcon_bad")).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
     await expect(select("pcon_go", "no-such-model")).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
+  it("refuses a Pi agent without a model when no default applies to the caller", async () => {
+    const preferences = (stages: string[]) =>
+      ({
+        async preview(_ctx: unknown, input: { stage: string }) {
+          return stages.includes(input.stage)
+            ? { runtime: "pi", stage: input.stage, selection: { source: "workspace-default" } }
+            : { runtime: "pi", stage: input.stage };
+        },
+      }) as unknown as ModelPreferenceService;
+    const select = (modelPreferences: ModelPreferenceService) =>
+      resolveAgentSelection({ providers, modelPreferences }, ctx, {
+        runtime: "pi",
+        providerConnectionId: "pcon_go",
+      });
+
+    await expect(select(preferences([]))).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+      details: { reason: "no_model_selected" },
+    });
+    await expect(select(preferences(["default"]))).resolves.toEqual({
+      runtime: "pi",
+      connectionId: "pcon_go",
+      provider: "openai",
+    });
+    // A plan-stage entry never reaches an agent stage, so it does not count.
+    await expect(select(preferences(["plan"]))).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    // Host mode or a planner never resolves a Pi default.
+    await expect(
+      resolveAgentSelection(
+        { providers, modelPreferences: preferences([]) },
+        ctx,
+        { runtime: "pi", providerConnectionId: "pcon_go" },
+        false,
+      ),
+    ).resolves.toMatchObject({ runtime: "pi" });
   });
 });

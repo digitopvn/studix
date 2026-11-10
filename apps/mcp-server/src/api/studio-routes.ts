@@ -120,7 +120,8 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
         ? { runtime: "claude" as const, providerConnectionId: body.agent.providerConnectionId }
         : body.planner;
     await assertPlannerSelection(deps, ctx, planner);
-    const agent = body.agent ? await resolveAgentSelection(deps, ctx, body.agent) : undefined;
+    // A job a planner runs never resolves a Pi default, so only the rest need one.
+    const agent = body.agent ? await resolveAgentSelection(deps, ctx, body.agent, !planner) : undefined;
     const roles = await resolveAgentRoles(deps, ctx, body.roles);
     const result = await deps.studio.createVideoProject(ctx, {
       brief: {

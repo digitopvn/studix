@@ -306,8 +306,12 @@ export const NATIVE_TOOLS = [
           ? { runtime: "claude" as const, providerConnectionId: input.agent.providerConnectionId }
           : input.planner;
       if (input.spec === undefined) await assertPlannerSelection(ctx.deps, ctx.tenant, planner);
-      const agent = input.agent ? await resolveAgentSelection(ctx.deps, ctx.tenant, input.agent) : undefined;
-      const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles);
+      // A host-mode job or one a planner runs never resolves a Pi default, so only the rest need one.
+      const needsDefault = input.agentMode !== "host" && !planner;
+      const agent = input.agent
+        ? await resolveAgentSelection(ctx.deps, ctx.tenant, input.agent, needsDefault)
+        : undefined;
+      const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles, input.agentMode !== "host");
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
         spec: input.spec,
