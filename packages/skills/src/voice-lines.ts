@@ -1,7 +1,7 @@
 import { StudixError } from "@studix/shared";
 import { type AssetRef, type AudioTrack, resolveSceneSpans, type VideoIR } from "@studix/video-ir";
-import { wordCount } from "./caption-chunks.ts";
-import { VO_WORDS_PER_SECOND } from "./marketing-video/marketing-script.ts";
+import { spokenLength } from "./caption-chunks.ts";
+import { MAX_VOICE_SPEEDUP, spokenMs, VO_WORDS_PER_SECOND } from "./marketing-video/marketing-script.ts";
 
 /** What a line of the voice-over does in the video, which sets how it is read. */
 export type VoicePart = "hook" | "message" | "cta";
@@ -35,11 +35,8 @@ export const MAX_VOICE_DIRECTION_CHARS = 1000;
  * beat, so the stage fails instead.
  */
 export const VOICE_OVERRUN_TOLERANCE_MS = 250;
-/**
- * Most a take is sped up (pitch kept) to fit its room when it runs past the tolerance: about 12% stays a
- * natural read. A longer take is too long a line, and the stage fails.
- */
-export const MAX_VOICE_SPEEDUP = 1.12;
+export { MAX_VOICE_SPEEDUP };
+
 const OVERRUN_FADE_MS = 150;
 const SPEDUP_FADE_MS = 40;
 
@@ -135,12 +132,17 @@ export function voiceLines(ir: VideoIR, fromMs = 0, toMs = ir.format.durationMs)
     const text = group.map((c) => c.text).join(" ");
     const at = partAt(ir, (first.startMs + last.endMs) / 2);
     const part = i === 0 && at === "message" ? "hook" : at;
-    const most = Math.floor((roomMs / 1000) * VO_WORDS_PER_SECOND);
-    if (wordCount(text) > most) {
+    const words = spokenLength(text, ir.language);
+    // Compared in whole milliseconds against what the voice stage can still lay (a take sped up to
+    // `MAX_VOICE_SPEEDUP`), so a line that just fills its room is never refused by float rounding.
+    const mostMs = Math.floor(roomMs * MAX_VOICE_SPEEDUP);
+    if (spokenMs(text, ir.language) > mostMs) {
+      // The spoken length that still passes, in tenths of a word like `spokenLength`.
+      const most = Math.floor((mostMs * VO_WORDS_PER_SECOND) / 100) / 10;
       throw new StudixError("VALIDATION", `Voice-over line "${text.slice(0, 60)}" does not fit its beat`, {
         retryable: false,
-        details: { startMs: first.startMs, roomMs, words: wordCount(text), mostWords: most },
-        suggestedAction: `Cut the line to at most ${most} words, or lengthen its beat.`,
+        details: { startMs: first.startMs, roomMs, words, mostWords: most },
+        suggestedAction: `Cut the line to at most ${most} words (an English word or brand name counts by its syllables), or lengthen its beat.`,
       });
     }
     return {

@@ -19,8 +19,13 @@ import {
   validateVideoIR,
 } from "@studix/video-ir";
 import { DEFAULT_BRAND_FONTS } from "../brand-intro/brief-draft.ts";
-import { captionCues, wordCount } from "../caption-chunks.ts";
-import { VO_PAD_MS, VO_WORDS_PER_SECOND, voiceoverWordBudget } from "../marketing-video/marketing-script.ts";
+import { captionCues, spokenLength } from "../caption-chunks.ts";
+import {
+  spokenMs,
+  VO_PAD_MS,
+  VO_WORDS_PER_SECOND,
+  voiceoverWordBudget,
+} from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
@@ -89,23 +94,33 @@ const spokenWords = (line: Line) => (line.voiceover ?? "").trim().split(/\s+/).f
 /**
  * A brief-derived script that fits the length: message cards are dropped from the last one back (the hook
  * and the call to action stay), then the voiced text of the longest line before the call to action is cut a
- * word at a time, the call to action itself last. On-screen text stays whole. A voiceless graphic drops
+ * word at a time, the call to action itself last, until the spoken length (`spokenLength`) fits. On-screen text stays whole. A voiceless graphic drops
  * message cards until each card has time to be read.
  */
-function fitDerived(lines: readonly Line[], totalMs: number, voiced: boolean): Line[] {
+function fitDerived(lines: readonly Line[], totalMs: number, voiced: boolean, language: string): Line[] {
   const out = [...lines];
   const budget = voiceoverWordBudget(totalMs);
-  const words = () => out.reduce((n, l) => n + spokenWords(l).length, 0);
-  const over = () => (voiced ? words() > budget : out.length * MIN_SILENT_CARD_MS > totalMs);
+  // Measured like the template's final check: the whole voice-over's spoken length within the budget,
+  // and every card's rounded need (`cardNeeds`) inside the length, so no card comes up short of its line.
+  const tooLong = (lines: readonly string[][]) => {
+    const texts = lines.map((w) => w.join(" "));
+    return (
+      spokenLength(texts.join(" "), language) > budget ||
+      cardNeeds(texts, language).reduce((a, b) => a + b, 0) > totalMs
+    );
+  };
+  const over = () => (voiced ? tooLong(out.map(spokenWords)) : out.length * MIN_SILENT_CARD_MS > totalMs);
   while (out.length > 2 && over()) out.splice(out.length - 2, 1);
-  if (!voiced || words() <= budget) return out;
+  if (!voiced || !tooLong(out.map(spokenWords))) return out;
   const said = out.map(spokenWords);
   const cta = said.length - 1;
-  for (let excess = words() - budget; excess > 0; excess--) {
+  while (tooLong(said)) {
+    // The line that takes longest to say (not the one with most words) gives up a word first.
+    const spoken = said.map((w) => spokenLength(w.join(" "), language));
     let pick = cta;
     for (let i = 0; i < cta; i++) {
       const n = said[i]?.length ?? 0;
-      if (n > 1 && (pick === cta || n > (said[pick]?.length ?? 0))) pick = i;
+      if (n > 1 && (pick === cta || (spoken[i] ?? 0) > (spoken[pick] ?? 0))) pick = i;
     }
     if ((said[pick]?.length ?? 0) <= 1) break;
     said[pick]?.pop();
@@ -120,7 +135,7 @@ function fitDerived(lines: readonly Line[], totalMs: number, voiced: boolean): L
  * On-screen lines and their voice-over: the first direction's beats as written, else the title, messages
  * and CTA fitted to the length. A voiceless brief keeps the on-screen lines only.
  */
-function linesOf(brief: CreativeBrief, cta: string, totalMs: number): Line[] {
+function linesOf(brief: CreativeBrief, cta: string, totalMs: number, language: string): Line[] {
   const voiced = brief.voiceover !== false;
   const beats = brief.directions?.[0]?.beats;
   if (beats) {
@@ -136,7 +151,7 @@ function linesOf(brief: CreativeBrief, cta: string, totalMs: number): Line[] {
     onScreen: truncateText(text, 120),
     ...(voiced ? { voiceover: text } : {}),
   }));
-  return fitDerived(lines, totalMs, voiced);
+  return fitDerived(lines, totalMs, voiced, language);
 }
 
 /** WCAG relative luminance of a `#rrggbb[aa]` colour (alpha ignored). */
@@ -196,17 +211,30 @@ function inkOn(
 }
 
 /**
+ * Time each card needs for its voice-over (`spokenMs`, with the lead-in pad on the first card and the
+ * closing pad on the last), rounded up to the 100ms step the cards are cut in. While these sum to at most
+ * the length, every card gets at least its need (`durations`).
+ */
+function cardNeeds(voiceovers: ReadonlyArray<string | undefined>, language: string): number[] {
+  const last = voiceovers.length - 1;
+  return voiceovers.map(
+    (v, i) =>
+      Math.ceil(
+        ((v ? spokenMs(v, language) : 0) + (i === 0 ? VO_PAD_MS : 0) + (i === last ? VO_PAD_MS : 0)) / 100,
+      ) * 100,
+  );
+}
+
+/**
  * Card lengths in 100ms steps: each card gets the time its voice-over takes to say (with the lead-in and
  * closing pads), and the rest of the length is shared in proportion to the lines' weights (even when
  * unweighted), so a long hook never outruns its card.
  */
-function durations(totalMs: number, lines: readonly Line[]): number[] {
+function durations(totalMs: number, lines: readonly Line[], language: string): number[] {
   const last = lines.length - 1;
-  const need = lines.map(
-    (l, i) =>
-      (l.voiceover ? (wordCount(l.voiceover) / VO_WORDS_PER_SECOND) * 1000 : 0) +
-      (i === 0 ? VO_PAD_MS : 0) +
-      (i === last ? VO_PAD_MS : 0),
+  const need = cardNeeds(
+    lines.map((l) => l.voiceover),
+    language,
   );
   const weights = lines.map((l) => l.weight ?? 1);
   const sum = weights.reduce((a, b) => a + b, 0);
@@ -255,18 +283,23 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         enter: b.enter,
         weight: b.weight,
       }))
-    : linesOf(brief, cta, totalMs).slice(0, 8);
+    : linesOf(brief, cta, totalMs, language).slice(0, 8);
   const voiceover = lines
     .map((l) => l.voiceover)
     .filter(Boolean)
     .join(" ");
   const budget = voiceoverWordBudget(totalMs);
   // Reachable only by a script the template did not derive: a direction's own beats or a storyboard.
-  if (wordCount(voiceover) > budget) {
+  const words = spokenLength(voiceover, language);
+  const neededMs = cardNeeds(
+    lines.map((l) => l.voiceover),
+    language,
+  ).reduce((a, b) => a + b, 0);
+  if (words > budget || neededMs > totalMs) {
     throw new StudixError("VALIDATION", `Voice-over is longer than a ${totalMs / 1000}s graphic can hold`, {
       retryable: false,
-      details: { wordBudget: budget, words: wordCount(voiceover) },
-      suggestedAction: `Cut the voice-over to at most ${budget} words (about ${VO_WORDS_PER_SECOND} words a second), or lengthen the video.`,
+      details: { wordBudget: budget, words, neededMs, totalMs },
+      suggestedAction: `Cut the voice-over to at most ${budget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables), or lengthen the video.`,
     });
   }
   const baseBrand: BrandKit = brief.brand ?? {
@@ -292,7 +325,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     : undefined;
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
   const chars = LINE_CHARS[aspectRatio];
-  const spans = durations(totalMs, lines);
+  const spans = durations(totalMs, lines, language);
   const last = lines.length - 1;
   let cursor = 0;
   const cues: CaptionCue[] = [];

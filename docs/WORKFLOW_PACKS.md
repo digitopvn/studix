@@ -255,10 +255,25 @@ với `include: ["schemas"]` trả cùng schema. Thương hiệu trong mẫu là
 
 ### marketing-video
 
-Pack bắt buộc `brief.directions` (1 đến 6, mỗi direction một quảng cáo). Prompt trơn không có direction
-fail `VALIDATION` ở stage script. Voice-over mỗi quảng cáo phải vừa ngân sách từ theo độ dài (khoảng ba từ
+Mỗi phần tử của `brief.directions` (1 đến 6) thành một quảng cáo. Brief không có direction thì pack tự
+dựng một quảng cáo từ chính brief: `keyMessages[0]` (hoặc `brand.name` khi không có key message) làm hook,
+hai key message kế tiếp làm thông điệp (beat dựng sẵn chỉ chứa tối đa hai, phần dư bị bỏ), prompt làm
+concept. Prompt không bao giờ được đọc thành lời vì nó là
+yêu cầu gửi Studix. Brief không có direction, key message lẫn brand name bị từ chối `VALIDATION` ngay lúc
+tạo job (`studix_create_video` hoặc dashboard), trước khi có project hay job nào. Form tạo video trên
+dashboard có ô key message (bắt buộc với pack này) và call to action.
+Voice-over mỗi quảng cáo phải vừa ngân sách từ theo độ dài (khoảng ba từ
 mỗi giây, `voiceoverWordBudget` trong
-[`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Bản đọc dài hơn beat được xử lý như ở
+[`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Độ dài đọc đo bằng
+`spokenLength` ([`caption-chunks.ts`](../packages/skills/src/caption-chunks.ts)): mỗi âm tiết tiếng Việt là
+một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
+("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
+thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này;
+storyboard của agent mà tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video thì được gửi lại
+cho agent đúng một lượt sửa (kèm lỗi cụ thể: dòng nào, phòng bao nhiêu ms, nên cắt còn bao nhiêu từ; chạy trong
+`MG_STORYBOARD_LIMITS` và ngân sách job, cả hai lượt đều ghi usage `agent.run`; agent chạy ở `agentMode: "host"`
+không có lượt sửa). Chỉ khi lượt sửa vẫn không vừa mới quay về template và ghi lý do ở `fallbackReason`. Còn beat do `directions[0].beats` đưa vào thì fail `VALIDATION`.
+`marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat của nó chứa được, kể cả khi đọc nhanh tới 1.12×. Bản đọc dài hơn beat được xử lý như ở
 `motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
 
 ```json
@@ -302,7 +317,7 @@ Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prom
 `tone`, `objective` và prompt, hoặc theo `directions[0].visualStyle` nếu trùng id một profile trong
 [`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
-từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
+từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất, tới khi mọi card đủ thời gian đọc câu của nó. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
 nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do
 `directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
 lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`
@@ -385,7 +400,7 @@ còn lại. Bảng chung cho client: [MCP_API.md](MCP_API.md#troubleshooting).
 | `VALIDATION` "Unknown workflowTemplate ..." khi gọi `studix_create_video`                                         | Id không có trong registry; `details.available` liệt kê id đã đăng ký                                                         | Dùng một id trong danh sách; pack mới phải được đăng ký ở `skill-registry.ts`                                                        |
 | Job `failed` với `VALIDATION` "Unknown workflowTemplate ..."                                                      | Project được tạo với pack mà registry của worker không có (`packPipelines`), ví dụ app và worker chạy hai phiên bản khác nhau | Deploy cùng phiên bản cho app và worker                                                                                              |
 | `VALIDATION` "Invalid input for stage ..."                                                                        | `inputSchema` không parse được `{ payload, outputs }`; `details.issues` chỉ field                                             | Sửa payload, hoặc stage trước không tạo output stage này cần (thứ tự pipeline sai)                                                   |
-| `VALIDATION` "A marketing-video brief needs at least one creative direction"                                      | Gửi prompt trơn cho `marketing-video`                                                                                         | Gửi `brief.directions` như [mẫu](#marketing-video)                                                                                   |
+| `VALIDATION` "A marketing-video brief needs creative directions or key messages"                                  | Gửi prompt trơn cho `marketing-video`                                                                                         | Gửi `brief.keyMessages` hoặc `brief.directions` như [mẫu](#marketing-video)                                                          |
 | `VALIDATION` "Voice-over is longer than a ...s ad can hold" (hoặc "graphic")                                      | Voice-over vượt ngân sách từ; `details.wordBudget`                                                                            | Rút gọn hook, message, CTA hoặc tăng `durationMs`                                                                                    |
 | `APPROVAL_REQUIRED` "Stage ... needs an approved storyboard"                                                      | Stage có `requiresApprovedStoryboard` chạy khi storyboard chưa `approved`; `details.storyboardStatus`                         | Thành viên workspace duyệt storyboard trên trang review, rồi gọi `studix_render`                                                     |
 | `APPROVAL_REQUIRED` "G<n> needs a person's approval"                                                              | Approval policy miễn `creative.gate`, cấu hình sai                                                                            | Giữ `creative.gate` trong nhóm luôn cần duyệt của policy                                                                             |
