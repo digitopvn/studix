@@ -11,7 +11,7 @@ import {
   type TenantContext,
   toJobPage,
 } from "@studix/core";
-import { type Clock, newId, StudixError } from "@studix/shared";
+import { type Clock, newId, StudixError, storableJson } from "@studix/shared";
 import { and, asc, count, desc, eq, gt, gte, ilike, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
@@ -118,8 +118,9 @@ export async function upsertStageRow(
 ): Promise<Stage> {
   const values = {
     status: input.status,
-    output: input.output ?? null,
-    error: input.error ?? null,
+    // Stage outputs and errors carry agent text: what Postgres cannot store would fail the whole write.
+    output: input.output === undefined ? null : storableJson(input.output),
+    error: input.error === undefined ? null : storableJson(input.error),
     startedAt: input.startedAt ?? null,
     finishedAt: input.finishedAt ?? null,
     // Omitted means "keep": progress and outcome writes must not erase the journal of submitted jobs.

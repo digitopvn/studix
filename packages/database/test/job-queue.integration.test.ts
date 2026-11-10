@@ -21,6 +21,35 @@ const enqueueInput = (key?: string) => ({
   createdBy: { type: "user" as const, id: "usr_1" },
 });
 
+describe("Postgres writes of agent text", () => {
+  it("stores stage outputs, errors and activity events that hold NUL or half an emoji", async () => {
+    const { queue, jobs, activity } = db.current.repos;
+    const ctx = await tenant("agent-text");
+    const { job } = await queue.enqueue(ctx, enqueueInput());
+    const bad = "png\u0000\u0000 cut \uD83D";
+    const stage = await jobs.upsertStage(ctx, {
+      jobId: job.id,
+      name: "skill-agent.run",
+      attempt: 1,
+      status: "failed",
+      output: { [`k\u0000`]: bad },
+      error: { code: "PROVIDER_ERROR", message: bad, retryable: false },
+    });
+    const clean = `png\uFFFD\uFFFD cut \uFFFD`;
+    expect(stage.output).toEqual({ [`k\uFFFD`]: clean });
+    expect(stage.error?.message).toBe(clean);
+    await activity.append(ctx, {
+      name: "agent.event",
+      level: "info",
+      jobId: job.id,
+      message: bad,
+      attributes: { type: "tool_end", result: bad },
+    });
+    const [row] = (await activity.list(ctx, { jobId: job.id })).items;
+    expect(row).toMatchObject({ message: clean, attributes: { result: clean } });
+  });
+});
+
 describe("Postgres job queue", () => {
   it("retry re-arms the window the caller asked for, even for a job that waited at a gate", async () => {
     const { queue, jobs } = db.current.repos;
