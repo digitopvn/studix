@@ -35,13 +35,10 @@ describe("Postgres job queue", () => {
     expect(job.deadlineWindowMs).toBeLessThanOrEqual(requested);
     // Parked at the gate the job has no absolute deadline; the failure leaves it unarmed as well.
     await jobs.update(ctx, job.id, { status: "failed" });
-    const before = Date.now();
     const retried = await queue.retry(ctx, job.id);
-    const window = (retried.deadlineAt?.getTime() ?? 0) - before;
-    // The paused remainder is dropped, or the next claim would re-arm the deadline from it instead.
-    expect(retried.deadlineRemainingMs).toBeUndefined();
-    expect(window).toBeLessThanOrEqual(requested + 1000);
-    expect(window).toBeGreaterThan(requested - 10_000);
+    // The window is paused until the next claim, so time queued behind other jobs never uses it up.
+    expect(retried.deadlineAt).toBeUndefined();
+    expect(retried.deadlineRemainingMs).toBe(job.deadlineWindowMs);
   });
 
   it("enqueue is idempotent per workspace, including under concurrency", async () => {

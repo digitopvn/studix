@@ -327,7 +327,8 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
             ),
             lt(jobs.attempts, jobs.maxAttempts),
             claimOptions.skipLongAgentJobs
-              ? sql`coalesce(${jobs.payload}->>'workflowTemplate', '') <> 'skill-agent'`
+              ? // A job on an existing version only plans, renders and uploads: it is not a long agent run.
+                sql`(coalesce(${jobs.payload}->>'workflowTemplate', '') <> 'skill-agent' or ${jobs.payload}->>'versionId' is not null)`
               : undefined,
           ),
         )

@@ -50,7 +50,9 @@ export function createWorkerPool(options: WorkerPoolOptions): WorkerPool {
     options.reservedLightSlots ?? (options.concurrency >= 2 ? 1 : 0),
     options.concurrency - 1,
   );
-  if (reserved < 0) throw new RangeError("reservedLightSlots must not be negative");
+  if (!Number.isInteger(reserved) || reserved < 0) {
+    throw new RangeError("reservedLightSlots must be a non-negative integer");
+  }
   const pollMs = options.pollIntervalMs ?? 1000;
   const sweepMs = options.sweepIntervalMs ?? 5000;
   const { queue, executor, logger } = options;

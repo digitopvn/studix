@@ -67,6 +67,14 @@ describe("worker queue", () => {
     expect(light?.id).toBe(video.job.id);
     expect(await queue.claim("w-light-2", { skipLongAgentJobs: true })).toBeUndefined();
 
+    // A skill-agent job on an existing version only renders, so the light lane takes it.
+    const rerender = await producer.enqueue(ctx, {
+      kind: "video.create",
+      payload: { workflowTemplate: "skill-agent", versionId: "ver_1" },
+      createdBy: human,
+    });
+    expect((await queue.claim("w-light-3", { skipLongAgentJobs: true }))?.id).toBe(rerender.job.id);
+
     const heavy = await queue.claim("w-any");
     expect(heavy?.id).toBe(agent.job.id);
     expect(await db.current.repos.jobs.queueWait(ctx, agent.job.id)).toBeUndefined();
