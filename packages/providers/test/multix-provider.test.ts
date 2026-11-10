@@ -196,6 +196,109 @@ function sumeImageCli(statusReply?: (argv: readonly string[]) => Reply) {
   return cli;
 }
 
+describe("Sume catalog refresh", () => {
+  const unpriced = {
+    envelope: { estimate: { status: "unknown", reason: "no_price" }, cost: { actual_source: "no_request" } },
+  };
+
+  it("refreshes the catalog once when a fresh worker has none to price from, then prices again", async () => {
+    let refreshed = false;
+    const cli = scriptedCli((argv) => {
+      if (argv[1] === "models") {
+        expect(argv).toContain("--refresh");
+        refreshed = true;
+        return { envelope: { data: { models: [] } } };
+      }
+      if (argv.includes("--estimate")) {
+        return refreshed
+          ? {
+              envelope: {
+                estimate: { status: "estimated", high_usd: 0.12 },
+                cost: { actual_source: "no_request" },
+              },
+            }
+          : unpriced;
+      }
+      throw new Error(`unexpected argv ${argv.join(" ")}`);
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, clock: createManualClock(0) });
+    await expect(
+      multix.estimateCostCents({
+        kind: "image",
+        prompt: "a tea shop",
+        maxCostCents: 50,
+        params: { aspectRatio: "9:16" },
+      }),
+    ).resolves.toBe(12);
+    expect(cli.commands()).toEqual(["sume image", "sume models", "sume image"]);
+  });
+
+  it("refreshes at most once a minute for a model the catalog does not price", async () => {
+    const clock = createManualClock(0);
+    const cli = scriptedCli((argv) =>
+      argv[1] === "models" ? { envelope: { data: { models: [] } } } : unpriced,
+    );
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, clock });
+    const request = { kind: "image" as const, prompt: "a tea shop", maxCostCents: 50 };
+    await expect(multix.estimateCostCents(request)).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    await expect(multix.estimateCostCents(request)).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    expect(cli.commands().filter((c) => c === "sume models")).toHaveLength(1);
+    clock.advance(60_000);
+    await expect(multix.estimateCostCents(request)).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    expect(cli.commands().filter((c) => c === "sume models")).toHaveLength(2);
+  });
+
+  it("names why the refresh failed and does not price again", async () => {
+    const cli = scriptedCli((argv) =>
+      argv[1] === "models"
+        ? { exitCode: 4, envelope: { error: { code: "NETWORK", message: "catalog unreachable" } } }
+        : unpriced,
+    );
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, clock: createManualClock(0) });
+    await expect(
+      multix.estimateCostCents({ kind: "image", prompt: "a tea shop", maxCostCents: 50 }),
+    ).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+      details: { catalogRefreshError: expect.stringContaining("catalog unreachable") },
+    });
+    expect(cli.commands()).toEqual(["sume image", "sume models"]);
+  });
+
+  it("shares one refresh between concurrent estimates", async () => {
+    let refreshed = false;
+    const cli = scriptedCli((argv) => {
+      if (argv[1] === "models") {
+        refreshed = true;
+        return { envelope: { data: { models: [] } } };
+      }
+      return refreshed
+        ? {
+            envelope: {
+              estimate: { status: "estimated", high_usd: 0.04 },
+              cost: { actual_source: "no_request" },
+            },
+          }
+        : unpriced;
+    });
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, clock: createManualClock(0) });
+    const request = { kind: "image" as const, prompt: "a tea shop", maxCostCents: 50 };
+    await expect(
+      Promise.all([multix.estimateCostCents(request), multix.estimateCostCents(request)]),
+    ).resolves.toEqual([4, 4]);
+    expect(cli.commands().filter((c) => c === "sume models")).toHaveLength(1);
+  });
+
+  it("never refreshes the Sume catalog for another vendor's estimate", async () => {
+    const cli = scriptedCli(() => unpriced);
+    const multix = new MultixProvider({ bin: "multix", runner: cli.runner, clock: createManualClock(0) });
+    await multix
+      .estimateCostCents({ kind: "voice", prompt: "Xin chào", maxCostCents: 50 })
+      .catch(() => undefined);
+    expect(cli.commands()).not.toContain("sume models");
+    expect(cli.commands().length).toBeGreaterThan(0);
+  });
+});
+
 describe("parseCheckKeys", () => {
   it("reads the found key names from real check text and ignores keys that are not set", () => {
     expect([...parseCheckKeys(CHECK_TEXT)].sort()).toEqual([
