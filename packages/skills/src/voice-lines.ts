@@ -35,6 +35,11 @@ export const MAX_VOICE_DIRECTION_CHARS = 1000;
  * beat, so the stage fails instead.
  */
 export const VOICE_OVERRUN_TOLERANCE_MS = 250;
+/**
+ * Most a take is sped up (pitch kept) to fit its room when it runs past the tolerance: about 12% stays a
+ * natural read. A longer take is too long a line, and the stage fails.
+ */
+export const MAX_VOICE_SPEEDUP = 1.12;
 const OVERRUN_FADE_MS = 150;
 
 /**
@@ -148,18 +153,31 @@ export function voiceLines(ir: VideoIR, fromMs = 0, toMs = ir.format.durationMs)
 }
 
 /**
- * The track of one generated line, at its beat. A take longer than the room by more than
- * `VOICE_OVERRUN_TOLERANCE_MS` fails VALIDATION rather than spilling into the next beat; a shorter
- * overrun (trailing silence) is cut with a short fade.
+ * The track of one generated line, at its beat. A take up to `VOICE_OVERRUN_TOLERANCE_MS` long
+ * (trailing silence) is cut with a short fade; a longer one is sped up to fit, up to `MAX_VOICE_SPEEDUP`;
+ * past that it fails VALIDATION rather than spilling into the next beat.
  */
 export function voiceLineTrack(line: VoiceLine, asset: AssetRef, id: string): AudioTrack {
   const length = asset.durationMs;
   if (length !== undefined && length > line.roomMs + VOICE_OVERRUN_TOLERANCE_MS) {
-    throw new StudixError("VALIDATION", `Voice-over line "${line.text.slice(0, 60)}" runs past its beat`, {
-      retryable: false,
-      details: { assetId: asset.id, durationMs: length, roomMs: line.roomMs },
-      suggestedAction: "Shorten the line or lengthen its beat, then render again.",
-    });
+    const rate = length / line.roomMs;
+    if (rate > MAX_VOICE_SPEEDUP) {
+      throw new StudixError("VALIDATION", `Voice-over line "${line.text.slice(0, 60)}" runs past its beat`, {
+        retryable: false,
+        details: { assetId: asset.id, durationMs: length, roomMs: line.roomMs },
+        suggestedAction: "Shorten the line or lengthen its beat, then render again.",
+      });
+    }
+    // Slightly long: read a little faster so the whole line lands inside its beat.
+    return {
+      id,
+      kind: "voiceover",
+      assetId: asset.id,
+      startMs: line.startMs,
+      durationMs: line.roomMs,
+      volume: 1,
+      playbackRate: Math.ceil(rate * 1000) / 1000,
+    };
   }
   const cut = length !== undefined && length > line.roomMs;
   return {

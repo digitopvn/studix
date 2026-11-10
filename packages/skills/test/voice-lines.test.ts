@@ -6,6 +6,7 @@ import { beatKey, marketingVideoIr } from "../src/marketing-video/marketing-vide
 import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
 import {
   MAX_VOICE_DIRECTION_CHARS,
+  MAX_VOICE_SPEEDUP,
   VOICE_OVERRUN_TOLERANCE_MS,
   voiceLines,
   voiceLineTrack,
@@ -169,8 +170,17 @@ describe("voice-over line tracks", () => {
     expect(voiceLineTrack(message, take("vo-2"), "t").durationMs).toBe(message.roomMs);
   });
 
-  it("fails VALIDATION on a take that would spill speech into the next beat", () => {
+  it("speeds up a slightly long take so the whole line lands inside its beat", () => {
     const long = take("vo-2", message.roomMs + VOICE_OVERRUN_TOLERANCE_MS + 1);
+    const track = voiceLineTrack(message, long, "t");
+    expect(track).toMatchObject({ startMs: message.startMs, durationMs: message.roomMs });
+    expect(track.playbackRate).toBeGreaterThan(1);
+    expect(track.playbackRate).toBeLessThanOrEqual(MAX_VOICE_SPEEDUP);
+    expect(track.fadeOutMs).toBeUndefined();
+  });
+
+  it("fails VALIDATION on a take too long to speed up into its beat", () => {
+    const long = take("vo-2", Math.ceil(message.roomMs * MAX_VOICE_SPEEDUP) + 10);
     expect(() => voiceLineTrack(message, long, "t")).toThrowError(/runs past its beat/);
   });
 
