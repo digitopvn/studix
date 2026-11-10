@@ -46,6 +46,20 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
         .filter((j) => !after || isAfterJobCursor(j, sort, order, after));
       return toJobPage(rows.slice(0, limit + 1), limit, sort);
     },
+    async queueLoad(_ctx, job) {
+      const now = clock.now();
+      const all = jobs.filterAnyTenant(() => true);
+      return {
+        ahead: all.filter(
+          (j) =>
+            j.status === "queued" &&
+            j.runAfter <= now &&
+            j.attempts < j.maxAttempts &&
+            (j.runAfter < job.runAfter || (j.runAfter.getTime() === job.runAfter.getTime() && j.id < job.id)),
+        ).length,
+        running: all.filter((j) => j.status === "running" && (j.leaseExpiresAt ?? 0) > now).length,
+      };
+    },
     async update(ctx, id, patch, options = {}) {
       const current = jobs.require(ctx, id);
       if (options.expectStatus && !options.expectStatus.includes(current.status)) {

@@ -12,7 +12,7 @@ import {
   toJobPage,
 } from "@studix/core";
 import { type Clock, newId, StudixError } from "@studix/shared";
-import { asc, desc, eq, gte, ilike, inArray, lte, type SQL, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, ilike, inArray, lt, lte, or, type SQL, sql } from "drizzle-orm";
 import type { DbExecutor, StudixDb } from "../client.ts";
 import { jobs, stages } from "../schema/jobs.ts";
 import { actorFrom, first, opt, pageLimit, scoped, tenantValues } from "./helpers.ts";
@@ -260,6 +260,29 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
       if (!(await getRow(ctx, input.jobId)))
         throw new StudixError("NOT_FOUND", `job ${input.jobId} not found`);
       return upsertStageRow(db, clock, ctx, input);
+    },
+
+    async queueLoad(_ctx, job) {
+      const now = clock.now();
+      const claimable = and(
+        eq(jobs.status, "queued"),
+        lte(jobs.runAfter, now),
+        lt(jobs.attempts, jobs.maxAttempts),
+      );
+      const [ahead] = await db
+        .select({ n: count() })
+        .from(jobs)
+        .where(
+          and(
+            claimable,
+            or(lt(jobs.runAfter, job.runAfter), and(eq(jobs.runAfter, job.runAfter), lt(jobs.id, job.id))),
+          ),
+        );
+      const [running] = await db
+        .select({ n: count() })
+        .from(jobs)
+        .where(and(eq(jobs.status, "running"), gt(jobs.leaseExpiresAt, sql`now()`)));
+      return { ahead: ahead?.n ?? 0, running: running?.n ?? 0 };
     },
 
     async listStages(ctx, jobId) {

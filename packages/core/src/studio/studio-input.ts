@@ -4,7 +4,7 @@ import { JOB_KINDS, type Job } from "../entities/job.ts";
 import type { ApprovalAction } from "../entities/review.ts";
 import type { UsageEvent } from "../entities/telemetry.ts";
 import type { TenantContext } from "../tenant.ts";
-import { type JobSpendDetail, toJobView } from "./job-view.ts";
+import { type JobSpendDetail, toJobView, toQueueView } from "./job-view.ts";
 import type { JobView, StudioDefaults, StudioServiceDeps } from "./studio-types.ts";
 
 /** Service dependencies with defaults resolved. */
@@ -46,7 +46,11 @@ export async function loadJobView(deps: ResolvedStudioDeps, ctx: TenantContext, 
       ? ((await deps.approvals.list(ctx, { subject, status: "pending", limit: 1 })).items[0] ??
         (await deps.approvals.findLatest(ctx, subject, gatingAction(job))))
       : undefined;
-  return toJobView(job, stages, approval, await spendDetail(deps, ctx, job.id));
+  const queue =
+    job.status === "queued"
+      ? toQueueView(job, await deps.jobs.queueLoad(ctx, job), deps.clock.now())
+      : undefined;
+  return toJobView(job, stages, approval, await spendDetail(deps, ctx, job.id), queue);
 }
 
 async function spendDetail(

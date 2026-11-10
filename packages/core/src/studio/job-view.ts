@@ -2,10 +2,12 @@ import { JOB_KINDS, type Job, type Stage } from "../entities/job.ts";
 import { jobAgent } from "../entities/job-agent.ts";
 import type { Approval } from "../entities/review.ts";
 import type { UsageEvent } from "../entities/telemetry.ts";
+import type { JobQueueLoad } from "../repositories/job-repository.ts";
 import { AGENT_HANDOFF_TOOLS } from "./agent-handoff-service.ts";
 import { stageRunOf } from "./stage-run.ts";
 import {
   type ApprovalView,
+  type JobQueueView,
   type JobView,
   type NextAction,
   STUDIX_TOOLS,
@@ -133,7 +135,34 @@ function stageRun(s: Stage, spend: JobSpendDetail | undefined) {
   return { run: { ...shown, ...(label ? { connectionLabel: label } : {}) } };
 }
 
-export function toJobView(job: Job, stages: Stage[], approval?: Approval, spend?: JobSpendDetail): JobView {
+/** The wait reason of a queued job: behind other work, or between retries. */
+export function toQueueView(job: Job, load: JobQueueLoad, now: Date): JobQueueView | undefined {
+  if (job.status !== "queued") return undefined;
+  if (job.runAfter > now) {
+    return {
+      running: load.running,
+      reason: `Waiting for its scheduled start at ${job.runAfter.toISOString()}.`,
+    };
+  }
+  const position = load.ahead + 1;
+  const slots = load.running === 1 ? "1 job holds" : `${load.running} jobs hold`;
+  return {
+    position,
+    running: load.running,
+    reason:
+      load.running > 0
+        ? `Queued at position ${position}: ${slots} the worker slots and the job starts when one frees up. A long agent job can hold a slot for up to its deadline.`
+        : `Queued at position ${position}: a worker claims it within seconds.`,
+  };
+}
+
+export function toJobView(
+  job: Job,
+  stages: Stage[],
+  approval?: Approval,
+  spend?: JobSpendDetail,
+  queue?: JobQueueView,
+): JobView {
   return {
     id: job.id,
     kind: job.kind,
@@ -167,6 +196,7 @@ export function toJobView(job: Job, stages: Stage[], approval?: Approval, spend?
     })),
     approval: approval ? toApprovalView(approval) : undefined,
     agent: jobAgent(job),
+    ...(queue ? { queue } : {}),
     next: nextActionsForJob(job, approval),
   };
 }

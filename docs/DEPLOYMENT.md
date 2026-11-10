@@ -621,6 +621,15 @@ cd deploy/cloudflare-app-proxy
 npx wrangler@4 deploy        # needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in the environment
 ```
 
+### Worker slots
+
+`WORKER_CONCURRENCY` (default 1) is the number of jobs a worker pod runs at once. With one slot, a long
+`skill-agent.run` job (up to its 60 minute deadline) keeps every job behind it `queued` with no attempt; the job
+view's `queue` field (`position`, `running`, `reason`) says so. To keep render and short jobs moving, raise
+`WORKER_CONCURRENCY`, `STUDIX_SANDBOX_RUNNERS` and `TOSE_WORKER_RUNNERS` together (see the sandbox section: a runner
+beyond the concurrency stays idle but billed, and agent jobs need one runner each). Check the pod's 2.5 CPU / 5 GiB
+against the extra concurrent render before raising it.
+
 ### Worker shutdown
 
 On SIGTERM the worker stops claiming, lets the running attempt finish within
@@ -631,7 +640,10 @@ engine is patched so Puppeteer does not close it on SIGTERM (see
 released, not failed
 (`packages/workflow/src/worker-pool.ts`, `job-executor.ts`). Verified on
 dev: `tose restart studix-worker` during a render left the job
-`succeeded` at attempt 1.
+`succeeded` at attempt 1. A long agent stage is not resumable: if the grace
+period (`WORKER_SHUTDOWN_GRACE_MS`) is shorter than the stage, it restarts from
+its beginning on the next pod and its deadline keeps counting. Deploy when no
+agent job is running (`studix_list_jobs` status `running`).
 
 ## MCP OAuth
 

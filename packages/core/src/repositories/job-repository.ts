@@ -41,6 +41,18 @@ export interface JobRepository {
   /** Insert or update the stage row identified by (jobId, name, attempt). */
   upsertStage(ctx: TenantContext, stage: Omit<NewRecord<Stage>, "id">): Promise<Stage>;
   listStages(ctx: TenantContext, jobId: string): Promise<Stage[]>;
+  /**
+   * How busy the shared queue is for a queued job: jobs that run before it and jobs holding a worker slot
+   * now. Counts only, across every workspace (workers claim across tenants); no ids or tenants leave here.
+   */
+  queueLoad(ctx: TenantContext, job: Job): Promise<JobQueueLoad>;
+}
+
+export interface JobQueueLoad {
+  /** Claimable jobs that a worker takes before this one. */
+  ahead: number;
+  /** Jobs whose lease is live: each holds a worker slot. */
+  running: number;
 }
 
 export type NewWorkflowRun = NewRecord<WorkflowRun>;
