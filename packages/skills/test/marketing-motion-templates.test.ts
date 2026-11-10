@@ -508,6 +508,14 @@ describe("spoken length", () => {
     expect(spokenLength("Hotline 1900-1234")).toBeCloseTo(9.3, 1);
     expect(spokenLength("10.000.000đ")).toBe(5);
     expect(spokenLength("Lãi 4,5%")).toBe(6);
+    expect(spokenLength("Gọi 0901.234.567")).toBe(11);
+    expect(spokenLength("+84 901 234 567")).toBe(11);
+    expect(spokenLength("1900.6868")).toBe(8);
+    // A year range is two years and "đến", never a phone number; a decimal point is a word too.
+    expect(spokenLength("2024-2025")).toBe(15);
+    expect(spokenLength("Thu Đông 2024 2025")).toBe(17);
+    expect(spokenLength("12.5%")).toBe(6);
+    expect(spokenLength("4.9 sao", "vi")).toBe(4);
     // All in capitals, a word is read as a word; a run with no vowel is still spelled out.
     expect(spokenLength("SALE SẬP SÀN TV")).toBeCloseTo(4.7, 1);
   });
@@ -544,6 +552,34 @@ describe("spoken length", () => {
     })();
     expect(err?.code).toBe("VALIDATION");
     expect(err?.message).toContain("longer than its beat");
+  });
+
+  it("refuses a storyboard whose cards, rounded up to 100ms, need more than the length", () => {
+    // 10 + 10 + 8 words fit the 28-word budget of 10 s, but the cards need 3700 + 3400 + 3000 ms.
+    const words = (n: number) => Array.from({ length: n }, () => "bốn").join(" ");
+    const err = (() => {
+      try {
+        motionGraphicTemplate(
+          { prompt: "Giới thiệu Studix", language: "vi", durationMs: 10_000, aspectRatio: "16:9" },
+          {
+            storyboard: {
+              styleProfile: "apple-clean",
+              beats: [10, 10, 8].map((n, i) => ({
+                onScreen: `C${i}`,
+                voiceover: words(n),
+                enter: "fade",
+                weight: 1,
+              })),
+              music: null,
+            } as never,
+          },
+        );
+      } catch (e) {
+        return e as StudixError;
+      }
+    })();
+    expect(err?.code).toBe("VALIDATION");
+    expect(err?.details).toMatchObject({ words: 28, neededMs: 10_100, totalMs: 10_000 });
   });
 
   it("gives a motion-graphic card the time a mixed-language line takes to say", () => {

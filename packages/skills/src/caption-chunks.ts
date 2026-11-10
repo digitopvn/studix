@@ -83,11 +83,12 @@ function syllables(part: string): number {
 /**
  * Words a number takes to say: one per digit up to two digits, then about two per non-zero digit (the
  * digit and its place, "hai trăm") and one per thousands group ("nghìn", "triệu"). Errs long, never short.
- * A run with a leading zero or eight digits and more is a phone number or a code, read a digit at a time.
+ * A run with a leading zero (grouped or not), or eight digits and more ungrouped, is a phone number or a
+ * code, read a digit at a time.
  */
 function numberLength(digits: string, grouped = false): number {
-  if (grouped) return amountLength(digits);
-  if (digits.length >= 8 || (digits.length > 1 && digits.startsWith("0"))) return digits.length;
+  if (digits.length > 1 && digits.startsWith("0")) return digits.length;
+  if (!grouped && digits.length >= 8) return digits.length;
   return amountLength(digits);
 }
 
@@ -99,26 +100,37 @@ function amountLength(digits: string): number {
 }
 
 /**
- * The numbers of one token, in reading order: a thousands-grouped amount ("99.000", "1,500,000"), a day and
- * month ("12.12", "11/11") read as two numbers, a decimal comma ("4,5": "bốn phẩy năm"), or a plain run.
+ * The numbers of one token, in reading order: a hotline written "1900.6868" (a digit at a time), a
+ * thousands-grouped amount ("99.000", "1,500,000", "0901.234.567" with its leading zero a phone number), a
+ * day and month ("12.12", "11/11") read as two numbers, a decimal ("4,5", "4.9": "bốn phẩy năm"), or a
+ * plain run.
  */
-const NUMBER = /\d+(?:[.,]\d{3})+(?!\d)|(\d{1,2})[./](\d{1,2})(?!\d)|(\d+),(\d{1,2})(?!\d)|\d+/g;
+const NUMBER =
+  /\d{4}\.\d{4}(?!\d)|\d+(?:[.,]\d{3})+(?!\d)|(\d{1,2})[./](\d{1,2})(?!\d)|(\d+),(\d{1,2})(?!\d)|\d+/g;
 
 function numbersLength(token: string): number {
   let total = 0;
   for (const m of token.matchAll(NUMBER)) {
-    if (m[1] !== undefined && m[2] !== undefined) total += numberLength(m[1]) + numberLength(m[2]);
-    else if (m[3] !== undefined && m[4] !== undefined) total += numberLength(m[3]) + 1 + m[4].length;
-    else total += numberLength(m[0].replace(/[.,]/g, ""), /[.,]/.test(m[0]));
+    const [run, day, month, whole, fraction] = m;
+    if (day !== undefined && month !== undefined) {
+      // A one-digit second part or a percent is a decimal ("4.9 sao", "12.5%"): its "phẩy" is a word too.
+      const decimal = month.length === 1 || token.slice((m.index ?? 0) + run.length).startsWith("%");
+      total += numberLength(day) + numberLength(month) + (decimal ? 1 : 0);
+    } else if (whole !== undefined && fraction !== undefined) {
+      total += numberLength(whole) + 1 + fraction.length;
+    } else if (/^\d{4}\.\d{4}$/.test(run)) total += 8;
+    else total += numberLength(run.replace(/[.,]/g, ""), /[.,]/.test(run));
   }
   return total;
 }
 
 /**
- * A phone number written in groups ("0901 234 567", "1900-1234", "+84 901 234 567"): digit groups
- * split by single spaces or dashes, starting with a zero or eight digits long and more.
+ * A phone number written in groups ("0901 234 567", "1900-1234", "+84 901 234 567"): groups of up to four
+ * digits split by single spaces or dashes, starting with a zero or eight digits long and more. A pair of
+ * years ("2024-2025") is a range, read as two amounts.
  */
-const PHONE = /\+?\d+(?:[ -]\d+)+/g;
+const PHONE = /(?<!\d)\+?\d{1,4}(?:[ -]\d{1,4})+(?!\d)/g;
+const YEAR_RANGE = /^((?:19|20)\d\d)[ -]((?:19|20)\d\d)$/;
 
 /** Words of one letter-only part. */
 function partLength(part: string, vietnamese: boolean, shouting: boolean): number {
@@ -149,6 +161,12 @@ export function spokenLength(text: string, language?: string): number {
     letters.length > 3 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
   let total = 0;
   const read = clean.replace(PHONE, (run) => {
+    const years = YEAR_RANGE.exec(run);
+    if (years) {
+      // "2024-2025": two years and the "đến" between them.
+      total += amountLength(years[1] as string) + 1 + amountLength(years[2] as string);
+      return " ";
+    }
     const digits = run.replace(/\D/g, "");
     if (digits.length < 8 && !digits.startsWith("0")) return run;
     total += digits.length;
