@@ -70,7 +70,7 @@ export type AgentInput = z.infer<typeof AgentInput>;
  * reasoning model. Returns what the job stores, so the worker never has to choose again.
  */
 export async function resolveAgentSelection(
-  deps: Pick<AppDeps, "providers">,
+  deps: Pick<AppDeps, "providers" | "modelPreferences">,
   ctx: TenantContext,
   agent: AgentInput,
 ): Promise<JobAgentSelection> {
@@ -112,6 +112,8 @@ export async function resolveAgentSelection(
       );
     }
     assertEffort(ref, reasoning, effort);
+  } else if (agent.runtime === "pi") {
+    await assertPiDefaultModel(deps, ctx);
   }
   return {
     runtime: agent.runtime,
@@ -120,6 +122,31 @@ export async function resolveAgentSelection(
     ...(modelId ? { modelId } : {}),
     ...(effort ? { reasoningEffort: effort } : {}),
   };
+}
+
+/** Stages a saved model preference can name; a run stage without its own entry uses `default`. */
+const PREFERENCE_STAGES = ["default", "plan"] as const;
+
+/**
+ * A Pi agent without a model runs on the default the worker resolves for this caller. Personal defaults
+ * apply only to their owner's own jobs, so a workspace API key sees workspace defaults alone; refusing here
+ * beats a job that fails at its first agent stage.
+ */
+async function assertPiDefaultModel(
+  deps: Pick<AppDeps, "modelPreferences">,
+  ctx: TenantContext,
+): Promise<void> {
+  if (!deps.modelPreferences) return;
+  for (const stage of PREFERENCE_STAGES) {
+    const preview = await deps.modelPreferences.preview(ctx, { runtime: "pi", stage });
+    if (preview.selection) return;
+  }
+  throw new StudixError("UNAVAILABLE", "No default model applies to this caller on the pi runtime", {
+    retryable: false,
+    details: { reason: "no_model_selected" },
+    suggestedAction:
+      "Pass agent.model, or have a workspace admin choose the workspace default model in Settings → AI & Providers. A personal default applies only to jobs its owner starts.",
+  });
 }
 
 /** Same checks for a model the host says it used, without needing a connection of its own. */
@@ -136,7 +163,7 @@ export const AgentRolesInput = z
 export type AgentRolesInput = z.infer<typeof AgentRolesInput>;
 
 export async function resolveAgentRoles(
-  deps: Pick<AppDeps, "providers">,
+  deps: Pick<AppDeps, "providers" | "modelPreferences">,
   ctx: TenantContext,
   roles: AgentRolesInput | undefined,
 ): Promise<JobAgentRoles | undefined> {

@@ -531,7 +531,8 @@ function ModelsCard({
         <DefaultModelForm
           catalog={catalog}
           connections={piConnections}
-          scope={canEditPersonal ? "user" : "workspace"}
+          // An admin's pick is the workspace default, so API keys and every member's jobs use it too.
+          scope={canEditWorkspace ? "workspace" : "user"}
           busy={busy.has("default")}
           onSave={(input) => act("default", () => api.saveModelPreference(input))}
         />
@@ -654,6 +655,11 @@ function DefaultModelForm({
       <button type="submit" disabled={busy || !modelId}>
         Use this model
       </button>
+      <span className="muted">
+        {scope === "workspace"
+          ? "Applies to the whole workspace, API keys included."
+          : "Applies to jobs you start; ask an admin for the workspace default."}
+      </span>
     </form>
   );
 }
