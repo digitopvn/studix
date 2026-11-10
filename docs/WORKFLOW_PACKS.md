@@ -211,6 +211,8 @@ Lý do của các ràng buộc:
   hay model đắt không tự tiêu quá budget. Ảnh Sume chạy với `--cost-policy estimate`: request không chọn
   resolution thì catalog khớp nhiều mức giá (1K/2K/4K), multix chỉ chặn được bằng giá cao nhất và gọi đó là
   ước tính; giá cao nhất này vẫn là trần thật cho số ảnh đã xin, nên được nhận nếu không vượt `maxCostCents`.
+  multix chỉ định giá Sume từ catalog đã cache (`~/.multix/cache`, hết hạn sau 24h); worker mới chưa có cache
+  thì adapter chạy `sume models --refresh` một lần (tối đa một lần mỗi phút) rồi định giá lại.
 - **Journal trước khi tin vào kết quả.** Job bất đồng bộ được ghi vào journal ngay sau khi submit; retry
   thu job theo id. Atlas Cloud không có idempotency key, nên adapter ghi trạng thái `submitting` ngay
   trước khi gửi; bản ghi `submitting` không có job id thì không gửi lại (có thể đã bị tính tiền).

@@ -127,6 +127,8 @@ export interface MultixProviderStatus {
 
 const DEFAULT_WAIT_MS = 900_000;
 const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000;
+/** Shortest gap between two forced refreshes of the Sume catalog. */
+const CATALOG_REFRESH_INTERVAL_MS = 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 /** Time the CLI gets beyond its own wait timeout to download outputs and print the envelope. */
 const RUN_MARGIN_MS = 120_000;
@@ -240,6 +242,8 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   private readonly clock: Clock;
   private readonly capabilityTtlMs: number;
   private probe: { at: number; value: Promise<MediaCapability[]> } | undefined;
+  /** The last forced refresh of the Sume catalog, shared by concurrent estimates. */
+  private catalogRefresh: { at: number; value: Promise<boolean> } | undefined;
   private lastReadiness: MultixReadiness | undefined;
   private readonly credentialSource: MultixProviderOptions["credentials"];
   private credentialRevision: string | undefined;
@@ -626,18 +630,45 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     return [...plan.argv, ...extra, "--json", ...(plan.operand !== undefined ? ["--", plan.operand] : [])];
   }
 
+  /**
+   * Fetch the Sume catalog into multix's cache. At most one refresh a minute: concurrent estimates share it,
+   * and a model the catalog does not price is not refetched on every call.
+   */
+  private refreshSumeCatalog(cwd: string): Promise<boolean> {
+    const now = this.clock.now().getTime();
+    if (!this.catalogRefresh || now - this.catalogRefresh.at >= CATALOG_REFRESH_INTERVAL_MS) {
+      const value = this.exec(
+        "sume models",
+        ["sume", "models", "--refresh", "--json"],
+        cwd,
+        PROBE_TIMEOUT_MS,
+      ).then(
+        () => true,
+        () => false,
+      );
+      this.catalogRefresh = { at: now, value };
+    }
+    return this.catalogRefresh.value;
+  }
+
   private async estimatePlan(
     plan: MultixPlan,
     request: Pick<MediaGenerationRequest, "kind" | "prompt" | "params">,
     cwd: string,
   ): Promise<number> {
     if (plan.priced) {
-      const envelope = await this.exec(
-        `${plan.argv[0]} estimate`,
-        this.compose(plan, ["--estimate"]),
-        cwd,
-        PROBE_TIMEOUT_MS,
-      );
+      const estimate = () =>
+        this.exec(`${plan.argv[0]} estimate`, this.compose(plan, ["--estimate"]), cwd, PROBE_TIMEOUT_MS);
+      let envelope = await estimate();
+      // multix prices a Sume run from its cached catalog only, and a fresh worker (or a copy older than a
+      // day) has none to read: refresh the catalog once and price again.
+      if (
+        envelope.estimateHighUsd === undefined &&
+        plan.argv[0] === "sume" &&
+        (await this.refreshSumeCatalog(cwd))
+      ) {
+        envelope = await estimate();
+      }
       if (envelope.estimateHighUsd !== undefined) return toCents(envelope.estimateHighUsd);
     }
     if (plan.assumed) {
