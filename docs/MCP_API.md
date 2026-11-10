@@ -138,7 +138,7 @@ Behavior notes:
   a workspace API key sees only the workspace default. When none applies the
   call fails up front with `UNAVAILABLE` (`details.reason: "no_model_selected"`)
   unless the job runs in `host` mode or under a `planner`. An admin's pick in
-  Settings → AI model is the workspace default once the workspace has a Pi key.
+  Settings → AI model is the workspace default once the workspace has a workspace-owned Pi key.
   `studix_list_agent_runtimes` lists the usable choices. `planner: {runtime:
   "claude", providerConnectionId}` stays as an alias of a Claude `agent`.
 - A `codex` agent needs `STUDIX_SANDBOX=docker` on the worker: `codex exec`

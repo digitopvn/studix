@@ -142,7 +142,7 @@ async function assertPiDefaultModel(
     retryable: false,
     details: { reason: "no_model_selected" },
     suggestedAction:
-      "Pass agent.model, or have a workspace admin choose the workspace default model in Settings → AI & Providers. A personal default applies only to jobs its owner starts.",
+      "Pass agent.model, or have a workspace admin add a workspace-owned Pi key and choose the default model in Settings → AI & Providers. A personal default applies only to jobs its owner starts.",
   });
 }
 
@@ -163,12 +163,14 @@ export async function resolveAgentRoles(
   deps: Pick<AppDeps, "providers" | "modelPreferences">,
   ctx: TenantContext,
   roles: AgentRolesInput | undefined,
+  /** False in host mode; a role outranks a planner, so a planner does not waive the check. */
+  needsDefault = true,
 ): Promise<JobAgentRoles | undefined> {
   if (!roles) return undefined;
   const out: JobAgentRoles = {};
   for (const role of AGENT_ROLES) {
     const agent = roles[role];
-    if (agent) out[role] = await resolveAgentSelection(deps, ctx, agent);
+    if (agent) out[role] = await resolveAgentSelection(deps, ctx, agent, needsDefault);
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
