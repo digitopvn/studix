@@ -168,7 +168,24 @@ describe("StudioService.createVideoProject", () => {
     expect(job?.deadlineAt).toBeUndefined();
     expect(job?.deadlineRemainingMs).toBe(60 * 60_000);
     const plain = await repos.jobs.get(ctx, (await studio.createVideoProject(ctx, { brief })).job.id);
-    expect(plain?.deadlineAt).toBeInstanceOf(Date);
+    expect(plain?.deadlineAt).toBeUndefined();
+    expect(plain?.deadlineRemainingMs).toBeGreaterThan(0);
+    const explicit = await studio.createVideoProject(ctx, {
+      brief,
+      deadlineAt: new Date(Date.now() + 5 * 60_000),
+    });
+    expect((await repos.jobs.get(ctx, explicit.job.id))?.deadlineAt).toBeInstanceOf(Date);
+  });
+
+  it("tells a queued job what it waits behind", async () => {
+    const { studio } = createInMemoryStudio();
+    const ctx = testTenant();
+    const first = await studio.createVideoProject(ctx, { brief });
+    const second = await studio.createVideoProject(ctx, { brief });
+    const view = await studio.getJob(ctx, second.job.id);
+    expect(view.queue?.ahead).toBe(1);
+    expect(view.queue?.reason).toContain("1 queued job(s)");
+    expect((await studio.getJob(ctx, first.job.id)).queue?.ahead).toBe(0);
   });
 
   it("rejects deadlines in the past", async () => {

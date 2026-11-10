@@ -77,6 +77,7 @@ export async function enqueueVersionJob(
     idempotencyKey: request.idempotencyKey,
     budgetCents,
     deadlineAt: new Date(now.getTime() + deps.defaults.jobDeadlineMs),
+    deadlineFromClaim: true,
     maxAttempts: deps.defaults.jobMaxAttempts,
     initialStatus: requirement.required ? "waiting_approval" : "queued",
     createdBy,

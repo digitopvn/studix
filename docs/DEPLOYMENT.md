@@ -373,6 +373,12 @@ runner beyond the concurrency stays idle but is still billed. Both environments 
 worker container; the worker only orchestrates, while commands run in the runner. Raise `TOSE_WORKER_RUNNERS`,
 `STUDIX_SANDBOX_RUNNERS` and `WORKER_CONCURRENCY` together.
 
+With `WORKER_CONCURRENCY` of 2 or more, the last slot never claims a `skill-agent` job (a run that can take an
+hour), so a render or media job always finds a slot. With 1 there is a single slot and an agent run holds it:
+a job queued behind it waits, which `studix_get_job` shows as `queue`. A deploy stops the pod after the grace
+period and the running agent stage restarts from its beginning, so avoid deploying while a long agent run is
+active when the worker has one slot.
+
 Verify after a deploy: the worker pod lists every container as ready in the TOSE status; the logs of a runner are
 `GET .../logs?container=pi-runner-1`; and the worker logs `skill runners checked` with every runner ready. On its
 first task each runner is reset, closing any session a previous worker process left. Then run a `skill-agent` job from an allowlisted workspace.

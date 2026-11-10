@@ -262,6 +262,19 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
       return upsertStageRow(db, clock, ctx, input);
     },
 
+    async queueWait(ctx, jobId) {
+      const row = await getRow(ctx, jobId);
+      if (!row || row.status !== "queued") return undefined;
+      const [counts] = await db
+        .select({
+          ahead: sql<number>`count(*) filter (where ${jobs.status} = 'queued' and ${jobs.runAfter} <= now()
+            and (${jobs.runAfter}, ${jobs.id}) < (${row.runAfter.toISOString()}::timestamptz, ${row.id}))::int`,
+          running: sql<number>`count(*) filter (where ${jobs.status} = 'running' and ${jobs.leaseExpiresAt} >= now())::int`,
+        })
+        .from(jobs);
+      return { ahead: counts?.ahead ?? 0, running: counts?.running ?? 0 };
+    },
+
     async listStages(ctx, jobId) {
       const rows = await db
         .select()

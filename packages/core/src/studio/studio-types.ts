@@ -395,6 +395,8 @@ export interface JobView {
   result?: Record<string, unknown>;
   error?: StudixErrorPayload;
   stages: StageView[];
+  /** Set while the job is queued: why it has not started and how many jobs are in front of it. */
+  queue?: { ahead: number; running: number; reason: string };
   approval?: ApprovalView;
   /** Runtime, model and effort the job's creative stages run on (see `jobAgent`). */
   agent: JobAgentView;

@@ -46,7 +46,8 @@ export async function loadJobView(deps: ResolvedStudioDeps, ctx: TenantContext, 
       ? ((await deps.approvals.list(ctx, { subject, status: "pending", limit: 1 })).items[0] ??
         (await deps.approvals.findLatest(ctx, subject, gatingAction(job))))
       : undefined;
-  return toJobView(job, stages, approval, await spendDetail(deps, ctx, job.id));
+  const wait = job.status === "queued" ? await deps.jobs.queueWait(ctx, job.id) : undefined;
+  return toJobView(job, stages, approval, await spendDetail(deps, ctx, job.id), wait);
 }
 
 async function spendDetail(

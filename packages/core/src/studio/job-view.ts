@@ -2,6 +2,7 @@ import { JOB_KINDS, type Job, type Stage } from "../entities/job.ts";
 import { jobAgent } from "../entities/job-agent.ts";
 import type { Approval } from "../entities/review.ts";
 import type { UsageEvent } from "../entities/telemetry.ts";
+import type { QueueWait } from "../repositories/job-repository.ts";
 import { AGENT_HANDOFF_TOOLS } from "./agent-handoff-service.ts";
 import { stageRunOf } from "./stage-run.ts";
 import {
@@ -133,7 +134,25 @@ function stageRun(s: Stage, spend: JobSpendDetail | undefined) {
   return { run: { ...shown, ...(label ? { connectionLabel: label } : {}) } };
 }
 
-export function toJobView(job: Job, stages: Stage[], approval?: Approval, spend?: JobSpendDetail): JobView {
+/** The wait reason of a queued job, from the jobs ahead of it and the ones running now. */
+export function queueView(wait: QueueWait | undefined): JobView["queue"] {
+  if (!wait) return undefined;
+  const reason =
+    wait.ahead > 0
+      ? `${wait.ahead} queued job(s) are claimed before this one; ${wait.running} running.`
+      : wait.running > 0
+        ? `Next in line; waiting for a free worker slot (${wait.running} job(s) running).`
+        : "Next in line; a worker claims it within seconds.";
+  return { ...wait, reason };
+}
+
+export function toJobView(
+  job: Job,
+  stages: Stage[],
+  approval?: Approval,
+  spend?: JobSpendDetail,
+  wait?: QueueWait,
+): JobView {
   return {
     id: job.id,
     kind: job.kind,
@@ -165,6 +184,7 @@ export function toJobView(job: Job, stages: Stage[], approval?: Approval, spend?
       ...reviewOf(s),
       ...stageRun(s, spend),
     })),
+    ...(wait ? { queue: queueView(wait) } : {}),
     approval: approval ? toApprovalView(approval) : undefined,
     agent: jobAgent(job),
     next: nextActionsForJob(job, approval),

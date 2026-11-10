@@ -41,6 +41,18 @@ export interface JobRepository {
   /** Insert or update the stage row identified by (jobId, name, attempt). */
   upsertStage(ctx: TenantContext, stage: Omit<NewRecord<Stage>, "id">): Promise<Stage>;
   listStages(ctx: TenantContext, jobId: string): Promise<Stage[]>;
+  /**
+   * Where a queued job waits: jobs due before it (any workspace, counts only) and jobs running now.
+   * `undefined` once the job is no longer queued.
+   */
+  queueWait(ctx: TenantContext, jobId: string): Promise<QueueWait | undefined>;
+}
+
+export interface QueueWait {
+  /** Queued jobs that a worker claims before this one. */
+  ahead: number;
+  /** Jobs workers are running right now. */
+  running: number;
 }
 
 export type NewWorkflowRun = NewRecord<WorkflowRun>;

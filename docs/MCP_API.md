@@ -175,11 +175,17 @@ Behavior notes:
   claims the job after the approval or host submission. A job created already
   waiting at a gate starts its deadline at its first claim. A review can take
   as long as the approval stays valid (7 days) without failing the job with
-  `TIMEOUT`; a stage that runs past the remaining budget still does. Retry
-  backoff and queue wait still count. While paused, the job view has no
+  `TIMEOUT`; a stage that runs past the remaining budget still does. A job
+  created without its own `deadlineSeconds` or `deadlineAt` also starts its
+  default window at its first claim, so time spent queued behind another job
+  never expires it; a deadline the caller sets stays an absolute time from
+  creation. Retry backoff still counts. While paused, the job view has no
   `deadlineAt` and reports the budget left as `deadlineRemainingMs`. When
   deploying, drain old workers before new ones park jobs: an old worker claims
   a paused job without re-arming its deadline.
+- A job that is still `queued` carries `queue`: `ahead` (queued jobs claimed before it, across
+  all workspaces, counts only), `running` (jobs workers run now) and a `reason` sentence, so a
+  caller can tell it waits behind another job instead of being stuck.
 - `workflowTemplate` is a pack id from the registry in `@studix/skills`
   (`studix_inspect` lists them under `skills`); it defaults to `brand-intro`.
   An unknown id fails with `VALIDATION` before anything is stored, with
