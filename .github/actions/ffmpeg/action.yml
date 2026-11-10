@@ -1,0 +1,49 @@
+# Pinned static FFmpeg + ffprobe, cached, so CI never depends on the Ubuntu apt mirror for them.
+name: ffmpeg
+description: Install a version- and checksum-pinned static FFmpeg onto PATH.
+inputs:
+  version:
+    description: FFmpeg release to install.
+    default: "6.0.1"
+  sha256:
+    description: sha256 of that release's amd64 static tarball.
+    default: 28268bf402f1083833ea269331587f60a242848880073be8016501d864bd07a5
+runs:
+  using: composite
+  steps:
+    - name: Cache FFmpeg
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ffmpeg-static
+        key: ffmpeg-static-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-${{ inputs.sha256 }}
+
+    - name: Install FFmpeg
+      shell: bash
+      env:
+        FFMPEG_VERSION: ${{ inputs.version }}
+        FFMPEG_SHA256: ${{ inputs.sha256 }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        dir="$HOME/.cache/ffmpeg-static"
+        if [ "$CACHE_HIT" != "true" ]; then
+          [ "$(uname -m)" = x86_64 ] || { echo "static FFmpeg is pinned for x86_64 only"; exit 1; }
+          mkdir -p "$dir"
+          archive="$RUNNER_TEMP/ffmpeg.tar.xz"
+          for attempt in 1 2 3; do
+            if curl -fsSL --connect-timeout 20 --max-time 180 -o "$archive" \
+              "https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-${FFMPEG_VERSION}-amd64-static.tar.xz" &&
+              echo "$FFMPEG_SHA256  $archive" | sha256sum -c -; then
+              break
+            fi
+            [ "$attempt" = 3 ] && exit 1
+            echo "FFmpeg download attempt $attempt failed, retrying"
+            sleep $((attempt * 5))
+          done
+          tar -xJf "$archive" -C "$dir" --strip-components=1 \
+            "ffmpeg-${FFMPEG_VERSION}-amd64-static/ffmpeg" "ffmpeg-${FFMPEG_VERSION}-amd64-static/ffprobe"
+          rm -f "$archive"
+        fi
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/ffmpeg" -version | sed -n 1p
