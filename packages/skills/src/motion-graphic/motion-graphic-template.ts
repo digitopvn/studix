@@ -30,7 +30,7 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 4;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 5;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -302,8 +302,10 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       suggestedAction: `Cut the voice-over to at most ${budget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables), or lengthen the video.`,
     });
   }
+  // What the graphic is called without a brand: its title, else its hook. Never the style profile's name.
+  const unbrandedName = brief.title ?? (lines[0]?.onScreen || "Motion graphic");
   const baseBrand: BrandKit = brief.brand ?? {
-    name: truncateText(brief.title ?? style.name, 120),
+    name: truncateText(unbrandedName, 120),
     palette: {
       primary: style.palette.accent,
       accent: style.palette.accent,
@@ -343,8 +345,8 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
     if (i === last) {
-      // The CTA names the brand only with a logo or a real name: with neither, the brand kit's name is the
-      // style profile's, which stands in for the palette and never goes on screen.
+      // The CTA names the brand only with a logo or a real name: without a brand or title, the brand kit's
+      // name is the hook line, which the hook card already shows.
       if (logo || brief.brand || brief.title)
         shots.push({
           id: "cta-logo",
@@ -406,7 +408,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
   });
   const ir: VideoIR = {
     schemaVersion: 1,
-    title: truncateText(brief.title ?? brief.brand?.name ?? (lines[0]?.onScreen || "Motion graphic"), 200),
+    title: truncateText(brief.title ?? brief.brand?.name ?? unbrandedName, 200),
     language,
     format: { aspectRatio, ...ASPECT_RATIO_SIZES[aspectRatio], fps: FPS, durationMs: totalMs },
     brand: logo ? brand : brandNoLogo,

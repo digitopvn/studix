@@ -381,7 +381,9 @@ describe("motion graphic", () => {
     expect(validateVideoIR(ir).ok).toBe(true);
     const cta = ir.scenes.find((s) => s.id === "cta");
     expect(cta?.shots.map((s) => s.id)).toEqual(["cta-text"]);
-    expect(ir.title).not.toBe(resolveMotionStyle({ prompt: "Video giới thiệu Lá Mây" }).name);
+    // No title or direction: the hook is the prompt, and it names the graphic.
+    expect(ir.title).toBe("Video giới thiệu Lá Mây");
+    expect(ir.brand?.name).toBe("Video giới thiệu Lá Mây");
     const titled = motionGraphicTemplate({ prompt: "Video giới thiệu Lá Mây", title: "Lá Mây" });
     const logo = titled.scenes.find((s) => s.id === "cta")?.shots.find((s) => s.id === "cta-logo");
     expect(logo).toMatchObject({ text: "Lá Mây" });
