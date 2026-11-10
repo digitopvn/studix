@@ -43,6 +43,8 @@ const CreateVideoBody = z
     aspectRatio: AspectRatio.optional(),
     durationMs: z.number().int().min(1000).max(600_000).optional(),
     language: LanguageTag.optional(),
+    keyMessages: z.array(z.string().trim().min(1).max(300)).max(10).optional(),
+    callToAction: z.string().trim().min(1).max(200).optional(),
     budgetCents: z.number().int().min(0).max(10_000_000).optional(),
     idempotencyKey: z
       .string()
@@ -128,6 +130,8 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       ...(body.aspectRatio ? { aspectRatio: body.aspectRatio } : {}),
       ...(body.durationMs ? { durationMs: body.durationMs } : {}),
       ...(body.language ? { language: body.language } : {}),
+      ...(body.keyMessages?.length ? { keyMessages: body.keyMessages } : {}),
+      ...(body.callToAction ? { callToAction: body.callToAction } : {}),
     };
     pack.checkBrief?.(brief);
     const result = await deps.studio.createVideoProject(ctx, {

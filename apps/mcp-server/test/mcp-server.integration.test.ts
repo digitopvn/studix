@@ -291,7 +291,7 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     expect(result.isError).toBe(true);
   });
 
-  it("refuses a marketing-video brief the pack cannot script before any job is queued", async () => {
+  it("refuses a marketing-video brief the pack cannot script without creating a job", async () => {
     const client = await app.connect(keyA);
     const refused = await call(client, "studix_create_video", {
       workflowTemplate: "marketing-video",

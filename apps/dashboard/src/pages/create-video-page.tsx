@@ -11,6 +11,8 @@ const EFFORTS: ReasoningEffort[] = ["off", "minimal", "low", "medium", "high", "
 export function CreateVideoPage() {
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
+  const [messages, setMessages] = useState("");
+  const [callToAction, setCallToAction] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("9:16");
   const [seconds, setSeconds] = useState(8);
   const [language, setLanguage] = useState("en");
@@ -37,6 +39,13 @@ export function CreateVideoPage() {
   // One key per form instance: a double submit or a retry after a network error returns the same job.
   const [idempotencyKey] = useState(() => `dash-${crypto.randomUUID()}`);
 
+  const keyMessages = messages
+    .split("\n")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  // A marketing ad speaks its copy: without a key message there is nothing to open it with.
+  const needsMessages = pack === "marketing-video" && keyMessages.length === 0;
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -48,6 +57,8 @@ export function CreateVideoPage() {
         aspectRatio,
         durationMs: Math.round(seconds * 1000),
         language,
+        ...(keyMessages.length ? { keyMessages } : {}),
+        ...(callToAction.trim() ? { callToAction: callToAction.trim() } : {}),
         idempotencyKey,
         renderPreset,
         ...(pack ? { workflowTemplate: pack } : {}),
@@ -82,6 +93,20 @@ export function CreateVideoPage() {
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Brand intro for Acme Coffee: logo reveal, slogan 'Wake up bold', warm palette."
           />
+        </label>
+        <label>
+          Key messages ({pack === "marketing-video" ? "required" : "optional"}, one per line, in the order
+          spoken)
+          <textarea
+            rows={3}
+            value={messages}
+            onChange={(e) => setMessages(e.target.value)}
+            placeholder="Roasted in house every morning"
+          />
+        </label>
+        <label>
+          Call to action (optional)
+          <input value={callToAction} maxLength={200} onChange={(e) => setCallToAction(e.target.value)} />
         </label>
         <label>
           Title (optional)
@@ -185,7 +210,7 @@ export function CreateVideoPage() {
           )}
         </div>
         <ErrorBanner error={error} />
-        <button type="submit" disabled={busy || prompt.trim() === ""}>
+        <button type="submit" disabled={busy || prompt.trim() === "" || needsMessages}>
           {busy ? "Starting..." : "Create video"}
         </button>
       </form>

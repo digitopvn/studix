@@ -127,8 +127,23 @@ describe("marketing script", () => {
     expect(branded.ads[0]?.beats[0]?.voiceover).toBe("Lá Mây");
   });
 
+  it("trims key messages, skips blank ones and speaks a long first message whole", () => {
+    const hook = Array.from({ length: 30 }, () => "trà").join(" ");
+    const script = marketingScript({
+      prompt: "Quảng cáo trà",
+      durationMs: 30_000,
+      keyMessages: ["   ", `  ${hook}  `, "  Giao nhanh  "],
+      callToAction: "",
+    });
+    const beats = script.ads[0]?.beats ?? [];
+    expect(beats.map((b) => b.voiceover)).toEqual([hook, "Giao nhanh", "Tìm hiểu ngay"]);
+  });
+
   it("lets the marketing pack refuse an unscriptable brief before a job is queued", () => {
     const pack = packRegistry.packs().find((p) => p.id === "marketing-video");
+    expect(codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà", keyMessages: ["   "] }))).toBe(
+      "VALIDATION",
+    );
     expect(codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà" }))).toBe("VALIDATION");
     expect(
       codeOf(() => pack?.checkBrief?.({ prompt: "Quảng cáo trà", keyMessages: ["Trà ngon"] })),

@@ -9,6 +9,8 @@ import {
   exportJsonSchemas,
   resolveRenderSpec,
   type Shot,
+  safeValidate,
+  unwrapValidation,
   VideoIR,
 } from "@studix/video-ir";
 import {
@@ -868,6 +870,8 @@ export const marketingVideoPack: WorkflowPack = {
     marketingPublishStage,
   ],
   pipeline: marketingVideoPipeline,
-  // The script stage is deterministic, so running it here refuses a brief it would reject later.
-  checkBrief: (brief) => void marketingScript(brief),
+  // The script stage is deterministic, so running it (and the schema the next stage parses its output
+  // with) here refuses a brief the queued job would fail on.
+  checkBrief: (brief) =>
+    void unwrapValidation(safeValidate(MarketingScript, marketingScript(brief)), "marketing script"),
 };

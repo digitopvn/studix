@@ -100,13 +100,15 @@ function derivedBeats(direction: CreativeDirection, brief: CreativeBrief, cta: s
 
 /**
  * The one ad of a brief that names no directions, drawn from the brief itself: the first key message is
- * the hook, the rest are the messages and the prompt is the concept. The hook is spoken, so it comes from
- * copy the user wrote for the audience (a key message, else the brand name), never from the prompt, which
- * is an instruction to Studix. Throws VALIDATION when the brief has neither.
+ * the hook, the next two are the messages (the derived beats hold no more) and the prompt is the concept.
+ * The hook is spoken, so it comes from copy the user wrote for the audience (a key message, else the brand
+ * name), never from the prompt, which is an instruction to Studix. Throws VALIDATION when the brief has
+ * neither.
  */
 function briefDirection(brief: CreativeBrief): CreativeDirection {
-  const [first, ...rest] = brief.keyMessages ?? [];
-  const hook = first?.trim() || brief.brand?.name?.trim();
+  const [first, ...rest] = (brief.keyMessages ?? []).map((m) => m.trim()).filter(Boolean);
+  const brand = brief.brand?.name?.trim();
+  const hook = first ?? brand;
   if (!hook) {
     throw new StudixError("VALIDATION", "A marketing-video brief needs creative directions or key messages", {
       retryable: false,
@@ -118,10 +120,10 @@ function briefDirection(brief: CreativeBrief): CreativeDirection {
   }
   return {
     id: "main",
-    name: truncateText(brief.brand?.name?.trim() || hook, 120),
+    name: truncateText(brand || hook, 120),
     concept: truncateText(brief.prompt, 1000),
-    hook: truncateText(hook, 200),
-    keyMessages: rest.slice(0, 6),
+    hook,
+    keyMessages: rest,
   };
 }
 
@@ -162,7 +164,7 @@ export function marketingScript(input: unknown): MarketingScript {
 
   const overBudget: Array<{ direction: string; words: number }> = [];
   const ads = directions.map((direction, index): ScriptAd => {
-    const cta = direction.callToAction ?? brief.callToAction ?? DEFAULT_CTA[lang];
+    const cta = direction.callToAction || brief.callToAction?.trim() || DEFAULT_CTA[lang];
     const beats = direction.beats ?? derivedBeats(direction, brief, cta);
     const times = beatTimes(beats.length, durationMs);
     const id = `ad-${index + 1}-${direction.id}`.slice(0, 40).replace(/-+$/, "");

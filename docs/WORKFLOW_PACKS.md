@@ -257,9 +257,11 @@ với `include: ["schemas"]` trả cùng schema. Thương hiệu trong mẫu là
 
 Mỗi phần tử của `brief.directions` (1 đến 6) thành một quảng cáo. Brief không có direction thì pack tự
 dựng một quảng cáo từ chính brief: `keyMessages[0]` (hoặc `brand.name` khi không có key message) làm hook,
-các key message còn lại làm thông điệp, prompt làm concept. Prompt không bao giờ được đọc thành lời vì nó là
+hai key message kế tiếp làm thông điệp (beat dựng sẵn chỉ chứa tối đa hai, phần dư bị bỏ), prompt làm
+concept. Prompt không bao giờ được đọc thành lời vì nó là
 yêu cầu gửi Studix. Brief không có direction, key message lẫn brand name bị từ chối `VALIDATION` ngay lúc
-tạo job (`studix_create_video` hoặc dashboard), trước khi có project hay job nào.
+tạo job (`studix_create_video` hoặc dashboard), trước khi có project hay job nào. Form tạo video trên
+dashboard có ô key message (bắt buộc với pack này) và call to action.
 Voice-over mỗi quảng cáo phải vừa ngân sách từ theo độ dài (khoảng ba từ
 mỗi giây, `voiceoverWordBudget` trong
 [`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Bản đọc dài hơn beat được xử lý như ở
