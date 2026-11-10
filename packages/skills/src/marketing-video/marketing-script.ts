@@ -8,7 +8,7 @@ import {
   validateCreativeBrief,
 } from "@studix/video-ir";
 import { z } from "zod";
-import { wordCount } from "../caption-chunks.ts";
+import { spokenLength, wordCount } from "../caption-chunks.ts";
 import { detectLanguage, normalizeText, truncateText } from "../vietnamese-safe-text.ts";
 
 export const MARKETING_SCRIPT_VERSION = 1;
@@ -65,6 +65,19 @@ export const MarketingScript = z.object({
 export type MarketingScript = z.infer<typeof MarketingScript>;
 
 const DEFAULT_CTA: Record<"vi" | "en", string> = { vi: "Tìm hiểu ngay", en: "Learn more" };
+
+/**
+ * Most a take is sped up (pitch kept) to fit its room when it runs past the tolerance: about 12% stays a
+ * natural read. A longer take is too long a line, and the stage fails.
+ */
+export const MAX_VOICE_SPEEDUP = 1.12;
+
+/** Milliseconds a line takes to say at the budget's pace, from its `spokenLength`; whole ms, rounded up. */
+export function spokenMs(text: string, language?: string): number {
+  // In whole tenths of a word, so 5.7 words is 1900ms, not the 1901 a float division rounds up to.
+  const tenths = Math.round(spokenLength(text, language) * 10);
+  return Math.ceil((tenths * 100) / VO_WORDS_PER_SECOND);
+}
 
 /** Words of voice-over an ad of `durationMs` can hold. */
 export function voiceoverWordBudget(durationMs: number): number {
@@ -166,6 +179,7 @@ export function marketingScript(input: unknown): MarketingScript {
   const wordBudget = voiceoverWordBudget(durationMs);
 
   const overBudget: Array<{ direction: string; words: number }> = [];
+  const overBeats: Array<{ direction: string; beat: string; roomMs: number; line: string }> = [];
   const ads = directions.map((direction, index): ScriptAd => {
     const cta = direction.callToAction || brief.callToAction?.trim() || DEFAULT_CTA[lang];
     const beats = direction.beats ?? derivedBeats(direction, brief, cta);
@@ -186,7 +200,21 @@ export function marketingScript(input: unknown): MarketingScript {
       .filter(Boolean)
       .join(" ");
     const words = wordCount(voiceover);
-    if (words > wordBudget) overBudget.push({ direction: direction.id, words });
+    const spoken = spokenLength(voiceover, language);
+    if (spoken > wordBudget) overBudget.push({ direction: direction.id, words: spoken });
+    // Each beat's line must fit where its captions run (the beat less the lead-in and closing pads), with
+    // the speed-up the voice stage may give a take, exactly as that stage checks after the paid clips;
+    // refusing it here costs nothing.
+    for (const beat of scriptBeats) {
+      if (!beat.voiceover) continue;
+      const roomMs =
+        beat.durationMs -
+        (beat.startMs === 0 ? VO_PAD_MS : 0) -
+        (beat.startMs + beat.durationMs >= durationMs ? VO_PAD_MS : 0);
+      if (spokenMs(beat.voiceover, language) > Math.floor(roomMs * MAX_VOICE_SPEEDUP)) {
+        overBeats.push({ direction: direction.id, beat: beat.id, roomMs, line: beat.voiceover.slice(0, 60) });
+      }
+    }
     return {
       id,
       name: direction.name,
@@ -202,7 +230,16 @@ export function marketingScript(input: unknown): MarketingScript {
     throw new StudixError("VALIDATION", `Voice-over is longer than a ${durationMs / 1000}s ad can hold`, {
       retryable: false,
       details: { wordBudget, overBudget },
-      suggestedAction: `Cut each ad's voice-over to at most ${wordBudget} words (about ${VO_WORDS_PER_SECOND} words a second).`,
+      suggestedAction: `Cut each ad's voice-over to at most ${wordBudget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables).`,
+    });
+  }
+  if (overBeats.length > 0) {
+    throw new StudixError("VALIDATION", "A voice-over line is longer than its beat can hold", {
+      retryable: false,
+      details: { overBeats },
+      suggestedAction:
+        "Shorten the listed lines (about three words a second; an English word or brand name counts by its " +
+        "syllables), or lengthen the ad.",
     });
   }
   return { version: MARKETING_SCRIPT_VERSION, language, aspectRatio, durationMs, wordBudget, ads };

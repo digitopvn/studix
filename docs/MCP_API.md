@@ -202,8 +202,9 @@ Behavior notes:
   image shot's `alt` (the frame description) regenerates the frame of that shot
   only, stores it as the next version and returns the project to review;
   unchanged shots keep their frames and review state. Each ad's voice-over must fit about three
-  words a second of its length, or the job fails with `VALIDATION` before any
-  paid call. After a person approves the storyboard, `studix_render` animates
+  words a second of its length (a Vietnamese syllable is a word; an English
+  word or brand name counts by its syllables, about two thirds of a word
+  each), or the job fails with `VALIDATION` before any paid call. After a person approves the storyboard, `studix_render` animates
   the frames, adds voice-over, music and SFX, then renders, QA-gates and
   uploads one file per ad (`renders[]`). Any image-to-video or audio stage
   without an approved storyboard fails with `APPROVAL_REQUIRED`.
