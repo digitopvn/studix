@@ -353,7 +353,7 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.getJob,
     title: "Get job",
     description:
-      "Job status, stages, progress, error with suggestedAction, and a signed MP4 URL once succeeded. view=summary is compact; sinceRevision skips an unchanged poll. waitSeconds holds the call until the status changes.",
+      "Job status, stages, progress, error with suggestedAction, signed MP4 URL once succeeded. view=summary is compact; sinceRevision skips unchanged polls; waitSeconds waits for a change.",
     input: z.object({
       jobId: Id,
       waitSeconds: z.number().int().min(0).max(50).optional(),
@@ -367,7 +367,9 @@ export const NATIVE_TOOLS = [
     readOnly: true,
     async run(ctx, input) {
       const found = await ctx.deps.studio.getJob(ctx.tenant, input.jobId);
-      const job = input.waitSeconds ? await waitForJobChange(ctx, found, input.waitSeconds) : found;
+      // A caller whose revision is already stale gets the news now instead of waiting for the next change.
+      const stale = input.sinceRevision !== undefined && input.sinceRevision !== jobRevision(found);
+      const job = input.waitSeconds && !stale ? await waitForJobChange(ctx, found, input.waitSeconds) : found;
       if (input.sinceRevision && input.sinceRevision === jobRevision(job)) {
         return {
           data: {

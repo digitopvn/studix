@@ -16,10 +16,16 @@ export function jobRevision(job: Pick<JobWithVideo, "updatedAt" | "status">): st
  */
 export function summarizeJob(job: JobWithVideo, next: NextAction[], reviewUrl: string | undefined) {
   const blocker = jobBlocker(job);
+  // Stage rows of every attempt are listed, oldest first: look at the newest row of each stage only.
+  const latest = [...new Map(job.stages.map((s) => [s.name, s])).values()];
   const failedStage =
-    job.status === "failed" ? job.stages.find((s) => s.status === "failed")?.name : undefined;
-  const warnings = job.stages.flatMap((s) => (s.warning ? [{ stage: s.name, warning: s.warning }] : []));
-  const fallbacks = job.stages.flatMap((s) => (s.fallback ? [{ stage: s.name, fallback: s.fallback }] : []));
+    job.status === "failed"
+      ? typeof job.error?.details?.stage === "string"
+        ? job.error.details.stage
+        : (latest.findLast((s) => s.status === "failed")?.name ?? job.stage)
+      : undefined;
+  const warnings = latest.flatMap((s) => (s.warning ? [{ stage: s.name, warning: s.warning }] : []));
+  const fallbacks = latest.flatMap((s) => (s.fallback ? [{ stage: s.name, fallback: s.fallback }] : []));
   return {
     view: "summary" as const,
     revision: jobRevision(job),
@@ -29,6 +35,9 @@ export function summarizeJob(job: JobWithVideo, next: NextAction[], reviewUrl: s
     ...(job.projectId ? { projectId: job.projectId } : {}),
     ...(job.stage ? { stage: job.stage } : {}),
     progress: job.progress,
+    attempts: job.attempts,
+    maxAttempts: job.maxAttempts,
+    ...(job.cancelRequested ? { cancelRequested: true } : {}),
     ...(blocker ? { blocker } : {}),
     ...(job.result ? { result: job.result } : {}),
     ...(job.error

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { SERVER_NAME } from "../src/app-deps.ts";
 import { inspectCapabilities } from "../src/mcp/inspect-capabilities.ts";
 import { jobRevision, summarizeJob } from "../src/mcp/job-summary.ts";
 import type { JobWithVideo } from "../src/resource-views.ts";
@@ -33,7 +32,6 @@ describe("studix_inspect schemaNames", () => {
 
   it("stays compact without schema options", () => {
     expect(inspectCapabilities({ ...base, include: [] })).not.toHaveProperty("schemas");
-    expect(SERVER_NAME).toBeTruthy();
   });
 });
 
@@ -74,5 +72,26 @@ describe("job summary view", () => {
 
   it("changes revision when the status changes", () => {
     expect(jobRevision({ ...job, status: "running" })).not.toBe(jobRevision(job));
+  });
+
+  it("names the stage that failed on the latest attempt and lists a warning once", () => {
+    const retried = {
+      ...job,
+      attempts: 2,
+      stages: [
+        { name: "render", status: "failed", attempt: 1, warning: "slow" },
+        { name: "render", status: "succeeded", attempt: 2, warning: "slow" },
+        { name: "tts", status: "failed", attempt: 2 },
+      ],
+    } as unknown as JobWithVideo;
+    const s = summarizeJob(retried, [], undefined);
+    expect(s.error?.stage).toBe("tts");
+    expect(s.warnings).toEqual([{ stage: "render", warning: "slow" }]);
+    expect(s.attempts).toBe(2);
+  });
+
+  it("reports why a waiting job is blocked", () => {
+    const waiting = { ...job, status: "waiting_host", error: undefined } as unknown as JobWithVideo;
+    expect(summarizeJob(waiting, [], undefined).blocker?.type).toBe("host_task");
   });
 });
