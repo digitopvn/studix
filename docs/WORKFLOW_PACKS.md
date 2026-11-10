@@ -258,7 +258,8 @@ với `include: ["schemas"]` trả cùng schema. Thương hiệu trong mẫu là
 Pack bắt buộc `brief.directions` (1 đến 6, mỗi direction một quảng cáo). Prompt trơn không có direction
 fail `VALIDATION` ở stage script. Voice-over mỗi quảng cáo phải vừa ngân sách từ theo độ dài (khoảng ba từ
 mỗi giây, `voiceoverWordBudget` trong
-[`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)).
+[`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Bản đọc dài hơn beat được xử lý như ở
+`motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
 
 ```json
 {

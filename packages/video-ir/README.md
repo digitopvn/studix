@@ -21,7 +21,8 @@ Renderer-neutral video intermediate representation (VideoIR) and the creative in
   reproducible; which renderer can draw it is the renderer's `supports()` decision.
 - `audio` tracks have a `kind` (`dialogue`, `voiceover`, `music`, `sfx`), placement (`startMs`,
   `durationMs`, `trimStartMs`), `volume` (0..1), `gainDb` (-60..12, applied on top of volume) and
-  `fadeInMs` / `fadeOutMs` (both must fit inside `durationMs`). See `schemas/audio-track.schema.json`.
+  `fadeInMs` / `fadeOutMs` (both must fit inside `durationMs`) and an optional `playbackRate` (0.5..2,
+  pitch kept; `durationMs` stays timeline time). See `schemas/audio-track.schema.json`.
 
 ## Storyboard
 

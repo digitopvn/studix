@@ -121,7 +121,12 @@ export function audioMixGraph(clips: readonly AudioClip[], totalMs: number): str
     if (clip.fadeInMs > 0) filters.push(`afade=t=in:st=0:d=${sec(clip.fadeInMs)}`);
     if (clip.fadeOutMs > 0)
       filters.push(`afade=t=out:st=${sec(clip.durationMs - clip.fadeOutMs)}:d=${sec(clip.fadeOutMs)}`);
-    if (clip.startMs > 0) filters.push(`adelay=delays=${clip.startMs}:all=1`);
+    if (clip.startMs > 0) {
+      filters.push(`adelay=delays=${clip.startMs}:all=1`);
+      // After atempo, adelay leaves its silent lead without timestamps on FFmpeg 6.1+, and amix then ends the
+      // whole mix at the delay; renumbering the samples gives every frame a real timestamp again.
+      if (rate !== 1) filters.push("asetpts=N/SR/TB");
+    }
     return `[${i}:a:0]${filters.join(",")}[c${i}]`;
   });
   const inputs = clips.map((_, i) => `[c${i}]`).join("");

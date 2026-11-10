@@ -176,7 +176,7 @@ describe("voice-over line tracks", () => {
     expect(track).toMatchObject({ startMs: message.startMs, durationMs: message.roomMs });
     expect(track.playbackRate).toBeGreaterThan(1);
     expect(track.playbackRate).toBeLessThanOrEqual(MAX_VOICE_SPEEDUP);
-    expect(track.fadeOutMs).toBeUndefined();
+    expect(track.fadeOutMs).toBeGreaterThan(0);
   });
 
   it("fails VALIDATION on a take too long to speed up into its beat", () => {

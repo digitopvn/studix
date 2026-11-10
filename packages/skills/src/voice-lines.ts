@@ -41,6 +41,7 @@ export const VOICE_OVERRUN_TOLERANCE_MS = 250;
  */
 export const MAX_VOICE_SPEEDUP = 1.12;
 const OVERRUN_FADE_MS = 150;
+const SPEDUP_FADE_MS = 40;
 
 /**
  * Beats of the video in order: each scene split where a picture (frame or clip) starts, so one beat of a
@@ -177,6 +178,8 @@ export function voiceLineTrack(line: VoiceLine, asset: AssetRef, id: string): Au
       durationMs: line.roomMs,
       volume: 1,
       playbackRate: Math.ceil(rate * 1000) / 1000,
+      // A probe a few ms longer than the provider's figure would end the read on a hard cut.
+      fadeOutMs: SPEDUP_FADE_MS,
     };
   }
   const cut = length !== undefined && length > line.roomMs;
