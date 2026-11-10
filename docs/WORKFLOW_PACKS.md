@@ -269,8 +269,10 @@ mỗi giây, `voiceoverWordBudget` trong
 một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
 ("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
 thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này;
-storyboard của agent mà tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video thì quay về
-template, ghi lý do ở `fallbackReason`, còn beat do `directions[0].beats` đưa vào thì fail `VALIDATION`.
+storyboard của agent mà tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video thì được gửi lại
+cho agent đúng một lượt sửa (kèm lỗi cụ thể: dòng nào, phòng bao nhiêu ms, nên cắt còn bao nhiêu từ; chạy trong
+`MG_STORYBOARD_LIMITS` và ngân sách job, cả hai lượt đều ghi usage `agent.run`; agent chạy ở `agentMode: "host"`
+không có lượt sửa). Chỉ khi lượt sửa vẫn không vừa mới quay về template và ghi lý do ở `fallbackReason`. Còn beat do `directions[0].beats` đưa vào thì fail `VALIDATION`.
 `marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat của nó chứa được, kể cả khi đọc nhanh tới 1.12×. Bản đọc dài hơn beat được xử lý như ở
 `motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
 
