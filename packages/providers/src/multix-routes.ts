@@ -431,6 +431,10 @@ export async function planMultixRequest(
         ...base,
         mode: "sume-job",
         priced: true,
+        // Sume prices an image per option (resolution, quality). When the request leaves an option to the
+        // model, multix bounds the run by the highest listed price and calls that an estimate; it is still a
+        // ceiling for the images asked for, so it is accepted against the cap.
+        costPolicy: "estimate",
         waitTimeoutMs: wait(300_000),
         argv: [
           "sume",

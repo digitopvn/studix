@@ -208,7 +208,9 @@ nằm ở [DEPLOYMENT.md](DEPLOYMENT.md#configuration). Không bật thì mọi 
 Lý do của các ràng buộc:
 
 - **Estimate rồi mới gọi.** Request mang `maxCostCents`; provider từ chối thay vì vượt trần, nên một prompt
-  hay model đắt không tự tiêu quá budget.
+  hay model đắt không tự tiêu quá budget. Ảnh Sume chạy với `--cost-policy estimate`: request không chọn
+  resolution thì catalog khớp nhiều mức giá (1K/2K/4K), multix chỉ chặn được bằng giá cao nhất và gọi đó là
+  ước tính; giá cao nhất này vẫn là trần thật cho số ảnh đã xin, nên được nhận nếu không vượt `maxCostCents`.
 - **Journal trước khi tin vào kết quả.** Job bất đồng bộ được ghi vào journal ngay sau khi submit; retry
   thu job theo id. Atlas Cloud không có idempotency key, nên adapter ghi trạng thái `submitting` ngay
   trước khi gửi; bản ghi `submitting` không có job id thì không gửi lại (có thể đã bị tính tiền).
@@ -225,7 +227,7 @@ Lý do của các ràng buộc:
   retry tìm lại file đã trả tiền thay vì sinh lại. Thư mục bị xóa ở `finalize`; job fail giữ nó cho lần
   retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
 - Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent, bỏ qua kèm `warning` khi
-  thiếu provider SFX), `motion-graphic.voice` (voice), `motion-graphic.music` (music, bỏ qua kèm `warning` khi thiếu
+  lời gọi trả `UNAVAILABLE`; lời gọi dùng cả key của workspace), `motion-graphic.voice` (voice), `motion-graphic.music` (music, bỏ qua kèm `warning` khi thiếu
   provider/key),
   `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).

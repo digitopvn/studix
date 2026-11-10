@@ -149,6 +149,8 @@ function harness(
     agent?: AgentRuntime;
     /** Media kinds whose calls fail before anything is spent, as with a missing provider key. */
     unavailableKinds?: readonly string[];
+    /** Media kinds missing from the provider's shared capability list, as when only a workspace has the key. */
+    unlistedKinds?: readonly string[];
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -158,6 +160,8 @@ function harness(
   const renderer = fakeRenderer();
   const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
   const real = media.generate.bind(media);
+  const listed = media.capabilities.bind(media);
+  media.capabilities = async () => (await listed()).filter((c) => !options.unlistedKinds?.includes(c.kind));
   media.generate = async (c, request) => {
     if (options.unavailableKinds?.includes(request.kind)) {
       throw new StudixError("UNAVAILABLE", "multix is missing a key or setting: ELEVENLABS_API_KEY", {
@@ -748,6 +752,21 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(ir.audio ?? []).toEqual([]);
     expect(ir.scenes.map((sc) => sc.id)).toEqual(["hook", "message-1", "message-2", "cta"]);
     expect(h.qaCalls).toEqual([expect.objectContaining({ requireAudio: false })]);
+  });
+
+  it("adds the SFX accent when the call works although the shared capability list omits sound effects", async () => {
+    const h = harness({ unlistedKinds: ["sfx"] });
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic cho Lá Mây",
+      durationMs: 10_000,
+      keyMessages: ["Trà hái tay mỗi sớm"],
+    });
+    const { job, outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.audio?.map((t) => t.kind)).toEqual(["voiceover", "voiceover", "voiceover", "sfx"]);
+    const stages = await h.jobs.listStages(ctx, job.id);
+    expect(stages.find((st) => st.name === MG_STAGES.accent)?.output?.warning).toBeUndefined();
   });
 
   it("skips the SFX accent with a warning when the media provider cannot make one", async () => {

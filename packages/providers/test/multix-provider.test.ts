@@ -513,7 +513,8 @@ describe("MultixProvider async jobs", () => {
     expect(submit!.slice(-2)).toEqual(["--", "--a lighthouse at dusk"]);
     expect(flagValue(submit!, "idempotency-key")).toMatch(/^studix-[0-9a-f]{40}$/);
     expect(flagValue(submit!, "max-cost")).toBe("1.00");
-    expect(submit).toContain("--cost-policy=strict");
+    // An image left to the model's default resolution is bounded by the highest listed price.
+    expect(submit).toContain("--cost-policy=estimate");
     expect(status!.slice(0, 5)).toEqual(["sume", "status", "job_1", "--wait", "--download"]);
 
     expect(result).toMatchObject({
