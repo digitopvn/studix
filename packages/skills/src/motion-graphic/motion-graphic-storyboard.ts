@@ -196,7 +196,7 @@ export const motionGraphicStoryboardStage: StageDefinition = {
     const { storyboard } = AgentOutput.parse(result.output);
     const { brief } = (s.input as StoryboardInput).outputs.brief;
     const budget = voiceoverWordBudget(lengthOf(brief));
-    const words = spokenLength(storyboard.beats.map((b) => b.voiceover).join(" "));
+    const words = spokenLength(storyboard.beats.map((b) => b.voiceover).join(" "), brief.language);
     // A voiceless graphic speaks none of the lines, so their length does not matter.
     if (brief.voiceover !== false && words > budget) {
       return {

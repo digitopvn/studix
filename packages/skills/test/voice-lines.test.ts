@@ -1,6 +1,7 @@
 import { StudixError } from "@studix/shared";
 import type { AssetRef, VideoIR } from "@studix/video-ir";
 import { describe, expect, it } from "vitest";
+import { spokenLength } from "../src/caption-chunks.ts";
 import { marketingScript } from "../src/marketing-video/marketing-script.ts";
 import { beatKey, marketingVideoIr } from "../src/marketing-video/marketing-video-template.ts";
 import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
@@ -148,6 +149,17 @@ describe("voice-over lines", () => {
     } catch (e) {
       expect((e as StudixError).code).toBe("VALIDATION");
     }
+  });
+
+  it("keeps a line that exactly fills its room, whatever float rounding says", () => {
+    const ir = adIr();
+    const hook = (ir.captions?.cues ?? []).find((c) => c.endMs <= 3000);
+    if (!hook) throw new Error("hook cue missing");
+    // 5.7 words over 1900 ms: 1.9 * 3 is 5.699999… in floating point.
+    hook.endMs = hook.startMs + 1900;
+    hook.text = "bạn studio Studix dựng hơn";
+    expect(spokenLength(hook.text, "vi")).toBe(5.7);
+    expect(() => voiceLines(ir, 0, 20_000)).not.toThrow();
   });
 });
 

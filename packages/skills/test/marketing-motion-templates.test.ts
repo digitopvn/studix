@@ -487,6 +487,29 @@ describe("spoken length", () => {
     expect(spokenLength("")).toBe(0);
   });
 
+  it("reads unaccented Vietnamese, capitals and prices for what they take to say", () => {
+    expect(spokenLength("Mua mot tang mot cuoi tuan nay", "vi")).toBe(7);
+    expect(spokenLength("MUA NGAY HÔM NAY")).toBe(4);
+    expect(spokenLength("Try MCP now")).toBeCloseTo(3.3, 1);
+    expect(spokenLength("Giá chỉ 99.000đ")).toBe(8);
+    expect(spokenLength("Giảm 50% hôm nay")).toBe(7);
+    expect(spokenLength("Cà phê".normalize("NFD"))).toBe(2);
+  });
+
+  it("refuses a marketing beat whose line its beat cannot hold, before any paid stage", () => {
+    const hook = "Studix là studio video AI-native cho marketer bận rộn mỗi ngày";
+    const ad = { ...brief, directions: [{ ...brief.directions[0], hook }] };
+    const err = (() => {
+      try {
+        marketingScript(ad);
+      } catch (e) {
+        return e as StudixError;
+      }
+    })();
+    expect(err?.code).toBe("VALIDATION");
+    expect(err?.message).toContain("longer than its beat");
+  });
+
   it("gives a motion-graphic card the time a mixed-language line takes to say", () => {
     const line = "Studix là studio video AI-native.";
     const ir = motionGraphicTemplate(
@@ -505,7 +528,7 @@ describe("spoken length", () => {
       },
     );
     const room = voiceLines(ir).find((l) => l.text === line)?.roomMs ?? 0;
-    expect(room).toBeGreaterThanOrEqual((spokenLength(line) / VO_WORDS_PER_SECOND) * 1000 - 100);
+    expect(room).toBeGreaterThanOrEqual((spokenLength(line, "vi") / VO_WORDS_PER_SECOND) * 1000);
   });
 });
 

@@ -267,7 +267,9 @@ mỗi giây, `voiceoverWordBudget` trong
 [`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Độ dài đọc đo bằng
 `spokenLength` ([`caption-chunks.ts`](../packages/skills/src/caption-chunks.ts)): mỗi âm tiết tiếng Việt là
 một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
-("AI-native" khoảng ba từ). `motion-graphic` cũng chia thời lượng card theo độ dài này. Bản đọc dài hơn beat được xử lý như ở
+("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ). `motion-graphic` chia thời lượng
+card theo độ dài này; `marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat
+của nó chứa được, kể cả khi đọc nhanh tới 1.12×. Bản đọc dài hơn beat được xử lý như ở
 `motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
 
 ```json
