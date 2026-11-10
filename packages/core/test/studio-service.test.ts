@@ -98,7 +98,7 @@ describe("StudioService.createVideoProject", () => {
     expect(behind.queue?.reason).toContain("1 job holds the worker slots");
     expect((await studio.getJob(ctx, first.job.id)).queue).toBeUndefined();
     // A lease that ran out (crashed worker) is reclaimed first, so it counts ahead and holds no slot.
-    await repos.jobs.update(ctx, first.job.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    await repos.jobs.update(ctx, first.job.id, { leaseExpiresAt: new Date(0) });
     const reclaim = await studio.getJob(ctx, second.job.id);
     expect(reclaim.queue).toMatchObject({ position: 2, running: 0 });
   });
