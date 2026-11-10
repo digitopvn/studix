@@ -83,6 +83,16 @@ describe("agent selection preflight", () => {
       connectionId: "pcon_go",
       provider: "openai",
     });
-    await expect(select(preferences(["plan"]))).resolves.toMatchObject({ runtime: "pi" });
+    // A plan-stage entry never reaches an agent stage, so it does not count.
+    await expect(select(preferences(["plan"]))).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    // Host mode or a planner never resolves a Pi default.
+    await expect(
+      resolveAgentSelection(
+        { providers, modelPreferences: preferences([]) },
+        ctx,
+        { runtime: "pi", providerConnectionId: "pcon_go" },
+        false,
+      ),
+    ).resolves.toMatchObject({ runtime: "pi" });
   });
 });

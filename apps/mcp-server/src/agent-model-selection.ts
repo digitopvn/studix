@@ -73,6 +73,8 @@ export async function resolveAgentSelection(
   deps: Pick<AppDeps, "providers" | "modelPreferences">,
   ctx: TenantContext,
   agent: AgentInput,
+  /** False when the worker will not resolve a Pi default for this job (host mode, or a planner runs it). */
+  needsDefault = true,
 ): Promise<JobAgentSelection> {
   if (!deps.providers) {
     throw new StudixError("UNAVAILABLE", "Provider connections are not configured on this Studix server", {
@@ -112,7 +114,7 @@ export async function resolveAgentSelection(
       );
     }
     assertEffort(ref, reasoning, effort);
-  } else if (agent.runtime === "pi") {
+  } else if (agent.runtime === "pi" && needsDefault) {
     await assertPiDefaultModel(deps, ctx);
   }
   return {
@@ -124,23 +126,18 @@ export async function resolveAgentSelection(
   };
 }
 
-/** Stages a saved model preference can name; a run stage without its own entry uses `default`. */
-const PREFERENCE_STAGES = ["default", "plan"] as const;
-
 /**
- * A Pi agent without a model runs on the default the worker resolves for this caller. Personal defaults
- * apply only to their owner's own jobs, so a workspace API key sees workspace defaults alone; refusing here
- * beats a job that fails at its first agent stage.
+ * A Pi agent without a model runs on the `default` preference the worker resolves for this caller: no run
+ * stage uses another entry. Personal defaults apply only to their owner's own jobs, so a workspace API key
+ * sees workspace defaults alone; refusing here beats a job that fails at its first agent stage.
  */
 async function assertPiDefaultModel(
   deps: Pick<AppDeps, "modelPreferences">,
   ctx: TenantContext,
 ): Promise<void> {
   if (!deps.modelPreferences) return;
-  for (const stage of PREFERENCE_STAGES) {
-    const preview = await deps.modelPreferences.preview(ctx, { runtime: "pi", stage });
-    if (preview.selection) return;
-  }
+  const preview = await deps.modelPreferences.preview(ctx, { runtime: "pi", stage: "default" });
+  if (preview.selection) return;
   throw new StudixError("UNAVAILABLE", "No default model applies to this caller on the pi runtime", {
     retryable: false,
     details: { reason: "no_model_selected" },

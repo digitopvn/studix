@@ -521,6 +521,15 @@ function ModelsCard({
     return c ? `${c.label} (${providerName(catalog, c.provider)})` : "Removed key";
   };
   const canEdit = canEditWorkspace || canEditPersonal;
+  // An admin with a workspace Pi key sets the workspace default, so API keys and every member's jobs use it.
+  // Without one (say a fresh Personal workspace holding only the owner's key) the pick stays personal.
+  const quickScope =
+    canEditWorkspace && (!canEditPersonal || piConnections.some((c) => c.owner === "workspace"))
+      ? "workspace"
+      : "user";
+  const personalDefault = preferences.some(
+    (p) => p.scope === "user" && p.stage === "default" && p.runtime === "pi",
+  );
   const previewKey = preferences.map((p) => p.updatedAt).join();
   return (
     <Section title="AI model">
@@ -531,8 +540,8 @@ function ModelsCard({
         <DefaultModelForm
           catalog={catalog}
           connections={piConnections}
-          // An admin's pick is the workspace default, so API keys and every member's jobs use it too.
-          scope={canEditWorkspace ? "workspace" : "user"}
+          scope={quickScope}
+          shadowed={quickScope === "workspace" && personalDefault}
           busy={busy.has("default")}
           onSave={(input) => act("default", () => api.saveModelPreference(input))}
         />
@@ -605,12 +614,15 @@ function DefaultModelForm({
   catalog,
   connections,
   scope,
+  shadowed,
   busy,
   onSave,
 }: {
   catalog: CatalogProvider[];
   connections: ProviderConnection[];
   scope: "workspace" | "user";
+  /** The caller's own default outranks the workspace one for jobs they start. */
+  shadowed: boolean;
   busy: boolean;
   onSave: (input: Parameters<typeof api.saveModelPreference>[0]) => Promise<void>;
 }) {
@@ -656,9 +668,11 @@ function DefaultModelForm({
         Use this model
       </button>
       <span className="muted">
-        {scope === "workspace"
-          ? "Applies to the whole workspace, API keys included."
-          : "Applies to jobs you start; ask an admin for the workspace default."}
+        {scope === "user"
+          ? "Applies to jobs you start; ask an admin for the workspace default."
+          : shadowed
+            ? "Applies to the whole workspace, API keys included. Your personal default still wins for jobs you start; remove it under Advanced."
+            : "Applies to the whole workspace, API keys included."}
       </span>
     </form>
   );
