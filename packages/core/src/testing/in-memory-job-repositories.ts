@@ -52,8 +52,8 @@ export function createInMemoryJobStore(clock: Clock): { jobs: JobRepository; que
       return {
         ahead: all.filter(
           (j) =>
-            j.status === "queued" &&
-            j.runAfter <= now &&
+            ((j.status === "queued" && j.runAfter <= now) ||
+              (j.status === "running" && (j.leaseExpiresAt ?? now) < now)) &&
             j.attempts < j.maxAttempts &&
             (j.runAfter < job.runAfter || (j.runAfter.getTime() === job.runAfter.getTime() && j.id < job.id)),
         ).length,

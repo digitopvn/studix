@@ -63,6 +63,8 @@ describe("Postgres job queue", () => {
     // A lease that ran out no longer holds a slot.
     await jobs.update(a, holder.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
     expect((await jobs.queueLoad(b, mine)).running).toBe(before.running);
+    // ... but the worker reclaims it before `mine`, so it counts as ahead again.
+    expect((await jobs.queueLoad(b, mine)).ahead).toBe(before.ahead);
   });
 
   it("enqueue is idempotent per workspace, including under concurrency", async () => {

@@ -264,17 +264,20 @@ export function createJobStore(db: StudixDb, clock: Clock): { jobs: JobRepositor
 
     async queueLoad(_ctx, job) {
       const now = clock.now();
-      const claimable = and(
-        eq(jobs.status, "queued"),
-        lte(jobs.runAfter, now),
-        lt(jobs.attempts, jobs.maxAttempts),
-      );
+      // Exactly what claim() takes before this job: queued and due, or running with an expired lease
+      // (a crashed or deployed-over worker), in (run_after, id) order.
       const [ahead] = await db
         .select({ n: count() })
         .from(jobs)
         .where(
           and(
-            claimable,
+            or(
+              and(eq(jobs.status, "queued"), lte(jobs.runAfter, now)),
+              and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, sql`now()`)),
+            ),
+            lt(jobs.attempts, jobs.maxAttempts),
+            // The plain bound lets the claim index stop at this job.
+            lte(jobs.runAfter, job.runAfter),
             or(lt(jobs.runAfter, job.runAfter), and(eq(jobs.runAfter, job.runAfter), lt(jobs.id, job.id))),
           ),
         );

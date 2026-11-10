@@ -180,7 +180,7 @@ Behavior notes:
   `deadlineAt` and reports the budget left as `deadlineRemainingMs`. When
   deploying, drain old workers before new ones park jobs: an old worker claims
   a paused job without re-arming its deadline.
-- A `queued` job view carries `queue`: `position` (1 is next to run), `running` (jobs holding a worker slot, all
+- A `queued` job view from `studix_get_job` (and a replayed create) carries `queue`: `position` (1 is next to run), `running` (jobs holding a worker slot, all
   workspaces; counts only) and a plain `reason`. A job waiting for a scheduled retry has no `position` and names
   its start time. The worker runs few jobs at once, and a long agent job holds its slot until it ends or reaches
   its deadline, so a job behind it waits; read `queue` before assuming it is stuck.
