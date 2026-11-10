@@ -3,7 +3,6 @@ import { StudixError, toStudixError } from "@studix/shared";
 import { CreativeBrief, MotionPreset } from "@studix/video-ir";
 import { createAgentStage, type StageDefinition } from "@studix/workflow";
 import { z } from "zod";
-import { wordCount } from "../caption-chunks.ts";
 import type { KnowledgePack } from "../knowledge/knowledge-pack-schema.ts";
 import { createBm25Index } from "../knowledge/knowledge-search.ts";
 import { compositionTimingPack } from "../knowledge/packs/composition-timing-pack.ts";
@@ -11,6 +10,8 @@ import { motionCraftPack } from "../knowledge/packs/motion-craft-pack.ts";
 import { motionDesignPack } from "../knowledge/packs/motion-design-pack.ts";
 import { voiceoverWordBudget } from "../marketing-video/marketing-script.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
+import { voiceLines } from "../voice-lines.ts";
+import { motionGraphicTemplate } from "./motion-graphic-template.ts";
 import { MOTION_STYLE_PROFILES } from "./motion-style-profiles.ts";
 
 export const MG_STORYBOARD_STAGE = "motion-graphic.storyboard";
@@ -120,7 +121,8 @@ const agentStage = createAgentStage({
     "the brief best. Write three to six beats: a hook that stops the scroll first, the call to action last. " +
     "Each beat has a short on-screen line (a headline, not the voice-over repeated), the line spoken over " +
     "it, the visual of the card, its entrance preset and a weight for its length. The whole voice-over must " +
-    "stay within `wordBudget` words. When `voiceover` is false nothing is spoken: the on-screen lines carry " +
+    "stay within `wordBudget` words, where a Vietnamese syllable is one word and an English word or brand " +
+    'name counts about two thirds of a word per syllable ("AI-native" is about three). When `voiceover` is false nothing is spoken: the on-screen lines carry ' +
     "the message alone, each beat's `voiceover` just repeats its on-screen line, and the weights give every " +
     "card time to be read. Keep the brief's language (Vietnamese keeps its diacritics) and its " +
     "facts; invent no claims, prices or names. Set `music` to a short prompt for an instrumental bed that " +
@@ -161,8 +163,9 @@ const agentChosen = (payload: unknown) => {
  * Brief -> script and storyboard, written by the workspace's agent (harness or MCP host) from the motion
  * knowledge packs. A worker without agent services, or a workspace with no agent model, falls back to the
  * deterministic template and records why, unless the job named its agent: then an agent that cannot run
- * fails the job, so the caller never gets a template graphic it did not ask for. A storyboard whose
- * voice-over overruns the length also falls back (its run is still billed). Caps: MG_STORYBOARD_LIMITS,
+ * fails the job, so the caller never gets a template graphic it did not ask for. A storyboard the template
+ * refuses (its voice-over overruns the length, a card or beat too short for its line) also falls back (its
+ * run is still billed). Caps: MG_STORYBOARD_LIMITS,
  * bounded by the job budget.
  */
 export const motionGraphicStoryboardStage: StageDefinition = {
@@ -194,16 +197,15 @@ export const motionGraphicStoryboardStage: StageDefinition = {
     }
     const { storyboard } = AgentOutput.parse(result.output);
     const { brief } = (s.input as StoryboardInput).outputs.brief;
-    const budget = voiceoverWordBudget(lengthOf(brief));
-    const words = wordCount(storyboard.beats.map((b) => b.voiceover).join(" "));
-    // A voiceless graphic speaks none of the lines, so their length does not matter.
-    if (brief.voiceover !== false && words > budget) {
-      return {
-        ...fallback(
-          `The agent's voice-over has ${words} words; a ${lengthOf(brief) / 1000}s graphic holds ${budget}`,
-        ),
-        usage: result.usage,
-      };
+    // Laid out now as the render will lay it, so a voice-over the graphic cannot hold (over the word
+    // budget, a card shorter than its line, a line past its beat) falls back here instead of failing later.
+    try {
+      const ir = motionGraphicTemplate(brief, { storyboard });
+      if (brief.voiceover !== false) voiceLines(ir);
+    } catch (err) {
+      const e = toStudixError(err);
+      if (e.code !== "VALIDATION") throw err;
+      return { ...fallback(`The agent's storyboard does not fit: ${e.message}`), usage: result.usage };
     }
     return { output: { source: "agent", storyboard }, usage: result.usage };
   },

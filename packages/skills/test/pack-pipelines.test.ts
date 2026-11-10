@@ -839,7 +839,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     const ir = h.renderer.rendered[0] as VideoIR;
     expect(ir.metadata).toMatchObject({ styleProfile: "swiss-kinetic-editorial", storyboard: "agent" });
     expect(ir.scenes.map((sc) => sc.shots[0]?.animation?.enter)).toEqual(["slide-left", "pop", "scale"]);
-    expect(ir.scenes.map((sc) => sc.durationMs)).toEqual([3300, 3600, 3100]);
+    expect(ir.scenes.map((sc) => sc.durationMs)).toEqual([3300, 3500, 3200]);
     expect(ir.format).toMatchObject({ aspectRatio: "16:9", durationMs: 10_000 });
     expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual([
       "music",
@@ -883,6 +883,23 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
     expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(1);
+  });
+
+  it("falls back to the template when the agent's cards cannot each hold their line", async () => {
+    // 10 + 10 + 8 words: 28, inside the 28 a 10 s graphic holds, but rounded up to the 100 ms the cards are
+    // cut in, with the lead-in and closing pads, they need 3700 + 3400 + 3000 ms, more than the 10 s.
+    const words = (n: number) => Array.from({ length: n }, () => "bốn").join(" ");
+    const beats = storyboard.beats.map((b, i) => ({ ...b, voiceover: words([10, 10, 8][i] ?? 8) }));
+    const h = harness({ agent: mockAgent({ storyboard: { ...storyboard, beats } }).runtime });
+    const { job, outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
+    const stages = await h.jobs.listStages(ctx, job.id);
+    const board = stages.find((st) => st.name === MG_STAGES.storyboard);
+    expect(board?.output?.fallbackReason).toMatch(/does not fit/);
   });
 
   it("falls back to the template when the workspace has no agent model", async () => {
