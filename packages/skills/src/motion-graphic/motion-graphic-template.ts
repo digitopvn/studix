@@ -343,20 +343,23 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
     if (i === last) {
-      shots.push({
-        id: "cta-logo",
-        type: "logo",
-        startMs: 0,
-        durationMs,
-        ...(logo ? { assetId: logo.id } : { text: truncateText(brand.name, 60) }),
-        style: {
-          textStyle: "heading",
-          color: inkOn(brand.palette, fill, "accent"),
-          align: "center",
-          region: "top",
-        },
-        animation: { enter, durationMs: 400 },
-      });
+      // The CTA names the brand only with a logo or a real name: with neither, the brand kit's name is the
+      // style profile's, which stands in for the palette and never goes on screen.
+      if (logo || brief.brand || brief.title)
+        shots.push({
+          id: "cta-logo",
+          type: "logo",
+          startMs: 0,
+          durationMs,
+          ...(logo ? { assetId: logo.id } : { text: truncateText(brand.name, 60) }),
+          style: {
+            textStyle: "heading",
+            color: inkOn(brand.palette, fill, "accent"),
+            align: "center",
+            region: "top",
+          },
+          animation: { enter, durationMs: 400 },
+        });
       shots.push({
         id: "cta-text",
         type: "cta",
@@ -403,7 +406,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
   });
   const ir: VideoIR = {
     schemaVersion: 1,
-    title: truncateText(brief.title ?? brand.name, 200),
+    title: truncateText(brief.title ?? brief.brand?.name ?? (lines[0]?.onScreen || "Motion graphic"), 200),
     language,
     format: { aspectRatio, ...ASPECT_RATIO_SIZES[aspectRatio], fps: FPS, durationMs: totalMs },
     brand: logo ? brand : brandNoLogo,
