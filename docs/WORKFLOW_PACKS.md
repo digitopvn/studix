@@ -267,8 +267,9 @@ mỗi giây, `voiceoverWordBudget` trong
 [`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Độ dài đọc đo bằng
 `spokenLength` ([`caption-chunks.ts`](../packages/skills/src/caption-chunks.ts)): mỗi âm tiết tiếng Việt là
 một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
-("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ). `motion-graphic` chia thời lượng
-card theo độ dài này; `marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat
+("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
+thoại như "0901 234 567" đọc từng chữ số). `motion-graphic` chia thời lượng card theo độ dài này, và từ chối
+storyboard có tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video; `marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat
 của nó chứa được, kể cả khi đọc nhanh tới 1.12×. Bản đọc dài hơn beat được xử lý như ở
 `motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
 
@@ -313,7 +314,7 @@ Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prom
 `tone`, `objective` và prompt, hoặc theo `directions[0].visualStyle` nếu trùng id một profile trong
 [`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
-từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
+từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất, tới khi mọi card đủ thời gian đọc câu của nó. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
 nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do
 `directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
 lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`

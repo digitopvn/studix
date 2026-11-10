@@ -160,6 +160,12 @@ describe("voice-over lines", () => {
     hook.text = "bạn studio Studix dựng hơn";
     expect(spokenLength(hook.text, "vi")).toBe(5.7);
     expect(() => voiceLines(ir, 0, 20_000)).not.toThrow();
+    // Sped up as far as the voice stage may, 1697ms still holds 1900ms of speech (floor(1697 × 1.12));
+    // one millisecond less does not.
+    hook.endMs = hook.startMs + 1697;
+    expect(() => voiceLines(ir, 0, 20_000)).not.toThrow();
+    hook.endMs = hook.startMs + 1696;
+    expect(() => voiceLines(ir, 0, 20_000)).toThrow(/does not fit its beat/);
   });
 });
 

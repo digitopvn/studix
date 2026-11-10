@@ -83,19 +83,51 @@ function syllables(part: string): number {
 /**
  * Words a number takes to say: one per digit up to two digits, then about two per non-zero digit (the
  * digit and its place, "hai trăm") and one per thousands group ("nghìn", "triệu"). Errs long, never short.
+ * A run with a leading zero or eight digits and more is a phone number or a code, read a digit at a time.
  */
-function numberLength(digits: string): number {
-  const n = digits.replace(/^0+(?=\d)/, "");
-  if (n.length <= 2) return n.length;
-  const nonZero = n.replace(/0/g, "").length;
-  return Math.max(1, nonZero * 2) + Math.floor((n.length - 1) / 3);
+function numberLength(digits: string, grouped = false): number {
+  if (grouped) return amountLength(digits);
+  if (digits.length >= 8 || (digits.length > 1 && digits.startsWith("0"))) return digits.length;
+  return amountLength(digits);
 }
+
+/** Words an amount takes to say (see `numberLength`). */
+function amountLength(digits: string): number {
+  if (digits.length <= 2) return digits.length;
+  const nonZero = digits.replace(/0/g, "").length;
+  return Math.max(1, nonZero * 2) + Math.floor((digits.length - 1) / 3);
+}
+
+/**
+ * The numbers of one token, in reading order: a thousands-grouped amount ("99.000", "1,500,000"), a day and
+ * month ("12.12", "11/11") read as two numbers, a decimal comma ("4,5": "bốn phẩy năm"), or a plain run.
+ */
+const NUMBER = /\d+(?:[.,]\d{3})+(?!\d)|(\d{1,2})[./](\d{1,2})(?!\d)|(\d+),(\d{1,2})(?!\d)|\d+/g;
+
+function numbersLength(token: string): number {
+  let total = 0;
+  for (const m of token.matchAll(NUMBER)) {
+    if (m[1] !== undefined && m[2] !== undefined) total += numberLength(m[1]) + numberLength(m[2]);
+    else if (m[3] !== undefined && m[4] !== undefined) total += numberLength(m[3]) + 1 + m[4].length;
+    else total += numberLength(m[0].replace(/[.,]/g, ""), /[.,]/.test(m[0]));
+  }
+  return total;
+}
+
+/**
+ * A phone number written in groups ("0901 234 567", "1900-1234", "+84 901 234 567"): digit groups
+ * split by single spaces or dashes, starting with a zero or eight digits long and more.
+ */
+const PHONE = /\+?\d+(?:[ -]\d+)+/g;
 
 /** Words of one letter-only part. */
 function partLength(part: string, vietnamese: boolean, shouting: boolean): number {
   if (VIETNAMESE_MARK.test(part)) return 1;
-  // A short capitalised run is spelled out ("AI", "MCP"), unless the whole line is set in capitals.
-  if (!shouting && /^[A-Z]{2,5}$/.test(part)) return part.length * FOREIGN_SYLLABLE;
+  // A short capitalised run is spelled out ("AI", "MCP"). In a line set all in capitals only a run that
+  // cannot be read as a word is: no vowel ("TV", "HCM") or at most two letters ("AI").
+  if (/^[A-Z]{2,5}$/.test(part) && (!shouting || part.length <= 2 || !/[AEIOUY]/.test(part))) {
+    return part.length * FOREIGN_SYLLABLE;
+  }
   const n = syllables(part);
   // One unaccented syllable of a Vietnamese line is most likely Vietnamese ("la", "va", "cho").
   return vietnamese && n === 1 ? 1 : n * FOREIGN_SYLLABLE;
@@ -106,8 +138,8 @@ function partLength(part: string, vietnamese: boolean, shouting: boolean): numbe
  * syllable is one word, as in `wordCount`. A loanword, brand name or English word counts its syllables at
  * an English pace instead, so "AI-native" weighs what it takes to say, not one word. A line is read as
  * Vietnamese when `language` says so or it carries Vietnamese marks; otherwise every word is English.
- * A number counts what it takes to say (`numberLength`) plus its unit ("50%", "99.000đ", "200k"), an
- * acronym a syllable per letter (not when the whole line is in capitals). Rounded to tenths; for timing, never caption chunking.
+ * A number counts what it takes to say (`numbersLength`; a phone number a digit at a time) plus its unit
+ * ("50%", "99.000đ", "200k"), an acronym a syllable per letter. Rounded to tenths; for timing, never caption chunking.
  */
 export function spokenLength(text: string, language?: string): number {
   const clean = text.normalize("NFD");
@@ -116,14 +148,20 @@ export function spokenLength(text: string, language?: string): number {
   const shouting =
     letters.length > 3 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
   let total = 0;
-  for (const token of clean.trim().split(/\s+/)) {
-    // Digits (with their thousands separators) are read one word each, then a unit glued to them.
-    const digits = token.replace(/(\d)[.,](?=\d)/g, "$1").match(/\d+/g) ?? [];
-    total += digits.reduce((n, d) => n + numberLength(d), 0);
-    const rest = token.replace(/\d+([.,]\d+)*/g, " ").normalize("NFC");
-    for (const raw of rest.split(/[\s\-/_.]+/)) {
+  const read = clean.replace(PHONE, (run) => {
+    const digits = run.replace(/\D/g, "");
+    if (digits.length < 8 && !digits.startsWith("0")) return run;
+    total += digits.length;
+    return " ";
+  });
+  for (const token of read.trim().split(/\s+/)) {
+    // Numbers first (`numbersLength`), then a unit glued to them, then the words left.
+    const numbers = numbersLength(token);
+    total += numbers;
+    const rest = token.replace(NUMBER, " ").normalize("NFC");
+    for (const raw of rest.split(/[\s\-/_.,]+/)) {
       const unit = UNIT_WORDS[raw.toLowerCase()];
-      if (digits.length > 0 && unit !== undefined) {
+      if (numbers > 0 && unit !== undefined) {
         total += unit;
         continue;
       }

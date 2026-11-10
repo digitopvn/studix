@@ -74,7 +74,9 @@ export const MAX_VOICE_SPEEDUP = 1.12;
 
 /** Milliseconds a line takes to say at the budget's pace, from its `spokenLength`; whole ms, rounded up. */
 export function spokenMs(text: string, language?: string): number {
-  return Math.ceil((spokenLength(text, language) / VO_WORDS_PER_SECOND) * 1000);
+  // In whole tenths of a word, so 5.7 words is 1900ms, not the 1901 a float division rounds up to.
+  const tenths = Math.round(spokenLength(text, language) * 10);
+  return Math.ceil((tenths * 100) / VO_WORDS_PER_SECOND);
 }
 
 /** Words of voice-over an ad of `durationMs` can hold. */
@@ -200,8 +202,9 @@ export function marketingScript(input: unknown): MarketingScript {
     const words = wordCount(voiceover);
     const spoken = spokenLength(voiceover, language);
     if (spoken > wordBudget) overBudget.push({ direction: direction.id, words: spoken });
-    // Each beat's line must fit where its captions run (the beat less the lead-in and closing pads), as
-    // the voice stage checks after the paid clips; refusing it here costs nothing.
+    // Each beat's line must fit where its captions run (the beat less the lead-in and closing pads), with
+    // the speed-up the voice stage may give a take, exactly as that stage checks after the paid clips;
+    // refusing it here costs nothing.
     for (const beat of scriptBeats) {
       if (!beat.voiceover) continue;
       const roomMs =

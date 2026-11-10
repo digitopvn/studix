@@ -132,11 +132,13 @@ export function voiceLines(ir: VideoIR, fromMs = 0, toMs = ir.format.durationMs)
     const text = group.map((c) => c.text).join(" ");
     const at = partAt(ir, (first.startMs + last.endMs) / 2);
     const part = i === 0 && at === "message" ? "hook" : at;
-    const most = Math.floor((roomMs / 1000) * VO_WORDS_PER_SECOND);
     const words = spokenLength(text, ir.language);
     // Compared in whole milliseconds against what the voice stage can still lay (a take sped up to
     // `MAX_VOICE_SPEEDUP`), so a line that just fills its room is never refused by float rounding.
-    if (spokenMs(text, ir.language) > Math.floor(roomMs * MAX_VOICE_SPEEDUP)) {
+    const mostMs = Math.floor(roomMs * MAX_VOICE_SPEEDUP);
+    if (spokenMs(text, ir.language) > mostMs) {
+      // The spoken length that still passes, in tenths of a word like `spokenLength`.
+      const most = Math.floor((mostMs * VO_WORDS_PER_SECOND) / 100) / 10;
       throw new StudixError("VALIDATION", `Voice-over line "${text.slice(0, 60)}" does not fit its beat`, {
         retryable: false,
         details: { startMs: first.startMs, roomMs, words, mostWords: most },

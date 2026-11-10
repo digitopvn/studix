@@ -496,6 +496,38 @@ describe("spoken length", () => {
     expect(spokenLength("Cà phê".normalize("NFD"))).toBe(2);
   });
 
+  it("reads sale dates as two numbers, phone numbers a digit at a time and amounts by their places", () => {
+    expect(spokenLength("12.12", "vi")).toBe(4);
+    expect(spokenLength("11/11", "vi")).toBe(4);
+    expect(spokenLength("Gọi ngay 0901 234 567")).toBe(12);
+    expect(spokenLength("Gọi 0901234567")).toBe(11);
+    expect(spokenLength("Hotline 1900-1234")).toBeCloseTo(9.3, 1);
+    expect(spokenLength("10.000.000đ")).toBe(5);
+    expect(spokenLength("Lãi 4,5%")).toBe(6);
+    // All in capitals, a word is read as a word; a run with no vowel is still spelled out.
+    expect(spokenLength("SALE SẬP SÀN TV")).toBeCloseTo(4.7, 1);
+  });
+
+  it("keeps a 15s sale ad with a date hook and a phone call to action", () => {
+    const ad = {
+      ...brief,
+      durationMs: 15_000,
+      callToAction: "Gọi ngay 0901 234 567",
+      directions: [
+        {
+          id: "sale",
+          name: "Sale 12.12",
+          concept: "Flash sale trên sàn thương mại điện tử",
+          hook: "Săn sale 12.12 trên Shopee",
+          keyMessages: ["Giảm đến 50% toàn bộ cửa hàng", "Miễn phí vận chuyển"],
+        },
+      ],
+    };
+    const script = marketingScript(ad);
+    expect(script.ads[0]?.beats).toHaveLength(4);
+    expect(script.ads[0]?.beats.at(-1)?.voiceover).toBe("Gọi ngay 0901 234 567");
+  });
+
   it("refuses a marketing beat whose line its beat cannot hold, before any paid stage", () => {
     const hook = "Studix là studio video AI-native cho marketer bận rộn mỗi ngày";
     const ad = { ...brief, directions: [{ ...brief.directions[0], hook }] };

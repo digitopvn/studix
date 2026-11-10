@@ -100,16 +100,21 @@ const spokenWords = (line: Line) => (line.voiceover ?? "").trim().split(/\s+/).f
 function fitDerived(lines: readonly Line[], totalMs: number, voiced: boolean, language: string): Line[] {
   const out = [...lines];
   const budget = voiceoverWordBudget(totalMs);
-  // Measured like the template's final check: the whole voice-over's spoken length.
-  const length = (lines: readonly string[][]) =>
-    spokenLength(lines.map((w) => w.join(" ")).join(" "), language);
-  const over = () =>
-    voiced ? length(out.map(spokenWords)) > budget : out.length * MIN_SILENT_CARD_MS > totalMs;
+  // Measured like the template's final check: the whole voice-over's spoken length within the budget,
+  // and every card's rounded need (`cardNeeds`) inside the length, so no card comes up short of its line.
+  const tooLong = (lines: readonly string[][]) => {
+    const texts = lines.map((w) => w.join(" "));
+    return (
+      spokenLength(texts.join(" "), language) > budget ||
+      cardNeeds(texts, language).reduce((a, b) => a + b, 0) > totalMs
+    );
+  };
+  const over = () => (voiced ? tooLong(out.map(spokenWords)) : out.length * MIN_SILENT_CARD_MS > totalMs);
   while (out.length > 2 && over()) out.splice(out.length - 2, 1);
-  if (!voiced || length(out.map(spokenWords)) <= budget) return out;
+  if (!voiced || !tooLong(out.map(spokenWords))) return out;
   const said = out.map(spokenWords);
   const cta = said.length - 1;
-  while (length(said) > budget) {
+  while (tooLong(said)) {
     // The line that takes longest to say (not the one with most words) gives up a word first.
     const spoken = said.map((w) => spokenLength(w.join(" "), language));
     let pick = cta;
@@ -206,21 +211,30 @@ function inkOn(
 }
 
 /**
+ * Time each card needs for its voice-over (`spokenMs`, with the lead-in pad on the first card and the
+ * closing pad on the last), rounded up to the 100ms step the cards are cut in. While these sum to at most
+ * the length, every card gets at least its need (`durations`).
+ */
+function cardNeeds(voiceovers: ReadonlyArray<string | undefined>, language: string): number[] {
+  const last = voiceovers.length - 1;
+  return voiceovers.map(
+    (v, i) =>
+      Math.ceil(
+        ((v ? spokenMs(v, language) : 0) + (i === 0 ? VO_PAD_MS : 0) + (i === last ? VO_PAD_MS : 0)) / 100,
+      ) * 100,
+  );
+}
+
+/**
  * Card lengths in 100ms steps: each card gets the time its voice-over takes to say (with the lead-in and
  * closing pads), and the rest of the length is shared in proportion to the lines' weights (even when
  * unweighted), so a long hook never outruns its card.
  */
 function durations(totalMs: number, lines: readonly Line[], language: string): number[] {
   const last = lines.length - 1;
-  const need = lines.map(
-    (l, i) =>
-      // Rounded up to the 100ms step the cards are cut in, so flooring never leaves a card short of its line.
-      Math.ceil(
-        ((l.voiceover ? spokenMs(l.voiceover, language) : 0) +
-          (i === 0 ? VO_PAD_MS : 0) +
-          (i === last ? VO_PAD_MS : 0)) /
-          100,
-      ) * 100,
+  const need = cardNeeds(
+    lines.map((l) => l.voiceover),
+    language,
   );
   const weights = lines.map((l) => l.weight ?? 1);
   const sum = weights.reduce((a, b) => a + b, 0);
@@ -277,10 +291,14 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
   const budget = voiceoverWordBudget(totalMs);
   // Reachable only by a script the template did not derive: a direction's own beats or a storyboard.
   const words = spokenLength(voiceover, language);
-  if (words > budget) {
+  const neededMs = cardNeeds(
+    lines.map((l) => l.voiceover),
+    language,
+  ).reduce((a, b) => a + b, 0);
+  if (words > budget || neededMs > totalMs) {
     throw new StudixError("VALIDATION", `Voice-over is longer than a ${totalMs / 1000}s graphic can hold`, {
       retryable: false,
-      details: { wordBudget: budget, words },
+      details: { wordBudget: budget, words, neededMs, totalMs },
       suggestedAction: `Cut the voice-over to at most ${budget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables), or lengthen the video.`,
     });
   }
