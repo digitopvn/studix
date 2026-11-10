@@ -22,6 +22,8 @@ export interface AudioClip {
   volume: number;
   fadeInMs: number;
   fadeOutMs: number;
+  /** Source speed-up (pitch kept); the clip reads `durationMs × rate` of its source. Absent plays as is. */
+  rate?: number;
 }
 
 /** What the planner needs to know about a source file. */
@@ -49,7 +51,9 @@ export function planAudioClips(
     const info = file ? sources.get(file) : undefined;
     if (!file || !info?.hasAudio) return;
     let durationMs = Math.min(wantedMs, total - clip.startMs);
-    if (info.durationMs > 0) durationMs = Math.min(durationMs, info.durationMs - clip.trimStartMs);
+    const rate = clip.rate ?? 1;
+    if (info.durationMs > 0) durationMs = Math.min(durationMs, (info.durationMs - clip.trimStartMs) / rate);
+    if (rate !== 1) durationMs = Math.floor(durationMs);
     if (durationMs <= 0) return;
     const fadeInMs = Math.min(clip.fadeInMs, durationMs);
     const fadeOutMs = Math.min(clip.fadeOutMs, durationMs - fadeInMs);
@@ -66,6 +70,7 @@ export function planAudioClips(
         volume: track.volume * 10 ** ((track.gainDb ?? 0) / 20),
         fadeInMs: track.fadeInMs ?? 0,
         fadeOutMs: track.fadeOutMs ?? 0,
+        rate: track.playbackRate ?? 1,
       },
       track.assetId,
       track.durationMs ?? total - track.startMs,
@@ -85,6 +90,7 @@ export function planAudioClips(
           volume: 1,
           fadeInMs: 0,
           fadeOutMs: 0,
+          rate: 1,
         },
         shot.assetId,
         shot.durationMs,
@@ -103,16 +109,24 @@ const sec = (ms: number) => (ms / 1000).toFixed(3);
 export function audioMixGraph(clips: readonly AudioClip[], totalMs: number): string {
   if (clips.length === 0) throw new StudixError("INTERNAL", "audio mix needs at least one clip");
   const chains = clips.map((clip, i) => {
+    const rate = clip.rate ?? 1;
     const filters = [
-      `atrim=start=${sec(clip.trimStartMs)}:duration=${sec(clip.durationMs)}`,
+      `atrim=start=${sec(clip.trimStartMs)}:duration=${sec(clip.durationMs * rate)}`,
       "asetpts=PTS-STARTPTS",
+      // atempo keeps the pitch; one stage covers 0.5-2, the range an IR track allows.
+      ...(rate !== 1 ? [`atempo=${rate.toFixed(4)}`] : []),
       `aformat=sample_fmts=fltp:sample_rates=${MIX_SAMPLE_RATE}:channel_layouts=stereo`,
       `volume=${clip.volume.toFixed(4)}`,
     ];
     if (clip.fadeInMs > 0) filters.push(`afade=t=in:st=0:d=${sec(clip.fadeInMs)}`);
     if (clip.fadeOutMs > 0)
       filters.push(`afade=t=out:st=${sec(clip.durationMs - clip.fadeOutMs)}:d=${sec(clip.fadeOutMs)}`);
-    if (clip.startMs > 0) filters.push(`adelay=delays=${clip.startMs}:all=1`);
+    if (clip.startMs > 0) {
+      filters.push(`adelay=delays=${clip.startMs}:all=1`);
+      // After atempo, adelay leaves its silent lead without timestamps on FFmpeg 6.1+, and amix then ends the
+      // whole mix at the delay; renumbering the samples gives every frame a real timestamp again.
+      if (rate !== 1) filters.push("asetpts=N/SR/TB");
+    }
     return `[${i}:a:0]${filters.join(",")}[c${i}]`;
   });
   const inputs = clips.map((_, i) => `[c${i}]`).join("");

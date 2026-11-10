@@ -27,6 +27,11 @@ export const AudioTrack = z.object({
   gainDb: z.number().min(-60).max(12).optional(),
   fadeInMs: z.number().int().min(0).max(10_000).optional(),
   fadeOutMs: z.number().int().min(0).max(10_000).optional(),
+  /**
+   * Plays the source this much faster (pitch kept): `durationMs` stays timeline time and the track reads
+   * `durationMs × playbackRate` of its source. Lets a slightly long voice-over take fit its beat.
+   */
+  playbackRate: z.number().min(0.5).max(2).optional(),
 });
 export type AudioTrack = z.infer<typeof AudioTrack>;
 
