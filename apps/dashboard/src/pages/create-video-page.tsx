@@ -15,7 +15,8 @@ export function CreateVideoPage() {
   const [callToAction, setCallToAction] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("9:16");
   const [seconds, setSeconds] = useState(8);
-  const [language, setLanguage] = useState("en");
+  // "" = detected from the copy, so Vietnamese key messages are not read as English.
+  const [language, setLanguage] = useState("");
   const [pack, setPack] = useState("");
   const [renderPreset, setRenderPreset] = useState<"preview" | "final">("final");
   // "" = the workspace's default agent; otherwise "runtime:connectionId".
@@ -43,8 +44,11 @@ export function CreateVideoPage() {
     .split("\n")
     .map((m) => m.trim())
     .filter(Boolean);
+  // Only marketing-video takes its spoken copy from the form; other packs draft theirs from the prompt,
+  // and a key message would stop the brand-intro pack from drafting its brief.
+  const marketing = pack === "marketing-video";
   // A marketing ad speaks its copy: without a key message there is nothing to open it with.
-  const needsMessages = pack === "marketing-video" && keyMessages.length === 0;
+  const needsMessages = marketing && keyMessages.length === 0;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -56,9 +60,9 @@ export function CreateVideoPage() {
         title: title.trim() || undefined,
         aspectRatio,
         durationMs: Math.round(seconds * 1000),
-        language,
-        ...(keyMessages.length ? { keyMessages } : {}),
-        ...(callToAction.trim() ? { callToAction: callToAction.trim() } : {}),
+        ...(language ? { language } : {}),
+        ...(marketing && keyMessages.length ? { keyMessages } : {}),
+        ...(marketing && callToAction.trim() ? { callToAction: callToAction.trim() } : {}),
         idempotencyKey,
         renderPreset,
         ...(pack ? { workflowTemplate: pack } : {}),
@@ -94,20 +98,24 @@ export function CreateVideoPage() {
             placeholder="Brand intro for Acme Coffee: logo reveal, slogan 'Wake up bold', warm palette."
           />
         </label>
-        <label>
-          Key messages ({pack === "marketing-video" ? "required" : "optional"}, one per line, in the order
-          spoken)
-          <textarea
-            rows={3}
-            value={messages}
-            onChange={(e) => setMessages(e.target.value)}
-            placeholder="Roasted in house every morning"
-          />
-        </label>
-        <label>
-          Call to action (optional)
-          <input value={callToAction} maxLength={200} onChange={(e) => setCallToAction(e.target.value)} />
-        </label>
+        {marketing && (
+          <>
+            <label>
+              Key messages (one per line, in the order spoken; the first opens the ad)
+              <textarea
+                required
+                rows={3}
+                value={messages}
+                onChange={(e) => setMessages(e.target.value)}
+                placeholder="Roasted in house every morning"
+              />
+            </label>
+            <label>
+              Call to action (optional)
+              <input value={callToAction} maxLength={200} onChange={(e) => setCallToAction(e.target.value)} />
+            </label>
+          </>
+        )}
         <label>
           Title (optional)
           <input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
@@ -135,6 +143,7 @@ export function CreateVideoPage() {
           <label>
             Language
             <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+              <option value="">Detect from text</option>
               <option value="en">English</option>
               <option value="vi">Tiếng Việt</option>
             </select>

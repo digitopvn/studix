@@ -9,7 +9,7 @@ import {
 } from "@studix/video-ir";
 import { z } from "zod";
 import { wordCount } from "../caption-chunks.ts";
-import { detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
+import { detectLanguage, normalizeText, truncateText } from "../vietnamese-safe-text.ts";
 
 export const MARKETING_SCRIPT_VERSION = 1;
 /** Length of one ad when the brief names none. */
@@ -80,7 +80,10 @@ const MESSAGE_SHOTS = ["Close-up detail shot", "Medium shot"] as const;
  * type; put into an image prompt, the model paints them as garbled lettering.
  */
 function derivedBeats(direction: CreativeDirection, brief: CreativeBrief, cta: string) {
-  const messages = (direction.keyMessages ?? brief.keyMessages ?? []).slice(0, MESSAGE_SHOTS.length);
+  const messages = (direction.keyMessages ?? brief.keyMessages ?? [])
+    .map(normalizeText)
+    .filter(Boolean)
+    .slice(0, MESSAGE_SHOTS.length);
   const hook = direction.hook ?? direction.name;
   return [
     { visual: `Wide establishing shot. ${direction.concept}`, onScreen: hook, voiceover: hook },
@@ -106,7 +109,7 @@ function derivedBeats(direction: CreativeDirection, brief: CreativeBrief, cta: s
  * neither.
  */
 function briefDirection(brief: CreativeBrief): CreativeDirection {
-  const [first, ...rest] = (brief.keyMessages ?? []).map((m) => m.trim()).filter(Boolean);
+  const [first, ...rest] = (brief.keyMessages ?? []).map(normalizeText).filter(Boolean);
   const brand = brief.brand?.name?.trim();
   const hook = first ?? brand;
   if (!hook) {

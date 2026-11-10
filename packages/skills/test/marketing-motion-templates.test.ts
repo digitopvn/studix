@@ -137,6 +137,13 @@ describe("marketing script", () => {
     });
     const beats = script.ads[0]?.beats ?? [];
     expect(beats.map((b) => b.voiceover)).toEqual([hook, "Giao nhanh", "Tìm hiểu ngay"]);
+    // A direction without messages of its own takes the brief's, cleaned the same way.
+    const directed = marketingScript({
+      ...brief,
+      keyMessages: ["  ", "Trà\n\nngon"],
+      directions: [{ id: "a", name: "A", concept: "Ấm trà buổi sáng." }],
+    });
+    expect(directed.ads[0]?.beats.map((b) => b.voiceover)).toContain("Trà ngon");
   });
 
   it("lets the marketing pack refuse an unscriptable brief before a job is queued", () => {
