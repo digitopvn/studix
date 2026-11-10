@@ -44,6 +44,29 @@ describe("Postgres job queue", () => {
     expect(window).toBeGreaterThan(requested - 10_000);
   });
 
+  it("counts the jobs ahead of a queued job and the slots in use, across workspaces", async () => {
+    const { queue, jobs } = db.current.repos;
+    const a = await tenant("load-a");
+    const b = await tenant("load-b");
+    const holder = (await queue.enqueue(a, enqueueInput("holder"))).job;
+    const mine = (await queue.enqueue(b, enqueueInput("mine"))).job;
+    const later = (await queue.enqueue(a, enqueueInput("later"))).job;
+    // Earlier tests in this file leave queued jobs behind, so compare against what is already there.
+    const before = await jobs.queueLoad(b, mine);
+    const lease = new Date(Date.now() + 60_000);
+    await jobs.update(a, holder.id, { status: "running", lockedBy: "w/0", leaseExpiresAt: lease });
+    const held = await jobs.queueLoad(b, mine);
+    // The holder left the queue and took a slot, in a workspace other than the caller's.
+    expect(held).toEqual({ ahead: before.ahead - 1, running: before.running + 1 });
+    // `mine` is queued ahead of `later`, so `later` has exactly one more job in front of it.
+    expect((await jobs.queueLoad(a, later)).ahead).toBe(held.ahead + 1);
+    // A lease that ran out no longer holds a slot.
+    await jobs.update(a, holder.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    expect((await jobs.queueLoad(b, mine)).running).toBe(before.running);
+    // ... but the worker reclaims it before `mine`, so it counts as ahead again.
+    expect((await jobs.queueLoad(b, mine)).ahead).toBe(before.ahead);
+  });
+
   it("enqueue is idempotent per workspace, including under concurrency", async () => {
     const { queue, jobs } = db.current.repos;
     const a = await tenant("idem-a");
