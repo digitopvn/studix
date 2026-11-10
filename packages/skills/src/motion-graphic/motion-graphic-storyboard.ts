@@ -136,7 +136,7 @@ const agentStageFor = (repair?: Repair) =>
       "Each beat has a short on-screen line (a headline, not the voice-over repeated), the line spoken over " +
       "it, the visual of the card, its entrance preset and a weight for its length. The whole voice-over must " +
       "stay within `wordBudget` words, where a Vietnamese syllable is one word and an English word or brand " +
-      'name counts about two thirds of a word per syllable ("AI-native" is about three). When `voiceover` is false nothing is spoken: the on-screen lines carry " +
+      'name counts about two thirds of a word per syllable ("AI-native" is about three). When `voiceover` is false nothing is spoken: the on-screen lines carry ' +
       "the message alone, each beat's `voiceover` just repeats its on-screen line, and the weights give every " +
       "card time to be read. Keep the brief's language (Vietnamese keeps its diacritics) and its " +
       "facts; invent no claims, prices or names. Set `music` to a short prompt for an instrumental bed that " +
@@ -202,7 +202,7 @@ const costOf = (usage: readonly StageUsage[]) => usage.reduce((sum, u) => sum + 
 
 /**
  * The repair turn: the agent gets its own storyboard back with what does not fit, under the same
- * MG_STORYBOARD_LIMITS, and the job budget less the first run (not yet booked when this runs). Any trouble
+ * MG_STORYBOARD_LIMITS (doubled per granted overrun, like the first run), and the job budget less the first run (not yet booked when this runs). Any trouble
  * of the turn (a cap, no budget left, bad output) just ends it, so the caller falls back to the template;
  * both runs stay on the usage list. A cap never parks the job for an approval here: that would re-run, and
  * re-bill, the first turn when the job resumes.
@@ -220,8 +220,12 @@ async function repairTurn(
       usage: [...first, ...(result.usage ?? [])],
     };
   } catch (err) {
-    if (s.signal.aborted) throw err;
     const spent = err instanceof StageSuspended || err instanceof StageFailedAfterSpend ? err.usage : [];
+    // An abort ends the stage, so the first run's paid usage must travel with the error to be booked.
+    if (s.signal.aborted) {
+      const cause = err instanceof StageFailedAfterSpend ? err.error : toStudixError(err);
+      throw new StageFailedAfterSpend(cause, [...first, ...spent]);
+    }
     const failure = err instanceof Error ? err.message : String(err);
     return { failure: truncateText(failure, 160), usage: [...first, ...spent] };
   }

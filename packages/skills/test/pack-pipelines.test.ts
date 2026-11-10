@@ -924,6 +924,33 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3, 3]);
   });
 
+  it("falls back, billing both runs, when the repair turn itself fails", async () => {
+    let runs = 0;
+    const runtime: AgentRuntime = {
+      id: "mock",
+      run: async () => {
+        runs += 1;
+        if (runs === 2) throw new StudixError("INTERNAL", "agent crashed", { retryable: false });
+        return {
+          output: { storyboard: tight },
+          turns: 1,
+          costCents: 3,
+          inputTokens: 4000,
+          outputTokens: 600,
+          model: "mock-model",
+        };
+      },
+    };
+    const h = harness({ agent: runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
+    expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3]);
+  });
+
   it("falls back to the template after a repair that still does not fit, billing both runs", async () => {
     const agent = sequenceAgent([{ storyboard: tight }]);
     const h = harness({ agent: agent.runtime });
