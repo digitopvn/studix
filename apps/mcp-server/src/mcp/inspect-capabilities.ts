@@ -1,9 +1,17 @@
 import { STUDIX_TOOLS, type TenantContext } from "@studix/core";
-import { ASPECT_RATIOS, exportJsonSchemas, RENDER_PRESETS, VIDEO_IR_SCHEMA_VERSION } from "@studix/video-ir";
+import {
+  ASPECT_RATIOS,
+  exportJsonSchemas,
+  PUBLISHED_SCHEMAS,
+  type PublishedSchemaName,
+  RENDER_PRESETS,
+  VIDEO_IR_SCHEMA_VERSION,
+} from "@studix/video-ir";
 import { type AppLimits, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { SkillSummary } from "../ports.ts";
 
 export const INSPECT_SECTIONS = ["schemas"] as const;
+export const SCHEMA_NAMES = Object.keys(PUBLISHED_SCHEMAS) as [PublishedSchemaName, ...PublishedSchemaName[]];
 
 /** Lazily built once: the JSON Schemas are static for a given build. */
 let cachedSchemas: ReturnType<typeof exportJsonSchemas> | undefined;
@@ -18,12 +26,15 @@ export function inspectCapabilities(input: {
   skills: SkillSummary[];
   toolNames: string[];
   include: ReadonlyArray<(typeof INSPECT_SECTIONS)[number]>;
+  /** Return only these schemas (implies `include: ["schemas"]`); saves tokens against the full set. */
+  schemaNames?: ReadonlyArray<PublishedSchemaName>;
 }) {
   const { limits } = input;
   const capabilities = {
     server: { name: SERVER_NAME, version: SERVER_VERSION },
     workspaceId: input.tenant.workspaceId,
     schemaVersion: VIDEO_IR_SCHEMA_VERSION,
+    schemaNames: SCHEMA_NAMES,
     tools: input.toolNames,
     workflow: [
       `Call ${STUDIX_TOOLS.createVideo} with a prompt (or a brief, or a validated VideoIR spec to skip planning).`,
@@ -53,7 +64,11 @@ export function inspectCapabilities(input: {
     ],
     skills: input.skills,
   };
-  if (!input.include.includes("schemas")) return capabilities;
+  const names = input.schemaNames?.length ? input.schemaNames : undefined;
+  if (!names && !input.include.includes("schemas")) return capabilities;
   cachedSchemas ??= exportJsonSchemas();
-  return { ...capabilities, schemas: cachedSchemas };
+  if (!names) return { ...capabilities, schemas: cachedSchemas };
+  const picked: Partial<typeof cachedSchemas> = {};
+  for (const name of new Set(names)) picked[name] = cachedSchemas[name];
+  return { ...capabilities, schemas: picked };
 }

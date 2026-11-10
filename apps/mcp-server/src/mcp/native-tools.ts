@@ -24,8 +24,9 @@ import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
-import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
+import { INSPECT_SECTIONS, inspectCapabilities, SCHEMA_NAMES } from "./inspect-capabilities.ts";
 import { waitForJobChange } from "./job-notifications.ts";
+import { JOB_VIEWS, summarizeJob } from "./job-summary.ts";
 import { withMediaExecUrls } from "./media-exec-tool.ts";
 import type { ToolImage } from "./tool-envelope.ts";
 
@@ -275,8 +276,11 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.inspect,
     title: "Inspect Studix capabilities",
     description:
-      "Capabilities handshake: versions, formats, limits, workflow templates. include=['schemas'] adds JSON Schemas. Call first.",
-    input: z.object({ include: z.array(z.enum(INSPECT_SECTIONS)).max(4).optional() }),
+      "Capabilities handshake: versions, formats, limits, workflow templates. schemaNames=['creative-brief'] adds just those JSON Schemas; include=['schemas'] adds all. Call first.",
+    input: z.object({
+      include: z.array(z.enum(INSPECT_SECTIONS)).max(4).optional(),
+      schemaNames: z.array(z.enum(SCHEMA_NAMES)).max(SCHEMA_NAMES.length).optional(),
+    }),
     readOnly: true,
     async run(ctx, input) {
       const data = inspectCapabilities({
@@ -285,6 +289,7 @@ export const NATIVE_TOOLS = [
         skills: ctx.deps.skills ?? [],
         toolNames: ctx.toolNames,
         include: input.include ?? [],
+        schemaNames: input.schemaNames,
       });
       const importedSkills = await importedSkillsSummary(ctx);
       return { data: importedSkills ? { ...data, importedSkills } : data, next: [] };
@@ -348,9 +353,10 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.getJob,
     title: "Get job",
     description:
-      "Job status, stages, progress, error with suggestedAction, and a signed MP4 URL once succeeded. waitSeconds holds the call until the status changes, with progress notifications.",
+      "Job status, stages, progress, error with suggestedAction, and a signed MP4 URL once succeeded. view='summary' returns just status, stage, progress, blocker, result, video and cost; default 'detail' adds every stage. waitSeconds holds the call until the status changes, with progress notifications.",
     input: z.object({
       jobId: Id,
+      view: z.enum(JOB_VIEWS).optional(),
       waitSeconds: z.number().int().min(0).max(50).optional(),
     }),
     readOnly: true,
@@ -363,7 +369,7 @@ export const NATIVE_TOOLS = [
         await withMediaExecUrls(ctx.artifacts, ctx.tenant, job),
       );
       const data = job.projectId ? { ...view, reviewUrl: reviewUrl(ctx.deps, job.projectId) } : view;
-      return { data, next: job.next };
+      return { data: input.view === "summary" ? summarizeJob(data) : data, next: job.next };
     },
   }),
   tool({
