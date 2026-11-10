@@ -42,16 +42,16 @@ export interface JobRepository {
   upsertStage(ctx: TenantContext, stage: Omit<NewRecord<Stage>, "id">): Promise<Stage>;
   listStages(ctx: TenantContext, jobId: string): Promise<Stage[]>;
   /**
-   * Where a queued job waits: jobs due before it (any workspace, counts only) and jobs running now.
-   * `undefined` once the job is no longer queued.
+   * How busy the shared queue is for a queued job: jobs that run before it and jobs holding a worker slot
+   * now. Counts only, across every workspace (workers claim across tenants); no ids or tenants leave here.
    */
-  queueWait(ctx: TenantContext, jobId: string): Promise<QueueWait | undefined>;
+  queueLoad(ctx: TenantContext, job: Job): Promise<JobQueueLoad>;
 }
 
-export interface QueueWait {
-  /** Queued jobs that a worker claims before this one. */
+export interface JobQueueLoad {
+  /** Claimable jobs that a worker takes before this one. */
   ahead: number;
-  /** Jobs workers are running right now. */
+  /** Jobs whose lease is live: each holds a worker slot. */
   running: number;
 }
 

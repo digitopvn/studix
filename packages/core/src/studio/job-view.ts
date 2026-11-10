@@ -2,11 +2,12 @@ import { JOB_KINDS, type Job, type Stage } from "../entities/job.ts";
 import { jobAgent } from "../entities/job-agent.ts";
 import type { Approval } from "../entities/review.ts";
 import type { UsageEvent } from "../entities/telemetry.ts";
-import type { QueueWait } from "../repositories/job-repository.ts";
+import type { JobQueueLoad } from "../repositories/job-repository.ts";
 import { AGENT_HANDOFF_TOOLS } from "./agent-handoff-service.ts";
 import { stageRunOf } from "./stage-run.ts";
 import {
   type ApprovalView,
+  type JobQueueView,
   type JobView,
   type NextAction,
   STUDIX_TOOLS,
@@ -134,16 +135,25 @@ function stageRun(s: Stage, spend: JobSpendDetail | undefined) {
   return { run: { ...shown, ...(label ? { connectionLabel: label } : {}) } };
 }
 
-/** The wait reason of a queued job, from the jobs ahead of it and the ones running now. */
-export function queueView(wait: QueueWait | undefined): JobView["queue"] {
-  if (!wait) return undefined;
-  const reason =
-    wait.ahead > 0
-      ? `${wait.ahead} queued job(s) are claimed before this one; ${wait.running} running.`
-      : wait.running > 0
-        ? `Next in line; waiting for a free worker slot (${wait.running} job(s) running).`
-        : "Next in line; a worker claims it within seconds.";
-  return { ...wait, reason };
+/** The wait reason of a queued job: behind other work, or between retries. */
+export function toQueueView(job: Job, load: JobQueueLoad, now: Date): JobQueueView | undefined {
+  if (job.status !== "queued") return undefined;
+  if (job.runAfter > now) {
+    return {
+      running: load.running,
+      reason: `Waiting for its scheduled start at ${job.runAfter.toISOString()}.`,
+    };
+  }
+  const position = load.ahead + 1;
+  const slots = load.running === 1 ? "1 job holds" : `${load.running} jobs hold`;
+  return {
+    position,
+    running: load.running,
+    reason:
+      load.running > 0
+        ? `Queued at position ${position}: ${slots} the worker slots and the job starts when one frees up. A long agent job can hold a slot for up to its deadline.`
+        : `Queued at position ${position}: a worker claims it within seconds.`,
+  };
 }
 
 export function toJobView(
@@ -151,7 +161,7 @@ export function toJobView(
   stages: Stage[],
   approval?: Approval,
   spend?: JobSpendDetail,
-  wait?: QueueWait,
+  queue?: JobQueueView,
 ): JobView {
   return {
     id: job.id,
@@ -184,9 +194,9 @@ export function toJobView(
       ...reviewOf(s),
       ...stageRun(s, spend),
     })),
-    ...(wait ? { queue: queueView(wait) } : {}),
     approval: approval ? toApprovalView(approval) : undefined,
     agent: jobAgent(job),
+    ...(queue ? { queue } : {}),
     next: nextActionsForJob(job, approval),
   };
 }

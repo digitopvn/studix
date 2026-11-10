@@ -21,6 +21,35 @@ const enqueueInput = (key?: string) => ({
   createdBy: { type: "user" as const, id: "usr_1" },
 });
 
+describe("Postgres writes of agent text", () => {
+  it("stores stage outputs, errors and activity events that hold NUL or half an emoji", async () => {
+    const { queue, jobs, activity } = db.current.repos;
+    const ctx = await tenant("agent-text");
+    const { job } = await queue.enqueue(ctx, enqueueInput());
+    const bad = "png\u0000\u0000 cut \uD83D";
+    const stage = await jobs.upsertStage(ctx, {
+      jobId: job.id,
+      name: "skill-agent.run",
+      attempt: 1,
+      status: "failed",
+      output: { [`k\u0000`]: bad },
+      error: { code: "PROVIDER_ERROR", message: bad, retryable: false },
+    });
+    const clean = `png\uFFFD\uFFFD cut \uFFFD`;
+    expect(stage.output).toEqual({ [`k\uFFFD`]: clean });
+    expect(stage.error?.message).toBe(clean);
+    await activity.append(ctx, {
+      name: "agent.event",
+      level: "info",
+      jobId: job.id,
+      message: bad,
+      attributes: { type: "tool_end", result: bad },
+    });
+    const [row] = (await activity.list(ctx, { jobId: job.id })).items;
+    expect(row).toMatchObject({ message: clean, attributes: { result: clean } });
+  });
+});
+
 describe("Postgres job queue", () => {
   it("retry re-arms the window the caller asked for, even for a job that waited at a gate", async () => {
     const { queue, jobs } = db.current.repos;
@@ -39,6 +68,29 @@ describe("Postgres job queue", () => {
     // The window is paused until the next claim, so time queued behind other jobs never uses it up.
     expect(retried.deadlineAt).toBeUndefined();
     expect(retried.deadlineRemainingMs).toBe(job.deadlineWindowMs);
+  });
+
+  it("counts the jobs ahead of a queued job and the slots in use, across workspaces", async () => {
+    const { queue, jobs } = db.current.repos;
+    const a = await tenant("load-a");
+    const b = await tenant("load-b");
+    const holder = (await queue.enqueue(a, enqueueInput("holder"))).job;
+    const mine = (await queue.enqueue(b, enqueueInput("mine"))).job;
+    const later = (await queue.enqueue(a, enqueueInput("later"))).job;
+    // Earlier tests in this file leave queued jobs behind, so compare against what is already there.
+    const before = await jobs.queueLoad(b, mine);
+    const lease = new Date(Date.now() + 60_000);
+    await jobs.update(a, holder.id, { status: "running", lockedBy: "w/0", leaseExpiresAt: lease });
+    const held = await jobs.queueLoad(b, mine);
+    // The holder left the queue and took a slot, in a workspace other than the caller's.
+    expect(held).toEqual({ ahead: before.ahead - 1, running: before.running + 1 });
+    // `mine` is queued ahead of `later`, so `later` has exactly one more job in front of it.
+    expect((await jobs.queueLoad(a, later)).ahead).toBe(held.ahead + 1);
+    // A lease that ran out no longer holds a slot.
+    await jobs.update(a, holder.id, { leaseExpiresAt: new Date(Date.now() - 1000) });
+    expect((await jobs.queueLoad(b, mine)).running).toBe(before.running);
+    // ... but the worker reclaims it before `mine`, so it counts as ahead again.
+    expect((await jobs.queueLoad(b, mine)).ahead).toBe(before.ahead);
   });
 
   it("enqueue is idempotent per workspace, including under concurrency", async () => {

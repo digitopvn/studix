@@ -395,12 +395,21 @@ export interface JobView {
   result?: Record<string, unknown>;
   error?: StudixErrorPayload;
   stages: StageView[];
-  /** Set while the job is queued: why it has not started and how many jobs are in front of it. */
-  queue?: { ahead: number; running: number; reason: string };
   approval?: ApprovalView;
   /** Runtime, model and effort the job's creative stages run on (see `jobAgent`). */
   agent: JobAgentView;
+  /** Why a `queued` job has not started: its place in line, or when its retry is due. */
+  queue?: JobQueueView;
   next: NextAction[];
+}
+
+export interface JobQueueView {
+  /** 1 is next to run; absent while the job waits for a scheduled retry. */
+  position?: number;
+  /** Jobs holding a worker slot now (all workspaces). */
+  running: number;
+  /** Plain-language wait reason for a caller. */
+  reason: string;
 }
 
 export type { Approval, Job };

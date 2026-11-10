@@ -177,15 +177,17 @@ Behavior notes:
   as long as the approval stays valid (7 days) without failing the job with
   `TIMEOUT`; a stage that runs past the remaining budget still does. A job
   created without its own `deadlineSeconds` or `deadlineAt` also starts its
-  default window at its first claim, so time spent queued behind another job
-  never expires it; a deadline the caller sets stays an absolute time from
-  creation. Retry backoff still counts. While paused, the job view has no
+  default window at its first claim, and a retried job starts its window again
+  at its next claim, so time spent queued behind another job never expires it; a
+  deadline the caller sets stays an absolute time from creation. Retry backoff
+  still counts. While paused, the job view has no
   `deadlineAt` and reports the budget left as `deadlineRemainingMs`. When
   deploying, drain old workers before new ones park jobs: an old worker claims
   a paused job without re-arming its deadline.
-- A job that is still `queued` carries `queue`: `ahead` (queued jobs claimed before it, across
-  all workspaces, counts only), `running` (jobs workers run now) and a `reason` sentence, so a
-  caller can tell it waits behind another job instead of being stuck.
+- A `queued` job view from `studix_get_job` (and a replayed create) carries `queue`: `position` (1 is next to run), `running` (jobs holding a worker slot, all
+  workspaces; counts only) and a plain `reason`. A job waiting for a scheduled retry has no `position` and names
+  its start time. The worker runs few jobs at once, and a long agent job holds its slot until it ends or reaches
+  its deadline, so a job behind it waits; read `queue` before assuming it is stuck.
 - `workflowTemplate` is a pack id from the registry in `@studix/skills`
   (`studix_inspect` lists them under `skills`); it defaults to `brand-intro`.
   An unknown id fails with `VALIDATION` before anything is stored, with
@@ -312,7 +314,7 @@ A `failed` job is terminal for the worker, but `studix_retry_job` (`POST /api/jo
 - The failed stage reuses its media job journal: asynchronous upstream jobs (for example Sume and Atlas image and video) that completed are collected, not submitted again, and a call that is still in flight is resumed by its upstream id. Synchronous outputs (some audio routes) are reused from the stage's media directory, which belongs to the job and not to the attempt (`<workRoot>/<jobId>/media/<stage>`; only the media provider writes there and stages never clear it), so a retry on the same worker finds the file and does not pay again. After a move to another worker that local file is gone and the call runs again; the journal only records the upstream job, not the file.
 - Usage events keep their `dedupeKey`, which is tied to the upstream job, so the resume bills no call twice.
 - Gates already decided on the job (approved, or consumed) are read from the database and are not asked again.
-- The job gets a fresh allowance of 3 attempts, and a deadline starts again at the next claim with the window the caller asked for when the job was created (stored with the job, so a job that waited at a gate gets the same window, not a longer one). The budget is not reset: spend so far still counts against `budgetCents`.
+- The job gets a fresh allowance of 3 attempts, and a deadline starts again with the window the caller asked for when the job was created (stored with the job, so a job that waited at a gate gets the same window, not a longer one). The budget is not reset: spend so far still counts against `budgetCents`.
 - Only a `failed` job can be retried (any other status returns `CONFLICT`). `video.publish` jobs cannot (`VALIDATION`: a publish is not idempotent, so start a new one), and neither can a job whose `job.start` approval was expired, rejected or never granted by a person (`APPROVAL_REQUIRED`). Agent stages are not retried automatically, but a manual retry re-runs a failed agent stage and its spend is billed again.
 - The caller needs the `job:retry` permission (owner, admin and editor roles; API keys need the scope). Migration `0012` adds the scope to keys issued before it existed whose scopes were exactly the editor, admin or owner set, so they keep their role label; a key with any other scope set is `custom` and needs a new key that includes `job:retry`.
 - A retried render job only moves its project to `in_review` while the project is still `rendering`, so a later status set by anything else (a newer review decision, an archive) is not overwritten.

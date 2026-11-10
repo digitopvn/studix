@@ -24,7 +24,7 @@ import {
   toJob,
   upsertStageRow,
 } from "@studix/database";
-import { type Clock, type StudixErrorPayload, systemClock } from "@studix/shared";
+import { type Clock, type StudixErrorPayload, storableJson, systemClock } from "@studix/shared";
 import { and, asc, eq, inArray, lt, lte, ne, or, type SQL, sql } from "drizzle-orm";
 
 const { jobs, approvals, stages, agentHandoffs } = schema;
@@ -305,7 +305,14 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
   const finish = async (job: Job, workerId: string, set: JobSet): Promise<boolean> => {
     const rows = await db
       .update(jobs)
-      .set({ ...set, lockedBy: null, leaseExpiresAt: null, updatedAt: clock.now() })
+      .set({
+        ...set,
+        // A failure message can quote agent output; text Postgres cannot store would lose the outcome.
+        ...(set.error ? { error: storableJson(set.error) } : {}),
+        lockedBy: null,
+        leaseExpiresAt: null,
+        updatedAt: clock.now(),
+      })
       .where(owned(job, workerId))
       .returning({ id: jobs.id });
     return rows.length === 1;

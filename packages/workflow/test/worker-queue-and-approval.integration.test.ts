@@ -50,7 +50,7 @@ async function enqueuePublish(ctx: TenantContext, deadlineAt?: Date): Promise<Jo
 }
 
 describe("worker queue", () => {
-  it("keeps long agent jobs out of the light lane and reports where a queued job waits", async () => {
+  it("keeps long agent jobs out of the light lane", async () => {
     const ctx = await tenant(db.current, "lanes");
     const { queue: producer } = db.current.repos;
     const agent = await producer.enqueue(ctx, {
@@ -60,8 +60,6 @@ describe("worker queue", () => {
     });
     const video = await producer.enqueue(ctx, { kind: "video.create", payload: {}, createdBy: human });
     const queue = createWorkerJobQueue(db.current.db, { leaseMs: 30_000 });
-
-    expect(await db.current.repos.jobs.queueWait(ctx, video.job.id)).toEqual({ ahead: 1, running: 0 });
 
     const light = await queue.claim("w-light", { skipLongAgentJobs: true });
     expect(light?.id).toBe(video.job.id);
@@ -77,7 +75,6 @@ describe("worker queue", () => {
 
     const heavy = await queue.claim("w-any");
     expect(heavy?.id).toBe(agent.job.id);
-    expect(await db.current.repos.jobs.queueWait(ctx, agent.job.id)).toBeUndefined();
   });
 
   it("starts a default deadline at the first claim", async () => {
