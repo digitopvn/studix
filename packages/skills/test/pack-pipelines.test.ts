@@ -262,7 +262,7 @@ function harness(
   });
 
   let seq = 0;
-  async function run(payload: Record<string, unknown>, projectId: string) {
+  async function run(payload: Record<string, unknown>, projectId: string, jobFields: Partial<Job> = {}) {
     const job = {
       id: `job_${++seq}`,
       organizationId: ctx.organizationId,
@@ -277,6 +277,7 @@ function harness(
       spentCents: 0,
       cancelRequested: false,
       createdBy: actor,
+      ...jobFields,
     } as unknown as Job;
     const outcome = await executor.execute(job, "worker-1", new AbortController().signal);
     return { job, outcome };
@@ -872,17 +873,90 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(music?.output?.warning).toMatch(/Music bed skipped: .*ELEVENLABS_API_KEY/);
   });
 
+  /** An agent that answers each run with the next output of `outputs` (the last repeats), billing 3¢ a run. */
+  const sequenceAgent = (outputs: unknown[]) => {
+    const tasks: AgentTask[] = [];
+    const runtime: AgentRuntime = {
+      id: "mock",
+      run: async (_ctx, task) => {
+        const output = outputs[Math.min(tasks.length, outputs.length - 1)];
+        tasks.push(task);
+        return { output, turns: 1, costCents: 3, inputTokens: 4000, outputTokens: 600, model: "mock-model" };
+      },
+    };
+    return { runtime, tasks };
+  };
+  const words = (n: number) => Array.from({ length: n }, (_, i) => `từ${i}`).join(" ");
+  /** 10 + 10 + 8 words: within the 28-word budget, but the rounded cards cannot hold the first two lines. */
+  const tight = {
+    ...storyboard,
+    beats: storyboard.beats.map((b, i) => ({ ...b, weight: 1, voiceover: words([10, 10, 8][i] as number) })),
+  };
+  const shorter = {
+    ...storyboard,
+    beats: storyboard.beats.map((b, i) => ({ ...b, weight: 1, voiceover: words([8, 8, 8][i] as number) })),
+  };
+
+  it("sends a storyboard that does not fit back to the agent once and uses the repaired one", async () => {
+    const agent = sequenceAgent([{ storyboard: tight }, { storyboard: shorter }]);
+    const h = harness({ agent: agent.runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(agent.tasks).toHaveLength(2);
+    const second = agent.tasks[1]?.input as { repair?: { previous: unknown; problem: string } };
+    expect(second.repair?.previous).toMatchObject({ beats: expect.any(Array) });
+    expect(second.repair?.problem).toMatch(/does not fit its beat.*Cut the line to at most \d+ words/s);
+    expect(agent.tasks[1]?.maxCostCents).toBeLessThanOrEqual(MG_STORYBOARD_LIMITS.maxCostCents);
+    expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("agent");
+    expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3, 3]);
+  });
+
+  it("falls back to the template, both runs billed, when the repair still does not fit", async () => {
+    const agent = sequenceAgent([{ storyboard: tight }]);
+    const h = harness({ agent: agent.runtime });
+    const { job, outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(agent.tasks).toHaveLength(2);
+    expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
+    expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3, 3]);
+    const stage = (await h.jobs.listStages(ctx, job.id)).find((st) => st.name === MG_STAGES.storyboard);
+    expect(stage?.output?.fallbackReason).toMatch(/does not fit after one repair/);
+  });
+
+  it("does not run a repair the job budget cannot pay for", async () => {
+    const agent = sequenceAgent([{ storyboard: tight }]);
+    const h = harness({ agent: agent.runtime });
+    // The budget covers the first run only; later paid stages are not the subject here.
+    const { job } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+      { budgetCents: 3 },
+    );
+    expect(agent.tasks).toHaveLength(1);
+    const stage = (await h.jobs.listStages(ctx, job.id)).find((st) => st.name === MG_STAGES.storyboard);
+    expect(stage?.output).toMatchObject({ source: "template" });
+    expect(stage?.output?.fallbackReason).toMatch(/no budget left to repair/);
+    expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(1);
+  });
+
   it("falls back to the template, billed, when the agent's voice-over overruns the length", async () => {
     const long = "một hai ba bốn năm sáu bảy tám chín mười ".repeat(4).trim();
     const beats = storyboard.beats.map((b) => ({ ...b, voiceover: long }));
-    const h = harness({ agent: mockAgent({ storyboard: { ...storyboard, beats } }).runtime });
+    const agent = sequenceAgent([{ storyboard: { ...storyboard, beats } }]);
+    const h = harness({ agent: agent.runtime });
     const { outcome } = await h.run(
       { workflowTemplate: "motion-graphic" },
       await newProject(h, "motion-graphic", graphic),
     );
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
-    expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(1);
+    expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(2);
   });
 
   it("falls back to the template when the workspace has no agent model", async () => {
