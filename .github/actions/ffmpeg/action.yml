@@ -1,6 +1,13 @@
 # Pinned static FFmpeg + ffprobe, cached, so CI never depends on the Ubuntu apt mirror for them.
 name: ffmpeg
 description: Install a version- and checksum-pinned static FFmpeg onto PATH.
+inputs:
+  version:
+    description: FFmpeg release to install.
+    default: "6.0.1"
+  sha256:
+    description: sha256 of that release's amd64 static tarball.
+    default: 28268bf402f1083833ea269331587f60a242848880073be8016501d864bd07a5
 runs:
   using: composite
   steps:
@@ -9,13 +16,13 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.cache/ffmpeg-static
-        key: ffmpeg-static-${{ runner.os }}-${{ runner.arch }}-6.0.1-28268bf4
+        key: ffmpeg-static-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-${{ inputs.sha256 }}
 
     - name: Install FFmpeg
       shell: bash
       env:
-        FFMPEG_VERSION: "6.0.1"
-        FFMPEG_SHA256: 28268bf402f1083833ea269331587f60a242848880073be8016501d864bd07a5
+        FFMPEG_VERSION: ${{ inputs.version }}
+        FFMPEG_SHA256: ${{ inputs.sha256 }}
         CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
       run: |
         set -euo pipefail
@@ -39,4 +46,4 @@ runs:
           rm -f "$archive"
         fi
         echo "$dir" >> "$GITHUB_PATH"
-        "$dir/ffmpeg" -version | head -1
+        "$dir/ffmpeg" -version | sed -n 1p
