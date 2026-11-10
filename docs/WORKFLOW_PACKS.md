@@ -268,9 +268,10 @@ mỗi giây, `voiceoverWordBudget` trong
 `spokenLength` ([`caption-chunks.ts`](../packages/skills/src/caption-chunks.ts)): mỗi âm tiết tiếng Việt là
 một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
 ("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
-thoại như "0901 234 567" đọc từng chữ số). `motion-graphic` chia thời lượng card theo độ dài này, và từ chối
-storyboard có tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video; `marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat
-của nó chứa được, kể cả khi đọc nhanh tới 1.12×. Bản đọc dài hơn beat được xử lý như ở
+thoại như "0901 234 567" đọc từng chữ số). `motion-graphic` chia thời lượng card theo độ dài này;
+storyboard của agent mà tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video thì quay về
+template, ghi lý do ở `fallbackReason`, còn beat do `directions[0].beats` đưa vào thì fail `VALIDATION`.
+`marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat của nó chứa được, kể cả khi đọc nhanh tới 1.12×. Bản đọc dài hơn beat được xử lý như ở
 `motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
 
 ```json
