@@ -46,6 +46,11 @@ export interface WorkflowPack {
    * run the engine's default plan -> render chain.
    */
   pipeline?: PackPipeline;
+  /**
+   * Checks a create request's brief before the job is accepted, so a brief this pack can never script is
+   * refused up front instead of failing a queued job. Throws a StudixError; must be pure and free.
+   */
+  checkBrief?: (brief: unknown) => void;
 }
 
 export interface PackRegistry {

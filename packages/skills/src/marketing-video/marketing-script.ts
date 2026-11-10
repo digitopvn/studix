@@ -99,6 +99,33 @@ function derivedBeats(direction: CreativeDirection, brief: CreativeBrief, cta: s
 }
 
 /**
+ * The one ad of a brief that names no directions, drawn from the brief itself: the first key message is
+ * the hook, the rest are the messages and the prompt is the concept. The hook is spoken, so it comes from
+ * copy the user wrote for the audience (a key message, else the brand name), never from the prompt, which
+ * is an instruction to Studix. Throws VALIDATION when the brief has neither.
+ */
+function briefDirection(brief: CreativeBrief): CreativeDirection {
+  const [first, ...rest] = brief.keyMessages ?? [];
+  const hook = first?.trim() || brief.brand?.name?.trim();
+  if (!hook) {
+    throw new StudixError("VALIDATION", "A marketing-video brief needs creative directions or key messages", {
+      retryable: false,
+      details: { field: "directions" },
+      suggestedAction:
+        "Add brief.keyMessages (the first one opens the ad), or brief.directions: one { id, name, concept } " +
+        "per ad (see studix_inspect schemas).",
+    });
+  }
+  return {
+    id: "main",
+    name: truncateText(brief.brand?.name?.trim() || hook, 120),
+    concept: truncateText(brief.prompt, 1000),
+    hook: truncateText(hook, 200),
+    keyMessages: rest.slice(0, 6),
+  };
+}
+
+/**
  * Beat timing: the hook gets at most `HOOK_MAX_MS`, the rest share what is left in whole 100ms steps and
  * the last beat absorbs the rounding remainder.
  */
@@ -115,20 +142,14 @@ function beatTimes(count: number, totalMs: number): Array<{ startMs: number; dur
 }
 
 /**
- * Script of a marketing brief: one ad per creative direction, each `durationMs` long (default 20s, 9:16,
- * Vietnamese when the copy is). Deterministic. Throws VALIDATION when the brief has no directions, or when
- * an ad's voice-over does not fit the word budget, before anything is generated or charged.
+ * Script of a marketing brief: one ad per creative direction (one drawn from the brief when it names none),
+ * each `durationMs` long (default 20s, 9:16, Vietnamese when the copy is). Deterministic. Throws VALIDATION
+ * when no direction can be drawn, or when an ad's voice-over does not fit the word budget, before anything
+ * is generated or charged.
  */
 export function marketingScript(input: unknown): MarketingScript {
   const brief = unwrapValidation(validateCreativeBrief(input), "creative brief");
-  const directions = brief.directions ?? [];
-  if (directions.length === 0) {
-    throw new StudixError("VALIDATION", "A marketing-video brief needs at least one creative direction", {
-      retryable: false,
-      details: { field: "directions" },
-      suggestedAction: "Add brief.directions: one { id, name, concept } per ad (see studix_inspect schemas).",
-    });
-  }
+  const directions = brief.directions ?? [briefDirection(brief)];
   const aspectRatio: AspectRatio = brief.aspectRatio ?? "9:16";
   const durationMs = Math.min(
     MARKETING_MAX_MS,

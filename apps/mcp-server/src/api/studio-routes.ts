@@ -123,13 +123,15 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
     // A job a planner runs never resolves a Pi default, so only the rest need one.
     const agent = body.agent ? await resolveAgentSelection(deps, ctx, body.agent, !planner) : undefined;
     const roles = await resolveAgentRoles(deps, ctx, body.roles);
+    const brief = {
+      prompt: body.prompt,
+      ...(body.aspectRatio ? { aspectRatio: body.aspectRatio } : {}),
+      ...(body.durationMs ? { durationMs: body.durationMs } : {}),
+      ...(body.language ? { language: body.language } : {}),
+    };
+    pack.checkBrief?.(brief);
     const result = await deps.studio.createVideoProject(ctx, {
-      brief: {
-        prompt: body.prompt,
-        ...(body.aspectRatio ? { aspectRatio: body.aspectRatio } : {}),
-        ...(body.durationMs ? { durationMs: body.durationMs } : {}),
-        ...(body.language ? { language: body.language } : {}),
-      },
+      brief,
       title: body.title,
       budgetCents: body.budgetCents,
       idempotencyKey: body.idempotencyKey,

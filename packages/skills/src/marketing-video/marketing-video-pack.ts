@@ -868,4 +868,6 @@ export const marketingVideoPack: WorkflowPack = {
     marketingPublishStage,
   ],
   pipeline: marketingVideoPipeline,
+  // The script stage is deterministic, so running it here refuses a brief it would reject later.
+  checkBrief: (brief) => void marketingScript(brief),
 };

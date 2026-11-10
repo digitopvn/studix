@@ -189,8 +189,11 @@ Behavior notes:
   (for example the motion-graphic storyboard) run on that Claude connection and
   model; with the default pack the Claude planner writes the IR.
 - `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
-  entry (1 to 6), all sharing the brief's brand, language, format and length
-  (default 20 s, 9:16). The create job writes the script, generates one
+  entry (1 to 6); a brief without directions makes one ad whose hook is its
+  first key message (else the brand name), and a brief with neither is refused
+  with `VALIDATION` before any job is created. All ads share the brief's brand,
+  language, format and length (default 20 s, 9:16). The create job writes the
+  script, generates one
   storyboard frame per beat and stops with the project `in_review`; it runs no
   image-to-video, voice or music. Frame prompts describe the scene only. Beats
   derived from a direction never carry its hook or messages, and the brand name
