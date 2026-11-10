@@ -212,7 +212,7 @@ export const motionGraphicStoryboardStage: StageDefinition = {
     }
     const { storyboard } = AgentOutput.parse(result.output);
     const { brief } = (s.input as StoryboardInput).outputs.brief;
-    const problem = fitProblem(brief, storyboard);
+    const problem = fitProblemBilled(brief, storyboard, result.usage ?? []);
     if (!problem) return { output: { source: "agent", storyboard }, usage: result.usage };
     // A host agent answers a round once and the stage cannot send it a second task, so only the worker's own
     // agent gets the repair turn.
@@ -251,6 +251,15 @@ export function fitProblem(brief: CreativeBrief, storyboard: MotionStoryboard): 
   }
 }
 
+/** `fitProblem` for a storyboard the agent already billed: an unexpected error keeps that spend recorded. */
+function fitProblemBilled(brief: CreativeBrief, storyboard: MotionStoryboard, usage: StageUsage[]) {
+  try {
+    return fitProblem(brief, storyboard);
+  } catch (err) {
+    throw new StageFailedAfterSpend(toStudixError(err), usage);
+  }
+}
+
 /**
  * The one repair turn: the agent gets its storyboard back with the problem and writes it again, within the
  * stage limits and what is left of the job budget (the first run's cost counted). A second storyboard that
@@ -269,10 +278,21 @@ async function repaired(
     input: { ...(s.input as StoryboardInput), repair: { previous, problem } },
     job: { ...s.job, spentCents: s.job.spentCents + usageCents(spent) },
   };
+  if (s.signal.aborted) throw new StageFailedAfterSpend(toStudixError(s.signal.reason), spent);
+  // On cancel the runner waits only briefly for the stage to settle: report the first run's cost at once
+  // instead of after the repair stops.
+  const aborted = new Promise<never>((_, reject) =>
+    s.signal.addEventListener(
+      "abort",
+      () => reject(new StageFailedAfterSpend(toStudixError(s.signal.reason), spent)),
+      { once: true },
+    ),
+  );
   let result: Awaited<ReturnType<StageDefinition["run"]>>;
   try {
-    result = await agentStage.run(turn);
+    result = await Promise.race([agentStage.run(turn), aborted]);
   } catch (err) {
+    if (err instanceof StageFailedAfterSpend && s.signal.aborted) throw err;
     const billed = [
       ...spent,
       ...(err instanceof StageSuspended || err instanceof StageFailedAfterSpend ? err.usage : []),
@@ -287,6 +307,6 @@ async function repaired(
   }
   const usage = [...spent, ...(result.usage ?? [])];
   const { storyboard } = AgentOutput.parse(result.output);
-  const still = fitProblem(brief, storyboard);
+  const still = fitProblemBilled(brief, storyboard, usage);
   return still ? unfit(still, usage, true) : { output: { source: "agent" as const, storyboard }, usage };
 }

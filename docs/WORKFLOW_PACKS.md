@@ -322,3 +322,105 @@ card) được gửi lại cho agent đúng một lượt sửa, kèm câu nào 
 trong `MG_STORYBOARD_LIMITS` và phần ngân sách còn lại của job; chỉ khi lượt sửa vẫn không vừa (hoặc hết
 ngân sách) job mới dùng template, ghi `fallbackReason`. Cả hai lượt đều tính usage `agent.run`. Chế độ
 `agentMode: "host"` không có lượt sửa.
+
+
+```json
+{
+  "workflowTemplate": "motion-graphic",
+  "brief": {
+    "prompt": "Motion graphic dọc 15 giây giới thiệu gói cà phê giao hằng tuần của Sương Mai",
+    "title": "Cà phê tươi mỗi tuần",
+    "language": "vi",
+    "objective": "launch",
+    "tone": ["năng động", "ấm áp"],
+    "keyMessages": ["Rang mộc mỗi sáng", "Giao tận nhà mỗi thứ Hai", "Huỷ bất cứ lúc nào"],
+    "callToAction": "Đăng ký ngay hôm nay",
+    "aspectRatio": "9:16",
+    "durationMs": 15000
+  },
+  "idempotencyKey": "suong-mai-mg-001",
+  "budgetCents": 300
+}
+```
+
+### anime
+
+Brief chỉ là đầu vào cho agent viết scope (series bible và beat sheet); luật tier và độ dài shot áp lên
+scope đó trước G0 ([`anime-pack.ts`](../packages/skills/src/narrative-film/anime-pack.ts)). Ở mode
+`harness` (mặc định) worker tự chạy agent bằng key và model của workspace (xem
+[Agent stage trong worker](#agent-stage-trong-worker)). Với `agentMode: "host"`, agent của MCP client nhận
+task qua các tool handoff ([MCP_API.md](MCP_API.md#agent-stage-handoff-tools)). Job dừng ở G0 và G1 chờ
+người ký trên dashboard.
+
+```json
+{
+  "workflowTemplate": "anime",
+  "agentMode": "host",
+  "brief": {
+    "prompt": "Một cảnh anime 15 giây: cô bé giao thư đạp xe qua con dốc ven biển lúc hoàng hôn, dừng lại nhặt lá thư bị gió thổi bay và nói một câu với chú mèo đi theo",
+    "title": "Lá thư trên dốc gió",
+    "language": "vi",
+    "tone": ["ấm áp", "hoài niệm"],
+    "aspectRatio": "16:9",
+    "durationMs": 15000,
+    "constraints": ["Nhân vật và bối cảnh là nguyên bản, không mô phỏng phim hay studio có thật"]
+  },
+  "idempotencyKey": "la-thu-doc-gio-001",
+  "budgetCents": 900
+}
+```
+
+Script smoke [`smoke-video.ts`](../apps/mcp-server/scripts/smoke-video.ts) chỉ gọi pack mặc định
+(`brand-intro`) với một prompt; nó không thay cho ba mẫu trên.
+
+## Pack `skill-agent`
+
+Agent của job (Claude Code, Pi hoặc Codex) tự dựng và render video trong skill sandbox, theo đúng
+SKILL.md của skill được bật. Studix chỉ đặt contract đầu ra (1080p, thời lượng ±0.5 s, có voice-over,
+-16 LUFS ±2, true peak ≤ -1 dBTP) và kiểm lại file trước khi lưu; file sai contract làm job lỗi
+`VALIDATION`. Cần `STUDIX_SANDBOX=docker`. Stage chỉ giữ trước tối đa phần budget còn lại của job (cap 800¢), nên
+budget nhỏ hơn chỉ giới hạn lượt chạy chứ không làm job fail. Deadline mặc định là 60 phút, tính từ lúc worker
+nhận job. Model không có vision được gợi ý soát khung hình bằng `multix gemini analyze` khi sandbox có
+`GEMINI_API_KEY`. Quyết định ở
+[ADR-0022](decisions/0022-agentic-video-authoring.md).
+
+## Giới hạn của QA gate
+
+Stage `<pack>.qa` chỉ đo thông số kỹ thuật của file render và không chấm thẩm mỹ. Phạm vi và giới hạn
+của nó ở [QA.md](QA.md#sandbox-và-giới-hạn).
+
+## Xử lý lỗi thường gặp
+
+Mã lỗi và thông điệp dưới đây lấy từ code; `error.details` và `error.suggestedAction` của job mang phần
+còn lại. Bảng chung cho client: [MCP_API.md](MCP_API.md#troubleshooting).
+
+| Triệu chứng                                                                                                       | Nguyên nhân                                                                                                                   | Xử lý                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `VALIDATION` "Unknown workflowTemplate ..." khi gọi `studix_create_video`                                         | Id không có trong registry; `details.available` liệt kê id đã đăng ký                                                         | Dùng một id trong danh sách; pack mới phải được đăng ký ở `skill-registry.ts`                                                        |
+| Job `failed` với `VALIDATION` "Unknown workflowTemplate ..."                                                      | Project được tạo với pack mà registry của worker không có (`packPipelines`), ví dụ app và worker chạy hai phiên bản khác nhau | Deploy cùng phiên bản cho app và worker                                                                                              |
+| `VALIDATION` "Invalid input for stage ..."                                                                        | `inputSchema` không parse được `{ payload, outputs }`; `details.issues` chỉ field                                             | Sửa payload, hoặc stage trước không tạo output stage này cần (thứ tự pipeline sai)                                                   |
+| `VALIDATION` "A marketing-video brief needs creative directions or key messages"                                  | Gửi prompt trơn cho `marketing-video`                                                                                         | Gửi `brief.keyMessages` hoặc `brief.directions` như [mẫu](#marketing-video)                                                          |
+| `VALIDATION` "Voice-over is longer than a ...s ad can hold" (hoặc "graphic")                                      | Voice-over vượt ngân sách từ; `details.wordBudget`                                                                            | Rút gọn hook, message, CTA hoặc tăng `durationMs`                                                                                    |
+| `APPROVAL_REQUIRED` "Stage ... needs an approved storyboard"                                                      | Stage có `requiresApprovedStoryboard` chạy khi storyboard chưa `approved`; `details.storyboardStatus`                         | Thành viên workspace duyệt storyboard trên trang review, rồi gọi `studix_render`                                                     |
+| `APPROVAL_REQUIRED` "G<n> needs a person's approval"                                                              | Approval policy miễn `creative.gate`, cấu hình sai                                                                            | Giữ `creative.gate` trong nhóm luôn cần duyệt của policy                                                                             |
+| `FORBIDDEN` "... was rejected by a reviewer"                                                                      | Người duyệt từ chối gate; `details.comment`                                                                                   | Xử lý góp ý, tạo job mới                                                                                                             |
+| `UNAVAILABLE` "Stage needs the ... service, which this worker lacks"                                              | `requireService`: worker không nối service đó                                                                                 | Nối service trong worker ([DEPLOYMENT.md](DEPLOYMENT.md#configuration))                                                              |
+| `UNAVAILABLE` "The Multix provider is not configured"                                                             | Stage trả tiền chạy trên worker chưa bật multix                                                                               | Bật multix cho worker theo [DEPLOYMENT.md](DEPLOYMENT.md#configuration)                                                              |
+| `UNAVAILABLE` "This worker runs no agent harness"                                                                 | Agent stage chạy mode `harness` trên worker không có `STUDIX_SECRETS_KEY` (không có harness)                                  | Tạo job với `agentMode: "host"` và hoàn tất task từ MCP client                                                                       |
+| `UNAVAILABLE` "No model is configured for agent stage ..."                                                        | Workspace và người tạo job chưa chọn model mặc định cho runtime `pi` hay `claude`                                             | Chọn model mặc định trong Settings → AI & Providers, hoặc dùng `agentMode: "host"`                                                   |
+| `UNAVAILABLE` "Agent stage ... resolved to Claude, which this worker does not run"                                | Lựa chọn của job là Claude nhưng worker không bật `STUDIX_CLAUDE_PLANNER`                                                     | Chọn model Pi, hoặc bật Claude runtime trên worker                                                                                   |
+| `UNAVAILABLE` "Workflow ... renders with ...; this worker has ..."                                                | `PackPipeline.renderer` khác renderer của worker                                                                              | Chạy pack trên worker có đúng renderer                                                                                               |
+| `VALIDATION` "Renderer ... cannot render this video"                                                              | `supports()` của renderer từ chối IR; `details.reasons`                                                                       | Sửa IR theo lý do, xem [RENDERER.md](RENDERER.md)                                                                                    |
+| `VALIDATION` "Stage ... returned an output that fails its schema"                                                 | Output của `run` không khớp `outputSchema`                                                                                    | Lỗi code của stage; sửa stage                                                                                                        |
+| `VALIDATION` "Agent output of stage ... fails its schema"                                                         | Agent (harness hoặc host) trả output sai schema; usage của lần chạy vẫn được ghi                                              | Tạo job mới; ở host mode, kiểm output với `outputSchema` của task trước khi nộp                                                      |
+| Stage có `cacheKey` chạy lại dù input không đổi                                                                   | Entry cache không còn khớp `outputSchema` (schema đổi) nên bị bỏ qua; đây là hành vi đúng                                     | Tăng version trong `cacheKey` khi đổi schema để key cũ không bị tra                                                                  |
+| `BUDGET_EXCEEDED` "... would bring job spend to ...¢, over the ...¢ budget"                                       | Ước tính của stage cộng phần đã tiêu vượt `budgetCents`                                                                       | Tăng `budgetCents` hoặc giảm phạm vi, tạo job mới                                                                                    |
+| `BUDGET_EXCEEDED` "job spent ...¢, over its ...¢ budget, after ..."                                               | Chi thật của stage vượt ước tính và vượt budget                                                                               | Như trên; kiểm `estimateCostCents` của stage có sát giá thật không                                                                   |
+| `BUDGET_EXCEEDED` "... estimates ... cents, above the ... cent cap"                                               | Provider ước tính một call vượt `maxCostCents` của request                                                                    | Chọn model rẻ hơn hoặc nâng trần của stage                                                                                           |
+| Log worker "a stage write was refused, job lease lost" hoặc "lease could not be renewed in time"                  | Worker mất lease (heartbeat chậm, DB gián đoạn); worker khác nhận job, attempt cũ không ghi gì thêm                           | Không cần làm gì nếu job tiếp tục; lặp lại thì xem log worker theo [runbook](DEPLOYMENT.md#runbook)                                  |
+| `INTERNAL` "Worker lease expired on the last allowed attempt ..."                                                 | Lease hết hạn ở attempt cuối, worker có thể đã crash                                                                          | Xem log worker của job, rồi `studix_retry_job` hoặc tạo job mới                                                                      |
+| `PROVIDER_ERROR` "A previous submission of this request may already have been charged and cannot be deduplicated" | Journal có bản ghi `submitting` không có job id (upstream không dedupe được, ví dụ Atlas)                                     | Tìm prediction trong `multix history` hoặc console Atlas, gắn bằng `studix_attach_media_job`, rồi `studix_retry_job`; không retry mù |
+| `CONFLICT` "This idempotency key already ran a different media request"                                           | Cùng idempotency key (`assetId` trong một stage) đi với kind hoặc model khác, kể cả khi model mặc định đổi giữa hai attempt   | Giữ `assetId` duy nhất cho mỗi asset trong stage                                                                                     |
+| Retry tính tiền audio lần nữa                                                                                     | Voice, music, SFX chạy đồng bộ; file chỉ được dùng lại khi retry chạy trên cùng worker và cùng `workRoot` ([Audio](#audio))   | Giữ `workRoot` bền qua restart; chấp nhận chi lại khi job chuyển worker                                                              |
+| `TIMEOUT` "Job deadline reached"                                                                                  | Hết deadline của job (thời gian park không tính)                                                                              | Tạo job với `deadlineSeconds` dài hơn hoặc video ngắn hơn                                                                            |
+| QA stage fail `VALIDATION` "QA hard gate failed: ..."                                                             | File render trượt hard check; `details.failures`                                                                              | Xem [QA.md](QA.md)                                                                                                                   |
