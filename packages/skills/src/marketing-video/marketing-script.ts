@@ -8,7 +8,7 @@ import {
   validateCreativeBrief,
 } from "@studix/video-ir";
 import { z } from "zod";
-import { wordCount } from "../caption-chunks.ts";
+import { spokenLength, wordCount } from "../caption-chunks.ts";
 import { detectLanguage, normalizeText, truncateText } from "../vietnamese-safe-text.ts";
 
 export const MARKETING_SCRIPT_VERSION = 1;
@@ -186,7 +186,8 @@ export function marketingScript(input: unknown): MarketingScript {
       .filter(Boolean)
       .join(" ");
     const words = wordCount(voiceover);
-    if (words > wordBudget) overBudget.push({ direction: direction.id, words });
+    const spoken = spokenLength(voiceover);
+    if (spoken > wordBudget) overBudget.push({ direction: direction.id, words: spoken });
     return {
       id,
       name: direction.name,
@@ -202,7 +203,7 @@ export function marketingScript(input: unknown): MarketingScript {
     throw new StudixError("VALIDATION", `Voice-over is longer than a ${durationMs / 1000}s ad can hold`, {
       retryable: false,
       details: { wordBudget, overBudget },
-      suggestedAction: `Cut each ad's voice-over to at most ${wordBudget} words (about ${VO_WORDS_PER_SECOND} words a second).`,
+      suggestedAction: `Cut each ad's voice-over to at most ${wordBudget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables).`,
     });
   }
   return { version: MARKETING_SCRIPT_VERSION, language, aspectRatio, durationMs, wordBudget, ads };

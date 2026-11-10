@@ -14,6 +14,7 @@ import {
   packPipelines,
   packRegistry,
   resolveMotionStyle,
+  spokenLength,
   variantIr,
   voiceoverWordBudget,
   wordCount,
@@ -431,7 +432,9 @@ describe("motion graphic", () => {
       "Studix turns one short brief into a finished kinetic motion graphic with voice captions and sound";
     const cut = motionGraphicTemplate({ ...brief, title: hook, durationMs: 6_000, keyMessages: [] });
     const said = String(cut.metadata?.voiceover);
-    expect(wordCount(said)).toBe(16);
+    // Cut by spoken length: the 16 words a 6 s graphic holds, English counted by its syllables.
+    expect(spokenLength(said)).toBeLessThanOrEqual(voiceoverWordBudget(6_000));
+    expect(spokenLength(said)).toBeGreaterThan(voiceoverWordBudget(6_000) - 2);
     expect(said.endsWith("Try Studix free today")).toBe(true);
     const title = cut.scenes[0]?.shots[0];
     expect(title && "text" in title ? title.text?.replace(/\s+/g, " ") : undefined).toBe(hook);
@@ -471,6 +474,38 @@ describe("motion graphic", () => {
     for (const line of voiceLines(ir)) {
       expect(line.roomMs).toBeGreaterThanOrEqual((wordCount(line.text) / VO_WORDS_PER_SECOND) * 1000);
     }
+  });
+});
+
+describe("spoken length", () => {
+  it("counts a Vietnamese syllable as a word and a loanword or brand by its syllables", () => {
+    expect(spokenLength("Cà phê rang tại chỗ, view đồi thông Đà Lạt")).toBe(10);
+    expect(spokenLength("Mua 1 tặng 1 cuối tuần")).toBe(6);
+    // Read on prod in 2.6 s: five whitespace words, about eight words of speech at three a second.
+    expect(spokenLength("Studix là studio video AI-native.")).toBeCloseTo(7.7, 1);
+    expect(spokenLength("Studix turns one brief into a finished video")).toBe(8);
+    expect(spokenLength("")).toBe(0);
+  });
+
+  it("gives a motion-graphic card the time a mixed-language line takes to say", () => {
+    const line = "Studix là studio video AI-native.";
+    const ir = motionGraphicTemplate(
+      { prompt: "Giới thiệu Studix", language: "vi", durationMs: 10_000, aspectRatio: "16:9" },
+      {
+        storyboard: {
+          styleProfile: "apple-clean",
+          beats: [
+            { onScreen: "Studix", voiceover: "Từ một brief tới video hoàn chỉnh", enter: "fade", weight: 1 },
+            { onScreen: "AI-native", voiceover: line, enter: "fade", weight: 1 },
+            { onScreen: "Render", voiceover: "Agent lên kịch bản, dựng và render", enter: "fade", weight: 1 },
+            { onScreen: "Thử ngay", voiceover: "Thử Studix ngay", enter: "fade", weight: 1 },
+          ],
+          music: null,
+        } as never,
+      },
+    );
+    const room = voiceLines(ir).find((l) => l.text === line)?.roomMs ?? 0;
+    expect(room).toBeGreaterThanOrEqual((spokenLength(line) / VO_WORDS_PER_SECOND) * 1000 - 100);
   });
 });
 

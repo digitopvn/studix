@@ -1,6 +1,6 @@
 import { StudixError } from "@studix/shared";
 import { type AssetRef, type AudioTrack, resolveSceneSpans, type VideoIR } from "@studix/video-ir";
-import { wordCount } from "./caption-chunks.ts";
+import { spokenLength } from "./caption-chunks.ts";
 import { VO_WORDS_PER_SECOND } from "./marketing-video/marketing-script.ts";
 
 /** What a line of the voice-over does in the video, which sets how it is read. */
@@ -136,11 +136,13 @@ export function voiceLines(ir: VideoIR, fromMs = 0, toMs = ir.format.durationMs)
     const at = partAt(ir, (first.startMs + last.endMs) / 2);
     const part = i === 0 && at === "message" ? "hook" : at;
     const most = Math.floor((roomMs / 1000) * VO_WORDS_PER_SECOND);
-    if (wordCount(text) > most) {
+    const words = spokenLength(text);
+    // The spoken length is fractional, so it is held to the room's exact capacity, not the rounded count.
+    if (words > (roomMs / 1000) * VO_WORDS_PER_SECOND) {
       throw new StudixError("VALIDATION", `Voice-over line "${text.slice(0, 60)}" does not fit its beat`, {
         retryable: false,
-        details: { startMs: first.startMs, roomMs, words: wordCount(text), mostWords: most },
-        suggestedAction: `Cut the line to at most ${most} words, or lengthen its beat.`,
+        details: { startMs: first.startMs, roomMs, words, mostWords: most },
+        suggestedAction: `Cut the line to at most ${most} words (an English word or brand name counts by its syllables), or lengthen its beat.`,
       });
     }
     return {

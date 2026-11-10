@@ -264,7 +264,10 @@ tạo job (`studix_create_video` hoặc dashboard), trước khi có project hay
 dashboard có ô key message (bắt buộc với pack này) và call to action.
 Voice-over mỗi quảng cáo phải vừa ngân sách từ theo độ dài (khoảng ba từ
 mỗi giây, `voiceoverWordBudget` trong
-[`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Bản đọc dài hơn beat được xử lý như ở
+[`marketing-script.ts`](../packages/skills/src/marketing-video/marketing-script.ts)). Độ dài đọc đo bằng
+`spokenLength` ([`caption-chunks.ts`](../packages/skills/src/caption-chunks.ts)): mỗi âm tiết tiếng Việt là
+một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
+("AI-native" khoảng ba từ). `motion-graphic` cũng chia thời lượng card theo độ dài này. Bản đọc dài hơn beat được xử lý như ở
 `motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
 
 ```json
