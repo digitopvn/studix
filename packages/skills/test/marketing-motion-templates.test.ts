@@ -128,16 +128,20 @@ describe("marketing script", () => {
     expect(branded.ads[0]?.beats[0]?.voiceover).toBe("Lá Mây");
   });
 
-  it("trims key messages, skips blank ones and speaks a long first message whole", () => {
-    const hook = Array.from({ length: 30 }, () => "trà").join(" ");
+  it("trims key messages, skips blank ones and never cuts a long first message short", () => {
     const script = marketingScript({
       prompt: "Quảng cáo trà",
       durationMs: 30_000,
-      keyMessages: ["   ", `  ${hook}  `, "  Giao nhanh  "],
+      keyMessages: ["   ", "  Trà ngon mỗi sáng  ", "  Giao nhanh  "],
       callToAction: "",
     });
     const beats = script.ads[0]?.beats ?? [];
-    expect(beats.map((b) => b.voiceover)).toEqual([hook, "Giao nhanh", "Tìm hiểu ngay"]);
+    expect(beats.map((b) => b.voiceover)).toEqual(["Trà ngon mỗi sáng", "Giao nhanh", "Tìm hiểu ngay"]);
+    // A hook too long for its beat is refused whole, not spoken cut short.
+    const hook = Array.from({ length: 30 }, () => "trà").join(" ");
+    expect(() =>
+      marketingScript({ prompt: "Quảng cáo trà", durationMs: 30_000, keyMessages: [hook, "Giao nhanh"] }),
+    ).toThrow(/longer than its beat/);
     // A direction without messages of its own takes the brief's, cleaned the same way.
     const directed = marketingScript({
       ...brief,
