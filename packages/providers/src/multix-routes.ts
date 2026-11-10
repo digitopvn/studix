@@ -427,7 +427,6 @@ export async function planMultixRequest(
   switch (role) {
     case "image": {
       const image = await input("image");
-      const resolution = stringParam(params, "resolution", RESOLUTION);
       return {
         ...base,
         mode: "sume-job",
@@ -443,7 +442,7 @@ export async function planMultixRequest(
           `--model=${model.model}`,
           ...inputFlag("image", image),
           ...flag("aspect-ratio", stringParam(params, "aspectRatio", ASPECT)),
-          ...flag("resolution", resolution),
+          ...flag("resolution", stringParam(params, "resolution", RESOLUTION)),
           ...flag("quality", stringParam(params, "quality", TOKEN)),
           ...flag("num-images", numberParam(params, "numImages", 1, 4, true)),
           ...flag("output-format", stringParam(params, "outputFormat", IMAGE_FORMAT)),
