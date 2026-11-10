@@ -872,7 +872,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(music?.output?.warning).toMatch(/Music bed skipped: .*ELEVENLABS_API_KEY/);
   });
 
-  it("falls back to the template, billed, when the agent's voice-over overruns the length", async () => {
+  it("falls back to the template, both runs billed, when the voice-over still overruns the length after the repair turn", async () => {
     const long = "một hai ba bốn năm sáu bảy tám chín mười ".repeat(4).trim();
     const beats = storyboard.beats.map((b) => ({ ...b, voiceover: long }));
     const h = harness({ agent: mockAgent({ storyboard: { ...storyboard, beats } }).runtime });
@@ -882,7 +882,62 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     );
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
-    expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(1);
+    expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(2);
+  });
+
+  /** An agent that answers each run with the next scripted output, and records its tasks. */
+  const sequenceAgent = (outputs: unknown[]) => {
+    const tasks: AgentTask[] = [];
+    const runtime: AgentRuntime = {
+      id: "mock",
+      run: async (_ctx, task) => {
+        const output = outputs[Math.min(tasks.length, outputs.length - 1)];
+        tasks.push(task);
+        return { output, turns: 1, costCents: 3, inputTokens: 4000, outputTokens: 600, model: "mock-model" };
+      },
+    };
+    return { runtime, tasks };
+  };
+  /** 10 + 10 + 8 words: inside the 28-word budget, yet the cards need 10.1 s once rounded up and padded. */
+  const words = (n: number) => Array.from({ length: n }, (_, i) => `từ${i + 1}`).join(" ");
+  const tight = {
+    ...storyboard,
+    beats: storyboard.beats.map((b, i) => ({ ...b, voiceover: words([10, 10, 8][i] as number), weight: 1 })),
+  };
+
+  it("gives the agent one repair turn for a storyboard that does not fit, and bills both runs", async () => {
+    const agent = sequenceAgent([{ storyboard: tight }, { storyboard }]);
+    const h = harness({ agent: agent.runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(agent.tasks).toHaveLength(2);
+    const first = agent.tasks[0]?.input as Record<string, unknown>;
+    const second = agent.tasks[1]?.input as { repair?: { problem: string; storyboard: unknown } };
+    expect(first.repair).toBeUndefined();
+    expect(second.repair?.storyboard).toEqual(tight);
+    expect(second.repair?.problem).toMatch(/does not fit its beat|longer than/);
+    expect(agent.tasks[1]?.maxCostCents).toBe(MG_STORYBOARD_LIMITS.maxCostCents);
+    expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("agent");
+    expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3, 3]);
+  });
+
+  it("falls back to the template after a repair that still does not fit, billing both runs", async () => {
+    const agent = sequenceAgent([{ storyboard: tight }]);
+    const h = harness({ agent: agent.runtime });
+    const { job, outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(agent.tasks).toHaveLength(2);
+    expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
+    expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3, 3]);
+    const stages = await h.jobs.listStages(ctx, job.id);
+    const out = stages.find((st) => st.name === MG_STAGES.storyboard)?.output;
+    expect(out?.fallbackReason).toMatch(/still does not fit after one repair turn/);
   });
 
   it("falls back to the template when the workspace has no agent model", async () => {
