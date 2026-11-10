@@ -168,23 +168,9 @@ async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMed
 /** A media call that could not be made at all (no provider, no key, no price); nothing was spent on it. */
 const unavailable = (err: unknown) => err instanceof StudixError && err.code === "UNAVAILABLE";
 
-/**
- * Whether the media provider lists a sound-effect model. A probe that fails counts as listed, so the call
- * itself decides.
- */
-async function sfxListed(s: StageContext): Promise<boolean> {
-  const media = s.services.media;
-  if (!media) return false;
-  try {
-    return (await media.capabilities()).some((c) => c.kind === "sfx" && c.models.length > 0);
-  } catch {
-    return true;
-  }
-}
-
 /** The SFX accent of a graphic that has a script; none for a graphic without one (it has no voice to lead). */
 async function accentRequests(s: StageContext): Promise<StoredMediaRequest[]> {
-  return voiceoverOf(irOf(s)) && (await sfxListed(s)) ? [await capped(s, sfxRequest(s).request)] : [];
+  return voiceoverOf(irOf(s)) && s.services.media ? [await capped(s, sfxRequest(s).request)] : [];
 }
 
 /** The graphic without its accent, and why: the accent is decoration, so a missing provider never fails the job. */
@@ -205,8 +191,10 @@ const AccentOutput = IrOutput.extend({ warning: z.string().max(500).optional() }
 
 /**
  * One SFX accent where the CTA card lands, for a graphic with a voice-over. No music: the voice carries the
- * graphic. A provider with no sound-effect model, or a call that cannot be made (UNAVAILABLE: no key, no
- * price), skips the accent with a warning instead of failing the job; the runner never caches a warned
+ * graphic. No media provider, or a call that cannot be made (UNAVAILABLE: no sound-effect model, no key,
+ * no price), skips the accent with a warning instead of failing the job. The call itself decides, not the
+ * provider's shared capability list: that list is probed on platform keys only, while the call also uses
+ * the workspace's own keys; the runner never caches a warned
  * output, so a skipped accent is retried next run. The cache key is the one this stage had when it also
  * voiced the graphic (such a cached output still holds that older voice-over, which the voice stage
  * replaces), so a paid accent is reused.
@@ -227,7 +215,7 @@ export const motionGraphicAccentStage: StageDefinition = {
   async run(s) {
     const ir = irOf(s);
     if (!voiceoverOf(ir)) return { output: { ir } };
-    if (!(await sfxListed(s))) return withoutAccent(ir, "the media provider has no sound-effect model");
+    if (!s.services.media) return withoutAccent(ir, "no media provider is configured");
     const workDir = await stageWorkDir(s, MG_STAGES.accent);
     let sfx: StoredMedia;
     try {
