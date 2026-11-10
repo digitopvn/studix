@@ -243,7 +243,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   private readonly capabilityTtlMs: number;
   private probe: { at: number; value: Promise<MediaCapability[]> } | undefined;
   /** The last forced refresh of the Sume catalog, shared by concurrent estimates. */
-  private catalogRefresh: { at: number; value: Promise<boolean> } | undefined;
+  private catalogRefresh: { at: number; value: Promise<string | undefined> } | undefined;
   private lastReadiness: MultixReadiness | undefined;
   private readonly credentialSource: MultixProviderOptions["credentials"];
   private credentialRevision: string | undefined;
@@ -631,21 +631,21 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   }
 
   /**
-   * Fetch the Sume catalog into multix's cache. At most one refresh a minute: concurrent estimates share it,
-   * and a model the catalog does not price is not refetched on every call.
+   * Fetch the Sume catalog into multix's cache; resolves to why that failed, or undefined. At most one
+   * refresh a minute: concurrent estimates share it, and a model the catalog does not price is not refetched
+   * on every call. It runs on platform keys only (the catalog needs none), as it is shared by every workspace.
    */
-  private refreshSumeCatalog(cwd: string): Promise<boolean> {
+  private refreshSumeCatalog(cwd: string): Promise<string | undefined> {
     const now = this.clock.now().getTime();
     if (!this.catalogRefresh || now - this.catalogRefresh.at >= CATALOG_REFRESH_INTERVAL_MS) {
-      const value = this.exec(
-        "sume models",
-        ["sume", "models", "--refresh", "--json"],
-        cwd,
-        PROBE_TIMEOUT_MS,
-      ).then(
-        () => true,
-        () => false,
-      );
+      const value = this.workspaceKeys
+        .exit(() =>
+          this.exec("sume models", ["sume", "models", "--refresh", "--json"], cwd, PROBE_TIMEOUT_MS),
+        )
+        .then(
+          () => undefined,
+          (err: unknown) => toStudixError(err).message,
+        );
       this.catalogRefresh = { at: now, value };
     }
     return this.catalogRefresh.value;
@@ -656,18 +656,16 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     request: Pick<MediaGenerationRequest, "kind" | "prompt" | "params">,
     cwd: string,
   ): Promise<number> {
+    let refreshError: string | undefined;
     if (plan.priced) {
       const estimate = () =>
         this.exec(`${plan.argv[0]} estimate`, this.compose(plan, ["--estimate"]), cwd, PROBE_TIMEOUT_MS);
       let envelope = await estimate();
       // multix prices a Sume run from its cached catalog only, and a fresh worker (or a copy older than a
       // day) has none to read: refresh the catalog once and price again.
-      if (
-        envelope.estimateHighUsd === undefined &&
-        plan.argv[0] === "sume" &&
-        (await this.refreshSumeCatalog(cwd))
-      ) {
-        envelope = await estimate();
+      if (envelope.estimateHighUsd === undefined && plan.argv[0] === "sume") {
+        refreshError = await this.refreshSumeCatalog(cwd);
+        if (refreshError === undefined) envelope = await estimate();
       }
       if (envelope.estimateHighUsd !== undefined) return toCents(envelope.estimateHighUsd);
     }
@@ -679,7 +677,10 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     throw new StudixError("UNAVAILABLE", `No trusted price for ${plan.model.id}`, {
       retryable: false,
       suggestedAction: "Choose a model multix can price, or a default model with a known price.",
-      details: { model: plan.model.id },
+      details: {
+        model: plan.model.id,
+        ...(refreshError !== undefined ? { catalogRefreshError: refreshError.slice(0, 300) } : {}),
+      },
     });
   }
 
