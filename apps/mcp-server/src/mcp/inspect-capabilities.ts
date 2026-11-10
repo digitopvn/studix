@@ -1,9 +1,20 @@
 import { STUDIX_TOOLS, type TenantContext } from "@studix/core";
-import { ASPECT_RATIOS, exportJsonSchemas, RENDER_PRESETS, VIDEO_IR_SCHEMA_VERSION } from "@studix/video-ir";
+import {
+  ASPECT_RATIOS,
+  exportJsonSchemas,
+  PUBLISHED_SCHEMAS,
+  type PublishedSchemaName,
+  RENDER_PRESETS,
+  VIDEO_IR_SCHEMA_VERSION,
+} from "@studix/video-ir";
 import { type AppLimits, SERVER_NAME, SERVER_VERSION } from "../app-deps.ts";
 import type { SkillSummary } from "../ports.ts";
 
 export const INSPECT_SECTIONS = ["schemas"] as const;
+export const PUBLISHED_SCHEMA_NAMES = Object.keys(PUBLISHED_SCHEMAS) as [
+  PublishedSchemaName,
+  ...PublishedSchemaName[],
+];
 
 /** Lazily built once: the JSON Schemas are static for a given build. */
 let cachedSchemas: ReturnType<typeof exportJsonSchemas> | undefined;
@@ -18,6 +29,8 @@ export function inspectCapabilities(input: {
   skills: SkillSummary[];
   toolNames: string[];
   include: ReadonlyArray<(typeof INSPECT_SECTIONS)[number]>;
+  /** Only these published schemas; `include: ["schemas"]` adds all of them. */
+  schemaNames?: readonly PublishedSchemaName[];
 }) {
   const { limits } = input;
   const capabilities = {
@@ -53,7 +66,12 @@ export function inspectCapabilities(input: {
     ],
     skills: input.skills,
   };
-  if (!input.include.includes("schemas")) return capabilities;
+  const all = input.include.includes("schemas");
+  if (!all && !input.schemaNames?.length) return capabilities;
   cachedSchemas ??= exportJsonSchemas();
-  return { ...capabilities, schemas: cachedSchemas };
+  const schemas = all
+    ? cachedSchemas
+    : Object.fromEntries(input.schemaNames!.map((name) => [name, cachedSchemas![name]]));
+  // The schemas change only with a build, so the schema version is the cache key.
+  return { ...capabilities, schemas, schemasEtag: `${VIDEO_IR_SCHEMA_VERSION}:${SERVER_VERSION}` };
 }
