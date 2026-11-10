@@ -40,22 +40,16 @@ runs:
         path: ~/.cache/puppeteer
         key: chrome-headless-shell-${{ runner.os }}-${{ steps.chrome.outputs.version }}
 
+    # Pinned static FFmpeg: no apt, so a stalled Ubuntu mirror cannot fail the job.
+    - uses: ./.github/actions/ffmpeg
+      if: inputs.media == 'true'
+
     # Rendering toolchain for the HyperFrames and QA media tests (the runner image already ships Chrome's
-    # shared libraries). man-db triggers make apt installs crawl on hosted runners, so they are disabled first.
-    - name: Install FFmpeg and chrome-headless-shell
+    # shared libraries).
+    - name: Install chrome-headless-shell
       if: inputs.media == 'true'
       shell: bash
       run: |
-        sudo rm -f /var/lib/man-db/auto-update
-        # A stalled mirror can hang apt silently until the job times out, so each attempt is bounded and retried.
-        for attempt in 1 2 3; do
-          if timeout 240 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -qq &&
-            timeout 240 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq --no-install-recommends ffmpeg; then
-            break
-          fi
-          [ "$attempt" = 3 ] && exit 1
-          echo "apt attempt $attempt failed, retrying"
-        done
         if [ "${{ steps.chrome-cache.outputs.cache-hit }}" != "true" ]; then
           # Outside the checkout, so npx fetches the package instead of reusing pnpm's bin-less copy.
           (cd "$RUNNER_TEMP" && npx --yes --package @puppeteer/browsers@3.2.6 -- browsers install "chrome-headless-shell@${{ steps.chrome.outputs.version }}" --path ~/.cache/puppeteer)
