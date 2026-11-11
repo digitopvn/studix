@@ -23,8 +23,9 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
   while (start < words.length) {
     let end = Math.min(words.length, start + maxWords);
     if (end < words.length) {
-      // Prefer the last clause boundary in the window, unless it would leave a one-word chunk.
+      // Prefer the last clause boundary in the window, unless it would leave a one-word chunk either side.
       for (let i = end - 1; i > start; i--) {
+        if (words.length - (i + 1) < MIN_CAPTION_WORDS) continue;
         if (CLAUSE_END.test(words[i] as string)) {
           end = i + 1;
           break;
@@ -46,7 +47,8 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
  * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. A cue
  * shorter than `MIN_CAPTION_MS` is merged into the cue before it (the first into the one after), so the
- * cues tile the span with no text dropped.
+ * cues tile the span with no text dropped; a merge that runs past `maxWords` is split again into two even
+ * halves when each half still stays up `MIN_CAPTION_MS`.
  */
 export function captionCues(
   text: string,
@@ -69,12 +71,36 @@ export function captionCues(
   }
   const cues: CaptionCue[] = [];
   for (const cue of timed) {
-    const prev = cues.at(-1);
+    const prev = cues.pop();
     if (prev && (cue.endMs - cue.startMs < MIN_CAPTION_MS || prev.endMs - prev.startMs < MIN_CAPTION_MS)) {
-      cues[cues.length - 1] = { startMs: prev.startMs, endMs: cue.endMs, text: `${prev.text} ${cue.text}` };
-    } else cues.push(cue);
+      const merged = { startMs: prev.startMs, endMs: cue.endMs, text: `${prev.text} ${cue.text}` };
+      cues.push(...evenHalves(merged, maxWords ?? MAX_CAPTION_WORDS));
+    } else cues.push(...(prev ? [prev, cue] : [cue]));
   }
   return cues;
+}
+
+/**
+ * A merged cue longer than `maxWords`, split into two halves of about equal words (at a clause boundary
+ * next to the middle when there is one) and timed by `spokenLength`; the cue whole when either half
+ * would be shorter than `MIN_CAPTION_MS`.
+ */
+function evenHalves(cue: CaptionCue, maxWords: number): CaptionCue[] {
+  const words = cue.text.split(" ");
+  if (words.length <= maxWords) return [cue];
+  const mid = Math.ceil(words.length / 2);
+  const clause = [mid, mid - 1, mid + 1].find((i) => CLAUSE_END.test(words[i - 1] as string));
+  const cut = clause ?? mid;
+  const first = words.slice(0, cut).join(" ");
+  const second = words.slice(cut).join(" ");
+  const a = Math.max(spokenLength(first), 0.1);
+  const b = Math.max(spokenLength(second), 0.1);
+  const at = cue.startMs + Math.round(((cue.endMs - cue.startMs) * a) / (a + b));
+  if (at - cue.startMs < MIN_CAPTION_MS || cue.endMs - at < MIN_CAPTION_MS) return [cue];
+  return [
+    { startMs: cue.startMs, endMs: at, text: first },
+    { startMs: at, endMs: cue.endMs, text: second },
+  ];
 }
 
 /** Whitespace-separated word count (a Vietnamese syllable is a word). */

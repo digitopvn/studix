@@ -92,6 +92,11 @@ describe("caption chunks", () => {
       "một hai ba bốn năm sáu bảy",
       "tám, chín",
     ]);
+    // An earlier clause boundary beats cutting a sentence in two to feed the last word.
+    expect(chunkCaption("Trà hái tay, ủ chậm mỗi sớm trên đồi. Thử")).toEqual([
+      "Trà hái tay,",
+      "ủ chậm mỗi sớm trên đồi. Thử",
+    ]);
     expect(chunkCaption("một hai ba", 2)).toEqual(["một hai ba"]);
     expect(chunkCaption("Studix.")).toEqual(["Studix."]);
 
@@ -99,6 +104,10 @@ describe("caption chunks", () => {
     expect(cues).toEqual([{ startMs: 0, endMs: 1000, text: "một hai ba bốn năm sáu bảy tám chín mười" }]);
     for (const cue of captionCues(line, 0, 4000))
       expect(cue.endMs - cue.startMs).toBeGreaterThanOrEqual(MIN_CAPTION_MS);
+    // A short cue merged past the word limit splits again into even halves.
+    const fast = captionCues("một hai ba bốn năm sáu bảy tám chín mười mười", 0, 3000);
+    expect(fast.map((c) => c.text)).toEqual(["một hai ba bốn năm sáu", "bảy tám chín mười mười"]);
+    expect(fast.at(-1)?.endMs).toBe(3000);
   });
 });
 
