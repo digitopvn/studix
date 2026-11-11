@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mediaOutputKey, type StoredMediaRequest } from "../src/stored-media.ts";
 import { MAX_VOICE_DIRECTION_CHARS, MAX_VOICE_SPEEDUP, type VoiceLine } from "../src/voice-lines.ts";
 import {
+  cappedVoiceTake,
   generateVoiceTake,
   type MeasuredTake,
   measureVoiceTake,
@@ -381,6 +382,57 @@ describe("voicing a line", () => {
     const junk = join(root, "junk.mp3");
     await writeFile(junk, "not audio");
     expect(await measureVoiceTake(junk, new AbortController().signal)).toBeUndefined();
+  });
+
+  describe("cappedVoiceTake", () => {
+    const repeated: MeasuredTake = { durationMs: 7000, startMs: 0, endMs: 7000 };
+
+    it("keeps a slow take under the cap as it is, with one call", async () => {
+      const h = stage([tooLong]);
+      const take = await cappedVoiceTake(h.s, "voice", request, await workDir(), 5400, h.measure);
+      expect(h.calls).toHaveLength(1);
+      expect(take.lengthMs).toBe(tooLong.durationMs);
+    });
+
+    it("reads a take past the cap again, brisker, keeps the re-take, stores only it and bills both", async () => {
+      const h = stage([repeated, tooLong]);
+      const take = await cappedVoiceTake(h.s, "voice", request, await workDir(), 5400, h.measure);
+      expect(h.calls).toHaveLength(2);
+      expect(String(h.calls[1]?.params?.instructions)).toMatch(/^The previous read ran too long/);
+      expect(take.asset.storageKey).toBe("generated/job_1/voiceover-1-r1.mp3");
+      expect([...h.objects.keys()]).toEqual(["generated/job_1/voiceover-1-r1.mp3"]);
+      expect(take.usage.map((u) => u.item)).toEqual(["media-voiceover-1", "media-voiceover-1-r1"]);
+      // A retry starts from the stored re-take instead of paying for the broken take again.
+      await rm(join(root, "job_1"), { recursive: true, force: true });
+      const again = await cappedVoiceTake(h.s, "voice", request, await workDir(), 5400, h.measure);
+      expect(h.calls).toHaveLength(2);
+      expect(again.asset.storageKey).toBe("generated/job_1/voiceover-1-r1.mp3");
+      expect(again.retaken).toBe(true);
+    });
+
+    it("checks a take served from the journal too, and reads it again when it is past the cap", async () => {
+      // Kept by a run without the cap (an earlier deploy), then served from the journal to a capped run.
+      const h = stage([repeated, tooLong]);
+      await cappedVoiceTake(h.s, "voice", request, await workDir(), 60_000, h.measure);
+      expect(h.calls).toHaveLength(1);
+      const take = await cappedVoiceTake(h.s, "voice", request, await workDir(), 5400, h.measure);
+      expect(h.calls).toHaveLength(2);
+      expect(take.asset.storageKey).toBe("generated/job_1/voiceover-1-r1.mp3");
+      expect(take.retaken).toBe(true);
+    });
+
+    it("bills the turned-down take when its re-take fails after charging", async () => {
+      const charged = new MediaChargedError(
+        new StudixError("PROVIDER_ERROR", "result lost", { retryable: false }),
+        { provider: "multix", model: "elevenlabs:eleven_v3", costCents: 3, costSource: "receipt" },
+      );
+      const h = stage([repeated, charged]);
+      const err = await cappedVoiceTake(h.s, "voice", request, await workDir(), 5400, h.measure).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(StageFailedAfterSpend);
+      expect((err as StageFailedAfterSpend).usage.map((u) => u.item)).toContain("media-voiceover-1");
+    });
   });
 
   it("keys reuse by the exact room, so a take that fit a longer room is not served for a shorter one", () => {

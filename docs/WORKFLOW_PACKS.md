@@ -342,14 +342,16 @@ lời (chỉ chữ trên màn hình, không caption, không SFX accent, không c
 cũng tôn trọng field này. Thiếu model hay key SFX/nhạc thì SFX accent và music bed bị bỏ qua, stage ghi `warning`, job vẫn
 chạy tiếp. Stage `motion-graphic.voice` đọc mọi dòng trước rồi mới đặt track. Bản đọc được đo bằng FFmpeg
 `silencedetect`: khoảng lặng đầu bị bỏ qua (`trimStartMs`, giữ 60 ms trước tiếng đầu), khoảng lặng cuối không
-tính, chỉ phần lời phải vừa card. Có bản đọc dài hơn card của nó thì card được chia lại theo bản đọc thật
+tính, chỉ phần lời phải vừa card. Bản đọc đầu cần quá 3 lần chỗ của card mình (đọc lặp lời, ngừng dài) bị coi
+là hỏng: không lưu, không tái dùng, và dòng đó được đọc lại ngay với chỉ dẫn đọc gọn hơn (tính tiền cả hai lần
+đọc). Có bản đọc dài hơn card của nó thì card được chia lại theo bản đọc thật
 (`retimeCards` trong [`motion-graphic-retime.ts`](../packages/skills/src/motion-graphic/motion-graphic-retime.ts)):
 tổng độ dài giữ nguyên, card có câu ngắn nhường thời gian cho card có câu dài, rồi scene, timeline, caption,
 SFX accent và whoosh được dựng lại theo nhịp cắt mới, mọi câu đọc đúng tốc độ gốc. Khi tổng lời đọc dài hơn
 video thì mọi câu được đọc nhanh lên như nhau (giữ cao độ, `playbackRate` của audio track) tới 1.12×. Chỉ khi
 vẫn không vừa, các dòng dài hơn card mới được đọc lại một lần với chỉ dẫn đọc gọn hơn (tính tiền cả hai lần
 đọc, giữ bản ngắn hơn); vẫn không vừa cả video mới fail `VALIDATION` "The voice-over runs longer than the ...s
-graphic". Mọi bản đọc đều được lưu, nên retry job không trả tiền giọng lần nữa. Ước tính chi phí vẫn tính một
+graphic". Mọi bản đọc được giữ đều được lưu, nên retry job không trả tiền giọng lần nữa. Ước tính chi phí vẫn tính một
 lần đọc mỗi dòng. File không đo được (không có FFmpeg) thì cả file được tính, dư tới 250 ms (hơi thở cuối) thì
 cắt kèm fade.
 
