@@ -1678,5 +1678,6 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
       qaStage,
     ],
     pipeline,
+    needsAgentModel: true,
   };
 }

@@ -146,6 +146,37 @@ async function assertPiDefaultModel(
   });
 }
 
+/**
+ * A job created without an agent runs its agent stages on the caller's preference, as the worker's `choose()`
+ * does: a Pi or a Claude `default` entry, whichever is more specific (Pi on a tie). Either one is enough here,
+ * so a job the worker would run is never refused; no operator model is ever substituted. Host mode, a planner
+ * and a ready spec never reach an agent stage that needs one, and a pack with a template fallback never fails
+ * for lack of a model, so those are not checked.
+ */
+export async function assertDefaultAgentModel(
+  deps: Pick<AppDeps, "modelPreferences">,
+  ctx: TenantContext,
+  job: {
+    pack: { needsAgentModel?: boolean };
+    agent: unknown;
+    planner: unknown;
+    agentMode: "harness" | "host" | undefined;
+    spec: unknown;
+  },
+): Promise<void> {
+  if (!job.pack.needsAgentModel || job.agent || job.planner || job.spec !== undefined) return;
+  if (job.agentMode === "host" || !deps.modelPreferences) return;
+  // The listing holds the caller's own preferences and the workspace's, of any runtime (`preview` knows Pi only).
+  const { preferences } = await deps.modelPreferences.list(ctx);
+  if (preferences.some((p) => p.stage === "default")) return;
+  throw new StudixError("UNAVAILABLE", "No default agent model applies to this caller", {
+    retryable: false,
+    details: { reason: "no_model_selected" },
+    suggestedAction:
+      "Pass agent (with agent.model for Pi), submit with agentMode 'host', or have a workspace admin choose the workspace default model in Settings → AI & Providers. A personal default applies only to jobs its owner starts.",
+  });
+}
+
 /** Same checks for a model the host says it used, without needing a connection of its own. */
 export function assertReportedModel(model: string | undefined, effort: ReasoningEffort | undefined): void {
   if (!model) return;
