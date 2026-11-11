@@ -12,12 +12,14 @@ const CLAUSE_END = /[.,;:!?…]$/;
 /**
  * Split a spoken line into caption chunks of at most `maxWords` words. A chunk ends at clause punctuation
  * when one falls inside the limit, so a cue never breaks a short clause in two; Vietnamese words (one
- * syllable each, diacritics intact) are counted like any other whitespace-separated word. A tail shorter
- * than `MIN_CAPTION_WORDS` stays with the chunk before it, which may then run one word over the limit.
+ * syllable each, diacritics intact) are counted like any other whitespace-separated word. A phone number
+ * starts a new chunk rather than break across two, unless that leaves a one-word chunk. A tail shorter than `MIN_CAPTION_WORDS` stays with the
+ * chunk before it, which may then run one word over the limit.
  */
 export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string[] {
   maxWords = Math.max(1, Math.floor(maxWords));
   const words = text.normalize("NFC").trim().split(/\s+/).filter(Boolean);
+  const phones = phoneSpans(words);
   const chunks: string[] = [];
   let start = 0;
   while (start < words.length) {
@@ -30,6 +32,9 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
           break;
         }
       }
+      // Never cut through a phone number ("0901 234 567"): end before it, unless that leaves one word.
+      const from = phones.find(([a, b]) => a < end && end < b)?.[0];
+      if (from !== undefined && from - start >= Math.min(MIN_CAPTION_WORDS, maxWords)) end = from;
       // Never leave an orphan word behind: the end of the line rides with this chunk instead.
       if (words.length - end < MIN_CAPTION_WORDS && maxWords >= MIN_CAPTION_WORDS) end = words.length;
     }
@@ -90,6 +95,23 @@ function mergeShortCues(cues: CaptionCue[], maxWords: number): CaptionCue[] {
     }
   }
   return out;
+}
+
+/** Word ranges `[from, to)` of the phone numbers (`isPhoneNumber`) in a line split into `words`. */
+function phoneSpans(words: string[]): Array<[number, number]> {
+  let offset = 0;
+  const starts = words.map((w) => {
+    const at = offset;
+    offset += w.length + 1;
+    return at;
+  });
+  const wordAt = (char: number) => starts.findLastIndex((at) => at <= char);
+  const spans: Array<[number, number]> = [];
+  for (const m of words.join(" ").matchAll(PHONE)) {
+    const at = m.index ?? 0;
+    if (isPhoneNumber(m[0])) spans.push([wordAt(at), wordAt(at + m[0].length - 1) + 1]);
+  }
+  return spans;
 }
 
 /** Whitespace-separated word count (a Vietnamese syllable is a word). */
@@ -167,6 +189,13 @@ function numbersLength(token: string): number {
 const PHONE = /(?<!\d)\+?\d{1,4}(?:[ -]\d{1,4})+(?!\d)/g;
 const YEAR_RANGE = /^((?:19|20)\d\d)[ -]((?:19|20)\d\d)$/;
 
+/** Whether a `PHONE` run is a phone number, read a digit at a time, rather than a year range or amounts. */
+function isPhoneNumber(run: string): boolean {
+  if (YEAR_RANGE.test(run)) return false;
+  const digits = run.replace(/\D/g, "");
+  return digits.length >= 8 || digits.startsWith("0");
+}
+
 /** Words of one letter-only part. */
 function partLength(part: string, vietnamese: boolean, shouting: boolean): number {
   if (VIETNAMESE_MARK.test(part)) return 1;
@@ -202,9 +231,8 @@ export function spokenLength(text: string, language?: string): number {
       total += amountLength(years[1] as string) + 1 + amountLength(years[2] as string);
       return " ";
     }
-    const digits = run.replace(/\D/g, "");
-    if (digits.length < 8 && !digits.startsWith("0")) return run;
-    total += digits.length;
+    if (!isPhoneNumber(run)) return run;
+    total += run.replace(/\D/g, "").length;
     return " ";
   });
   for (const token of read.trim().split(/\s+/)) {
