@@ -25,8 +25,9 @@ import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
-import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
+import { INSPECT_SECTIONS, inspectCapabilities, PUBLISHED_SCHEMA_NAMES } from "./inspect-capabilities.ts";
 import { waitForJobChange } from "./job-notifications.ts";
+import { JOB_VIEWS, jobRevision, summarizeJob } from "./job-summary.ts";
 import { withMediaExecUrls } from "./media-exec-tool.ts";
 import type { ToolImage } from "./tool-envelope.ts";
 
@@ -276,8 +277,11 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.inspect,
     title: "Inspect Studix capabilities",
     description:
-      "Capabilities handshake: versions, formats, limits, workflow templates. include=['schemas'] adds JSON Schemas. Call first.",
-    input: z.object({ include: z.array(z.enum(INSPECT_SECTIONS)).max(4).optional() }),
+      "Capabilities handshake: versions, formats, limits, workflow templates. schemaNames=['creative-brief'] adds only those JSON Schemas; include=['schemas'] adds all. Call first.",
+    input: z.object({
+      include: z.array(z.enum(INSPECT_SECTIONS)).max(4).optional(),
+      schemaNames: z.array(z.enum(PUBLISHED_SCHEMA_NAMES)).max(12).optional(),
+    }),
     readOnly: true,
     async run(ctx, input) {
       const data = inspectCapabilities({
@@ -286,6 +290,7 @@ export const NATIVE_TOOLS = [
         skills: ctx.deps.skills ?? [],
         toolNames: ctx.toolNames,
         include: input.include ?? [],
+        schemaNames: input.schemaNames,
       });
       const importedSkills = await importedSkillsSummary(ctx);
       return { data: importedSkills ? { ...data, importedSkills } : data, next: [] };
@@ -356,21 +361,43 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.getJob,
     title: "Get job",
     description:
-      "Job status, stages, progress, error with suggestedAction, and a signed MP4 URL once succeeded. waitSeconds holds the call until the status changes, with progress notifications.",
+      "Job status, stages, progress, error with suggestedAction, signed MP4 URL once succeeded. view=summary is compact; sinceRevision skips unchanged polls; waitSeconds waits for a change.",
     input: z.object({
       jobId: Id,
       waitSeconds: z.number().int().min(0).max(50).optional(),
+      view: z.enum(JOB_VIEWS).optional().describe("detail (default): full job. summary: no stage list."),
+      sinceRevision: z
+        .string()
+        .max(100)
+        .optional()
+        .describe("revision from a summary; unchanged returns a stub."),
     }),
     readOnly: true,
     async run(ctx, input) {
       const found = await ctx.deps.studio.getJob(ctx.tenant, input.jobId);
-      const job = input.waitSeconds ? await waitForJobChange(ctx, found, input.waitSeconds) : found;
+      // A caller whose revision is already stale gets the news now instead of waiting for the next change.
+      const stale = input.sinceRevision !== undefined && input.sinceRevision !== jobRevision(found);
+      const job = input.waitSeconds && !stale ? await waitForJobChange(ctx, found, input.waitSeconds) : found;
+      if (input.sinceRevision && input.sinceRevision === jobRevision(job)) {
+        return {
+          data: {
+            view: "summary",
+            unchanged: true,
+            id: job.id,
+            status: job.status,
+            revision: input.sinceRevision,
+          },
+          next: job.next,
+        };
+      }
       const view = await jobWithVideo(
         ctx.artifacts,
         ctx.tenant,
         await withMediaExecUrls(ctx.artifacts, ctx.tenant, job),
       );
-      const data = job.projectId ? { ...view, reviewUrl: reviewUrl(ctx.deps, job.projectId) } : view;
+      const url = job.projectId ? reviewUrl(ctx.deps, job.projectId) : undefined;
+      if (input.view === "summary") return { data: summarizeJob(view, job.next, url), next: job.next };
+      const data = url ? { ...view, reviewUrl: url } : view;
       return { data, next: job.next };
     },
   }),
