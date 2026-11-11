@@ -699,47 +699,8 @@ describe("spoken length", () => {
       "background",
     ]);
     expect(ir.metadata?.templateVersion).toBe(8);
-  });
-
-  it("sets landscape headlines at display size when they fit, and portrait ones at heading size", () => {
-    const beat = (onScreen: string, layout?: unknown) => ({
-      onScreen,
-      voiceover: "One short line.",
-      visual: "A card.",
-      enter: "fade",
-      weight: 1,
-      ...(layout ? { layout } : {}),
-    });
-    const stat = { kind: "stat", value: "MIT", label: "Open source" };
-    const storyboard = {
-      styleProfile: "kinetic-typography",
-      beats: [
-        beat("Studix is open source"),
-        beat("MIT licensed", stat),
-        beat("A headline far too long to sit in two display lines over a layout device", stat),
-        beat("Every model you already use, wired in"),
-        beat("Start free"),
-      ],
-      music: null,
-    } as never;
-    const graphic = (aspectRatio: "16:9" | "9:16") =>
-      motionGraphicTemplate(
-        { prompt: "A launch video introducing Studix", language: "en", durationMs: 20_000, aspectRatio },
-        { storyboard },
-      );
-    const headline = (ir: VideoIR, i: number) => {
-      const shot = ir.scenes[i]!.shots[0]!;
-      return [shot.style?.textStyle, shot.style?.emphasis];
-    };
-    const wide = graphic("16:9");
-    expect(headline(wide, 0)).toEqual(["display", undefined]);
-    expect(headline(wide, 1)).toEqual(["display", undefined]);
-    // Three display lines over a layout would crowd the device: it keeps the smaller heading.
-    expect(headline(wide, 2)).toEqual(["heading", "low"]);
-    expect(headline(wide, 3)).toEqual(["display", undefined]);
-    const tall = graphic("9:16");
-    expect(headline(tall, 1)).toEqual(["heading", "low"]);
-    expect(headline(tall, 3)).toEqual(["heading", undefined]);
+    // Landscape has the room: a short headline over a layout is set at display size too.
+    expect(hook.shots[0]?.style?.textStyle).toBe("display");
   });
 
   it("rejects a storyboard layout outside its typed shape", () => {

@@ -1,6 +1,13 @@
 // Adapted from motion-mcp packages/hyperframes-adapter/src/compile.ts @ 408ceccd (MIT, Copyright (c) 2026 Digitop).
 import type { ColorRole, Scene, Shot } from "@studix/video-ir";
-import { COLOR_ROLES, cssColor, TEXT_STYLES } from "./brand-tokens.ts";
+import {
+  BURNED_CAPTION,
+  BURNED_CAPTION_PAD,
+  burnedCaptionBand,
+  burnedCaptionEdge,
+  COLOR_ROLES,
+  cssColor,
+} from "./brand-tokens.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
 import { writeLayoutMotion } from "./layout-markup.ts";
 import {
@@ -65,6 +72,12 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   const stageId = `${prefix}stage`;
   const safe = Math.round(0.07 * Math.min(width, height));
   const gap = Math.round(0.03 * Math.min(width, height));
+  const captionClearance =
+    input.captions.position === "bottom" &&
+    input.captions.cues.length > 0 &&
+    scene.shots.some((s) => s.type === "layout" && (s.style?.region ?? "middle") === "middle")
+      ? Math.max(0, burnedCaptionBand(markup.frame) + gap - safe)
+      : 0;
 
   const css: string[] = [
     cssRule(`#${stageId}`, [
@@ -82,7 +95,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     cssRule(`#${stageId} .underlay, #${stageId} .underlay > *`, ["position: absolute;", "inset: 0;"]),
     cssRule(`#${stageId} .content`, [
       "position: absolute;",
-      `inset: ${contentInset(input, safe, gap)};`,
+      `inset: ${safe}px;`,
       "display: flex;",
       "flex-direction: column;",
       `gap: ${gap}px;`,
@@ -93,7 +106,12 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       `gap: ${gap}px;`,
       "min-height: 0;",
     ]),
-    cssRule(`#${stageId} .region-middle`, ["flex: 1 1 auto;", "justify-content: center;"]),
+    cssRule(`#${stageId} .region-middle`, [
+      "flex: 1 1 auto;",
+      "justify-content: center;",
+      // A layout fills the middle of its card, so it is centred above the burned captions, never under them.
+      ...(captionClearance > 0 ? [`padding-bottom: ${captionClearance}px;`] : []),
+    ]),
     cssRule(`#${stageId} .lane`, ["display: grid;", "align-items: center;"]),
     cssRule(`#${stageId} .lane > .shot`, ["grid-area: 1 / 1;"]),
   ];
@@ -179,32 +197,6 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   return { path: `compositions/${scene.id}.html`, body };
 }
 
-/**
- * Inset of the flowing regions: the safe margin, and on the edge the burned captions sit at, the band the
- * longest cue of the scene takes (one or two lines, plus a gap), so a headline or layout never runs under a cue.
- */
-function contentInset(input: SceneCompileInput, safe: number, gap: number): string {
-  const { cues, position } = input.captions;
-  if (cues.length === 0 || position === "middle") return `${safe}px`;
-  const { frame, scale } = input.markup;
-  const edge = Math.round(0.09 * Math.min(frame.width, frame.height));
-  const sizePx = CAPTION_CUE.sizeAt1080 * scale;
-  // Lines the longest cue wraps to (at most two), taking a caption glyph as about 0.55em wide.
-  const room = frame.width - 2 * edge - 2 * Math.round(24 * scale);
-  const longest = Math.max(...cues.map((c) => Array.from(c.text).length));
-  const lines = Math.min(2, Math.max(1, Math.ceil((longest * 0.55 * sizePx) / room)));
-  const chip = Math.round(sizePx * CAPTION_CUE.lineHeight) * lines + 2 * Math.round(10 * scale);
-  const band = `${Math.max(safe, edge + chip + gap)}px`;
-  return position === "top" ? `${band} ${safe}px ${safe}px` : `${safe}px ${safe}px ${band}`;
-}
-
-/**
- * Burned caption type: larger and heavier than the `caption` text style, because a cue is read in passing,
- * often on a phone showing a landscape video at a third of its size. 48px at 1080 is about 4.4% of the
- * short edge, the size subtitles are set at for small screens.
- */
-const CAPTION_CUE = { ...TEXT_STYLES.caption, sizeAt1080: 48, weight: 600, lineHeight: 1.3 } as const;
-
 /** Burned captions: one hidden line per cue, shown for its scene-local window above all shots. */
 function captionsMarkup(
   input: SceneCompileInput,
@@ -216,9 +208,9 @@ function captionsMarkup(
   const { cues, position } = input.captions;
   if (cues.length === 0) return "";
   const { frame, fontStacks, fontWeights, scale } = input.markup;
-  const token = CAPTION_CUE;
+  const token = BURNED_CAPTION;
   fontWeights[token.font].add(token.weight);
-  const edge = Math.round(0.09 * Math.min(frame.width, frame.height));
+  const edge = burnedCaptionEdge(frame);
   const placement =
     position === "top" ? [`top: ${edge}px;`] : position === "middle" ? ["top: 50%;"] : [`bottom: ${edge}px;`];
   css.push(
@@ -238,9 +230,9 @@ function captionsMarkup(
       `font-weight: ${token.weight};`,
       `line-height: ${token.lineHeight};`,
       "color: #ffffff;",
-      "background: rgba(0, 0, 0, 0.72);",
-      `padding: ${Math.round(10 * scale)}px ${Math.round(24 * scale)}px;`,
-      `border-radius: ${Math.round(14 * scale)}px;`,
+      "background: rgba(0, 0, 0, 0.66);",
+      `padding: ${Math.round(BURNED_CAPTION_PAD.y * scale)}px ${Math.round(BURNED_CAPTION_PAD.x * scale)}px;`,
+      `border-radius: ${Math.round(12 * scale)}px;`,
       "text-align: center;",
       "white-space: pre-line;",
       "hyphens: manual;",

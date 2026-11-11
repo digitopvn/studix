@@ -2,7 +2,7 @@ import { StudixError } from "@studix/shared";
 import type { BrandKit, ColorRole, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
 import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
-import { layoutBoost, renderLayoutMarkup } from "./layout-markup.ts";
+import { renderLayoutMarkup } from "./layout-markup.ts";
 
 /** What a shot renderer needs to know about the scene being compiled. */
 export interface ShotMarkupContext {
@@ -233,7 +233,7 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       );
     case "layout":
       return renderLayoutMarkup(
-        { ...ctx, scale: ctx.scale * layoutBoost(ctx.frame) },
+        ctx,
         sel,
         open,
         base,

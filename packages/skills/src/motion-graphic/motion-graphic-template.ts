@@ -40,25 +40,6 @@ const FPS = 30;
 const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 28 };
 /** A heading-size headline over a layout holds more per line than a display-size headline card. */
 const LAYOUT_LINE_CHARS: Record<AspectRatio, number> = { "9:16": 24, "1:1": 26, "16:9": 38 };
-/** Characters per line of a display-size headline on a landscape card (about 31 fit the safe width). */
-const DISPLAY_LINE_CHARS = LINE_CHARS["16:9"];
-
-/**
- * A message headline on a landscape card: display size when it sets in at most `maxLines` display lines,
- * so a 16:9 card reads as a film title rather than a slide; otherwise (and on other ratios) heading size.
- */
-function landscapeHeadline(
-  aspectRatio: AspectRatio,
-  text: string,
-  headingChars: number,
-  maxLines: number,
-): { text: string; textStyle: "display" | "heading" } {
-  if (aspectRatio === "16:9") {
-    const display = breakLines(text, DISPLAY_LINE_CHARS);
-    if (display.split("\n").length <= maxLines) return { text: display, textStyle: "display" };
-  }
-  return { text: breakLines(text, headingChars), textStyle: "heading" };
-}
 
 const words = (text: string) =>
   text
@@ -452,22 +433,24 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         animation: { enter, durationMs: 400 },
       });
     } else if (line.layout) {
-      // A layout card: the headline sits on top and the layout builds under it. On a landscape frame a
-      // headline of up to two lines is set at display size, so the card fills the frame.
-      const headline = landscapeHeadline(aspectRatio, line.onScreen, LAYOUT_LINE_CHARS[aspectRatio], 2);
+      // A layout card: the headline sits on top and the layout builds under it. In landscape a headline that
+      // holds on two display lines is set at display size, like every other landscape headline; a longer one
+      // keeps the heading size and its own width, so the layout keeps its room.
+      const display = aspectRatio === "16:9" ? breakLines(line.onScreen, chars) : "";
+      const big = display !== "" && display.split("\n").length <= 2;
       shots.push(
         {
           id: `${id}-text`,
           type: i === 0 ? "title" : "text",
           startMs: 0,
           durationMs,
-          text: headline.text.slice(0, 160),
+          text: (big ? display : breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio])).slice(0, 160),
           style: {
-            textStyle: headline.textStyle,
+            textStyle: big ? "display" : "heading",
             color: inkOn(brand.palette, fill, "foreground"),
             align: "center",
             region: "top",
-            ...(headline.textStyle === "heading" ? { emphasis: "low" as const } : {}),
+            emphasis: "low",
           },
           animation: { enter: line.enter ?? motion.enter, exit: motion.exit, durationMs: 400 },
         },
@@ -482,22 +465,15 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         },
       );
     } else {
-      // The hook is always display size; a landscape message card is too when it sets in three lines.
-      const headline =
-        i === 0
-          ? {
-              text: breakLines(line.onScreen, chars),
-              textStyle: "display" as const,
-            }
-          : landscapeHeadline(aspectRatio, line.onScreen, chars, 3);
       shots.push({
         id: `${id}-text`,
         type: i === 0 ? "title" : "text",
         startMs: 0,
         durationMs,
-        text: headline.text.slice(0, i === 0 ? 160 : 500),
+        text: breakLines(line.onScreen, chars).slice(0, i === 0 ? 160 : 500),
         style: {
-          textStyle: headline.textStyle,
+          // Landscape has room: every headline card is set at display size there.
+          textStyle: i === 0 || aspectRatio === "16:9" ? "display" : "heading",
           color: inkOn(brand.palette, fill, "foreground"),
           align: "center",
           region: "middle",

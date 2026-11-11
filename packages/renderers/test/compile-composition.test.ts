@@ -12,7 +12,6 @@ import {
   validateVideoIR,
 } from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
-import { layoutBoost } from "../src/hyperframes/layout-markup.ts";
 import { assignLanes } from "../src/hyperframes/scene-composition.ts";
 import { buildComposition, GSAP_ASSET, hyperframesSupport, writeComposition } from "../src/index.ts";
 import { loadIrFixture, tempDir, writePng } from "./render-test-helpers.ts";
@@ -80,8 +79,6 @@ describe("buildComposition (brand-intro 9:16)", () => {
       '<div id="s-intro__cue-0" class="cue">Sương Mai Coffee, rang mộc từ Cầu Đất</div>',
     );
     expect(scene("intro")).toContain('tl.set("#s-intro__cue-0", {"opacity":1}, 0);');
-    // Captions are set at 48px on a 1080 short edge (24px on this 540-wide preview), read on a phone.
-    expect(scene("intro")).toMatch(/\.cue \{[^}]*font-size: 24px;[^}]*font-weight: 600;/);
     expect(scene("intro")).not.toContain('tl.set("#s-intro__cue-0", {"opacity":0}');
     expect(scene("cta")).toContain('window.__timelines["cta"] = tl;');
   });
@@ -257,6 +254,9 @@ describe("buildComposition layouts", () => {
     expect(scene(4)).toContain(
       'tl.fromTo("#s-l4__shot-l4-layout .lo-d3", {"yPercent":0}, {"yPercent":-66.667,"duration":1.2,"ease":"power2.out"}, 0.3);',
     );
+    // Only separators that exist are faded in: 1.250 has one, after its first digit.
+    const targets = [...scene(4).matchAll(/layout \.(lo-p\d+)"/g)].map((m) => m[1]);
+    expect(targets).toEqual(["lo-p0"]);
     for (let i = 0; i < 8; i++) {
       expect(scene(i)).not.toContain('"repeat"');
       expect(scene(i)).not.toContain("onUpdate");
@@ -271,38 +271,35 @@ describe("buildComposition layouts", () => {
     expect([...plain.copies.keys()].some((k) => k.includes("jetbrains"))).toBe(false);
   });
 
-  it("draws layouts half as large again on a landscape frame, fitting labels to their tracks", () => {
-    expect(layoutBoost({ width: 1920, height: 1080 })).toBe(1.5);
-    expect(layoutBoost({ width: 1080, height: 1080 })).toBe(1);
-    expect(layoutBoost({ width: 1080, height: 1920 })).toBe(1);
+  it("fills a landscape card and keeps the layout above burned captions", () => {
     const wide = structuredClone(ir);
-    wide.format = { ...wide.format, aspectRatio: "16:9", width: 1920, height: 1080 };
-    const chips = buildComposition(wide, { width: 1920, height: 1080 }).files.get("compositions/l2.html")!;
-    // Body 44px x 1.1 x 1.5 on the hub; the chips sit side by side and shrink only to fit their track.
-    expect(chips).toMatch(/\.lo-hub \{[^}]*font-size: 73px;/);
-    expect(chips).toContain("grid-template-columns: repeat(4, minmax(0, 1fr));");
-    expect(chips).toMatch(/\.lo-chip \{[^}]*font-size: 59px;/);
-    // Six two-word chips wrap between words: the type fits the longest word, never below 0.6 of its size.
-    const crowded = structuredClone(wide);
-    crowded.scenes[2]!.shots[0] = {
-      ...crowded.scenes[2]!.shots[0]!,
-      layout: {
-        kind: "chips",
-        hub: "Studix",
-        items: [
-          "Customer support",
-          "Analytics dashboard",
-          "Integrations",
-          "Billing",
-          "Notifications",
-          "Audit",
-        ],
-      },
-    } as Shot;
-    const six = buildComposition(crowded, { width: 1920, height: 1080 }).files.get("compositions/l2.html")!;
-    const size = Number(/\.lo-chip \{[^}]*font-size: (\d+)px;/.exec(six)?.[1]);
-    expect(size).toBeGreaterThanOrEqual(Math.round(44 * 0.75 * 1.5 * 0.6));
-    expect(size).toBeLessThan(59);
+    wide.captions = {
+      language: "vi",
+      mode: "burned",
+      position: "bottom",
+      cues: [{ startMs: 0, endMs: 3000, text: "Gõ một câu lệnh." }],
+    };
+    const landscape = buildComposition(wide, { width: 1920, height: 1080 });
+    const first = landscape.files.get("compositions/l0.html")!;
+    // Subtitles are 44 px at a 1080 px short edge, readable on a phone.
+    expect(first).toMatch(/\.cue \{[^}]*font-size: 44px;/);
+    // The middle region keeps clear of the caption band: edge 97 + a 79 px cue (one line and its padding) + gap 32 - safe 76.
+    expect(first).toMatch(/\.region-middle \{[^}]*padding-bottom: 132px;/);
+    expect(landscape.files.get("compositions/l1.html")).not.toContain("padding-bottom");
+    // Landscape draws a layout larger than its short edge alone would: the prompt is 1.25x its portrait size (44 px body x 1.1 x 1.25, rounded once).
+    const promptPx = (html: string) => Number(/\.lo-field \{[^}]*font-size: (\d+)px;/.exec(html)?.[1]);
+    const tall = buildComposition(wide, { width: 1080, height: 1920 }).files.get("compositions/l0.html")!;
+    expect(promptPx(first)).toBe(61);
+    expect(promptPx(tall)).toBe(48);
+    // A square frame is not landscape: no boost, and chip labels never drop below the 26 px floor.
+    const square = buildComposition(wide, { width: 1080, height: 1080 });
+    expect(promptPx(square.files.get("compositions/l0.html")!)).toBe(48);
+    for (const html of [
+      square.files.get("compositions/l2.html")!,
+      landscape.files.get("compositions/l2.html")!,
+    ]) {
+      expect(Number(/\.lo-chip \{[^}]*font-size: (\d+)px;/.exec(html)?.[1])).toBeGreaterThanOrEqual(26);
+    }
   });
 
   it("passes the HyperFrames linter with no errors", async () => {
