@@ -139,6 +139,11 @@ Behavior notes:
   call fails up front with `UNAVAILABLE` (`details.reason: "no_model_selected"`)
   unless the job runs in `host` mode or under a `planner`. An admin's pick in
   Settings → AI model is the workspace default once the workspace has a workspace-owned Pi key.
+  The same refusal applies to a job created with no `agent` at all on a
+  workflow that has an agent stage without a template fallback (`skill-agent`,
+  `anime`, `long-form-film`) when the caller has no `default` model preference
+  of either runtime. Host mode, a `planner`, a ready `spec`, and packs that fall
+  back to a template (such as `motion-graphic`) are never refused.
   `studix_list_agent_runtimes` lists the usable choices. `planner: {runtime:
   "claude", providerConnectionId}` stays as an alias of a Claude `agent`.
 - A `codex` agent needs `STUDIX_SANDBOX=docker` on the worker: `codex exec`

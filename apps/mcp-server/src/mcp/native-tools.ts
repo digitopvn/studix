@@ -17,6 +17,7 @@ import { z } from "zod";
 import {
   AgentInput,
   AgentRolesInput,
+  assertDefaultAgentModel,
   resolveAgentRoles,
   resolveAgentSelection,
 } from "../agent-model-selection.ts";
@@ -313,6 +314,13 @@ export const NATIVE_TOOLS = [
       const agent = input.agent
         ? await resolveAgentSelection(ctx.deps, ctx.tenant, input.agent, needsDefault)
         : undefined;
+      await assertDefaultAgentModel(ctx.deps, ctx.tenant, {
+        pack,
+        agent,
+        planner,
+        agentMode: input.agentMode,
+        spec: input.spec,
+      });
       const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles, input.agentMode !== "host");
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },

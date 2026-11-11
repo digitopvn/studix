@@ -2,7 +2,7 @@ import type { ModelPreferenceService, ProviderConnectionService, ProviderConnect
 import { testTenant } from "@studix/core/testing";
 import { StudixError } from "@studix/shared";
 import { describe, expect, it } from "vitest";
-import { resolveAgentSelection } from "../src/agent-model-selection.ts";
+import { assertDefaultAgentModel, resolveAgentSelection } from "../src/agent-model-selection.ts";
 
 const view = (over: Partial<ProviderConnectionView>): ProviderConnectionView =>
   ({
@@ -94,5 +94,41 @@ describe("agent selection preflight", () => {
         false,
       ),
     ).resolves.toMatchObject({ runtime: "pi" });
+  });
+  it("refuses a job without an agent only when a pack needs one and no default applies", async () => {
+    const preferences = (selected: Array<{ runtime: string; stage: string }>) =>
+      ({
+        async list() {
+          return { preferences: selected };
+        },
+      }) as unknown as ModelPreferenceService;
+    const check = (
+      selected: Array<{ runtime: string; stage: string }>,
+      over: Partial<Parameters<typeof assertDefaultAgentModel>[2]> = {},
+    ) =>
+      assertDefaultAgentModel({ modelPreferences: preferences(selected) }, ctx, {
+        pack: { needsAgentModel: true },
+        agent: undefined,
+        planner: undefined,
+        agentMode: undefined,
+        spec: undefined,
+        ...over,
+      });
+
+    await expect(check([])).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+      details: { reason: "no_model_selected" },
+    });
+    // Either runtime's default is enough: the worker picks Pi or Claude from the same preferences.
+    await expect(check([{ runtime: "pi", stage: "default" }])).resolves.toBeUndefined();
+    await expect(check([{ runtime: "claude", stage: "default" }])).resolves.toBeUndefined();
+    // A stage-only entry is not a default.
+    await expect(check([{ runtime: "pi", stage: "plan" }])).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    // Never refused: a named agent or planner, host mode, a ready spec, or a pack with a template fallback.
+    await expect(check([], { agent: { runtime: "pi" } })).resolves.toBeUndefined();
+    await expect(check([], { planner: { runtime: "claude" } })).resolves.toBeUndefined();
+    await expect(check([], { agentMode: "host" })).resolves.toBeUndefined();
+    await expect(check([], { spec: {} })).resolves.toBeUndefined();
+    await expect(check([], { pack: {} })).resolves.toBeUndefined();
   });
 });
