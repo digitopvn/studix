@@ -31,15 +31,17 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 7;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 8;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
 const DEFAULT_STYLE = "kinetic-typography";
 const FPS = 30;
-const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 34 };
+const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 28 };
+/** A heading-size headline over a layout holds more per line than a display-size headline card. */
+const LAYOUT_LINE_CHARS: Record<AspectRatio, number> = { "9:16": 24, "1:1": 26, "16:9": 38 };
 /** Characters per line of a display-size headline on a landscape card (about 31 fit the safe width). */
-const DISPLAY_LINE_CHARS = 28;
+const DISPLAY_LINE_CHARS = LINE_CHARS["16:9"];
 
 /**
  * A message headline on a landscape card: display size when it sets in at most `maxLines` display lines,
@@ -452,7 +454,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     } else if (line.layout) {
       // A layout card: the headline sits on top and the layout builds under it. On a landscape frame a
       // headline of up to two lines is set at display size, so the card fills the frame.
-      const headline = landscapeHeadline(aspectRatio, line.onScreen, chars + 4, 2);
+      const headline = landscapeHeadline(aspectRatio, line.onScreen, LAYOUT_LINE_CHARS[aspectRatio], 2);
       shots.push(
         {
           id: `${id}-text`,
@@ -484,7 +486,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       const headline =
         i === 0
           ? {
-              text: breakLines(line.onScreen, aspectRatio === "16:9" ? DISPLAY_LINE_CHARS : chars),
+              text: breakLines(line.onScreen, chars),
               textStyle: "display" as const,
             }
           : landscapeHeadline(aspectRatio, line.onScreen, chars, 3);
