@@ -178,21 +178,27 @@ const agentStageFor = (repair?: Repair) =>
 const agentStage = agentStageFor();
 
 /**
- * What stops a storyboard from fitting its video, in words the agent can act on, or undefined when it fits.
- * It checks the beat count against the length (`motionBeatRange`), then runs the very checks the compose and
- * voice stages run later (word budget, then each line against the room of its card), so a storyboard that
- * passes here cannot fail them.
+ * Why a storyboard holds too few or too many cards for its length (`motionBeatRange`), in words the agent can
+ * act on, or undefined when the count is right. Advisory: it earns a repair turn, but a storyboard that only
+ * misses the count is still better than the template, which never has more than six cards.
  */
-function fitProblem(brief: CreativeBrief, storyboard: MotionStoryboard): string | undefined {
+function beatCountProblem(brief: CreativeBrief, storyboard: MotionStoryboard): string | undefined {
   const range = motionBeatRange(lengthOf(brief));
   const count = storyboard.beats.length;
-  if (count < range.min || count > range.max) {
-    return (
-      `The storyboard has ${count} beats; a ${lengthOf(brief) / 1000}s graphic needs ${range.min} to ` +
-      `${range.max} (about ${range.target}, one every five seconds). Rewrite it with ${range.target} beats, ` +
-      "hook first and call to action last, keeping the voice-over within `wordBudget`."
-    );
-  }
+  if (count >= range.min && count <= range.max) return undefined;
+  return (
+    `The storyboard has ${count} beats; a ${lengthOf(brief) / 1000}s graphic needs ${range.min} to ` +
+    `${range.max} (about ${range.target}, one every five seconds). Rewrite it with ${range.target} beats, ` +
+    "hook first and call to action last, keeping the voice-over within `wordBudget`."
+  );
+}
+
+/**
+ * What stops a storyboard's voice-over from fitting its video, in words the agent can act on, or undefined
+ * when it fits. It runs the very checks the compose and voice stages run later (word budget, then each line
+ * against the room of its card), so a storyboard that passes here cannot fail them.
+ */
+function voiceFitProblem(brief: CreativeBrief, storyboard: MotionStoryboard): string | undefined {
   // A voiceless graphic speaks none of the lines, so their length does not matter.
   if (brief.voiceover === false) return undefined;
   try {
@@ -203,6 +209,12 @@ function fitProblem(brief: CreativeBrief, storyboard: MotionStoryboard): string 
     const details = err.details ? ` ${JSON.stringify(err.details)}` : "";
     return `${err.message}.${details} ${err.suggestedAction ?? ""}`.trim();
   }
+}
+
+/** Every problem of a storyboard in one message, so its one repair turn hears all of them. */
+function fitProblem(brief: CreativeBrief, storyboard: MotionStoryboard): string | undefined {
+  const problems = [beatCountProblem(brief, storyboard), voiceFitProblem(brief, storyboard)].filter(Boolean);
+  return problems.length > 0 ? problems.join(" ") : undefined;
 }
 
 const fallback = (fallbackReason: string): { output: MotionStoryboardOutput } => ({
@@ -265,8 +277,9 @@ async function repairTurn(
  * knowledge packs. A worker without agent services, or a workspace with no agent model, falls back to the
  * deterministic template and records why, unless the job named its agent: then an agent that cannot run
  * fails the job, so the caller never gets a template graphic it did not ask for. A storyboard that does not fit
- * (voice-over over the word budget, or a line longer than its card) gets one repair turn with the exact
- * problem; only a repair that still does not fit falls back to the template (both runs are billed). Caps: MG_STORYBOARD_LIMITS,
+ * (beat count off for the length, voice-over over the word budget, or a line longer than its card) gets one
+ * repair turn with every problem; only a voice-over that still does not fit falls back to the template (both
+ * runs are billed). A beat count that stays off is advisory: the agent's storyboard is kept. Caps: MG_STORYBOARD_LIMITS,
  * bounded by the job budget.
  */
 export const motionGraphicStoryboardStage: StageDefinition = {
@@ -301,21 +314,30 @@ export const motionGraphicStoryboardStage: StageDefinition = {
     const problem = fitProblem(brief, storyboard);
     if (problem === undefined) return { output: { source: "agent", storyboard }, usage: result.usage };
     const usage = result.usage ?? [];
+    const agentOutput = (sb: MotionStoryboard, u: StageUsage[]) => ({
+      output: { source: "agent" as const, storyboard: sb },
+      usage: u,
+    });
+    // A storyboard whose voice-over fits keeps the agent's take even when its beat count is off.
+    const firstFits = voiceFitProblem(brief, storyboard) === undefined;
     // One bounded repair turn. A host agent answers once per round, so it cannot be asked again here.
     if (hostMode(s.job.payload) || s.signal.aborted) {
+      if (firstFits) return agentOutput(storyboard, usage);
       return { ...fallback(`The agent's storyboard does not fit: ${problem}`), usage };
     }
     const repaired = await repairTurn(s, { problem, storyboard }, usage);
     if ("failure" in repaired) {
+      if (firstFits) return agentOutput(storyboard, repaired.usage);
       return {
         ...fallback(`The agent's storyboard does not fit: ${problem} (repair turn: ${repaired.failure})`),
         usage: repaired.usage,
       };
     }
-    const next = fitProblem(brief, repaired.storyboard);
-    if (next === undefined) {
-      return { output: { source: "agent", storyboard: repaired.storyboard }, usage: repaired.usage };
+    if (voiceFitProblem(brief, repaired.storyboard) === undefined) {
+      return agentOutput(repaired.storyboard, repaired.usage);
     }
+    if (firstFits) return agentOutput(storyboard, repaired.usage);
+    const next = fitProblem(brief, repaired.storyboard);
     return {
       ...fallback(`The agent's storyboard still does not fit after one repair turn: ${next}`),
       usage: repaired.usage,

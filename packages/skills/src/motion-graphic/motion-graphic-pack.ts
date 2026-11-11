@@ -38,8 +38,8 @@ export const MG_STAGES = {
   storyboard: MG_STORYBOARD_STAGE,
   compose: "motion-graphic.compose",
   /**
-   * Lays the SFX accent and the whoosh on each cut. It is named for the time it also voiced the graphic; the name and cache key are
-   * kept so a re-voiced graphic reuses its paid accent and older jobs still resume.
+   * Lays the SFX accent and the whoosh on each cut. It is named for the time it also voiced the graphic; the
+   * name is kept so older jobs still resume.
    */
   accent: "motion-graphic.voiceover",
   voice: "motion-graphic.voice",
@@ -56,7 +56,7 @@ export const motionGraphicSkill: Skill = {
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
     "generated voice-over with burned captions, a soft whoosh on each cut and one SFX accent on the CTA card; " +
-    "about one card every five seconds (3–12); the whoosh, accent and music bed " +
+    "the agent's storyboard has about one card every five seconds (3–12); the whoosh, accent and music bed " +
     "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). No image-to-video.",
   version: 1,
@@ -223,14 +223,13 @@ async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMed
 const unavailable = (err: unknown) => err instanceof StudixError && err.code === "UNAVAILABLE";
 
 /**
- * The SFX accent and the cut whoosh of a graphic that has a script; none for a graphic without one (it has
- * no voice to lead).
+ * The SFX accent and the cut whoosh of a graphic that has a script, uncapped; none for a graphic without one
+ * (it has no voice to lead).
  */
-async function accentRequests(s: StageContext): Promise<StoredMediaRequest[]> {
+function accentRequests(s: StageContext): StoredMediaRequest[] {
   const ir = irOf(s);
   if (!voiceoverOf(ir) || !s.services.media) return [];
-  const accent = await capped(s, sfxRequest(s).request);
-  return cutsOf(ir).length > 0 ? [accent, await capped(s, whooshRequest(s))] : [accent];
+  return cutsOf(ir).length > 0 ? [sfxRequest(s).request, whooshRequest(s)] : [sfxRequest(s).request];
 }
 
 /** The graphic without its accent, and why: the accent is decoration, so a missing provider never fails the job. */
@@ -255,9 +254,8 @@ const AccentOutput = IrOutput.extend({ warning: z.string().max(500).optional() }
  * no price), skips the accent with a warning instead of failing the job. The call itself decides, not the
  * provider's shared capability list: that list is probed on platform keys only, while the call also uses
  * the workspace's own keys; the runner never caches a warned
- * output, so a skipped accent is retried next run. The cache key is the one this stage had when it also
- * voiced the graphic (such a cached output still holds that older voice-over, which the voice stage
- * replaces), so a paid accent is reused.
+ * output, so a skipped accent is retried next run. Both sounds are reusable requests, so a new cache key
+ * (or another job of the tenant) reuses the stored accent and whoosh instead of paying for them again.
  */
 export const motionGraphicAccentStage: StageDefinition = {
   name: MG_STAGES.accent,
@@ -265,13 +263,17 @@ export const motionGraphicAccentStage: StageDefinition = {
   outputSchema: AccentOutput,
   // Version 3 adds the cut whooshes; the accent itself is a reusable request, so it is not paid for again.
   cacheKey: (s) => stageCacheKey(MG_STAGES.accent, 3, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Each sound is estimated on its own: one that cannot be made is skipped, the other is still paid for.
   estimateCostCents: async (s) => {
-    try {
-      return await estimateMediaCents(s, await accentRequests(s));
-    } catch (err) {
-      if (unavailable(err)) return 0;
-      throw err;
+    let total = 0;
+    for (const request of accentRequests(s)) {
+      try {
+        total += await estimateMediaCents(s, [await capped(s, request)]);
+      } catch (err) {
+        if (!unavailable(err)) throw err;
+      }
     }
+    return total;
   },
   async run(s) {
     const ir = irOf(s);

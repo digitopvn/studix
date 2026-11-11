@@ -275,8 +275,10 @@ một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm t
 ("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
 thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này.
 Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
-(60 s là 12, chấp nhận 9 đến 12; 15 s trở xuống vẫn 3 đến 6), để video dài có nhiều card hơn thay vì giữ
-mỗi card lâu hơn. Storyboard sai số beat cũng được một lượt sửa như dưới;
+(60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì
+giữ mỗi card lâu hơn. Storyboard sai số beat được một lượt sửa như dưới (cùng mọi lỗi khác trong một thông
+điệp); sau lượt sửa, hay ở `agentMode: "host"`, số beat chỉ là khuyến nghị: storyboard có lời đọc vừa vẫn
+được giữ, vì template (không agent) tối đa sáu card;
 storyboard của agent mà tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video thì được gửi lại
 cho agent đúng một lượt sửa (kèm lỗi cụ thể: dòng nào, phòng bao nhiêu ms, nên cắt còn bao nhiêu từ; chạy trong
 `MG_STORYBOARD_LIMITS` và ngân sách job, cả hai lượt đều ghi usage `agent.run`; agent chạy ở `agentMode: "host"`

@@ -949,6 +949,22 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect((ir.audio ?? []).filter((t) => t.assetId === "sfx-accent")).toHaveLength(1);
   });
 
+  it("keeps a fitting storyboard whose beat count is still off after the repair turn", async () => {
+    const long = { ...graphic, durationMs: 60_000 };
+    const beats = Array.from({ length: 8 }, (_, i) => ({ ...storyboard.beats[1], onScreen: `Thẻ ${i + 1}` }));
+    const agent = sequenceAgent([{ storyboard: { ...storyboard, music: null, beats } }]);
+    const h = harness({ agent: agent.runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", long),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(agent.tasks).toHaveLength(2);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.metadata?.storyboard).toBe("agent");
+    expect(ir.scenes).toHaveLength(8);
+  });
+
   it("falls back to the template, both runs billed, when the voice-over still overruns the length after the repair turn", async () => {
     const long = "một hai ba bốn năm sáu bảy tám chín mười ".repeat(4).trim();
     const beats = storyboard.beats.map((b) => ({ ...b, voiceover: long }));
