@@ -108,6 +108,10 @@ describe("caption chunks", () => {
       expect(cues.at(-1)?.endMs).toBe(500 + durationMs);
     }
     expect(captionCues(dense[3][0], 0, dense[3][1]).some((c) => c.text.includes("0901 234 567"))).toBe(true);
+    const hotline = "Đặt hàng ngay hôm nay qua hotline 0901 234 567 để nhận quà tặng";
+    for (const ms of [1500, 2500, 3600]) {
+      expect(captionCues(hotline, 0, ms).some((c) => c.text.includes("0901 234 567"))).toBe(true);
+    }
     expect(chunkCaption("one two three", 2)).toEqual(["one two", "three"]);
   });
 });

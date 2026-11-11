@@ -12,14 +12,15 @@ const CLAUSE_END = /[.,;:!?…]$/;
  * Split a spoken line into caption chunks of at most `maxWords` words. A chunk ends at clause punctuation
  * when one falls inside the limit, so a cue never breaks a short clause in two; Vietnamese words (one
  * syllable each, diacritics intact) are counted like any other whitespace-separated word. No chunk after
- * the first is a single word: a one-word tail ("about.") takes the word before it along.
+ * the first is a single word when the limit allows: a one-word tail ("about.") takes the word before it along.
  */
 export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string[] {
   const words = text.normalize("NFC").trim().split(/\s+/).filter(Boolean);
+  const limit = Math.max(1, Math.floor(maxWords));
   const chunks: string[] = [];
   let start = 0;
   while (start < words.length) {
-    let end = Math.min(words.length, start + maxWords);
+    let end = Math.min(words.length, start + limit);
     if (end < words.length) {
       // Prefer the last clause boundary in the window, unless it would leave a one-word chunk.
       for (let i = end - 1; i > start; i--) {
@@ -31,7 +32,7 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
       // A one-word tail would flash alone: hand it this chunk's last word, or take it in when that fits.
       if (words.length - end === 1) {
         if (end - start > 2) end -= 1;
-        else if (end - start < maxWords) end = words.length;
+        else if (end - start < limit) end = words.length;
       }
     }
     chunks.push(words.slice(start, end).join(" "));
@@ -43,7 +44,8 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
 /**
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
  * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. When that
- * leaves a cue shorter than `MIN_CAPTION_MS`, the line is cut again by `readableChunks` instead.
+ * leaves a cue shorter than `MIN_CAPTION_MS` or splits a phone number, the line is cut again by
+ * `readableChunks` instead.
  */
 export function captionCues(
   text: string,
@@ -56,9 +58,17 @@ export function captionCues(
   if (chunks.length === 0) return [];
   const language = VIETNAMESE_MARK.test(text.normalize("NFD")) ? "vi" : undefined;
   let cues = timeChunks(chunks, startMs, durationMs, language);
-  if (cues.length > 1 && cues.some((c) => c.endMs - c.startMs < MIN_CAPTION_MS)) {
-    const words = chunks.join(" ").split(" ");
-    cues = timeChunks(readableChunks(words, durationMs, maxWords, language), startMs, durationMs, language);
+  const words = chunks.join(" ").split(" ");
+  const inPhone = phoneCuts(words);
+  let cut = 0;
+  let cutsPhone = false;
+  for (const chunk of chunks.slice(0, -1)) {
+    cut += wordCount(chunk);
+    cutsPhone ||= inPhone.has(cut);
+  }
+  if (cutsPhone || (cues.length > 1 && cues.some((c) => c.endMs - c.startMs < MIN_CAPTION_MS))) {
+    const limit = Math.max(1, Math.floor(maxWords));
+    cues = timeChunks(readableChunks(words, durationMs, limit, language), startMs, durationMs, language);
   }
   return cues.filter((c) => c.endMs > c.startMs);
 }
@@ -77,9 +87,9 @@ function timeChunks(chunks: string[], startMs: number, durationMs: number, langu
 }
 
 /**
- * Cuts a line too dense for `chunkCaption` into chunks of at most `maxWords` words, chosen in order to: keep
- * the shortest cue as long as it can be (up to `MIN_CAPTION_MS`), leave no one-word cue, keep a phone number
- * in one cue, use as few cues as possible, cut at clause ends, then keep cues even. Each chunk is weighed by its own
+ * Cuts a line `chunkCaption` cuts badly into chunks of at most `maxWords` words, chosen in order to: keep a
+ * phone number in one cue, keep the shortest cue as long as it can be (up to `MIN_CAPTION_MS`), leave no
+ * one-word cue, use as few cues as possible, cut at clause ends, then keep cues even. Each chunk is weighed by its own
  * `spokenLength`, as `timeChunks` times it.
  */
 function readableChunks(words: string[], durationMs: number, maxWords: number, language?: string): string[] {
@@ -87,30 +97,28 @@ function readableChunks(words: string[], durationMs: number, maxWords: number, l
   const weight = (i: number, j: number) => Math.max(spokenLength(words.slice(i, j).join(" "), language), 0.1);
   // A little over the minimum: cues are timed against the sum of their own lengths, not the line's.
   const enough = ((MIN_CAPTION_MS * 1.05) / durationMs) * weight(0, n);
-  // Cutting before word `j` splits a phone number ("0901 234 567") when `j` lies inside one.
-  const inPhone = new Set<number>();
-  let offset = 0;
-  const starts = words.map((w) => {
-    const at = offset;
-    offset += w.length + 1;
-    return at;
-  });
-  for (const m of words.join(" ").matchAll(PHONE)) {
-    const end = (m.index ?? 0) + m[0].length;
-    starts.forEach((at, j) => {
-      if (at > (m.index ?? 0) && at < end) inPhone.add(j);
-    });
-  }
-  // First the longest shortest chunk any cut reaches, capped where every cue is long enough.
-  const floor = new Array<number>(n + 1).fill(-1);
-  floor[0] = Number.POSITIVE_INFINITY;
-  for (let j = 1; j <= n; j++) {
-    for (let i = Math.max(0, j - maxWords); i < j; i++) {
-      if ((floor[i] as number) >= 0)
-        floor[j] = Math.max(floor[j] as number, Math.min(floor[i] as number, weight(i, j)));
+  const inPhone = phoneCuts(words);
+  // First the longest shortest chunk any cut reaches, capped where every cue is long enough. A cut inside a
+  // phone number is taken only when nothing else fits the word limit (its parts would also weigh wrong).
+  const longestShortest = (cuttable: (j: number) => boolean) => {
+    const floor = new Array<number>(n + 1).fill(-1);
+    floor[0] = Number.POSITIVE_INFINITY;
+    for (let j = 1; j <= n; j++) {
+      if (!cuttable(j)) continue;
+      for (let i = Math.max(0, j - maxWords); i < j; i++) {
+        if ((floor[i] as number) >= 0)
+          floor[j] = Math.max(floor[j] as number, Math.min(floor[i] as number, weight(i, j)));
+      }
     }
+    return floor[n] as number;
+  };
+  let cuttable = (j: number) => j === n || !inPhone.has(j);
+  let longest = longestShortest(cuttable);
+  if (longest < 0) {
+    cuttable = () => true;
+    longest = longestShortest(cuttable);
   }
-  const reach = Math.min(floor[n] as number, enough) * 0.999;
+  const reach = Math.min(longest, enough) * 0.999;
   // Then, among cuts whose every chunk reaches it, the best by the remaining rules (lower is better).
   type Plan = { cost: [number, number, number, number, number]; from: number };
   const best: (Plan | undefined)[] = [{ cost: [0, 0, 0, 0, 0], from: -1 }];
@@ -121,7 +129,7 @@ function readableChunks(words: string[], durationMs: number, maxWords: number, l
   for (let j = 1; j <= n; j++) {
     for (let i = Math.max(0, j - maxWords); i < j; i++) {
       const prev = best[i];
-      if (!prev || weight(i, j) < reach) continue;
+      if (!prev || !cuttable(j) || weight(i, j) < reach) continue;
       const cost: Plan["cost"] = [
         prev.cost[0] + (j - i === 1 && n > 1 ? 1 : 0),
         prev.cost[1] + (j < n && inPhone.has(j) ? 1 : 0),
@@ -136,6 +144,27 @@ function readableChunks(words: string[], durationMs: number, maxWords: number, l
   const chunks: string[] = [];
   for (let j = n; j > 0; j = best[j]?.from ?? 0) chunks.unshift(words.slice(best[j]?.from ?? 0, j).join(" "));
   return chunks;
+}
+
+/** Word indices `j` where cutting before word `j` splits a phone number ("0901 234 567"). */
+function phoneCuts(words: string[]): Set<number> {
+  const cuts = new Set<number>();
+  const starts: number[] = [];
+  let offset = 0;
+  for (const w of words) {
+    starts.push(offset);
+    offset += w.length + 1;
+  }
+  for (const m of words.join(" ").matchAll(PHONE)) {
+    // Only what `spokenLength` reads as a phone number: a leading zero or eight digits and more.
+    const digits = m[0].replace(/\D/g, "");
+    if (YEAR_RANGE.test(m[0]) || (digits.length < 8 && !digits.startsWith("0"))) continue;
+    const from = m.index ?? 0;
+    starts.forEach((at, j) => {
+      if (at > from && at < from + m[0].length) cuts.add(j);
+    });
+  }
+  return cuts;
 }
 
 /** Whitespace-separated word count (a Vietnamese syllable is a word). */
