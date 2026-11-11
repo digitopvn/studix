@@ -25,6 +25,11 @@ describe("promptFormatOf", () => {
     expect(lengthOf("Phần mở đầu 3 giây, tổng 30 giây")).toBe(30_000);
     expect(lengthOf("0.5s transitions, 15 second video")).toBe(15_000);
     expect(lengthOf("Scene at 0:15s shows the logo")).toBeUndefined();
+    expect(lengthOf("6 scenes, 5 seconds each")).toBeUndefined();
+    expect(lengthOf("6 cảnh, 5 giây một cảnh, nhạc trong 5 phút đầu")).toBeUndefined();
+    expect(lengthOf("Cut 10 minutes of footage into a 30s ad")).toBe(30_000);
+    expect(lengthOf("Our first 30-second ad")).toBe(30_000);
+    expect(lengthOf("Video giới thiệu đầu bếp 30 giây")).toBe(30_000);
   });
 
   it("ignores decades, counts and lengths no brief accepts", () => {
@@ -42,6 +47,8 @@ describe("promptFormatOf", () => {
     expect(ratioOf("A portrait of our founder")).toBeUndefined();
     expect(ratioOf("Summer sale on shorts, follow us on YouTube")).toBeUndefined();
     expect(ratioOf("Promote our 1:1 coaching sessions")).toBeUndefined();
+    expect(ratioOf("video ngang hàng đầu Việt Nam")).toBeUndefined();
+    expect(ratioOf("Pay in Square")).toBeUndefined();
   });
 });
 

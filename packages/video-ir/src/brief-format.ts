@@ -43,10 +43,16 @@ const TOTAL_BEFORE =
   /(?:total|tổng|exactly|overall|in all|length|duration|thời lượng|dài|video|clip)[\s:]*(?:of\s+|là\s+|khoảng\s+|about\s+)?$/iu;
 /** Words just after a length that make it the whole video's ("60-second video", "15s TikTok ad"). */
 const TOTAL_AFTER =
-  /^\s*(?:long\s+)?(?:\S+\s+)?(?:video|clip|ad|advert|commercial|spot|film|teaser|trailer|promo|explainer|intro|reel|motion)/iu;
+  /^\s*(?:long\s+)?(?:video|clip|(?:\S+\s+)?(?:ad|advert|commercial|spot|film|teaser|trailer|promo|explainer|intro|reel|motion))(?![\p{L}])/iu;
 /** Words just before a length that make it a part's ("each 5 seconds", "mỗi cảnh 3 giây", "last 3s"). */
 const PART_BEFORE =
-  /(?<![\p{L}])(?:each|per|every|mỗi|first|last|scene|shot|cảnh|phần|đầu|cuối)(?![\p{L}])[^.,;!?\n]{0,12}$/iu;
+  /(?<![\p{L}])(?:each|per|every|mỗi|first|last|scene|shot|cảnh|phần|đoạn)(?![\p{L}])[^.,;!?\n]{0,12}$/iu;
+/**
+ * Words just after a length that make it a part's or the source's, never the video's: "5 seconds each",
+ * "5s per scene", "5 giây một cảnh", "5 phút đầu", "10 minutes of footage".
+ */
+const PART_AFTER =
+  /^\s*(?:each|apiece|per\s+\p{L}+|mỗi\s+\p{L}+|một\s+(?:cảnh|phần|đoạn|shot|scene)|đầu|cuối|of\s+(?:raw\s+)?(?:footage|video|recordings?|material|clips?)|(?:raw\s+)?footage|tư liệu|cảnh quay)(?![\p{L}])/iu;
 
 const num = (s: string | undefined) => Number((s ?? "").replace(",", "."));
 
@@ -65,8 +71,11 @@ function durationOf(text: string): number | undefined {
     if (!Number.isFinite(ms) || ms < BRIEF_MIN_MS || ms > BRIEF_MAX_MS) continue;
     const before = text.slice(Math.max(0, m.index - 24), m.index);
     const after = text.slice(m.index + m[0].length, m.index + m[0].length + 24);
-    if (PART_BEFORE.test(before)) continue;
-    lengths.push({ ms: Math.round(ms), total: TOTAL_BEFORE.test(before) || TOTAL_AFTER.test(after) });
+    if (PART_AFTER.test(after)) continue;
+    const total = TOTAL_BEFORE.test(before) || TOTAL_AFTER.test(after);
+    // "our first 30-second ad" names the whole ad, though "first" usually opens a part.
+    if (!total && PART_BEFORE.test(before)) continue;
+    lengths.push({ ms: Math.round(ms), total });
   }
   return (lengths.find((l) => l.total) ?? lengths[0])?.ms;
 }
@@ -95,12 +104,14 @@ const VI_FRAME_NOUN = "(?:video|clip|quảng cáo|khung hình|khung|định dạ
 const ORIENTATIONS: Array<[AspectRatio, RegExp]> = (
   [
     ["9:16", "vertical|portrait", "dọc"],
-    ["16:9", "landscape|horizontal|widescreen", "ngang"],
+    // "ngang hàng" (on par) and "ngang qua" (passing by) do not name the frame.
+    ["16:9", "landscape|horizontal|widescreen", "ngang(?!\\s+(?:hàng|qua|nhiên|tầm|bằng|ngửa))"],
     ["1:1", "square", "vuông"],
   ] as const
 ).flatMap(([ratio, en, vi]) => [
   [ratio, new RegExp(`(?<![\\p{L}])(?:${en})[\\s-]+${PLATFORM}${FRAME_NOUN}(?![\\p{L}])`, "iu")],
-  [ratio, new RegExp(`(?<![\\p{L}])in\\s+(?:${en})(?![\\p{L}])`, "iu")],
+  // Case-sensitive: "Pay in Square" names a company.
+  [ratio, new RegExp(`(?<![\\p{L}])[Ii]n\\s+(?:${en})(?![\\p{L}])`, "u")],
   [ratio, new RegExp(`(?<![\\p{L}])${VI_FRAME_NOUN}\\s+${vi}(?![\\p{L}])`, "iu")],
 ]);
 
