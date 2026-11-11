@@ -72,7 +72,8 @@ jobs:
 
   qa-speech:
     name: QA speech tests
-    runs-on: ubuntu-latest
+    # Pinned to the release the espeak-ng debs in .github/actions/espeak-ng are built for.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -81,21 +82,16 @@ jobs:
         with:
           cache-dependency-glob: tools/qa/uv.lock
 
-      # Every Ubuntu mirror down is an outage, not a regression: the job warns and skips instead of
-      # blocking merges. Once espeak-ng is installed, the tests below still fail, not skip.
+      # When no Ubuntu mirror serves the debs, that outage is not a regression: the job warns and skips
+      # the speech tests instead of blocking merges. Any other install failure still fails the job.
       - name: Install espeak-ng
         id: espeak
-        continue-on-error: true
         uses: ./.github/actions/espeak-ng
-
-      - name: Warn that the speech tests did not run
-        if: steps.espeak.outcome != 'success'
-        run: echo "::warning title=QA speech tests skipped::espeak-ng could not be fetched from any Ubuntu mirror; the speech tests did not run."
 
       # The real Silero VAD on a synthesized voice and on voiceless sound, in its own venv so the main one
       # stays the default image (no torch). Fails, not skips, when the detector or espeak-ng is missing.
       - name: QA speech tests (speech image)
-        if: steps.espeak.outcome == 'success'
+        if: steps.espeak.outputs.installed == 'true'
         env:
           STUDIX_QA_REQUIRE_SPEECH: "1"
           UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/qa-speech-venv

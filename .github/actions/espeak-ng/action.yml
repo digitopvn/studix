@@ -2,18 +2,25 @@
 # `apt-get update` (a stalled apt mirror failed every speech job for hours).
 # debs.txt holds `<sha256> <path under ubuntu/pool/>`, dependencies first. Refresh it from
 # `apt-get download --print-uris espeak-ng libespeak-ng1 espeak-ng-data libpcaudio0 libsonic0`.
+# Only "no mirror served a deb" is soft (`installed=false`); anything else fails the step.
 name: espeak-ng
 description: Install a checksum-pinned espeak-ng onto PATH without apt-get update.
+outputs:
+  installed:
+    description: "\"true\" once espeak-ng is on PATH, \"false\" when no mirror could serve the debs."
+    value: ${{ steps.install.outputs.installed }}
 runs:
   using: composite
   steps:
-    - name: Cache espeak-ng debs
-      uses: actions/cache@v4
+    - name: Restore espeak-ng debs
+      id: cache
+      uses: actions/cache/restore@v4
       with:
         path: ~/.cache/espeak-ng-debs
         key: espeak-ng-debs-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/espeak-ng/debs.txt') }}
 
     - name: Install espeak-ng
+      id: install
       shell: bash
       env:
         DEBS: ${{ github.action_path }}/debs.txt
@@ -30,19 +37,34 @@ runs:
           files+=("$file")
           echo "$sum  $file" | sha256sum -c --status - 2>/dev/null && continue
           # A stalled mirror is cut off after 15 s below 10 kB/s instead of hanging the job.
+          served=
           for mirror in http://azure.archive.ubuntu.com/ubuntu http://archive.ubuntu.com/ubuntu \
             https://mirrors.edge.kernel.org/ubuntu; do
             if curl -fsSL --connect-timeout 10 --max-time 90 --speed-limit 10000 --speed-time 15 \
-              -o "$file" "$mirror/pool/${path//+/%2b}" &&
-              echo "$sum  $file" | sha256sum -c --status -; then
-              continue 2
+              -o "$file" "$mirror/pool/${path//+/%2b}"; then
+              echo "$sum  $file" | sha256sum -c --status - && continue 2
+              served=1
+              echo "::warning::${path##*/} from $mirror does not match its pinned sha256"
+            else
+              echo "::warning::${path##*/} from $mirror failed, trying the next mirror"
             fi
-            echo "::warning::${path##*/} from $mirror failed, trying the next mirror"
           done
-          rm -f "$file"
-          echo "::error::could not fetch ${path##*/} from any mirror"
-          exit 1
+          rm -rf "$dir"
+          # Mirrors that serve the file but never the pinned bytes mean a wrong pin, not an outage.
+          [ -z "$served" ] || { echo "::error::no mirror served ${path##*/} with its pinned sha256"; exit 1; }
+          echo "::warning title=espeak-ng unavailable::no Ubuntu mirror served ${path##*/}"
+          echo "installed=false" >> "$GITHUB_OUTPUT"
+          exit 0
         done < "$DEBS"
         sudo rm -f /var/lib/man-db/auto-update
         sudo dpkg -i "${files[@]}" > /dev/null
         espeak-ng --version
+        echo "installed=true" >> "$GITHUB_OUTPUT"
+
+    # Saved only once all debs verified and installed, so a partial download is never cached.
+    - name: Save espeak-ng debs
+      if: steps.cache.outputs.cache-hit != 'true' && steps.install.outputs.installed == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/espeak-ng-debs
+        key: ${{ steps.cache.outputs.cache-primary-key }}
