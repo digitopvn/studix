@@ -222,14 +222,16 @@ function inkOn(
  * closing pad on the last), rounded up to the 100ms step the cards are cut in. While these sum to at most
  * the length, every card gets at least its need (`durations`).
  */
-function cardNeeds(voiceovers: ReadonlyArray<string | undefined>, language: string): number[] {
+export function cardNeeds(
+  voiceovers: ReadonlyArray<string | undefined>,
+  language: string,
+  speechMs?: ReadonlyArray<number | undefined>,
+): number[] {
   const last = voiceovers.length - 1;
-  return voiceovers.map(
-    (v, i) =>
-      Math.ceil(
-        ((v ? spokenMs(v, language) : 0) + (i === 0 ? VO_PAD_MS : 0) + (i === last ? VO_PAD_MS : 0)) / 100,
-      ) * 100,
-  );
+  return voiceovers.map((v, i) => {
+    const said = speechMs?.[i] ?? (v ? spokenMs(v, language) : 0);
+    return Math.ceil((said + (i === 0 ? VO_PAD_MS : 0) + (i === last ? VO_PAD_MS : 0)) / 100) * 100;
+  });
 }
 
 /**
@@ -237,11 +239,17 @@ function cardNeeds(voiceovers: ReadonlyArray<string | undefined>, language: stri
  * closing pads), and the rest of the length is shared in proportion to the lines' weights (even when
  * unweighted), so a long hook never outruns its card.
  */
-function durations(totalMs: number, lines: readonly Line[], language: string): number[] {
+function durations(
+  totalMs: number,
+  lines: readonly Line[],
+  language: string,
+  speechMs?: ReadonlyArray<number | undefined>,
+): number[] {
   const last = lines.length - 1;
   const need = cardNeeds(
     lines.map((l) => l.voiceover),
     language,
+    speechMs,
   );
   const weights = lines.map((l) => l.weight ?? 1);
   const sum = weights.reduce((a, b) => a + b, 0);
@@ -259,6 +267,11 @@ export interface MotionGraphicOptions {
    * and weights replace the brief-derived cards. Absent, the cards come from the brief alone.
    */
   storyboard?: MotionStoryboard;
+  /**
+   * Measured speech of each card's voice-over take (ms; undefined where not measured), in place of the
+   * reading-pace estimate when the cards are cut: the voice stage re-times the cards to its takes.
+   */
+  speechMs?: ReadonlyArray<number | undefined>;
 }
 
 /**
@@ -357,7 +370,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     : undefined;
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
   const chars = LINE_CHARS[aspectRatio];
-  const spans = durations(totalMs, lines, language);
+  const spans = durations(totalMs, lines, language, options.speechMs);
   const last = lines.length - 1;
   let cursor = 0;
   const cues: CaptionCue[] = [];

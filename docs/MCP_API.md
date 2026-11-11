@@ -239,7 +239,10 @@ Behavior notes:
   action last. With `brief.voiceover: false` it needs no speech
   provider and makes on-screen text only. A missing SFX model or key skips the
   accent with a warning; a voice-over that cannot be generated still fails the
-  job.
+  job. Every voice take is measured first: a line longer than its card re-times
+  the cards (same total length, captions and SFX moved with them), and only
+  speech that cannot fit the whole video fails with `VALIDATION` naming the
+  lines and by how many milliseconds.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action

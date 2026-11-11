@@ -3,7 +3,6 @@ import { StudixError, toStudixError } from "@studix/shared";
 import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
 import {
   irOf,
-  mapBounded,
   type PackPipeline,
   RenderOutput,
   read,
@@ -23,14 +22,24 @@ import {
   type StoredMediaRequest,
 } from "../stored-media.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
-import { type VoiceLine, voiceLines, withVoiceover } from "../voice-lines.ts";
-import { generateVoiceTake, voiceFitScope } from "../voice-takes.ts";
+import { type VoiceLine, voiceLines } from "../voice-lines.ts";
+import { voiceTakeScope } from "../voice-takes.ts";
+import {
+  ACCENT_TRACK_ID,
+  accentAt,
+  accentDurationMs,
+  cutTimes,
+  SFX_MS,
+  whooshStart,
+  whooshTrackId,
+} from "./motion-graphic-sfx-timing.ts";
 import {
   MG_STORYBOARD_STAGE,
   MotionStoryboardOutput,
   motionGraphicStoryboardStage,
 } from "./motion-graphic-storyboard.ts";
 import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion-graphic-template.ts";
+import { voiceGraphic } from "./motion-graphic-voice-retime.ts";
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
 export const MG_STAGES = {
@@ -125,28 +134,21 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
       params: { language: ir.language, instructions: line.instructions },
       keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
       maxCostCents: 0,
-      reuse: { scope: voiceFitScope(line) },
+      reuse: { scope: voiceTakeScope(line) },
     },
   }));
 }
 
-/** Voice takes generated at once, like the other packs' media batches. */
+/**
+ * Voice takes generated at once: under a provider's concurrent-request cap (ElevenLabs allows 5 on common
+ * plans), as a 60 s graphic has up to twelve lines and firing them all at once fails the stage with 429s.
+ */
 const VOICE_CONCURRENCY = 3;
-
-const SFX_MS = 1500;
-/** Where the accent lands when the IR has no CTA scene: this long before the end. */
-const SFX_TAIL_MS = 3000;
 
 /** One soft accent where the CTA card lands; the voice-over stays the lead. */
 function sfxRequest(s: StageContext): { at: number; request: StoredMediaRequest } {
-  const ir = irOf(s);
-  const ctaIndex = ir.scenes.findIndex((scene) => scene.id === "cta");
-  const at =
-    ctaIndex === -1
-      ? Math.max(0, ir.format.durationMs - SFX_TAIL_MS)
-      : ir.scenes.slice(0, ctaIndex).reduce((ms, scene) => ms + scene.durationMs, 0);
   return {
-    at,
+    at: accentAt(irOf(s)),
     request: {
       assetId: "sfx-accent",
       kind: "sfx",
@@ -172,17 +174,6 @@ function whooshRequest(s: StageContext): StoredMediaRequest {
     maxCostCents: 0,
     reuse: {},
   };
-}
-
-/** Start of every scene after the first, except the CTA card (the accent lands there). */
-function cutTimes(ir: VideoIR): number[] {
-  const out: number[] = [];
-  let at = 0;
-  for (const scene of ir.scenes) {
-    if (at > 0 && scene.id !== "cta") out.push(at);
-    at += scene.durationMs;
-  }
-  return out;
 }
 
 async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMediaRequest> {
@@ -258,8 +249,6 @@ export const motionGraphicAccentStage: StageDefinition = {
       await rm(workDir, { recursive: true, force: true });
       return withoutAccent(ir, toStudixError(err).message);
     }
-    const accentAt = sfxRequest(s).at;
-    const accentRoom = Math.max(1, ir.format.durationMs - accentAt);
     // The cut whooshes are a garnish on the accent: a whoosh that cannot be made leaves the accent alone.
     const cuts = cutTimes(ir);
     let whoosh: StoredMedia | undefined;
@@ -272,11 +261,10 @@ export const motionGraphicAccentStage: StageDefinition = {
     }
     const whooshTracks = whoosh
       ? cuts.map((at, i) => ({
-          id: `sfx-whoosh-${i + 1}-track`,
+          id: whooshTrackId(i),
           kind: "sfx" as const,
           assetId: (whoosh as StoredMedia).asset.id,
-          // Lead the cut slightly so the whoosh peaks on it.
-          startMs: Math.max(0, at - 150),
+          startMs: whooshStart(at),
           durationMs: Math.min(WHOOSH_MS, (whoosh as StoredMedia).asset.durationMs ?? WHOOSH_MS),
           volume: 0.35,
         }))
@@ -290,14 +278,14 @@ export const motionGraphicAccentStage: StageDefinition = {
         ...(whoosh ? [whoosh.asset] : []),
       ],
       audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "sfx-accent-track" && !t.id.startsWith("sfx-whoosh-")),
+        ...(ir.audio ?? []).filter((t) => t.id !== ACCENT_TRACK_ID && !t.id.startsWith("sfx-whoosh-")),
         ...whooshTracks,
         {
-          id: "sfx-accent-track",
+          id: ACCENT_TRACK_ID,
           kind: "sfx" as const,
           assetId: sfx.asset.id,
-          startMs: accentAt,
-          durationMs: Math.min(accentRoom, sfx.asset.durationMs ?? SFX_MS),
+          startMs: accentAt(ir),
+          durationMs: accentDurationMs(ir, sfx.asset.durationMs),
           volume: 0.6,
         },
       ],
@@ -313,14 +301,16 @@ export const motionGraphicAccentStage: StageDefinition = {
 /**
  * The voice-over of the script, one line per card, each read with its card's direction and laid where that
  * card's captions start, so the call to action is heard with the CTA card. Its own stage, so a new voice
- * (another speech model, new direction) costs only the voice. A take is judged on its speech, not its
- * silence, and one still too long is voiced once more, brisker (`generateVoiceTake`).
+ * (another speech model, new direction) costs only the voice. Every take is measured (on its speech, not its
+ * silence) before any is laid: a line longer than its card re-times the cards to the takes when all the
+ * speech fits the graphic, and is voiced once more, brisker, only when it does not (`voiceGraphic`).
  */
 export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
+  inputSchema: ComposeInput,
   outputSchema: IrOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 3, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 4, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -330,27 +320,23 @@ export const motionGraphicVoiceStage: StageDefinition = {
     const ir = irOf(s);
     const planned = await voiceRequests(s);
     if (planned.length === 0) return { output: { ir } };
+    const input = s.input as ComposeInput;
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
-    const generated = await mapBounded(
+    const voiced = await voiceGraphic(
+      s,
+      MG_STAGES.voice,
+      ir,
+      {
+        brief: input.outputs.brief.brief,
+        assets: input.payload.assets,
+        storyboard: input.outputs[MG_STORYBOARD_STAGE]?.storyboard,
+      },
       planned,
-      // Under a provider's concurrent-request cap (ElevenLabs allows 5 on common plans): a 60 s graphic has
-      // up to twelve lines, and firing them all at once fails the stage with 429s.
+      workDir,
       VOICE_CONCURRENCY,
-      (v) => generateVoiceTake(s, MG_STAGES.voice, v.line, v.request, `${v.request.assetId}-track`, workDir),
-      (g) => g.usage,
     );
     await rm(workDir, { recursive: true, force: true });
-    const usage = generated.flatMap((g) => g.usage);
-    const next = await billedOnFailure(usage, () =>
-      VideoIR.parse(
-        withVoiceover(
-          ir,
-          generated.map((g) => g.track),
-          generated.map((g) => g.asset),
-        ),
-      ),
-    );
-    return { output: { ir: next }, usage };
+    return { output: { ir: voiced.ir }, usage: voiced.usage };
   },
 };
 const musicOf = (ir: VideoIR) =>
