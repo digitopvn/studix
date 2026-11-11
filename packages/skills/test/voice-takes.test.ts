@@ -18,6 +18,7 @@ import { MAX_VOICE_DIRECTION_CHARS, MAX_VOICE_SPEEDUP, type VoiceLine } from "..
 import {
   generateVoiceTake,
   type MeasuredTake,
+  measuredVoiceTake,
   measureVoiceTake,
   VOICE_FIT_SCOPE,
   type VoiceTakeMeasure,
@@ -386,5 +387,21 @@ describe("voicing a line", () => {
   it("keys reuse by the exact room, so a take that fit a longer room is not served for a shorter one", () => {
     expect(voiceFitScope({ roomMs: 1849 })).not.toBe(voiceFitScope({ roomMs: 1750 }));
     expect(voiceFitScope({ roomMs: 1800 })).toBe(`${VOICE_FIT_SCOPE}:1800`);
+  });
+});
+
+describe("measuring a take before it is judged", () => {
+  it("keeps a take too long for its room, so a stage retry measures it from storage instead of paying again", async () => {
+    const h = stage([tooLong]);
+    const first = await measuredVoiceTake(h.s, "voice", request, await workDir(), h.measure);
+    expect(first.measured).toEqual(tooLong);
+    expect(first.lengthMs).toBe(tooLong.durationMs);
+    // The retry's scratch file is gone: the take is collected through the journal and measured from storage.
+    await rm(join(root, "job_1"), { recursive: true, force: true });
+    const again = await measuredVoiceTake(h.s, "voice", request, await workDir(), h.measure);
+    expect(h.calls).toHaveLength(1);
+    expect(again.asset.storageKey).toBe(first.asset.storageKey);
+    expect(again.measured).toEqual(tooLong);
+    expect(again.lengthMs).toBe(tooLong.durationMs);
   });
 });
