@@ -81,24 +81,25 @@ jobs:
         with:
           cache-dependency-glob: tools/qa/uv.lock
 
+      # Every Ubuntu mirror down is an outage, not a regression: the job warns and skips instead of
+      # blocking merges. Once espeak-ng is installed, the tests below still fail, not skip.
+      - name: Install espeak-ng
+        id: espeak
+        continue-on-error: true
+        uses: ./.github/actions/espeak-ng
+
+      - name: Warn that the speech tests did not run
+        if: steps.espeak.outcome != 'success'
+        run: echo "::warning title=QA speech tests skipped::espeak-ng could not be fetched from any Ubuntu mirror; the speech tests did not run."
+
       # The real Silero VAD on a synthesized voice and on voiceless sound, in its own venv so the main one
       # stays the default image (no torch). Fails, not skips, when the detector or espeak-ng is missing.
       - name: QA speech tests (speech image)
+        if: steps.espeak.outcome == 'success'
         env:
           STUDIX_QA_REQUIRE_SPEECH: "1"
           UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/qa-speech-venv
-        run: |
-          sudo rm -f /var/lib/man-db/auto-update
-          # A stalled mirror can hang apt silently, so each attempt is bounded and retried.
-          for attempt in 1 2 3; do
-            if timeout 240 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -qq &&
-              timeout 240 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq --no-install-recommends espeak-ng; then
-              break
-            fi
-            [ "$attempt" = 3 ] && exit 1
-            echo "apt attempt $attempt failed, retrying"
-          done
-          uv run --locked --extra speech --project tools/qa pytest tools/qa/tests/test_speech_activity.py -v
+        run: uv run --locked --extra speech --project tools/qa pytest tools/qa/tests/test_speech_activity.py -v
 
   integration:
     name: integration tests (${{ matrix.shard }}/3)

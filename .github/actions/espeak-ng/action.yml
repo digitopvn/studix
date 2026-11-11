@@ -1,0 +1,48 @@
+# Pinned espeak-ng .debs for Ubuntu 24.04, cached and fetched from several mirrors, so CI never waits on
+# `apt-get update` (a stalled apt mirror failed every speech job for hours).
+# debs.txt holds `<sha256> <path under ubuntu/pool/>`, dependencies first. Refresh it from
+# `apt-get download --print-uris espeak-ng libespeak-ng1 espeak-ng-data libpcaudio0 libsonic0`.
+name: espeak-ng
+description: Install a checksum-pinned espeak-ng onto PATH without apt-get update.
+runs:
+  using: composite
+  steps:
+    - name: Cache espeak-ng debs
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/espeak-ng-debs
+        key: espeak-ng-debs-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/espeak-ng/debs.txt') }}
+
+    - name: Install espeak-ng
+      shell: bash
+      env:
+        DEBS: ${{ github.action_path }}/debs.txt
+      run: |
+        set -euo pipefail
+        . /etc/os-release
+        [ "$VERSION_ID" = 24.04 ] && [ "$(uname -m)" = x86_64 ] ||
+          { echo "::error::espeak-ng debs are pinned for Ubuntu 24.04 x86_64, got $VERSION_ID $(uname -m)"; exit 1; }
+        dir="$HOME/.cache/espeak-ng-debs"
+        mkdir -p "$dir"
+        files=()
+        while read -r sum path; do
+          file="$dir/${path##*/}"
+          files+=("$file")
+          echo "$sum  $file" | sha256sum -c --status - 2>/dev/null && continue
+          # A stalled mirror is cut off after 15 s below 10 kB/s instead of hanging the job.
+          for mirror in http://azure.archive.ubuntu.com/ubuntu http://archive.ubuntu.com/ubuntu \
+            https://mirrors.edge.kernel.org/ubuntu; do
+            if curl -fsSL --connect-timeout 10 --max-time 90 --speed-limit 10000 --speed-time 15 \
+              -o "$file" "$mirror/pool/${path//+/%2b}" &&
+              echo "$sum  $file" | sha256sum -c --status -; then
+              continue 2
+            fi
+            echo "::warning::${path##*/} from $mirror failed, trying the next mirror"
+          done
+          rm -f "$file"
+          echo "::error::could not fetch ${path##*/} from any mirror"
+          exit 1
+        done < "$DEBS"
+        sudo rm -f /var/lib/man-db/auto-update
+        sudo dpkg -i "${files[@]}" > /dev/null
+        espeak-ng --version
