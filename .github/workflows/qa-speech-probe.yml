@@ -1,0 +1,10 @@
+# Temporary: runs the QA speech job on this branch's pushes to verify the pinned espeak-ng install.
+name: qa-speech-probe
+on:
+  push:
+    branches: [claude/bold-newton-hjjst7]
+permissions:
+  contents: read
+jobs:
+  qa-speech:
+    uses: ./.github/workflows/ci.yml
