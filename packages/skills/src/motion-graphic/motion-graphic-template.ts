@@ -31,7 +31,7 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 7;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 8;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -433,16 +433,20 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         animation: { enter, durationMs: 400 },
       });
     } else if (line.layout) {
-      // A layout card: the headline sits on top and the layout builds under it.
+      // A layout card: the headline sits on top and the layout builds under it. In landscape a headline that
+      // holds on two display lines is set at display size, like every other landscape headline; a longer one
+      // keeps the heading size and its own width, so the layout keeps its room.
+      const display = aspectRatio === "16:9" ? breakLines(line.onScreen, chars) : "";
+      const big = display !== "" && display.split("\n").length <= 2;
       shots.push(
         {
           id: `${id}-text`,
           type: i === 0 ? "title" : "text",
           startMs: 0,
           durationMs,
-          text: breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio]).slice(0, 160),
+          text: (big ? display : breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio])).slice(0, 160),
           style: {
-            textStyle: "heading",
+            textStyle: big ? "display" : "heading",
             color: inkOn(brand.palette, fill, "foreground"),
             align: "center",
             region: "top",

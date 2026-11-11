@@ -1,5 +1,5 @@
 import type { ColorRole, LayoutSpec } from "@studix/video-ir";
-import { cssColor, TEXT_STYLES, type TextStyleToken } from "./brand-tokens.ts";
+import { burnedCaptionBand, cssColor, frameScale, TEXT_STYLES, type TextStyleToken } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, seconds } from "./html-utils.ts";
 import type { TimelineWriter } from "./scene-timeline.ts";
 import type { ShotMarkup, ShotMarkupContext } from "./shot-markup.ts";
@@ -68,13 +68,49 @@ const px = (ctx: ShotMarkupContext, n: number) => `${Math.max(1, Math.round(n * 
 const contentWidth = (ctx: ShotMarkupContext) =>
   ctx.frame.width - 2 * Math.round(0.07 * Math.min(ctx.frame.width, ctx.frame.height));
 const portrait = (ctx: ShotMarkupContext) => ctx.frame.height > ctx.frame.width;
+/** Wider than tall (16:9): a square frame is neither portrait nor landscape. */
+const landscape = (frame: { width: number; height: number }) => frame.width > frame.height;
 /**
  * Height a layout may take: what the content area leaves under a headline of up to two lines and above
  * the burned captions, so a tall layout never runs into either.
  */
-const layoutHeight = (ctx: ShotMarkupContext) =>
-  (ctx.frame.height - 2 * Math.round(0.07 * Math.min(ctx.frame.width, ctx.frame.height))) *
-  (portrait(ctx) ? 0.7 : 0.55);
+const layoutHeight = (ctx: ShotMarkupContext) => {
+  const { width, height } = ctx.frame;
+  const short = Math.min(width, height);
+  const safe = Math.round(0.07 * short);
+  const gap = Math.round(0.03 * short);
+  const captions = Math.max(0, burnedCaptionBand(ctx.frame) + gap - safe);
+  if (!landscape(ctx.frame)) return (height - 2 * safe - captions) * (portrait(ctx) ? 0.7 : 0.55);
+  // Landscape: the content area less a two-line display headline, the gaps around it and the band the
+  // captions keep at the bottom (see scene-composition.ts).
+  const headline =
+    2 * TEXT_STYLES.display.sizeAt1080 * TEXT_STYLES.display.lineHeight * frameScale(ctx.frame);
+  return height - 2 * safe - headline - 2 * gap - captions;
+};
+
+/** How much larger a layout is drawn in a landscape frame than its short edge alone would make it. */
+const LANDSCAPE_LAYOUT_BOOST = 1.25;
+
+/** The smallest chip label, as a factor of the body size: 26 px at 1080, 33 px on a 16:9 frame. */
+const MIN_CHIP_FACTOR = 0.6;
+
+/**
+ * How a chips layout sits: side by side, each label sized to stay on one line of its track, or hung off a
+ * spine when the labels would be set below `MIN_CHIP_FACTOR` side by side (and always for four or more
+ * chips on a portrait frame). A landscape row never hangs: there its labels keep the floor size and wrap
+ * between words. Shared by the markup and the motion, so both draw the same arrangement.
+ */
+function chipsPlan(items: readonly string[], frame: { width: number; height: number }) {
+  const n = items.length;
+  const scale = frameScale(frame) * (landscape(frame) ? LANDSCAPE_LAYOUT_BOOST : 1);
+  const width = frame.width - 2 * Math.round(0.07 * Math.min(frame.width, frame.height));
+  const track = (Math.round(width * 0.94) - (n - 1) * 20 * scale) / n - 2 * 33 * scale;
+  const longest = Math.max(...items.map((l) => Array.from(l).length));
+  const fit = (track * 0.95) / (longest * 0.6 * TEXT_STYLES.body.sizeAt1080 * scale);
+  const factor = Math.max(MIN_CHIP_FACTOR, Math.min(n > 4 ? 0.75 : 0.9, fit));
+  const column = (frame.height > frame.width && n > 3) || (!landscape(frame) && fit < MIN_CHIP_FACTOR);
+  return { column, factor: column ? 1 : factor };
+}
 
 const CHECK_SVG =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -115,13 +151,19 @@ const STRIP = "012345678901234567890123456789";
 
 /** HTML and CSS for a layout shot; `sel` is the shot's outer element selector. */
 export function renderLayoutMarkup(
-  ctx: ShotMarkupContext,
+  frameCtx: ShotMarkupContext,
   sel: string,
   open: string,
   base: string[],
   layout: LayoutSpec,
   ink: string,
 ): ShotMarkup {
+  // Sizes scale with the short frame edge, so a landscape frame would draw a layout as small as a portrait one
+  // in a frame almost twice as wide. There it is drawn larger (widths, heights and the type sized to fit them
+  // are still capped by the content area), so the layout fills the card instead of floating in it.
+  const ctx = landscape(frameCtx.frame)
+    ? { ...frameCtx, scale: frameCtx.scale * LANDSCAPE_LAYOUT_BOOST }
+    : frameCtx;
   const width = contentWidth(ctx);
   const css: string[] = [
     cssRule(sel, [...base, "display: flex;", "justify-content: center;", "max-width: 100%;"]),
@@ -179,11 +221,11 @@ export function renderLayoutMarkup(
     case "code": {
       const longest = Math.max(12, ...layout.lines.map((l) => l.length + 4));
       // Monospace glyphs are about 0.6em wide: shrink the type until the longest line fits the window, and
-      // the lines (plus the title bar and padding, about 1.6 more) fit the layout's height.
+      // the lines fit the layout's height less the window's title bar and padding (about 110 px at 1080).
       const sizePx = Math.min(
         Math.round(TEXT_STYLES.body.sizeAt1080 * ctx.scale),
         Math.floor((width * 0.9) / (longest * 0.6)),
-        Math.floor(layoutHeight(ctx) / ((layout.lines.length + 1.6) * 1.55)),
+        Math.floor((layoutHeight(ctx) - 110 * ctx.scale) / (layout.lines.length * 1.55)),
       );
       ctx.fontWeights.mono.add(500);
       rule(".lo-code", [
@@ -246,12 +288,15 @@ export function renderLayoutMarkup(
     }
     case "chips": {
       const n = layout.items.length;
-      // A portrait frame cannot hold four or more chips side by side: they hang off a spine instead.
-      const column = portrait(ctx) && n > 3;
+      const { column, factor: chipFactor } = chipsPlan(layout.items, frameCtx.frame);
+      // A spine of chips is about 155 px (hub and stem) plus 94 px a chip and 18 px between at 1080: it
+      // shrinks to the height the card leaves it, like a checklist.
+      const k = column ? Math.min(1, layoutHeight(ctx) / ((155 + n * 94 + (n - 1) * 18) * ctx.scale)) : 1;
+      const c = k < 1 ? { ...ctx, scale: ctx.scale * k } : ctx;
       const line = tint("foreground", 45);
-      const stroke = px(ctx, 4);
+      const stroke = px(c, 4);
       const pill = [
-        `padding: ${px(ctx, 16)} ${px(ctx, 30)};`,
+        `padding: ${px(c, 16)} ${px(c, 30)};`,
         "border-radius: 999px;",
         "text-align: center;",
         "overflow-wrap: anywhere;",
@@ -263,25 +308,25 @@ export function renderLayoutMarkup(
         `width: ${Math.round(width * (column ? 0.86 : 0.94))}px;`,
       ]);
       rule(".lo-hub", [
-        ...fontCss(ctx, body, 1.1, 700),
+        ...fontCss(c, body, 1.1, 700),
         ...pill,
         "background: var(--c-accent);",
-        `color: ${inkOnAccent(ctx)};`,
+        `color: ${inkOnAccent(c)};`,
       ]);
       rule(".lo-stem", [
         `width: ${stroke};`,
-        `height: ${px(ctx, 56)};`,
+        `height: ${px(c, 56)};`,
         `background: ${line};`,
         "transform-origin: top center;",
-        column ? `margin-left: ${px(ctx, 40)};` : "",
+        column ? `margin-left: ${px(c, 40)};` : "",
       ]);
       rule(".lo-row", [
         "position: relative;",
         "display: grid;",
         "width: 100%;",
         column ? "grid-auto-rows: 1fr;" : `grid-template-columns: repeat(${n}, minmax(0, 1fr));`,
-        `gap: ${px(ctx, column ? 18 : 20)};`,
-        column ? `padding-left: ${px(ctx, 40)};` : "",
+        `gap: ${px(c, column ? 18 : 20)};`,
+        column ? `padding-left: ${px(c, 40)};` : "",
         "box-sizing: border-box;",
       ]);
       // The bus runs between the first and last chip's centres, which equal tracks make exact.
@@ -290,7 +335,7 @@ export function renderLayoutMarkup(
         column
           ? [
               "position: absolute;",
-              `left: ${px(ctx, 40)};`,
+              `left: ${px(c, 40)};`,
               "top: 0;",
               `bottom: calc(100% / ${2 * n});`,
               `width: ${stroke};`,
@@ -317,7 +362,7 @@ export function renderLayoutMarkup(
         ".lo-drop",
         column
           ? [
-              `width: ${px(ctx, 36)};`,
+              `width: ${px(c, 36)};`,
               `height: ${stroke};`,
               `background: ${line};`,
               "flex: 0 0 auto;",
@@ -325,15 +370,15 @@ export function renderLayoutMarkup(
             ]
           : [
               `width: ${stroke};`,
-              `height: ${px(ctx, 44)};`,
+              `height: ${px(c, 44)};`,
               `background: ${line};`,
               "transform-origin: top center;",
             ],
       );
       rule(".lo-chip", [
-        ...fontCss(ctx, body, column ? 1 : n > 4 ? 0.75 : 0.9, 600),
+        ...fontCss(c, body, chipFactor, 600),
         ...pill,
-        `border: ${px(ctx, 3)} solid ${tint("foreground", 40)};`,
+        `border: ${px(c, 3)} solid ${tint("foreground", 40)};`,
         `background: ${tint("foreground", 7)};`,
         "min-width: 0;",
       ]);
@@ -474,7 +519,15 @@ export function renderLayoutMarkup(
       ]);
       rule(".lo-hot", ["border-color: var(--c-accent);", `background: ${tint("accent", 16)};`]);
       rule(".lo-idx", [...fontCss(ctx, TEXT_STYLES.caption, 0.9, 700), "color: var(--c-accent);"]);
-      rule(".lo-ctext", [...fontCss(ctx, body, n > 3 ? 0.85 : 1, 700), "overflow-wrap: anywhere;"]);
+      // A word breaks only when it cannot fit its card at all: the type shrinks to fit the longest word first.
+      const inner =
+        (Math.round(width * 0.96) - (cols - 1) * 24 * ctx.scale) / cols - 2 * (26 + 3) * ctx.scale;
+      const word = Math.max(...layout.items.flatMap((l) => l.split(/\s+/).map((w) => Array.from(w).length)));
+      const cardFactor = Math.min(
+        n > 3 ? 0.85 : 1,
+        (inner * 0.95) / (word * 0.62 * body.sizeAt1080 * ctx.scale),
+      );
+      rule(".lo-ctext", [...fontCss(ctx, body, cardFactor, 700), "overflow-wrap: anywhere;"]);
       const cards = layout.items
         .map(
           (label, i) =>
@@ -633,7 +686,7 @@ export function writeLayoutMotion(
         { scaleY: 1, duration: dur(220), ease: EASE },
         seconds(wire),
       );
-      const column = frame.height > frame.width && n > 3;
+      const { column } = chipsPlan(layout.items, frame);
       w.fromTo(
         `${sel} .lo-bus`,
         column ? { scaleY: 0 } : { scaleX: 0 },
@@ -685,7 +738,9 @@ export function writeLayoutMotion(
         const show = { opacity: 1, duration: seconds(Math.max(100, Math.round(rollMs * 0.3))), ease: EASE };
         const at = seconds(begin + Math.round(rollMs * 0.1 * (lead - c)));
         w.fromTo(`${sel} .lo-g${c}`, { opacity: 0 }, show, at);
-        w.fromTo(`${sel} .lo-p${c}`, { opacity: 0 }, show, at);
+        // A thousands separator follows a digit only where three or more digits come after it.
+        const separated = c < to.length - 1 && (to.length - 1 - c) % 3 === 0;
+        if (separated) w.fromTo(`${sel} .lo-p${c}`, { opacity: 0 }, show, at);
       }
       for (let c = 0; c < to.length; c++) {
         const turns = Math.max(0, 2 - (to.length - 1 - c)); // the units spin twice, tens once
