@@ -78,11 +78,11 @@ export const burnedCaptionEdge = (frame: { width: number; height: number }) =>
 
 /**
  * Height of the band burned captions take at the bottom of the frame, from its edge: the edge gap and one cue
- * line on a landscape frame (a cue fits one line there), two on a portrait one.
+ * line on a landscape frame (a cue fits one line there), two on a square or portrait one.
  */
 export function burnedCaptionBand(frame: { width: number; height: number }): number {
   const scale = frameScale(frame);
-  const lines = frame.height > frame.width ? 2 : 1;
+  const lines = frame.width > frame.height ? 1 : 2;
   const line = BURNED_CAPTION.sizeAt1080 * BURNED_CAPTION.lineHeight * lines + 2 * BURNED_CAPTION_PAD.y;
   return burnedCaptionEdge(frame) + Math.round(line * scale);
 }

@@ -291,6 +291,15 @@ describe("buildComposition layouts", () => {
     const tall = buildComposition(wide, { width: 1080, height: 1920 }).files.get("compositions/l0.html")!;
     expect(promptPx(first)).toBe(61);
     expect(promptPx(tall)).toBe(48);
+    // A square frame is not landscape: no boost, and chip labels never drop below the 26 px floor.
+    const square = buildComposition(wide, { width: 1080, height: 1080 });
+    expect(promptPx(square.files.get("compositions/l0.html")!)).toBe(48);
+    for (const html of [
+      square.files.get("compositions/l2.html")!,
+      landscape.files.get("compositions/l2.html")!,
+    ]) {
+      expect(Number(/\.lo-chip \{[^}]*font-size: (\d+)px;/.exec(html)?.[1])).toBeGreaterThanOrEqual(26);
+    }
   });
 
   it("passes the HyperFrames linter with no errors", async () => {
