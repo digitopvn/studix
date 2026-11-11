@@ -87,12 +87,46 @@ export function isErrorCode(value: unknown): value is ErrorCode {
   return typeof value === "string" && (ERROR_CODES as readonly string[]).includes(value);
 }
 
+interface SchemaIssue {
+  path?: ReadonlyArray<PropertyKey>;
+  message?: string;
+}
+
+/**
+ * A schema failure as one readable line (`audio: Too big: expected array to have <=16 items`) with the
+ * first issues in `details`, instead of the multi-line JSON dump a ZodError carries as its message.
+ */
+function fromSchemaError(err: Error, issues: SchemaIssue[], code: ErrorCode): StudixError {
+  const brief = issues.slice(0, 5).map((i) => ({
+    path: (i.path ?? []).map(String).join(".") || "(root)",
+    message: String(i.message ?? "invalid"),
+  }));
+  const first = brief[0];
+  const more = issues.length > 1 ? ` (+${issues.length - 1} more)` : "";
+  return new StudixError(
+    code,
+    `Invalid data: ${first ? `${first.path}: ${first.message}` : "schema check failed"}${more}`,
+    {
+      cause: err,
+      details: { issues: brief },
+      ...(code === "INTERNAL"
+        ? {
+            suggestedAction:
+              "Studix produced data its own schema rejects; this is not caused by your input. Report it with the jobId and traceId; retrying the same job fails the same way.",
+          }
+        : {}),
+    },
+  );
+}
+
 /** Wrap anything thrown into a StudixError; existing StudixErrors pass through unchanged. */
 export function toStudixError(err: unknown, fallback: ErrorCode = "INTERNAL"): StudixError {
   if (err instanceof StudixError) return err;
   if (err instanceof Error) {
     if (err.name === "AbortError") return new StudixError("CANCELLED", err.message, { cause: err });
     if (err.name === "TimeoutError") return new StudixError("TIMEOUT", err.message, { cause: err });
+    if (err.name === "ZodError" && Array.isArray((err as { issues?: unknown }).issues))
+      return fromSchemaError(err, (err as unknown as { issues: SchemaIssue[] }).issues, fallback);
     return new StudixError(fallback, err.message, { cause: err });
   }
   return new StudixError(fallback, typeof err === "string" ? err : "Unknown error", {
