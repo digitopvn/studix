@@ -1,6 +1,9 @@
 import type { CaptionCue } from "@studix/video-ir";
 
-/** Longest caption cue, in words: a burned caption on a vertical frame stays one or two short lines. */
+/**
+ * Longest caption chunk, in words: a burned caption on a vertical frame stays one or two short lines. A
+ * cue may run one word over it, when a lone tail word or a too-brief cue is folded in.
+ */
 export const MAX_CAPTION_WORDS = 9;
 
 /** Shortest caption cue, in words: a lone word flashes on screen and reads as a glitch. */
@@ -33,7 +36,7 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
       }
     }
     const chunk = words.slice(start, end);
-    if (chunks.length > 0 && chunk.length < MIN_CAPTION_WORDS) {
+    if (chunks.length > 0 && chunk.length < MIN_CAPTION_WORDS && maxWords >= MIN_CAPTION_WORDS) {
       chunks[chunks.length - 1] += ` ${chunk.join(" ")}`;
     } else chunks.push(chunk.join(" "));
     start = end;
@@ -44,13 +47,14 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
 /**
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
  * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. A cue
- * shorter than `MIN_CAPTION_MS` joins the cue before it (the first one joins the next), so none flashes.
+ * shorter than `MIN_CAPTION_MS` borrows time from a neighbour, or joins one, so none flashes (see
+ * `settleShortCues`).
  */
 export function captionCues(
   text: string,
   startMs: number,
   durationMs: number,
-  maxWords?: number,
+  maxWords = MAX_CAPTION_WORDS,
 ): CaptionCue[] {
   const chunks = chunkCaption(text, maxWords);
   // Timed by how long each chunk takes to say, so a chunk holding "AI-native" stays up while it is read.
@@ -63,26 +67,49 @@ export function captionCues(
     const from = startMs + Math.round((durationMs * words) / total);
     words += weights[i] ?? 0;
     const to = startMs + Math.round((durationMs * words) / total);
-    if (to > from) cues.push({ startMs: from, endMs: to, text: chunk });
+    cues.push({ startMs: from, endMs: to, text: chunk });
   }
-  return mergeShortCues(cues);
+  return settleShortCues(cues, maxWords + 1).filter((c) => c.endMs > c.startMs);
 }
 
-/** Joins each cue shorter than `MIN_CAPTION_MS` to its neighbour, until every cue is long enough or one is left. */
-function mergeShortCues(cues: CaptionCue[]): CaptionCue[] {
-  const out = [...cues];
+const span = (c: CaptionCue) => c.endMs - c.startMs;
+
+/**
+ * Gives every cue at least `MIN_CAPTION_MS` where the line has room. The timing is a proportional estimate,
+ * so a short cue first moves its boundary into a neighbour that stays long enough itself (the one before
+ * it, then the one after). Failing that it joins a neighbour, as long as the joined cue keeps to
+ * `maxWords`; a line squeezed past both keeps its short cues rather than burn one overlong caption.
+ */
+function settleShortCues(cues: CaptionCue[], maxWords: number): CaptionCue[] {
+  const out = cues.map((c) => ({ ...c }));
+  for (const [i, cue] of out.entries()) {
+    const need = MIN_CAPTION_MS - span(cue);
+    if (need <= 0) continue;
+    const prev = out[i - 1];
+    const next = out[i + 1];
+    if (prev && span(prev) - need >= MIN_CAPTION_MS) {
+      prev.endMs -= need;
+      cue.startMs -= need;
+    } else if (next && span(next) - need >= MIN_CAPTION_MS) {
+      next.startMs += need;
+      cue.endMs += need;
+    }
+  }
+  const fits = (a: CaptionCue, b: CaptionCue) => wordCount(a.text) + wordCount(b.text) <= maxWords;
   for (let i = 0; i < out.length && out.length > 1; ) {
     const cue = out[i] as CaptionCue;
-    if (cue.endMs - cue.startMs >= MIN_CAPTION_MS) {
+    const prev = out[i - 1];
+    const next = out[i + 1];
+    const at =
+      span(cue) >= MIN_CAPTION_MS ? -1 : prev && fits(prev, cue) ? i - 1 : next && fits(cue, next) ? i : -1;
+    if (at < 0) {
       i++;
       continue;
     }
-    // Back into the cue before it; the first cue has none, so it takes the next one in.
-    const [a, b] = i > 0 ? [i - 1, i] : [0, 1];
-    const left = out[a] as CaptionCue;
-    const right = out[b] as CaptionCue;
-    out.splice(a, 2, { startMs: left.startMs, endMs: right.endMs, text: `${left.text} ${right.text}` });
-    i = a;
+    const left = out[at] as CaptionCue;
+    const right = out[at + 1] as CaptionCue;
+    out.splice(at, 2, { startMs: left.startMs, endMs: right.endMs, text: `${left.text} ${right.text}` });
+    i = at;
   }
   return out;
 }

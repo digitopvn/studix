@@ -99,22 +99,36 @@ describe("caption chunks", () => {
   });
 
   it("never times a cue under the minimum while the line has room", () => {
-    // Two chunks in 1 s: each would hold 500 ms, so they share one cue.
-    expect(captionCues("một hai ba bốn năm sáu bảy tám chín mười", 0, 1000, 5)).toEqual([
-      { startMs: 0, endMs: 1000, text: "một hai ba bốn năm sáu bảy tám chín mười" },
-    ]);
-    // A short opening chunk joins the next one; the cues still cover the span end to end.
+    // A short opening clause borrows time from the cue after it instead of flashing for 400 ms.
     const opening = "Ừ à, một hai ba bốn năm sáu bảy tám";
     expect(chunkCaption(opening)).toEqual(["Ừ à,", "một hai ba bốn năm sáu bảy tám"]);
-    expect(captionCues(opening, 5000, 2000)).toEqual([{ startMs: 5000, endMs: 7000, text: opening }]);
-    const cues = captionCues(`${opening}, chín mười mười một mười hai mười ba`, 5000, 3000);
-    expect(cues.length).toBeGreaterThan(1);
+    expect(captionCues(opening, 5000, 2000)).toEqual([
+      { startMs: 5000, endMs: 5600, text: "Ừ à," },
+      { startMs: 5600, endMs: 7000, text: "một hai ba bốn năm sáu bảy tám" },
+    ]);
+    // At the voice-over budget pace (three words a second) every cue stays readable and within the cap.
+    const line = "Oh no, we built this tool for every busy founder today, and it is here now";
+    const cues = captionCues(line, 1000, Math.round((spokenLength(line) / 3) * 1000));
     expect(cues.every((c) => c.endMs - c.startMs >= MIN_CAPTION_MS)).toBe(true);
-    expect(cues[0]?.startMs).toBe(5000);
-    expect(cues.at(-1)?.endMs).toBe(8000);
+    expect(cues.every((c) => wordCount(c.text) <= MAX_CAPTION_WORDS + 1)).toBe(true);
+    expect(cues.map((c) => c.text).join(" ")).toBe(line);
+    expect(cues[0]?.startMs).toBe(1000);
     for (const [i, c] of cues.entries()) if (i > 0) expect(c.startMs).toBe(cues[i - 1]?.endMs);
+    // Two short chunks with room between them join into one cue.
+    expect(captionCues("một hai, ba bốn", 0, 1000, 3)).toEqual([
+      { startMs: 0, endMs: 1000, text: "một hai, ba bốn" },
+    ]);
     // A line too short for the minimum still shows, as a single cue.
     expect(captionCues("Xin chào bạn", 0, 300)).toEqual([{ startMs: 0, endMs: 300, text: "Xin chào bạn" }]);
+  });
+
+  it("never joins a squeezed line into one overlong cue", () => {
+    const words = Array.from({ length: 40 }, (_, i) => `word${i},`).join(" ");
+    const cues = captionCues(words, 0, 2000);
+    expect(cues.length).toBeGreaterThan(1);
+    expect(cues.every((c) => wordCount(c.text) <= MAX_CAPTION_WORDS + 1 && c.text.length <= 300)).toBe(true);
+    // A one-word limit has no tail to fold.
+    expect(chunkCaption("a b c", 1)).toEqual(["a", "b", "c"]);
   });
 });
 
