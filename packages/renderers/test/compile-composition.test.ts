@@ -12,6 +12,7 @@ import {
   validateVideoIR,
 } from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
+import { layoutBoost } from "../src/hyperframes/layout-markup.ts";
 import { assignLanes } from "../src/hyperframes/scene-composition.ts";
 import { buildComposition, GSAP_ASSET, hyperframesSupport, writeComposition } from "../src/index.ts";
 import { loadIrFixture, tempDir, writePng } from "./render-test-helpers.ts";
@@ -79,6 +80,8 @@ describe("buildComposition (brand-intro 9:16)", () => {
       '<div id="s-intro__cue-0" class="cue">Sương Mai Coffee, rang mộc từ Cầu Đất</div>',
     );
     expect(scene("intro")).toContain('tl.set("#s-intro__cue-0", {"opacity":1}, 0);');
+    // Captions are set at 48px on a 1080 short edge (24px on this 540-wide preview), read on a phone.
+    expect(scene("intro")).toMatch(/\.cue \{[^}]*font-size: 24px;[^}]*font-weight: 600;/);
     expect(scene("intro")).not.toContain('tl.set("#s-intro__cue-0", {"opacity":0}');
     expect(scene("cta")).toContain('window.__timelines["cta"] = tl;');
   });
@@ -266,6 +269,40 @@ describe("buildComposition layouts", () => {
     expect(build.warnings).toEqual([]);
     const plain = buildComposition(brandIntro, previewSize);
     expect([...plain.copies.keys()].some((k) => k.includes("jetbrains"))).toBe(false);
+  });
+
+  it("draws layouts half as large again on a landscape frame, fitting labels to their tracks", () => {
+    expect(layoutBoost({ width: 1920, height: 1080 })).toBe(1.5);
+    expect(layoutBoost({ width: 1080, height: 1080 })).toBe(1);
+    expect(layoutBoost({ width: 1080, height: 1920 })).toBe(1);
+    const wide = structuredClone(ir);
+    wide.format = { ...wide.format, aspectRatio: "16:9", width: 1920, height: 1080 };
+    const chips = buildComposition(wide, { width: 1920, height: 1080 }).files.get("compositions/l2.html")!;
+    // Body 44px x 1.1 x 1.5 on the hub; the chips sit side by side and shrink only to fit their track.
+    expect(chips).toMatch(/\.lo-hub \{[^}]*font-size: 73px;/);
+    expect(chips).toContain("grid-template-columns: repeat(4, minmax(0, 1fr));");
+    expect(chips).toMatch(/\.lo-chip \{[^}]*font-size: 59px;/);
+    // Six two-word chips wrap between words: the type fits the longest word, never below 0.6 of its size.
+    const crowded = structuredClone(wide);
+    crowded.scenes[2]!.shots[0] = {
+      ...crowded.scenes[2]!.shots[0]!,
+      layout: {
+        kind: "chips",
+        hub: "Studix",
+        items: [
+          "Customer support",
+          "Analytics dashboard",
+          "Integrations",
+          "Billing",
+          "Notifications",
+          "Audit",
+        ],
+      },
+    } as Shot;
+    const six = buildComposition(crowded, { width: 1920, height: 1080 }).files.get("compositions/l2.html")!;
+    const size = Number(/\.lo-chip \{[^}]*font-size: (\d+)px;/.exec(six)?.[1]);
+    expect(size).toBeGreaterThanOrEqual(Math.round(44 * 0.75 * 1.5 * 0.6));
+    expect(size).toBeLessThan(59);
   });
 
   it("passes the HyperFrames linter with no errors", async () => {

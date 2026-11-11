@@ -52,6 +52,21 @@ function fitFactor(
   return Math.min(factor, fits);
 }
 
+/**
+ * Factor (at most `factor`, at least 0.6 of it) that keeps the longest word of `labels` inside `width`, so
+ * labels wrap between words. Below the floor a label would be too small to read, so it may break instead.
+ */
+function wordFitFactor(
+  ctx: ShotMarkupContext,
+  token: TextStyleToken,
+  factor: number,
+  labels: readonly string[],
+  width: number,
+) {
+  const longest = Math.max(1, ...labels.flatMap((l) => l.split(/\s+/).map((w) => Array.from(w).length)));
+  return Math.max(factor * 0.6, fitFactor(ctx, token, factor, longest, width));
+}
+
 /** Font declarations of a text style token at this frame's scale, `factor` times its size. */
 function fontCss(ctx: ShotMarkupContext, token: TextStyleToken, factor = 1, weight = token.weight): string[] {
   ctx.fontWeights[token.font].add(weight);
@@ -61,6 +76,17 @@ function fontCss(ctx: ShotMarkupContext, token: TextStyleToken, factor = 1, weig
     `line-height: ${token.lineHeight};`,
     `font-weight: ${weight};`,
   ];
+}
+
+/**
+ * How much larger a layout is drawn than the type scale on this frame. Sizes follow the short edge, so on
+ * a landscape frame a layout would fill only a narrow band of the width: there it is drawn half as large
+ * again, still bounded by the content width and `layoutHeight`, so it
+ * reads as the subject of the card. Portrait frames keep the type scale.
+ */
+export function layoutBoost(frame: { width: number; height: number }): number {
+  const ratio = frame.width / frame.height;
+  return ratio >= 1.5 ? 1.5 : 1;
 }
 
 const px = (ctx: ShotMarkupContext, n: number) => `${Math.max(1, Math.round(n * ctx.scale))}px`;
@@ -133,18 +159,26 @@ export function renderLayoutMarkup(
 
   switch (layout.kind) {
     case "prompt-box": {
+      const boxWidth = Math.round(width * (portrait(ctx) ? 1 : 0.8));
+      // The typed text holds at most about five lines: the type shrinks for a long prompt, so the box
+      // never runs into the captions. The field is what the box leaves beside its padding and send button.
+      const sendWidth = layout.action
+        ? (layout.action.length * 0.62 * TEXT_STYLES.caption.sizeAt1080 + 60 + 22) * ctx.scale
+        : 0;
+      const field = boxWidth - 62 * ctx.scale - sendWidth;
+      const perLine = Math.ceil(Array.from(layout.text).length / 5) + 4;
       rule(".lo-prompt", [
         "display: flex;",
         "align-items: center;",
         `gap: ${px(ctx, 22)};`,
-        `width: ${Math.round(width * (portrait(ctx) ? 1 : 0.8))}px;`,
+        `width: ${boxWidth}px;`,
         `padding: ${px(ctx, 26)} ${px(ctx, 26)} ${px(ctx, 26)} ${px(ctx, 36)};`,
         `border: ${px(ctx, 3)} solid ${tint("foreground", 35)};`,
         `border-radius: ${px(ctx, 30)};`,
         `background: ${tint("foreground", 7)};`,
       ]);
       rule(".lo-field", [
-        ...fontCss(ctx, body, 1.1),
+        ...fontCss(ctx, body, fitFactor(ctx, body, 1.1, perLine, field)),
         "flex: 1 1 auto;",
         "text-align: left;",
         "min-width: 0;",
@@ -177,17 +211,20 @@ export function renderLayoutMarkup(
       );
     }
     case "code": {
-      const longest = Math.max(12, ...layout.lines.map((l) => l.length + 4));
-      // Monospace glyphs are about 0.6em wide: shrink the type until the longest line fits the window, and
-      // the lines (plus the title bar and padding, about 1.6 more) fit the layout's height.
+      const longest = Math.max(12, ...layout.lines.map((l) => l.length + 5));
+      const windowWidth = Math.round(width * (portrait(ctx) ? 1 : 0.82));
+      // Monospace glyphs are about 0.6em wide: shrink the type until the longest line (with its number
+      // column) fits inside the window's side padding, and the lines plus the window's chrome fit the
+      // layout's height.
       const sizePx = Math.min(
         Math.round(TEXT_STYLES.body.sizeAt1080 * ctx.scale),
-        Math.floor((width * 0.9) / (longest * 0.6)),
-        Math.floor(layoutHeight(ctx) / ((layout.lines.length + 1.6) * 1.55)),
+        Math.floor((windowWidth * 0.94 - 2 * 24 * ctx.scale) / (longest * 0.6)),
+        // The title bar, the padding around the lines and the borders take about 110px at this scale.
+        Math.floor((layoutHeight(ctx) - 110 * ctx.scale) / (layout.lines.length * 1.55)),
       );
       ctx.fontWeights.mono.add(500);
       rule(".lo-code", [
-        `width: ${Math.round(width * (portrait(ctx) ? 1 : 0.82))}px;`,
+        `width: ${windowWidth}px;`,
         `border: ${px(ctx, 2)} solid ${tint("foreground", 18)};`,
         `border-radius: ${px(ctx, 22)};`,
         `background: ${tint("foreground", 7)};`,
@@ -330,9 +367,22 @@ export function renderLayoutMarkup(
               "transform-origin: top center;",
             ],
       );
+      // A row of chips shares the width in equal tracks: the type shrinks until the longest word fits its
+      // track, so a label wraps between words rather than inside one.
+      // Five or six chips in a row keep their side padding tight, so the label gets the room.
+      const side = !column && n > 4 ? 14 : 30;
+      const track = column
+        ? width * 0.86 - 142 * ctx.scale
+        : (width * 0.94 - (n - 1) * 20 * ctx.scale) / n - (2 * side + 6) * ctx.scale;
       rule(".lo-chip", [
-        ...fontCss(ctx, body, column ? 1 : n > 4 ? 0.75 : 0.9, 600),
+        ...fontCss(
+          ctx,
+          body,
+          wordFitFactor(ctx, body, column ? 1 : n > 4 ? 0.75 : 0.9, layout.items, track),
+          600,
+        ),
         ...pill,
+        `padding: ${px(ctx, 16)} ${px(ctx, side)};`,
         `border: ${px(ctx, 3)} solid ${tint("foreground", 40)};`,
         `background: ${tint("foreground", 7)};`,
         "min-width: 0;",
@@ -451,7 +501,8 @@ export function renderLayoutMarkup(
     }
     case "cards-row": {
       const n = layout.items.length;
-      const cols = portrait(ctx) && n > 3 ? 2 : n;
+      // More than three cards wrap into two rows unless the frame is landscape.
+      const cols = n <= 3 || layoutBoost(ctx.frame) > 1 ? n : portrait(ctx) ? 2 : Math.ceil(n / 2);
       rule(".lo-cards", [
         "display: grid;",
         `grid-template-columns: repeat(${cols}, minmax(0, 1fr));`,
@@ -474,7 +525,13 @@ export function renderLayoutMarkup(
       ]);
       rule(".lo-hot", ["border-color: var(--c-accent);", `background: ${tint("accent", 16)};`]);
       rule(".lo-idx", [...fontCss(ctx, TEXT_STYLES.caption, 0.9, 700), "color: var(--c-accent);"]);
-      rule(".lo-ctext", [...fontCss(ctx, body, n > 3 ? 0.85 : 1, 700), "overflow-wrap: anywhere;"]);
+      // Equal cards share the width: the type shrinks until the longest word fits a card, so a label wraps
+      // between words and never inside one.
+      const card = (width * 0.96 - (cols - 1) * 24 * ctx.scale) / cols - 58 * ctx.scale;
+      rule(".lo-ctext", [
+        ...fontCss(ctx, body, wordFitFactor(ctx, body, n > 3 ? 0.85 : 1, layout.items, card), 700),
+        "overflow-wrap: anywhere;",
+      ]);
       const cards = layout.items
         .map(
           (label, i) =>
@@ -486,7 +543,11 @@ export function renderLayoutMarkup(
     case "swatches": {
       const n = layout.items.length;
       const cols = portrait(ctx) && n > 3 ? 3 : n;
-      const size = Math.min(Math.round(220 * ctx.scale), Math.floor((width * 0.9) / cols - 24 * ctx.scale));
+      // Columns and the gaps between them stay inside the width; a label shrinks to its swatch's width.
+      const size = Math.min(
+        Math.round(220 * ctx.scale),
+        Math.floor((width * 0.94 - (cols - 1) * 36 * ctx.scale) / cols),
+      );
       rule(".lo-swatches", [
         "display: grid;",
         `grid-template-columns: repeat(${cols}, auto);`,
@@ -505,7 +566,22 @@ export function renderLayoutMarkup(
         `border-radius: ${px(ctx, 28)};`,
         `box-shadow: inset 0 0 0 ${px(ctx, 3)} ${tint("foreground", 22)};`,
       ]);
-      rule(".lo-swl", [...fontCss(ctx, TEXT_STYLES.caption, 0.9, 600), "text-align: center;"]);
+      rule(".lo-swl", [
+        ...fontCss(
+          ctx,
+          TEXT_STYLES.caption,
+          wordFitFactor(
+            ctx,
+            TEXT_STYLES.caption,
+            0.9,
+            layout.items.map((i) => i.label ?? ""),
+            size,
+          ),
+          600,
+        ),
+        `max-width: ${size}px;`,
+        "text-align: center;",
+      ]);
       const swatches = layout.items
         .map(
           (s, i) =>
@@ -515,13 +591,23 @@ export function renderLayoutMarkup(
       return done(`<div class="lo lo-swatches">${swatches}</div>`);
     }
     case "stat": {
+      // The label sets in at most two lines; the value takes the height the label and rule leave.
+      const labelFactor = fitFactor(
+        ctx,
+        body,
+        1.1,
+        Math.ceil(Array.from(layout.label).length / 2) + 2,
+        width,
+      );
+      const labelPx = body.sizeAt1080 * ctx.scale * labelFactor;
+      const valueRoom = layoutHeight(ctx) - 2 * labelPx * body.lineHeight - 50 * ctx.scale;
+      const valueFactor = Math.min(
+        fitFactor(ctx, TEXT_STYLES.display, 1.6, layout.value.length, width),
+        valueRoom / (1.1 * TEXT_STYLES.display.sizeAt1080 * ctx.scale),
+      );
       rule(".lo-stat", ["display: flex;", "flex-direction: column;", "align-items: center;"]);
       rule(".lo-value", [
-        ...fontCss(
-          ctx,
-          TEXT_STYLES.display,
-          fitFactor(ctx, TEXT_STYLES.display, 1.6, layout.value.length, width),
-        ),
+        ...fontCss(ctx, TEXT_STYLES.display, valueFactor),
         "line-height: 1.1;",
         "white-space: nowrap;",
       ]);
@@ -533,7 +619,7 @@ export function renderLayoutMarkup(
         `margin: ${px(ctx, 18)} 0 ${px(ctx, 22)};`,
         "transform-origin: center;",
       ]);
-      rule(".lo-slabel", [...fontCss(ctx, body, 1.1, 500), "text-align: center;", "opacity: 0.85;"]);
+      rule(".lo-slabel", [...fontCss(ctx, body, labelFactor, 500), "text-align: center;", "opacity: 0.85;"]);
       return done(
         `<div class="lo lo-stat"><div class="lo-value">${escapeHtml(layout.value)}</div><div class="lo-rule"></div><div class="lo-slabel">${escapeHtml(layout.label)}</div></div>`,
       );

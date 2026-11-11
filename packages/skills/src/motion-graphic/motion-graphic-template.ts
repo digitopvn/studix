@@ -31,13 +31,32 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 6;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 7;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
 const DEFAULT_STYLE = "kinetic-typography";
 const FPS = 30;
 const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 34 };
+/** Characters per line of a display-size headline on a landscape card (about 31 fit the safe width). */
+const DISPLAY_LINE_CHARS = 28;
+
+/**
+ * A message headline on a landscape card: display size when it sets in at most `maxLines` display lines,
+ * so a 16:9 card reads as a film title rather than a slide; otherwise (and on other ratios) heading size.
+ */
+function landscapeHeadline(
+  aspectRatio: AspectRatio,
+  text: string,
+  headingChars: number,
+  maxLines: number,
+): { text: string; textStyle: "display" | "heading" } {
+  if (aspectRatio === "16:9") {
+    const display = breakLines(text, DISPLAY_LINE_CHARS);
+    if (display.split("\n").length <= maxLines) return { text: display, textStyle: "display" };
+  }
+  return { text: breakLines(text, headingChars), textStyle: "heading" };
+}
 
 const words = (text: string) =>
   text
@@ -431,20 +450,22 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         animation: { enter, durationMs: 400 },
       });
     } else if (line.layout) {
-      // A layout card: the headline sits on top and the layout builds under it.
+      // A layout card: the headline sits on top and the layout builds under it. On a landscape frame a
+      // headline of up to two lines is set at display size, so the card fills the frame.
+      const headline = landscapeHeadline(aspectRatio, line.onScreen, chars + 4, 2);
       shots.push(
         {
           id: `${id}-text`,
           type: i === 0 ? "title" : "text",
           startMs: 0,
           durationMs,
-          text: breakLines(line.onScreen, chars + 4).slice(0, 160),
+          text: headline.text.slice(0, 160),
           style: {
-            textStyle: "heading",
+            textStyle: headline.textStyle,
             color: inkOn(brand.palette, fill, "foreground"),
             align: "center",
             region: "top",
-            emphasis: "low",
+            ...(headline.textStyle === "heading" ? { emphasis: "low" as const } : {}),
           },
           animation: { enter: line.enter ?? motion.enter, exit: motion.exit, durationMs: 400 },
         },
@@ -459,14 +480,22 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         },
       );
     } else {
+      // The hook is always display size; a landscape message card is too when it sets in three lines.
+      const headline =
+        i === 0
+          ? {
+              text: breakLines(line.onScreen, aspectRatio === "16:9" ? DISPLAY_LINE_CHARS : chars),
+              textStyle: "display" as const,
+            }
+          : landscapeHeadline(aspectRatio, line.onScreen, chars, 3);
       shots.push({
         id: `${id}-text`,
         type: i === 0 ? "title" : "text",
         startMs: 0,
         durationMs,
-        text: breakLines(line.onScreen, chars).slice(0, i === 0 ? 160 : 500),
+        text: headline.text.slice(0, i === 0 ? 160 : 500),
         style: {
-          textStyle: i === 0 ? "display" : "heading",
+          textStyle: headline.textStyle,
           color: inkOn(brand.palette, fill, "foreground"),
           align: "center",
           region: "middle",

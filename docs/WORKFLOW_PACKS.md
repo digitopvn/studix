@@ -282,7 +282,8 @@ bên cạnh khi tổng không quá mười từ, nếu không thì hai cue chia 
 Mỗi beat của storyboard agent có thể kèm `layout` có kiểu (`prompt-box`, `code`, `chips`, `checklist`, `counter`,
 `cards-row`, `swatches`, `stat`, schema `LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
 dựng dần bên dưới (shot `layout`, renderer tự vẽ). `visual` chỉ là mô tả. Beat cuối luôn là card CTA, bỏ qua
-layout. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
+layout. Ở khổ 16:9, headline dùng cỡ `display` khi vừa tối đa hai dòng (card có layout) hoặc ba dòng (card chỉ
+có chữ), dài hơn thì giữ cỡ `heading`. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
 màu `primary`, thay vì xen kẽ nền từng card.
 Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
 (60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì

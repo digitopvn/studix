@@ -82,7 +82,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     cssRule(`#${stageId} .underlay, #${stageId} .underlay > *`, ["position: absolute;", "inset: 0;"]),
     cssRule(`#${stageId} .content`, [
       "position: absolute;",
-      `inset: ${safe}px;`,
+      `inset: ${contentInset(input, safe, gap)};`,
       "display: flex;",
       "flex-direction: column;",
       `gap: ${gap}px;`,
@@ -179,6 +179,32 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   return { path: `compositions/${scene.id}.html`, body };
 }
 
+/**
+ * Inset of the flowing regions: the safe margin, and on the edge the burned captions sit at, the band the
+ * longest cue of the scene takes (one or two lines, plus a gap), so a headline or layout never runs under a cue.
+ */
+function contentInset(input: SceneCompileInput, safe: number, gap: number): string {
+  const { cues, position } = input.captions;
+  if (cues.length === 0 || position === "middle") return `${safe}px`;
+  const { frame, scale } = input.markup;
+  const edge = Math.round(0.09 * Math.min(frame.width, frame.height));
+  const sizePx = CAPTION_CUE.sizeAt1080 * scale;
+  // Lines the longest cue wraps to (at most two), taking a caption glyph as about 0.55em wide.
+  const room = frame.width - 2 * edge - 2 * Math.round(24 * scale);
+  const longest = Math.max(...cues.map((c) => Array.from(c.text).length));
+  const lines = Math.min(2, Math.max(1, Math.ceil((longest * 0.55 * sizePx) / room)));
+  const chip = Math.round(sizePx * CAPTION_CUE.lineHeight) * lines + 2 * Math.round(10 * scale);
+  const band = `${Math.max(safe, edge + chip + gap)}px`;
+  return position === "top" ? `${band} ${safe}px ${safe}px` : `${safe}px ${safe}px ${band}`;
+}
+
+/**
+ * Burned caption type: larger and heavier than the `caption` text style, because a cue is read in passing,
+ * often on a phone showing a landscape video at a third of its size. 48px at 1080 is about 4.4% of the
+ * short edge, the size subtitles are set at for small screens.
+ */
+const CAPTION_CUE = { ...TEXT_STYLES.caption, sizeAt1080: 48, weight: 600, lineHeight: 1.3 } as const;
+
 /** Burned captions: one hidden line per cue, shown for its scene-local window above all shots. */
 function captionsMarkup(
   input: SceneCompileInput,
@@ -190,7 +216,7 @@ function captionsMarkup(
   const { cues, position } = input.captions;
   if (cues.length === 0) return "";
   const { frame, fontStacks, fontWeights, scale } = input.markup;
-  const token = TEXT_STYLES.caption;
+  const token = CAPTION_CUE;
   fontWeights[token.font].add(token.weight);
   const edge = Math.round(0.09 * Math.min(frame.width, frame.height));
   const placement =
@@ -212,9 +238,9 @@ function captionsMarkup(
       `font-weight: ${token.weight};`,
       `line-height: ${token.lineHeight};`,
       "color: #ffffff;",
-      "background: rgba(0, 0, 0, 0.6);",
-      `padding: ${Math.round(8 * scale)}px ${Math.round(18 * scale)}px;`,
-      `border-radius: ${Math.round(10 * scale)}px;`,
+      "background: rgba(0, 0, 0, 0.72);",
+      `padding: ${Math.round(10 * scale)}px ${Math.round(24 * scale)}px;`,
+      `border-radius: ${Math.round(14 * scale)}px;`,
       "text-align: center;",
       "white-space: pre-line;",
       "hyphens: manual;",
