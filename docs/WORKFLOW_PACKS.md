@@ -279,6 +279,11 @@ Caption burned chia mỗi lời đọc thành cue tối đa chín từ, ngắt �
 hai cue: cue mới bắt đầu từ số điện thoại, trừ khi cách đó để lại cue một từ. Cue ngắn hơn 600 ms gộp vào cue
 bên cạnh khi tổng không quá mười từ, nếu không thì hai cue chia lại thời gian để mỗi cue hiện ít nhất 600 ms
 (`captionCues`).
+Mỗi beat của storyboard agent có thể kèm `layout` có kiểu (`prompt-box`, `code`, `chips`, `checklist`, `counter`,
+`cards-row`, `swatches`, `stat`, schema `LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
+dựng dần bên dưới (shot `layout`, renderer tự vẽ). `visual` chỉ là mô tả. Beat cuối luôn là card CTA, bỏ qua
+layout. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
+màu `primary`, thay vì xen kẽ nền từng card.
 Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
 (60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì
 giữ mỗi card lâu hơn. Storyboard sai số beat được một lượt sửa như dưới (cùng mọi lỗi khác trong một thông

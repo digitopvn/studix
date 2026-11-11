@@ -1,5 +1,6 @@
 import { StudixError } from "@studix/shared";
 import {
+  type LayoutSpec,
   nodeDigests,
   nodeKey,
   resolveSceneSpans,
@@ -33,8 +34,34 @@ export function shotScript(shot: Shot): string | undefined {
       return shot.text;
     case "logo":
       return shot.text;
+    case "layout":
+      return layoutWords(shot.layout);
     default:
       return undefined;
+  }
+}
+
+/** The words a built-in layout shows, in reading order. */
+function layoutWords(layout: LayoutSpec): string {
+  switch (layout.kind) {
+    case "prompt-box":
+      return layout.text;
+    case "code":
+      return layout.lines.join("\n");
+    case "chips":
+      return `${layout.hub}: ${layout.items.join(", ")}`;
+    case "checklist":
+      return layout.items.map((i) => i.label).join(", ");
+    case "counter":
+      return [`${layout.prefix ?? ""}${layout.to}${layout.suffix ?? ""}`, layout.label ?? ""]
+        .join(" ")
+        .trim();
+    case "cards-row":
+      return layout.items.join(", ");
+    case "swatches":
+      return layout.items.map((i) => i.label ?? i.color).join(", ");
+    case "stat":
+      return `${layout.value} ${layout.label}`;
   }
 }
 
@@ -52,6 +79,8 @@ export function shotDescription(shot: Shot): string {
       return shot.url ? `Call to action "${shot.text}" (${shot.url})` : `Call to action "${shot.text}"`;
     case "composition":
       return `Composition ${shot.entry ?? "default"} from ${shot.assetId}`;
+    case "layout":
+      return `Layout ${shot.layout.kind} "${words}"`;
     default:
       return `${shot.type === "title" ? "Title" : "Text"} "${words}"`;
   }

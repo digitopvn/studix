@@ -1,7 +1,8 @@
 import { StudixError } from "@studix/shared";
-import type { BrandKit, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
+import type { BrandKit, ColorRole, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
 import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
+import { renderLayoutMarkup } from "./layout-markup.ts";
 
 /** What a shot renderer needs to know about the scene being compiled. */
 export interface ShotMarkupContext {
@@ -17,6 +18,10 @@ export interface ShotMarkupContext {
   /** IR asset id -> project-relative path of the copied file. */
   assetPaths: ReadonlyMap<string, string>;
   brand?: BrandKit;
+  /** Resolved scene palette; layouts pick the ink that reads on an accent fill from it. */
+  palette?: Record<ColorRole, string>;
+  /** IR language (BCP 47), for number formatting in layouts. */
+  language?: string;
 }
 
 export interface ShotMarkup {
@@ -225,6 +230,15 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
         {
           suggestedAction: "Check RendererAdapter.supports() before rendering.",
         },
+      );
+    case "layout":
+      return renderLayoutMarkup(
+        ctx,
+        sel,
+        open,
+        base,
+        shot.layout,
+        cssColor(shot.style?.color ?? "foreground"),
       );
     case "video": {
       const src = assetPath(ctx, shot, shot.assetId);
