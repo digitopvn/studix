@@ -90,6 +90,21 @@ describe("caption chunks", () => {
       [600, 3572],
     ]);
   });
+
+  it("keeps a phone number in one cue", () => {
+    const hotline = "Đặt hàng ngay hôm nay qua hotline 0901 234 567 để nhận quà tặng";
+    expect(chunkCaption(hotline)).toEqual([
+      "Đặt hàng ngay hôm nay qua hotline",
+      "0901 234 567 để nhận quà tặng",
+    ]);
+    for (const ms of [1500, 2500, 3600]) {
+      expect(captionCues(hotline, 0, ms).some((c) => c.text.includes("0901 234 567"))).toBe(true);
+    }
+    // A year range or a plain amount is not a phone number and may still be cut.
+    expect(chunkCaption("một hai ba bốn năm sáu bảy tám 2024 2025 chín mười")[0]).toBe(
+      "một hai ba bốn năm sáu bảy tám 2024",
+    );
+  });
 });
 
 describe("marketing script", () => {

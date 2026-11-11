@@ -24,14 +24,7 @@ export {
   needsBriefDraft,
 } from "./brand-intro/brief-draft.ts";
 export { draftBriefFromPrompt } from "./brand-intro/brief-draft-from-prompt.ts";
-export {
-  captionCues,
-  chunkCaption,
-  MAX_CAPTION_WORDS,
-  MIN_CAPTION_MS,
-  spokenLength,
-  wordCount,
-} from "./caption-chunks.ts";
+export { captionCues, chunkCaption, MAX_CAPTION_WORDS, spokenLength, wordCount } from "./caption-chunks.ts";
 export * from "./external/index.ts";
 export { BUILTIN_KNOWLEDGE_PACKS } from "./knowledge/builtin-knowledge-packs.ts";
 export {

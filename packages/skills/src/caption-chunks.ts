@@ -13,11 +13,13 @@ const CLAUSE_END = /[.,;:!?…]$/;
  * Split a spoken line into caption chunks of at most `maxWords` words. A chunk ends at clause punctuation
  * when one falls inside the limit, so a cue never breaks a short clause in two; Vietnamese words (one
  * syllable each, diacritics intact) are counted like any other whitespace-separated word. A tail shorter
- * than `MIN_CAPTION_WORDS` stays with the chunk before it, which may then run one word over the limit.
+ * than `MIN_CAPTION_WORDS` stays with the chunk before it, which may then run one word over the limit, and
+ * a phone number is never cut in two.
  */
 export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string[] {
   maxWords = Math.max(1, Math.floor(maxWords));
   const words = text.normalize("NFC").trim().split(/\s+/).filter(Boolean);
+  const inPhone = phoneCuts(words);
   const chunks: string[] = [];
   let start = 0;
   while (start < words.length) {
@@ -30,8 +32,20 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
           break;
         }
       }
+      // A phone number ("0901 234 567") stays whole: cut before it, or past it when that fits.
+      if (inPhone.has(end)) {
+        let before = end;
+        while (inPhone.has(before)) before--;
+        let after = end;
+        while (inPhone.has(after)) after++;
+        if (before - start >= MIN_CAPTION_WORDS) end = before;
+        else if (after - start <= maxWords + 1) end = after;
+      }
       // Never leave an orphan word behind: the end of the line rides with this chunk instead.
-      if (words.length - end < MIN_CAPTION_WORDS && maxWords >= MIN_CAPTION_WORDS) end = words.length;
+      const rest = words.length - end;
+      if (rest < MIN_CAPTION_WORDS && maxWords >= MIN_CAPTION_WORDS && end - start + rest <= maxWords + 1) {
+        end = words.length;
+      }
     }
     chunks.push(words.slice(start, end).join(" "));
     start = end;
@@ -90,6 +104,27 @@ function mergeShortCues(cues: CaptionCue[], maxWords: number): CaptionCue[] {
     }
   }
   return out;
+}
+
+/** Word indices `j` where cutting before word `j` splits a phone number ("0901 234 567"). */
+function phoneCuts(words: string[]): Set<number> {
+  const cuts = new Set<number>();
+  const starts: number[] = [];
+  let offset = 0;
+  for (const w of words) {
+    starts.push(offset);
+    offset += w.length + 1;
+  }
+  for (const m of words.join(" ").matchAll(PHONE)) {
+    // Only what `spokenLength` reads as a phone number: a leading zero or eight digits and more.
+    const digits = m[0].replace(/\D/g, "");
+    if (YEAR_RANGE.test(m[0]) || (digits.length < 8 && !digits.startsWith("0"))) continue;
+    const from = m.index ?? 0;
+    starts.forEach((at, j) => {
+      if (at > from && at < from + m[0].length) cuts.add(j);
+    });
+  }
+  return cuts;
 }
 
 /** Whitespace-separated word count (a Vietnamese syllable is a word). */
