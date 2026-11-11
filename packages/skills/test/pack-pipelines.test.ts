@@ -159,7 +159,7 @@ function harness(
     /** Media kinds missing from the provider's shared capability list, as when only a workspace has the key. */
     unlistedKinds?: readonly string[];
     /** Length of the voice take of a line, by what it says; the fake's default take otherwise. */
-    voiceMs?: (text: string) => number | undefined;
+    voiceMs?: (text: string, params?: Record<string, unknown>) => number | undefined;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -190,7 +190,7 @@ function harness(
         retryable: false,
       });
     }
-    const voiceMs = request.kind === "voice" ? options.voiceMs?.(request.prompt) : undefined;
+    const voiceMs = request.kind === "voice" ? options.voiceMs?.(request.prompt, request.params) : undefined;
     if (voiceMs !== undefined) request = { ...request, params: { ...request.params, durationMs: voiceMs } };
     // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
     for (const name of ["image", "video", "audio"]) {
@@ -1067,6 +1067,28 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     const ir = h.renderer.rendered[0] as VideoIR;
     expect(ir.metadata?.storyboard).toBe("agent");
     expect(ir.scenes).toHaveLength(8);
+  });
+
+  it("voices again only the line that does not fit even read faster, then lays the takes on the graphic", async () => {
+    const message = storyboard.beats[1]?.voiceover as string;
+    const brisker = (params?: Record<string, unknown>) => String(params?.instructions).includes("brisker");
+    // The other lines fit their cards; the message line fits only its brisker re-take, and the speech
+    // as first voiced outruns the graphic, so recutting cannot help.
+    const h = harness({
+      agent: mockAgent({ storyboard }).runtime,
+      voiceMs: (text, params) => (text !== message ? 3100 : brisker(params) ? 3400 : 4500),
+    });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // The lines that fit sped up are not paid for again: three first takes and one brisker re-take.
+    const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    expect(voices).toHaveLength(4);
+    expect(voices.filter((r) => brisker(r.params)).map((r) => r.prompt)).toEqual([message]);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.scenes.reduce((ms, sc) => ms + sc.durationMs, 0)).toBe(10_000);
   });
 
   it("falls back to the template, both runs billed, when the voice-over still overruns the length after the repair turn", async () => {

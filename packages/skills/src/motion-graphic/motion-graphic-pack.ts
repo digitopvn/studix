@@ -15,6 +15,7 @@ import {
   stageWorkDir,
 } from "@studix/workflow";
 import { z } from "zod";
+import { MAX_VOICE_SPEEDUP } from "../marketing-video/marketing-script.ts";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
 import {
   billedOnFailure,
@@ -455,14 +456,18 @@ export const motionGraphicVoiceStage: StageDefinition = {
         const lines = planned.map((v) => v.line);
         const usage = () => takes.flatMap((t) => t.usage);
         let cardMs = await billedOnFailure(usage(), () => retimeCards(ir, lines, takes));
-        if (!cardMs) {
-          // Too long together even read faster: voice the lines that ran past their cards once more, brisker,
-          // and keep whichever take of each line is shorter.
+        // Too long together even read faster: voice once more, brisker, first the lines that do not fit their
+        // card even read faster, then (only if the graphic still does not fit) the other lines that ran past
+        // their card at their own pace, and keep whichever take of each line is shorter. A line that fits sped
+        // up is not paid for again unless the graphic needs the time.
+        for (const rate of [MAX_VOICE_SPEEDUP, 1]) {
+          if (cardMs) break;
           const long = lines.flatMap((line, i) => {
-            const room = takeRoomMs(takes[i]?.lengthMs, takes[i]?.measured);
-            // A line already read again, brisker, for a broken take would only be served that take again.
+            const room = takeRoomMs(takes[i]?.lengthMs, takes[i]?.measured, rate);
+            // A line already read again, brisker, would only be served that take again.
             return room !== undefined && room > line.roomMs && !takes[i]?.retaken ? [i] : [];
           });
+          if (long.length === 0) continue;
           const retakes = await mapBounded(
             long,
             VOICE_CONCURRENCY,
@@ -482,7 +487,11 @@ export const motionGraphicVoiceStage: StageDefinition = {
             const shorter =
               (takeRoomMs(again.lengthMs, again.measured) ?? Number.POSITIVE_INFINITY) <
               (takeRoomMs(first.lengthMs, first.measured) ?? Number.POSITIVE_INFINITY);
-            takes[i] = { ...(shorter ? again : first), usage: [...first.usage, ...again.usage] };
+            takes[i] = {
+              ...(shorter ? again : first),
+              usage: [...first.usage, ...again.usage],
+              retaken: true,
+            };
           });
           cardMs = await billedOnFailure(usage(), () => retimeCards(ir, lines, takes));
         }
