@@ -55,6 +55,27 @@ describe("validateVideoIR semantic checks", () => {
       });
   });
 
+  it("holds the audio of a 60 s graphic: a voice line per card plus a whoosh per cut", () => {
+    const ir = base();
+    ir.assets.push({
+      id: "whoosh",
+      kind: "audio",
+      storageKey: "assets/a/whoosh.mp3",
+      sha256: "a".repeat(64),
+      mime: "audio/mpeg",
+      provenance: { source: "upload" },
+    });
+    ir.audio = Array.from({ length: 25 }, (_, i) => ({
+      id: `t-${i}`,
+      kind: "sfx" as const,
+      assetId: "whoosh",
+      startMs: i * 100,
+      durationMs: 100,
+      volume: 0.3,
+    }));
+    expect(validateVideoIR(ir).ok).toBe(true);
+  });
+
   it("checks captions order and audio bounds", () => {
     const ir = base();
     ir.captions!.cues[1]!.startMs = 2000;
