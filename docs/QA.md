@@ -193,10 +193,10 @@ gió sạch và bỏ sót lời thật. VAD là tín hiệu quyết định.
 - CI chạy VAD thật ở bước "QA speech tests (speech image)": venv riêng cài extra `speech`,
   `espeak-ng` tạo giọng nói để test dương tính (phải ra tiếng nói), tiếng ồn và âm đơn phải ra
   0 ms. `STUDIX_QA_REQUIRE_SPEECH=1` làm job fail thay vì skip khi thiếu Silero hay espeak-ng.
-  espeak-ng được cài từ các `.deb` Ubuntu 24.04 ghim theo sha256 (`.github/actions/espeak-ng`),
-  có cache và thử lần lượt nhiều mirror, không chạy `apt-get update`; job vì vậy chạy trên
-  `ubuntu-24.04`. Chỉ khi không mirror nào trả được deb thì job cảnh báo và bỏ qua test speech, không
-  chặn merge; sai checksum, `dpkg` lỗi hay sai bản Ubuntu vẫn làm job fail.
+  espeak-ng lấy từ các `.deb` Ubuntu 24.04 ghim theo sha256 (`.github/actions/espeak-ng`, gồm cả
+  `libpulse0` mà runner không có), giải nén vào prefix riêng thay vì cài bằng apt, có cache và thử lần
+  lượt nhiều mirror; job vì vậy chạy trên `ubuntu-24.04`. Chỉ khi không mirror nào trả lời thì job cảnh
+  báo và bỏ qua test speech, không chặn merge; sai pin hay espeak-ng không chạy vẫn làm job fail.
 - Ngưỡng: từ 300 ms tiếng nói tích lũy trở lên là có tiếng nói (`SPEECH_MIN_MS` trong
   `packages/qa/src/speech-probe.ts`). Tiếng click hay hơi thở ngắn không vượt ngưỡng.
 - SFX đã lưu khi cổng đang tắt không được tái dùng cho job có cổng bật: khóa tái dùng có
