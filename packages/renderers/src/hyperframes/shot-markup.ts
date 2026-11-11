@@ -1,5 +1,5 @@
 import { StudixError } from "@studix/shared";
-import type { BrandKit, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
+import type { BrandKit, ColorRole, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
 import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
 import { renderLayoutMarkup } from "./layout-markup.ts";
@@ -21,6 +21,8 @@ export interface ShotMarkupContext {
   brand?: BrandKit;
   /** IR language, for language-dependent typography such as number grouping. */
   language?: string;
+  /** The resolved palette, for marks that must contrast with the scene colours. */
+  palette?: Record<ColorRole, string>;
 }
 
 export interface ShotMarkup {

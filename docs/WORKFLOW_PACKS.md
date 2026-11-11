@@ -341,8 +341,8 @@ nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Mỗ
 (cùng schema với shot `layout` của IR: `prompt-box`, `code`, `chips`, `checklist`, `counter`, `cards-row`,
 `swatches`, `stat`); `visual` vẫn chỉ là mô tả. Beat có layout thành card có headline ở trên và layout ở giữa;
 card CTA bỏ qua layout và giữ nút. Chỉ số trỏ ra ngoài danh sách (`highlight`, `focus`) bị bỏ (`fitLayout`)
-thay vì làm hỏng storyboard đã trả phí. Mọi card dùng chung nền `background` của style profile, accent cho
-điểm nhấn; chỉ profile có energy từ 4 trở lên mới phủ màu `primary` lên card CTA. Beat do
+thay vì làm hỏng storyboard đã trả phí. Headline của card có layout tối đa hai dòng. Mọi card dùng chung một nền `background` (của brand
+nếu brief có, không thì của style profile), accent cho điểm nhấn; chỉ profile có energy từ 4 trở lên mới phủ màu `primary` lên card CTA. Beat do
 `directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
 lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`
 cũng tôn trọng field này. Thiếu model hay key SFX/nhạc thì SFX accent và music bed bị bỏ qua, stage ghi `warning`, job vẫn

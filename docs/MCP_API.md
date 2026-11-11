@@ -246,9 +246,10 @@ Behavior notes:
   the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
   for one. A storyboard beat may carry a `layout` (`prompt-box`, `code`, `chips`,
-  `checklist`, `counter`, `cards-row`, `swatches` or `stat`, the IR `layout` shot
-  schema): the card then shows its headline on top and the animated layout below it.
-  Every card shares the style profile's background; the accent marks emphasis. A script derived from the brief (hook, messages, call to action) is
+  `checklist`, `counter`, `cards-row`, `swatches` or `stat`, with the fields of the IR
+  `layout` shot; an index past its list is dropped): the card then shows its headline
+  (two lines at most) on top and the animated layout below it. Every card shares one
+  background (the brand's, else the style profile's); the accent marks emphasis. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
   longest spoken lines are shortened. The hook and call-to-action cards and the
   on-screen text are kept, but their spoken text may be shortened, the call to

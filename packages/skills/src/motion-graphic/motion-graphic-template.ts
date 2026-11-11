@@ -106,6 +106,13 @@ export function fitLayout(layout: LayoutContent): Layout {
   return layout;
 }
 
+/** A headline over a layout: at most two lines, so the layout below keeps its room above the captions. */
+function twoLines(text: string, chars: number): string {
+  const lines = breakLines(text, chars).split("\n");
+  if (lines.length <= 2) return lines.join("\n");
+  return `${lines[0]}\n${truncateText(lines.slice(1).join(" "), chars)}`;
+}
+
 /** Energy from which a profile floods the call to action with its primary colour. */
 const CTA_FLOOD_ENERGY = 4;
 
@@ -457,7 +464,10 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         type: i === 0 ? "title" : "text",
         startMs: 0,
         durationMs,
-        text: breakLines(line.onScreen, layout ? chars + 6 : chars).slice(0, i === 0 ? 160 : 500),
+        text: (layout ? twoLines(line.onScreen, chars + 6) : breakLines(line.onScreen, chars)).slice(
+          0,
+          i === 0 ? 160 : 500,
+        ),
         style: {
           // With a layout the headline steps up top and the layout takes the middle.
           textStyle: layout ? "heading" : i === 0 ? "display" : "heading",
