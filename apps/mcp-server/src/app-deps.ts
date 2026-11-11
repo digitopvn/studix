@@ -20,8 +20,8 @@ import type { Logger } from "@studix/shared";
 import type { ExternalSkillService } from "@studix/skills";
 import type { TokenBucketOptions } from "./http/rate-limit.ts";
 import type { JobWebhookService } from "./job-webhooks.ts";
-import type { PlatformSettingsService } from "./platform-settings.ts";
 import type { MediaAvailability } from "./media-availability.ts";
+import type { PlatformSettingsService } from "./platform-settings.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,

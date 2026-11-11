@@ -61,9 +61,9 @@ import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
 import { createJobWebhookService } from "./job-webhooks.ts";
+import { mediaAvailability } from "./media-availability.ts";
 import { platformAuditContext } from "./platform-audit-context.ts";
 import { createPlatformSettingsService, fetchWorkerMedia } from "./platform-settings.ts";
-import { mediaAvailability } from "./media-availability.ts";
 import type {
   ArtifactUrlSigner,
   ConnectorAdmin,
