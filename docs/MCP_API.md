@@ -223,8 +223,9 @@ Behavior notes:
   without an approved storyboard fails with `APPROVAL_REQUIRED`.
 - `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
   (6 to 60 s, default 15 s) in the style profile that best matches the brief,
-  with a generated voice-over, one SFX accent where the CTA card lands and
-  burned captions, then renders, QA-gates and uploads it in one job. It has no
+  with a generated voice-over, about one card every five seconds (3 to 12)
+  when the agent writes the storyboard, one soft whoosh (generated once) on every other cut, one SFX accent where
+  the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
   for one. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
@@ -481,8 +482,10 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   `tools`, the allowlist of tool names the agent may call. Only the time limit
   is enforced in host mode: the task expires at `expiresAt`. The other limits
   are the budget the harness would have; respect them.
-- `output` is checked against the stage's output schema, the same schema the
-  worker applies. A mismatch fails with `VALIDATION`, `details.reason:
+- `output` is checked against the task's `outputSchema`, the same schema the
+  worker applies when the job resumes. A stage that wraps its agent (such as
+  `motion-graphic.storyboard`) adds its own fields itself; the host sends only
+  what `outputSchema` lists. A mismatch fails with `VALIDATION`, `details.reason:
   "invalid_output"` and `details.issues`, and nothing is stored, so fix the
   output and submit again. Secrets in the output are redacted before it is
   stored.
