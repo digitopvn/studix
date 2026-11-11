@@ -1418,7 +1418,12 @@ describe("MultixProvider synchronous audio", () => {
   it("gives up after a few rate-limited tries, and never retries a refusal that reports a charge", async () => {
     const sleep = async () => undefined;
     const always = scriptedCli((argv) => (argv.includes("--estimate") ? estimateReply : concurrentLimit()));
-    const limited = new MultixProvider({ bin: "multix", runner: always.runner, sleep });
+    const limited = new MultixProvider({
+      bin: "multix",
+      runner: always.runner,
+      sleep,
+      limiter: new VendorCallLimiter(),
+    });
     await expect(limited.generate(ctx, voiceRequest())).rejects.toMatchObject({
       code: "PROVIDER_ERROR",
       retryable: true,
@@ -1436,7 +1441,12 @@ describe("MultixProvider synchronous audio", () => {
             },
           },
     );
-    const paid = new MultixProvider({ bin: "multix", runner: charged.runner, sleep });
+    const paid = new MultixProvider({
+      bin: "multix",
+      runner: charged.runner,
+      sleep,
+      limiter: new VendorCallLimiter(),
+    });
     await expect(paid.generate(ctx, voiceRequest())).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
     expect(charged.calls).toHaveLength(2);
   });

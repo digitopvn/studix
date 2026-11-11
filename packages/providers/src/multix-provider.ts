@@ -1299,11 +1299,7 @@ function paramsOfRole(role: MultixRole): Record<string, unknown> {
 
 /** The vendor refused the call for rate or concurrency and multix reports nothing charged for it. */
 function rateLimitedWithoutCharge(envelope: MultixEnvelope | undefined): boolean {
-  return (
-    envelope?.error?.code === "RATE_LIMITED" &&
-    envelope.receiptUsd === undefined &&
-    envelope.capturedCents === undefined
-  );
+  return envelope?.error?.code === "RATE_LIMITED" && !envelope.receiptUsd && !envelope.capturedCents;
 }
 
 /** retry_after_s when the vendor sent one, else exponential backoff with jitter; capped either way. */
