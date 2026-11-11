@@ -98,11 +98,21 @@ const SIZE_LIMIT_HINT = " Until it is fixed, a shorter or simpler brief may stay
 const MAX_SCHEMA_ISSUES = 5;
 const MAX_ISSUE_MESSAGE = 200;
 
-/** One compact schema issue: JSON pointer, zod issue code and its one-line message. */
+/**
+ * One schema issue: RFC 6901 JSON pointer (`""` is the root), an issue code, an optional constraint
+ * (the zod issue code, e.g. `too_big`) and a message.
+ */
 export interface SchemaIssue {
   path: string;
   code: string;
+  constraint?: string;
   message: string;
+}
+
+/** RFC 6901 JSON pointer for a property path; the empty path is the root, `""`. */
+export function toPointer(path: ReadonlyArray<PropertyKey>): string {
+  if (path.length === 0) return "";
+  return `/${path.map((p) => String(p).replace(/~/g, "~0").replace(/\//g, "~1")).join("/")}`;
 }
 
 /**
@@ -113,18 +123,18 @@ function schemaIssuesOf(err: Error): SchemaIssue[] | undefined {
   if (err.name !== "ZodError" && err.name !== "$ZodError") return undefined;
   const raw: unknown = (err as { issues?: unknown }).issues;
   if (!Array.isArray(raw)) return undefined;
-  return raw.map((issue: { path?: unknown; code?: unknown; message?: unknown }) => {
-    const path = Array.isArray(issue.path) ? issue.path : [];
-    const message = String(issue.message ?? "invalid value").replace(/\s+/g, " ");
-    return {
-      path:
-        path.length === 0
-          ? "(root)"
-          : `/${path.map((p) => String(p).replace(/~/g, "~0").replace(/\//g, "~1")).join("/")}`,
-      code: String(issue.code ?? "invalid"),
-      message: message.length > MAX_ISSUE_MESSAGE ? `${message.slice(0, MAX_ISSUE_MESSAGE - 1)}…` : message,
-    };
-  });
+  return raw.map((issue: { path?: unknown; code?: unknown; message?: unknown }) => ({
+    path: toPointer(Array.isArray(issue.path) ? issue.path : []),
+    code: "schema",
+    constraint: String(issue.code ?? "invalid"),
+    message: String(issue.message ?? "invalid value"),
+  }));
+}
+
+/** Keep a client-facing issue message on one short line. */
+function compactMessage(message: string): string {
+  const line = message.replace(/\s+/g, " ").trim();
+  return line.length > MAX_ISSUE_MESSAGE ? `${line.slice(0, MAX_ISSUE_MESSAGE - 1)}…` : line;
 }
 
 /**
@@ -138,13 +148,14 @@ export function schemaFailure(
   issues: readonly SchemaIssue[],
   cause?: unknown,
 ): StudixError {
-  const [first] = issues;
-  const more = issues.length > 1 ? ` (+${issues.length - 1} more)` : "";
+  const compact = issues.map((i) => ({ ...i, message: compactMessage(i.message) }));
+  const [first] = compact;
+  const more = compact.length > 1 ? ` (+${compact.length - 1} more)` : "";
   const message = first ? `${what} at ${first.path || "(root)"}: ${first.message}${more}` : what;
-  const sizeLimit = issues.some((i) => i.code === "too_big" || i.code === "too_small");
+  const sizeLimit = compact.some((i) => i.constraint === "too_big" || i.constraint === "too_small");
   return new StudixError(code, message, {
     cause,
-    details: { kind: "schema", issueCount: issues.length, issues: issues.slice(0, MAX_SCHEMA_ISSUES) },
+    details: { kind: "schema", issueCount: compact.length, issues: compact.slice(0, MAX_SCHEMA_ISSUES) },
     ...(code === "INTERNAL"
       ? { suggestedAction: STUDIX_DEFECT_ACTION + (sizeLimit ? SIZE_LIMIT_HINT : ""), retryable: false }
       : {}),

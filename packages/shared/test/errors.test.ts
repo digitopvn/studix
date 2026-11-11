@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { isErrorCode, StudixError, toStudixError } from "../src/index.ts";
+import { isErrorCode, StudixError, schemaFailure, toStudixError } from "../src/index.ts";
 
 describe("StudixError", () => {
   it("defaults retryable by code and serializes to a stable payload", () => {
@@ -60,10 +60,16 @@ describe("StudixError", () => {
       kind: "schema",
       issueCount: 2,
       issues: [
-        { path: "/audio", code: "too_big", message: "Too big: expected array to have <=2 items" },
+        {
+          path: "/audio",
+          code: "schema",
+          constraint: "too_big",
+          message: "Too big: expected array to have <=2 items",
+        },
         {
           path: "/scenes/0/text",
-          code: "invalid_type",
+          code: "schema",
+          constraint: "invalid_type",
           message: "Invalid input: expected string, received number",
         },
       ],
@@ -73,6 +79,18 @@ describe("StudixError", () => {
       code: "PROVIDER_ERROR",
       retryable: true,
     });
+  });
+
+  it("compacts issues handed in by a caller, such as a template's IR validation", () => {
+    const error = schemaFailure("INTERNAL", "The template produced an invalid IR", [
+      { path: "", code: "duplicate_id", message: "duplicate\n  id" },
+      { path: "/audio", code: "schema", constraint: "too_big", message: "x".repeat(500) },
+    ]);
+    expect(error.message).toBe("The template produced an invalid IR at (root): duplicate id (+1 more)");
+    const issues = error.details?.issues as { path: string; message: string }[];
+    expect(issues[0]?.path).toBe("");
+    expect(issues[1]?.message).toHaveLength(200);
+    expect(error.suggestedAction).toContain("shorter or simpler brief");
   });
 
   it("guards error codes", () => {

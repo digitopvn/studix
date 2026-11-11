@@ -1,4 +1,4 @@
-import { StudixError } from "@studix/shared";
+import { StudixError, toPointer } from "@studix/shared";
 import type { z } from "zod";
 
 export type ValidationIssueCode =
@@ -22,18 +22,22 @@ export type ValidationIssueCode =
 export interface ValidationIssue {
   path: string;
   code: ValidationIssueCode;
+  /** The zod issue code behind a `schema` issue, e.g. `too_big`. */
+  constraint?: string;
   message: string;
 }
 
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; issues: ValidationIssue[] };
 
-export function toPointer(path: ReadonlyArray<PropertyKey>): string {
-  if (path.length === 0) return "";
-  return `/${path.map((p) => String(p).replace(/~/g, "~0").replace(/\//g, "~1")).join("/")}`;
-}
+export { toPointer };
 
 export function fromZodIssues(issues: ReadonlyArray<z.core.$ZodIssue>): ValidationIssue[] {
-  return issues.map((issue) => ({ path: toPointer(issue.path), code: "schema", message: issue.message }));
+  return issues.map((issue) => ({
+    path: toPointer(issue.path),
+    code: "schema",
+    constraint: issue.code,
+    message: issue.message,
+  }));
 }
 
 /** Parse with a schema and return structured issues instead of throwing. */
