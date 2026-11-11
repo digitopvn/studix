@@ -240,9 +240,11 @@ Behavior notes:
   uploads one file per ad (`renders[]`). Any image-to-video or audio stage
   without an approved storyboard fails with `APPROVAL_REQUIRED`.
 - `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
-  (6 to 60 s, default 15 s 9:16) in the style profile that best matches the brief,
+  (6 to 60 s, default 15 s 9:16; a length or aspect ratio written in the prompt,
+  such as "a 60-second 16:9 intro", is used when the brief omits it) in the
+  style profile that best matches the brief,
   with a generated voice-over, about one card every five seconds (3 to 12)
-  when the agent writes the storyboard, one soft whoosh (generated once) on every other cut, one SFX accent where
+  when the agent writes the storyboard, one soft whoosh (generated once) on every cut except the one into the CTA card, one SFX accent where
   the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
   for one. Each storyboard beat may name a typed `layout` (a prompt being typed,
@@ -257,7 +259,11 @@ Behavior notes:
   action last. With `brief.voiceover: false` it needs no speech
   provider and makes on-screen text only. A missing SFX model or key skips the
   accent with a warning; a voice-over that cannot be generated still fails the
-  job.
+  job. Every voice take is measured before it is laid: a line longer than its
+  card re-cuts the cards (same total length; captions, whooshes and the accent
+  move with them), a line no re-cut can fit is voiced once more, brisker, and
+  only speech that cannot fit the whole video fails with `VALIDATION`
+  naming the lines past their cards and by how many milliseconds (`details.lines`).
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action

@@ -159,7 +159,7 @@ function harness(
     /** Media kinds missing from the provider's shared capability list, as when only a workspace has the key. */
     unlistedKinds?: readonly string[];
     /** Length of the voice take of a line, by what it says; the fake's default take otherwise. */
-    voiceMs?: (text: string) => number | undefined;
+    voiceMs?: (text: string, instructions?: string) => number | undefined;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -190,7 +190,10 @@ function harness(
         retryable: false,
       });
     }
-    const voiceMs = request.kind === "voice" ? options.voiceMs?.(request.prompt) : undefined;
+    const voiceMs =
+      request.kind === "voice"
+        ? options.voiceMs?.(request.prompt, request.params?.instructions as string | undefined)
+        : undefined;
     if (voiceMs !== undefined) request = { ...request, params: { ...request.params, durationMs: voiceMs } };
     // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
     for (const name of ["image", "video", "audio"]) {
@@ -804,6 +807,39 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(whooshes.map((t) => t.startMs + 250)).toEqual(cards.slice(1, -1).map((c) => c.startMs));
   });
 
+  it("lays a brisker re-take that fits its card on the cards as they stand", async () => {
+    const long = "Trà hái tay mỗi sớm";
+    // The long line runs past what any re-cut can give it; its brisker re-take fits its card, so no card moves.
+    const h = harness({
+      voiceMs: (text, instructions) =>
+        text !== long ? undefined : String(instructions).includes("brisker") ? 3_000 : 9_000,
+    });
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic giới thiệu tiệm trà Lá Mây",
+      title: "Lá Mây",
+      language: "vi",
+      durationMs: 12_000,
+      keyMessages: [long, "Giao tận nơi trong ngày"],
+      callToAction: "Đặt trà ngay",
+    });
+    const even = harness();
+    const evenProject = await newProject(even, "motion-graphic", {
+      prompt: "Motion graphic giới thiệu tiệm trà Lá Mây",
+      title: "Lá Mây",
+      language: "vi",
+      durationMs: 12_000,
+      keyMessages: [long, "Giao tận nơi trong ngày"],
+      callToAction: "Đặt trà ngay",
+    });
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    await even.run({ workflowTemplate: "motion-graphic" }, evenProject);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // The long line is voiced twice, the others once.
+    expect(h.generate.mock.calls.filter(([, r]) => r.kind === "voice")).toHaveLength(5);
+    const cards = (h.renderer.rendered[0] as VideoIR).scenes.map((sc) => sc.durationMs);
+    expect(cards).toEqual((even.renderer.rendered[0] as VideoIR).scenes.map((sc) => sc.durationMs));
+  });
+
   it("voices long lines once more, brisker, and fails only when the takes outrun the whole graphic", async () => {
     const h = harness({ voiceMs: () => 4_000 });
     const projectId = await newProject(h, "motion-graphic", {
@@ -819,13 +855,20 @@ describe("motion-graphic pipeline (fake providers)", () => {
     const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
     expect(voices).toHaveLength(8);
     expect(voices.filter((r) => String(r.params?.instructions).includes("brisker"))).toHaveLength(4);
-    const failure = h.queue.fail.mock.calls.at(-1)?.[2] as { code: string; message: string } | undefined;
-    expect(failure).toEqual(
-      expect.objectContaining({
-        code: "VALIDATION",
-        message: "The voice-over runs longer than the 12s graphic",
-      }),
+    const failure = h.queue.fail.mock.calls.at(-1)?.[2] as
+      | { code: string; message: string; details?: Record<string, unknown> }
+      | undefined;
+    expect(failure?.code).toBe("VALIDATION");
+    // It names the lines that ran past their cards and by how much, so the caller knows what to shorten.
+    expect(failure?.message).toMatch(
+      /^The voice-over runs longer than the 12s graphic; past their cards: line 1 ".+" by \d+ ms/,
     );
+    expect(failure?.details).toMatchObject({
+      totalMs: 12_000,
+      lines: expect.arrayContaining([
+        expect.objectContaining({ line: 1, overrunMs: expect.any(Number), roomMs: expect.any(Number) }),
+      ]),
+    });
   });
 
   it("re-renders a stored version through render -> QA -> upload", async () => {
