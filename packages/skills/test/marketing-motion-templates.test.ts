@@ -87,13 +87,19 @@ describe("caption chunks", () => {
       "one two three four five six seven eight",
       "nine about.",
     ]);
-    // A two-word tail 400 ms long: it joins the cue before it, or shares its words when both cannot fit.
+    // A two-word tail 400 ms long joins the cue before it; when both cannot fit, the line splits evenly.
     const line11 = "một hai ba bốn năm sáu bảy tám chín mười mốt";
     expect(captionCues(line11, 0, 2200, 11)).toEqual([{ startMs: 0, endMs: 2200, text: line11 }]);
     expect(captionCues(line11, 0, 2200, 9)).toEqual([
       { startMs: 0, endMs: 1200, text: "một hai ba bốn năm sáu" },
       { startMs: 1200, endMs: 2200, text: "bảy tám chín mười mốt" },
     ]);
+    const dense = "một hai ba bốn năm sáu bảy tám chín mười mốt hai ba bốn năm sáu bảy tám chín mười";
+    const spread = captionCues(dense, 0, 2000);
+    expect(spread.map((c) => wordCount(c.text))).toEqual([7, 7, 6]);
+    expect(spread.every((c) => c.endMs - c.startMs >= MIN_CAPTION_MS)).toBe(true);
+    expect(spread.map((c) => c.text).join(" ")).toBe(dense);
+    expect(chunkCaption("one two three", 2)).toEqual(["one two", "three"]);
   });
 });
 

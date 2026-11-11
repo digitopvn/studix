@@ -28,8 +28,11 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
           break;
         }
       }
-      // A one-word tail would flash alone: hand it this chunk's last word, or take it in when two words remain.
-      if (words.length - end === 1) end = end - start > 2 ? end - 1 : words.length;
+      // A one-word tail would flash alone: hand it this chunk's last word, or take it in when that fits.
+      if (words.length - end === 1) {
+        if (end - start > 2) end -= 1;
+        else if (end - start < maxWords) end = words.length;
+      }
     }
     chunks.push(words.slice(start, end).join(" "));
     start = end;
@@ -40,56 +43,98 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
 /**
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
  * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. A cue
- * shorter than `MIN_CAPTION_MS` joins its neighbour (`mergeShortCues`).
+ * shorter than `MIN_CAPTION_MS` joins the cue before it (the first, the one after it) when the two fit in
+ * `maxWords`; when they cannot, the line is split into even chunks instead, as few as the word limit and
+ * the line's length allow, so no cue is shorter than it has to be.
  */
 export function captionCues(
   text: string,
   startMs: number,
   durationMs: number,
-  maxWords?: number,
+  maxWords = MAX_CAPTION_WORDS,
 ): CaptionCue[] {
+  if (durationMs <= 0) return [];
   const chunks = chunkCaption(text, maxWords);
-  // Timed by how long each chunk takes to say, so a chunk holding "AI-native" stays up while it is read.
-  const weights = chunks.map((c) => Math.max(spokenLength(c), 0.1));
-  const total = weights.reduce((n, w) => n + w, 0);
-  if (chunks.length === 0 || durationMs <= 0) return [];
-  const cues: CaptionCue[] = [];
-  let words = 0;
-  for (const [i, chunk] of chunks.entries()) {
-    const from = startMs + Math.round((durationMs * words) / total);
-    words += weights[i] ?? 0;
-    const to = startMs + Math.round((durationMs * words) / total);
-    if (to > from) cues.push({ startMs: from, endMs: to, text: chunk });
+  if (chunks.length === 0) return [];
+  const merged = mergeShortCues(timeChunks(chunks, startMs, durationMs), maxWords);
+  if (merged.length < 2 || merged.every((c) => c.endMs - c.startMs >= MIN_CAPTION_MS)) {
+    return merged.filter((c) => c.endMs > c.startMs);
   }
-  return mergeShortCues(cues, maxWords ?? MAX_CAPTION_WORDS);
+  const words = chunks.join(" ").split(" ");
+  const fewest = Math.ceil(words.length / maxWords);
+  const count = Math.max(fewest, Math.min(merged.length, Math.floor(durationMs / MIN_CAPTION_MS)));
+  const atClauses = timeChunks(evenChunks(words, count, maxWords, true), startMs, durationMs);
+  const even = atClauses.some((c) => c.endMs - c.startMs < MIN_CAPTION_MS)
+    ? timeChunks(evenChunks(words, count, maxWords, false), startMs, durationMs)
+    : atClauses;
+  return even.filter((c) => c.endMs > c.startMs);
 }
 
 /**
- * Joins each cue shorter than `MIN_CAPTION_MS` to the cue before it (the first to the one after it). When
- * the two together pass `maxWords`, their words are split evenly between them instead, timed as before.
+ * `words` in `count` chunks that take about as long to say each (`spokenLength`), within `maxWords`. With
+ * `atClauses`, each cut moves up to two words to a clause end when one is that close, so a clause keeps
+ * its tail.
  */
+function evenChunks(words: string[], count: number, maxWords: number, atClauses: boolean): string[] {
+  const said = [0];
+  for (const w of words) said.push((said.at(-1) as number) + Math.max(spokenLength(w), 0.1));
+  const total = said.at(-1) as number;
+  const chunks: string[] = [];
+  let start = 0;
+  for (let i = 1; i <= count; i++) {
+    const left = count - i;
+    // Where this chunk's share of the line ends, kept inside the word limit both ways.
+    let target = start + 1;
+    while (target < words.length && (said[target] as number) < (total * i) / count) target++;
+    const lo = Math.max(start + 1, words.length - maxWords * left);
+    target = Math.min(Math.max(target, lo), start + maxWords, words.length - left);
+    let end = target;
+    for (const shift of [0, -1, 1, -2, 2]) {
+      const cut = target + shift;
+      if (
+        !atClauses ||
+        i === count ||
+        cut - start < 2 ||
+        cut < lo ||
+        cut > start + maxWords ||
+        cut > words.length - left
+      )
+        continue;
+      if (CLAUSE_END.test(words[cut - 1] as string)) {
+        end = cut;
+        break;
+      }
+    }
+    if (i === count) end = words.length;
+    chunks.push(words.slice(start, end).join(" "));
+    start = end;
+  }
+  return chunks.filter(Boolean);
+}
+
+/** Times chunks across the span in proportion to how long each takes to say (`spokenLength`). */
+function timeChunks(chunks: string[], startMs: number, durationMs: number): CaptionCue[] {
+  // Timed by how long each chunk takes to say, so a chunk holding "AI-native" stays up while it is read.
+  const weights = chunks.map((c) => Math.max(spokenLength(c), 0.1));
+  const total = weights.reduce((n, w) => n + w, 0);
+  let said = 0;
+  return chunks.map((text, i) => {
+    const from = startMs + Math.round((durationMs * said) / total);
+    said += weights[i] ?? 0;
+    return { startMs: from, endMs: startMs + Math.round((durationMs * said) / total), text };
+  });
+}
+
+/** Joins each cue shorter than `MIN_CAPTION_MS` to the cue before it (the first to the one after it). */
 function mergeShortCues(cues: CaptionCue[], maxWords: number): CaptionCue[] {
   const out: CaptionCue[] = [];
   const short = (c: CaptionCue) => c.endMs - c.startMs < MIN_CAPTION_MS;
   for (const cue of cues) {
     const prev = out.at(-1);
-    if (!prev || !(short(cue) || (out.length === 1 && short(prev)))) {
-      out.push(cue);
-      continue;
-    }
-    const words = `${prev.text} ${cue.text}`.split(" ");
-    if (words.length <= maxWords) {
-      out[out.length - 1] = { startMs: prev.startMs, endMs: cue.endMs, text: words.join(" ") };
-      continue;
-    }
-    const half = Math.ceil(words.length / 2);
-    const first = words.slice(0, half).join(" ");
-    const second = words.slice(half).join(" ");
-    const a = Math.max(spokenLength(first), 0.1);
-    const b = Math.max(spokenLength(second), 0.1);
-    const mid = prev.startMs + Math.round(((cue.endMs - prev.startMs) * a) / (a + b));
-    out[out.length - 1] = { startMs: prev.startMs, endMs: mid, text: first };
-    out.push({ startMs: mid, endMs: cue.endMs, text: second });
+    const join = prev && (short(cue) || (out.length === 1 && short(prev)));
+    if (join && wordCount(prev.text) + wordCount(cue.text) <= maxWords) {
+      out[out.length - 1] = { startMs: prev.startMs, endMs: cue.endMs, text: `${prev.text} ${cue.text}` };
+    } else out.push(cue);
   }
   return out;
 }
