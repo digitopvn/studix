@@ -8,6 +8,8 @@ import {
   HOOK_MAX_MS,
   irVariants,
   MAX_CAPTION_WORDS,
+  MIN_CAPTION_MS,
+  MIN_CAPTION_WORDS,
   marketingScript,
   marketingVideoTemplate,
   motionGraphicTemplate,
@@ -72,6 +74,47 @@ describe("caption chunks", () => {
       { startMs: 2000, endMs: 3000, text: "sáu bảy tám chín mười" },
     ]);
     expect(captionCues("", 0, 1000)).toEqual([]);
+  });
+
+  it("folds a one-word tail into the chunk before it", () => {
+    // Ten words: a nine-word window used to leave "about." on a cue of its own.
+    const text = "This is the one thing every founder should care about.";
+    const chunks = chunkCaption(text);
+    expect(chunks).toEqual(["This is the one thing every founder should care about."]);
+    expect(chunkCaption("một hai ba bốn năm sáu", 5)).toEqual(["một hai ba bốn năm sáu"]);
+    // A clause boundary that leaves a lone trailing word folds the same way.
+    expect(chunkCaption("Một hai ba bốn, năm sáu bảy tám. Chín", 5)).toEqual([
+      "Một hai ba bốn,",
+      "năm sáu bảy tám. Chín",
+    ]);
+    expect(chunkCaption("about.")).toEqual(["about."]);
+    for (const line of [text, "một hai ba bốn năm sáu bảy tám chín mười mười một", "a b c d e f g h i j"]) {
+      for (const max of [3, 4, 5, MAX_CAPTION_WORDS]) {
+        const out = chunkCaption(line, max);
+        expect(out.join(" ")).toBe(line.normalize("NFC"));
+        if (out.length > 1) expect(out.every((c) => wordCount(c) >= MIN_CAPTION_WORDS)).toBe(true);
+        expect(out.every((c) => wordCount(c) <= max + 1)).toBe(true);
+      }
+    }
+  });
+
+  it("never times a cue under the minimum while the line has room", () => {
+    // Two chunks in 1 s: each would hold 500 ms, so they share one cue.
+    expect(captionCues("một hai ba bốn năm sáu bảy tám chín mười", 0, 1000, 5)).toEqual([
+      { startMs: 0, endMs: 1000, text: "một hai ba bốn năm sáu bảy tám chín mười" },
+    ]);
+    // A short opening chunk joins the next one; the cues still cover the span end to end.
+    const opening = "Ừ à, một hai ba bốn năm sáu bảy tám";
+    expect(chunkCaption(opening)).toEqual(["Ừ à,", "một hai ba bốn năm sáu bảy tám"]);
+    expect(captionCues(opening, 5000, 2000)).toEqual([{ startMs: 5000, endMs: 7000, text: opening }]);
+    const cues = captionCues(`${opening}, chín mười mười một mười hai mười ba`, 5000, 3000);
+    expect(cues.length).toBeGreaterThan(1);
+    expect(cues.every((c) => c.endMs - c.startMs >= MIN_CAPTION_MS)).toBe(true);
+    expect(cues[0]?.startMs).toBe(5000);
+    expect(cues.at(-1)?.endMs).toBe(8000);
+    for (const [i, c] of cues.entries()) if (i > 0) expect(c.startMs).toBe(cues[i - 1]?.endMs);
+    // A line too short for the minimum still shows, as a single cue.
+    expect(captionCues("Xin chào bạn", 0, 300)).toEqual([{ startMs: 0, endMs: 300, text: "Xin chào bạn" }]);
   });
 });
 
