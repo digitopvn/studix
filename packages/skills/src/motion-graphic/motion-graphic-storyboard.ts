@@ -171,7 +171,8 @@ const agentStageFor = (repair?: Repair) =>
       "wired to the tools or channels it connects), `checklist` (steps that are `done`, `active` or `todo`), " +
       "`counter` (a whole number counting up `from` to `to`, with `prefix`, `suffix`, `label`), `cards-row` (2-5 " +
       "short cards, `highlight` the one that wins), `swatches` (palette roles like `accent` or hex colours) or " +
-      "`stat` (one big `value` and its `label`). Use the brief's own facts and words in it, vary the layouts " +
+      "`stat` (one big `value` and its `label`). A beat's layout, headline and spoken line show and say the " +
+      "same fact (the line over a 5,000 counter speaks of the 5,000, not of the next card). Use the brief's own facts and words in it, vary the layouts " +
       "across the video, put no layout on the last beat (the call to action), and set `layout` null where " +
       "the headline alone is stronger. The whole voice-over must " +
       "stay within `wordBudget` words, where a Vietnamese syllable is one word and an English word or brand " +

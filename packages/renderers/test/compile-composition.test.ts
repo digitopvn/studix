@@ -254,6 +254,9 @@ describe("buildComposition layouts", () => {
     expect(scene(4)).toContain(
       'tl.fromTo("#s-l4__shot-l4-layout .lo-d3", {"yPercent":0}, {"yPercent":-66.667,"duration":1.2,"ease":"power2.out"}, 0.3);',
     );
+    // Only separators that exist are faded in: 1.250 has one, after its first digit.
+    const targets = [...scene(4).matchAll(/layout \.(lo-p\d+)"/g)].map((m) => m[1]);
+    expect(targets).toEqual(["lo-p0"]);
     for (let i = 0; i < 8; i++) {
       expect(scene(i)).not.toContain('"repeat"');
       expect(scene(i)).not.toContain("onUpdate");
@@ -266,6 +269,28 @@ describe("buildComposition layouts", () => {
     expect(build.warnings).toEqual([]);
     const plain = buildComposition(brandIntro, previewSize);
     expect([...plain.copies.keys()].some((k) => k.includes("jetbrains"))).toBe(false);
+  });
+
+  it("fills a landscape card and keeps the layout above burned captions", () => {
+    const wide = structuredClone(ir);
+    wide.captions = {
+      language: "vi",
+      mode: "burned",
+      position: "bottom",
+      cues: [{ startMs: 0, endMs: 3000, text: "Gõ một câu lệnh." }],
+    };
+    const landscape = buildComposition(wide, { width: 1920, height: 1080 });
+    const first = landscape.files.get("compositions/l0.html")!;
+    // Subtitles are 44 px at a 1080 px short edge, readable on a phone.
+    expect(first).toMatch(/\.cue \{[^}]*font-size: 44px;/);
+    // The middle region keeps clear of the caption band: edge 97 + a 79 px cue (one line and its padding) + gap 32 - safe 76.
+    expect(first).toMatch(/\.region-middle \{[^}]*padding-bottom: 132px;/);
+    expect(landscape.files.get("compositions/l1.html")).not.toContain("padding-bottom");
+    // Landscape draws a layout larger than its short edge alone would: the prompt is 1.25x its portrait size (44 px body x 1.1 x 1.25, rounded once).
+    const promptPx = (html: string) => Number(/\.lo-field \{[^}]*font-size: (\d+)px;/.exec(html)?.[1]);
+    const tall = buildComposition(wide, { width: 1080, height: 1920 }).files.get("compositions/l0.html")!;
+    expect(promptPx(first)).toBe(61);
+    expect(promptPx(tall)).toBe(48);
   });
 
   it("passes the HyperFrames linter with no errors", async () => {

@@ -1,6 +1,13 @@
 // Adapted from motion-mcp packages/hyperframes-adapter/src/compile.ts @ 408ceccd (MIT, Copyright (c) 2026 Digitop).
 import type { ColorRole, Scene, Shot } from "@studix/video-ir";
-import { COLOR_ROLES, cssColor, TEXT_STYLES } from "./brand-tokens.ts";
+import {
+  BURNED_CAPTION,
+  BURNED_CAPTION_PAD,
+  burnedCaptionBand,
+  burnedCaptionEdge,
+  COLOR_ROLES,
+  cssColor,
+} from "./brand-tokens.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
 import { writeLayoutMotion } from "./layout-markup.ts";
 import {
@@ -65,6 +72,12 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   const stageId = `${prefix}stage`;
   const safe = Math.round(0.07 * Math.min(width, height));
   const gap = Math.round(0.03 * Math.min(width, height));
+  const captionClearance =
+    input.captions.position === "bottom" &&
+    input.captions.cues.length > 0 &&
+    scene.shots.some((s) => s.type === "layout" && (s.style?.region ?? "middle") === "middle")
+      ? Math.max(0, burnedCaptionBand(markup.frame) + gap - safe)
+      : 0;
 
   const css: string[] = [
     cssRule(`#${stageId}`, [
@@ -93,7 +106,12 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       `gap: ${gap}px;`,
       "min-height: 0;",
     ]),
-    cssRule(`#${stageId} .region-middle`, ["flex: 1 1 auto;", "justify-content: center;"]),
+    cssRule(`#${stageId} .region-middle`, [
+      "flex: 1 1 auto;",
+      "justify-content: center;",
+      // A layout fills the middle of its card, so it is centred above the burned captions, never under them.
+      ...(captionClearance > 0 ? [`padding-bottom: ${captionClearance}px;`] : []),
+    ]),
     cssRule(`#${stageId} .lane`, ["display: grid;", "align-items: center;"]),
     cssRule(`#${stageId} .lane > .shot`, ["grid-area: 1 / 1;"]),
   ];
@@ -190,9 +208,9 @@ function captionsMarkup(
   const { cues, position } = input.captions;
   if (cues.length === 0) return "";
   const { frame, fontStacks, fontWeights, scale } = input.markup;
-  const token = TEXT_STYLES.caption;
+  const token = BURNED_CAPTION;
   fontWeights[token.font].add(token.weight);
-  const edge = Math.round(0.09 * Math.min(frame.width, frame.height));
+  const edge = burnedCaptionEdge(frame);
   const placement =
     position === "top" ? [`top: ${edge}px;`] : position === "middle" ? ["top: 50%;"] : [`bottom: ${edge}px;`];
   css.push(
@@ -212,9 +230,9 @@ function captionsMarkup(
       `font-weight: ${token.weight};`,
       `line-height: ${token.lineHeight};`,
       "color: #ffffff;",
-      "background: rgba(0, 0, 0, 0.6);",
-      `padding: ${Math.round(8 * scale)}px ${Math.round(18 * scale)}px;`,
-      `border-radius: ${Math.round(10 * scale)}px;`,
+      "background: rgba(0, 0, 0, 0.66);",
+      `padding: ${Math.round(BURNED_CAPTION_PAD.y * scale)}px ${Math.round(BURNED_CAPTION_PAD.x * scale)}px;`,
+      `border-radius: ${Math.round(12 * scale)}px;`,
       "text-align: center;",
       "white-space: pre-line;",
       "hyphens: manual;",

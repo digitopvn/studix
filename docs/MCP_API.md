@@ -250,7 +250,10 @@ Behavior notes:
   for one. Each storyboard beat may name a typed `layout` (a prompt being typed,
   code lines, chips wired to a hub, a checklist, a rolling counter, a row of
   cards, colour swatches or a stat) that the card draws under its headline; the
-  `visual` field stays a description. Cards share the style profile's
+  `visual` field stays a description. On a 16:9 frame headlines are set at
+  display size and layouts drawn larger, so a card fills the frame. Burned
+  captions are 44 px at a 1080 px short edge, and a layout is centred above
+  them. Cards share the style profile's
   background; a high-energy profile fills the call-to-action card with its
   accent. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the

@@ -691,7 +691,10 @@ describe("spoken length", () => {
       "background",
       "background",
     ]);
-    expect(ir.metadata?.templateVersion).toBe(6);
+    expect(ir.metadata?.templateVersion).toBe(7);
+    // Landscape has the room: the headline over a layout and a short message card are set at display size.
+    expect(hook.shots[0]?.style?.textStyle).toBe("display");
+    expect(ir.scenes[2]!.shots[0]?.style?.textStyle).toBe("display");
   });
 
   it("rejects a storyboard layout outside its typed shape", () => {

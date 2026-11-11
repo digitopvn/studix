@@ -1,5 +1,5 @@
 import type { ColorRole, LayoutSpec } from "@studix/video-ir";
-import { cssColor, TEXT_STYLES, type TextStyleToken } from "./brand-tokens.ts";
+import { burnedCaptionBand, cssColor, frameScale, TEXT_STYLES, type TextStyleToken } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, seconds } from "./html-utils.ts";
 import type { TimelineWriter } from "./scene-timeline.ts";
 import type { ShotMarkup, ShotMarkupContext } from "./shot-markup.ts";
@@ -72,9 +72,22 @@ const portrait = (ctx: ShotMarkupContext) => ctx.frame.height > ctx.frame.width;
  * Height a layout may take: what the content area leaves under a headline of up to two lines and above
  * the burned captions, so a tall layout never runs into either.
  */
-const layoutHeight = (ctx: ShotMarkupContext) =>
-  (ctx.frame.height - 2 * Math.round(0.07 * Math.min(ctx.frame.width, ctx.frame.height))) *
-  (portrait(ctx) ? 0.7 : 0.55);
+const layoutHeight = (ctx: ShotMarkupContext) => {
+  const { width, height } = ctx.frame;
+  const short = Math.min(width, height);
+  const safe = Math.round(0.07 * short);
+  if (portrait(ctx)) return (height - 2 * safe) * 0.7;
+  // Landscape: the content area less a two-line display headline, the gaps around it and the band the
+  // captions keep at the bottom (see scene-composition.ts).
+  const gap = Math.round(0.03 * short);
+  const headline =
+    2 * TEXT_STYLES.display.sizeAt1080 * TEXT_STYLES.display.lineHeight * frameScale(ctx.frame);
+  const captions = Math.max(0, burnedCaptionBand(ctx.frame) + gap - safe);
+  return height - 2 * safe - headline - 2 * gap - captions;
+};
+
+/** How much larger a layout is drawn in a landscape frame than its short edge alone would make it. */
+const LANDSCAPE_LAYOUT_BOOST = 1.25;
 
 const CHECK_SVG =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -115,13 +128,17 @@ const STRIP = "012345678901234567890123456789";
 
 /** HTML and CSS for a layout shot; `sel` is the shot's outer element selector. */
 export function renderLayoutMarkup(
-  ctx: ShotMarkupContext,
+  frameCtx: ShotMarkupContext,
   sel: string,
   open: string,
   base: string[],
   layout: LayoutSpec,
   ink: string,
 ): ShotMarkup {
+  // Sizes scale with the short frame edge, so a landscape frame would draw a layout as small as a portrait one
+  // in a frame almost twice as wide. There it is drawn larger (widths, heights and the type sized to fit them
+  // are still capped by the content area), so the layout fills the card instead of floating in it.
+  const ctx = portrait(frameCtx) ? frameCtx : { ...frameCtx, scale: frameCtx.scale * LANDSCAPE_LAYOUT_BOOST };
   const width = contentWidth(ctx);
   const css: string[] = [
     cssRule(sel, [...base, "display: flex;", "justify-content: center;", "max-width: 100%;"]),
@@ -330,8 +347,14 @@ export function renderLayoutMarkup(
               "transform-origin: top center;",
             ],
       );
+      // Side by side, each chip has one track of the row: its label is set small enough to stay on one line.
+      const track = (Math.round(width * 0.94) - (n - 1) * 20 * ctx.scale) / n - 2 * 33 * ctx.scale;
+      const longest = Math.max(...layout.items.map((l) => Array.from(l).length));
+      const chipFactor = column
+        ? 1
+        : Math.min(n > 4 ? 0.75 : 0.9, (track * 0.95) / (longest * 0.6 * body.sizeAt1080 * ctx.scale));
       rule(".lo-chip", [
-        ...fontCss(ctx, body, column ? 1 : n > 4 ? 0.75 : 0.9, 600),
+        ...fontCss(ctx, body, chipFactor, 600),
         ...pill,
         `border: ${px(ctx, 3)} solid ${tint("foreground", 40)};`,
         `background: ${tint("foreground", 7)};`,
@@ -685,7 +708,9 @@ export function writeLayoutMotion(
         const show = { opacity: 1, duration: seconds(Math.max(100, Math.round(rollMs * 0.3))), ease: EASE };
         const at = seconds(begin + Math.round(rollMs * 0.1 * (lead - c)));
         w.fromTo(`${sel} .lo-g${c}`, { opacity: 0 }, show, at);
-        w.fromTo(`${sel} .lo-p${c}`, { opacity: 0 }, show, at);
+        // A thousands separator follows a digit only where three or more digits come after it.
+        const separated = c < to.length - 1 && (to.length - 1 - c) % 3 === 0;
+        if (separated) w.fromTo(`${sel} .lo-p${c}`, { opacity: 0 }, show, at);
       }
       for (let c = 0; c < to.length; c++) {
         const turns = Math.max(0, 2 - (to.length - 1 - c)); // the units spin twice, tens once
