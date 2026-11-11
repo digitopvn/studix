@@ -254,13 +254,21 @@ const briefText = (brief: CreativeBrief) =>
     ...(brief.directions ?? []).flatMap((d) => [d.name, d.concept, d.hook ?? "", ...(d.keyMessages ?? [])]),
   ].join("\n");
 
-/** `name` when the brief writes it (ignoring case), so the card never shows a name the agent made up. */
-function namedInBrief(brief: CreativeBrief, name: string | null | undefined): string | undefined {
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * `name` as the brief spells it, when the brief writes it as whole words (ignoring case), so the card never
+ * shows a name the agent made up or re-cased. A name that is the hook line itself is no brand.
+ */
+function namedInBrief(
+  brief: CreativeBrief,
+  name: string | null | undefined,
+  hook: string,
+): string | undefined {
   const wanted = name?.normalize("NFC").trim();
-  if (!wanted) return undefined;
-  return briefText(brief).normalize("NFC").toLocaleLowerCase().includes(wanted.toLocaleLowerCase())
-    ? wanted
-    : undefined;
+  if (!wanted || wanted.toLowerCase() === hook.trim().toLowerCase()) return undefined;
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(wanted)}(?![\\p{L}\\p{N}])`, "iu");
+  return pattern.exec(briefText(brief).normalize("NFC"))?.[0];
 }
 
 export interface MotionGraphicOptions {
@@ -322,7 +330,9 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     });
   }
   // The brand the storyboard found in the brief, kept only when the brief really writes it.
-  const brandName = brief.brand ? undefined : namedInBrief(brief, storyboard?.brandName);
+  const brandName = brief.brand
+    ? undefined
+    : namedInBrief(brief, storyboard?.brandName, lines[0]?.onScreen ?? "");
   // What the graphic is called without a brand: its title, else its hook. Never the style profile's name.
   const unbrandedName = brief.title ?? (lines[0]?.onScreen || "Motion graphic");
   const baseBrand: BrandKit = brief.brand ?? {

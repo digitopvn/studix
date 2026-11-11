@@ -626,8 +626,11 @@ describe("spoken length", () => {
     expect(ir.brand?.name).toBe("Studix");
     expect(ir.title).toBe("Studix");
     expect(ctaLogo(ir)).toMatchObject({ type: "logo", text: "Studix" });
-    // A name the brief never writes is dropped, and the CTA shows no hook line in its place.
-    for (const ir of [named("Acme"), named(null)]) {
+    // The brief's spelling wins over the agent's casing.
+    expect(named("STUDIX").brand?.name).toBe("Studix");
+    // A name the brief never writes as a whole word, or the hook line itself, is dropped, and the CTA
+    // shows no hook line in its place.
+    for (const ir of [named("Acme"), named("Stud"), named("Describe a video. Get a film."), named(null)]) {
       expect(ir.brand?.name).toBe("Describe a video. Get a film.");
       expect(ctaLogo(ir)).toBeUndefined();
     }

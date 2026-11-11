@@ -55,15 +55,15 @@ export const MotionStoryboard = z.object({
   music: z.string().trim().min(1).max(300).nullable(),
   /**
    * The brand or product name exactly as the brief writes it ("Studix" in "introducing Studix"), or null when
-   * the brief names none. Optional only so storyboards stored before it existed still load.
+   * the brief names none. Optional so storyboards stored before it existed, and host agents that omit it,
+   * still load.
    */
   brandName: z.string().trim().min(1).max(80).nullable().optional(),
   rationale: z.string().trim().min(1).max(600),
 });
 export type MotionStoryboard = z.infer<typeof MotionStoryboard>;
 
-// The agent must answer `brandName`, even if only with null.
-const AgentOutput = z.object({ storyboard: MotionStoryboard.required({ brandName: true }) });
+const AgentOutput = z.object({ storyboard: MotionStoryboard });
 
 /** The stage output: an agent storyboard, or none when the graphic falls back to the template. */
 export const MotionStoryboardOutput = z.object({
