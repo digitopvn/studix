@@ -158,6 +158,8 @@ function harness(
     unavailableKinds?: readonly string[];
     /** Media kinds missing from the provider's shared capability list, as when only a workspace has the key. */
     unlistedKinds?: readonly string[];
+    /** Length of the voice take of a line, by what it says; the fake's default take otherwise. */
+    voiceMs?: (text: string) => number | undefined;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -175,6 +177,8 @@ function harness(
         retryable: false,
       });
     }
+    const voiceMs = request.kind === "voice" ? options.voiceMs?.(request.prompt) : undefined;
+    if (voiceMs !== undefined) request = { ...request, params: { ...request.params, durationMs: voiceMs } };
     // The real provider reads local inputs only from inside the request's workDir; the fake does not check.
     for (const name of ["image", "video", "audio"]) {
       const value = request.params?.[name];
@@ -727,6 +731,75 @@ describe("motion-graphic pipeline (fake providers)", () => {
       "sfx",
       "sfx",
     ]);
+  });
+
+  it("recuts the cards around a take that runs past its card instead of failing the job", async () => {
+    const long = "Trà hái tay mỗi sớm";
+    const h = harness({ voiceMs: (text) => (text === long ? 4_500 : undefined) });
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic giới thiệu tiệm trà Lá Mây",
+      title: "Lá Mây",
+      language: "vi",
+      durationMs: 12_000,
+      keyMessages: [long, "Giao tận nơi trong ngày"],
+      callToAction: "Đặt trà ngay",
+    });
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // One take per line: the cards are cut to the takes, nothing is voiced again.
+    expect(h.generate.mock.calls.filter(([, r]) => r.kind === "voice")).toHaveLength(4);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.scenes.reduce((ms, sc) => ms + sc.durationMs, 0)).toBe(12_000);
+    const message = ir.scenes.find((sc) => sc.id === "message-1");
+    // The long line's card grew past the even share of the length, taken from the cards with short lines.
+    expect(message?.durationMs).toBeGreaterThanOrEqual(4_500);
+    let at = 0;
+    const cards = ir.scenes.map((sc) => {
+      const span = { startMs: at, endMs: at + sc.durationMs };
+      at = span.endMs;
+      return span;
+    });
+    const voice = (ir.audio ?? []).filter((t) => t.kind === "voiceover");
+    expect(voice.slice(1).map((t) => t.startMs)).toEqual(cards.slice(1).map((c) => c.startMs));
+    voice.forEach((t, i) => {
+      expect(t.startMs + (t.durationMs ?? 0)).toBeLessThanOrEqual(cards[i]?.endMs as number);
+    });
+    // Read at its own pace, whole: the card was cut to the take, so nothing is sped up.
+    expect(voice[1]).toEqual(expect.objectContaining({ durationMs: 4_500 }));
+    expect(voice.every((t) => t.playbackRate === undefined)).toBe(true);
+    // The captions, the accent and the whooshes follow the new cuts.
+    const cues = ir.captions?.cues ?? [];
+    const messageCues = cues.filter(
+      (c) => c.startMs >= (cards[1]?.startMs ?? 0) && c.endMs <= (cards[1]?.endMs ?? 0),
+    );
+    expect(messageCues.map((c) => c.text).join(" ")).toBe(long);
+    expect(ir.audio?.find((t) => t.assetId === "sfx-accent")?.startMs).toBe(cards.at(-1)?.startMs);
+    const whooshes = (ir.audio ?? []).filter((t) => t.assetId === "sfx-whoosh");
+    expect(whooshes.map((t) => t.startMs + 250)).toEqual(cards.slice(1, -1).map((c) => c.startMs));
+  });
+
+  it("voices long lines once more, brisker, and fails only when the takes outrun the whole graphic", async () => {
+    const h = harness({ voiceMs: () => 4_000 });
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic giới thiệu tiệm trà Lá Mây",
+      title: "Lá Mây",
+      language: "vi",
+      durationMs: 12_000,
+      keyMessages: ["Trà hái tay mỗi sớm", "Giao tận nơi trong ngày"],
+      callToAction: "Đặt trà ngay",
+    });
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(outcome).toBe("failed");
+    const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    expect(voices).toHaveLength(8);
+    expect(voices.filter((r) => String(r.params?.instructions).includes("brisker"))).toHaveLength(4);
+    const failure = h.queue.fail.mock.calls.at(-1)?.[2] as { code: string; message: string } | undefined;
+    expect(failure).toEqual(
+      expect.objectContaining({
+        code: "VALIDATION",
+        message: "The voice-over runs longer than the 12s graphic",
+      }),
+    );
   });
 
   it("re-renders a stored version through render -> QA -> upload", async () => {
