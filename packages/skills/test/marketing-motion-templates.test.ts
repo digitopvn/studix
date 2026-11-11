@@ -87,18 +87,27 @@ describe("caption chunks", () => {
       "one two three four five six seven eight",
       "nine about.",
     ]);
-    // A two-word tail 400 ms long joins the cue before it; when both cannot fit, the line splits evenly.
-    const line11 = "một hai ba bốn năm sáu bảy tám chín mười mốt";
-    expect(captionCues(line11, 0, 2200, 11)).toEqual([{ startMs: 0, endMs: 2200, text: line11 }]);
-    expect(captionCues(line11, 0, 2200, 9)).toEqual([
-      { startMs: 0, endMs: 1200, text: "một hai ba bốn năm sáu" },
-      { startMs: 1200, endMs: 2200, text: "bảy tám chín mười mốt" },
-    ]);
-    const dense = "một hai ba bốn năm sáu bảy tám chín mười mốt hai ba bốn năm sáu bảy tám chín mười";
-    const spread = captionCues(dense, 0, 2000);
-    expect(spread.map((c) => wordCount(c.text))).toEqual([7, 7, 6]);
-    expect(spread.every((c) => c.endMs - c.startMs >= MIN_CAPTION_MS)).toBe(true);
-    expect(spread.map((c) => c.text).join(" ")).toBe(dense);
+    // Lines too dense for the plain chunks: every cue still reads for 600 ms, a phone number stays whole.
+    const dense = [
+      ["một hai ba bốn năm sáu bảy tám chín mười mốt", 2200],
+      ["một hai ba bốn năm sáu bảy tám chín mười mốt hai ba bốn năm sáu bảy tám chín mười", 2000],
+      [
+        "Chỉ cần một câu mô tả, Studix dựng video quảng cáo hoàn chỉnh cho bạn trong vài phút, không cần biên tập viên.",
+        1965,
+      ],
+      [
+        "Giảm 50% cho đơn đầu tiên, gọi ngay 0901 234 567 hoặc ghé studix.vn để nhận ưu đãi hôm nay nhé.",
+        2002,
+      ],
+    ] as const;
+    for (const [text, durationMs] of dense) {
+      const cues = captionCues(text, 500, durationMs);
+      expect(cues.map((c) => c.text).join(" ")).toBe(text);
+      expect(cues.every((c) => c.endMs - c.startMs >= MIN_CAPTION_MS)).toBe(true);
+      expect(cues.every((c) => wordCount(c.text) >= 2 && wordCount(c.text) <= MAX_CAPTION_WORDS)).toBe(true);
+      expect(cues.at(-1)?.endMs).toBe(500 + durationMs);
+    }
+    expect(captionCues(dense[3][0], 0, dense[3][1]).some((c) => c.text.includes("0901 234 567"))).toBe(true);
     expect(chunkCaption("one two three", 2)).toEqual(["one two", "three"]);
   });
 });

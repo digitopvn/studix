@@ -42,10 +42,8 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
 
 /**
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
- * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. A cue
- * shorter than `MIN_CAPTION_MS` joins the cue before it (the first, the one after it) when the two fit in
- * `maxWords`; when they cannot, the line is split into even chunks instead, as few as the word limit and
- * the line's length allow, so no cue is shorter than it has to be.
+ * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. When that
+ * leaves a cue shorter than `MIN_CAPTION_MS`, the line is cut again by `readableChunks` instead.
  */
 export function captionCues(
   text: string,
@@ -56,66 +54,19 @@ export function captionCues(
   if (durationMs <= 0) return [];
   const chunks = chunkCaption(text, maxWords);
   if (chunks.length === 0) return [];
-  const merged = mergeShortCues(timeChunks(chunks, startMs, durationMs), maxWords);
-  if (merged.length < 2 || merged.every((c) => c.endMs - c.startMs >= MIN_CAPTION_MS)) {
-    return merged.filter((c) => c.endMs > c.startMs);
+  const language = VIETNAMESE_MARK.test(text.normalize("NFD")) ? "vi" : undefined;
+  let cues = timeChunks(chunks, startMs, durationMs, language);
+  if (cues.length > 1 && cues.some((c) => c.endMs - c.startMs < MIN_CAPTION_MS)) {
+    const words = chunks.join(" ").split(" ");
+    cues = timeChunks(readableChunks(words, durationMs, maxWords, language), startMs, durationMs, language);
   }
-  const words = chunks.join(" ").split(" ");
-  const fewest = Math.ceil(words.length / maxWords);
-  const count = Math.max(fewest, Math.min(merged.length, Math.floor(durationMs / MIN_CAPTION_MS)));
-  const atClauses = timeChunks(evenChunks(words, count, maxWords, true), startMs, durationMs);
-  const even = atClauses.some((c) => c.endMs - c.startMs < MIN_CAPTION_MS)
-    ? timeChunks(evenChunks(words, count, maxWords, false), startMs, durationMs)
-    : atClauses;
-  return even.filter((c) => c.endMs > c.startMs);
-}
-
-/**
- * `words` in `count` chunks that take about as long to say each (`spokenLength`), within `maxWords`. With
- * `atClauses`, each cut moves up to two words to a clause end when one is that close, so a clause keeps
- * its tail.
- */
-function evenChunks(words: string[], count: number, maxWords: number, atClauses: boolean): string[] {
-  const said = [0];
-  for (const w of words) said.push((said.at(-1) as number) + Math.max(spokenLength(w), 0.1));
-  const total = said.at(-1) as number;
-  const chunks: string[] = [];
-  let start = 0;
-  for (let i = 1; i <= count; i++) {
-    const left = count - i;
-    // Where this chunk's share of the line ends, kept inside the word limit both ways.
-    let target = start + 1;
-    while (target < words.length && (said[target] as number) < (total * i) / count) target++;
-    const lo = Math.max(start + 1, words.length - maxWords * left);
-    target = Math.min(Math.max(target, lo), start + maxWords, words.length - left);
-    let end = target;
-    for (const shift of [0, -1, 1, -2, 2]) {
-      const cut = target + shift;
-      if (
-        !atClauses ||
-        i === count ||
-        cut - start < 2 ||
-        cut < lo ||
-        cut > start + maxWords ||
-        cut > words.length - left
-      )
-        continue;
-      if (CLAUSE_END.test(words[cut - 1] as string)) {
-        end = cut;
-        break;
-      }
-    }
-    if (i === count) end = words.length;
-    chunks.push(words.slice(start, end).join(" "));
-    start = end;
-  }
-  return chunks.filter(Boolean);
+  return cues.filter((c) => c.endMs > c.startMs);
 }
 
 /** Times chunks across the span in proportion to how long each takes to say (`spokenLength`). */
-function timeChunks(chunks: string[], startMs: number, durationMs: number): CaptionCue[] {
+function timeChunks(chunks: string[], startMs: number, durationMs: number, language?: string): CaptionCue[] {
   // Timed by how long each chunk takes to say, so a chunk holding "AI-native" stays up while it is read.
-  const weights = chunks.map((c) => Math.max(spokenLength(c), 0.1));
+  const weights = chunks.map((c) => Math.max(spokenLength(c, language), 0.1));
   const total = weights.reduce((n, w) => n + w, 0);
   let said = 0;
   return chunks.map((text, i) => {
@@ -125,18 +76,66 @@ function timeChunks(chunks: string[], startMs: number, durationMs: number): Capt
   });
 }
 
-/** Joins each cue shorter than `MIN_CAPTION_MS` to the cue before it (the first to the one after it). */
-function mergeShortCues(cues: CaptionCue[], maxWords: number): CaptionCue[] {
-  const out: CaptionCue[] = [];
-  const short = (c: CaptionCue) => c.endMs - c.startMs < MIN_CAPTION_MS;
-  for (const cue of cues) {
-    const prev = out.at(-1);
-    const join = prev && (short(cue) || (out.length === 1 && short(prev)));
-    if (join && wordCount(prev.text) + wordCount(cue.text) <= maxWords) {
-      out[out.length - 1] = { startMs: prev.startMs, endMs: cue.endMs, text: `${prev.text} ${cue.text}` };
-    } else out.push(cue);
+/**
+ * Cuts a line too dense for `chunkCaption` into chunks of at most `maxWords` words, chosen in order to: keep
+ * the shortest cue as long as it can be (up to `MIN_CAPTION_MS`), leave no one-word cue, keep a phone number
+ * in one cue, use as few cues as possible, cut at clause ends, then keep cues even. Each chunk is weighed by its own
+ * `spokenLength`, as `timeChunks` times it.
+ */
+function readableChunks(words: string[], durationMs: number, maxWords: number, language?: string): string[] {
+  const n = words.length;
+  const weight = (i: number, j: number) => Math.max(spokenLength(words.slice(i, j).join(" "), language), 0.1);
+  // A little over the minimum: cues are timed against the sum of their own lengths, not the line's.
+  const enough = ((MIN_CAPTION_MS * 1.05) / durationMs) * weight(0, n);
+  // Cutting before word `j` splits a phone number ("0901 234 567") when `j` lies inside one.
+  const inPhone = new Set<number>();
+  let offset = 0;
+  const starts = words.map((w) => {
+    const at = offset;
+    offset += w.length + 1;
+    return at;
+  });
+  for (const m of words.join(" ").matchAll(PHONE)) {
+    const end = (m.index ?? 0) + m[0].length;
+    starts.forEach((at, j) => {
+      if (at > (m.index ?? 0) && at < end) inPhone.add(j);
+    });
   }
-  return out;
+  // First the longest shortest chunk any cut reaches, capped where every cue is long enough.
+  const floor = new Array<number>(n + 1).fill(-1);
+  floor[0] = Number.POSITIVE_INFINITY;
+  for (let j = 1; j <= n; j++) {
+    for (let i = Math.max(0, j - maxWords); i < j; i++) {
+      if ((floor[i] as number) >= 0)
+        floor[j] = Math.max(floor[j] as number, Math.min(floor[i] as number, weight(i, j)));
+    }
+  }
+  const reach = Math.min(floor[n] as number, enough) * 0.999;
+  // Then, among cuts whose every chunk reaches it, the best by the remaining rules (lower is better).
+  type Plan = { cost: [number, number, number, number, number]; from: number };
+  const best: (Plan | undefined)[] = [{ cost: [0, 0, 0, 0, 0], from: -1 }];
+  const better = (a: Plan["cost"], b: Plan["cost"]) => {
+    for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return (a[k] as number) < (b[k] as number);
+    return false;
+  };
+  for (let j = 1; j <= n; j++) {
+    for (let i = Math.max(0, j - maxWords); i < j; i++) {
+      const prev = best[i];
+      if (!prev || weight(i, j) < reach) continue;
+      const cost: Plan["cost"] = [
+        prev.cost[0] + (j - i === 1 && n > 1 ? 1 : 0),
+        prev.cost[1] + (j < n && inPhone.has(j) ? 1 : 0),
+        prev.cost[2] + 1,
+        prev.cost[3] + (j < n && !CLAUSE_END.test(words[j - 1] as string) ? 1 : 0),
+        prev.cost[4] + weight(i, j) ** 2,
+      ];
+      const current = best[j];
+      if (!current || better(cost, current.cost)) best[j] = { cost, from: i };
+    }
+  }
+  const chunks: string[] = [];
+  for (let j = n; j > 0; j = best[j]?.from ?? 0) chunks.unshift(words.slice(best[j]?.from ?? 0, j).join(" "));
+  return chunks;
 }
 
 /** Whitespace-separated word count (a Vietnamese syllable is a word). */
