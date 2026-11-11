@@ -254,6 +254,11 @@ role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`, and voice per langua
 `@<voice>`), which also carries the packs' delivery direction to models that take it;
 `MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
 job. Every paid call is estimated first and refused above the request's cap.
+`MULTIX_AUDIO_CONCURRENCY` (default 4) caps the speech, music and sound-effect calls running at once per
+vendor in one worker process, across all of its jobs, because vendors limit concurrent requests per account
+(ElevenLabs Creator allows 5). Keep it under the account's limit. A call the vendor still refuses for rate or
+concurrency, with nothing charged, waits (its `retry_after_s`, else 2 s, 4 s, 8 s, 16 s) and is tried again
+up to 4 times inside the same stage attempt.
 
 These env values are the server defaults. A workspace admin (`member:manage`) can override them on the
 dashboard's Providers page, or through `GET|PUT|DELETE /api/providers/multix`: turn Multix off for the

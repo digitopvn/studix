@@ -56,6 +56,7 @@ import {
   resolveMultixModel,
   type VoiceLanguageRoutes,
 } from "./multix-routes.ts";
+import { sharedVendorCallLimiter, type VendorCallLimiter } from "./vendor-call-limiter.ts";
 
 export const MULTIX_PROVIDER_ID = "multix";
 
@@ -99,6 +100,16 @@ export interface MultixProviderOptions {
   clock?: Clock;
   /** How long capability probes (`multix check`, model catalogs) are reused. */
   capabilityTtlMs?: number;
+  /**
+   * Most speech, music and sound-effect calls running at once per vendor in this process
+   * (config.MULTIX_AUDIO_CONCURRENCY). Vendors cap concurrent requests per account (ElevenLabs answers 429
+   * `concurrent_limit_exceeded`), and parallel jobs in one worker share that account.
+   */
+  audioConcurrency?: number;
+  /** Where the per-vendor slots live; defaults to the one limiter of this process. */
+  limiter?: VendorCallLimiter;
+  /** How a rate-limited audio call waits before trying again; tests replace it. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export type MultixReadiness = Readonly<Record<string, boolean>>;
@@ -132,6 +143,13 @@ const CATALOG_REFRESH_INTERVAL_MS = 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 /** Time the CLI gets beyond its own wait timeout to download outputs and print the envelope. */
 const RUN_MARGIN_MS = 120_000;
+export const DEFAULT_AUDIO_CONCURRENCY = 4;
+/** Sync roles whose calls count against the vendor's concurrent-request limit. */
+const LIMITED_AUDIO_ROLES: ReadonlySet<MultixRole> = new Set(["voice", "music", "sfx"]);
+/** Times one audio call is retried in place after the vendor said it was rate limited. */
+const RATE_LIMIT_RETRIES = 4;
+const RATE_LIMIT_BASE_MS = 2_000;
+const RATE_LIMIT_MAX_WAIT_MS = 30_000;
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const CACHE_DIR = ".multix-cache";
 
@@ -241,6 +259,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   private readonly journal: MediaJobJournal;
   private readonly clock: Clock;
   private readonly capabilityTtlMs: number;
+  private readonly audioConcurrency: number;
+  private readonly limiter: VendorCallLimiter;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private probe: { at: number; value: Promise<MediaCapability[]> } | undefined;
   /** The last forced refresh of the Sume catalog, shared by concurrent estimates. */
   private catalogRefresh: { at: number; value: Promise<string | undefined> } | undefined;
@@ -271,6 +292,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     this.journal = options.journal ?? new InMemoryMediaJobJournal();
     this.clock = options.clock ?? systemClock;
     this.capabilityTtlMs = options.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS;
+    this.audioConcurrency = options.audioConcurrency ?? DEFAULT_AUDIO_CONCURRENCY;
+    this.limiter = options.limiter ?? sharedVendorCallLimiter;
+    this.sleep = options.sleep ?? abortableSleep;
   }
 
   get enabled(): boolean {
@@ -992,11 +1016,10 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     assertWithinBudget(estimate, request.maxCostCents, this.id);
     throwIfAborted(request.signal);
     await mkdir(outDir, { recursive: true });
-    const envelope = await this.exec(
-      plan.argv.slice(0, 2).join(" "),
+    const envelope = await this.execSync(
+      plan,
       this.compose(plan, [...this.maxCostFlags(plan, request), `--output=${file}`]),
       outDir,
-      plan.waitTimeoutMs + RUN_MARGIN_MS,
       request.signal,
     );
     // The run succeeded, so the upstream has charged even if its output turns out unusable.
@@ -1041,6 +1064,35 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
         throw charge ? new MediaChargedError(toStudixError(putErr), charge) : putErr;
       });
     return result(outputs, receipt ?? estimate, receipt !== undefined ? "receipt" : "estimate", ran);
+  }
+
+  /**
+   * Run one sync plan. Audio calls take a per-vendor slot, so parallel jobs in this worker stay under the
+   * vendor's concurrent-request limit. A call the vendor rate-limits without charging is retried here with
+   * backoff (honouring retry_after_s), so one busy moment does not fail the whole stage attempt.
+   */
+  private async execSync(
+    plan: MultixPlan,
+    argv: readonly string[],
+    cwd: string,
+    signal?: AbortSignal,
+  ): Promise<MultixEnvelope> {
+    const command = plan.argv.slice(0, 2).join(" ");
+    const timeoutMs = plan.waitTimeoutMs + RUN_MARGIN_MS;
+    if (!LIMITED_AUDIO_ROLES.has(plan.role)) return this.exec(command, argv, cwd, timeoutMs, signal);
+    for (let retry = 0; ; retry++) {
+      const { result, envelope } = await this.limiter.run(
+        `multix:${plan.model.vendor}`,
+        this.audioConcurrency,
+        () => this.execRaw(argv, cwd, timeoutMs, signal),
+        signal,
+      );
+      const limited = !result.stoppedBy && rateLimitedWithoutCharge(envelope);
+      const retryAfterS = envelope?.error?.retryAfterS;
+      if (multixRunSucceeded(result, envelope)) return envelope;
+      if (retry >= RATE_LIMIT_RETRIES || !limited) throw multixRunError(command, result, envelope);
+      await this.sleep(rateLimitWaitMs(retryAfterS, retry), signal);
+    }
   }
 
   private assertTrustedOutputs(envelope: MultixEnvelope, job?: ProviderJobRef): void {
@@ -1245,6 +1297,41 @@ function paramsOfRole(role: MultixRole): Record<string, unknown> {
   return {};
 }
 
+/** The vendor refused the call for rate or concurrency and multix reports nothing charged for it. */
+function rateLimitedWithoutCharge(envelope: MultixEnvelope | undefined): boolean {
+  return (
+    envelope?.error?.code === "RATE_LIMITED" &&
+    envelope.receiptUsd === undefined &&
+    envelope.capturedCents === undefined
+  );
+}
+
+/** retry_after_s when the vendor sent one, else exponential backoff with jitter; capped either way. */
+function rateLimitWaitMs(retryAfterS: number | undefined, retry: number): number {
+  const wait =
+    retryAfterS !== undefined && retryAfterS > 0
+      ? retryAfterS * 1000
+      : RATE_LIMIT_BASE_MS * 2 ** retry + Math.floor(Math.random() * RATE_LIMIT_BASE_MS);
+  return Math.min(wait, RATE_LIMIT_MAX_WAIT_MS);
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const stop = () =>
+      reject(new StudixError("CANCELLED", "The request was cancelled while waiting to retry"));
+    if (signal?.aborted) return stop();
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      stop();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function fileSize(path: string): Promise<number> {
   try {
     const s = await stat(path);
@@ -1288,10 +1375,11 @@ export function createMultixProviderFromConfig(
     | "MULTIX_VIDEO_UPSCALE_MODEL"
     | "MULTIX_ALLOW_HOME_ENV"
     | "MULTIX_WAIT_TIMEOUT_SECONDS"
-  >,
+  > &
+    Partial<Pick<StudixConfig, "MULTIX_AUDIO_CONCURRENCY">>,
   options: Omit<
     MultixProviderOptions,
-    "bin" | "models" | "voiceLanguageModels" | "allowHomeEnv" | "waitTimeoutMs"
+    "bin" | "models" | "voiceLanguageModels" | "allowHomeEnv" | "waitTimeoutMs" | "audioConcurrency"
   > = {},
 ): MultixProvider {
   const models: Partial<Record<MultixRole, string>> = {};
@@ -1315,5 +1403,6 @@ export function createMultixProviderFromConfig(
       : {}),
     allowHomeEnv: config.MULTIX_ALLOW_HOME_ENV,
     waitTimeoutMs: config.MULTIX_WAIT_TIMEOUT_SECONDS * 1000,
+    ...(config.MULTIX_AUDIO_CONCURRENCY ? { audioConcurrency: config.MULTIX_AUDIO_CONCURRENCY } : {}),
   });
 }

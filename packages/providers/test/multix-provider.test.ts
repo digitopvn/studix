@@ -14,6 +14,7 @@ import {
   type MultixRunResult,
   parseCheckKeys,
   parseMultixEnvelope,
+  VendorCallLimiter,
 } from "../src/index.ts";
 
 /** One scripted CLI reply. `files` are written before the envelope is returned, as multix would. */
@@ -1376,6 +1377,105 @@ describe("MultixProvider synchronous audio", () => {
     const again = await multix.generate(ctx, voiceRequest());
     expect(again.outputs).toEqual(result.outputs);
     expect(cli.calls).toHaveLength(2);
+  });
+
+  /** ElevenLabs' 429 as multix 1.28 reports it: RATE_LIMITED, exit 4, nothing charged. */
+  const concurrentLimit = (extra: Record<string, unknown> = {}): Reply => ({
+    exitCode: 4,
+    envelope: {
+      error: { code: "RATE_LIMITED", message: "concurrent_limit_exceeded", retryable: true, ...extra },
+      exit_code: 4,
+    },
+  });
+  const estimateReply: Reply = { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+
+  it("retries a take the vendor rate-limited in place, honouring retry_after_s, and pays once", async () => {
+    let tts = 0;
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate")) return estimateReply;
+      tts += 1;
+      if (tts === 1) return concurrentLimit({ retry_after_s: 3 });
+      if (tts === 2) return concurrentLimit();
+      const out = flagValue(argv, "output")!;
+      return { files: { [out]: "mp3" }, envelope: { outputs: [{ path: out }], history_id: "h_1" } };
+    });
+    const waits: number[] = [];
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      limiter: new VendorCallLimiter(),
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    const result = await multix.generate(ctx, voiceRequest());
+    expect(tts).toBe(3);
+    expect(waits[0]).toBe(3000);
+    expect(waits[1]).toBeGreaterThanOrEqual(4000);
+    expect(result).toMatchObject({ costCents: 1, costSource: "estimate" });
+  });
+
+  it("gives up after a few rate-limited tries, and never retries a refusal that reports a charge", async () => {
+    const sleep = async () => undefined;
+    const always = scriptedCli((argv) => (argv.includes("--estimate") ? estimateReply : concurrentLimit()));
+    const limited = new MultixProvider({ bin: "multix", runner: always.runner, sleep });
+    await expect(limited.generate(ctx, voiceRequest())).rejects.toMatchObject({
+      code: "PROVIDER_ERROR",
+      retryable: true,
+    });
+    expect(always.calls).toHaveLength(1 + 5);
+
+    const charged = scriptedCli((argv) =>
+      argv.includes("--estimate")
+        ? estimateReply
+        : {
+            ...concurrentLimit(),
+            envelope: {
+              ...concurrentLimit().envelope,
+              cost: { actual_usd: 0.01, actual_source: "provider" },
+            },
+          },
+    );
+    const paid = new MultixProvider({ bin: "multix", runner: charged.runner, sleep });
+    await expect(paid.generate(ctx, voiceRequest())).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(charged.calls).toHaveLength(2);
+  });
+
+  it("keeps parallel audio calls of every provider instance under the vendor's limit", async () => {
+    const limiter = new VendorCallLimiter();
+    let running = 0;
+    let peak = 0;
+    const runner: MultixRunner = async (argv) => {
+      if (argv.includes("--estimate"))
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ schema: "multix.result/v1", ok: true, ...estimateReply.envelope }),
+        };
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 10));
+      const out = flagValue(argv, "output")!;
+      await mkdir(dirname(out), { recursive: true });
+      await writeFile(out, "mp3");
+      running -= 1;
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({ schema: "multix.result/v1", ok: true, outputs: [{ path: out }] }),
+      };
+    };
+    // Two jobs in one worker, each with its own provider (a workspace override builds another instance).
+    const jobs = [1, 2].map(
+      () => new MultixProvider({ bin: "multix", runner, limiter, audioConcurrency: 2 }),
+    );
+    await Promise.all(
+      jobs.flatMap((multix, job) =>
+        [0, 1, 2].map((take) =>
+          multix.generate(ctx, { ...voiceRequest(), idempotencyKey: `job-${job}:take-${take}` }),
+        ),
+      ),
+    );
+    expect(peak).toBe(2);
+    expect(limiter.inFlight("multix:elevenlabs")).toBe(0);
   });
 
   it("speaks a routed language on OpenRouter with its direction, capped by the estimate's high end", async () => {

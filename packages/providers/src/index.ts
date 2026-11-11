@@ -90,3 +90,4 @@ export {
   type WorkspaceMultixProviders,
   type WorkspaceMultixProvidersOptions,
 } from "./multix-workspace-settings.ts";
+export { sharedVendorCallLimiter, VendorCallLimiter } from "./vendor-call-limiter.ts";

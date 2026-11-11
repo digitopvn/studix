@@ -139,6 +139,11 @@ export const ConfigSchema = z
     MULTIX_ALLOW_HOME_ENV: bool.default(false),
     /** Longest wait for one upstream job before the call fails retryably (the job keeps its id). */
     MULTIX_WAIT_TIMEOUT_SECONDS: z.coerce.number().int().min(30).max(7200).default(900),
+    /**
+     * Most speech, music and sound-effect calls at once per vendor in one process. Keep it under the vendor
+     * account's concurrent-request limit (ElevenLabs: 5 on Creator); a 429 beyond it is retried in place.
+     */
+    MULTIX_AUDIO_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
 
     OTEL_SERVICE_NAME: z.string().min(1).default("studix"),
     OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,
