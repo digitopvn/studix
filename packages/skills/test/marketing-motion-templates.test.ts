@@ -644,3 +644,12 @@ describe("pack pipelines", () => {
     expect(mg.some((s) => s.name.includes("i2v"))).toBe(false);
   });
 });
+
+describe("motion graphic prompt format", () => {
+  it("keeps the length and aspect ratio the prompt states", async () => {
+    const { motionGraphicTemplate } = await import("../src/motion-graphic/motion-graphic-template.ts");
+    const ir = motionGraphicTemplate({ prompt: "A 30-second 16:9 intro for Studix. Try it today." });
+    expect(ir.format.aspectRatio).toBe("16:9");
+    expect(ir.format.durationMs).toBe(30_000);
+  });
+});

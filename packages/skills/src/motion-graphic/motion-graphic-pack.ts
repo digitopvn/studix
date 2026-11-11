@@ -51,10 +51,10 @@ export const motionGraphicSkill: Skill = {
   id: MOTION_GRAPHIC_PACK,
   title: "Motion graphic",
   description:
-    "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16): the workspace's agent writes the script and " +
+    "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16; a length or ratio stated in the prompt wins): the workspace's agent writes the script and " +
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
-    "generated voice-over with burned captions and one SFX accent on the CTA card; the accent and music bed " +
+    "generated voice-over with burned captions, a whoosh on each cut and one SFX accent on the CTA card; the accent and music bed " +
     "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). No image-to-video.",
   version: 1,
@@ -156,6 +156,32 @@ function sfxRequest(s: StageContext): { at: number; request: StoredMediaRequest 
   };
 }
 
+const WHOOSH_MS = 700;
+
+/** One short whoosh, reused on every cut between cards so a cut is heard as well as seen. */
+function whooshRequest(s: StageContext): StoredMediaRequest {
+  return {
+    assetId: "sfx-whoosh",
+    kind: "sfx",
+    prompt: "Fast clean cinematic whoosh transition, airy, short, no reverb tail",
+    params: { durationMs: WHOOSH_MS },
+    keyPrefix: `generated/${s.job.id}/sfx-whoosh`,
+    maxCostCents: 0,
+    reuse: {},
+  };
+}
+
+/** Start of every scene after the first, except the CTA card (the accent lands there). */
+function cutTimes(ir: VideoIR): number[] {
+  const out: number[] = [];
+  let at = 0;
+  for (const scene of ir.scenes) {
+    if (at > 0 && scene.id !== "cta") out.push(at);
+    at += scene.durationMs;
+  }
+  return out;
+}
+
 async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMediaRequest> {
   const estimate = await requireService(s, "media").estimateCostCents({
     kind: r.kind,
@@ -171,7 +197,10 @@ const unavailable = (err: unknown) => err instanceof StudixError && err.code ===
 
 /** The SFX accent of a graphic that has a script; none for a graphic without one (it has no voice to lead). */
 async function accentRequests(s: StageContext): Promise<StoredMediaRequest[]> {
-  return voiceoverOf(irOf(s)) && s.services.media ? [await capped(s, sfxRequest(s).request)] : [];
+  if (!voiceoverOf(irOf(s)) || !s.services.media) return [];
+  const requests = [await capped(s, sfxRequest(s).request)];
+  if (cutTimes(irOf(s)).length > 0) requests.push(await capped(s, whooshRequest(s)));
+  return requests;
 }
 
 /** The graphic without its accent, and why: the accent is decoration, so a missing provider never fails the job. */
@@ -204,7 +233,7 @@ export const motionGraphicAccentStage: StageDefinition = {
   name: MG_STAGES.accent,
   knowledge: ["sound"],
   outputSchema: AccentOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.accent, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  cacheKey: (s) => stageCacheKey(MG_STAGES.accent, 3, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) => {
     try {
       return await estimateMediaCents(s, await accentRequests(s));
@@ -228,11 +257,38 @@ export const motionGraphicAccentStage: StageDefinition = {
     }
     const accentAt = sfxRequest(s).at;
     const accentRoom = Math.max(1, ir.format.durationMs - accentAt);
+    // The cut whooshes are a garnish on the accent: a whoosh that cannot be made leaves the accent alone.
+    const cuts = cutTimes(ir);
+    let whoosh: StoredMedia | undefined;
+    if (cuts.length > 0) {
+      try {
+        whoosh = await generateStoredMedia(s, MG_STAGES.accent, await capped(s, whooshRequest(s)));
+      } catch (err) {
+        if (!unavailable(err)) throw err;
+      }
+    }
+    const whooshTracks = whoosh
+      ? cuts.map((at, i) => ({
+          id: `sfx-whoosh-${i + 1}-track`,
+          kind: "sfx" as const,
+          assetId: (whoosh as StoredMedia).asset.id,
+          // Lead the cut slightly so the whoosh peaks on it.
+          startMs: Math.max(0, at - 150),
+          durationMs: Math.min(WHOOSH_MS, (whoosh as StoredMedia).asset.durationMs ?? WHOOSH_MS),
+          volume: 0.35,
+        }))
+      : [];
+    const usage = whoosh ? [sfx.usage, whoosh.usage] : [sfx.usage];
     const next = {
       ...ir,
-      assets: [...ir.assets.filter((a) => a.id !== sfx.asset.id), sfx.asset],
+      assets: [
+        ...ir.assets.filter((a) => a.id !== sfx.asset.id && a.id !== whoosh?.asset.id),
+        sfx.asset,
+        ...(whoosh ? [whoosh.asset] : []),
+      ],
       audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "sfx-accent-track"),
+        ...(ir.audio ?? []).filter((t) => t.id !== "sfx-accent-track" && !t.id.startsWith("sfx-whoosh-")),
+        ...whooshTracks,
         {
           id: "sfx-accent-track",
           kind: "sfx" as const,
@@ -245,8 +301,8 @@ export const motionGraphicAccentStage: StageDefinition = {
     };
     await rm(workDir, { recursive: true, force: true });
     return {
-      output: { ir: await billedOnFailure([sfx.usage], () => VideoIR.parse(next)) },
-      usage: [sfx.usage],
+      output: { ir: await billedOnFailure(usage, () => VideoIR.parse(next)) },
+      usage,
     };
   },
 };

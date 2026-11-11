@@ -23,7 +23,7 @@ export {
   DEFAULT_BRAND_PALETTE,
   needsBriefDraft,
 } from "./brand-intro/brief-draft.ts";
-export { draftBriefFromPrompt } from "./brand-intro/brief-draft-from-prompt.ts";
+export { draftBriefFromPrompt, promptFormatHints } from "./brand-intro/brief-draft-from-prompt.ts";
 export { captionCues, chunkCaption, MAX_CAPTION_WORDS, spokenLength, wordCount } from "./caption-chunks.ts";
 export * from "./external/index.ts";
 export { BUILTIN_KNOWLEDGE_PACKS } from "./knowledge/builtin-knowledge-packs.ts";

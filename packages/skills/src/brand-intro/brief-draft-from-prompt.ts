@@ -32,7 +32,9 @@ const NOT_BRAND = new Set(
 );
 const CTA_START =
   /^(đặt|mua|liên hệ|ghé|truy cập|đăng ký|gọi|nhắn|tải|thử|khám phá ngay|order|buy|visit|try|call|shop|get|sign up|download|book|join|learn more)(?![\p{L}])/iu;
-const DURATION = /(\d{1,3})\s*(?:giây|seconds?|secs?|s)(?![\p{L}])/iu;
+// "60 seconds", "60-second", "60s", "60 giây"; minutes as "1 minute", "1-min", "1 phút".
+const DURATION = /(\d{1,3})\s*-?\s*(?:giây|seconds?|secs?|s)(?![\p{L}])/iu;
+const DURATION_MINUTES = /(\d{1,2})\s*-?\s*(?:phút|minutes?|mins?)(?![\p{L}])/iu;
 const DIRECTIVE_ONLY =
   /^(?:(?:dài|thời lượng|length|duration|khoảng|about|tỉ lệ|tỷ lệ|định dạng|format|video|clip)\s*:?\s*)*[\d\s:]+(?:giây|seconds?|secs?|s)?\.?$/iu;
 const AUDIENCE =
@@ -49,10 +51,30 @@ function aspectRatioOf(text: string): AspectRatio | undefined {
   return undefined;
 }
 
-function durationOf(text: string): number | undefined {
+function durationOf(
+  text: string,
+  minMs = BRAND_INTRO_MIN_MS,
+  maxMs = BRAND_INTRO_MAX_MS,
+): number | undefined {
   const seconds = Number(DURATION.exec(text)?.[1]);
-  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
-  return Math.min(BRAND_INTRO_MAX_MS, Math.max(BRAND_INTRO_MIN_MS, seconds * 1000));
+  const minutes = Number(DURATION_MINUTES.exec(text)?.[1]);
+  const ms = seconds > 0 ? seconds * 1000 : minutes > 0 ? minutes * 60_000 : Number.NaN;
+  if (!Number.isFinite(ms)) return undefined;
+  return Math.min(maxMs, Math.max(minMs, ms));
+}
+
+/**
+ * The aspect ratio and length a prompt states ("60-second 16:9", "video dọc 30 giây"), clamped to a
+ * workflow's own range. Workflows that read the prompt themselves (not through a BriefDraft) use this so a
+ * format the user wrote is never silently replaced by the workflow default.
+ */
+export function promptFormatHints(
+  prompt: string,
+  range: { minMs: number; maxMs: number },
+): { aspectRatio?: AspectRatio; durationMs?: number } {
+  const aspectRatio = aspectRatioOf(prompt);
+  const durationMs = durationOf(prompt, range.minMs, range.maxMs);
+  return { ...(aspectRatio ? { aspectRatio } : {}), ...(durationMs ? { durationMs } : {}) };
 }
 
 const stripEdgePunctuation = (word: string) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}&'’]+$/gu, "");
