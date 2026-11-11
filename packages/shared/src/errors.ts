@@ -99,7 +99,7 @@ interface SchemaIssue {
 /** A thrown zod error, matched by shape so a second zod copy in the bundle is still recognised. */
 function schemaIssues(err: Error): SchemaIssue[] | undefined {
   const issues = (err as { issues?: unknown }).issues;
-  if (err.name !== "ZodError" || !Array.isArray(issues) || issues.length === 0) return undefined;
+  if (!/^\$?ZodError$/.test(err.name) || !Array.isArray(issues) || issues.length === 0) return undefined;
   return issues.map((raw) => {
     const issue = (raw ?? {}) as { path?: unknown; code?: unknown; message?: unknown };
     const path = Array.isArray(issue.path) ? issue.path.map(String).join(".") : "";
@@ -112,17 +112,21 @@ function schemaIssues(err: Error): SchemaIssue[] | undefined {
 }
 
 /**
- * Studix itself produced data its own schema rejects (e.g. a stage built an invalid IR). Report it as a
- * one-line Studix defect with the failing path, never as the multi-line zod dump.
+ * A schema rejected data Studix handled (e.g. a stage built an invalid IR). Report it as one line with the
+ * failing path, never as the multi-line zod dump. Only an INTERNAL failure is named a Studix defect; a caller
+ * that classifies it otherwise (e.g. PROVIDER_ERROR) keeps its code's own retry policy and wording.
  */
 function schemaFailure(err: Error, issues: SchemaIssue[], fallback: ErrorCode): StudixError {
   const [first] = issues as [SchemaIssue, ...SchemaIssue[]];
   const more = issues.length > 1 ? ` (+${issues.length - 1} more)` : "";
-  return new StudixError(fallback, `Studix produced invalid data at ${first.path}: ${first.message}${more}`, {
+  const where = `invalid data at ${first.path}: ${first.message}${more}`;
+  const details = { issues: issues.slice(0, MAX_SCHEMA_ISSUES), issueCount: issues.length };
+  if (fallback !== "INTERNAL") return new StudixError(fallback, `Received ${where}`, { details, cause: err });
+  return new StudixError("INTERNAL", `Studix produced ${where}`, {
     retryable: false,
     suggestedAction:
-      "This is a Studix defect, not a mistake in your request, and retrying the same request fails the same way. Report the job id to Studix. A shorter or simpler brief may avoid the failing limit meanwhile.",
-    details: { issues: issues.slice(0, MAX_SCHEMA_ISSUES), issueCount: issues.length },
+      "This is a Studix defect, not a mistake in your request; retrying it unchanged fails the same way. Report it to Studix with the job or trace id. If a long brief led to it, a shorter one may avoid the limit meanwhile.",
+    details,
     cause: err,
   });
 }

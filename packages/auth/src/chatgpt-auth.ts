@@ -112,6 +112,13 @@ export function tokensFromCodexAuthJson(text: string): ChatGptTokens | undefined
   }
 }
 
+/** Parse a ChatGPT response; an unexpected shape is the provider's failure, not a Studix defect. */
+function providerBody<T>(schema: z.ZodType<T>, body: unknown, step: string): T {
+  const parsed = schema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  throw failure(step, 502);
+}
+
 function failure(step: string, status: number): StudixError {
   const rejected = status === 400 || status === 401;
   return new StudixError(
@@ -141,7 +148,7 @@ export function createChatGptAuthClient(
       signal: signal(),
     });
     if (!res.ok) throw failure("token", res.status);
-    const parsed = TokenResponse.parse(await res.json());
+    const parsed = providerBody(TokenResponse, await res.json(), "token");
     const refreshToken = parsed.refresh_token ?? previousRefresh;
     if (!refreshToken) throw failure("token", 502);
     const accountId = chatGptAccountId(parsed.id_token);
@@ -163,7 +170,7 @@ export function createChatGptAuthClient(
         signal: signal(),
       });
       if (!res.ok) throw failure("device code", res.status);
-      const parsed = UserCodeResponse.parse(await res.json());
+      const parsed = providerBody(UserCodeResponse, await res.json(), "device code");
       const userCode = parsed.user_code ?? parsed.usercode;
       if (!userCode) throw failure("device code", 502);
       const interval = Number(parsed.interval ?? 5);
@@ -184,7 +191,7 @@ export function createChatGptAuthClient(
       // The user has not entered the code yet.
       if (res.status === 403 || res.status === 404) return { status: "pending" };
       if (!res.ok) throw failure("device poll", res.status);
-      const grant = DeviceTokenResponse.parse(await res.json());
+      const grant = providerBody(DeviceTokenResponse, await res.json(), "device poll");
       const tokens = await exchange(
         new URLSearchParams({
           grant_type: "authorization_code",

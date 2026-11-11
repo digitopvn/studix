@@ -235,7 +235,7 @@ async function repairTurn(
       const cause = err instanceof StageFailedAfterSpend ? err.error : toStudixError(err);
       throw new StageFailedAfterSpend(cause, [...first, ...spent]);
     }
-    const failure = err instanceof Error ? err.message : String(err);
+    const failure = toStudixError(err).message;
     return { failure: truncateText(failure, 160), usage: [...first, ...spent] };
   }
 }

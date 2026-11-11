@@ -59,6 +59,17 @@ describe("StudixError", () => {
     });
   });
 
+  it("keeps a caller's own code for a schema failure and caps the issues it lists", () => {
+    const thrown = z.array(z.string()).safeParse([1, 2, 3, 4, 5, 6, 7]).error;
+    const error = toStudixError(thrown, "PROVIDER_ERROR");
+    expect(error.code).toBe("PROVIDER_ERROR");
+    expect(error.retryable).toBe(true);
+    expect(error.message).toMatch(/^Received invalid data at 0: .+ \(\+6 more\)$/);
+    expect(error.suggestedAction).toBeUndefined();
+    expect(error.details?.issues).toHaveLength(5);
+    expect(error.details?.issueCount).toBe(7);
+  });
+
   it("guards error codes", () => {
     expect(isErrorCode("APPROVAL_REQUIRED")).toBe(true);
     expect(isErrorCode("NOPE")).toBe(false);

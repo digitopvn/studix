@@ -78,6 +78,12 @@ Rules:
 The union is `ErrorCode` in `packages/shared`; the `retryable` column is a
 guide, the per-error value is authoritative.
 
+When data Studix builds fails its own schema (for example a stage produces an
+invalid IR), the error is `INTERNAL` with a one-line message naming the first
+failing path, `details.issues` (at most five `{path, code, message}`) plus
+`details.issueCount`, `retryable: false` and a `suggestedAction` that marks it a
+Studix defect rather than a problem with the request.
+
 ## P0 native tools
 
 | Tool                      | Purpose                                                                                                                                                                                                                                                |
