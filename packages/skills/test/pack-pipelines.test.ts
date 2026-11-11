@@ -1112,6 +1112,67 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(ir.scenes).toHaveLength(8);
   });
 
+  const brisker = (instructions?: string) => String(instructions).includes("brisker");
+
+  it("voices again only the line that does not fit even read faster, then lays the takes on the graphic", async () => {
+    const message = storyboard.beats[1]?.voiceover as string;
+    // The other lines fit their cards only sped up; the message line fits only its brisker re-take, and the
+    // speech as first voiced outruns the graphic, so recutting cannot help.
+    const h = harness({
+      agent: mockAgent({ storyboard }).runtime,
+      voiceMs: (text, instructions) => (text !== message ? 3100 : brisker(instructions) ? 3400 : 4500),
+    });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // The lines that fit sped up are not paid for again: three first takes and one brisker re-take.
+    const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    expect(voices).toHaveLength(4);
+    expect(
+      voices.filter((r) => brisker(r.params?.instructions as string | undefined)).map((r) => r.prompt),
+    ).toEqual([message]);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    const cards = ir.scenes.map((sc) => sc.durationMs);
+    expect(cards.reduce((a, b) => a + b, 0)).toBe(10_000);
+    // Every card holds its take, sped up at most the allowed rate.
+    const voice = (ir.audio ?? []).filter((t) => t.kind === "voiceover");
+    expect(voice.every((t) => (t.playbackRate ?? 1) <= 1.12)).toBe(true);
+    let at = 0;
+    voice.forEach((t, i) => {
+      at += i === 0 ? 0 : (cards[i - 1] as number);
+      expect(t.startMs + (t.durationMs ?? 0)).toBeLessThanOrEqual(at + (cards[i] as number));
+    });
+  });
+
+  it("voices the lines that fit only sped up once more too, when the graphic still needs the time", async () => {
+    const message = storyboard.beats[1]?.voiceover as string;
+    // The message line never fits its card; the others fit theirs only sped up, so they are voiced again,
+    // brisker, only after the message line's re-take still leaves the graphic short of time.
+    const h = harness({
+      agent: mockAgent({ storyboard }).runtime,
+      voiceMs: (text, instructions) =>
+        text === message ? (brisker(instructions) ? 4300 : 4500) : brisker(instructions) ? 2400 : 3200,
+    });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    // Three first takes, the message line's re-take, then one re-take each of the other two; none twice.
+    expect(voices).toHaveLength(6);
+    const retaken = voices
+      .filter((r) => brisker(r.params?.instructions as string | undefined))
+      .map((r) => r.prompt);
+    expect(retaken[0]).toBe(message);
+    expect(new Set(retaken).size).toBe(3);
+    // The message card took the time its long take needs from the cards whose lines were re-read shorter.
+    const cards = (h.renderer.rendered[0] as VideoIR).scenes.map((sc) => sc.durationMs);
+    expect(cards[1]).toBeGreaterThan(Math.max(cards[0] as number, cards[2] as number));
+  });
+
   it("falls back to the template, both runs billed, when the voice-over still overruns the length after the repair turn", async () => {
     const long = "một hai ba bốn năm sáu bảy tám chín mười ".repeat(4).trim();
     const beats = storyboard.beats.map((b) => ({ ...b, voiceover: long }));

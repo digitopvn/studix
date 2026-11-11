@@ -261,8 +261,9 @@ Behavior notes:
   accent with a warning; a voice-over that cannot be generated still fails the
   job. Every voice take is measured before it is laid: a line longer than its
   card re-cuts the cards (same total length; captions, whooshes and the accent
-  move with them), a line no re-cut can fit is voiced once more, brisker, and
-  only speech that cannot fit the whole video fails with `VALIDATION`
+  move with them), a line no re-cut can fit is voiced once more, brisker (a line
+  that fits its card read up to 1.12x faster is voiced again only when the
+  graphic still needs the time), and only speech that cannot fit the whole video fails with `VALIDATION`
   naming the lines past their cards and by how many milliseconds (`details.lines`).
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
