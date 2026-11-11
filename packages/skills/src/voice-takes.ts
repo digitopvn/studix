@@ -1,7 +1,7 @@
 import { extname, join } from "node:path";
 import type { GeneratedMedia } from "@studix/core";
 import { measureAudibleSpan } from "@studix/renderers";
-import { toStudixError } from "@studix/shared";
+import { StudixError, toStudixError } from "@studix/shared";
 import type { AssetRef, AudioTrack } from "@studix/video-ir";
 import { requireService, type StageContext, StageFailedAfterSpend, type StageUsage } from "@studix/workflow";
 import { generateStoredMedia, hasStoredOutput, type StoredMediaRequest } from "./stored-media.ts";
@@ -36,6 +36,17 @@ export function voiceFitScope(line: Pick<VoiceLine, "roomMs">): string {
   return `${VOICE_FIT_SCOPE}:${line.roomMs}`;
 }
 
+/**
+ * Names takes stored as measured but not judged in the reuse key: a stage that re-times its cards to the
+ * takes it gets keeps every take, so such a take is never served as one that fits (`VOICE_FIT_SCOPE`).
+ */
+export const VOICE_TAKE_SCOPE = "voice-take@1";
+
+/** The reuse scope of a line's unjudged takes, keyed by its exact room like `voiceFitScope`. */
+export function voiceTakeScope(line: Pick<VoiceLine, "roomMs">): string {
+  return `${VOICE_TAKE_SCOPE}:${line.roomMs}`;
+}
+
 const BRISKER_DIRECTION =
   "The previous read ran too long for its slot: read this one noticeably brisker with short pauses, " +
   "still natural, and say the brand name clearly.";
@@ -54,7 +65,7 @@ export const measureVoiceTake: VoiceTakeMeasure = async (filePath, signal) => {
 };
 
 /** The one re-take of a line: brisker direction, and its own idempotency key, usage line and object. */
-function briskerTake(request: StoredMediaRequest): StoredMediaRequest {
+export function briskerTake(request: StoredMediaRequest): StoredMediaRequest {
   const direction = typeof request.params?.instructions === "string" ? request.params.instructions : "";
   // The line's own direction gives way, never the brisker ask that leads.
   const kept = direction.slice(0, MAX_VOICE_DIRECTION_CHARS - BRISKER_DIRECTION.length - 1);
@@ -157,4 +168,53 @@ export async function generateVoiceTake(
     ]);
   }
   throw new StageFailedAfterSpend(voiceOverrunError(line, last), spent);
+}
+
+/** A take kept whatever its length, with what it measured. */
+export interface MeasuredVoiceTake {
+  /** The request that made it: the line's own, or its brisker re-take. */
+  request: StoredMediaRequest;
+  asset: AssetRef;
+  /** Its length: as stored, else as measured; undefined when neither is known. */
+  lengthMs: number | undefined;
+  measured: MeasuredTake | undefined;
+  usage: StageUsage;
+}
+
+/**
+ * Voice one line, store the take whatever its length and measure its speech, for a stage that judges every
+ * take before it lays any (and re-times the cards to them). A stored take is reused, never paid twice: an
+ * earlier attempt's journaled output, or an identical request's stored output, is measured from storage.
+ */
+export async function measuredVoiceTake(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+  workDir: string,
+  measure: VoiceTakeMeasure = measureVoiceTake,
+): Promise<MeasuredVoiceTake> {
+  const probe: { checked: boolean; measured?: MeasuredTake } = { checked: false };
+  const made = await generateStoredMedia(s, stage, request, async (filePath) => {
+    probe.checked = true;
+    probe.measured = await measure(filePath, s.signal);
+    return true;
+  });
+  // Never turned down: the check above accepts every take.
+  if ("rejected" in made)
+    throw new StageFailedAfterSpend(
+      new StudixError("INTERNAL", "A voice take was turned down by a check that accepts all"),
+      [made.usage],
+    );
+  try {
+    const measured = probe.checked ? probe.measured : await measureStored(s, made.asset, workDir, measure);
+    return {
+      request,
+      asset: made.asset,
+      lengthMs: made.asset.durationMs ?? measured?.durationMs,
+      measured,
+      usage: made.usage,
+    };
+  } catch (err) {
+    throw new StageFailedAfterSpend(toStudixError(err), [made.usage]);
+  }
 }

@@ -151,6 +151,8 @@ function harness(
     unavailableKinds?: readonly string[];
     /** Media kinds missing from the provider's shared capability list, as when only a workspace has the key. */
     unlistedKinds?: readonly string[];
+    /** Length of the voice take the fake provider returns for a request (2 s when undefined). */
+    voiceMs?: (request: { prompt: string; params?: Record<string, unknown> }) => number | undefined;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -177,7 +179,8 @@ function harness(
         throw new StudixError("VALIDATION", `params.${name} must be inside workDir`, { retryable: false });
       }
     }
-    return real(c, request);
+    const voiceMs = request.kind === "voice" ? options.voiceMs?.(request) : undefined;
+    return real(c, voiceMs ? { ...request, params: { ...request.params, durationMs: voiceMs } } : request);
   };
   const generate = vi.spyOn(media, "generate");
   const usage: UsageEvent[] = [];
@@ -905,6 +908,81 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     expect(h.renderer.rendered[0]?.metadata?.storyboard).toBe("template");
     expect(h.usage.filter((u) => u.kind === "agent.run")).toHaveLength(2);
+  });
+
+  it("re-times the cards to a take longer than its card when all the speech fits the graphic", async () => {
+    const message = storyboard.beats[1]?.voiceover as string;
+    const h = harness({
+      agent: mockAgent({ storyboard }).runtime,
+      voiceMs: (r) => (r.prompt === message ? 4500 : undefined),
+    });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // One take per line: re-timing is free, so the long line is not voiced again.
+    expect(h.generate.mock.calls.filter(([, r]) => r.kind === "voice")).toHaveLength(3);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    // Was [3300, 3500, 3200]: the message card takes the time its 4.5 s take needs from the others.
+    const cards = ir.scenes.map((sc) => sc.durationMs);
+    expect(cards.reduce((a, b) => a + b, 0)).toBe(10_000);
+    expect(cards[1]).toBeGreaterThanOrEqual(4500);
+    const starts = [0, cards[0] as number, (cards[0] as number) + (cards[1] as number)];
+    expect(ir.timeline.entries.map((e) => e.startMs)).toEqual(starts);
+    const voice = (ir.audio ?? []).filter((t) => t.kind === "voiceover");
+    expect(voice[1]).toMatchObject({ startMs: starts[1] });
+    expect(voice[1]?.playbackRate).toBeUndefined();
+    voice.forEach((t, i) => {
+      expect(t.startMs + (t.durationMs ?? 0)).toBeLessThanOrEqual(
+        (starts[i] as number) + (cards[i] as number),
+      );
+    });
+    // Captions and SFX follow the new cuts.
+    const cues = ir.captions?.cues ?? [];
+    expect(
+      cues.filter((c) => c.startMs >= (starts[1] as number) && c.endMs <= (starts[2] as number)),
+    ).not.toEqual([]);
+    expect(ir.audio?.find((t) => t.id === "sfx-whoosh-1-track")?.startMs).toBe((starts[1] as number) - 150);
+    expect(ir.audio?.find((t) => t.id === "sfx-accent-track")?.startMs).toBe(starts[2]);
+  });
+
+  it("lays the brisker re-take on the cards as they stand when it fits them", async () => {
+    const message = storyboard.beats[1]?.voiceover as string;
+    const brisker = (r: { params?: Record<string, unknown> }) =>
+      String(r.params?.instructions).includes("brisker");
+    // Lines 1 and 3 only fit sped up; line 2 is too long until its re-take, which fits its card.
+    const h = harness({
+      agent: mockAgent({ storyboard }).runtime,
+      voiceMs: (r) => (r.prompt !== message ? 3100 : brisker(r) ? 3800 : 4500),
+    });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(h.generate.mock.calls.filter(([, r]) => r.kind === "voice")).toHaveLength(4);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.scenes.map((sc) => sc.durationMs)).toEqual([3300, 3500, 3200]);
+  });
+
+  it("fails naming the lines when the speech cannot fit the whole graphic", async () => {
+    const h = harness({ agent: mockAgent({ storyboard }).runtime, voiceMs: () => 4000 });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    const { failure } = h.failureOf(outcome) as { failure?: StudixError };
+    expect(failure?.code).toBe("VALIDATION");
+    expect(failure?.message).toMatch(/graphic is 10000 ms .*line 1 .* by \d+ ms/);
+    expect(failure?.details).toMatchObject({
+      totalMs: 10_000,
+      lines: expect.arrayContaining([expect.anything()]),
+    });
+    // Each line voiced once, then once more brisker, before the graphic is given up on.
+    const voiceCalls = h.generate.mock.calls.filter(([, r]) => r.kind === "voice");
+    expect(voiceCalls).toHaveLength(6);
+    expect(h.renderer.rendered).toHaveLength(0);
   });
 
   /** An agent that answers each run with the next scripted output, and records its tasks. */
