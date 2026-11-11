@@ -44,7 +44,8 @@ import {
   type StoredMedia,
   type StoredMediaRequest,
 } from "../stored-media.ts";
-import { voiceLines, voiceLineTrack, withVoiceover } from "../voice-lines.ts";
+import { voiceLines, withVoiceover } from "../voice-lines.ts";
+import { generateVoiceTake, VOICE_FIT_SCOPE } from "../voice-takes.ts";
 import { MARKETING_SCRIPT_VERSION, MarketingScript, marketingScript } from "./marketing-script.ts";
 import {
   beatKey,
@@ -490,7 +491,7 @@ function voiceRequests(s: StageContext) {
         params: { language: ir.language, instructions: line.instructions },
         keyPrefix: `generated/${s.job.id}/audio/${v.id}-vo-${i + 1}`,
         maxCostCents: 0,
-        reuse: {},
+        reuse: { scope: VOICE_FIT_SCOPE },
       } satisfies StoredMediaRequest,
     })),
   );
@@ -606,7 +607,8 @@ export const marketingAudioStage: StageDefinition = {
  * The voice-over of every ad, one line per beat, each read with its beat's direction and laid at full level
  * where that beat starts, so the call to action is heard with the CTA card. Its own stage, so a new voice
  * (another speech model, new direction) costs only the voice: the clips, music and SFX before it stay
- * cached.
+ * cached. A take is judged on its speech, not its silence, and one still too long is voiced once more,
+ * brisker (`generateVoiceTake`).
  */
 export const marketingVoiceoverStage: StageDefinition = {
   name: MV_STAGES.voiceover,
@@ -614,7 +616,7 @@ export const marketingVoiceoverStage: StageDefinition = {
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
   cacheKey: (s) =>
-    stageCacheKey(MV_STAGES.voiceover, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
+    stageCacheKey(MV_STAGES.voiceover, 3, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -637,19 +639,27 @@ export const marketingVoiceoverStage: StageDefinition = {
       planned,
       MEDIA_CONCURRENCY,
       async (v, i) => {
-        const media = await generateStoredMedia(s, MV_STAGES.voiceover, capped[i] as StoredMediaRequest);
+        const request = capped[i] as StoredMediaRequest;
+        const take = await generateVoiceTake(
+          s,
+          MV_STAGES.voiceover,
+          v.line,
+          request,
+          `${request.assetId}-track`.slice(0, 64),
+          workDir,
+        );
         s.reportProgress(++done / planned.length);
-        return { ...v, ...media };
+        return take;
       },
-      (r) => [r.usage],
+      (r) => r.usage,
     );
     await rm(workDir, { recursive: true, force: true });
-    const usage = generated.map((g) => g.usage);
+    const usage = generated.flatMap((g) => g.usage);
     const next = await billedOnFailure(usage, () =>
       VideoIR.parse(
         withVoiceover(
           ir,
-          generated.map((g) => voiceLineTrack(g.line, g.asset, `${g.asset.id}-track`.slice(0, 64))),
+          generated.map((g) => g.track),
           generated.map((g) => g.asset),
         ),
       ),

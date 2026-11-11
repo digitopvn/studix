@@ -1,3 +1,4 @@
+export { type AudibleSpan, measureAudibleSpan, parseAudibleSpan } from "./ffmpeg/audible-span.ts";
 export {
   type AudioClip,
   type AudioSourceInfo,

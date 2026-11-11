@@ -23,7 +23,8 @@ import {
   type StoredMediaRequest,
 } from "../stored-media.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
-import { type VoiceLine, voiceLines, voiceLineTrack, withVoiceover } from "../voice-lines.ts";
+import { type VoiceLine, voiceLines, withVoiceover } from "../voice-lines.ts";
+import { generateVoiceTake, VOICE_FIT_SCOPE } from "../voice-takes.ts";
 import {
   MG_STORYBOARD_STAGE,
   MotionStoryboardOutput,
@@ -124,7 +125,7 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
       params: { language: ir.language, instructions: line.instructions },
       keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
       maxCostCents: 0,
-      reuse: {},
+      reuse: { scope: VOICE_FIT_SCOPE },
     },
   }));
 }
@@ -253,13 +254,14 @@ export const motionGraphicAccentStage: StageDefinition = {
 /**
  * The voice-over of the script, one line per card, each read with its card's direction and laid where that
  * card's captions start, so the call to action is heard with the CTA card. Its own stage, so a new voice
- * (another speech model, new direction) costs only the voice.
+ * (another speech model, new direction) costs only the voice. A take is judged on its speech, not its
+ * silence, and one still too long is voiced once more, brisker (`generateVoiceTake`).
  */
 export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 3, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -273,16 +275,16 @@ export const motionGraphicVoiceStage: StageDefinition = {
     const generated = await mapBounded(
       planned,
       planned.length,
-      async (v) => ({ ...v, ...(await generateStoredMedia(s, MG_STAGES.voice, v.request)) }),
-      (g) => [g.usage],
+      (v) => generateVoiceTake(s, MG_STAGES.voice, v.line, v.request, `${v.request.assetId}-track`, workDir),
+      (g) => g.usage,
     );
     await rm(workDir, { recursive: true, force: true });
-    const usage = generated.map((g) => g.usage);
+    const usage = generated.flatMap((g) => g.usage);
     const next = await billedOnFailure(usage, () =>
       VideoIR.parse(
         withVoiceover(
           ir,
-          generated.map((g) => voiceLineTrack(g.line, g.asset, `${g.asset.id}-track`)),
+          generated.map((g) => g.track),
           generated.map((g) => g.asset),
         ),
       ),
