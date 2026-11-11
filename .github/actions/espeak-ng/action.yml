@@ -1,0 +1,74 @@
+# espeak-ng from cached .deb files, so a stalled Ubuntu apt mirror cannot fail the speech job once the cache
+# is warm. A cold cache downloads the packages with bounded, retried apt calls and falls back to the main
+# Ubuntu archive when the runner's default mirror stalls.
+name: espeak-ng
+description: Install espeak-ng onto the runner from cached Ubuntu packages.
+runs:
+  using: composite
+  steps:
+    # The packages are built for one Ubuntu release, so it is part of the cache key. ImageOS is a runner
+    # process variable, which the `env` expression context does not see.
+    - name: Read Ubuntu release
+      id: release
+      shell: bash
+      run: echo "id=${ImageOS:-unknown}-$(. /etc/os-release && echo "$VERSION_ID")" >> "$GITHUB_OUTPUT"
+
+    - name: Cache espeak-ng packages
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/espeak-ng-debs
+        key: espeak-ng-debs-${{ runner.os }}-${{ runner.arch }}-${{ steps.release.outputs.id }}-v1
+
+    - name: Install espeak-ng
+      shell: bash
+      env:
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        set -uo pipefail
+        dir="$HOME/.cache/espeak-ng-debs"
+        sudo rm -f /var/lib/man-db/auto-update
+
+        # Offline path: the cached packages need no package lists and no network.
+        if [ "$CACHE_HIT" = "true" ] && compgen -G "$dir/*.deb" >/dev/null &&
+          sudo dpkg -i "$dir"/*.deb >/dev/null && command -v espeak-ng >/dev/null; then
+          espeak-ng --version
+          exit 0
+        fi
+        if [ "$CACHE_HIT" = "true" ]; then
+          echo "cached espeak-ng packages did not install, downloading them again"
+          # A failed dpkg -i leaves the set half-configured, which makes apt refuse every later install.
+          for deb in "$dir"/*.deb; do
+            [ -f "$deb" ] && sudo dpkg --remove --force-depends "$(dpkg-deb -f "$deb" Package)" >/dev/null 2>&1
+          done
+        fi
+
+        apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o "Dir::Cache::archives=$dir")
+        # GitHub's Ubuntu 24.04 image points apt at mirror+file:/etc/apt/apt-mirrors.txt with the Azure mirror
+        # first; older images list the Azure mirror directly. Both are rewritten to the main archive.
+        use_main_archive() {
+          echo "switching apt to archive.ubuntu.com"
+          [ -f /etc/apt/apt-mirrors.txt ] && sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+          sudo sed -i 's#http://azure\.archive\.ubuntu\.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null
+          grep -hs '^URIs\|^deb \|archive' /etc/apt/sources.list.d/*.sources /etc/apt/sources.list /etc/apt/apt-mirrors.txt || true
+        }
+        # A stalled mirror can hang apt silently, so each attempt is bounded; attempt 2 onward uses the main
+        # archive instead of the runner's default mirror.
+        for attempt in 1 2 3; do
+          [ "$attempt" = 2 ] && use_main_archive
+          rm -rf "$dir" && mkdir -p "$dir/partial"
+          if timeout 180 sudo apt-get "${apt_opts[@]}" update -qq &&
+            timeout 180 sudo apt-get "${apt_opts[@]}" install -y -qq --no-install-recommends --download-only espeak-ng &&
+            sudo dpkg -i "$dir"/*.deb >/dev/null; then
+            break
+          fi
+          [ "$attempt" = 3 ] && { echo "::error::espeak-ng could not be installed from apt"; exit 1; }
+          echo "apt attempt $attempt failed, retrying"
+          sleep $((attempt * 5))
+        done
+        # Keep only the .deb files in the cache, readable by the runner user that saves it.
+        sudo rm -rf "$dir/partial" "$dir/lock"
+        sudo chown -R "$(id -u):$(id -g)" "$dir"
+        ls "$dir"
+        espeak-ng --version

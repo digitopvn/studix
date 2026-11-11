@@ -193,6 +193,9 @@ gió sạch và bỏ sót lời thật. VAD là tín hiệu quyết định.
 - CI chạy VAD thật ở bước "QA speech tests (speech image)": venv riêng cài extra `speech`,
   `espeak-ng` tạo giọng nói để test dương tính (phải ra tiếng nói), tiếng ồn và âm đơn phải ra
   0 ms. `STUDIX_QA_REQUIRE_SPEECH=1` làm job fail thay vì skip khi thiếu Silero hay espeak-ng.
+  `espeak-ng` cài qua action `.github/actions/espeak-ng` từ các gói `.deb` đã cache, nên khi cache
+  còn thì mirror apt chậm hay sập không làm job fail. Cache trống thì action tải lại bằng apt, có
+  giới hạn thời gian, thử lại và từ lần thử thứ hai bỏ mirror Azure để dùng `archive.ubuntu.com`.
 - Ngưỡng: từ 300 ms tiếng nói tích lũy trở lên là có tiếng nói (`SPEECH_MIN_MS` trong
   `packages/qa/src/speech-probe.ts`). Tiếng click hay hơi thở ngắn không vượt ngưỡng.
 - SFX đã lưu khi cổng đang tắt không được tái dùng cho job có cổng bật: khóa tái dùng có
