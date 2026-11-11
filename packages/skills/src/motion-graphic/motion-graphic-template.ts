@@ -31,20 +31,15 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 7;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 8;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
 const DEFAULT_STYLE = "kinetic-typography";
 const FPS = 30;
-const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 34 };
-/**
- * Characters per line of a landscape headline at display size. A landscape frame has the room: every headline
- * of up to `LANDSCAPE_DISPLAY_LINES` lines at this width is set at display size, so the card reads as a film
- * title and not as a slide.
- */
-const LANDSCAPE_DISPLAY_CHARS = 26;
-const LANDSCAPE_DISPLAY_LINES = 3;
+const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 28 };
+/** A heading-size headline over a layout holds more per line than a display-size headline card. */
+const LAYOUT_LINE_CHARS: Record<AspectRatio, number> = { "9:16": 24, "1:1": 26, "16:9": 38 };
 
 const words = (text: string) =>
   text
@@ -374,7 +369,6 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     : undefined;
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
   const chars = LINE_CHARS[aspectRatio];
-  const landscape = aspectRatio === "16:9";
   const spans = options.cardMs ? [...options.cardMs] : durations(totalMs, lines, language);
   if (
     options.cardMs &&
@@ -439,17 +433,18 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         animation: { enter, durationMs: 400 },
       });
     } else if (line.layout) {
-      // A layout card: the headline sits on top and the layout builds under it. In landscape a headline of up
-      // to two display lines is set at display size; a longer one keeps the heading size.
-      const display = landscape ? breakLines(line.onScreen, LANDSCAPE_DISPLAY_CHARS) : "";
-      const big = landscape && display.split("\n").length <= 2;
+      // A layout card: the headline sits on top and the layout builds under it. In landscape a headline that
+      // holds on two display lines is set at display size, like every other landscape headline; a longer one
+      // keeps the heading size and its own width, so the layout keeps its room.
+      const display = aspectRatio === "16:9" ? breakLines(line.onScreen, chars) : "";
+      const big = display !== "" && display.split("\n").length <= 2;
       shots.push(
         {
           id: `${id}-text`,
           type: i === 0 ? "title" : "text",
           startMs: 0,
           durationMs,
-          text: (big ? display : breakLines(line.onScreen, chars + 4)).slice(0, 160),
+          text: (big ? display : breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio])).slice(0, 160),
           style: {
             textStyle: big ? "display" : "heading",
             color: inkOn(brand.palette, fill, "foreground"),
@@ -470,16 +465,15 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         },
       );
     } else {
-      const display = landscape ? breakLines(line.onScreen, LANDSCAPE_DISPLAY_CHARS) : "";
-      const big = landscape && display.split("\n").length <= LANDSCAPE_DISPLAY_LINES;
       shots.push({
         id: `${id}-text`,
         type: i === 0 ? "title" : "text",
         startMs: 0,
         durationMs,
-        text: (big ? display : breakLines(line.onScreen, chars)).slice(0, i === 0 ? 160 : 500),
+        text: breakLines(line.onScreen, chars).slice(0, i === 0 ? 160 : 500),
         style: {
-          textStyle: i === 0 || big ? "display" : "heading",
+          // Landscape has room: every headline card is set at display size there.
+          textStyle: i === 0 || aspectRatio === "16:9" ? "display" : "heading",
           color: inkOn(brand.palette, fill, "foreground"),
           align: "center",
           region: "middle",

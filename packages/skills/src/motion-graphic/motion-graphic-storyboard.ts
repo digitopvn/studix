@@ -311,6 +311,9 @@ export const motionGraphicStoryboardStage: StageDefinition = {
   knowledge: [...MG_STORYBOARD_KNOWLEDGE],
   inputSchema: StoryboardInput,
   outputSchema: MotionStoryboardOutput,
+  // A storyboard stored in an older beat shape (e.g. a `layout` name string) is written again instead of
+  // failing the compose stage that reads it.
+  isCheckpointValid: (output) => MotionStoryboardOutput.safeParse(output).success,
   // A host agent writes only the storyboard; `source` is this stage's own record.
   hostOutputSchema: agentStage.hostOutputSchema,
   retry: "never",

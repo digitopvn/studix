@@ -11,6 +11,7 @@ import {
   MotionStoryboard,
   marketingScript,
   marketingVideoTemplate,
+  motionGraphicStoryboardStage,
   motionGraphicTemplate,
   packPipelines,
   packRegistry,
@@ -410,6 +411,12 @@ describe("motion graphic", () => {
       "A 60-second 16:9 (1920x1080) English motion-graphic video about Lá Mây. Exactly 60 seconds.";
     const ir = motionGraphicTemplate(withPromptFormat({ prompt }));
     expect(ir.format).toMatchObject({ aspectRatio: "16:9", width: 1920, height: 1080, durationMs: 60_000 });
+    // Landscape has room: every plain headline card is set at display size, not only the hook.
+    const wide = motionGraphicTemplate({ prompt, aspectRatio: "16:9", keyMessages: ["Tea picked by hand"] });
+    const message = wide.scenes
+      .find((s) => s.id === "message-1")
+      ?.shots.find((s) => s.id === "message-1-text");
+    expect(message?.style?.textStyle).toBe("display");
   });
 
   it("keeps the style profile's name off screen when the brief has no brand or title", () => {
@@ -691,10 +698,9 @@ describe("spoken length", () => {
       "background",
       "background",
     ]);
-    expect(ir.metadata?.templateVersion).toBe(7);
-    // Landscape has the room: the headline over a layout and a short message card are set at display size.
+    expect(ir.metadata?.templateVersion).toBe(8);
+    // Landscape has the room: a short headline over a layout is set at display size too.
     expect(hook.shots[0]?.style?.textStyle).toBe("display");
-    expect(ir.scenes[2]!.shots[0]?.style?.textStyle).toBe("display");
   });
 
   it("rejects a storyboard layout outside its typed shape", () => {
@@ -712,6 +718,28 @@ describe("spoken length", () => {
       rationale: "r",
     });
     expect(parsed.success).toBe(false);
+  });
+
+  it("writes again a stored storyboard whose beats name a layout instead of typing it", () => {
+    const stored = (layout: unknown) => ({
+      source: "agent",
+      storyboard: {
+        styleProfile: "kinetic-typography",
+        beats: [1, 2, 3].map((i) => ({
+          onScreen: `C${i}`,
+          voiceover: "Hi.",
+          visual: "Card.",
+          enter: "fade",
+          weight: 1,
+          layout,
+        })),
+        music: null,
+        rationale: "r",
+      },
+    });
+    const valid = (output: unknown) => motionGraphicStoryboardStage.isCheckpointValid?.(output as never, {});
+    expect(valid(stored(null))).toBe(true);
+    expect(valid({ ...stored("chips"), items: ["MCP", "API"] })).toBe(false);
   });
 
   it("names the brand the storyboard found in the brief, not the hook line, on the kit, title and CTA", () => {
