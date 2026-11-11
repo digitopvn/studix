@@ -96,10 +96,12 @@ function ratioOfSize(text: string): AspectRatio | undefined {
   return undefined;
 }
 
-const FRAME_NOUN = "(?:video|clip|ad|format|frame|orientation|version|cut|mode)";
+const FRAME_NOUN = "(?:video|clip|ad|intro|teaser|explainer|promo|format|frame|orientation|version|cut|mode)";
+/** A length written between the orientation and the noun: "landscape 30-second intro". */
+const LENGTH_BETWEEN = String.raw`(?:\d{1,3}[\s-]*(?:seconds?|secs?|s|minutes?|mins?)[\s-]+)?`;
 /** A platform named between the orientation and the noun: "vertical TikTok ad". */
 const PLATFORM = String.raw`(?:(?:tiktok|instagram|facebook|youtube|reels?|shorts|social)\s+)?`;
-const VI_FRAME_NOUN = "(?:video|clip|quảng cáo|khung hình|khung|định dạng)";
+const VI_FRAME_NOUN = "(?:video|clip|quảng cáo|khung hình|khung|khổ|định dạng)";
 /** An orientation tied to the frame: "vertical video", "in portrait", "video dọc", "khung ngang". */
 const ORIENTATIONS: Array<[AspectRatio, RegExp]> = (
   [
@@ -109,7 +111,10 @@ const ORIENTATIONS: Array<[AspectRatio, RegExp]> = (
     ["1:1", "square", "vuông"],
   ] as const
 ).flatMap(([ratio, en, vi]) => [
-  [ratio, new RegExp(`(?<![\\p{L}])(?:${en})[\\s-]+${PLATFORM}${FRAME_NOUN}(?![\\p{L}])`, "iu")],
+  [
+    ratio,
+    new RegExp(`(?<![\\p{L}])(?:${en})[\\s-]+${LENGTH_BETWEEN}${PLATFORM}${FRAME_NOUN}(?![\\p{L}])`, "iu"),
+  ],
   // Case-sensitive: "Pay in Square" names a company.
   [ratio, new RegExp(`(?<![\\p{L}])[Ii]n\\s+(?:${en})(?![\\p{L}])`, "u")],
   [ratio, new RegExp(`(?<![\\p{L}])${VI_FRAME_NOUN}\\s+${vi}(?![\\p{L}])`, "iu")],

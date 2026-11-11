@@ -34,9 +34,10 @@ labelled `ai-handle`.
   there if you found something it needs.
 - A new issue that you label `ai-handle` starts its own session. Either let that session fix it, or leave
   the label off and fix it yourself. Never do both.
-- Feature and fix PRs target `dev`. A hotfix merged straight into `main` must be merged back into `dev`
-  in the same session (`git merge origin/main` on a branch from `dev`, resolved so both sides' tests
-  pass, then a PR into `dev`), so the next `dev` → `main` release does not conflict over it.
+- A hotfix merged straight into `main` goes back into `dev` in the same session: merge `origin/main` into a
+  branch from `dev`, keep the tests of both sides passing, and open a PR into `dev`. Otherwise the next
+  `dev` → `main` release conflicts, and a session whose branch starts at `main` cannot push work built on
+  `dev`.
 - Before you merge, fetch `dev` again. If someone already merged the same fix, close your PR as superseded
   instead of merging over theirs.
 

@@ -396,7 +396,7 @@ function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR
 
 /**
  * The VALIDATION failure of a voice-over whose takes, all together, run longer than the graphic. It names the
- * lines that ran past their cards and by how much, so the caller knows which to shorten.
+ * lines that ran past their own cards and by how much, so the caller knows which lines to shorten.
  */
 function voiceTooLong(
   ir: VideoIR,
@@ -404,35 +404,32 @@ function voiceTooLong(
   takes: readonly MeasuredVoiceTake[],
 ): StudixError {
   const totalMs = ir.format.durationMs;
+  const speechMs = takes.reduce((n, t) => n + (takeRoomMs(t.lengthMs, t.measured) ?? 0), 0);
   const over = lines.flatMap((line, i) => {
-    const speechMs = takeRoomMs(takes[i]?.lengthMs, takes[i]?.measured);
-    return speechMs !== undefined && speechMs > line.roomMs
+    const take = takes[i];
+    const needMs = take ? takeRoomMs(take.lengthMs, take.measured) : undefined;
+    return needMs !== undefined && needMs > line.roomMs
       ? [
           {
             line: i + 1,
-            text: truncateText(line.text, 60),
+            text: line.text.slice(0, 60),
             roomMs: line.roomMs,
-            speechMs,
-            overrunMs: speechMs - line.roomMs,
+            speechMs: needMs,
+            overrunMs: needMs - line.roomMs,
           },
         ]
       : [];
   });
   const named = over
     .slice(0, 4)
-    .map((o) => `line ${o.line} "${truncateText(o.text, 40)}" by ${o.overrunMs} ms`)
+    .map((o) => `line ${o.line} "${o.text.slice(0, 40)}" by ${o.overrunMs} ms`)
     .join(", ");
   return new StudixError(
     "VALIDATION",
     `The voice-over runs longer than the ${totalMs / 1000}s graphic${named ? `; past their cards: ${named}` : ""}`,
     {
       retryable: false,
-      details: {
-        totalMs,
-        speechMs: takes.reduce((n, t) => n + (takeRoomMs(t.lengthMs, t.measured) ?? 0), 0),
-        takes: takes.length,
-        lines: over,
-      },
+      details: { totalMs, speechMs, takes: takes.length, lines: over },
       suggestedAction: "Shorten the lines named, or lengthen the video, then create the job again.",
     },
   );

@@ -43,6 +43,9 @@ describe("promptFormatOf", () => {
     expect(ratioOf("render at 1080x1920")).toBe("9:16");
     expect(ratioOf("a vertical video for our café")).toBe("9:16");
     expect(ratioOf("Quảng cáo ngang cho tiệm trà")).toBe("16:9");
+    expect(ratioOf("Intro 30 giây, khổ ngang")).toBe("16:9");
+    expect(ratioOf("A landscape 30-second intro for Studix")).toBe("16:9");
+    expect(ratioOf("a vertical 15s TikTok ad")).toBe("9:16");
     expect(ratioOf("A vertical TikTok ad, use our 1200x1200 logo")).toBe("9:16");
     expect(ratioOf("A portrait of our founder")).toBeUndefined();
     expect(ratioOf("Summer sale on shorts, follow us on YouTube")).toBeUndefined();
