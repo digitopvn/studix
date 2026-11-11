@@ -16,6 +16,7 @@ import {
   eventText,
   withSpend,
 } from "./bounded-agent-runtime.ts";
+import { parseModelJson } from "./model-json-repair.ts";
 import { type PiTaskWorkspace, type PiTaskWorkspaceProvider, sandboxFilesNote } from "./pi-task-workspace.ts";
 import { SANDBOX_OUTPUT_DIR, SANDBOX_WORK_DIR } from "./sandbox-docker.ts";
 
@@ -274,7 +275,7 @@ export function createCodexAgentRuntime(options: CodexAgentRuntimeOptions): Agen
         let output: unknown = text.trim();
         if (task.outputSchema) {
           try {
-            output = JSON.parse(text);
+            output = parseModelJson(text);
           } catch {
             throw new StudixError("PROVIDER_ERROR", "Codex did not return JSON for the output schema");
           }
