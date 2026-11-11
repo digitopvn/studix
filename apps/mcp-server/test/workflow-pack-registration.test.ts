@@ -64,24 +64,38 @@ describe("workflow packs on the MCP server", () => {
 });
 
 describe("host agent output validation", () => {
+  const storyboard = {
+    styleProfile: "saas-bento",
+    beats: ["Hook", "Message", "Try it"].map((onScreen) => ({
+      onScreen,
+      voiceover: `${onScreen}.`,
+      visual: "Big type",
+      enter: "fade",
+      weight: 1,
+    })),
+    music: null,
+    brandName: "Studix",
+    rationale: "Clean type for a product launch.",
+  };
+
+  // The host writes only `{ storyboard }`; the worker records `source: "agent"` itself.
   it("accepts a motion-graphic storyboard in the shape the host agent is given", () => {
-    const storyboard = {
-      styleProfile: "saas-bento",
-      beats: ["Hook", "Message", "Try it"].map((onScreen) => ({
-        onScreen,
-        voiceover: `${onScreen}.`,
-        visual: "Big type",
-        enter: "fade",
-        weight: 1,
-      })),
-      music: null,
-      brandName: "Studix",
-      rationale: "Clean type for a product launch.",
-    };
     const check = packStageOutputValidator()("motion-graphic.storyboard", { storyboard });
-    expect(check).toMatchObject({
+    expect(check).toEqual({
       ok: true,
-      output: { source: "agent", storyboard: { brandName: "Studix" } },
+      output: { storyboard: expect.objectContaining({ brandName: "Studix" }) },
     });
+  });
+
+  it("rejects a template record sent by the host", () => {
+    const check = packStageOutputValidator()("motion-graphic.storyboard", { source: "template" });
+    expect(check.ok).toBe(false);
+    expect(check).toMatchObject({ issues: [expect.objectContaining({ path: "storyboard" })] });
+  });
+
+  it("drops a source the host claims, so it cannot mark its storyboard a template", () => {
+    const check = packStageOutputValidator()("motion-graphic.storyboard", { source: "template", storyboard });
+    expect(check).toMatchObject({ ok: true });
+    expect(check.ok && check.output).not.toHaveProperty("source");
   });
 });
