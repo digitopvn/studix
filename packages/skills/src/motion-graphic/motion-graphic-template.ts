@@ -87,7 +87,7 @@ interface Line {
 }
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
-const MIN_SILENT_CARD_MS = 1500;
+export const MIN_SILENT_CARD_MS = 1500;
 
 const spokenWords = (line: Line) => (line.voiceover ?? "").trim().split(/\s+/).filter(Boolean);
 

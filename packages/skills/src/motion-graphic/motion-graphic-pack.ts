@@ -344,27 +344,33 @@ export const motionGraphicAccentStage: StageDefinition = {
 /** Lines voiced at once: every line of a short graphic, a bounded share of a long one's twelve. */
 const VOICE_CONCURRENCY = 6;
 
-/** What the voice stage needs to cut the cards again: the brief, the storyboard and the payload's assets. */
-const VoiceInput = z.object({
-  payload: z.object({ assets: z.array(AssetRef).optional() }).optional(),
+/**
+ * What the voice stage needs to cut the cards again: the brief, the storyboard and the payload's assets.
+ * Parsed only when a recut is needed, and leniently: an older checkpoint that no longer parses is not
+ * recut, never failed.
+ */
+const RecutInput = z.object({
+  payload: z.object({ assets: z.array(AssetRef).optional() }),
   outputs: z.object({
-    brief: z.object({ brief: CreativeBrief }).optional(),
+    brief: z.object({ brief: CreativeBrief }),
     [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
   }),
 });
-type VoiceInput = z.infer<typeof VoiceInput>;
 
 /**
  * The graphic recut to `cardMs` (scenes, timeline and captions from the template, then the accent and
  * whooshes laid again on the new cuts), or undefined when the IR is not the template's (nothing to recut).
  */
 function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR | undefined {
-  const input = s.input as VoiceInput | undefined;
-  const brief = input?.outputs.brief?.brief;
-  if (!brief || ir.metadata?.template !== "motion-graphic") return undefined;
-  const cut = motionGraphicTemplate(brief, {
-    assets: input?.payload?.assets,
-    storyboard: input?.outputs[MG_STORYBOARD_STAGE]?.storyboard,
+  // A graphic composed by another template version is not recut: the cut would not match its cards.
+  const ours =
+    ir.metadata?.template === "motion-graphic" &&
+    ir.metadata.templateVersion === MOTION_GRAPHIC_TEMPLATE_VERSION;
+  const input = ours ? RecutInput.safeParse({ payload: s.job.payload, outputs: s.outputs }) : undefined;
+  if (!input?.success) return undefined;
+  const cut = motionGraphicTemplate(input.data.outputs.brief.brief, {
+    assets: input.data.payload.assets,
+    storyboard: input.data.outputs[MG_STORYBOARD_STAGE]?.storyboard,
     cardMs,
   });
   const next: VideoIR = {
@@ -405,7 +411,6 @@ function voiceTooLong(ir: VideoIR, takes: readonly MeasuredVoiceTake[]): StudixE
 export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
-  inputSchema: VoiceInput,
   outputSchema: IrOutput,
   // Version 4 measures every take first and recuts the cards around them.
   cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 4, { ir: irOf(s), media: s.services.media?.id ?? null }),
@@ -419,47 +424,55 @@ export const motionGraphicVoiceStage: StageDefinition = {
     const planned = await voiceRequests(s);
     if (planned.length === 0) return { output: { ir } };
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
-    const voice = (request: StoredMediaRequest) => measuredVoiceTake(s, MG_STAGES.voice, request, workDir);
-    const takes = await mapBounded(
-      planned,
-      VOICE_CONCURRENCY,
-      (v) => voice(v.request),
-      (t) => t.usage,
-    );
-    const lines = planned.map((v) => v.line);
-    const usage = () => takes.flatMap((t) => t.usage);
-    let cardMs = retimeCards(ir, lines, takes);
-    if (!cardMs) {
-      // Too long together even read faster: voice the lines that ran past their cards once more, brisker,
-      // and keep whichever take of each line is shorter.
-      const long = lines.flatMap((line, i) => {
-        const room = takeRoomMs(takes[i]?.lengthMs, takes[i]?.measured);
-        return room !== undefined && room > line.roomMs ? [i] : [];
-      });
-      const retakes = await mapBounded(
-        long,
-        VOICE_CONCURRENCY,
-        (i) => voice(briskerTake((planned[i] as (typeof planned)[number]).request)),
-        (t) => t.usage,
-      ).catch((err) => {
-        // The first takes were paid for as well as whatever the re-takes spent.
-        const failed = err instanceof StageFailedAfterSpend;
-        throw new StageFailedAfterSpend(failed ? err.error : toStudixError(err), [
-          ...usage(),
-          ...(failed ? err.usage : []),
-        ]);
-      });
-      long.forEach((i, k) => {
-        const first = takes[i] as MeasuredVoiceTake;
-        const again = retakes[k] as MeasuredVoiceTake;
-        const shorter =
-          (takeRoomMs(again.lengthMs, again.measured) ?? Number.POSITIVE_INFINITY) <
-          (takeRoomMs(first.lengthMs, first.measured) ?? Number.POSITIVE_INFINITY);
-        takes[i] = { ...(shorter ? again : first), usage: [...first.usage, ...again.usage] };
-      });
-      cardMs = retimeCards(ir, lines, takes);
-    }
-    await rm(workDir, { recursive: true, force: true });
+    // The takes fetched to measure them go with the scratch directory, however the stage ends.
+    const { takes, lines, cardMs, usage } = await (async () => {
+      try {
+        const voice = (request: StoredMediaRequest) =>
+          measuredVoiceTake(s, MG_STAGES.voice, request, workDir);
+        const takes = await mapBounded(
+          planned,
+          VOICE_CONCURRENCY,
+          (v) => voice(v.request),
+          (t) => t.usage,
+        );
+        const lines = planned.map((v) => v.line);
+        const usage = () => takes.flatMap((t) => t.usage);
+        let cardMs = await billedOnFailure(usage(), () => retimeCards(ir, lines, takes));
+        if (!cardMs) {
+          // Too long together even read faster: voice the lines that ran past their cards once more, brisker,
+          // and keep whichever take of each line is shorter.
+          const long = lines.flatMap((line, i) => {
+            const room = takeRoomMs(takes[i]?.lengthMs, takes[i]?.measured);
+            return room !== undefined && room > line.roomMs ? [i] : [];
+          });
+          const retakes = await mapBounded(
+            long,
+            VOICE_CONCURRENCY,
+            (i) => voice(briskerTake((planned[i] as (typeof planned)[number]).request)),
+            (t) => t.usage,
+          ).catch((err) => {
+            // The first takes were paid for as well as whatever the re-takes spent.
+            const failed = err instanceof StageFailedAfterSpend;
+            throw new StageFailedAfterSpend(failed ? err.error : toStudixError(err), [
+              ...usage(),
+              ...(failed ? err.usage : []),
+            ]);
+          });
+          long.forEach((i, k) => {
+            const first = takes[i] as MeasuredVoiceTake;
+            const again = retakes[k] as MeasuredVoiceTake;
+            const shorter =
+              (takeRoomMs(again.lengthMs, again.measured) ?? Number.POSITIVE_INFINITY) <
+              (takeRoomMs(first.lengthMs, first.measured) ?? Number.POSITIVE_INFINITY);
+            takes[i] = { ...(shorter ? again : first), usage: [...first.usage, ...again.usage] };
+          });
+          cardMs = await billedOnFailure(usage(), () => retimeCards(ir, lines, takes));
+        }
+        return { takes, lines, cardMs, usage };
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    })();
     const spent = usage();
     const next = await billedOnFailure(spent, () => {
       if (!cardMs) throw voiceTooLong(ir, takes);

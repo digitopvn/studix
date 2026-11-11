@@ -71,4 +71,34 @@ describe("retimeCards", () => {
     expect(out[0]).toBe(cards[0]);
     expect(out.reduce((a, b) => a + b, 0)).toBe(12_000);
   });
+
+  it("never cuts a card below its transition or the time to read it when one long line takes the spare", () => {
+    const takes = [take(100), take(10_000), take(100), take(100)];
+    const out = retimeCards(ir, lines, takes) as number[];
+    expect(out.reduce((a, b) => a + b, 0)).toBe(12_000);
+    ir.scenes.forEach((sc, i) => {
+      expect(out[i]).toBeGreaterThanOrEqual(Math.min(sc.durationMs, 1_000));
+      expect(out[i]).toBeGreaterThanOrEqual(sc.transitionOut?.durationMs ?? 0);
+    });
+    // The template accepts the cut: no card is shorter than its transition.
+    expect(() => recutLines(out)).not.toThrow();
+  });
+
+  it("fits takes that fill the graphic exactly at the fastest pace", () => {
+    // 4 x 3192 ms read 1.12x as fast is 11 400 ms: the 12 s graphic less its 600 ms of pads.
+    const takes = lines.map(() => take(3_192));
+    const out = retimeCards(ir, lines, takes) as number[];
+    recutLines(out).forEach((line, i) => {
+      expect(voiceTakeFits(line, takes[i]?.lengthMs, takes[i]?.measured)).toBe(true);
+    });
+  });
+
+  it("re-times takes FFmpeg could not measure on their whole length, less the trailing breath", () => {
+    const takes: TakeLength[] = lines.map((_, i) => ({ lengthMs: i === 1 ? 4_800 : 1_800 }));
+    const out = retimeCards(ir, lines, takes) as number[];
+    expect(out.reduce((a, b) => a + b, 0)).toBe(12_000);
+    recutLines(out).forEach((line, i) => {
+      expect(voiceTakeFits(line, takes[i]?.lengthMs)).toBe(true);
+    });
+  });
 });

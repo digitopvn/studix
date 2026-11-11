@@ -1,6 +1,7 @@
 import { resolveSceneSpans, type VideoIR } from "@studix/video-ir";
 import { MAX_VOICE_SPEEDUP } from "../marketing-video/marketing-script.ts";
-import { type SpokenSpan, takeRoomMs, type VoiceLine, voiceTakeFits } from "../voice-lines.ts";
+import { type SpokenSpan, takeRoomMs, type VoiceLine } from "../voice-lines.ts";
+import { MIN_SILENT_CARD_MS } from "./motion-graphic-template.ts";
 
 /** A voiced line's take as measured: its file length and, when FFmpeg could read it, its speech. */
 export interface TakeLength {
@@ -8,14 +9,12 @@ export interface TakeLength {
   measured?: SpokenSpan;
 }
 
-/** Shortest a card without a voice-over line may get: time to read a headline. */
-const MIN_SILENT_CARD_MS = 1500;
-/** Card needs are rounded up to this step, the step the template cuts cards in. */
+/** Shortest a voiced card is cut to (unless it was already shorter): long enough to read its words. */
+const MIN_VOICED_CARD_MS = 1000;
+/** Spare time is first handed over in this step, so most cards keep the step they were cut in. */
 const STEP_MS = 100;
 /** How much faster each retry of the cut reads the takes, up to `MAX_VOICE_SPEEDUP`. */
 const RATE_STEP = 0.01;
-
-const roundUp = (ms: number) => Math.ceil(ms / STEP_MS) * STEP_MS;
 
 /** The card (scene index) each line is spoken on: the one its start falls in. */
 function cardsOf(ir: VideoIR, lines: readonly VoiceLine[]): number[] {
@@ -76,24 +75,28 @@ export function retimeCards(
   });
   if (natural) return current;
   const cards = cardsOf(ir, lines);
-  if (cards.some((c) => c < 0) || new Set(cards).size !== cards.length) {
-    // Lines that do not map one to one onto cards cannot be re-timed card by card.
-    return lines.every((line, i) => voiceTakeFits(line, takes[i]?.lengthMs, takes[i]?.measured))
-      ? current
-      : undefined;
-  }
-  for (let rate = 1; rate <= MAX_VOICE_SPEEDUP + 1e-9; rate += RATE_STEP) {
-    const need = current.map((ms) => Math.min(ms, MIN_SILENT_CARD_MS));
+  // Lines that do not map one to one onto cards cannot be re-timed card by card: the cards stay.
+  if (cards.some((c) => c < 0) || new Set(cards).size !== cards.length) return current;
+  // No card gets shorter than its own transition out, nor (unless it already was) than time to read it.
+  const floor = ir.scenes.map((sc, i) =>
+    Math.max(
+      sc.transitionOut?.durationMs ?? 0,
+      Math.min(current[i] ?? 0, cards.includes(i) ? MIN_VOICED_CARD_MS : MIN_SILENT_CARD_MS),
+    ),
+  );
+  for (let step = 0; ; step++) {
+    const rate = Math.min(1 + step * RATE_STEP, MAX_VOICE_SPEEDUP);
+    const need = [...floor];
     lines.forEach((line, i) => {
       const card = cards[i] as number;
       const take = takes[i];
       // What the card holds besides its line: the lead-in before the hook, the pad after the CTA.
       const around = (current[card] ?? 0) - line.roomMs;
       const room = take ? takeRoomMs(take.lengthMs, take.measured, rate) : undefined;
-      need[card] = roundUp((room ?? line.roomMs) + around);
+      need[card] = Math.max(need[card] ?? 0, (room ?? line.roomMs) + around);
     });
     const out = share(current, need);
     if (out) return out;
+    if (rate >= MAX_VOICE_SPEEDUP) return undefined;
   }
-  return undefined;
 }

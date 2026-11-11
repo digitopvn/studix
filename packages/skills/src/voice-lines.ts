@@ -215,8 +215,10 @@ export function takeRoomMs(
 ): number | undefined {
   const fit = fitTake({ roomMs: Number.MAX_SAFE_INTEGER } as VoiceLine, lengthMs, span);
   if (fit?.spokenMs === undefined) return undefined;
-  if (rate <= 1) return Math.max(1, fit.spokenMs - (span ? 0 : VOICE_OVERRUN_TOLERANCE_MS));
-  return Math.max(1, Math.ceil(fit.spokenMs / Math.min(rate, MAX_VOICE_SPEEDUP)));
+  // Unmeasured, a take fits when it runs past its room by at most the tolerance, whatever the rate.
+  const asVoiced = fit.spokenMs - (span ? 0 : VOICE_OVERRUN_TOLERANCE_MS);
+  const faster = rate <= 1 ? asVoiced : Math.ceil(fit.spokenMs / Math.min(rate, MAX_VOICE_SPEEDUP));
+  return Math.max(1, Math.min(asVoiced, faster));
 }
 
 /** The VALIDATION failure of a line whose take is too long to speed up into its beat. */
