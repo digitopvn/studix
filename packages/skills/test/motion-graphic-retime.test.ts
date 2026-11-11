@@ -30,7 +30,7 @@ describe("retimedCardLengths", () => {
     ];
     const lengths = retimedCardLengths(cards, 6000) as number[];
     expect(lengths).toEqual([3000, 3000]);
-    lengths.forEach((ms) => expect(3200 / ms).toBeLessThanOrEqual(MAX_VOICE_SPEEDUP));
+    for (const ms of lengths) expect(3200 / ms).toBeLessThanOrEqual(MAX_VOICE_SPEEDUP);
     expect(retimedCardLengths(cards, 5000)).toBeUndefined();
   });
 });
@@ -49,7 +49,7 @@ describe("retimeGraphic", () => {
     const cards = cardTimings(
       ir,
       lines,
-      lines.map((l, i) => (i === 1 ? 5000 : 800)),
+      lines.map((_, i) => (i === 1 ? 5000 : 800)),
     );
     const lengths = retimedCardLengths(cards ?? [], ir.format.durationMs) as number[];
     const next = retimeGraphic(ir, lines, lengths);
