@@ -29,7 +29,14 @@ import {
   type WorkerJobQueue,
 } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MG_STAGES, MG_STORYBOARD_LIMITS, MV_STAGES, packPipelines, packRegistry } from "../src/index.ts";
+import {
+  MG_STAGES,
+  MG_STORYBOARD_LIMITS,
+  MV_STAGES,
+  motionBeatRange,
+  packPipelines,
+  packRegistry,
+} from "../src/index.ts";
 
 const clock = { now: () => new Date() };
 const ctx: TenantContext = {
@@ -630,8 +637,9 @@ describe("motion-graphic pipeline (fake providers)", () => {
     });
     const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
-    // Hook, two messages and the call to action: one line per card.
+    // Hook, two messages and the call to action: one line per card, the accent and one whoosh for the cuts.
     expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual([
+      "sfx",
       "sfx",
       "voice",
       "voice",
@@ -666,7 +674,10 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(ir.audio?.at(-1)).toEqual(
       expect.objectContaining({ kind: "sfx", assetId: "sfx-accent", startMs: ctaAt }),
     );
-    expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(5);
+    // No cut is silent: the one whoosh sweeps into every card but the CTA card, which the accent marks.
+    const whooshes = (ir.audio ?? []).filter((t) => t.assetId === "sfx-whoosh");
+    expect(whooshes.map((t) => t.startMs + 250)).toEqual(cards.slice(1, -1).map((c) => c.startMs));
+    expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(6);
     expect(ir.captions?.cues.length).toBeGreaterThan(0);
     expect(ir.metadata?.styleProfile).toEqual(expect.any(String));
     expect(h.qaCalls).toEqual([expect.objectContaining({ requireAudio: true, durationMs: 12_000 })]);
@@ -713,6 +724,7 @@ describe("motion-graphic pipeline (fake providers)", () => {
       "voiceover",
       "voiceover",
       "voiceover",
+      "sfx",
       "sfx",
     ]);
   });
@@ -764,7 +776,7 @@ describe("motion-graphic pipeline (fake providers)", () => {
     const { job, outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     const ir = h.renderer.rendered[0] as VideoIR;
-    expect(ir.audio?.map((t) => t.kind)).toEqual(["voiceover", "voiceover", "voiceover", "sfx"]);
+    expect(ir.audio?.map((t) => t.kind)).toEqual(["voiceover", "voiceover", "voiceover", "sfx", "sfx"]);
     const stages = await h.jobs.listStages(ctx, job.id);
     expect(stages.find((st) => st.name === MG_STAGES.accent)?.output?.warning).toBeUndefined();
   });
@@ -864,6 +876,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual([
       "music",
       "sfx",
+      "sfx",
       "voice",
       "voice",
       "voice",
@@ -890,6 +903,67 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     const stages = await h.jobs.listStages(ctx, job.id);
     const music = stages.find((st) => st.name === MG_STAGES.music);
     expect(music?.output?.warning).toMatch(/Music bed skipped: .*ELEVENLABS_API_KEY/);
+  });
+
+  it("scales the beat count with the length: about one card every five seconds, 3 to 12", () => {
+    expect(motionBeatRange(6_000)).toEqual({ target: 3, min: 3, max: 6 });
+    expect(motionBeatRange(15_000)).toEqual({ target: 3, min: 3, max: 6 });
+    expect(motionBeatRange(30_000)).toEqual({ target: 6, min: 5, max: 9 });
+    expect(motionBeatRange(60_000)).toEqual({ target: 12, min: 9, max: 12 });
+  });
+
+  it("asks again for a long video held on too few cards, then whooshes every cut with one SFX", async () => {
+    const long = {
+      ...graphic,
+      prompt: "Motion graphic 60 giây giới thiệu tiệm trà Lá Mây",
+      durationMs: 60_000,
+    };
+    const beats = Array.from({ length: 12 }, (_, i) => ({
+      onScreen: `Thẻ ${i + 1}`,
+      voiceover: `Lá Mây kể câu chuyện số ${i + 1}.`,
+      visual: "Chữ lớn trên nền nhấn màu",
+      enter: "pop",
+      weight: 1,
+    }));
+    // No music: the fake provider makes audio of at most 30 s.
+    const agent = sequenceAgent([
+      { storyboard: { ...storyboard, music: null } },
+      { storyboard: { ...storyboard, music: null, beats } },
+    ]);
+    const h = harness({ agent: agent.runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", long),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(agent.tasks).toHaveLength(2);
+    const [first, second] = agent.tasks as [AgentTask, AgentTask];
+    expect((first.input as { beats: unknown }).beats).toEqual({ target: 12, min: 9, max: 12 });
+    const repair = (second.input as { repair?: { problem: string } }).repair;
+    expect(repair?.problem).toMatch(/has 3 beats; a 60s graphic needs 9 to 12/);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.metadata?.storyboard).toBe("agent");
+    expect(ir.scenes).toHaveLength(12);
+    // Eleven cuts: ten whooshes from one generated SFX, and the accent on the cut into the CTA card.
+    expect(h.generate.mock.calls.filter(([, r]) => r.kind === "sfx")).toHaveLength(2);
+    expect((ir.audio ?? []).filter((t) => t.assetId === "sfx-whoosh")).toHaveLength(10);
+    expect((ir.audio ?? []).filter((t) => t.assetId === "sfx-accent")).toHaveLength(1);
+  });
+
+  it("keeps a fitting storyboard whose beat count is still off after the repair turn", async () => {
+    const long = { ...graphic, durationMs: 60_000 };
+    const beats = Array.from({ length: 8 }, (_, i) => ({ ...storyboard.beats[1], onScreen: `Thẻ ${i + 1}` }));
+    const agent = sequenceAgent([{ storyboard: { ...storyboard, music: null, beats } }]);
+    const h = harness({ agent: agent.runtime });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", long),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(agent.tasks).toHaveLength(2);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.metadata?.storyboard).toBe("agent");
+    expect(ir.scenes).toHaveLength(8);
   });
 
   it("falls back to the template, both runs billed, when the voice-over still overruns the length after the repair turn", async () => {

@@ -79,9 +79,12 @@ describe("host agent output validation", () => {
       rationale: "Clean type for a product launch.",
     };
     const check = packStageOutputValidator()("motion-graphic.storyboard", { storyboard });
-    expect(check).toMatchObject({
-      ok: true,
-      output: { source: "agent", storyboard: { brandName: "Studix" } },
-    });
+    // The host submits only the storyboard; the stage records `source` itself.
+    expect(check).toMatchObject({ ok: true, output: { storyboard: { brandName: "Studix" } } });
+    expect(check.ok && "source" in check.output).toBe(false);
+    // The stage's own template-fallback record is not something a host can hand in.
+    expect(
+      packStageOutputValidator()("motion-graphic.storyboard", { source: "template", fallbackReason: "x" }),
+    ).toMatchObject({ ok: false });
   });
 });
