@@ -15,7 +15,11 @@ Renderer-neutral video intermediate representation (VideoIR) and the creative in
 - A stored IR is immutable. Edits are `VideoIRPatch` (RFC 6902 subset) applied with `applyPatch`,
   which returns a new validated document and leaves the input untouched; each result is stored as a new
   project version.
-- Shot types: `title`, `text`, `image`, `video`, `logo`, `cta` and `composition`. A composition shot
+- Shot types: `title`, `text`, `image`, `video`, `logo`, `cta`, `layout` and `composition`. A layout shot
+  carries typed content for one built-in visual (`layout.kind`: `prompt-box`, `code`, `chips`, `checklist`,
+  `counter`, `cards-row`, `swatches`, `stat`; see `src/layout.ts`); the renderer decides how it looks and
+  moves. `LayoutContent` checks each field alone, `Layout` also checks that an index (`highlight`, `focus`)
+  points inside its list. A composition shot
   points at a `code` asset (a GL scene or HyperFrames composition) with `assetId`, an optional `entry`
   and flat `params`. The asset must carry `assetVersionId`, so the IR stays declarative and a render is
   reproducible; which renderer can draw it is the renderer's `supports()` decision.

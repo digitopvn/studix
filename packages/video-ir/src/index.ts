@@ -7,6 +7,7 @@ export * from "./dependency-graph.ts";
 export * from "./film-production.ts";
 export * from "./format.ts";
 export * from "./json-schema.ts";
+export * from "./layout.ts";
 export * from "./migrations.ts";
 export * from "./patch.ts";
 export * from "./primitives.ts";

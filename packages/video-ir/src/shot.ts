@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Layout } from "./layout.ts";
 import { ColorValue, IrId, Milliseconds, PositiveMilliseconds } from "./primitives.ts";
 
 /** Typography role resolved against the brand fonts by the renderer. */
@@ -86,6 +87,15 @@ export const CtaShot = ShotBase.extend({
   url: z.string().max(300).optional(),
 });
 
+/**
+ * A built-in visual layout (a prompt being typed, code, wired chips, a checklist, a rolling counter, a row of
+ * cards, colour swatches, a big figure). The renderer draws and animates it inside the shot's region.
+ */
+export const LayoutShot = ShotBase.extend({
+  type: z.literal("layout"),
+  layout: Layout,
+});
+
 /** Composition parameter name: an identifier, so params stay plain data handed to the composition. */
 const ParamName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/, "expected an identifier");
 
@@ -109,7 +119,16 @@ export const CompositionShot = ShotBase.extend({
     .optional(),
 });
 
-export const SHOT_TYPES = ["title", "text", "image", "video", "logo", "cta", "composition"] as const;
+export const SHOT_TYPES = [
+  "title",
+  "text",
+  "image",
+  "video",
+  "logo",
+  "cta",
+  "layout",
+  "composition",
+] as const;
 export const ShotType = z.enum(SHOT_TYPES);
 export type ShotType = z.infer<typeof ShotType>;
 
@@ -120,6 +139,7 @@ export const Shot = z.discriminatedUnion("type", [
   VideoShot,
   LogoShot,
   CtaShot,
+  LayoutShot,
   CompositionShot,
 ]);
 export type Shot = z.infer<typeof Shot>;

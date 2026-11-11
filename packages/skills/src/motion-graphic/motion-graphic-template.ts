@@ -9,6 +9,8 @@ import {
   type CaptionCue,
   type ColorRole,
   type CreativeBrief,
+  type Layout,
+  type LayoutContent,
   type MotionPreset,
   type Scene,
   type SceneTransition,
@@ -30,7 +32,7 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 5;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 6;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -84,7 +86,28 @@ interface Line {
   enter?: MotionPreset;
   /** Relative length of the card (storyboard weight); even split when absent. */
   weight?: number;
+  /** Built-in layout the storyboard drew under the headline. */
+  layout?: Layout;
 }
+
+/**
+ * A storyboard layout made safe to draw: an index past its list (a highlighted line or a focused card that
+ * does not exist) is dropped instead of failing a storyboard the agent was already paid for.
+ */
+export function fitLayout(layout: LayoutContent): Layout {
+  if (layout.kind === "code" && layout.highlight !== undefined && layout.highlight >= layout.lines.length) {
+    const { highlight: _dropped, ...rest } = layout;
+    return rest;
+  }
+  if (layout.kind === "cards-row" && layout.focus !== undefined && layout.focus >= layout.items.length) {
+    const { focus: _dropped, ...rest } = layout;
+    return rest;
+  }
+  return layout;
+}
+
+/** Energy from which a profile floods the call to action with its primary colour. */
+const CTA_FLOOD_ENERGY = 4;
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
 export const MIN_SILENT_CARD_MS = 1500;
@@ -314,6 +337,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         ...(brief.voiceover === false ? {} : { voiceover: b.voiceover }),
         enter: b.enter,
         weight: b.weight,
+        ...(b.layout ? { layout: fitLayout(b.layout) } : {}),
       }))
     : linesOf(brief, cta, totalMs, language).slice(0, 8);
   const voiceover = lines
@@ -388,7 +412,9 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       cues.push(...captionCues(line.voiceover, startAt + pad, durationMs - pad - tail));
     }
     const id = i === 0 ? "hook" : i === last ? "cta" : `message-${i}`;
-    const fill = i % 2 === 0 ? "background" : "primary";
+    // One background for the whole graphic: the accent marks emphasis, and only a high-energy profile
+    // floods its call to action with the primary colour.
+    const fill = i === last && style.energy >= CTA_FLOOD_ENERGY ? "primary" : "background";
     const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
     if (i === last) {
@@ -425,17 +451,19 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         animation: { enter, durationMs: 400 },
       });
     } else {
+      const layout = line.layout;
       shots.push({
         id: `${id}-text`,
         type: i === 0 ? "title" : "text",
         startMs: 0,
         durationMs,
-        text: breakLines(line.onScreen, chars).slice(0, i === 0 ? 160 : 500),
+        text: breakLines(line.onScreen, layout ? chars + 6 : chars).slice(0, i === 0 ? 160 : 500),
         style: {
-          textStyle: i === 0 ? "display" : "heading",
+          // With a layout the headline steps up top and the layout takes the middle.
+          textStyle: layout ? "heading" : i === 0 ? "display" : "heading",
           color: inkOn(brand.palette, fill, "foreground"),
           align: "center",
-          region: "middle",
+          region: layout ? "top" : "middle",
         },
         animation: {
           enter: line.enter ?? (i === 0 ? "scale" : motion.enter),
@@ -443,6 +471,18 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           durationMs: 400,
         },
       });
+      if (layout) {
+        const lead = Math.min(250, Math.floor(durationMs / 4));
+        shots.push({
+          id: `${id}-layout`,
+          type: "layout",
+          startMs: lead,
+          durationMs: durationMs - lead,
+          layout,
+          style: { align: "center", region: "middle" },
+          animation: { enter: "slide-up", exit: motion.exit, durationMs: 400 },
+        });
+      }
     }
     return {
       id,

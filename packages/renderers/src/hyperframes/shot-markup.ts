@@ -2,6 +2,8 @@ import { StudixError } from "@studix/shared";
 import type { BrandKit, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
 import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
+import { renderLayoutMarkup } from "./layout-markup.ts";
+import type { TimelineWriter } from "./scene-timeline.ts";
 
 /** What a shot renderer needs to know about the scene being compiled. */
 export interface ShotMarkupContext {
@@ -17,11 +19,15 @@ export interface ShotMarkupContext {
   /** IR asset id -> project-relative path of the copied file. */
   assetPaths: ReadonlyMap<string, string>;
   brand?: BrandKit;
+  /** IR language, for language-dependent typography such as number grouping. */
+  language?: string;
 }
 
 export interface ShotMarkup {
   html: string;
   css: string[];
+  /** Tweens of the shot's own content (a layout's typing, rolling...), placed on the scene timeline. */
+  motion?: (w: TimelineWriter) => void;
 }
 
 export const shotDomId = (prefix: string, shotId: string): string => `${prefix}shot-${shotId}`;
@@ -217,6 +223,10 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
         url = `<div class="cta-url">${escapeHtml(shot.url)}</div>`;
       }
       return { html: `${open}<div class="cta-pill">${escapeHtml(shot.text)}</div>${url}</div>`, css };
+    }
+    case "layout": {
+      const layout = renderLayoutMarkup(ctx, shot, sel);
+      return { html: `${open}${layout.html}</div>`, css: layout.css, motion: layout.motion };
     }
     case "composition":
       throw new StudixError(

@@ -168,6 +168,7 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
     fontWeights,
     assetPaths,
     brand: ir.brand,
+    language: ir.language,
   };
   const scenes = ir.scenes.map((scene, index) =>
     compileScene({

@@ -337,7 +337,12 @@ bị bỏ qua; không có tên nào thì card CTA không hiện tên brand thay 
 [`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
 từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất, tới khi mọi card đủ thời gian đọc câu của nó. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
-nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do
+nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Mỗi beat của storyboard agent có thể kèm `layout`
+(cùng schema với shot `layout` của IR: `prompt-box`, `code`, `chips`, `checklist`, `counter`, `cards-row`,
+`swatches`, `stat`); `visual` vẫn chỉ là mô tả. Beat có layout thành card có headline ở trên và layout ở giữa;
+card CTA bỏ qua layout và giữ nút. Chỉ số trỏ ra ngoài danh sách (`highlight`, `focus`) bị bỏ (`fitLayout`)
+thay vì làm hỏng storyboard đã trả phí. Mọi card dùng chung nền `background` của style profile, accent cho
+điểm nhấn; chỉ profile có energy từ 4 trở lên mới phủ màu `primary` lên card CTA. Beat do
 `directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
 lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`
 cũng tôn trọng field này. Thiếu model hay key SFX/nhạc thì SFX accent và music bed bị bỏ qua, stage ghi `warning`, job vẫn

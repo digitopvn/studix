@@ -438,9 +438,13 @@ describe("motion graphic", () => {
     expect(validateVideoIR(ir).ok).toBe(true);
     const ink = (sceneId: string, shotId: string) =>
       ir.scenes.find((s) => s.id === sceneId)?.shots.find((s) => s.id === shotId)?.style?.color;
+    // One background for every card; the high-energy default profile floods only its call to action.
+    expect(ir.metadata?.styleProfile).toBe("kinetic-typography");
+    expect(ir.scenes.slice(0, -1).map((s) => s.background?.color)).toEqual(
+      ir.scenes.slice(0, -1).map(() => "background"),
+    );
+    expect(ink("message-1", "message-1-text")).toBe("foreground");
     // Dark green primary: the cream background colour, not the near-black foreground or the orange accent.
-    expect(ir.scenes.find((s) => s.id === "message-1")?.background?.color).toBe("primary");
-    expect(ink("message-1", "message-1-text")).toBe("background");
     expect(ir.scenes.find((s) => s.id === "cta")?.background?.color).toBe("primary");
     expect(ink("cta", "cta-text")).toBe("background");
     expect(ink("cta", "cta-logo")).toBe("background");
@@ -673,6 +677,56 @@ describe("spoken length", () => {
       expect(ir.brand?.name).toBe("Describe a video. Get a film.");
       expect(ctaLogo(ir)).toBeUndefined();
     }
+  });
+
+  it("draws a storyboard beat's layout under its headline, repairs bad indexes and keeps the CTA button", () => {
+    const ir = motionGraphicTemplate(
+      { prompt: "Giới thiệu Studix", language: "vi", durationMs: 12_000, aspectRatio: "16:9" },
+      {
+        storyboard: {
+          styleProfile: "monochrome-luxury",
+          beats: [
+            {
+              onScreen: "Mô tả video",
+              voiceover: "Gõ một câu mô tả.",
+              enter: "fade",
+              weight: 1,
+              layout: { kind: "prompt-box", text: "Video 60 giây giới thiệu Studix" },
+            },
+            {
+              onScreen: "Một dòng cấu hình",
+              voiceover: "Thêm Studix vào agent.",
+              enter: "fade",
+              weight: 1,
+              layout: { kind: "code", lines: ["{", "}"], highlight: 5 },
+            },
+            { onScreen: "Không layout", voiceover: "Chỉ một câu.", enter: "fade", weight: 1, layout: null },
+            {
+              onScreen: "Thử ngay",
+              voiceover: "Thử Studix ngay.",
+              enter: "fade",
+              weight: 1,
+              layout: { kind: "stat", value: "3×", label: "nhanh hơn" },
+            },
+          ],
+          music: null,
+        } as never,
+      },
+    );
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const shots = (id: string) => ir.scenes.find((s) => s.id === id)?.shots ?? [];
+    expect(shots("hook").map((s) => [s.type, s.style?.region])).toEqual([
+      ["title", "top"],
+      ["layout", "middle"],
+    ]);
+    // A highlight past the last line is dropped instead of failing the storyboard.
+    const code = shots("message-1").find((s) => s.type === "layout");
+    expect(code).toMatchObject({ layout: { kind: "code", lines: ["{", "}"] } });
+    expect(code?.type === "layout" && "highlight" in code.layout).toBe(false);
+    expect(shots("message-2").map((s) => [s.type, s.style?.region])).toEqual([["text", "middle"]]);
+    expect(shots("cta").map((s) => s.type)).not.toContain("layout");
+    // A calm profile keeps one background on every card, the call to action included.
+    expect(new Set(ir.scenes.map((s) => s.background?.color))).toEqual(new Set(["background"]));
   });
 
   it("gives a motion-graphic card the time a mixed-language line takes to say", () => {

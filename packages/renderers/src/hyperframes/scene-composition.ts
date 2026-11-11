@@ -128,6 +128,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     // Full-bleed shots sit in the underlay behind the flowing regions.
     if (shot.style?.region === "full") underlay.push(rendered.html);
     writeShotMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, scene.durationMs, markup.frame);
+    rendered.motion?.(w);
   }
 
   const regions = REGIONS.map((region) => {

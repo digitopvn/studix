@@ -1,5 +1,6 @@
 import { StudixError } from "@studix/shared";
 import {
+  layoutText,
   nodeDigests,
   nodeKey,
   resolveSceneSpans,
@@ -33,6 +34,8 @@ export function shotScript(shot: Shot): string | undefined {
       return shot.text;
     case "logo":
       return shot.text;
+    case "layout":
+      return layoutText(shot.layout);
     default:
       return undefined;
   }
@@ -52,6 +55,8 @@ export function shotDescription(shot: Shot): string {
       return shot.url ? `Call to action "${shot.text}" (${shot.url})` : `Call to action "${shot.text}"`;
     case "composition":
       return `Composition ${shot.entry ?? "default"} from ${shot.assetId}`;
+    case "layout":
+      return `Layout ${shot.layout.kind}: ${words}`;
     default:
       return `${shot.type === "title" ? "Title" : "Text"} "${words}"`;
   }
