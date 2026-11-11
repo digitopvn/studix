@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSequentialTimeline,
+  MAX_AUDIO_TRACKS,
   type VideoIR,
   validateCreativeBrief,
   validateVideoIR,
@@ -109,5 +110,32 @@ describe("validateCreativeBrief", () => {
     const result = validateCreativeBrief({ prompt: "", aspectRatio: "4:3" });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.map((i) => i.path).sort()).toEqual(["/aspectRatio", "/prompt"]);
+  });
+});
+
+describe("VideoIR audio track bound", () => {
+  const tracks = (n: number): VideoIR["audio"] =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `sfx-${i}`,
+      kind: "sfx" as const,
+      assetId: "missing-asset",
+      startMs: 0,
+      volume: 0.5,
+    }));
+  const audioIssues = (n: number) => {
+    const ir = base();
+    ir.audio = tracks(n);
+    const result = validateVideoIR(ir);
+    return result.ok ? [] : result.issues.filter((i) => i.path === "/audio");
+  };
+
+  it("holds the voice, whoosh, accent and music tracks of a 60 s motion graphic", () => {
+    expect(MAX_AUDIO_TRACKS).toBe(64);
+    expect(audioIssues(12 * 3 + 1)).toEqual([]);
+    expect(audioIssues(MAX_AUDIO_TRACKS)).toEqual([]);
+  });
+
+  it("still bounds the track count", () => {
+    expect(audioIssues(MAX_AUDIO_TRACKS + 1)).not.toEqual([]);
   });
 });
