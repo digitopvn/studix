@@ -12,7 +12,10 @@ export interface LayoutKit {
   ctx: ShotMarkupContext;
   /** `#<shot dom id>`: every selector of a device is scoped under it. */
   sel: string;
-  /** px at a 1080 px short frame edge -> px in this frame. */
+  /**
+   * px at a 1080 px short frame edge -> px in this frame. A landscape frame scales its devices up by the
+   * square root of its aspect (at most `LANDSCAPE_BOOST_MAX`), so a 16:9 device fills the width it has.
+   */
   px: (n: number) => number;
   portrait: boolean;
   /** Width a device may take inside the safe margins. */
@@ -74,11 +77,18 @@ export function contrastRatio(a: string, b: string): number {
 /** WCAG AA for large text and graphics. */
 const MIN_CONTRAST = 3;
 
+/** Largest extra scale a wide frame gives its devices (a 16:9 frame gets about 1.33). */
+const LANDSCAPE_BOOST_MAX = 1.35;
+/** Share of a landscape frame's width a device may take: enough to read as a film, not a mockup. */
+const LANDSCAPE_WIDTH_SHARE = 0.62;
+
 export function layoutKit(ctx: ShotMarkupContext, sel: string): LayoutKit {
   const { width, height } = ctx.frame;
   const short = Math.min(width, height);
   const safe = Math.round(0.07 * short);
-  const px = (n: number) => Math.round(n * ctx.scale);
+  const landscape = width > height;
+  const boost = landscape ? clamp(Math.sqrt(width / height), 1, LANDSCAPE_BOOST_MAX) : 1;
+  const px = (n: number) => Math.round(n * ctx.scale * boost);
   const palette = ctx.palette;
   const accentInk =
     palette && contrastRatio(palette.accent, palette.background) < MIN_CONTRAST
@@ -93,7 +103,9 @@ export function layoutKit(ctx: ShotMarkupContext, sel: string): LayoutKit {
     sel,
     px,
     portrait: height > width,
-    width: Math.min(width - 2 * safe, px(1240)),
+    width: landscape
+      ? Math.min(width - 2 * safe, Math.round(LANDSCAPE_WIDTH_SHARE * width))
+      : Math.min(width - 2 * safe, px(1240)),
     colors: {
       surface: "color-mix(in srgb, var(--c-foreground) 8%, var(--c-background))",
       line: "color-mix(in srgb, var(--c-foreground) 20%, transparent)",

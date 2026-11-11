@@ -71,4 +71,20 @@ describe("layout devices", () => {
     const errors = result.results.flatMap((r) => r.result.findings.filter((f) => f.severity === "error"));
     expect(errors).toEqual([]);
   });
+
+  it("fills about 60% of a landscape frame and keeps captions readable", () => {
+    const ir = irWith();
+    const cue = { startMs: 0, endMs: 1500, text: "Một dòng" };
+    const build = buildComposition(
+      { ...ir, captions: { language: "vi", mode: "burned", position: "bottom", cues: [cue] } },
+      { width: 1920, height: 1080 },
+    );
+    const html = (i: number) => build.files.get(`compositions/s${i}.html`)!;
+    const px = (css: string, rule: RegExp) => Number(css.match(rule)?.[1]);
+    // The checklist takes the landscape width share (62% of 1920), not a portrait-sized box.
+    expect(px(html(3), /\.lay-checklist \{[^}]*?width: (\d+)px/)).toBe(1190);
+    // Swatches grow with the frame's aspect rather than staying at their 1080-edge size.
+    expect(px(html(6), /\.sw-dot \{[^}]*?width: (\d+)px/)).toBeGreaterThan(200);
+    expect(px(html(0), /\.cue \{[^}]*?font-size: (\d+)px/)).toBeGreaterThanOrEqual(36);
+  });
 });

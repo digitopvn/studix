@@ -58,7 +58,7 @@ export const TEXT_STYLES: Record<TextStyleRole, TextStyleToken> = {
   display: { sizeAt1080: 104, weight: 800, lineHeight: 1.2, font: "heading" },
   heading: { sizeAt1080: 68, weight: 700, lineHeight: 1.25, font: "heading" },
   body: { sizeAt1080: 44, weight: 400, lineHeight: 1.4, font: "body" },
-  caption: { sizeAt1080: 34, weight: 500, lineHeight: 1.35, font: "body" },
+  caption: { sizeAt1080: 40, weight: 500, lineHeight: 1.35, font: "body" },
 };
 
 /** Type scales with the short frame edge so portrait and landscape share one scale. */
