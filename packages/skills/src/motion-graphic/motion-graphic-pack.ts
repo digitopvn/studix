@@ -24,8 +24,9 @@ import {
   type StoredMediaRequest,
 } from "../stored-media.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
-import { type VoiceLine, voiceLines, withVoiceover } from "../voice-lines.ts";
-import { generateVoiceTake, voiceFitScope } from "../voice-takes.ts";
+import { takeRoomMs, type VoiceLine, voiceLines, voiceLineTrack, withVoiceover } from "../voice-lines.ts";
+import { briskerTake, type MeasuredVoiceTake, measuredVoiceTake, VOICE_TAKE_SCOPE } from "../voice-takes.ts";
+import { retimeCards } from "./motion-graphic-retime.ts";
 import {
   MG_STORYBOARD_STAGE,
   MotionStoryboardOutput,
@@ -127,7 +128,7 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
       params: { language: ir.language, instructions: line.instructions },
       keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
       maxCostCents: 0,
-      reuse: { scope: voiceFitScope(line) },
+      reuse: { scope: VOICE_TAKE_SCOPE },
     },
   }));
 }
@@ -219,6 +220,30 @@ async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMed
   return { ...r, maxCostCents: Math.max(5, Math.ceil(estimate * 2)) };
 }
 
+const ACCENT_TRACK = "sfx-accent-track";
+
+/** `ir` with the accent laid where its CTA card lands and the whoosh on every other cut (when there is one). */
+function withAccent(ir: VideoIR, sfx: AssetRef, whoosh: AssetRef | undefined): VideoIR {
+  const accentAt = ctaStart(ir);
+  const added = whoosh ? [sfx, whoosh] : [sfx];
+  return {
+    ...ir,
+    assets: [...ir.assets.filter((a) => !added.some((b) => b.id === a.id)), ...added],
+    audio: [
+      ...(ir.audio ?? []).filter((t) => t.id !== ACCENT_TRACK && !t.id.startsWith(WHOOSH_TRACK)),
+      ...(whoosh ? whooshTracks(ir, whoosh.id, whoosh.durationMs ?? WHOOSH_MS) : []),
+      {
+        id: ACCENT_TRACK,
+        kind: "sfx" as const,
+        assetId: sfx.id,
+        startMs: accentAt,
+        durationMs: Math.min(Math.max(1, ir.format.durationMs - accentAt), sfx.durationMs ?? SFX_MS),
+        volume: 0.6,
+      },
+    ],
+  };
+}
+
 /** A media call that could not be made at all (no provider, no key, no price); nothing was spent on it. */
 const unavailable = (err: unknown) => err instanceof StudixError && err.code === "UNAVAILABLE";
 
@@ -304,25 +329,7 @@ export const motionGraphicAccentStage: StageDefinition = {
       }
     }
     const usage = whoosh ? [sfx.usage, whoosh.usage] : [sfx.usage];
-    const accentAt = sfxRequest(s).at;
-    const accentRoom = Math.max(1, ir.format.durationMs - accentAt);
-    const added = whoosh ? [sfx.asset, whoosh.asset] : [sfx.asset];
-    const next = {
-      ...ir,
-      assets: [...ir.assets.filter((a) => !added.some((b) => b.id === a.id)), ...added],
-      audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "sfx-accent-track" && !t.id.startsWith(WHOOSH_TRACK)),
-        ...(whoosh ? whooshTracks(ir, whoosh.asset.id, whoosh.asset.durationMs ?? WHOOSH_MS) : []),
-        {
-          id: "sfx-accent-track",
-          kind: "sfx" as const,
-          assetId: sfx.asset.id,
-          startMs: accentAt,
-          durationMs: Math.min(accentRoom, sfx.asset.durationMs ?? SFX_MS),
-          volume: 0.6,
-        },
-      ],
-    };
+    const next = withAccent(ir, sfx.asset, whoosh?.asset);
     await rm(workDir, { recursive: true, force: true });
     return {
       output: {
@@ -341,16 +348,75 @@ export const motionGraphicAccentStage: StageDefinition = {
 const VOICE_CONCURRENCY = 3;
 
 /**
+ * What the voice stage needs to cut the cards again: the brief, the storyboard and the payload's assets.
+ * Parsed only when a recut is needed, and leniently: an older checkpoint that no longer parses is not
+ * recut, never failed.
+ */
+const RecutInput = z.object({
+  payload: z.object({ assets: z.array(AssetRef).optional() }),
+  outputs: z.object({
+    brief: z.object({ brief: CreativeBrief }),
+    [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
+  }),
+});
+
+/**
+ * The graphic recut to `cardMs` (scenes, timeline and captions from the template, then the accent and
+ * whooshes laid again on the new cuts), or undefined when the IR is not the template's (nothing to recut).
+ */
+function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR | undefined {
+  // A graphic composed by another template version is not recut: the cut would not match its cards.
+  const ours =
+    ir.metadata?.template === "motion-graphic" &&
+    ir.metadata.templateVersion === MOTION_GRAPHIC_TEMPLATE_VERSION;
+  const input = ours ? RecutInput.safeParse({ payload: s.job.payload, outputs: s.outputs }) : undefined;
+  if (!input?.success) return undefined;
+  const cut = motionGraphicTemplate(input.data.outputs.brief.brief, {
+    assets: input.data.payload.assets,
+    storyboard: input.data.outputs[MG_STORYBOARD_STAGE]?.storyboard,
+    cardMs,
+  });
+  const next: VideoIR = {
+    ...cut,
+    assets: [...cut.assets, ...ir.assets.filter((a) => !cut.assets.some((b) => b.id === a.id))],
+    audio: (ir.audio ?? []).filter((t) => t.id !== ACCENT_TRACK && !t.id.startsWith(WHOOSH_TRACK)),
+  };
+  const asset = (id: string | undefined) => ir.assets.find((a) => a.id === id);
+  const sfx = asset(ir.audio?.find((t) => t.id === ACCENT_TRACK)?.assetId);
+  const whoosh = asset(ir.audio?.find((t) => t.id.startsWith(WHOOSH_TRACK))?.assetId);
+  return sfx ? withAccent(next, sfx, whoosh) : next;
+}
+
+/** The VALIDATION failure of a voice-over whose takes, all together, run longer than the graphic. */
+function voiceTooLong(ir: VideoIR, takes: readonly MeasuredVoiceTake[]): StudixError {
+  const totalMs = ir.format.durationMs;
+  return new StudixError("VALIDATION", `The voice-over runs longer than the ${totalMs / 1000}s graphic`, {
+    retryable: false,
+    details: {
+      totalMs,
+      speechMs: takes.reduce((n, t) => n + (takeRoomMs(t.lengthMs, t.measured) ?? 0), 0),
+      takes: takes.length,
+    },
+    suggestedAction: "Shorten the voice-over or lengthen the video, then create the job again.",
+  });
+}
+
+/**
  * The voice-over of the script, one line per card, each read with its card's direction and laid where that
  * card's captions start, so the call to action is heard with the CTA card. Its own stage, so a new voice
- * (another speech model, new direction) costs only the voice. A take is judged on its speech, not its
- * silence, and one still too long is voiced once more, brisker (`generateVoiceTake`).
+ * (another speech model, new direction) costs only the voice. Every line is voiced and measured first (on
+ * its speech, not its silence); when a take runs past its card, the cards are cut again around the takes
+ * (`retimeCards`: the length stays, cards with short lines give time to cards with long ones) and the
+ * scenes, captions, accent and whooshes are laid on the new cuts. Only when the takes together outrun the
+ * graphic are the lines that ran long voiced once more, brisker; the stage fails only when even those do
+ * not fit the whole graphic.
  */
 export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 3, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Version 4 measures every take first and recuts the cards around them.
+  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 4, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -361,24 +427,88 @@ export const motionGraphicVoiceStage: StageDefinition = {
     const planned = await voiceRequests(s);
     if (planned.length === 0) return { output: { ir } };
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
-    const generated = await mapBounded(
-      planned,
-      VOICE_CONCURRENCY,
-      (v) => generateVoiceTake(s, MG_STAGES.voice, v.line, v.request, `${v.request.assetId}-track`, workDir),
-      (g) => g.usage,
-    );
-    await rm(workDir, { recursive: true, force: true });
-    const usage = generated.flatMap((g) => g.usage);
-    const next = await billedOnFailure(usage, () =>
-      VideoIR.parse(
+    // The takes fetched to measure them go with the scratch directory, however the stage ends.
+    const { takes, lines, cardMs, usage } = await (async () => {
+      try {
+        const voice = (request: StoredMediaRequest) =>
+          measuredVoiceTake(s, MG_STAGES.voice, request, workDir);
+        const takes = await mapBounded(
+          planned,
+          VOICE_CONCURRENCY,
+          (v) => voice(v.request),
+          (t) => t.usage,
+        );
+        const lines = planned.map((v) => v.line);
+        const usage = () => takes.flatMap((t) => t.usage);
+        let cardMs = await billedOnFailure(usage(), () => retimeCards(ir, lines, takes));
+        if (!cardMs) {
+          // Too long together even read faster: voice the lines that ran past their cards once more, brisker,
+          // and keep whichever take of each line is shorter.
+          const long = lines.flatMap((line, i) => {
+            const room = takeRoomMs(takes[i]?.lengthMs, takes[i]?.measured);
+            return room !== undefined && room > line.roomMs ? [i] : [];
+          });
+          const retakes = await mapBounded(
+            long,
+            VOICE_CONCURRENCY,
+            (i) => voice(briskerTake((planned[i] as (typeof planned)[number]).request)),
+            (t) => t.usage,
+          ).catch((err) => {
+            // The first takes were paid for as well as whatever the re-takes spent.
+            const failed = err instanceof StageFailedAfterSpend;
+            throw new StageFailedAfterSpend(failed ? err.error : toStudixError(err), [
+              ...usage(),
+              ...(failed ? err.usage : []),
+            ]);
+          });
+          long.forEach((i, k) => {
+            const first = takes[i] as MeasuredVoiceTake;
+            const again = retakes[k] as MeasuredVoiceTake;
+            const shorter =
+              (takeRoomMs(again.lengthMs, again.measured) ?? Number.POSITIVE_INFINITY) <
+              (takeRoomMs(first.lengthMs, first.measured) ?? Number.POSITIVE_INFINITY);
+            takes[i] = { ...(shorter ? again : first), usage: [...first.usage, ...again.usage] };
+          });
+          cardMs = await billedOnFailure(usage(), () => retimeCards(ir, lines, takes));
+        }
+        return { takes, lines, cardMs, usage };
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    })();
+    const spent = usage();
+    const next = await billedOnFailure(spent, () => {
+      if (!cardMs) throw voiceTooLong(ir, takes);
+      const same = cardMs.every((ms, i) => ms === ir.scenes[i]?.durationMs);
+      const cut = same ? ir : recut(s, ir, cardMs);
+      // An IR the template did not make keeps its cards; a take that does not fit them fails as before.
+      const laid = cut ?? ir;
+      const timed = cut && !same ? voiceLines(laid, 0, laid.format.durationMs, { estimate: false }) : lines;
+      if (timed.length !== lines.length) {
+        throw new StudixError("INTERNAL", "Recutting the cards changed the voice-over lines", {
+          retryable: false,
+          details: { before: lines.length, after: timed.length },
+        });
+      }
+      const tracks = timed.map((line, i) => {
+        const take = takes[i] as MeasuredVoiceTake;
+        const id = (planned[i] as (typeof planned)[number]).request.assetId;
+        return voiceLineTrack(
+          line,
+          { ...take.asset, durationMs: take.lengthMs },
+          `${id}-track`,
+          take.measured,
+        );
+      });
+      return VideoIR.parse(
         withVoiceover(
-          ir,
-          generated.map((g) => g.track),
-          generated.map((g) => g.asset),
+          laid,
+          tracks,
+          takes.map((t) => t.asset),
         ),
-      ),
-    );
-    return { output: { ir: next }, usage };
+      );
+    });
+    return { output: { ir: next }, usage: spent };
   },
 };
 const musicOf = (ir: VideoIR) =>

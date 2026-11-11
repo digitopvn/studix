@@ -36,6 +36,12 @@ export function voiceFitScope(line: Pick<VoiceLine, "roomMs">): string {
   return `${VOICE_FIT_SCOPE}:${line.roomMs}`;
 }
 
+/**
+ * Names takes stored without a room check: the stage measures them first and fits the cards to them, so such
+ * a take is never served to a request that needs one already judged against its room.
+ */
+export const VOICE_TAKE_SCOPE = "voice-take@1";
+
 const BRISKER_DIRECTION =
   "The previous read ran too long for its slot: read this one noticeably brisker with short pauses, " +
   "still natural, and say the brand name clearly.";
@@ -54,7 +60,7 @@ export const measureVoiceTake: VoiceTakeMeasure = async (filePath, signal) => {
 };
 
 /** The one re-take of a line: brisker direction, and its own idempotency key, usage line and object. */
-function briskerTake(request: StoredMediaRequest): StoredMediaRequest {
+export function briskerTake(request: StoredMediaRequest): StoredMediaRequest {
   const direction = typeof request.params?.instructions === "string" ? request.params.instructions : "";
   // The line's own direction gives way, never the brisker ask that leads.
   const kept = direction.slice(0, MAX_VOICE_DIRECTION_CHARS - BRISKER_DIRECTION.length - 1);
@@ -157,4 +163,48 @@ export async function generateVoiceTake(
     ]);
   }
   throw new StageFailedAfterSpend(voiceOverrunError(line, last), spent);
+}
+
+/** A take kept whatever its length, with its measured speech; the caller fits the video to it. */
+export interface MeasuredVoiceTake {
+  asset: AssetRef;
+  /** The take's length: as stored, else as measured. */
+  lengthMs: number | undefined;
+  measured?: MeasuredTake;
+  usage: StageUsage[];
+}
+
+/**
+ * Voice one line and measure the take, keeping it whatever its length (no re-take): for a stage that cuts
+ * its cards to the takes instead of judging each take against a fixed room. A take served from storage is
+ * fetched into `workDir` and measured there.
+ */
+export async function measuredVoiceTake(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+  workDir: string,
+  measure: VoiceTakeMeasure = measureVoiceTake,
+): Promise<MeasuredVoiceTake> {
+  const probe: { checked: boolean; measured?: MeasuredTake } = { checked: false };
+  const made = await generateStoredMedia(s, stage, request, async (filePath) => {
+    probe.checked = true;
+    probe.measured = await measure(filePath, s.signal);
+    return true;
+  });
+  // Never rejected: the check above accepts every take.
+  if ("rejected" in made)
+    throw new StageFailedAfterSpend(toStudixError(new Error("take rejected")), [made.usage]);
+  try {
+    if (!probe.checked) probe.measured = await measureStored(s, made.asset, workDir, measure);
+  } catch (err) {
+    throw new StageFailedAfterSpend(toStudixError(err), [made.usage]);
+  }
+  const measured = probe.measured;
+  return {
+    asset: made.asset,
+    lengthMs: made.asset.durationMs ?? measured?.durationMs,
+    ...(measured ? { measured } : {}),
+    usage: [made.usage],
+  };
 }
