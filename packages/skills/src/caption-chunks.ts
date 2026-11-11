@@ -2,13 +2,18 @@ import type { CaptionCue } from "@studix/video-ir";
 
 /** Longest caption cue, in words: a burned caption on a vertical frame stays one or two short lines. */
 export const MAX_CAPTION_WORDS = 9;
+/** Shortest caption cue, in words: a lone trailing word ("about.") joins the chunk before it. */
+export const MIN_CAPTION_WORDS = 2;
+/** Shortest caption cue on screen: a shorter one flashes past unread, so it joins its neighbour. */
+export const MIN_CAPTION_MS = 600;
 
 const CLAUSE_END = /[.,;:!?…]$/;
 
 /**
  * Split a spoken line into caption chunks of at most `maxWords` words. A chunk ends at clause punctuation
  * when one falls inside the limit, so a cue never breaks a short clause in two; Vietnamese words (one
- * syllable each, diacritics intact) are counted like any other whitespace-separated word.
+ * syllable each, diacritics intact) are counted like any other whitespace-separated word. A tail shorter
+ * than `MIN_CAPTION_WORDS` stays with the chunk before it, which may then run one word over the limit.
  */
 export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string[] {
   const words = text.normalize("NFC").trim().split(/\s+/).filter(Boolean);
@@ -24,6 +29,8 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
           break;
         }
       }
+      // Never leave an orphan word behind: the end of the line rides with this chunk instead.
+      if (words.length - end < MIN_CAPTION_WORDS && maxWords >= MIN_CAPTION_WORDS) end = words.length;
     }
     chunks.push(words.slice(start, end).join(" "));
     start = end;
@@ -33,7 +40,8 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
 
 /**
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
- * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds.
+ * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. A cue
+ * shorter than `MIN_CAPTION_MS` joins the cue before it (the first one, the cue after it).
  */
 export function captionCues(
   text: string,
@@ -54,7 +62,19 @@ export function captionCues(
     const to = startMs + Math.round((durationMs * words) / total);
     if (to > from) cues.push({ startMs: from, endMs: to, text: chunk });
   }
-  return cues;
+  return mergeShortCues(cues);
+}
+
+/** Folds every cue shorter than `MIN_CAPTION_MS` into a neighbour, keeping the span covered end to end. */
+function mergeShortCues(cues: CaptionCue[]): CaptionCue[] {
+  const out: CaptionCue[] = [];
+  for (const cue of cues) {
+    const prev = out.at(-1);
+    if (prev && (cue.endMs - cue.startMs < MIN_CAPTION_MS || prev.endMs - prev.startMs < MIN_CAPTION_MS)) {
+      out[out.length - 1] = { startMs: prev.startMs, endMs: cue.endMs, text: `${prev.text} ${cue.text}` };
+    } else out.push(cue);
+  }
+  return out;
 }
 
 /** Whitespace-separated word count (a Vietnamese syllable is a word). */
