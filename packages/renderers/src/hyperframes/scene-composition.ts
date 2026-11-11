@@ -2,6 +2,7 @@
 import type { ColorRole, Scene, Shot } from "@studix/video-ir";
 import { COLOR_ROLES, cssColor, TEXT_STYLES } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
+import { writeLayoutMotion } from "./layout-markup.ts";
 import {
   type ResolvedTransition,
   TimelineWriter,
@@ -59,7 +60,7 @@ export function assignLanes(shots: readonly Shot[]): Shot[][] {
 export function compileScene(input: SceneCompileInput): CompiledScene {
   const { scene, palette, markup } = input;
   const prefix = `s-${scene.id}__`;
-  const ctx: ShotMarkupContext = { ...markup, prefix };
+  const ctx: ShotMarkupContext = { ...markup, prefix, palette };
   const { width, height } = markup.frame;
   const stageId = `${prefix}stage`;
   const safe = Math.round(0.07 * Math.min(width, height));
@@ -128,6 +129,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     // Full-bleed shots sit in the underlay behind the flowing regions.
     if (shot.style?.region === "full") underlay.push(rendered.html);
     writeShotMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, scene.durationMs, markup.frame);
+    if (shot.type === "layout") writeLayoutMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, markup.frame);
   }
 
   const regions = REGIONS.map((region) => {

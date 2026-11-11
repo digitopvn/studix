@@ -1,6 +1,6 @@
 import { stageAgentSelection } from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
-import { CreativeBrief, MotionPreset } from "@studix/video-ir";
+import { CreativeBrief, LayoutSpec, MotionPreset } from "@studix/video-ir";
 import {
   createAgentStage,
   type StageContext,
@@ -39,8 +39,14 @@ const STYLE_IDS = MOTION_STYLE_PROFILES.map((p) => p.id) as [string, ...string[]
 export const MotionStoryboardBeat = z.object({
   onScreen: z.string().trim().min(1).max(120),
   voiceover: z.string().trim().min(1).max(400),
-  /** What the card shows besides the words: layout, graphic device, colour role. */
+  /** What the card shows besides the words: layout, graphic device, colour role. A description only. */
   visual: z.string().trim().min(1).max(600),
+  /**
+   * The built-in layout the card draws under its headline, with typed content (a prompt being typed, code,
+   * wired chips, a checklist, a rolling counter, a row of cards, colour swatches, a stat), or null/absent for a
+   * headline alone. Ignored on the last beat, which is always the call to action.
+   */
+  layout: LayoutSpec.nullable().optional(),
   enter: MotionPreset.exclude(["none"]),
   /** Relative length of the beat; the compose stage scales the weights to the video length. */
   weight: z.number().min(0.5).max(3),
@@ -148,7 +154,7 @@ interface Repair {
 const agentStageFor = (repair?: Repair) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
-    version: 3,
+    version: 4,
     inputSchema: StoryboardInput,
     outputSchema: AgentOutput,
     instructions:
@@ -159,7 +165,15 @@ const agentStageFor = (repair?: Repair) =>
       "one every five seconds, so a long video gets more cards, not longer held ones): a hook that stops the " +
       "scroll first, the call to action last. " +
       "Each beat has a short on-screen line (a headline, not the voice-over repeated), the line spoken over " +
-      "it, the visual of the card, its entrance preset and a weight for its length. The whole voice-over must " +
+      "it, the visual of the card, its entrance preset and a weight for its length. Give a beat a `layout` " +
+      "when the message is easier to show than to say: `prompt-box` (a prompt being typed, optional send " +
+      "button `action`), `code` (a few short code lines, `highlight` the ones that matter), `chips` (a `hub` " +
+      "wired to the tools or channels it connects), `checklist` (steps that are `done`, `active` or `todo`), " +
+      "`counter` (a whole number rolling `from` to `to`, with `prefix`, `suffix`, `label`), `cards-row` (2-5 " +
+      "short cards, `highlight` the one that wins), `swatches` (palette roles like `accent` or hex colours) or " +
+      "`stat` (one big `value` and its `label`). Use the brief's own facts and words in it, vary the layouts " +
+      "across the video, put no layout on the last beat (the call to action), and set `layout` null where " +
+      "the headline alone is stronger. The whole voice-over must " +
       "stay within `wordBudget` words, where a Vietnamese syllable is one word and an English word or brand " +
       'name counts about two thirds of a word per syllable ("AI-native" is about three). When `voiceover` is false nothing is spoken: the on-screen lines carry ' +
       "the message alone, each beat's `voiceover` just repeats its on-screen line, and the weights give every " +

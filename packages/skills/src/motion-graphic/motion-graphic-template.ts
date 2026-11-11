@@ -9,6 +9,7 @@ import {
   type CaptionCue,
   type ColorRole,
   type CreativeBrief,
+  type LayoutSpec,
   type MotionPreset,
   type Scene,
   type SceneTransition,
@@ -30,7 +31,7 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 5;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 6;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -84,6 +85,8 @@ interface Line {
   enter?: MotionPreset;
   /** Relative length of the card (storyboard weight); even split when absent. */
   weight?: number;
+  /** Built-in layout the storyboard chose to draw under the headline. */
+  layout?: LayoutSpec;
 }
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
@@ -314,6 +317,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         ...(brief.voiceover === false ? {} : { voiceover: b.voiceover }),
         enter: b.enter,
         weight: b.weight,
+        ...(b.layout ? { layout: b.layout } : {}),
       }))
     : linesOf(brief, cta, totalMs, language).slice(0, 8);
   const voiceover = lines
@@ -388,7 +392,9 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       cues.push(...captionCues(line.voiceover, startAt + pad, durationMs - pad - tail));
     }
     const id = i === 0 ? "hook" : i === last ? "cta" : `message-${i}`;
-    const fill = i % 2 === 0 ? "background" : "primary";
+    // One surface for the whole graphic, as the style profile paints it; a high-energy profile spends its
+    // accent on the closing card only, so colour marks the call to action instead of every other card.
+    const fill = i === last && style.energy >= 4 ? "primary" : "background";
     const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
     if (i === last) {
@@ -424,6 +430,34 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         },
         animation: { enter, durationMs: 400 },
       });
+    } else if (line.layout) {
+      // A layout card: the headline sits on top and the layout builds under it.
+      shots.push(
+        {
+          id: `${id}-text`,
+          type: i === 0 ? "title" : "text",
+          startMs: 0,
+          durationMs,
+          text: breakLines(line.onScreen, chars + 4).slice(0, 160),
+          style: {
+            textStyle: "heading",
+            color: inkOn(brand.palette, fill, "foreground"),
+            align: "center",
+            region: "top",
+            emphasis: "low",
+          },
+          animation: { enter: line.enter ?? motion.enter, exit: motion.exit, durationMs: 400 },
+        },
+        {
+          id: `${id}-layout`,
+          type: "layout",
+          startMs: 0,
+          durationMs,
+          layout: line.layout,
+          style: { color: inkOn(brand.palette, fill, "foreground"), align: "center", region: "middle" },
+          animation: { enter: "fade", exit: motion.exit, durationMs: 300 },
+        },
+      );
     } else {
       shots.push({
         id: `${id}-text`,

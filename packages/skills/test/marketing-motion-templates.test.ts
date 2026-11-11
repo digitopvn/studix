@@ -8,6 +8,7 @@ import {
   HOOK_MAX_MS,
   irVariants,
   MAX_CAPTION_WORDS,
+  MotionStoryboard,
   marketingScript,
   marketingVideoTemplate,
   motionGraphicTemplate,
@@ -434,13 +435,15 @@ describe("motion graphic", () => {
       keyMessages: ["Trà hái tay mỗi sớm", "Hộp trà giao tận nơi"],
       callToAction: "Ghé Lá Mây hôm nay",
       brand: { ...brief.brand, palette: { ...brief.brand.palette, accent: "#d98e3f" } },
+      directions: [{ id: "a", name: "A", concept: "Trà", visualStyle: "kinetic-typography" }],
     });
     expect(validateVideoIR(ir).ok).toBe(true);
     const ink = (sceneId: string, shotId: string) =>
       ir.scenes.find((s) => s.id === sceneId)?.shots.find((s) => s.id === shotId)?.style?.color;
+    // One surface for the message cards; the high-energy profile spends the primary on the CTA alone.
+    expect(ir.scenes.find((s) => s.id === "message-1")?.background?.color).toBe("background");
+    expect(ink("message-1", "message-1-text")).toBe("foreground");
     // Dark green primary: the cream background colour, not the near-black foreground or the orange accent.
-    expect(ir.scenes.find((s) => s.id === "message-1")?.background?.color).toBe("primary");
-    expect(ink("message-1", "message-1-text")).toBe("background");
     expect(ir.scenes.find((s) => s.id === "cta")?.background?.color).toBe("primary");
     expect(ink("cta", "cta-text")).toBe("background");
     expect(ink("cta", "cta-logo")).toBe("background");
@@ -636,6 +639,76 @@ describe("spoken length", () => {
     })();
     expect(err?.code).toBe("VALIDATION");
     expect(err?.details).toMatchObject({ words: 28, neededMs: 10_100, totalMs: 10_000 });
+  });
+
+  it("draws a storyboard beat's layout under its headline and keeps the call to action a CTA", () => {
+    const beat = (onScreen: string, layout?: unknown) => ({
+      onScreen,
+      voiceover: `${onScreen}.`,
+      visual: "A dark card.",
+      enter: "fade",
+      weight: 1,
+      ...(layout ? { layout } : {}),
+    });
+    const ir = motionGraphicTemplate(
+      {
+        prompt: "A launch video introducing Studix",
+        language: "en",
+        durationMs: 15_000,
+        aspectRatio: "16:9",
+      },
+      {
+        storyboard: {
+          styleProfile: "kinetic-typography",
+          beats: [
+            beat("Type a prompt", {
+              kind: "prompt-box",
+              text: "A 60s launch film for Studix",
+              action: "Create",
+            }),
+            beat("Plug in any agent", { kind: "chips", hub: "Studix MCP", items: ["Claude", "ChatGPT"] }),
+            beat("Watch it build"),
+            beat("Start free", { kind: "stat", value: "100", label: "credits" }),
+          ],
+          music: null,
+        } as never,
+      },
+    );
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const hook = ir.scenes[0]!;
+    expect(hook.shots.map((s) => [s.type, s.style?.region])).toEqual([
+      ["title", "top"],
+      ["layout", "middle"],
+    ]);
+    const layout = hook.shots[1];
+    expect(layout?.type === "layout" && layout.layout.kind).toBe("prompt-box");
+    expect(ir.scenes[2]!.shots.map((s) => s.type)).toEqual(["text"]);
+    // The last beat stays the call to action, whatever layout it names.
+    expect(ir.scenes[3]!.shots.some((s) => s.type === "layout")).toBe(false);
+    // No mechanical alternation: every message card shares the scene background.
+    expect(ir.scenes.slice(0, 3).map((s) => s.background?.color)).toEqual([
+      "background",
+      "background",
+      "background",
+    ]);
+    expect(ir.metadata?.templateVersion).toBe(6);
+  });
+
+  it("rejects a storyboard layout outside its typed shape", () => {
+    const parsed = MotionStoryboard.safeParse({
+      styleProfile: "kinetic-typography",
+      beats: [1, 2, 3].map((i) => ({
+        onScreen: `C${i}`,
+        voiceover: "Hi.",
+        visual: "Card.",
+        enter: "fade",
+        weight: 1,
+        layout: { kind: "chips", hub: "Hub", items: ["only one"] },
+      })),
+      music: null,
+      rationale: "r",
+    });
+    expect(parsed.success).toBe(false);
   });
 
   it("names the brand the storyboard found in the brief, not the hook line, on the kit, title and CTA", () => {

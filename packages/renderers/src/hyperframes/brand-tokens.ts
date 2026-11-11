@@ -40,7 +40,10 @@ export function cssColor(value: ColorValue): string {
   return value.startsWith("#") ? value : `var(--c-${value})`;
 }
 
-export type FontSlot = "heading" | "body";
+export type FontSlot = "heading" | "body" | "mono";
+
+/** Monospace family for code layouts; bundled like the brand fonts (see bundled-fonts.ts). */
+export const MONO_FONT_FAMILY = "JetBrains Mono";
 
 export interface TextStyleToken {
   /** Font size in px at a 1080 px short frame edge. */

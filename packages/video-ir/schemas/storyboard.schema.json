@@ -297,7 +297,8 @@
                     "video",
                     "logo",
                     "cta",
-                    "composition"
+                    "composition",
+                    "layout"
                   ]
                 },
                 "description": {

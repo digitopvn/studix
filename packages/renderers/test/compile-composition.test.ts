@@ -2,7 +2,15 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { lintProject } from "@hyperframes/lint";
 import { StudixError } from "@studix/shared";
-import { RENDER_PRESETS, renderDimensions, type Shot, type VideoIR } from "@studix/video-ir";
+import {
+  buildSequentialTimeline,
+  type LayoutSpec,
+  RENDER_PRESETS,
+  renderDimensions,
+  type Shot,
+  type VideoIR,
+  validateVideoIR,
+} from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
 import { assignLanes } from "../src/hyperframes/scene-composition.ts";
 import { buildComposition, GSAP_ASSET, hyperframesSupport, writeComposition } from "../src/index.ts";
@@ -168,6 +176,99 @@ describe("buildComposition escaping and assets", () => {
     ir.brand!.fonts = { heading: "Comic Neue", body: "Be Vietnam Pro" };
     const build = buildComposition(ir, previewSize);
     expect(build.warnings[0]).toMatch(/Comic Neue.*substituted "Be Vietnam Pro"/);
+  });
+});
+
+describe("buildComposition layouts", () => {
+  const layouts: LayoutSpec[] = [
+    { kind: "prompt-box", text: "Một phim 60 giây giới thiệu <Studix>", action: "Tạo" },
+    {
+      kind: "code",
+      title: "mcp.json",
+      lines: ['{ "studix": {', '  "url": "https://x" // MCP', "}}"],
+      highlight: [1],
+    },
+    { kind: "chips", hub: "Studix MCP", items: ["Claude", "ChatGPT", "Cursor", "Gemini"] },
+    {
+      kind: "checklist",
+      items: [
+        { label: "Job", state: "done" },
+        { label: "Preview", state: "active" },
+        { label: "Duyệt", state: "todo" },
+      ],
+    },
+    { kind: "counter", from: 0, to: 1250, suffix: "credit", label: "còn lại" },
+    { kind: "cards-row", items: ["Hook", "Demo", "CTA"], highlight: 1 },
+    { kind: "swatches", items: [{ color: "accent", label: "Cam" }, { color: "#112233" }] },
+    { kind: "stat", value: "3×", label: "nhanh hơn" },
+  ];
+  const ir = structuredClone(brandIntro);
+  ir.scenes = layouts.map((layout, i) => ({
+    id: `l${i}`,
+    role: "feature",
+    durationMs: 3000,
+    background: { color: "background" },
+    shots: [{ id: `l${i}-layout`, type: "layout", startMs: 0, durationMs: 3000, layout }],
+  }));
+  ir.timeline = buildSequentialTimeline(ir.scenes);
+  ir.format.durationMs = 3000 * layouts.length;
+  delete ir.captions;
+  ir.audio = [];
+  const build = buildComposition(ir, previewSize);
+  const scene = (i: number) => build.files.get(`compositions/l${i}.html`)!;
+
+  it("draws every built-in layout from its typed content, escaped", () => {
+    expect(validateVideoIR(ir).ok).toBe(true);
+    expect(hyperframesSupport(ir, RENDER_PRESETS.preview).reasons).toEqual([]);
+    expect(scene(0)).toContain("&lt;");
+    expect(scene(0)).not.toContain("<Studix>");
+    expect(scene(0)).toContain('<div class="lo-send">Tạo</div>');
+    expect(scene(1)).toContain('<span class="lo-str">&quot;studix&quot;</span>');
+    expect(scene(1)).toContain('<span class="lo-cmt">// MCP</span>');
+    expect(scene(2)).toContain('<div class="lo-hub">Studix MCP</div>');
+    // Four chips do not fit side by side on a portrait frame: they hang off a spine.
+    expect(scene(2)).toContain("grid-auto-rows: 1fr;");
+    expect(scene(3)).toContain("lo-step lo-s0 lo-done");
+    expect(scene(4).match(/class="lo-strip/g)).toHaveLength(4);
+    // Vietnamese groups thousands with a dot: 1.250.
+    expect(scene(4)).toContain("<span>.</span>");
+    expect(scene(5)).toContain("lo-card lo-k1 lo-hot");
+    expect(scene(6)).toContain("background: var(--c-accent);");
+    expect(scene(6)).toContain("background: #112233;");
+    expect(scene(7)).toContain('<div class="lo-value">3×</div>');
+  });
+
+  it("builds each layout in with seek-safe tweens after the shot enters", () => {
+    // Typing: each run of letters is shown at an absolute time, the caret blinks after.
+    expect(scene(0)).toMatch(/tl\.set\("#s-l0__shot-l0-layout \.lo-c0", \{"opacity":1\}, 0\.3\);/);
+    expect(scene(0)).toContain('tl.set("#s-l0__shot-l0-layout .lo-caret"');
+    expect(scene(1)).toContain('"clipPath":"inset(0% 100% 0% 0%)"');
+    expect(scene(1)).toContain('"#s-l1__shot-l1-layout .lo-l1 .lo-hlbar", {"scaleX":0}');
+    // The counter's units roll two turns: from 0 to the 20 + 0th digit of the strip.
+    expect(scene(4)).toContain(
+      'tl.fromTo("#s-l4__shot-l4-layout .lo-d3", {"yPercent":0}, {"yPercent":-66.667,"duration":1.2,"ease":"power2.out"}, 0.3);',
+    );
+    for (let i = 0; i < 8; i++) {
+      expect(scene(i)).not.toContain('"repeat"');
+      expect(scene(i)).not.toContain("onUpdate");
+    }
+  });
+
+  it("bundles the monospace family only when a code layout uses it", () => {
+    expect([...build.copies.keys()]).toContain("assets/fonts/jetbrains-mono-vietnamese-500-normal.woff2");
+    expect(scene(1)).toContain('font-family: "JetBrains Mono", monospace;');
+    expect(build.warnings).toEqual([]);
+    const plain = buildComposition(brandIntro, previewSize);
+    expect([...plain.copies.keys()].some((k) => k.includes("jetbrains"))).toBe(false);
+  });
+
+  it("passes the HyperFrames linter with no errors", async () => {
+    const { dir, cleanup } = await tempDir("compile-layouts");
+    cleanups.push(cleanup);
+    await writeComposition(build, dir);
+    const result = await lintProject(dir);
+    const errors = result.results.flatMap((r) => r.result.findings.filter((f) => f.severity === "error"));
+    expect(errors).toEqual([]);
   });
 });
 
