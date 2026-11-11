@@ -28,6 +28,7 @@ import {
   type VoiceLine,
   voiceLines,
   voiceLineTrack,
+  voiceOverrunError,
   voiceTakeFits,
   voiceTakeSpeechMs,
   withVoiceover,
@@ -120,21 +121,30 @@ const voiceoverOf = (ir: VideoIR) =>
     : undefined;
 
 /**
- * The room any one line's take may take: every line's room together. The cards are re-timed around the
- * takes, so a take is turned down only when it could not fit even if the other lines gave it all theirs.
+ * How many times its own room a take may run before it is turned down and read again, brisker: well past
+ * how far the script's reading-speed estimate misses (about 1.6x), short of a take that repeats its words.
  */
-const graphicRoomMs = (lines: readonly VoiceLine[]) => lines.reduce((ms, line) => ms + line.roomMs, 0);
+const MAX_TAKE_OVER_ROOM = 3;
+
+/**
+ * The room a line's take is judged against: the cards are re-timed around the takes, so a take is kept
+ * while the other lines could give it their time (every line's room together), up to
+ * `MAX_TAKE_OVER_ROOM` times its own.
+ */
+function takeRoomMs(line: VoiceLine, lines: readonly VoiceLine[]): number {
+  const all = lines.reduce((ms, l) => ms + l.roomMs, 0);
+  return Math.min(all, line.roomMs * MAX_TAKE_OVER_ROOM);
+}
 
 /**
  * The script as one line per card, each read with its card's direction (hook, messages, call to action)
  * and the brand's tone of voice; the worker's media provider picks the speech model. A take is kept (and
- * reused) by the room of the whole graphic, since the cards are re-timed around it.
+ * reused) by the room it is judged against (`takeRoomMs`), since the cards are re-timed around it.
  */
 function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: StoredMediaRequest }> {
   const ir = irOf(s);
   if (!voiceoverOf(ir)) return [];
   const lines = voiceLines(ir);
-  const room = graphicRoomMs(lines);
   return lines.map((line, i) => ({
     line,
     request: {
@@ -144,7 +154,7 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
       params: { language: ir.language, instructions: line.instructions },
       keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
       maxCostCents: 0,
-      reuse: { scope: voiceFitScope({ roomMs: room }) },
+      reuse: { scope: voiceFitScope({ roomMs: takeRoomMs(line, lines) }) },
     },
   }));
 }
@@ -434,10 +444,12 @@ export const motionGraphicVoiceStage: StageDefinition = {
     const planned = await voiceRequests(s);
     if (planned.length === 0) return { output: { ir } };
     const lines = planned.map((v) => v.line);
-    const roomMs = graphicRoomMs(lines);
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
     const take = (v: (typeof planned)[number], briskerOnly = false) =>
-      takeVoiceLine(s, MG_STAGES.voice, v.line, v.request, workDir, undefined, { roomMs, briskerOnly });
+      takeVoiceLine(s, MG_STAGES.voice, v.line, v.request, workDir, undefined, {
+        roomMs: takeRoomMs(v.line, lines),
+        briskerOnly,
+      });
     const takes = await mapBounded(
       planned,
       VOICE_CONCURRENCY,
@@ -445,12 +457,23 @@ export const motionGraphicVoiceStage: StageDefinition = {
       (t) => t.usage,
     );
     const usage = () => takes.flatMap((t) => t.usage);
-    let next = layTakes(ir, lines, takes);
+    let next = await billedOnFailure(usage(), () => layTakes(ir, lines, takes));
     if (!next) {
       // Too long for the graphic even re-timed: the lines that ran past their cards are read brisker.
       const over = planned.flatMap((v, i) =>
         voiceTakeFits(v.line, takes[i]?.lengthMs, takes[i]?.span) ? [] : [i],
       );
+      if (!cardTimings(ir, lines, [])) {
+        // Not cut one line to a card, so the cards cannot be re-timed: a re-take would not help either.
+        const i = over[0] ?? 0;
+        throw new StageFailedAfterSpend(
+          voiceOverrunError(lines[i] as VoiceLine, {
+            assetId: takes[i]?.asset.id,
+            durationMs: takes[i]?.lengthMs,
+          }),
+          usage(),
+        );
+      }
       const paid = usage();
       const retakes = await mapBounded(
         over,
@@ -473,7 +496,7 @@ export const motionGraphicVoiceStage: StageDefinition = {
           (voiceTakeSpeechMs(first.lengthMs, first.span) ?? Number.POSITIVE_INFINITY);
         takes[i] = { ...(shorter ? brisk : first), usage: [...first.usage, ...brisk.usage] };
       });
-      next = layTakes(ir, lines, takes);
+      next = await billedOnFailure(usage(), () => layTakes(ir, lines, takes));
       if (!next) {
         await rm(workDir, { recursive: true, force: true });
         throw new StageFailedAfterSpend(voiceTooLongError(ir, takes), usage());

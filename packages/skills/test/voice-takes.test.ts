@@ -19,6 +19,7 @@ import {
   generateVoiceTake,
   type MeasuredTake,
   measureVoiceTake,
+  takeVoiceLine,
   VOICE_FIT_SCOPE,
   type VoiceTakeMeasure,
   voiceFitScope,
@@ -253,6 +254,23 @@ describe("voicing a line", () => {
     expect(again.asset.storageKey).toBe("generated/job_1/voiceover-1-r1.mp3");
     expect(again.track.trimStartMs).toBe(140);
     expect(again.usage.map((u) => [u.item, u.costCents])).toEqual([["media-voiceover-1-r1", 3]]);
+  });
+
+  it("retries from the kept first take, not a re-take stored after it, so a resumed attempt picks the same", async () => {
+    // The first take (2.3 s) was kept for a re-timed graphic; the brisker re-take was paid for after it.
+    const h = stage([tooLong, padded]);
+    const room = { roomMs: 6000 };
+    await takeVoiceLine(h.s, "voice", line, request, await workDir(), h.measure, room);
+    await takeVoiceLine(h.s, "voice", line, request, await workDir(), h.measure, {
+      ...room,
+      briskerOnly: true,
+    });
+    expect(h.calls).toHaveLength(2);
+    await rm(join(root, "job_1"), { recursive: true, force: true });
+    const again = await takeVoiceLine(h.s, "voice", line, request, await workDir(), h.measure, room);
+    expect(h.calls).toHaveLength(2);
+    expect(again.asset.storageKey).toBe("generated/job_1/voiceover-1.mp3");
+    expect(again.lengthMs).toBe(tooLong.durationMs);
   });
 
   it("starts from another job's stored re-take of the same line", async () => {

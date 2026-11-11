@@ -793,6 +793,21 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(whooshes.map((t) => t.startMs + 250)).toEqual(cards.slice(1, -1).map((c) => c.startMs));
   });
 
+  it("reads again, brisker, a take that runs far past its own card instead of squeezing the others", async () => {
+    // A first take of the message runs 10 s (a repeat, not a slow read); its brisker re-take runs 2 s.
+    const h = harness({ voiceMs: (text, brisker) => (text !== longLine ? 1_000 : brisker ? 2_000 : 10_000) });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", longGraphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const message = h.generate.mock.calls.filter(([, r]) => r.kind === "voice" && r.prompt === longLine);
+    expect(message).toHaveLength(2);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    const laid = (ir.audio ?? []).find((t) => t.assetId === "voiceover-2");
+    expect(laid?.durationMs).toBeLessThan(3_000);
+  });
+
   it("re-voices brisker only the lines that overran, and fails only when the voice-over outlasts the graphic", async () => {
     // Every line runs 3.5 s (14 s for a 12 s graphic); a brisker re-take runs 2 s.
     const fits = harness({ voiceMs: (_text, brisker) => (brisker ? 2_000 : 3_500) });

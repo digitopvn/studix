@@ -33,6 +33,16 @@ describe("retimedCardLengths", () => {
     for (const ms of lengths) expect(3200 / ms).toBeLessThanOrEqual(MAX_VOICE_SPEEDUP);
     expect(retimedCardLengths(cards, 5000)).toBeUndefined();
   });
+
+  it("never cuts a card whose take could not be measured", () => {
+    const cards = [
+      { durationMs: 3000, padMs: 0, speechMs: 3000, unmeasured: true },
+      { durationMs: 3000, padMs: 0, speechMs: 3600 },
+    ];
+    // Measured, the first card could be read faster into 2.7 s; unmeasured, it keeps its 3 s.
+    expect(retimedCardLengths(cards, 6000)).toBeUndefined();
+    expect(retimedCardLengths(cards, 6300)).toEqual([3000, 3300]);
+  });
 });
 
 describe("retimeGraphic", () => {

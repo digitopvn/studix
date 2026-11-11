@@ -16,6 +16,8 @@ export interface CardTiming {
   padMs: number;
   /** How long the card's take must be heard; undefined for a card without a line. */
   speechMs?: number;
+  /** The take's length is unknown (`speechMs` is the room it has now): the card is never cut shorter. */
+  unmeasured?: boolean;
 }
 
 const up = (ms: number) => Math.ceil(ms / STEP_MS) * STEP_MS;
@@ -36,7 +38,7 @@ export function retimedCardLengths(cards: readonly CardTiming[], totalMs: number
       : Math.max(MIN_CARD_MS, up(c.padMs + c.speechMs)),
   );
   const brisk = cards.map((c, i) =>
-    c.speechMs === undefined
+    c.speechMs === undefined || c.unmeasured
       ? (natural[i] as number)
       : Math.max(MIN_CARD_MS, up(c.padMs + Math.ceil(c.speechMs / MAX_VOICE_SPEEDUP))),
   );
@@ -89,7 +91,9 @@ export function cardTimings(
     if (!card || card.speechMs !== undefined || place.leadMs < 0 || place.tailMs < 0) return undefined;
     card.padMs = place.leadMs + place.tailMs;
     // A take of unknown length is held to the room its line has now.
-    card.speechMs = speechMs[i] ?? lines[i]?.roomMs ?? 0;
+    const measured = speechMs[i];
+    card.speechMs = measured ?? lines[i]?.roomMs ?? 0;
+    if (measured === undefined) card.unmeasured = true;
   }
   return cards;
 }
@@ -141,7 +145,7 @@ export function retimeGraphic(
     ir: {
       ...ir,
       scenes,
-      timeline: buildSequentialTimeline(scenes),
+      timeline: { ...ir.timeline, ...buildSequentialTimeline(scenes) },
       ...(ir.captions ? { captions: { ...ir.captions, cues } } : {}),
     },
     lines: moved,

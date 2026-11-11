@@ -133,10 +133,13 @@ export async function takeVoiceLine(
   let last: Record<string, unknown> = { assetId: request.assetId };
   const retake = briskerTake(request);
   try {
-    // A re-take already stored (an earlier attempt of this stage, or another job voicing the same line)
-    // means the first take was turned down: start from the re-take instead of paying for it again.
-    const takes =
-      options.briskerOnly || (await hasStoredOutput(s, stage, retake)) ? [retake] : [request, retake];
+    // A re-take stored while the first take is not (an earlier attempt of this stage, or another job voicing
+    // the same line) means the first take was turned down: start from the re-take instead of paying for it
+    // again. A first take that was kept is tried first, so an attempt that resumes picks what the first did.
+    const skipFirst =
+      options.briskerOnly ||
+      ((await hasStoredOutput(s, stage, retake)) && !(await hasStoredOutput(s, stage, request)));
+    const takes = skipFirst ? [retake] : [request, retake];
     for (const take of takes) {
       const probe: { checked: boolean; measured?: MeasuredTake } = { checked: false };
       const fits = async (filePath: string, output: GeneratedMedia) => {
