@@ -13,6 +13,19 @@ describe("VideoIR migrations", () => {
     expect(outcome).toMatchObject({ fromVersion: 1, toVersion: 1, migrated: false });
   });
 
+  it("reads a stored title or text shot that carries a layout device as a plain headline", () => {
+    // Production briefly stored a layout object on title and text shots; layouts are now their own shot type.
+    const stored = loadFixture("brand-intro-9x16.json") as {
+      scenes: { shots: Record<string, unknown>[] }[];
+    };
+    const layout = { kind: "chips", hub: "Studix", items: ["MCP", "API", "CLI"] };
+    Object.assign(stored.scenes[0]?.shots[0] ?? {}, { layout });
+    Object.assign(stored.scenes[1]?.shots[1] ?? {}, { layout });
+    const { ir } = migrateVideoIR(stored);
+    expect(ir.scenes[0]?.shots[0]).not.toHaveProperty("layout");
+    expect(ir.scenes[1]?.shots[1]).not.toHaveProperty("layout");
+  });
+
   it("refuses documents from the future or without a version", () => {
     expect(() => migrateVideoIR(loadFixture("invalid-future-version.json"))).toThrow(/newer than supported/);
     expect(() => migrateVideoIR({ title: "x" })).toThrow(StudixError);

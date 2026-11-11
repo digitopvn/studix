@@ -691,7 +691,7 @@ describe("spoken length", () => {
       "background",
       "background",
     ]);
-    expect(ir.metadata?.templateVersion).toBe(6);
+    expect(ir.metadata?.templateVersion).toBe(7);
   });
 
   it("rejects a storyboard layout outside its typed shape", () => {
