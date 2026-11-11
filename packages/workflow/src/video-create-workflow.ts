@@ -11,7 +11,7 @@ import {
   type TenantContext,
 } from "@studix/core";
 import { type Clock, StudixError, systemClock } from "@studix/shared";
-import { resolveRenderSpec } from "@studix/video-ir";
+import { resolveRenderSpec, withPromptFormat } from "@studix/video-ir";
 import { fileExists, jobScopedId, sha256File } from "./file-digest.ts";
 import { downloadIrAssets } from "./ir-asset-download.ts";
 import {
@@ -72,7 +72,9 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
       const project = await deps.projects.get(s.ctx, payload.projectId);
       if (!project)
         throw new StudixError("NOT_FOUND", `project ${payload.projectId} not found`, { retryable: false });
-      return { output: { brief: project.brief } };
+      // A length or aspect ratio stated only in the prompt ("a 60-second 16:9 video") is honoured;
+      // the brief's own fields win.
+      return { output: { brief: withPromptFormat(project.brief) } };
     },
   };
 

@@ -52,7 +52,7 @@ export const motionGraphicSkill: Skill = {
   id: MOTION_GRAPHIC_PACK,
   title: "Motion graphic",
   description:
-    "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16): the workspace's agent writes the script and " +
+    "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16; a length or aspect ratio stated in the prompt is used when the brief sets none): the workspace's agent writes the script and " +
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
     "generated voice-over with burned captions, a soft whoosh on each cut and one SFX accent on the CTA card; " +

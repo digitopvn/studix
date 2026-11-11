@@ -1,6 +1,7 @@
 export * from "./asset-ref.ts";
 export * from "./audio-captions.ts";
 export * from "./brand-kit.ts";
+export * from "./brief-format.ts";
 export * from "./creative-brief.ts";
 export * from "./dependency-graph.ts";
 export * from "./film-production.ts";
