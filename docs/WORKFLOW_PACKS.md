@@ -337,7 +337,8 @@ lời (chỉ chữ trên màn hình, không caption, không SFX accent, không c
 cũng tôn trọng field này. Thiếu model hay key SFX/nhạc thì SFX accent và music bed bị bỏ qua, stage ghi `warning`, job vẫn
 chạy tiếp. Bản đọc được đo bằng FFmpeg `silencedetect`: khoảng lặng đầu bị bỏ qua (`trimStartMs`, giữ
 60 ms trước tiếng đầu), khoảng lặng cuối không tính, chỉ phần lời phải vừa card. Mọi dòng được đọc và đo
-trước; dòng nào dài hơn card của nó thì độ dài các card được chia lại (tổng không đổi, theo bước 100 ms): mỗi
+trước (bản đọc dài quá 3 lần chỗ của card mình, như khi đọc lặp lời, thì bị bỏ và đọc lại gọn hơn ngay);
+dòng nào dài hơn card của nó thì độ dài các card được chia lại (tổng không đổi, theo bước 100 ms): mỗi
 card nhận đủ thời gian cho lời của nó, card có câu ngắn nhường phần dư cho card có câu dài, rồi scene,
 timeline, caption, SFX accent và whoosh được dựng lại trước khi đặt track. Không đủ chỗ ở tốc độ tự nhiên thì
 lời được đọc nhanh lên (giữ cao độ, `playbackRate` của audio track) tới 1.12×. Vẫn không vừa thì chỉ những dòng
