@@ -16,22 +16,15 @@ describe("packStageOutputValidator", () => {
   const validate = packStageOutputValidator();
 
   it("accepts a host storyboard shaped like the outputSchema studix_get_agent_task advertises", () => {
-    const check = validate("motion-graphic.storyboard", { storyboard });
-    expect(check).toEqual({ ok: true, output: { source: "agent", storyboard } });
+    expect(validate("motion-graphic.storyboard", { storyboard })).toEqual({
+      ok: true,
+      output: { storyboard },
+    });
   });
 
-  it("rejects a motion-graphic agent output without its storyboard", () => {
-    const check = validate("motion-graphic.storyboard", {});
+  it("rejects the stage's own template record, which the worker would not take from a host", () => {
+    const check = validate("motion-graphic.storyboard", { source: "template", fallbackReason: "no agent" });
     expect(check.ok).toBe(false);
     expect(check.ok ? [] : check.issues.map((i) => i.path)).toContain("storyboard");
-  });
-
-  it("still accepts the template fallback the stage records itself", () => {
-    expect(validate("motion-graphic.storyboard", { source: "template", fallbackReason: "no agent" })).toEqual(
-      {
-        ok: true,
-        output: { source: "template", fallbackReason: "no agent" },
-      },
-    );
   });
 });

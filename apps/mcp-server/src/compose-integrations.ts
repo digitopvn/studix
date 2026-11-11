@@ -49,12 +49,13 @@ export function skillSummaries(): SkillSummary[] {
 }
 
 /**
- * Checks a host agent's output against the output schema of the registered pack stage, the schema the
- * worker applies too. A stage this server does not know is UNAVAILABLE (server and worker out of step).
+ * Checks a host agent's output against the schema the registered pack stage hands the host
+ * (`hostOutputSchema`, else its output schema), the schema the worker applies too. A stage this server does not know is UNAVAILABLE (server and worker out of step).
  */
 export function packStageOutputValidator(registry: PackRegistry = packRegistry): AgentOutputValidator {
   return (stage, output) => {
-    const schema = registry.stage(stage)?.outputSchema;
+    const definition = registry.stage(stage);
+    const schema = definition?.hostOutputSchema ?? definition?.outputSchema;
     if (!schema) {
       throw new StudixError("UNAVAILABLE", `Stage ${stage} is not registered on this server`, {
         details: { stage },

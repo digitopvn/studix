@@ -59,22 +59,13 @@ export type MotionStoryboard = z.infer<typeof MotionStoryboard>;
 
 const AgentOutput = z.object({ storyboard: MotionStoryboard });
 
-/**
- * The stage output: an agent storyboard, or none when the graphic falls back to the template. A host agent is
- * handed the agent's own schema (`{ storyboard }`) and the MCP server checks its submission against this one,
- * so `source` defaults to `agent` and an agent output must carry its storyboard.
- */
-export const MotionStoryboardOutput = z
-  .object({
-    source: z.enum(["agent", "template"]).default("agent"),
-    storyboard: MotionStoryboard.optional(),
-    /** Why the template was used instead of an agent. */
-    fallbackReason: z.string().max(500).optional(),
-  })
-  .refine((o) => o.source === "template" || o.storyboard !== undefined, {
-    message: "An agent storyboard output needs its storyboard",
-    path: ["storyboard"],
-  });
+/** The stage output: an agent storyboard, or none when the graphic falls back to the template. */
+export const MotionStoryboardOutput = z.object({
+  source: z.enum(["agent", "template"]),
+  storyboard: MotionStoryboard.optional(),
+  /** Why the template was used instead of an agent. */
+  fallbackReason: z.string().max(500).optional(),
+});
 export type MotionStoryboardOutput = z.infer<typeof MotionStoryboardOutput>;
 
 const StoryboardInput = z.object({ outputs: z.object({ brief: z.object({ brief: CreativeBrief }) }) });
@@ -254,6 +245,8 @@ export const motionGraphicStoryboardStage: StageDefinition = {
   knowledge: [...MG_STORYBOARD_KNOWLEDGE],
   inputSchema: StoryboardInput,
   outputSchema: MotionStoryboardOutput,
+  // A host agent writes only the storyboard; `source` is this stage's own record.
+  hostOutputSchema: agentStage.hostOutputSchema,
   retry: "never",
   // No cacheKey: a template fallback must not be reused once the workspace has an agent, and a new job for
   // the same brief gets a fresh take. The job's checkpoint still keeps one storyboard across its attempts.
