@@ -117,25 +117,14 @@ describe("film scope", () => {
     expect(scopeIssues(scope, { durationMs: 30_000 })).toEqual([
       expect.objectContaining({ code: "timeline", path: "/scenes" }),
     ]);
-    const quiet = withShots((s) => {
+    const noisy = withShots((s) => {
       for (const shot of s) shot.sfx = ["a", "b", "c"];
     });
-    expect(scopeIssues(quiet).some((i) => /audio tracks/.test(i.message))).toBe(false);
-    const noisy = structuredClone(fixture);
-    const [first] = noisy.scenes;
-    noisy.scenes = [0, 1].map((n) => ({
-      ...structuredClone(first!),
-      shots: Array.from({ length: 12 }, () => ({
-        ...structuredClone(first!.shots[0]!),
-        sfx: ["a", "b", "c"],
-      })),
-      id: `${first!.id}-${n}`,
-    }));
     expect(
-      scopeIssues(FilmScope.parse(noisy))
+      scopeIssues(noisy)
         .map((i) => i.message)
         .join(),
-    ).toMatch(/need \d+ audio tracks; a film carries at most 64/);
+    ).toMatch(/need 19 audio tracks/);
   });
 
   it("flags an undeclared left-right flip along the continuity chain", () => {

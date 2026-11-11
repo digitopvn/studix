@@ -1571,7 +1571,7 @@
       ]
     },
     "audio": {
-      "maxItems": 64,
+      "maxItems": 16,
       "type": "array",
       "items": {
         "type": "object",

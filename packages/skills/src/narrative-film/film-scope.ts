@@ -8,7 +8,6 @@ import {
   HexColor,
   IrId,
   LanguageTag,
-  MAX_AUDIO_TRACKS,
   type RenderClass,
   ShotPlan,
   STORYBOARD_SCHEMA_VERSION,
@@ -37,7 +36,7 @@ export const SPOKEN_WORDS_PER_SECOND = 3;
 export const SHOT_MIN_MS = 1_000;
 export const SHOT_MAX_MS = 10_000;
 /** Audio tracks one VideoIR carries: every line, every SFX cue and each scene's score cue take one. */
-export { MAX_AUDIO_TRACKS };
+export const MAX_AUDIO_TRACKS = 16;
 
 /** A cast voice: `<voice>`, `<vendor>:<model>` or `<vendor>:<model>@<voice>` (see film-voices.ts). */
 export const VOICE_REF =
