@@ -15,7 +15,7 @@ import { captionCues } from "../caption-chunks.ts";
 import { breakLines } from "../vietnamese-safe-text.ts";
 import { type MarketingScript, marketingScript, type ScriptAd, VO_PAD_MS } from "./marketing-script.ts";
 
-export const MARKETING_TEMPLATE_VERSION = 1;
+export const MARKETING_TEMPLATE_VERSION = 2;
 const FPS = 30;
 const LINE_CHARS = { "9:16": 22, "1:1": 22, "16:9": 36 } as const;
 

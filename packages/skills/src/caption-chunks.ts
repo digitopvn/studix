@@ -2,13 +2,19 @@ import type { CaptionCue } from "@studix/video-ir";
 
 /** Longest caption cue, in words: a burned caption on a vertical frame stays one or two short lines. */
 export const MAX_CAPTION_WORDS = 9;
+/** Shortest caption cue, in words: a lone word flashes up and is gone before it is read. */
+export const MIN_CAPTION_WORDS = 2;
+/** Shortest caption cue on screen; a shorter one is merged into its neighbour. */
+export const MIN_CAPTION_MS = 600;
 
 const CLAUSE_END = /[.,;:!?…]$/;
 
 /**
  * Split a spoken line into caption chunks of at most `maxWords` words. A chunk ends at clause punctuation
  * when one falls inside the limit, so a cue never breaks a short clause in two; Vietnamese words (one
- * syllable each, diacritics intact) are counted like any other whitespace-separated word.
+ * syllable each, diacritics intact) are counted like any other whitespace-separated word. No chunk but a
+ * one-word line is shorter than `MIN_CAPTION_WORDS`: a chunk that would strand the line's last word hands
+ * it a word of its own, or takes it in when it has none to spare.
  */
 export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string[] {
   const words = text.normalize("NFC").trim().split(/\s+/).filter(Boolean);
@@ -24,6 +30,11 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
           break;
         }
       }
+      const tail = words.length - end;
+      if (tail < MIN_CAPTION_WORDS) {
+        const shorter = words.length - MIN_CAPTION_WORDS;
+        end = shorter - start >= MIN_CAPTION_WORDS ? shorter : words.length;
+      }
     }
     chunks.push(words.slice(start, end).join(" "));
     start = end;
@@ -33,7 +44,9 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
 
 /**
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
- * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds.
+ * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. A cue
+ * shorter than `MIN_CAPTION_MS` is merged into the cue before it (the first into the one after), so the
+ * cues tile the span with no text dropped.
  */
 export function captionCues(
   text: string,
@@ -46,13 +59,20 @@ export function captionCues(
   const weights = chunks.map((c) => Math.max(spokenLength(c), 0.1));
   const total = weights.reduce((n, w) => n + w, 0);
   if (chunks.length === 0 || durationMs <= 0) return [];
-  const cues: CaptionCue[] = [];
+  const timed: CaptionCue[] = [];
   let words = 0;
   for (const [i, chunk] of chunks.entries()) {
     const from = startMs + Math.round((durationMs * words) / total);
     words += weights[i] ?? 0;
     const to = startMs + Math.round((durationMs * words) / total);
-    if (to > from) cues.push({ startMs: from, endMs: to, text: chunk });
+    timed.push({ startMs: from, endMs: to, text: chunk });
+  }
+  const cues: CaptionCue[] = [];
+  for (const cue of timed) {
+    const prev = cues.at(-1);
+    if (prev && (cue.endMs - cue.startMs < MIN_CAPTION_MS || prev.endMs - prev.startMs < MIN_CAPTION_MS)) {
+      cues[cues.length - 1] = { startMs: prev.startMs, endMs: cue.endMs, text: `${prev.text} ${cue.text}` };
+    } else cues.push(cue);
   }
   return cues;
 }

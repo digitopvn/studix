@@ -8,6 +8,8 @@ import {
   HOOK_MAX_MS,
   irVariants,
   MAX_CAPTION_WORDS,
+  MIN_CAPTION_MS,
+  MIN_CAPTION_WORDS,
   marketingScript,
   marketingVideoTemplate,
   motionGraphicTemplate,
@@ -72,6 +74,31 @@ describe("caption chunks", () => {
       { startMs: 2000, endMs: 3000, text: "sáu bảy tám chín mười" },
     ]);
     expect(captionCues("", 0, 1000)).toEqual([]);
+  });
+
+  it("never strands a lone word or a sub-600 ms cue at the end of a line", () => {
+    const line = "Studix turns a brief into the film you care about.";
+    const chunks = chunkCaption(line);
+    expect(chunks).toEqual(["Studix turns a brief into the film you", "care about."]);
+    expect(chunks.every((c) => wordCount(c) >= MIN_CAPTION_WORDS && wordCount(c) <= MAX_CAPTION_WORDS)).toBe(
+      true,
+    );
+    expect(chunkCaption("một hai ba bốn năm sáu bảy tám chín mười")).toEqual([
+      "một hai ba bốn năm sáu bảy tám",
+      "chín mười",
+    ]);
+    // A clause boundary that would leave one word behind gives way: the last two words share a cue.
+    expect(chunkCaption("một hai ba bốn năm sáu bảy tám, chín", 8)).toEqual([
+      "một hai ba bốn năm sáu bảy",
+      "tám, chín",
+    ]);
+    expect(chunkCaption("một hai ba", 2)).toEqual(["một hai ba"]);
+    expect(chunkCaption("Studix.")).toEqual(["Studix."]);
+
+    const cues = captionCues("một hai ba bốn năm sáu bảy tám chín mười", 0, 1000, 8);
+    expect(cues).toEqual([{ startMs: 0, endMs: 1000, text: "một hai ba bốn năm sáu bảy tám chín mười" }]);
+    for (const cue of captionCues(line, 0, 4000))
+      expect(cue.endMs - cue.startMs).toBeGreaterThanOrEqual(MIN_CAPTION_MS);
   });
 });
 

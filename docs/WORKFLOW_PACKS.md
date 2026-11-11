@@ -274,6 +274,7 @@ mỗi giây, `voiceoverWordBudget` trong
 một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
 ("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
 thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này.
+Caption burned của `marketing-video` và `motion-graphic` chia mỗi câu thành cue tối đa 9 từ, ngắt ở dấu câu khi được (`captionCues`). Không cue nào ngắn hơn 2 từ (trừ câu chỉ có một từ) hay 600 ms: từ cuối lẻ ra được ghép với từ trước nó, cue quá ngắn gộp vào cue liền trước.
 Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
 (60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì
 giữ mỗi card lâu hơn. Storyboard sai số beat được một lượt sửa như dưới (cùng mọi lỗi khác trong một thông
