@@ -1,9 +1,10 @@
 import { extname, join } from "node:path";
+import type { GeneratedMedia } from "@studix/core";
 import { measureAudibleSpan } from "@studix/renderers";
 import { toStudixError } from "@studix/shared";
 import type { AssetRef, AudioTrack } from "@studix/video-ir";
 import { requireService, type StageContext, StageFailedAfterSpend, type StageUsage } from "@studix/workflow";
-import { generateStoredMedia, type StoredMediaRequest } from "./stored-media.ts";
+import { generateStoredMedia, hasStoredOutput, type StoredMediaRequest } from "./stored-media.ts";
 import {
   MAX_VOICE_DIRECTION_CHARS,
   type SpokenSpan,
@@ -47,12 +48,11 @@ export const measureVoiceTake: VoiceTakeMeasure = async (filePath, signal) => {
 /** The one re-take of a line: brisker direction, and its own idempotency key, usage line and object. */
 function briskerTake(request: StoredMediaRequest): StoredMediaRequest {
   const direction = typeof request.params?.instructions === "string" ? request.params.instructions : "";
+  // The line's own direction gives way, never the brisker ask that leads.
+  const kept = direction.slice(0, MAX_VOICE_DIRECTION_CHARS - BRISKER_DIRECTION.length - 1);
   return {
     ...request,
-    params: {
-      ...request.params,
-      instructions: `${BRISKER_DIRECTION} ${direction}`.trim().slice(0, MAX_VOICE_DIRECTION_CHARS),
-    },
+    params: { ...request.params, instructions: `${BRISKER_DIRECTION} ${kept}`.trim() },
     keyPrefix: `${request.keyPrefix}-r1`,
     retry: 1,
   };
@@ -60,7 +60,8 @@ function briskerTake(request: StoredMediaRequest): StoredMediaRequest {
 
 /**
  * Measure a take served from storage (an earlier attempt's journaled output, or another job's reused one):
- * its scratch file may be gone, so the stored object is fetched into `workDir`.
+ * its scratch file may be gone, so the stored object is fetched into `workDir`. A fetch that fails leaves
+ * the take judged on its whole length, like a file FFmpeg cannot read.
  */
 async function measureStored(
   s: StageContext,
@@ -70,7 +71,12 @@ async function measureStored(
 ): Promise<MeasuredTake | undefined> {
   if (!asset.storageKey) return undefined;
   const file = join(workDir, `${asset.id}-take${extname(asset.storageKey)}`);
-  await requireService(s, "storage").download(s.ctx, asset.storageKey, file);
+  try {
+    await requireService(s, "storage").download(s.ctx, asset.storageKey, file);
+  } catch (err) {
+    if (s.signal.aborted) throw err;
+    return undefined;
+  }
   return measure(file, s.signal);
 }
 
@@ -99,13 +105,20 @@ export async function generateVoiceTake(
 ): Promise<VoiceTake> {
   const spent: StageUsage[] = [];
   let last: Record<string, unknown> = { assetId: request.assetId };
+  const retake = briskerTake(request);
   try {
-    for (const take of [request, briskerTake(request)]) {
+    // A re-take already stored (an earlier attempt of this stage, or another job voicing the same line)
+    // means the first take was turned down: start from the re-take instead of paying for it again.
+    const takes = (await hasStoredOutput(s, stage, retake)) ? [retake] : [request, retake];
+    for (const take of takes) {
       const probe: { checked: boolean; measured?: MeasuredTake } = { checked: false };
-      const fits = async (filePath: string) => {
+      const fits = async (filePath: string, output: GeneratedMedia) => {
         probe.checked = true;
         probe.measured = await measure(filePath, s.signal);
-        return probe.measured === undefined || voiceTakeFits(line, probe.measured.durationMs, probe.measured);
+        // Unmeasured, the take is judged on the length the provider reported (accepted when it reported none).
+        return probe.measured
+          ? voiceTakeFits(line, probe.measured.durationMs, probe.measured)
+          : voiceTakeFits(line, output.durationMs === undefined ? undefined : Math.round(output.durationMs));
       };
       const made = await generateStoredMedia(s, stage, take, fits);
       spent.push(made.usage);
@@ -122,7 +135,9 @@ export async function generateVoiceTake(
         ...(measured ? { speechStartMs: measured.startMs, speechEndMs: measured.endMs } : {}),
       };
       if ("rejected" in made || !voiceTakeFits(line, lengthMs, measured)) continue;
-      return { asset: made.asset, track: voiceLineTrack(line, made.asset, trackId, measured), usage: spent };
+      // A take served from a provider cache may carry no length; the measured one still places its fade.
+      const timed = { ...made.asset, durationMs: lengthMs };
+      return { asset: made.asset, track: voiceLineTrack(line, timed, trackId, measured), usage: spent };
     }
   } catch (err) {
     if (spent.length === 0) throw err;

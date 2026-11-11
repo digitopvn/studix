@@ -2,13 +2,19 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { MediaGenerationRequest, MediaProvider, TenantContext } from "@studix/core";
+import {
+  MediaChargedError,
+  type MediaGenerationRequest,
+  type MediaProvider,
+  type TenantContext,
+} from "@studix/core";
 import { InMemoryMediaJobJournal } from "@studix/providers";
+import { StudixError } from "@studix/shared";
 import type { AssetRef } from "@studix/video-ir";
 import { type MediaOutputCache, type StageContext, StageFailedAfterSpend } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mediaOutputKey, type StoredMediaRequest } from "../src/stored-media.ts";
-import { MAX_VOICE_SPEEDUP, type VoiceLine } from "../src/voice-lines.ts";
+import { MAX_VOICE_DIRECTION_CHARS, MAX_VOICE_SPEEDUP, type VoiceLine } from "../src/voice-lines.ts";
 import {
   generateVoiceTake,
   type MeasuredTake,
@@ -56,21 +62,37 @@ afterEach(async () => {
 });
 
 /**
- * A stage whose speech provider returns `takes` in order. Each take file holds its index, which the
- * measurer maps back to the take's measurement.
+ * A stage whose speech provider returns `takes` in order (an error entry is thrown, after charging). Each
+ * take file holds its index, which the measurer maps back to the take's measurement. Completed calls are
+ * journaled like a synchronous provider does, so a second run on the same harness is a stage retry.
  */
-function stage(takes: MeasuredTake[], outputs?: MediaOutputCache) {
+function stage(takes: Array<MeasuredTake | MediaChargedError>, outputs?: MediaOutputCache) {
   const calls: MediaGenerationRequest[] = [];
+  const journal = new InMemoryMediaJobJournal();
+  const controller = new AbortController();
   const media: MediaProvider = {
     id: "multix",
     capabilities: async () => [],
     estimateCostCents: async () => 3,
-    async generate(_c, req) {
+    async generate(c, req) {
       const index = calls.push(req) - 1;
       const take = takes[index];
       if (!take) throw new Error(`unexpected take ${index + 1}`);
+      if (take instanceof MediaChargedError) throw take;
       const filePath = join(req.workDir ?? root, `take-${index}.mp3`);
       await writeFile(filePath, String(index));
+      const at = new Date().toISOString();
+      await journal.put(c, {
+        idempotencyKey: req.idempotencyKey,
+        kind: req.kind,
+        model: "elevenlabs:eleven_v3",
+        attempt: 1,
+        state: "completed",
+        estimatedCostCents: 3,
+        receiptCents: 3,
+        submittedAt: at,
+        updatedAt: at,
+      });
       return {
         outputs: [{ filePath, mime: "audio/mpeg", durationMs: take.durationMs }],
         provider: "multix",
@@ -100,20 +122,24 @@ function stage(takes: MeasuredTake[], outputs?: MediaOutputCache) {
     },
   };
   const measured: string[] = [];
+  const hooks: { onMeasure?: (index: number) => void } = {};
   const measure: VoiceTakeMeasure = async (filePath) => {
     measured.push(filePath);
-    return takes[Number(await readFile(filePath, "utf8"))];
+    const index = Number(await readFile(filePath, "utf8"));
+    hooks.onMeasure?.(index);
+    const take = takes[index];
+    return take instanceof MediaChargedError ? undefined : take;
   };
   const s = {
     ctx,
     job: { id: "job_1" },
     attempt: 1,
-    signal: new AbortController().signal,
-    mediaJournal: new InMemoryMediaJobJournal(),
+    signal: controller.signal,
+    mediaJournal: journal,
     ...(outputs ? { mediaOutputs: outputs } : {}),
     services: { media, storage, workRoot: root },
   } as unknown as StageContext;
-  return { s, calls, objects, measure, measured };
+  return { s, calls, objects, measure, measured, controller, hooks };
 }
 
 async function workDir(): Promise<string> {
@@ -213,6 +239,141 @@ describe("voicing a line", () => {
     expect(h.measured).toEqual([join(dir, "voiceover-1-take.mp3")]);
     expect(take.track.trimStartMs).toBe(140);
     expect(take.usage.map((u) => u.costCents)).toEqual([0]);
+  });
+
+  it("starts a stage retry from the journaled re-take instead of paying for the first take again", async () => {
+    const h = stage([tooLong, padded]);
+    await generateVoiceTake(h.s, "voice", line, request, "t", await workDir(), h.measure);
+    expect(h.calls).toHaveLength(2);
+    // The retry's scratch file is gone: the re-take is measured from storage.
+    await rm(join(root, "job_1"), { recursive: true, force: true });
+    const again = await generateVoiceTake(h.s, "voice", line, request, "t", await workDir(), h.measure);
+    expect(h.calls).toHaveLength(2);
+    expect(again.asset.storageKey).toBe("generated/job_1/voiceover-1-r1.mp3");
+    expect(again.track.trimStartMs).toBe(140);
+    expect(again.usage.map((u) => [u.item, u.costCents])).toEqual([["media-voiceover-1-r1", 3]]);
+  });
+
+  it("starts from another job's stored re-take of the same line", async () => {
+    const stored: AssetRef = {
+      id: "voiceover-1",
+      kind: "audio",
+      storageKey: "generated/job_0/voiceover-1-r1.mp3",
+      sha256: createHash("sha256").update("0").digest("hex"),
+      mime: "audio/mpeg",
+      durationMs: padded.durationMs,
+      provenance: { source: "generated", provider: "multix" },
+    };
+    let firstKey: string | undefined;
+    const outputs: MediaOutputCache = {
+      // Only the re-take was ever stored: the first take was turned down.
+      get: async (k) => (k !== firstKey ? { asset: stored, jobId: "job_0" } : undefined),
+      put: async () => {},
+    };
+    const h = stage([padded], outputs);
+    firstKey = mediaOutputKey(h.s, request);
+    h.objects.set(stored.storageKey as string, Buffer.from("0"));
+    const take = await generateVoiceTake(h.s, "voice", line, request, "t", await workDir(), h.measure);
+    expect(h.calls).toHaveLength(0);
+    expect(take.asset.storageKey).toBe(stored.storageKey);
+    expect(take.usage.map((u) => u.costCents)).toEqual([0]);
+  });
+
+  it("bills both takes once when the re-take's provider call fails after charging", async () => {
+    const charged = new MediaChargedError(
+      new StudixError("PROVIDER_ERROR", "result lost", { retryable: false }),
+      {
+        provider: "multix",
+        model: "elevenlabs:eleven_v3",
+        costCents: 3,
+        costSource: "receipt",
+      },
+    );
+    const h = stage([tooLong, charged]);
+    const err = await generateVoiceTake(h.s, "voice", line, request, "t", await workDir(), h.measure).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(StageFailedAfterSpend);
+    expect((err as StageFailedAfterSpend).error.code).toBe("PROVIDER_ERROR");
+    expect((err as StageFailedAfterSpend).usage.map((u) => u.item)).toEqual([
+      "media-voiceover-1",
+      "media-voiceover-1-r1",
+    ]);
+  });
+
+  it("bills both takes once when the job is cancelled while the re-take is measured", async () => {
+    const h = stage([tooLong, padded]);
+    h.hooks.onMeasure = (index) => {
+      if (index !== 1) return;
+      h.controller.abort();
+      throw new StudixError("CANCELLED", "job cancelled");
+    };
+    const err = await generateVoiceTake(h.s, "voice", line, request, "t", await workDir(), h.measure).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(StageFailedAfterSpend);
+    expect((err as StageFailedAfterSpend).error.code).toBe("CANCELLED");
+    expect((err as StageFailedAfterSpend).usage.map((u) => u.item)).toEqual([
+      "media-voiceover-1",
+      "media-voiceover-1-r1",
+    ]);
+  });
+
+  it("turns down an unmeasured take on its reported length, so it is never stored as fitting", async () => {
+    const h = stage([tooLong, { durationMs: 1900, startMs: 0, endMs: 1900 }]);
+    const take = await generateVoiceTake(
+      h.s,
+      "voice",
+      line,
+      request,
+      "t",
+      await workDir(),
+      async () => undefined,
+    );
+    expect(h.calls).toHaveLength(2);
+    expect([...h.objects.keys()]).toEqual(["generated/job_1/voiceover-1-r1.mp3"]);
+    // Within the breath of tolerance an unmeasured take has: cut at its room with a fade.
+    expect(take.track).toMatchObject({ durationMs: 1800, fadeOutMs: 150 });
+    expect(take.track.trimStartMs).toBeUndefined();
+  });
+
+  it("judges a stored take on its whole length when fetching it fails", async () => {
+    const stored: AssetRef = {
+      id: "voiceover-1",
+      kind: "audio",
+      storageKey: "generated/job_0/voiceover-1.mp3",
+      sha256: createHash("sha256").update("0").digest("hex"),
+      mime: "audio/mpeg",
+      durationMs: 1700,
+      provenance: { source: "generated", provider: "multix" },
+    };
+    const outputs: MediaOutputCache = {
+      get: async () => ({ asset: stored, jobId: "job_0" }),
+      put: async () => {},
+    };
+    const h = stage([], outputs);
+    h.objects.set(stored.storageKey as string, Buffer.from("0"));
+    const storage = (h.s.services as { storage: { download: unknown } }).storage;
+    storage.download = async () => {
+      throw new StudixError("UNAVAILABLE", "storage is down", { retryable: true });
+    };
+    // The re-take is looked up first; with every key a hit, it is the one served.
+    const take = await generateVoiceTake(h.s, "voice", line, request, "t", await workDir(), h.measure);
+    expect(h.measured).toEqual([]);
+    expect(take.track).toMatchObject({ durationMs: 1700 });
+    expect(take.track.trimStartMs).toBeUndefined();
+  });
+
+  it("keeps the brisker ask whole when the line's direction is at the limit", async () => {
+    const long = {
+      ...request,
+      params: { ...request.params, instructions: "x".repeat(MAX_VOICE_DIRECTION_CHARS) },
+    };
+    const h = stage([tooLong, padded]);
+    await generateVoiceTake(h.s, "voice", line, long, "t", await workDir(), h.measure);
+    const direction = String(h.calls[1]?.params?.instructions);
+    expect(direction).toMatch(/^The previous read ran too long.*say the brand name clearly\. x+$/);
+    expect(direction.length).toBeLessThanOrEqual(MAX_VOICE_DIRECTION_CHARS);
   });
 
   it("judges a take FFmpeg cannot read on its whole length", async () => {
