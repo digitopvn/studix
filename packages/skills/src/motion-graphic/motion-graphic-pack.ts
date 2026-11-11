@@ -36,8 +36,8 @@ import {
 import { retimeCards } from "./motion-graphic-retime.ts";
 import {
   MG_STORYBOARD_STAGE,
-  MotionStoryboardOutput,
   motionGraphicStoryboardStage,
+  StoredMotionStoryboardOutput,
 } from "./motion-graphic-storyboard.ts";
 import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion-graphic-template.ts";
 
@@ -81,7 +81,7 @@ const ComposeInput = z.object({
   outputs: z.object({
     brief: z.object({ brief: CreativeBrief }),
     // Optional: jobs checkpointed before the storyboard stage existed resume without it.
-    [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
+    [MG_STORYBOARD_STAGE]: StoredMotionStoryboardOutput.optional(),
   }),
 });
 type ComposeInput = z.infer<typeof ComposeInput>;
@@ -363,7 +363,7 @@ const RecutInput = z.object({
   payload: z.object({ assets: z.array(AssetRef).optional() }),
   outputs: z.object({
     brief: z.object({ brief: CreativeBrief }),
-    [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
+    [MG_STORYBOARD_STAGE]: StoredMotionStoryboardOutput.optional(),
   }),
 });
 

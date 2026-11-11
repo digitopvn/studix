@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ColorValue, IrId, Milliseconds, PositiveMilliseconds } from "./primitives.ts";
+import { ShotLayout } from "./shot-layout.ts";
 
 /** Typography role resolved against the brand fonts by the renderer. */
 export const TextStyleRole = z.enum(["display", "heading", "body", "caption"]);
@@ -49,11 +50,21 @@ export const TitleShot = ShotBase.extend({
   type: z.literal("title"),
   text: z.string().min(1).max(160),
   subtitle: z.string().min(1).max(240).optional(),
+  /**
+   * Motion-design device drawn under the title; `text` stays the complete headline. Kept so stored IRs that
+   * carry it still validate and render: a new layout is a `layout` shot.
+   */
+  layout: ShotLayout.optional(),
 });
 
 export const TextShot = ShotBase.extend({
   type: z.literal("text"),
   text: z.string().min(1).max(500),
+  /**
+   * Motion-design device drawn under the text; `text` stays the complete headline. Kept so stored IRs that
+   * carry it still validate and render: a new layout is a `layout` shot.
+   */
+  layout: ShotLayout.optional(),
 });
 
 export const ImageShot = ShotBase.extend({

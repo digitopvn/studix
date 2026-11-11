@@ -130,6 +130,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     if (shot.style?.region === "full") underlay.push(rendered.html);
     writeShotMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, scene.durationMs, markup.frame);
     if (shot.type === "layout") writeLayoutMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, markup.frame);
+    rendered.motion?.(w);
   }
 
   const regions = REGIONS.map((region) => {

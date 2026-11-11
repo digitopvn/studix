@@ -97,6 +97,24 @@ export const MotionStoryboardOutput = z.object({
 });
 export type MotionStoryboardOutput = z.infer<typeof MotionStoryboardOutput>;
 
+/**
+ * Storyboards checkpointed before beats carried a typed `layout` named only its kind (`"chips"`) and listed
+ * its content in `items`. Such a beat keeps its words and loses the device, so its card shows the headline.
+ */
+function dropUntypedBeatLayouts(value: unknown): unknown {
+  const storyboard = (value as { storyboard?: { beats?: unknown } } | null)?.storyboard;
+  if (!Array.isArray(storyboard?.beats)) return value;
+  const beats = storyboard.beats.map((beat: unknown) => {
+    if (typeof (beat as { layout?: unknown } | null)?.layout !== "string") return beat;
+    const { layout: _kind, ...rest } = beat as Record<string, unknown>;
+    return rest;
+  });
+  return { ...(value as object), storyboard: { ...storyboard, beats } };
+}
+
+/** The storyboard stage output as a later stage reads it back from the job's checkpoint. */
+export const StoredMotionStoryboardOutput = z.preprocess(dropUntypedBeatLayouts, MotionStoryboardOutput);
+
 const StoryboardInput = z.object({ outputs: z.object({ brief: z.object({ brief: CreativeBrief }) }) });
 type StoryboardInput = z.infer<typeof StoryboardInput>;
 

@@ -13,6 +13,7 @@ export * from "./primitives.ts";
 export * from "./render-spec.ts";
 export * from "./scene.ts";
 export * from "./shot.ts";
+export * from "./shot-layout.ts";
 export * from "./storyboard.ts";
 export * from "./timeline.ts";
 export * from "./validate.ts";
