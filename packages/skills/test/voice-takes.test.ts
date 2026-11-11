@@ -21,6 +21,7 @@ import {
   measureVoiceTake,
   VOICE_FIT_SCOPE,
   type VoiceTakeMeasure,
+  voiceFitScope,
 } from "../src/voice-takes.ts";
 
 const ctx: TenantContext = {
@@ -380,5 +381,10 @@ describe("voicing a line", () => {
     const junk = join(root, "junk.mp3");
     await writeFile(junk, "not audio");
     expect(await measureVoiceTake(junk, new AbortController().signal)).toBeUndefined();
+  });
+
+  it("keys reuse by the exact room, so a take that fit a longer room is not served for a shorter one", () => {
+    expect(voiceFitScope({ roomMs: 1849 })).not.toBe(voiceFitScope({ roomMs: 1750 }));
+    expect(voiceFitScope({ roomMs: 1800 })).toBe(`${VOICE_FIT_SCOPE}:1800`);
   });
 });

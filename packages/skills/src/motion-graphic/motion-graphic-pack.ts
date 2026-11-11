@@ -24,7 +24,7 @@ import {
 } from "../stored-media.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { type VoiceLine, voiceLines, withVoiceover } from "../voice-lines.ts";
-import { generateVoiceTake, VOICE_FIT_SCOPE } from "../voice-takes.ts";
+import { generateVoiceTake, voiceFitScope } from "../voice-takes.ts";
 import {
   MG_STORYBOARD_STAGE,
   MotionStoryboardOutput,
@@ -125,7 +125,7 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
       params: { language: ir.language, instructions: line.instructions },
       keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
       maxCostCents: 0,
-      reuse: { scope: VOICE_FIT_SCOPE },
+      reuse: { scope: voiceFitScope(line) },
     },
   }));
 }

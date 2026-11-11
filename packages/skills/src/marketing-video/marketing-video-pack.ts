@@ -45,7 +45,7 @@ import {
   type StoredMediaRequest,
 } from "../stored-media.ts";
 import { voiceLines, withVoiceover } from "../voice-lines.ts";
-import { generateVoiceTake, VOICE_FIT_SCOPE } from "../voice-takes.ts";
+import { generateVoiceTake, voiceFitScope } from "../voice-takes.ts";
 import { MARKETING_SCRIPT_VERSION, MarketingScript, marketingScript } from "./marketing-script.ts";
 import {
   beatKey,
@@ -491,7 +491,7 @@ function voiceRequests(s: StageContext) {
         params: { language: ir.language, instructions: line.instructions },
         keyPrefix: `generated/${s.job.id}/audio/${v.id}-vo-${i + 1}`,
         maxCostCents: 0,
-        reuse: { scope: VOICE_FIT_SCOPE },
+        reuse: { scope: voiceFitScope(line) },
       } satisfies StoredMediaRequest,
     })),
   );

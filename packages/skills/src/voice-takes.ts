@@ -24,9 +24,17 @@ export type VoiceTakeMeasure = (filePath: string, signal: AbortSignal) => Promis
 
 /**
  * Names the fit check in the reuse key of a voice request: a take stored without it, or one too long for
- * its room, is never served as a take that fits. The room is in the request's direction, so it is keyed too.
+ * its room, is never served as a take that fits.
  */
 export const VOICE_FIT_SCOPE = "voice-fits@1";
+
+/**
+ * The reuse scope of a line's takes, keyed by its exact room: a take (or re-take) that fit one room is only
+ * reused for that same room, never for a slightly shorter one whose direction rounds to the same seconds.
+ */
+export function voiceFitScope(line: Pick<VoiceLine, "roomMs">): string {
+  return `${VOICE_FIT_SCOPE}:${line.roomMs}`;
+}
 
 const BRISKER_DIRECTION =
   "The previous read ran too long for its slot: read this one noticeably brisker with short pauses, " +
