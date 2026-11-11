@@ -59,9 +59,13 @@ export type MotionStoryboard = z.infer<typeof MotionStoryboard>;
 
 const AgentOutput = z.object({ storyboard: MotionStoryboard });
 
-/** The stage output: an agent storyboard, or none when the graphic falls back to the template. */
+/**
+ * The stage output: an agent storyboard, or none when the graphic falls back to the template. `source`
+ * defaults to "agent" because a host agent is handed the inner agent schema (`{ storyboard }`) while its
+ * submission is checked against this one.
+ */
 export const MotionStoryboardOutput = z.object({
-  source: z.enum(["agent", "template"]),
+  source: z.enum(["agent", "template"]).default("agent"),
   storyboard: MotionStoryboard.optional(),
   /** Why the template was used instead of an agent. */
   fallbackReason: z.string().max(500).optional(),

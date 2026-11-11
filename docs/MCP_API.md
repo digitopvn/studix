@@ -482,7 +482,9 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   is enforced in host mode: the task expires at `expiresAt`. The other limits
   are the budget the harness would have; respect them.
 - `output` is checked against the stage's output schema, the same schema the
-  worker applies. A mismatch fails with `VALIDATION`, `details.reason:
+  worker applies. An output that matches the task's `outputSchema` is always
+  accepted (for example `{ storyboard }` on `motion-graphic.storyboard`). A
+  mismatch fails with `VALIDATION`, `details.reason:
   "invalid_output"` and `details.issues`, and nothing is stored, so fix the
   output and submit again. Secrets in the output are redacted before it is
   stored.
