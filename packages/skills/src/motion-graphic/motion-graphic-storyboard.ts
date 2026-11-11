@@ -18,6 +18,7 @@ import { motionDesignPack } from "../knowledge/packs/motion-design-pack.ts";
 import { voiceoverWordBudget } from "../marketing-video/marketing-script.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { voiceLines } from "../voice-lines.ts";
+import { BEAT_LAYOUT_GUIDE, BEAT_LAYOUTS } from "./motion-graphic-layouts.ts";
 import { motionGraphicTemplate, withPromptFormat } from "./motion-graphic-template.ts";
 import { MOTION_STYLE_PROFILES } from "./motion-style-profiles.ts";
 
@@ -44,6 +45,12 @@ export const MotionStoryboardBeat = z.object({
   enter: MotionPreset.exclude(["none"]),
   /** Relative length of the beat; the compose stage scales the weights to the video length. */
   weight: z.number().min(0.5).max(3),
+  /**
+   * Device drawn under the headline. Loose on purpose: items that do not fit the layout's limits only drop
+   * the beat back to the headline card (see beatLayout), they never discard the storyboard.
+   */
+  layout: z.enum(BEAT_LAYOUTS).nullable().optional(),
+  items: z.array(z.string().trim().max(80)).max(6).nullable().optional(),
 });
 export type MotionStoryboardBeat = z.infer<typeof MotionStoryboardBeat>;
 
@@ -134,7 +141,7 @@ interface Repair {
 const agentStageFor = (repair?: Repair) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
-    version: 2,
+    version: 3,
     inputSchema: StoryboardInput,
     outputSchema: AgentOutput,
     instructions:
@@ -143,7 +150,9 @@ const agentStageFor = (repair?: Repair) =>
       "composition-timing knowledge packs) and apply it. Pick the one style profile from `styles` that fits " +
       "the brief best. Write between `beats.min` and `beats.max` beats (longer videos need more beats, never one long held card): a hook that stops the scroll first, the call to action last. " +
       "Each beat has a short on-screen line (a headline, not the voice-over repeated), the line spoken over " +
-      "it, the visual of the card, its entrance preset and a weight for its length. The whole voice-over must " +
+      "it, the visual of the card, its entrance preset and a weight for its length. " +
+      BEAT_LAYOUT_GUIDE +
+      " The whole voice-over must " +
       "stay within `wordBudget` words, where a Vietnamese syllable is one word and an English word or brand " +
       'name counts about two thirds of a word per syllable ("AI-native" is about three). When `voiceover` is false nothing is spoken: the on-screen lines carry ' +
       "the message alone, each beat's `voiceover` just repeats its on-screen line, and the weights give every " +
