@@ -252,7 +252,7 @@ Behavior notes:
   cards, colour swatches or a stat) that the card draws under its headline; the
   `visual` field stays a description. Cards share the style profile's
   background; a high-energy profile fills the call-to-action card with its
-  accent. A script derived from the brief (hook, messages, call to action) is
+  primary colour. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
   longest spoken lines are shortened. The hook and call-to-action cards and the
   on-screen text are kept, but their spoken text may be shortened, the call to

@@ -85,21 +85,10 @@ export const MotionStoryboard = z.object({
 });
 export type MotionStoryboard = z.infer<typeof MotionStoryboard>;
 
-const AgentOutput = z.object({ storyboard: MotionStoryboard });
-
-/** The stage output: an agent storyboard, or none when the graphic falls back to the template. */
-export const MotionStoryboardOutput = z.object({
-  // A host agent submits the agent stage's `{ storyboard }`, which is an agent storyboard.
-  source: z.enum(["agent", "template"]).default("agent"),
-  storyboard: MotionStoryboard.optional(),
-  /** Why the template was used instead of an agent. */
-  fallbackReason: z.string().max(500).optional(),
-});
-export type MotionStoryboardOutput = z.infer<typeof MotionStoryboardOutput>;
-
 /**
- * Storyboards checkpointed before beats carried a typed `layout` named only its kind (`"chips"`) and listed
- * its content in `items`. Such a beat keeps its words and loses the device, so its card shows the headline.
+ * Storyboards written before beats carried a typed `layout` named only its kind (`"chips"`) and listed its
+ * content in `items`: checkpointed by an earlier release, or handed in by a host following that release's
+ * schema. Such a beat keeps its words and loses the device, so its card shows the headline.
  */
 function dropUntypedBeatLayouts(value: unknown): unknown {
   const storyboard = (value as { storyboard?: { beats?: unknown } } | null)?.storyboard;
@@ -111,6 +100,18 @@ function dropUntypedBeatLayouts(value: unknown): unknown {
   });
   return { ...(value as object), storyboard: { ...storyboard, beats } };
 }
+
+const AgentOutput = z.preprocess(dropUntypedBeatLayouts, z.object({ storyboard: MotionStoryboard }));
+
+/** The stage output: an agent storyboard, or none when the graphic falls back to the template. */
+export const MotionStoryboardOutput = z.object({
+  // A host agent submits the agent stage's `{ storyboard }`, which is an agent storyboard.
+  source: z.enum(["agent", "template"]).default("agent"),
+  storyboard: MotionStoryboard.optional(),
+  /** Why the template was used instead of an agent. */
+  fallbackReason: z.string().max(500).optional(),
+});
+export type MotionStoryboardOutput = z.infer<typeof MotionStoryboardOutput>;
 
 /** The storyboard stage output as a later stage reads it back from the job's checkpoint. */
 export const StoredMotionStoryboardOutput = z.preprocess(dropUntypedBeatLayouts, MotionStoryboardOutput);

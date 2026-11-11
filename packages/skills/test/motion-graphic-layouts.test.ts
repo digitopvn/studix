@@ -1,6 +1,9 @@
 import { ShotLayout, validateVideoIR } from "@studix/video-ir";
 import { describe, expect, it } from "vitest";
-import { StoredMotionStoryboardOutput } from "../src/motion-graphic/motion-graphic-storyboard.ts";
+import {
+  motionGraphicStoryboardStage,
+  StoredMotionStoryboardOutput,
+} from "../src/motion-graphic/motion-graphic-storyboard.ts";
 import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
 
 describe("shot layout schema", () => {
@@ -52,5 +55,22 @@ describe("stored storyboards", () => {
     expect(validateVideoIR(ir).ok).toBe(true);
     expect(ir.scenes[0]?.shots.some((s) => s.type === "layout")).toBe(false);
     expect(ir.scenes[1]?.shots.find((s) => s.type === "layout")).toMatchObject({ layout: { kind: "stat" } });
+  });
+
+  it("accepts a host hand-in that follows the earlier kind-and-items schema", () => {
+    const parsed = motionGraphicStoryboardStage.hostOutputSchema?.safeParse({
+      storyboard: {
+        styleProfile: "kinetic-typography",
+        brandName: null,
+        music: null,
+        rationale: "r",
+        beats: [
+          beat("Mở đầu", null),
+          beat("Kết nối", "chips", ["Studix", "Claude", "Cursor"]),
+          beat("Thử ngay", null),
+        ],
+      },
+    });
+    expect(parsed?.error?.issues ?? []).toEqual([]);
   });
 });
