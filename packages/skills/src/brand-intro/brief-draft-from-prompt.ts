@@ -1,4 +1,4 @@
-import { promptFormatOf } from "@studix/video-ir";
+import { type AspectRatio, promptFormatOf } from "@studix/video-ir";
 import { detectLanguage, normalizeText, truncateText } from "../vietnamese-safe-text.ts";
 import { BRAND_INTRO_MAX_MS, BRAND_INTRO_MIN_MS } from "./brand-intro-template.ts";
 import { BriefDraft } from "./brief-draft.ts";
@@ -38,6 +38,17 @@ const AUDIENCE =
   /(?:dành cho|cho|for|targeting)\s+((?:khách hàng|người|giới|bạn|các|gia đình|sinh viên|dân|young|customers|people|students|families|parents|teens|professionals)[^,.;!?\n]{0,60})/iu;
 const QUOTED = /["“«]([^"”»\n]{2,60})["”»]/u;
 const BRAND_KEYWORD = /(?:thương hiệu|nhãn hàng|brand)\s+([^,.;!?\n]{2,60})/iu;
+
+/**
+ * A short brand-intro brief names its shape loosely ("dài 6 giây, dọc", "for TikTok"); these words are read
+ * only here, after the frame-specific forms the shared parser accepts.
+ */
+function looseAspectRatioOf(text: string): AspectRatio | undefined {
+  if (/(?<![\p{L}])(dọc|vertical|portrait|reels|shorts|tiktok)(?![\p{L}])/iu.test(text)) return "9:16";
+  if (/(?<![\p{L}])(ngang|landscape|horizontal|widescreen|youtube)(?![\p{L}])/iu.test(text)) return "16:9";
+  if (/(?<![\p{L}])(vuông|square)(?![\p{L}])/iu.test(text)) return "1:1";
+  return undefined;
+}
 
 /** The length the prompt states, clamped to the brand-intro range. */
 function durationOf(statedMs: number | undefined): number | undefined {
@@ -123,8 +134,9 @@ export function draftBriefFromPrompt(prompt: string): BriefDraft {
     if (keyMessages.length < MAX_MESSAGES)
       keyMessages.push(truncateText(withoutFinalPeriod(sentence), MESSAGE_CHARS));
   }
-  const { aspectRatio, durationMs: statedMs } = promptFormatOf(prompt);
-  const durationMs = durationOf(statedMs);
+  const stated = promptFormatOf(prompt);
+  const aspectRatio = stated.aspectRatio ?? looseAspectRatioOf(prompt.normalize("NFC"));
+  const durationMs = durationOf(stated.durationMs);
   return BriefDraft.parse({
     ...(brandName ? { title: brandName, brandName } : {}),
     keyMessages,

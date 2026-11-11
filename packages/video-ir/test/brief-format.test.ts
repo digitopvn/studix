@@ -3,27 +3,45 @@ import { promptFormatOf, withPromptFormat } from "../src/index.ts";
 
 const LONG_FORM_PROMPT =
   "A masterpiece-grade 60-second 16:9 (1920x1080) English motion-graphic video about our launch. Exactly 60 seconds.";
+const lengthOf = (prompt: string) => promptFormatOf(prompt).durationMs;
+const ratioOf = (prompt: string) => promptFormatOf(prompt).aspectRatio;
 
 describe("promptFormatOf", () => {
-  it("reads hyphenated, minute and Vietnamese lengths", () => {
+  it("reads the whole video's length in its common spellings", () => {
     expect(promptFormatOf(LONG_FORM_PROMPT)).toEqual({ aspectRatio: "16:9", durationMs: 60_000 });
-    expect(promptFormatOf("a 1-minute explainer").durationMs).toBe(60_000);
-    expect(promptFormatOf("a 1.5 minute explainer").durationMs).toBe(90_000);
-    expect(promptFormatOf("1 minute and 30 seconds, vertical").durationMs).toBe(90_000);
-    expect(promptFormatOf("Video dọc dài 2 phút").durationMs).toBe(120_000);
-    expect(promptFormatOf("Video 15s cho quán cà phê").durationMs).toBe(15_000);
+    expect(lengthOf("a 1-minute explainer")).toBe(60_000);
+    expect(lengthOf("a 1.5 minute explainer")).toBe(90_000);
+    expect(lengthOf("1 minute and 30 seconds")).toBe(90_000);
+    expect(lengthOf("a 1m30s video")).toBe(90_000);
+    expect(lengthOf("Video dài 1p30")).toBe(90_000);
+    expect(lengthOf("Video dọc dài 2 phút")).toBe(120_000);
+    expect(lengthOf("Video 15s cho quán cà phê")).toBe(15_000);
   });
 
-  it("reads the frame shape from a pixel size or a platform word", () => {
-    expect(promptFormatOf("render at 1080x1920").aspectRatio).toBe("9:16");
-    expect(promptFormatOf("square 1080×1080 post").aspectRatio).toBe("1:1");
-    expect(promptFormatOf("a TikTok ad").aspectRatio).toBe("9:16");
+  it("prefers the whole video's length over a part's, a later minute or a timecode", () => {
+    expect(lengthOf("A 30-second teaser for our 5-minute documentary")).toBe(30_000);
+    expect(lengthOf("15s TikTok ad: book in 2 minutes")).toBe(15_000);
+    expect(lengthOf("Show 3 scenes, each 5 seconds, total 30 seconds")).toBe(30_000);
+    expect(lengthOf("Phần mở đầu 3 giây, tổng 30 giây")).toBe(30_000);
+    expect(lengthOf("0.5s transitions, 15 second video")).toBe(15_000);
+    expect(lengthOf("Scene at 0:15s shows the logo")).toBeUndefined();
   });
 
   it("ignores decades, counts and lengths no brief accepts", () => {
     expect(promptFormatOf("an 80s retro look for the 1990s crowd")).toEqual({});
+    expect(lengthOf("an 80s-style ad, 20 seconds")).toBe(20_000);
     expect(promptFormatOf("launch on 5 sites")).toEqual({});
-    expect(promptFormatOf("a 20 minute documentary").durationMs).toBeUndefined();
+    expect(lengthOf("a 20 minute documentary")).toBeUndefined();
+  });
+
+  it("reads the frame shape only where the prompt ties it to the frame", () => {
+    expect(ratioOf("render at 1080x1920")).toBe("9:16");
+    expect(ratioOf("a vertical video for our café")).toBe("9:16");
+    expect(ratioOf("Quảng cáo ngang cho tiệm trà")).toBe("16:9");
+    expect(ratioOf("A vertical TikTok ad, use our 1200x1200 logo")).toBe("9:16");
+    expect(ratioOf("A portrait of our founder")).toBeUndefined();
+    expect(ratioOf("Summer sale on shorts, follow us on YouTube")).toBeUndefined();
+    expect(ratioOf("Promote our 1:1 coaching sessions")).toBeUndefined();
   });
 });
 

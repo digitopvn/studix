@@ -201,10 +201,14 @@ Behavior notes:
   `agent`) combines with any pack: the pack's pipeline runs and its agent stages
   (for example the motion-graphic storyboard) run on that Claude connection and
   model; with the default pack the Claude planner writes the IR.
-- A length or aspect ratio stated only in `brief.prompt` ("a 60-second 16:9
-  video", "1920x1080", "video dọc dài 1 phút") is used when `brief.durationMs`
-  or `brief.aspectRatio` is unset; the explicit field always wins. Each pack
-  still clamps the length to its own range.
+- A length or aspect ratio stated only in `brief.prompt` for the whole video
+  ("a 60-second 16:9 video", "1920x1080", "video dọc, tổng 1p30") fills
+  `brief.durationMs` / `brief.aspectRatio` when they are unset; the explicit
+  field always wins. A part's length ("each 5 seconds"), a timecode, a decade
+  or an asset's pixel size is not read. `motion-graphic` and `marketing-video`
+  clamp the length to their own range; `anime`, `long-form-film` and
+  `skill-agent` make the stated length. `brand-intro` reads the prompt in its
+  own brief draft and clamps to 6–15 s.
 - `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
   entry (1 to 6); a brief without directions makes one ad whose hook is its
   first key message (else the brand name), and a brief with neither is refused
