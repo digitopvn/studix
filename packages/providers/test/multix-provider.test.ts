@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createMultixProviderFromConfig,
   InMemoryMediaJobJournal,
+  KeyedLimiter,
   MultixProvider,
   type MultixRunner,
   type MultixRunOptions,
@@ -1376,6 +1377,215 @@ describe("MultixProvider synchronous audio", () => {
     const again = await multix.generate(ctx, voiceRequest());
     expect(again.outputs).toEqual(result.outputs);
     expect(cli.calls).toHaveLength(2);
+  });
+
+  /** A TTS reply that writes the requested file. */
+  const spoken = (argv: readonly string[]): Reply => {
+    const out = flagValue(argv, "output")!;
+    return { files: { [out]: "mp3" }, envelope: { outputs: [{ path: out }] } };
+  };
+  const estimated: Reply = { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+  const rateLimited = (retryAfterS?: number): Reply => ({
+    exitCode: 4,
+    envelope: {
+      exit_code: 4,
+      error: {
+        code: "RATE_LIMITED",
+        message: "HTTP 429: concurrent_limit_exceeded",
+        retryable: true,
+        ...(retryAfterS !== undefined ? { retry_after_s: retryAfterS } : {}),
+      },
+    },
+  });
+
+  it("retries a rate-limited take in place, honouring retry-after, without failing the request", async () => {
+    let tts = 0;
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate")) return estimated;
+      tts += 1;
+      return tts === 1 ? rateLimited(7) : tts === 2 ? rateLimited() : spoken(argv);
+    });
+    const waits: number[] = [];
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      accountLimiter: new KeyedLimiter(),
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    const result = await multix.generate(ctx, voiceRequest());
+    expect(result.outputs).toHaveLength(1);
+    expect(tts).toBe(3);
+    expect(waits[0]).toBe(7000);
+    expect(waits[1]).toBeGreaterThanOrEqual(2000);
+    expect(waits[1]).toBeLessThan(3000);
+  });
+
+  it("gives a rate limit back after four retries, and never retries other provider failures", async () => {
+    const limited = scriptedCli((argv) => (argv.includes("--estimate") ? estimated : rateLimited()));
+    const sleep = async () => undefined;
+    const first = new MultixProvider({
+      bin: "multix",
+      runner: limited.runner,
+      sleep,
+      accountLimiter: new KeyedLimiter(),
+    });
+    await expect(first.generate(ctx, voiceRequest())).rejects.toMatchObject({
+      code: "PROVIDER_ERROR",
+      retryable: true,
+      details: { upstreamCode: "RATE_LIMITED" },
+    });
+    expect(limited.calls.filter((c) => !c.argv.includes("--estimate"))).toHaveLength(5);
+
+    const unavailable = scriptedCli((argv) =>
+      argv.includes("--estimate")
+        ? estimated
+        : {
+            exitCode: 4,
+            envelope: { exit_code: 4, error: { code: "PROVIDER_UNAVAILABLE", message: "HTTP 503" } },
+          },
+    );
+    const second = new MultixProvider({
+      bin: "multix",
+      runner: unavailable.runner,
+      sleep,
+      accountLimiter: new KeyedLimiter(),
+    });
+    await expect(second.generate(ctx, voiceRequest())).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(unavailable.calls.filter((c) => !c.argv.includes("--estimate"))).toHaveLength(1);
+  });
+
+  it("caps concurrent takes per vendor account across jobs and provider instances", async () => {
+    let running = 0;
+    let peak = 0;
+    const gate: Array<() => void> = [];
+    const runner: MultixRunner = async (argv, options) => {
+      if (argv.includes("--estimate"))
+        return {
+          exitCode: 0,
+          stdout: `${JSON.stringify({ schema: "multix.result/v1", ok: true, estimate: { status: "estimated", high_usd: 0.002 } })}\n`,
+        };
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise<void>((resolve) => gate.push(resolve));
+      running -= 1;
+      const out = flagValue(argv, "output")!;
+      await mkdir(dirname(out), { recursive: true });
+      await writeFile(out, "mp3");
+      return {
+        exitCode: 0,
+        stdout: `${JSON.stringify({ schema: "multix.result/v1", ok: true, outputs: [{ path: out }] })}\n`,
+      };
+    };
+    const limiter = new KeyedLimiter();
+    // Two provider instances, as two workspaces with their own settings on one worker would have.
+    const a = new MultixProvider({ bin: "multix", runner, accountLimiter: limiter, audioConcurrency: 2 });
+    const b = new MultixProvider({ bin: "multix", runner, accountLimiter: limiter, audioConcurrency: 2 });
+    const takes = [a, b, a, b, a].map((p, i) =>
+      p.generate(ctx, { ...voiceRequest(), idempotencyKey: `job-${i}:voice`, prompt: `Line ${i}` }),
+    );
+    for (let released = 0, ticks = 0; released < 5; ticks += 1) {
+      expect(ticks).toBeLessThan(200);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const next = gate.shift();
+      if (next) {
+        expect(running).toBeLessThanOrEqual(2);
+        next();
+        released += 1;
+      }
+    }
+    expect((await Promise.all(takes)).every((r) => r.outputs.length === 1)).toBe(true);
+    expect(peak).toBe(2);
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 0, waiting: 0 });
+  });
+
+  it("frees the account's slot while a take waits to retry", async () => {
+    const limiter = new KeyedLimiter();
+    const held: number[] = [];
+    let tts = 0;
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate")) return estimated;
+      tts += 1;
+      held.push(limiter.load("elevenlabs:platform").active);
+      return tts === 1 ? rateLimited(2) : spoken(argv);
+    });
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      accountLimiter: limiter,
+      sleep: async () => {
+        held.push(limiter.load("elevenlabs:platform").active);
+      },
+    });
+    await multix.generate(ctx, voiceRequest());
+    // Running, waiting (no slot held), running again.
+    expect(held).toEqual([1, 0, 1]);
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 0, waiting: 0 });
+  });
+
+  it("counts a workspace's own key as its own account", async () => {
+    const limiter = new KeyedLimiter();
+    const platform: number[] = [];
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate")) return estimated;
+      platform.push(limiter.load("elevenlabs:platform").active);
+      return spoken(argv);
+    });
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      accountLimiter: limiter,
+      workspaceCredentials: async () => ({ ELEVENLABS_API_KEY: "own-key" }),
+    });
+    const result = await multix.generate(ctx, voiceRequest());
+    expect(result.funding).toBe("workspace");
+    expect(platform).toEqual([0]);
+  });
+
+  it("leaves a rate limit asking for more than a minute, and MiniMax's, to the stage's own retry", async () => {
+    const long = scriptedCli((argv) => (argv.includes("--estimate") ? estimated : rateLimited(120)));
+    const sleep = async () => undefined;
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: long.runner,
+      sleep,
+      accountLimiter: new KeyedLimiter(),
+    });
+    await expect(multix.generate(ctx, voiceRequest())).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(long.calls.filter((c) => !c.argv.includes("--estimate"))).toHaveLength(1);
+
+    const minimax = scriptedCli(() => rateLimited());
+    const music = new MultixProvider({
+      bin: "multix",
+      runner: minimax.runner,
+      sleep,
+      accountLimiter: new KeyedLimiter(),
+    });
+    await expect(
+      music.generate(ctx, {
+        ...voiceRequest(),
+        kind: "music",
+        model: "minimax:music-2.0",
+        maxCostCents: 100,
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(minimax.calls.filter((c) => !c.argv.includes("--estimate"))).toHaveLength(1);
+  });
+
+  it("stops waiting for a slot when the request is cancelled", async () => {
+    const limiter = new KeyedLimiter();
+    let release!: () => void;
+    const busy = limiter.run("elevenlabs:platform", 1, () => new Promise<void>((r) => (release = r)));
+    const controller = new AbortController();
+    const waiting = limiter.run("elevenlabs:platform", 1, async () => "ran", controller.signal);
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 1, waiting: 1 });
+    controller.abort();
+    await expect(waiting).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 1, waiting: 0 });
+    release();
+    await busy;
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 0, waiting: 0 });
   });
 
   it("speaks a routed language on OpenRouter with its direction, capped by the estimate's high end", async () => {
