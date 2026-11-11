@@ -96,3 +96,17 @@ describe("applyBriefDraft", () => {
     expect(merged.brand).toEqual(brand);
   });
 });
+
+describe("promptFormatHints", () => {
+  it("reads a hyphenated length and an aspect ratio, clamped to the workflow range", async () => {
+    const { promptFormatHints } = await import("../src/brand-intro/brief-draft-from-prompt.ts");
+    expect(promptFormatHints("A 60-second 16:9 intro", { minMs: 6_000, maxMs: 60_000 })).toEqual({
+      aspectRatio: "16:9",
+      durationMs: 60_000,
+    });
+    expect(promptFormatHints("video dọc 1 phút", { minMs: 6_000, maxMs: 30_000 })).toEqual({
+      aspectRatio: "9:16",
+      durationMs: 30_000,
+    });
+  });
+});

@@ -633,6 +633,7 @@ describe("motion-graphic pipeline (fake providers)", () => {
     // Hook, two messages and the call to action: one line per card.
     expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual([
       "sfx",
+      "sfx",
       "voice",
       "voice",
       "voice",
@@ -666,7 +667,7 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(ir.audio?.at(-1)).toEqual(
       expect.objectContaining({ kind: "sfx", assetId: "sfx-accent", startMs: ctaAt }),
     );
-    expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(5);
+    expect(h.usage.filter((u) => u.kind === "media.generation")).toHaveLength(6);
     expect(ir.captions?.cues.length).toBeGreaterThan(0);
     expect(ir.metadata?.styleProfile).toEqual(expect.any(String));
     expect(h.qaCalls).toEqual([expect.objectContaining({ requireAudio: true, durationMs: 12_000 })]);
@@ -713,6 +714,7 @@ describe("motion-graphic pipeline (fake providers)", () => {
       "voiceover",
       "voiceover",
       "voiceover",
+      "sfx",
       "sfx",
     ]);
   });
@@ -764,7 +766,7 @@ describe("motion-graphic pipeline (fake providers)", () => {
     const { job, outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
     const ir = h.renderer.rendered[0] as VideoIR;
-    expect(ir.audio?.map((t) => t.kind)).toEqual(["voiceover", "voiceover", "voiceover", "sfx"]);
+    expect(ir.audio?.map((t) => t.kind)).toEqual(["voiceover", "voiceover", "voiceover", "sfx", "sfx"]);
     const stages = await h.jobs.listStages(ctx, job.id);
     expect(stages.find((st) => st.name === MG_STAGES.accent)?.output?.warning).toBeUndefined();
   });
@@ -862,6 +864,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(ir.format).toMatchObject({ aspectRatio: "16:9", durationMs: 10_000 });
     expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual([
       "music",
+      "sfx",
       "sfx",
       "voice",
       "voice",

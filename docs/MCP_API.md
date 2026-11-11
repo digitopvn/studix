@@ -222,9 +222,11 @@ Behavior notes:
   uploads one file per ad (`renders[]`). Any image-to-video or audio stage
   without an approved storyboard fails with `APPROVAL_REQUIRED`.
 - `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
-  (6 to 60 s, default 15 s) in the style profile that best matches the brief,
-  with a generated voice-over, one SFX accent where the CTA card lands and
-  burned captions, then renders, QA-gates and uploads it in one job. It has no
+  (6 to 60 s, default 15 s 9:16; a length or aspect ratio written in the prompt,
+  such as "a 60-second 16:9 intro", is used when the brief omits it) in the
+  style profile that best matches the brief, with about one card per five
+  seconds, a generated voice-over, a whoosh on every cut, one SFX accent where
+  the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
   for one. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
