@@ -2,6 +2,7 @@ import { extname } from "node:path";
 import { USAGE_KINDS } from "@studix/billing";
 import {
   type FundingSource,
+  type GeneratedMedia,
   type MediaCharge,
   MediaChargedError,
   type MediaGenerationRequest,
@@ -236,6 +237,22 @@ async function findJournaledOutput(
   return { record, stored };
 }
 
+/**
+ * Whether `request` would be served without a provider call: this call's own earlier output (stage
+ * journal) or an identical request's stored output (reuse cache). The same lookups `generateStoredMedia`
+ * makes first.
+ */
+export async function hasStoredOutput(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+): Promise<boolean> {
+  return (
+    (await findJournaledOutput(s, stage, request)) !== undefined ||
+    (await findReusableMedia(s, request)) !== undefined
+  );
+}
+
 function mediaIdempotencyKey(s: StageContext, stage: string, request: StoredMediaRequest): string {
   return `${s.job.id}:${stage}:${request.assetId}${retrySuffix(request, ":r")}`;
 }
@@ -411,19 +428,20 @@ export function generateStoredMedia(
 /**
  * With `accept`, the generated file is checked before it is stored or cached: a file it turns down comes back
  * as `RejectedMedia` (still billed), so a bad output never reaches storage or the tenant's reuse cache. A
- * reused output was accepted when it was stored, so it is not checked again.
+ * reused output was accepted when it was stored, so it is not checked again. `accept` also gets what the
+ * provider reported about the file (its length, size).
  */
 export function generateStoredMedia(
   s: StageContext,
   stage: string,
   request: StoredMediaRequest,
-  accept: (filePath: string) => Promise<boolean>,
+  accept: (filePath: string, output: GeneratedMedia) => Promise<boolean>,
 ): Promise<StoredMedia | RejectedMedia>;
 export async function generateStoredMedia(
   s: StageContext,
   stage: string,
   request: StoredMediaRequest,
-  accept?: (filePath: string) => Promise<boolean>,
+  accept?: (filePath: string, output: GeneratedMedia) => Promise<boolean>,
 ): Promise<StoredMedia | RejectedMedia> {
   const media = requireService(s, "media");
   const storage = requireService(s, "storage");
@@ -486,7 +504,7 @@ export async function generateStoredMedia(
         details: { assetId: request.assetId, model: result.model },
       });
     }
-    if (accept && !(await accept(output.filePath)))
+    if (accept && !(await accept(output.filePath, output)))
       return { rejected: true, usage, filePath: output.filePath };
     const ext = EXT_BY_MIME[output.mime] ?? extname(output.filePath);
     const { sha256, bytes } = await sha256File(output.filePath);

@@ -326,8 +326,12 @@ nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat
 `directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
 lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`
 cũng tôn trọng field này. Thiếu model hay key SFX/nhạc thì SFX accent và music bed bị bỏ qua, stage ghi `warning`, job vẫn
-chạy tiếp. Bản đọc dài hơn beat của nó: dư tới 250 ms (hơi thở cuối) thì cắt kèm fade; dài hơn thì được
-đọc nhanh lên (giữ cao độ, `playbackRate` của audio track) tới 1.12×; quá mức đó mới fail `VALIDATION`.
+chạy tiếp. Bản đọc được đo bằng FFmpeg `silencedetect`: khoảng lặng đầu bị bỏ qua (`trimStartMs`, giữ
+60 ms trước tiếng đầu), khoảng lặng cuối không tính, chỉ phần lời phải vừa beat. Lời dài hơn beat thì được
+đọc nhanh lên (giữ cao độ, `playbackRate` của audio track) tới 1.12×; quá mức đó thì dòng được đọc lại một
+lần với chỉ dẫn đọc gọn hơn (tính tiền cả hai lần đọc, bản dài không được lưu hay tái dùng); bản đọc lại vẫn
+quá dài mới fail `VALIDATION`. Ước tính chi phí vẫn tính một lần đọc mỗi dòng. File không đo được (không có
+FFmpeg) thì cả file được tính, dư tới 250 ms (hơi thở cuối) thì cắt kèm fade.
 
 ```json
 {

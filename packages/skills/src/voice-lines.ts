@@ -32,7 +32,8 @@ export const MAX_VOICE_DIRECTION_CHARS = 1000;
 /**
  * How far a generated line may run past its room and still be laid: speech models end on a breath of
  * silence, which the track cuts with a short fade. Anything longer would be speech spilling into the next
- * beat, so the stage fails instead.
+ * beat, so the stage fails instead. Only for a take whose speech could not be measured: a measured one is
+ * judged on its speech alone.
  */
 export const VOICE_OVERRUN_TOLERANCE_MS = 250;
 export { MAX_VOICE_SPEEDUP };
@@ -155,44 +156,99 @@ export function voiceLines(ir: VideoIR, fromMs = 0, toMs = ir.format.durationMs)
   });
 }
 
+/** Where the speech of a take starts and ends, in milliseconds from the start of its file. */
+export interface SpokenSpan {
+  startMs: number;
+  endMs: number;
+}
+
+/** Silence kept before the first word of a trimmed take, so the read does not open on a hard edge. */
+export const VOICE_LEAD_PAD_MS = 60;
+
+/** How a take fits its line's room: where it is read from, how much of it must be heard, and how fast. */
+interface TakeFit {
+  trimStartMs: number;
+  /** Length of the file after the trim; undefined when the file's length is unknown. */
+  restMs: number | undefined;
+  /** What must be heard: the speech after the trim, or (unmeasured) the whole rest of the file. */
+  spokenMs: number | undefined;
+  rate: number;
+}
+
 /**
- * The track of one generated line, at its beat. A take up to `VOICE_OVERRUN_TOLERANCE_MS` long
- * (trailing silence) is cut with a short fade; a longer one is sped up to fit, up to `MAX_VOICE_SPEEDUP`;
- * past that it fails VALIDATION rather than spilling into the next beat.
+ * Fit a take of `lengthMs` into `line`'s room. With a measured `span`, the leading silence is skipped (but
+ * `VOICE_LEAD_PAD_MS`) and only the speech must fit; without one the whole file counts, less a breath of
+ * trailing silence (`VOICE_OVERRUN_TOLERANCE_MS`). Undefined when it needs more than `MAX_VOICE_SPEEDUP`.
  */
-export function voiceLineTrack(line: VoiceLine, asset: AssetRef, id: string): AudioTrack {
-  const length = asset.durationMs;
-  if (length !== undefined && length > line.roomMs + VOICE_OVERRUN_TOLERANCE_MS) {
-    const rate = length / line.roomMs;
-    if (rate > MAX_VOICE_SPEEDUP) {
-      throw new StudixError("VALIDATION", `Voice-over line "${line.text.slice(0, 60)}" runs past its beat`, {
-        retryable: false,
-        details: { assetId: asset.id, durationMs: length, roomMs: line.roomMs },
-        suggestedAction: "Shorten the line or lengthen its beat, then render again.",
-      });
-    }
+function fitTake(line: VoiceLine, lengthMs: number | undefined, span?: SpokenSpan): TakeFit | undefined {
+  const trimStartMs = span ? Math.max(0, span.startMs - VOICE_LEAD_PAD_MS) : 0;
+  const restMs = lengthMs === undefined ? undefined : Math.max(0, lengthMs - trimStartMs);
+  const spokenMs = span ? span.endMs - trimStartMs : restMs;
+  const tolerance = span ? 0 : VOICE_OVERRUN_TOLERANCE_MS;
+  if (spokenMs === undefined || spokenMs <= line.roomMs + tolerance) {
+    return { trimStartMs, restMs, spokenMs, rate: 1 };
+  }
+  const rate = spokenMs / line.roomMs;
+  return rate > MAX_VOICE_SPEEDUP ? undefined : { trimStartMs, restMs, spokenMs, rate };
+}
+
+/** Whether a take of `lengthMs` (its speech in `span`, when measured) can be laid in `line`'s room. */
+export function voiceTakeFits(line: VoiceLine, lengthMs: number | undefined, span?: SpokenSpan): boolean {
+  return fitTake(line, lengthMs, span) !== undefined;
+}
+
+/** The VALIDATION failure of a line whose take is too long to speed up into its beat. */
+export function voiceOverrunError(line: VoiceLine, details: Record<string, unknown>): StudixError {
+  return new StudixError("VALIDATION", `Voice-over line "${line.text.slice(0, 60)}" runs past its beat`, {
+    retryable: false,
+    details: { ...details, roomMs: line.roomMs },
+    suggestedAction: "Shorten the line or lengthen its beat, then render again.",
+  });
+}
+
+/**
+ * The track of one generated line, at its beat. With the take's measured speech `span`, the leading
+ * silence is trimmed and only the speech is judged. A take that fits plays as is, cut with a short fade at
+ * the end of its room (trailing silence); a longer one is sped up to fit, up to `MAX_VOICE_SPEEDUP`; past
+ * that it fails VALIDATION rather than spilling into the next beat.
+ */
+export function voiceLineTrack(line: VoiceLine, asset: AssetRef, id: string, span?: SpokenSpan): AudioTrack {
+  const fit = fitTake(line, asset.durationMs, span);
+  if (!fit) {
+    throw voiceOverrunError(line, {
+      assetId: asset.id,
+      durationMs: asset.durationMs,
+      ...(span ? { speechStartMs: span.startMs, speechEndMs: span.endMs } : {}),
+    });
+  }
+  const base = {
+    id,
+    kind: "voiceover" as const,
+    assetId: asset.id,
+    startMs: line.startMs,
+    volume: 1,
+    ...(fit.trimStartMs > 0 ? { trimStartMs: fit.trimStartMs } : {}),
+  };
+  if (fit.rate > 1) {
     // Slightly long: read a little faster so the whole line lands inside its beat.
     return {
-      id,
-      kind: "voiceover",
-      assetId: asset.id,
-      startMs: line.startMs,
+      ...base,
       durationMs: line.roomMs,
-      volume: 1,
-      playbackRate: Math.ceil(rate * 1000) / 1000,
+      playbackRate: Math.ceil(fit.rate * 1000) / 1000,
       // A probe a few ms longer than the provider's figure would end the read on a hard cut.
       fadeOutMs: SPEDUP_FADE_MS,
     };
   }
-  const cut = length !== undefined && length > line.roomMs;
+  const cut = fit.restMs !== undefined && fit.restMs > line.roomMs;
+  // A measured take is cut in its trailing silence, so its fade stays clear of the last word.
+  const fadeOutMs =
+    span && fit.spokenMs !== undefined
+      ? Math.min(OVERRUN_FADE_MS, Math.max(SPEDUP_FADE_MS, line.roomMs - fit.spokenMs))
+      : Math.min(OVERRUN_FADE_MS, line.roomMs);
   return {
-    id,
-    kind: "voiceover",
-    assetId: asset.id,
-    startMs: line.startMs,
-    durationMs: Math.max(1, Math.min(line.roomMs, length ?? line.roomMs)),
-    volume: 1,
-    ...(cut ? { fadeOutMs: Math.min(OVERRUN_FADE_MS, line.roomMs) } : {}),
+    ...base,
+    durationMs: Math.max(1, Math.min(line.roomMs, fit.restMs ?? line.roomMs)),
+    ...(cut ? { fadeOutMs } : {}),
   };
 }
 
