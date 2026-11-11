@@ -219,6 +219,12 @@ describe("buildComposition layouts", () => {
 
   it("draws every built-in layout from its typed content, escaped", () => {
     expect(validateVideoIR(ir).ok).toBe(true);
+    const down = structuredClone(ir);
+    down.scenes[4]!.shots[0] = {
+      ...down.scenes[4]!.shots[0]!,
+      layout: { kind: "counter", from: 900, to: 50 },
+    } as Shot;
+    expect(validateVideoIR(down).ok).toBe(false);
     expect(hyperframesSupport(ir, RENDER_PRESETS.preview).reasons).toEqual([]);
     expect(scene(0)).toContain("&lt;");
     expect(scene(0)).not.toContain("<Studix>");
@@ -231,7 +237,7 @@ describe("buildComposition layouts", () => {
     expect(scene(3)).toContain("lo-step lo-s0 lo-done");
     expect(scene(4).match(/class="lo-strip/g)).toHaveLength(4);
     // Vietnamese groups thousands with a dot: 1.250.
-    expect(scene(4)).toContain("<span>.</span>");
+    expect(scene(4)).toContain('<span class="lo-p0">.</span>');
     expect(scene(5)).toContain("lo-card lo-k1 lo-hot");
     expect(scene(6)).toContain("background: var(--c-accent);");
     expect(scene(6)).toContain("background: #112233;");

@@ -169,7 +169,7 @@ const agentStageFor = (repair?: Repair) =>
       "when the message is easier to show than to say: `prompt-box` (a prompt being typed, optional send " +
       "button `action`), `code` (a few short code lines, `highlight` the ones that matter), `chips` (a `hub` " +
       "wired to the tools or channels it connects), `checklist` (steps that are `done`, `active` or `todo`), " +
-      "`counter` (a whole number rolling `from` to `to`, with `prefix`, `suffix`, `label`), `cards-row` (2-5 " +
+      "`counter` (a whole number counting up `from` to `to`, with `prefix`, `suffix`, `label`), `cards-row` (2-5 " +
       "short cards, `highlight` the one that wins), `swatches` (palette roles like `accent` or hex colours) or " +
       "`stat` (one big `value` and its `label`). Use the brief's own facts and words in it, vary the layouts " +
       "across the video, put no layout on the last beat (the call to action), and set `layout` null where " +

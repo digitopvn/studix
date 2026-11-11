@@ -68,13 +68,22 @@ const px = (ctx: ShotMarkupContext, n: number) => `${Math.max(1, Math.round(n * 
 const contentWidth = (ctx: ShotMarkupContext) =>
   ctx.frame.width - 2 * Math.round(0.07 * Math.min(ctx.frame.width, ctx.frame.height));
 const portrait = (ctx: ShotMarkupContext) => ctx.frame.height > ctx.frame.width;
+/**
+ * Height a layout may take: what the content area leaves under a headline of up to two lines and above
+ * the burned captions, so a tall layout never runs into either.
+ */
+const layoutHeight = (ctx: ShotMarkupContext) =>
+  (ctx.frame.height - 2 * Math.round(0.07 * Math.min(ctx.frame.width, ctx.frame.height))) *
+  (portrait(ctx) ? 0.7 : 0.55);
 
 const CHECK_SVG =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-/** Up to `max` runs of the text's characters (graphemes stay whole for composed Vietnamese). */
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Up to `max` runs of the text's characters; a grapheme (an emoji, a stacked diacritic) stays whole. */
 function typingChunks(text: string, max: number): string[] {
-  const chars = Array.from(text.normalize("NFC"));
+  const chars = Array.from(GRAPHEMES.segment(text.normalize("NFC")), (g) => g.segment);
   const size = Math.ceil(chars.length / max);
   const out: string[] = [];
   for (let i = 0; i < chars.length; i += size) out.push(chars.slice(i, i + size).join(""));
@@ -169,10 +178,12 @@ export function renderLayoutMarkup(
     }
     case "code": {
       const longest = Math.max(12, ...layout.lines.map((l) => l.length + 4));
-      // Monospace glyphs are about 0.6em wide: shrink the type until the longest line fits the window.
+      // Monospace glyphs are about 0.6em wide: shrink the type until the longest line fits the window, and
+      // the lines (plus the title bar and padding, about 1.6 more) fit the layout's height.
       const sizePx = Math.min(
         Math.round(TEXT_STYLES.body.sizeAt1080 * ctx.scale),
         Math.floor((width * 0.9) / (longest * 0.6)),
+        Math.floor(layoutHeight(ctx) / ((layout.lines.length + 1.6) * 1.55)),
       );
       ctx.fontWeights.mono.add(500);
       rule(".lo-code", [
@@ -337,22 +348,26 @@ export function renderLayoutMarkup(
       );
     }
     case "checklist": {
-      const mark = px(ctx, 64);
+      const n = layout.items.length;
+      // A step is about 100px tall at 1080 (mark plus padding), 22px apart: shrink to fit the height.
+      const k = Math.min(1, layoutHeight(ctx) / ((n * 100 + (n - 1) * 22) * ctx.scale));
+      const sz = (v: number) => px(ctx, v * k);
+      const mark = sz(64);
       rule(".lo-checklist", [
         "display: grid;",
-        `gap: ${px(ctx, 22)};`,
+        `gap: ${sz(22)};`,
         `width: ${Math.round(width * (portrait(ctx) ? 0.94 : 0.7))}px;`,
         "text-align: left;",
       ]);
       rule(".lo-step", [
         "display: flex;",
         "align-items: center;",
-        `gap: ${px(ctx, 26)};`,
-        `padding: ${px(ctx, 18)} ${px(ctx, 26)};`,
-        `border-radius: ${px(ctx, 20)};`,
+        `gap: ${sz(26)};`,
+        `padding: ${sz(18)} ${sz(26)};`,
+        `border-radius: ${sz(20)};`,
         `background: ${tint("foreground", 6)};`,
       ]);
-      rule(".lo-active", [`box-shadow: inset 0 0 0 ${px(ctx, 3)} var(--c-accent);`]);
+      rule(".lo-active", [`box-shadow: inset 0 0 0 ${sz(3)} var(--c-accent);`]);
       rule(".lo-todo .lo-label", ["opacity: 0.6;"]);
       rule(".lo-mark", [
         "position: relative;",
@@ -360,14 +375,14 @@ export function renderLayoutMarkup(
         `width: ${mark};`,
         `height: ${mark};`,
         "border-radius: 50%;",
-        `border: ${px(ctx, 4)} solid ${tint("foreground", 35)};`,
+        `border: ${sz(4)} solid ${tint("foreground", 35)};`,
         "box-sizing: border-box;",
       ]);
       rule(".lo-done .lo-mark", ["border-color: var(--c-accent);"]);
       rule(".lo-active .lo-mark", ["border-color: var(--c-accent);"]);
       rule(".lo-tick", [
         "position: absolute;",
-        `inset: -${px(ctx, 4)};`,
+        `inset: -${sz(4)};`,
         "border-radius: 50%;",
         "background: var(--c-accent);",
         `color: ${inkOnAccent(ctx)};`,
@@ -381,7 +396,7 @@ export function renderLayoutMarkup(
         "border-radius: 50%;",
         "background: var(--c-accent);",
       ]);
-      rule(".lo-label", [...fontCss(ctx, body, 1.05, 600), "min-width: 0;"]);
+      rule(".lo-label", [...fontCss(ctx, body, 1.05 * k, 600), "min-width: 0;"]);
       const steps = layout.items
         .map((item, i) => {
           const inner =
@@ -403,7 +418,7 @@ export function renderLayoutMarkup(
         ...fontCss(ctx, TEXT_STYLES.display, fitFactor(ctx, TEXT_STYLES.display, 1.5, chars, width)),
         "line-height: 1.15;",
         "display: flex;",
-        "align-items: baseline;",
+        "align-items: flex-end;",
         "font-variant-numeric: tabular-nums;",
         "white-space: nowrap;",
       ]);
@@ -418,12 +433,13 @@ export function renderLayoutMarkup(
       rule(".lo-affix", ["color: var(--c-accent);"]);
       rule(".lo-clabel", [...fontCss(ctx, body, 1.05, 500), "opacity: 0.75;", `margin-top: ${px(ctx, 8)};`]);
       const strip = Array.from(STRIP, (d) => `<span>${d}</span>`).join("");
+      // A separator belongs to the digit before it, so it shows and hides with that digit.
       let col = 0;
       const digits = Array.from(target)
         .map((c) =>
           /\d/.test(c)
-            ? `<span class="lo-dg"><span class="lo-strip lo-d${col++}">${strip}</span></span>`
-            : `<span>${escapeHtml(c)}</span>`,
+            ? `<span class="lo-dg lo-g${col}"><span class="lo-strip lo-d${col++}">${strip}</span></span>`
+            : `<span class="lo-p${col - 1}">${escapeHtml(c)}</span>`,
         )
         .join("");
       const prefix = layout.prefix ? `<span class="lo-affix">${escapeHtml(layout.prefix)}</span>` : "";
@@ -567,7 +583,7 @@ export function writeLayoutMotion(
       const at = stagger(chunks, begin, typeMs, 80);
       for (let i = 0; i < chunks; i++) w.set(`${sel} .lo-c${i}`, { opacity: 1 }, at(i));
       const typed = begin + typeMs;
-      // The caret blinks from the last letter to the end of the shot, then stays lit.
+      // The caret blinks from the last letter to the end of the shot.
       const caret = `${sel} .lo-caret`;
       for (let t = typed, on = true; t < end - 100; t += 500, on = !on) {
         w.set(caret, { opacity: on ? 1 : 0 }, seconds(t));
@@ -607,8 +623,10 @@ export function writeLayoutMotion(
     }
     case "chips": {
       const n = layout.items.length;
+      // Fixed offsets for a long shot, squeezed with the span so a short card builds before it exits.
+      const f = Math.min(1, span / 1000);
       pop(`${sel} .lo-hub`, seconds(begin));
-      const wire = begin + 260;
+      const wire = begin + Math.round(260 * f);
       w.fromTo(
         `${sel} .lo-stem`,
         { scaleY: 0 },
@@ -620,9 +638,9 @@ export function writeLayoutMotion(
         `${sel} .lo-bus`,
         column ? { scaleY: 0 } : { scaleX: 0 },
         { ...(column ? { scaleY: 1 } : { scaleX: 1 }), duration: dur(320), ease: EASE },
-        seconds(wire + 180),
+        seconds(wire + Math.round(180 * f)),
       );
-      const at = stagger(n, wire + 380, Math.max(0, span - 640), 160);
+      const at = stagger(n, wire + Math.round(380 * f), Math.max(0, span - Math.round(640 * f)), 160);
       for (let i = 0; i < n; i++) {
         w.fromTo(
           `${sel} .lo-i${i} .lo-drop`,
@@ -630,7 +648,7 @@ export function writeLayoutMotion(
           { ...(column ? { scaleX: 1 } : { scaleY: 1 }), duration: dur(180), ease: EASE },
           at(i),
         );
-        pop(`${sel} .lo-i${i} .lo-chip`, at(i) + 0.12, 380);
+        pop(`${sel} .lo-i${i} .lo-chip`, seconds(Math.round(at(i) * 1000) + Math.round(120 * f)), 380);
       }
       return;
     }
@@ -656,9 +674,19 @@ export function writeLayoutMotion(
       return;
     }
     case "counter": {
+      // The schema keeps `from <= to`, so `to` has at least as many digits.
       const to = String(layout.to);
-      const from = String(Math.min(layout.from, 10 ** to.length - 1)).padStart(to.length, "0");
-      const roll = seconds(Math.max(100, Math.min(1600, span)));
+      const from = String(layout.from).padStart(to.length, "0");
+      const lead = to.length - String(layout.from).length;
+      const rollMs = Math.max(100, Math.min(1600, span));
+      const roll = seconds(rollMs);
+      // Digits `from` does not have (and their separators) appear as the count grows into them.
+      for (let c = 0; c < lead; c++) {
+        const show = { opacity: 1, duration: seconds(Math.max(100, Math.round(rollMs * 0.3))), ease: EASE };
+        const at = seconds(begin + Math.round(rollMs * 0.1 * (lead - c)));
+        w.fromTo(`${sel} .lo-g${c}`, { opacity: 0 }, show, at);
+        w.fromTo(`${sel} .lo-p${c}`, { opacity: 0 }, show, at);
+      }
       for (let c = 0; c < to.length; c++) {
         const turns = Math.max(0, 2 - (to.length - 1 - c)); // the units spin twice, tens once
         const startIdx = Number(from[c]);
@@ -680,7 +708,8 @@ export function writeLayoutMotion(
       for (let i = 0; i < n; i++) upIn(`${sel} .lo-k${i}`, at(i));
       const hot = layout.highlight;
       if (hot !== undefined && hot < n) {
-        const t = seconds(begin + Math.floor(span * 0.8));
+        // Only once every card has landed, so no card jumps to full opacity mid-entrance.
+        const t = Math.max(seconds(begin + Math.floor(span * 0.8)), at(n - 1) + dur(450));
         w.fromTo(`${sel} .lo-k${hot}`, { scale: 1 }, { scale: 1.07, duration: dur(400), ease: EASE }, t);
         for (let i = 0; i < n; i++) {
           if (i !== hot)

@@ -126,7 +126,15 @@ export const LayoutSpec = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("prompt-box"), text: Label(160), action: Label(24).optional() }),
   z.object({
     kind: z.literal("code"),
-    lines: z.array(z.string().max(64)).min(1).max(10),
+    lines: z
+      .array(
+        z
+          .string()
+          .max(64)
+          .regex(/^[^\t\r\n]*$/, "one line, no tabs: indent with spaces"),
+      )
+      .min(1)
+      .max(10),
     highlight: z.array(z.number().int().min(0).max(9)).max(10).optional(),
     title: Label(40).optional(),
   }),
@@ -138,14 +146,19 @@ export const LayoutSpec = z.discriminatedUnion("kind", [
       .min(2)
       .max(6),
   }),
-  z.object({
-    kind: z.literal("counter"),
-    from: z.number().int().min(0).max(999_999_999),
-    to: z.number().int().min(0).max(999_999_999),
-    prefix: Label(12).optional(),
-    suffix: Label(12).optional(),
-    label: Label(60).optional(),
-  }),
+  z
+    .object({
+      kind: z.literal("counter"),
+      from: z.number().int().min(0).max(999_999_999),
+      to: z.number().int().min(0).max(999_999_999),
+      prefix: Label(12).optional(),
+      suffix: Label(12).optional(),
+      label: Label(60).optional(),
+    })
+    .refine((c) => c.from <= c.to, {
+      message: "a counter counts up: `from` must not exceed `to`",
+      path: ["from"],
+    }),
   z.object({
     kind: z.literal("cards-row"),
     items: z.array(Label(40)).min(2).max(5),

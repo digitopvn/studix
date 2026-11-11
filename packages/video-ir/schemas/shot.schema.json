@@ -1295,7 +1295,8 @@
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "maxLength": 64
+                    "maxLength": 64,
+                    "pattern": "^[^\\t\\r\\n]*$"
                   }
                 },
                 "highlight": {
