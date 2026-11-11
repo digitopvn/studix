@@ -22,7 +22,13 @@ import {
   testTenant,
 } from "@studix/core/testing";
 import { createLogger, StudixError, systemClock } from "@studix/shared";
-import { BRAND_INTRO_SCRIPT_STAGE, BrandIntroScript, brandIntroScriptStage } from "@studix/skills";
+import {
+  BRAND_INTRO_SCRIPT_STAGE,
+  BrandIntroScript,
+  brandIntroScriptStage,
+  MG_STORYBOARD_STAGE,
+  motionGraphicStoryboardStage,
+} from "@studix/skills";
 import {
   createAgentStage,
   createJobExecutor,
@@ -71,8 +77,14 @@ const usageEvent = (u: Partial<Extract<ClaudeAgentEvent, { type: "usage" }>>): C
  * fences every write on (status running, lockedBy, attempts) like the Postgres queue does.
  */
 function createWorld(
-  options: { stage?: StageDefinition; transcript?: (r: ClaudeSessionRequest) => unknown } = {},
+  options: {
+    stage?: StageDefinition;
+    /** Stages run before the agent stage, for an agent stage that reads earlier outputs. */
+    before?: StageDefinition[];
+    transcript?: (r: ClaudeSessionRequest) => unknown;
+  } = {},
 ) {
+  const handed = options.stage ?? brandIntroScriptStage;
   const clock = systemClock;
   const store = createInMemoryJobStore(clock);
   const approvals = createInMemoryApprovalRepository(clock);
@@ -177,7 +189,7 @@ function createWorld(
     workflows: [
       {
         kind: "test.script",
-        stages: [options.stage ?? brandIntroScriptStage],
+        stages: [...(options.before ?? []), handed],
         result: (outputs) => ({ ...outputs }),
       },
     ],
@@ -185,9 +197,9 @@ function createWorld(
   const service = createAgentHandoffService({
     handoffs,
     validateOutput: (stage, output) => {
-      if (stage !== (options.stage ?? brandIntroScriptStage).name)
-        throw new StudixError("UNAVAILABLE", stage);
-      const parsed = (options.stage ?? brandIntroScriptStage).outputSchema!.safeParse(output);
+      // As the MCP server's packStageOutputValidator: the schema handed to the host, else the stage output.
+      if (stage !== handed.name) throw new StudixError("UNAVAILABLE", stage);
+      const parsed = (handed.hostOutputSchema ?? handed.outputSchema)!.safeParse(output);
       return parsed.success
         ? { ok: true, output: parsed.data as Record<string, unknown> }
         : {
@@ -346,6 +358,72 @@ describe("one agent stage, two modes", () => {
     await world.service.submit(world.ctx, { taskId: summary!.id, attempt: 1, output: leaky });
     expect(await world.runOnce(job.id)).toBe("succeeded");
     expect(JSON.stringify((await world.job(job.id))?.result)).not.toContain("sk-ant-api03");
+  });
+});
+
+describe("a stage that wraps an agent stage under its own output", () => {
+  const graphicBrief = {
+    prompt: "Motion graphic 10 giây giới thiệu tiệm trà Lá Mây",
+    title: "Lá Mây",
+    language: "vi",
+    aspectRatio: "16:9" as const,
+    durationMs: 10_000,
+    keyMessages: ["Trà hái tay mỗi sớm"],
+    callToAction: "Đặt trà ngay",
+  };
+  const storyboard = {
+    styleProfile: "swiss-kinetic-editorial",
+    beats: [
+      {
+        onScreen: "Sáng nay, trà gì?",
+        voiceover: "Sáng nay bạn uống trà gì?",
+        visual: "Chữ lớn",
+        enter: "slide-left",
+        weight: 1,
+      },
+      {
+        onScreen: "Hái tay mỗi sớm",
+        voiceover: "Lá trà hái tay mỗi sớm.",
+        visual: "Lưới Swiss",
+        enter: "pop",
+        weight: 1.5,
+      },
+      {
+        onScreen: "Đặt trà ngay",
+        voiceover: "Đặt trà ngay hôm nay.",
+        visual: "Logo và CTA",
+        enter: "scale",
+        weight: 1,
+      },
+    ],
+    music: null,
+    rationale: "Swiss editorial suits a calm, factual tea brand.",
+  };
+  const briefStage: StageDefinition = {
+    name: "brief",
+    run: async () => ({ output: { brief: graphicBrief } }),
+  };
+
+  it("takes from the host exactly the outputSchema studix_get_agent_task advertises", async () => {
+    const world = createWorld({ stage: motionGraphicStoryboardStage, before: [briefStage] });
+    const job = await world.enqueue({ agentMode: "host" });
+    expect(await world.runOnce(job.id)).toBe("waiting_host");
+    const [summary] = (await world.service.list(world.ctx, { jobId: job.id })).items;
+    const task = await world.service.get(world.ctx, summary!.id);
+    expect(task.outputSchema).toMatchObject({ required: ["storyboard"], additionalProperties: false });
+
+    // The stage's own record of a template fallback is not something the host can hand in.
+    await expect(
+      world.service.submit(world.ctx, {
+        taskId: task.id,
+        attempt: 1,
+        output: { source: "template", fallbackReason: "x" },
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION", details: { reason: "invalid_output" } });
+
+    await world.service.submit(world.ctx, { taskId: task.id, attempt: 1, output: { storyboard } });
+    expect(await world.runOnce(job.id)).toBe("succeeded");
+    expect((await world.job(job.id))?.result?.[MG_STORYBOARD_STAGE]).toEqual({ source: "agent", storyboard });
   });
 });
 

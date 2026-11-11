@@ -198,6 +198,12 @@ export interface StageDefinition {
    */
   outputSchema?: z.ZodType;
   /**
+   * The output an agent hands in for this stage in host mode: the schema `studix_get_agent_task` advertises and
+   * the MCP server checks a submission against. Set by `createAgentStage`; a stage that wraps an agent stage
+   * under another output shape forwards the agent stage's.
+   */
+  hostOutputSchema?: z.ZodType;
+  /**
    * Ids of the knowledge packs (`@studix/skills`) this stage works from. The knowledge loader hands a stage
    * exactly these packs and nothing else; a stage without the field loads none.
    */

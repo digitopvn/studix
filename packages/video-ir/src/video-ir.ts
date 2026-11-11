@@ -11,6 +11,12 @@ import { Timeline } from "./timeline.ts";
 export const VIDEO_IR_SCHEMA_VERSION = 1 as const;
 
 /**
+ * Audio tracks one IR carries: a 60 s graphic needs a voice line per card, a whoosh per cut, an accent
+ * and a music bed. Packs may plan for fewer (a narrative film keeps its own lower cap).
+ */
+export const IR_MAX_AUDIO_TRACKS = 64;
+
+/**
  * Renderer-neutral video intermediate representation. A stored IR is immutable: edits produce a new
  * project version via applyPatch. Binaries are referenced through `assets`, never embedded.
  */
@@ -23,7 +29,7 @@ export const VideoIR = z.object({
   assets: z.array(AssetRef).max(200),
   scenes: z.array(Scene).min(1).max(100),
   timeline: Timeline,
-  audio: z.array(AudioTrack).max(16).optional(),
+  audio: z.array(AudioTrack).max(IR_MAX_AUDIO_TRACKS).optional(),
   captions: Captions.optional(),
   /** Free-form, non-semantic metadata (template id, planner info). Renderers must ignore it. */
   metadata: z.record(z.string(), z.unknown()).optional(),
