@@ -130,6 +130,9 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
   }));
 }
 
+/** Voice takes generated at once, like the other packs' media batches. */
+const VOICE_CONCURRENCY = 3;
+
 const SFX_MS = 1500;
 /** Where the accent lands when the IR has no CTA scene: this long before the end. */
 const SFX_TAIL_MS = 3000;
@@ -330,7 +333,9 @@ export const motionGraphicVoiceStage: StageDefinition = {
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
     const generated = await mapBounded(
       planned,
-      planned.length,
+      // Under a provider's concurrent-request cap (ElevenLabs allows 5 on common plans): a 60 s graphic has
+      // up to twelve lines, and firing them all at once fails the stage with 429s.
+      VOICE_CONCURRENCY,
       (v) => generateVoiceTake(s, MG_STAGES.voice, v.line, v.request, `${v.request.assetId}-track`, workDir),
       (g) => g.usage,
     );
