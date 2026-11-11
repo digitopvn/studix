@@ -2,7 +2,7 @@ import { testTenant } from "@studix/core/testing";
 import { getSkill, registerPack, type WorkflowPack } from "@studix/skills";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AppLimits } from "../src/app-deps.ts";
-import { skillSummaries } from "../src/compose-integrations.ts";
+import { packStageOutputValidator, skillSummaries } from "../src/compose-integrations.ts";
 import { inspectCapabilities } from "../src/mcp/inspect-capabilities.ts";
 
 /** A pack the server has never heard of: it reuses the brand-intro template under a new id. */
@@ -60,5 +60,29 @@ describe("workflow packs on the MCP server", () => {
   it("drops the pack again once it is unregistered", () => {
     registerPack(samplePack)();
     expect(skillSummaries().map((s) => s.id)).toEqual(BUILT_IN);
+  });
+});
+
+describe("host agent output validation", () => {
+  it("accepts a motion-graphic storyboard in the shape the host agent is given", () => {
+    const storyboard = {
+      styleProfile: "saas-bento",
+      beats: ["Hook", "Message", "Try it"].map((onScreen) => ({
+        onScreen,
+        voiceover: `${onScreen}.`,
+        visual: "Big type",
+        enter: "fade",
+        weight: 1,
+      })),
+      music: null,
+      brandName: "Studix",
+      rationale: "Clean type for a product launch.",
+    };
+    const check = packStageOutputValidator()("motion-graphic.storyboard", { storyboard });
+    expect(check).toMatchObject({
+      ok: true,
+      // The host schema is what the host was handed; the worker adds `source` when it reads the output.
+      output: { storyboard: { brandName: "Studix" } },
+    });
   });
 });

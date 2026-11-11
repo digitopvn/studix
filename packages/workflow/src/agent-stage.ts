@@ -209,6 +209,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
     name: spec.name,
     inputSchema: spec.inputSchema,
     outputSchema: spec.outputSchema,
+    hostOutputSchema: spec.outputSchema,
     retry: "never",
     // The agent that runs the stage is part of the key: another runtime, model, effort or connection (a role's or
     // the job's) must not reuse this output.

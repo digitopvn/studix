@@ -10,6 +10,7 @@ import {
   requireService,
   type StageContext,
   type StageDefinition,
+  StageFailedAfterSpend,
   stageCacheKey,
   stageWorkDir,
 } from "@studix/workflow";
@@ -37,8 +38,8 @@ export const MG_STAGES = {
   storyboard: MG_STORYBOARD_STAGE,
   compose: "motion-graphic.compose",
   /**
-   * Lays the SFX accent. It is named for the time it also voiced the graphic; the name and cache key are
-   * kept so a re-voiced graphic reuses its paid accent and older jobs still resume.
+   * Lays the SFX accent and the whoosh on each cut. It is named for the time it also voiced the graphic; the
+   * name is kept so older jobs still resume.
    */
   accent: "motion-graphic.voiceover",
   voice: "motion-graphic.voice",
@@ -54,7 +55,8 @@ export const motionGraphicSkill: Skill = {
     "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16; a length or aspect ratio stated in the prompt is used when the brief sets none): the workspace's agent writes the script and " +
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
-    "generated voice-over with burned captions and one SFX accent on the CTA card; the accent and music bed " +
+    "generated voice-over with burned captions, a soft whoosh on each cut and one SFX accent on the CTA card; " +
+    "the agent's storyboard has about one card every five seconds (3–12); the whoosh, accent and music bed " +
     "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). No image-to-video.",
   version: 1,
@@ -134,16 +136,18 @@ const SFX_MS = 1500;
 /** Where the accent lands when the IR has no CTA scene: this long before the end. */
 const SFX_TAIL_MS = 3000;
 
+/** Where the CTA card starts, or this long before the end when the IR has none. */
+function ctaStart(ir: VideoIR): number {
+  const ctaIndex = ir.scenes.findIndex((scene) => scene.id === "cta");
+  return ctaIndex === -1
+    ? Math.max(0, ir.format.durationMs - SFX_TAIL_MS)
+    : ir.scenes.slice(0, ctaIndex).reduce((ms, scene) => ms + scene.durationMs, 0);
+}
+
 /** One soft accent where the CTA card lands; the voice-over stays the lead. */
 function sfxRequest(s: StageContext): { at: number; request: StoredMediaRequest } {
-  const ir = irOf(s);
-  const ctaIndex = ir.scenes.findIndex((scene) => scene.id === "cta");
-  const at =
-    ctaIndex === -1
-      ? Math.max(0, ir.format.durationMs - SFX_TAIL_MS)
-      : ir.scenes.slice(0, ctaIndex).reduce((ms, scene) => ms + scene.durationMs, 0);
   return {
-    at,
+    at: ctaStart(irOf(s)),
     request: {
       assetId: "sfx-accent",
       kind: "sfx",
@@ -154,6 +158,55 @@ function sfxRequest(s: StageContext): { at: number; request: StoredMediaRequest 
       reuse: {},
     },
   };
+}
+
+const WHOOSH_MS = 700;
+/** The whoosh starts this long before its cut, so it sweeps into the next card. */
+const WHOOSH_LEAD_MS = 250;
+const WHOOSH_VOLUME = 0.35;
+const WHOOSH_TRACK = "sfx-whoosh-";
+
+/** Every cut between two cards but the one into the CTA card, which the accent already marks. */
+function cutsOf(ir: VideoIR): number[] {
+  const cta = ctaStart(ir);
+  const cuts: number[] = [];
+  let at = 0;
+  for (const scene of ir.scenes.slice(0, -1)) {
+    at += scene.durationMs;
+    if (at !== cta) cuts.push(at);
+  }
+  return cuts;
+}
+
+/**
+ * One short whoosh for the cuts, generated once and laid on every cut. Its prompt names no job, so the
+ * tenant's stored whoosh is reused instead of paid for again.
+ */
+function whooshRequest(s: StageContext): StoredMediaRequest {
+  return {
+    assetId: "sfx-whoosh",
+    kind: "sfx",
+    prompt: "Short soft airy whoosh transition, clean swish, no chime, no voice",
+    params: { durationMs: WHOOSH_MS },
+    keyPrefix: `generated/${s.job.id}/sfx-whoosh`,
+    maxCostCents: 0,
+    reuse: {},
+  };
+}
+
+/** The whoosh track of each cut, centred so it peaks as the next card comes in. */
+function whooshTracks(ir: VideoIR, assetId: string, assetMs: number): VideoIR["audio"] & object {
+  return cutsOf(ir).map((cut, i) => {
+    const startMs = Math.max(0, cut - WHOOSH_LEAD_MS);
+    return {
+      id: `${WHOOSH_TRACK}${i + 1}`,
+      kind: "sfx" as const,
+      assetId,
+      startMs,
+      durationMs: Math.max(1, Math.min(assetMs, ir.format.durationMs - startMs)),
+      volume: WHOOSH_VOLUME,
+    };
+  });
 }
 
 async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMediaRequest> {
@@ -169,9 +222,14 @@ async function capped(s: StageContext, r: StoredMediaRequest): Promise<StoredMed
 /** A media call that could not be made at all (no provider, no key, no price); nothing was spent on it. */
 const unavailable = (err: unknown) => err instanceof StudixError && err.code === "UNAVAILABLE";
 
-/** The SFX accent of a graphic that has a script; none for a graphic without one (it has no voice to lead). */
-async function accentRequests(s: StageContext): Promise<StoredMediaRequest[]> {
-  return voiceoverOf(irOf(s)) && s.services.media ? [await capped(s, sfxRequest(s).request)] : [];
+/**
+ * The SFX accent and the cut whoosh of a graphic that has a script, uncapped; none for a graphic without one
+ * (it has no voice to lead).
+ */
+function accentRequests(s: StageContext): StoredMediaRequest[] {
+  const ir = irOf(s);
+  if (!voiceoverOf(ir) || !s.services.media) return [];
+  return cutsOf(ir).length > 0 ? [sfxRequest(s).request, whooshRequest(s)] : [sfxRequest(s).request];
 }
 
 /** The graphic without its accent, and why: the accent is decoration, so a missing provider never fails the job. */
@@ -191,27 +249,31 @@ async function voiceRequests(
 const AccentOutput = IrOutput.extend({ warning: z.string().max(500).optional() });
 
 /**
- * One SFX accent where the CTA card lands, for a graphic with a voice-over. No music: the voice carries the
- * graphic. No media provider, or a call that cannot be made (UNAVAILABLE: no sound-effect model, no key,
+ * One SFX accent where the CTA card lands and one short whoosh (generated once, laid on every other cut), for
+ * a graphic with a voice-over, so no cut is silent. No music: the voice carries the graphic. No media provider, or a call that cannot be made (UNAVAILABLE: no sound-effect model, no key,
  * no price), skips the accent with a warning instead of failing the job. The call itself decides, not the
  * provider's shared capability list: that list is probed on platform keys only, while the call also uses
  * the workspace's own keys; the runner never caches a warned
- * output, so a skipped accent is retried next run. The cache key is the one this stage had when it also
- * voiced the graphic (such a cached output still holds that older voice-over, which the voice stage
- * replaces), so a paid accent is reused.
+ * output, so a skipped accent is retried next run. Both sounds are reusable requests, so a new cache key
+ * (or another job of the tenant) reuses the stored accent and whoosh instead of paying for them again.
  */
 export const motionGraphicAccentStage: StageDefinition = {
   name: MG_STAGES.accent,
   knowledge: ["sound"],
   outputSchema: AccentOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.accent, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Version 3 adds the cut whooshes; the accent itself is a reusable request, so it is not paid for again.
+  cacheKey: (s) => stageCacheKey(MG_STAGES.accent, 3, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Each sound is estimated on its own: one that cannot be made is skipped, the other is still paid for.
   estimateCostCents: async (s) => {
-    try {
-      return await estimateMediaCents(s, await accentRequests(s));
-    } catch (err) {
-      if (unavailable(err)) return 0;
-      throw err;
+    let total = 0;
+    for (const request of accentRequests(s)) {
+      try {
+        total += await estimateMediaCents(s, [await capped(s, request)]);
+      } catch (err) {
+        if (!unavailable(err)) throw err;
+      }
     }
+    return total;
   },
   async run(s) {
     const ir = irOf(s);
@@ -226,13 +288,31 @@ export const motionGraphicAccentStage: StageDefinition = {
       await rm(workDir, { recursive: true, force: true });
       return withoutAccent(ir, toStudixError(err).message);
     }
+    let whoosh: StoredMedia | undefined;
+    let warning: string | undefined;
+    if (cutsOf(ir).length > 0) {
+      try {
+        whoosh = await generateStoredMedia(s, MG_STAGES.accent, await capped(s, whooshRequest(s)));
+      } catch (err) {
+        if (!unavailable(err)) {
+          await rm(workDir, { recursive: true, force: true });
+          const spent = err instanceof StageFailedAfterSpend ? err.usage : [];
+          const cause = err instanceof StageFailedAfterSpend ? err.error : toStudixError(err);
+          throw new StageFailedAfterSpend(cause, [sfx.usage, ...spent]);
+        }
+        warning = truncateText(`Cut whooshes skipped: ${toStudixError(err).message}`, 500);
+      }
+    }
+    const usage = whoosh ? [sfx.usage, whoosh.usage] : [sfx.usage];
     const accentAt = sfxRequest(s).at;
     const accentRoom = Math.max(1, ir.format.durationMs - accentAt);
+    const added = whoosh ? [sfx.asset, whoosh.asset] : [sfx.asset];
     const next = {
       ...ir,
-      assets: [...ir.assets.filter((a) => a.id !== sfx.asset.id), sfx.asset],
+      assets: [...ir.assets.filter((a) => !added.some((b) => b.id === a.id)), ...added],
       audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "sfx-accent-track"),
+        ...(ir.audio ?? []).filter((t) => t.id !== "sfx-accent-track" && !t.id.startsWith(WHOOSH_TRACK)),
+        ...(whoosh ? whooshTracks(ir, whoosh.asset.id, whoosh.asset.durationMs ?? WHOOSH_MS) : []),
         {
           id: "sfx-accent-track",
           kind: "sfx" as const,
@@ -245,11 +325,17 @@ export const motionGraphicAccentStage: StageDefinition = {
     };
     await rm(workDir, { recursive: true, force: true });
     return {
-      output: { ir: await billedOnFailure([sfx.usage], () => VideoIR.parse(next)) },
-      usage: [sfx.usage],
+      output: {
+        ir: await billedOnFailure(usage, () => VideoIR.parse(next)),
+        ...(warning ? { warning } : {}),
+      },
+      usage,
     };
   },
 };
+
+/** Lines voiced at once: every line of a short graphic, a bounded share of a long one's twelve. */
+const VOICE_CONCURRENCY = 6;
 
 /**
  * The voice-over of the script, one line per card, each read with its card's direction and laid where that
@@ -274,7 +360,7 @@ export const motionGraphicVoiceStage: StageDefinition = {
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
     const generated = await mapBounded(
       planned,
-      planned.length,
+      VOICE_CONCURRENCY,
       (v) => generateVoiceTake(s, MG_STAGES.voice, v.line, v.request, `${v.request.assetId}-track`, workDir),
       (g) => g.usage,
     );

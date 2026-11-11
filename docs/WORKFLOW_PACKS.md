@@ -228,8 +228,9 @@ Lý do của các ràng buộc:
   (`stageMediaDir`, `<workRoot>/<jobId>/media/<stage>`), không phải work dir của attempt, nên stage được
   retry tìm lại file đã trả tiền thay vì sinh lại. Thư mục bị xóa ở `finalize`; job fail giữ nó cho lần
   retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
-- Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent, bỏ qua kèm `warning` khi
-  lời gọi trả `UNAVAILABLE`; lời gọi dùng cả key của workspace), `motion-graphic.voice` (voice), `motion-graphic.music` (music, bỏ qua kèm `warning` khi thiếu
+- Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent ở card CTA và một
+  whoosh ngắn sinh một lần, đặt ở mọi lần cắt còn lại; bỏ qua kèm `warning` khi lời gọi trả `UNAVAILABLE`; lời
+  gọi dùng cả key của workspace), `motion-graphic.voice` (voice), `motion-graphic.music` (music, bỏ qua kèm `warning` khi thiếu
   provider/key),
   `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).
@@ -272,7 +273,12 @@ mỗi giây, `voiceoverWordBudget` trong
 `spokenLength` ([`caption-chunks.ts`](../packages/skills/src/caption-chunks.ts)): mỗi âm tiết tiếng Việt là
 một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
 ("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
-thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này;
+thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này.
+Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
+(60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì
+giữ mỗi card lâu hơn. Storyboard sai số beat được một lượt sửa như dưới (cùng mọi lỗi khác trong một thông
+điệp); sau lượt sửa, hay ở `agentMode: "host"`, số beat chỉ là khuyến nghị: storyboard có lời đọc vừa vẫn
+được giữ, vì template (không agent) tối đa sáu card;
 storyboard của agent mà tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video thì được gửi lại
 cho agent đúng một lượt sửa (kèm lỗi cụ thể: dòng nào, phòng bao nhiêu ms, nên cắt còn bao nhiêu từ; chạy trong
 `MG_STORYBOARD_LIMITS` và ngân sách job, cả hai lượt đều ghi usage `agent.run`; agent chạy ở `agentMode: "host"`
@@ -317,7 +323,10 @@ image-to-video, audio, render, QA và publish.
 
 ### motion-graphic
 
-Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prompt. Style profile được chọn theo
+Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prompt. Brief không có `brand` thì agent
+storyboard trả `brandName` đúng như brief viết (ví dụ "Studix" trong "introducing Studix"); tên đó làm tên
+brand kit, `title` của IR (khi brief không có `title`) và chữ logo ở card CTA. Tên không xuất hiện trong brief
+bị bỏ qua; không có tên nào thì card CTA không hiện tên brand thay vì lặp lại câu hook. Style profile được chọn theo
 `tone`, `objective` và prompt, hoặc theo `directions[0].visualStyle` nếu trùng id một profile trong
 [`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
