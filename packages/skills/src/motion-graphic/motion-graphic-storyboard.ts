@@ -254,6 +254,8 @@ export const motionGraphicStoryboardStage: StageDefinition = {
   knowledge: [...MG_STORYBOARD_KNOWLEDGE],
   inputSchema: StoryboardInput,
   outputSchema: MotionStoryboardOutput,
+  // A host agent writes only the storyboard; `source` is this stage's own record.
+  hostOutputSchema: agentStage.hostOutputSchema,
   retry: "never",
   // No cacheKey: a template fallback must not be reused once the workspace has an agent, and a new job for
   // the same brief gets a fresh take. The job's checkpoint still keeps one storyboard across its attempts.

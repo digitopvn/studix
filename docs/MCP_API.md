@@ -481,8 +481,10 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   `tools`, the allowlist of tool names the agent may call. Only the time limit
   is enforced in host mode: the task expires at `expiresAt`. The other limits
   are the budget the harness would have; respect them.
-- `output` is checked against the stage's output schema, the same schema the
-  worker applies. A mismatch fails with `VALIDATION`, `details.reason:
+- `output` is checked against the task's `outputSchema`, the same schema the
+  worker applies when the job resumes. A stage that wraps its agent (such as
+  `motion-graphic.storyboard`) adds its own fields itself; the host sends only
+  what `outputSchema` lists. A mismatch fails with `VALIDATION`, `details.reason:
   "invalid_output"` and `details.issues`, and nothing is stored, so fix the
   output and submit again. Secrets in the output are redacted before it is
   stored.
