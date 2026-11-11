@@ -31,13 +31,15 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 6;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 7;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
 const DEFAULT_STYLE = "kinetic-typography";
 const FPS = 30;
-const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 34 };
+const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 28 };
+/** A heading-size headline over a layout holds more per line than a display-size headline card. */
+const LAYOUT_LINE_CHARS: Record<AspectRatio, number> = { "9:16": 24, "1:1": 26, "16:9": 38 };
 
 const words = (text: string) =>
   text
@@ -438,7 +440,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           type: i === 0 ? "title" : "text",
           startMs: 0,
           durationMs,
-          text: breakLines(line.onScreen, chars + 4).slice(0, 160),
+          text: breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio]).slice(0, 160),
           style: {
             textStyle: "heading",
             color: inkOn(brand.palette, fill, "foreground"),
@@ -466,7 +468,8 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         durationMs,
         text: breakLines(line.onScreen, chars).slice(0, i === 0 ? 160 : 500),
         style: {
-          textStyle: i === 0 ? "display" : "heading",
+          // Landscape has room: every headline card is set at display size there.
+          textStyle: i === 0 || aspectRatio === "16:9" ? "display" : "heading",
           color: inkOn(brand.palette, fill, "foreground"),
           align: "center",
           region: "middle",
