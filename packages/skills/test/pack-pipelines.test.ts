@@ -158,6 +158,8 @@ function harness(
     unavailableKinds?: readonly string[];
     /** Media kinds missing from the provider's shared capability list, as when only a workspace has the key. */
     unlistedKinds?: readonly string[];
+    /** Length of a voice take, by what it says and whether it is the brisker re-take; the fake's default else. */
+    voiceMs?: (text: string, brisker: boolean) => number | undefined;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -184,7 +186,18 @@ function harness(
         throw new StudixError("VALIDATION", `params.${name} must be inside workDir`, { retryable: false });
       }
     }
-    return real(c, request);
+    const instructions = request.params?.instructions;
+    const voiceMs =
+      request.kind === "voice"
+        ? options.voiceMs?.(
+            request.prompt,
+            typeof instructions === "string" && instructions.startsWith("The previous read"),
+          )
+        : undefined;
+    return real(
+      c,
+      voiceMs === undefined ? request : { ...request, params: { ...request.params, durationMs: voiceMs } },
+    );
   };
   const generate = vi.spyOn(media, "generate");
   const usage: UsageEvent[] = [];
@@ -727,6 +740,91 @@ describe("motion-graphic pipeline (fake providers)", () => {
       "sfx",
       "sfx",
     ]);
+  });
+
+  /** Absolute [start, end) of each card of a sequential graphic. */
+  const cardSpans = (ir: VideoIR) => {
+    let at = 0;
+    return ir.scenes.map((sc) => {
+      const span = { startMs: at, endMs: at + sc.durationMs };
+      at = span.endMs;
+      return span;
+    });
+  };
+  const longLine = "Trà hái tay mỗi sớm";
+  const longGraphic = {
+    prompt: "Motion graphic giới thiệu tiệm trà Lá Mây",
+    title: "Lá Mây",
+    language: "vi",
+    durationMs: 12_000,
+    keyMessages: [longLine, "Giao tận nơi"],
+    callToAction: "Đặt trà ngay",
+  };
+
+  it("re-times the cards around a take longer than its card instead of failing the job", async () => {
+    // The message runs 5 s where its card was cut for its estimate; the other lines take 1 s.
+    const h = harness({ voiceMs: (text) => (text === longLine ? 5_000 : 1_000) });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", longGraphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // One take per line: re-timing costs nothing.
+    expect(h.generate.mock.calls.filter(([, r]) => r.kind === "voice")).toHaveLength(4);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    const cards = cardSpans(ir);
+    expect(cards.at(-1)?.endMs).toBe(12_000);
+    expect(ir.timeline.entries.map((e) => e.startMs)).toEqual(cards.map((c) => c.startMs));
+    const voice = (ir.audio ?? []).filter((t) => t.kind === "voiceover");
+    const message = voice[1];
+    // The long line plays whole at a natural pace inside its own card, which grew for it.
+    expect(message?.playbackRate).toBeUndefined();
+    expect(message?.durationMs).toBeGreaterThanOrEqual(5_000);
+    voice.forEach((t, i) => {
+      expect(t.startMs).toBeGreaterThanOrEqual(cards[i]?.startMs as number);
+      expect(t.startMs + (t.durationMs ?? 0)).toBeLessThanOrEqual(cards[i]?.endMs as number);
+    });
+    // Captions, the accent and the whooshes moved with the cards.
+    const messageCues = ir.captions?.cues.filter((c) => c.startMs >= (message?.startMs ?? 0)) ?? [];
+    expect(messageCues[0]?.startMs).toBe(message?.startMs);
+    const ctaAt = cards.at(-1)?.startMs;
+    expect(ir.audio?.find((t) => t.assetId === "sfx-accent")?.startMs).toBe(ctaAt);
+    const whooshes = (ir.audio ?? []).filter((t) => t.assetId === "sfx-whoosh");
+    expect(whooshes.map((t) => t.startMs + 250)).toEqual(cards.slice(1, -1).map((c) => c.startMs));
+  });
+
+  it("re-voices brisker only the lines that overran, and fails only when the voice-over outlasts the graphic", async () => {
+    // Every line runs 3.5 s (14 s for a 12 s graphic); a brisker re-take runs 2 s.
+    const fits = harness({ voiceMs: (_text, brisker) => (brisker ? 2_000 : 3_500) });
+    const { outcome } = await fits.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(fits, "motion-graphic", longGraphic),
+    );
+    expect(fits.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const voiced = fits.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    // Four first takes, then a brisker one only for the lines that ran past their cards.
+    expect(voiced.length).toBeGreaterThan(4);
+    expect(voiced.length).toBeLessThan(8);
+    expect(voiced.slice(4).every((r) => String(r.params?.instructions).startsWith("The previous read"))).toBe(
+      true,
+    );
+
+    // The fake names a take by its text and length, so the re-take gets a length of its own.
+    const tooLong = harness({ voiceMs: (_text, brisker) => (brisker ? 3_900 : 4_000) });
+    const failed = await tooLong.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(tooLong, "motion-graphic", longGraphic),
+    );
+    expect(tooLong.failureOf(failed.outcome).failure).toMatchObject({
+      code: "VALIDATION",
+      message: "The voice-over runs longer than the 12s graphic",
+      retryable: false,
+    });
+    expect(tooLong.renderer.rendered).toHaveLength(0);
+    // Every take paid for is billed, the re-takes included.
+    const takes = tooLong.generate.mock.calls.filter(([, r]) => r.kind === "voice").length;
+    expect(tooLong.usage.filter((u) => u.unit === "voice")).toHaveLength(takes);
+    expect(takes).toBeGreaterThan(4);
   });
 
   it("re-renders a stored version through render -> QA -> upload", async () => {

@@ -192,6 +192,15 @@ function fitTake(line: VoiceLine, lengthMs: number | undefined, span?: SpokenSpa
   return rate > MAX_VOICE_SPEEDUP ? undefined : { trimStartMs, restMs, spokenMs, rate };
 }
 
+/**
+ * How long a take of `lengthMs` must be heard in its beat: its speech (from the trimmed start) when measured,
+ * else the whole file; undefined when its length is unknown.
+ */
+export function voiceTakeSpeechMs(lengthMs: number | undefined, span?: SpokenSpan): number | undefined {
+  if (span) return span.endMs - Math.max(0, span.startMs - VOICE_LEAD_PAD_MS);
+  return lengthMs;
+}
+
 /** Whether a take of `lengthMs` (its speech in `span`, when measured) can be laid in `line`'s room. */
 export function voiceTakeFits(line: VoiceLine, lengthMs: number | undefined, span?: SpokenSpan): boolean {
   return fitTake(line, lengthMs, span) !== undefined;

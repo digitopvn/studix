@@ -24,8 +24,16 @@ import {
   type StoredMediaRequest,
 } from "../stored-media.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
-import { type VoiceLine, voiceLines, withVoiceover } from "../voice-lines.ts";
-import { generateVoiceTake, voiceFitScope } from "../voice-takes.ts";
+import {
+  type VoiceLine,
+  voiceLines,
+  voiceLineTrack,
+  voiceTakeFits,
+  voiceTakeSpeechMs,
+  withVoiceover,
+} from "../voice-lines.ts";
+import { type MeasuredVoiceTake, takeVoiceLine, timedAsset, voiceFitScope } from "../voice-takes.ts";
+import { cardTimings, retimedCardLengths, retimeGraphic } from "./motion-graphic-retime.ts";
 import {
   MG_STORYBOARD_STAGE,
   MotionStoryboardOutput,
@@ -112,13 +120,22 @@ const voiceoverOf = (ir: VideoIR) =>
     : undefined;
 
 /**
+ * The room any one line's take may take: every line's room together. The cards are re-timed around the
+ * takes, so a take is turned down only when it could not fit even if the other lines gave it all theirs.
+ */
+const graphicRoomMs = (lines: readonly VoiceLine[]) => lines.reduce((ms, line) => ms + line.roomMs, 0);
+
+/**
  * The script as one line per card, each read with its card's direction (hook, messages, call to action)
- * and the brand's tone of voice; the worker's media provider picks the speech model.
+ * and the brand's tone of voice; the worker's media provider picks the speech model. A take is kept (and
+ * reused) by the room of the whole graphic, since the cards are re-timed around it.
  */
 function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: StoredMediaRequest }> {
   const ir = irOf(s);
   if (!voiceoverOf(ir)) return [];
-  return voiceLines(ir).map((line, i) => ({
+  const lines = voiceLines(ir);
+  const room = graphicRoomMs(lines);
+  return lines.map((line, i) => ({
     line,
     request: {
       assetId: `voiceover-${i + 1}`,
@@ -127,7 +144,7 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
       params: { language: ir.language, instructions: line.instructions },
       keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
       maxCostCents: 0,
-      reuse: { scope: voiceFitScope(line) },
+      reuse: { scope: voiceFitScope({ roomMs: room }) },
     },
   }));
 }
@@ -232,6 +249,37 @@ function accentRequests(s: StageContext): StoredMediaRequest[] {
   return cutsOf(ir).length > 0 ? [sfxRequest(s).request, whooshRequest(s)] : [sfxRequest(s).request];
 }
 
+const ACCENT_TRACK = "sfx-accent-track";
+
+/** `ir` with the accent laid where its CTA card lands and the whoosh on its cuts, replacing any laid before. */
+function withAccent(ir: VideoIR, sfx: AssetRef, whoosh: AssetRef | undefined): VideoIR {
+  const accentAt = ctaStart(ir);
+  return {
+    ...ir,
+    audio: [
+      ...(ir.audio ?? []).filter((t) => t.id !== ACCENT_TRACK && !t.id.startsWith(WHOOSH_TRACK)),
+      ...(whoosh ? whooshTracks(ir, whoosh.id, whoosh.durationMs ?? WHOOSH_MS) : []),
+      {
+        id: ACCENT_TRACK,
+        kind: "sfx" as const,
+        assetId: sfx.id,
+        startMs: accentAt,
+        durationMs: Math.min(Math.max(1, ir.format.durationMs - accentAt), sfx.durationMs ?? SFX_MS),
+        volume: 0.6,
+      },
+    ],
+  };
+}
+
+/** `ir`, its cards re-timed, with the accent and whooshes it already had laid again on its new cuts. */
+function withAccentRelaid(ir: VideoIR): VideoIR {
+  const assetOf = (track: { assetId: string } | undefined) =>
+    track ? ir.assets.find((a) => a.id === track.assetId) : undefined;
+  const sfx = assetOf(ir.audio?.find((t) => t.id === ACCENT_TRACK));
+  if (!sfx) return ir;
+  return withAccent(ir, sfx, assetOf(ir.audio?.find((t) => t.id.startsWith(WHOOSH_TRACK))));
+}
+
 /** The graphic without its accent, and why: the accent is decoration, so a missing provider never fails the job. */
 const withoutAccent = (ir: VideoIR, reason: string) => ({
   output: { ir, warning: truncateText(`SFX accent skipped: ${reason}`, 500) },
@@ -304,25 +352,12 @@ export const motionGraphicAccentStage: StageDefinition = {
       }
     }
     const usage = whoosh ? [sfx.usage, whoosh.usage] : [sfx.usage];
-    const accentAt = sfxRequest(s).at;
-    const accentRoom = Math.max(1, ir.format.durationMs - accentAt);
     const added = whoosh ? [sfx.asset, whoosh.asset] : [sfx.asset];
-    const next = {
-      ...ir,
-      assets: [...ir.assets.filter((a) => !added.some((b) => b.id === a.id)), ...added],
-      audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "sfx-accent-track" && !t.id.startsWith(WHOOSH_TRACK)),
-        ...(whoosh ? whooshTracks(ir, whoosh.asset.id, whoosh.asset.durationMs ?? WHOOSH_MS) : []),
-        {
-          id: "sfx-accent-track",
-          kind: "sfx" as const,
-          assetId: sfx.asset.id,
-          startMs: accentAt,
-          durationMs: Math.min(accentRoom, sfx.asset.durationMs ?? SFX_MS),
-          volume: 0.6,
-        },
-      ],
-    };
+    const next = withAccent(
+      { ...ir, assets: [...ir.assets.filter((a) => !added.some((b) => b.id === a.id)), ...added] },
+      sfx.asset,
+      whoosh?.asset,
+    );
     await rm(workDir, { recursive: true, force: true });
     return {
       output: {
@@ -338,16 +373,57 @@ export const motionGraphicAccentStage: StageDefinition = {
 const VOICE_CONCURRENCY = 6;
 
 /**
+ * The graphic with its takes laid: as it is when every take fits its card, else with its cards re-timed
+ * around the takes (`retimedCardLengths`: same length, a card with a short line gives time to one with a
+ * long line), its captions and sounds moved with them. Undefined when the takes do not fit the graphic.
+ */
+function layTakes(ir: VideoIR, lines: readonly VoiceLine[], takes: readonly MeasuredVoiceTake[]) {
+  const fits = takes.every((t, i) => voiceTakeFits(lines[i] as VoiceLine, t.lengthMs, t.span));
+  let laid = { ir, lines: [...lines] };
+  if (!fits) {
+    const speech = takes.map((t) => voiceTakeSpeechMs(t.lengthMs, t.span));
+    const cards = cardTimings(ir, lines, speech);
+    const lengths = cards && retimedCardLengths(cards, ir.format.durationMs);
+    if (!lengths) return undefined;
+    const retimed = retimeGraphic(ir, lines, lengths);
+    laid = { ir: withAccentRelaid(retimed.ir), lines: retimed.lines };
+  }
+  const tracks = takes.map((t, i) =>
+    voiceLineTrack(laid.lines[i] as VoiceLine, timedAsset(t), `${t.asset.id}-track`, t.span),
+  );
+  return withVoiceover(
+    laid.ir,
+    tracks,
+    takes.map((t) => t.asset),
+  );
+}
+
+/** The VALIDATION failure of takes that, all told, are longer than the graphic. */
+function voiceTooLongError(ir: VideoIR, takes: readonly MeasuredVoiceTake[]): StudixError {
+  const speechMs = takes.reduce((ms, t) => ms + (voiceTakeSpeechMs(t.lengthMs, t.span) ?? 0), 0);
+  const seconds = ir.format.durationMs / 1000;
+  return new StudixError("VALIDATION", `The voice-over runs longer than the ${seconds}s graphic`, {
+    retryable: false,
+    details: { speechMs, totalMs: ir.format.durationMs, lines: takes.length },
+    suggestedAction: `Create the job again with a shorter script (fewer words per card) or a longer durationMs than ${ir.format.durationMs}.`,
+  });
+}
+
+/**
  * The voice-over of the script, one line per card, each read with its card's direction and laid where that
  * card's captions start, so the call to action is heard with the CTA card. Its own stage, so a new voice
- * (another speech model, new direction) costs only the voice. A take is judged on its speech, not its
- * silence, and one still too long is voiced once more, brisker (`generateVoiceTake`).
+ * (another speech model, new direction) costs only the voice. Every line is voiced and measured first (a
+ * take is judged on its speech, not its silence); when one runs past its card, the cards are re-timed
+ * around the takes (same length, captions and sounds moved with them) instead of failing. Only when the
+ * takes do not fit the graphic even read faster are the lines that ran past their cards voiced once more,
+ * brisker; the stage fails only when the voice-over is still longer than the graphic.
  */
 export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 3, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Version 4 re-times the cards around the takes.
+  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 4, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -357,25 +433,55 @@ export const motionGraphicVoiceStage: StageDefinition = {
     const ir = irOf(s);
     const planned = await voiceRequests(s);
     if (planned.length === 0) return { output: { ir } };
+    const lines = planned.map((v) => v.line);
+    const roomMs = graphicRoomMs(lines);
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
-    const generated = await mapBounded(
+    const take = (v: (typeof planned)[number], briskerOnly = false) =>
+      takeVoiceLine(s, MG_STAGES.voice, v.line, v.request, workDir, undefined, { roomMs, briskerOnly });
+    const takes = await mapBounded(
       planned,
       VOICE_CONCURRENCY,
-      (v) => generateVoiceTake(s, MG_STAGES.voice, v.line, v.request, `${v.request.assetId}-track`, workDir),
-      (g) => g.usage,
+      (v) => take(v),
+      (t) => t.usage,
     );
+    const usage = () => takes.flatMap((t) => t.usage);
+    let next = layTakes(ir, lines, takes);
+    if (!next) {
+      // Too long for the graphic even re-timed: the lines that ran past their cards are read brisker.
+      const over = planned.flatMap((v, i) =>
+        voiceTakeFits(v.line, takes[i]?.lengthMs, takes[i]?.span) ? [] : [i],
+      );
+      const paid = usage();
+      const retakes = await mapBounded(
+        over,
+        VOICE_CONCURRENCY,
+        (i) => take(planned[i] as (typeof planned)[number], true),
+        (t) => t.usage,
+      ).catch((err: unknown) => {
+        // The first takes were paid too.
+        const failed = err instanceof StageFailedAfterSpend;
+        throw new StageFailedAfterSpend(failed ? err.error : toStudixError(err), [
+          ...paid,
+          ...(failed ? err.usage : []),
+        ]);
+      });
+      over.forEach((i, k) => {
+        const first = takes[i] as MeasuredVoiceTake;
+        const brisk = retakes[k] as MeasuredVoiceTake;
+        const shorter =
+          (voiceTakeSpeechMs(brisk.lengthMs, brisk.span) ?? Number.POSITIVE_INFINITY) <
+          (voiceTakeSpeechMs(first.lengthMs, first.span) ?? Number.POSITIVE_INFINITY);
+        takes[i] = { ...(shorter ? brisk : first), usage: [...first.usage, ...brisk.usage] };
+      });
+      next = layTakes(ir, lines, takes);
+      if (!next) {
+        await rm(workDir, { recursive: true, force: true });
+        throw new StageFailedAfterSpend(voiceTooLongError(ir, takes), usage());
+      }
+    }
     await rm(workDir, { recursive: true, force: true });
-    const usage = generated.flatMap((g) => g.usage);
-    const next = await billedOnFailure(usage, () =>
-      VideoIR.parse(
-        withVoiceover(
-          ir,
-          generated.map((g) => g.track),
-          generated.map((g) => g.asset),
-        ),
-      ),
-    );
-    return { output: { ir: next }, usage };
+    const laid = next;
+    return { output: { ir: await billedOnFailure(usage(), () => VideoIR.parse(laid)) }, usage: usage() };
   },
 };
 const musicOf = (ir: VideoIR) =>

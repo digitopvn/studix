@@ -88,36 +88,55 @@ async function measureStored(
   return measure(file, s.signal);
 }
 
-export interface VoiceTake {
+/** A take of a line, measured: its asset, its length and its speech span when known. */
+export interface MeasuredVoiceTake {
   asset: AssetRef;
-  track: AudioTrack;
-  /** Every call made for the line, the turned-down take included. */
+  /** The take's length: the provider's figure, else the decoded one. */
+  lengthMs?: number;
+  span?: SpokenSpan;
+  /** Every call made for the line, a turned-down take included. */
   usage: StageUsage[];
 }
 
+export interface VoiceTake extends MeasuredVoiceTake {
+  track: AudioTrack;
+}
+
+export interface TakeVoiceLineOptions {
+  /**
+   * The room a take is judged against; the line's own by default. A pack that can re-time its beats
+   * passes more, so a take a little long for its beat is kept and its beat made longer instead.
+   */
+  roomMs?: number;
+  /** Only the brisker re-take: the first take was kept but the beats could not make room for it. */
+  briskerOnly?: boolean;
+}
+
 /**
- * Voice one line and lay it at its beat. The take is measured before it is stored, so its leading and
- * trailing silence do not count against the room. A take still too long to speed up into its room is
- * turned down (billed, never stored or reused) and the line is voiced once more with a brisker direction;
- * a second take too long fails VALIDATION with both calls billed. Cost estimates count one take per line:
- * the re-take is the exception, paid only when it is needed.
+ * Voice one line and measure it. The take is measured before it is stored, so its leading and trailing
+ * silence do not count against the room. A take still too long to speed up into the room is turned down
+ * (billed, never stored or reused) and the line is voiced once more with a brisker direction; a second take
+ * too long fails VALIDATION with both calls billed. Cost estimates count one take per line: the re-take is
+ * the exception, paid only when it is needed.
  */
-export async function generateVoiceTake(
+export async function takeVoiceLine(
   s: StageContext,
   stage: string,
   line: VoiceLine,
   request: StoredMediaRequest,
-  trackId: string,
   workDir: string,
   measure: VoiceTakeMeasure = measureVoiceTake,
-): Promise<VoiceTake> {
+  options: TakeVoiceLineOptions = {},
+): Promise<MeasuredVoiceTake> {
+  const room: VoiceLine = options.roomMs === undefined ? line : { ...line, roomMs: options.roomMs };
   const spent: StageUsage[] = [];
   let last: Record<string, unknown> = { assetId: request.assetId };
   const retake = briskerTake(request);
   try {
     // A re-take already stored (an earlier attempt of this stage, or another job voicing the same line)
     // means the first take was turned down: start from the re-take instead of paying for it again.
-    const takes = (await hasStoredOutput(s, stage, retake)) ? [retake] : [request, retake];
+    const takes =
+      options.briskerOnly || (await hasStoredOutput(s, stage, retake)) ? [retake] : [request, retake];
     for (const take of takes) {
       const probe: { checked: boolean; measured?: MeasuredTake } = { checked: false };
       const fits = async (filePath: string, output: GeneratedMedia) => {
@@ -125,8 +144,8 @@ export async function generateVoiceTake(
         probe.measured = await measure(filePath, s.signal);
         // Unmeasured, the take is judged on the length the provider reported (accepted when it reported none).
         return probe.measured
-          ? voiceTakeFits(line, probe.measured.durationMs, probe.measured)
-          : voiceTakeFits(line, output.durationMs === undefined ? undefined : Math.round(output.durationMs));
+          ? voiceTakeFits(room, probe.measured.durationMs, probe.measured)
+          : voiceTakeFits(room, output.durationMs === undefined ? undefined : Math.round(output.durationMs));
       };
       const made = await generateStoredMedia(s, stage, take, fits);
       spent.push(made.usage);
@@ -142,10 +161,14 @@ export async function generateVoiceTake(
         durationMs: lengthMs,
         ...(measured ? { speechStartMs: measured.startMs, speechEndMs: measured.endMs } : {}),
       };
-      if ("rejected" in made || !voiceTakeFits(line, lengthMs, measured)) continue;
-      // A take served from a provider cache may carry no length; the measured one still places its fade.
-      const timed = { ...made.asset, durationMs: lengthMs };
-      return { asset: made.asset, track: voiceLineTrack(line, timed, trackId, measured), usage: spent };
+      if ("rejected" in made || !voiceTakeFits(room, lengthMs, measured)) continue;
+      const span = measured ? { startMs: measured.startMs, endMs: measured.endMs } : undefined;
+      return {
+        asset: made.asset,
+        ...(lengthMs !== undefined ? { lengthMs } : {}),
+        ...(span ? { span } : {}),
+        usage: spent,
+      };
     }
   } catch (err) {
     if (spent.length === 0) throw err;
@@ -156,5 +179,27 @@ export async function generateVoiceTake(
       ...(failed ? err.usage : []),
     ]);
   }
-  throw new StageFailedAfterSpend(voiceOverrunError(line, last), spent);
+  throw new StageFailedAfterSpend(voiceOverrunError(room, last), spent);
+}
+
+/** Voice one line (`takeVoiceLine`) and lay it at its beat. */
+export async function generateVoiceTake(
+  s: StageContext,
+  stage: string,
+  line: VoiceLine,
+  request: StoredMediaRequest,
+  trackId: string,
+  workDir: string,
+  measure: VoiceTakeMeasure = measureVoiceTake,
+): Promise<VoiceTake> {
+  const take = await takeVoiceLine(s, stage, line, request, workDir, measure);
+  return { ...take, track: voiceLineTrack(line, timedAsset(take), trackId, take.span) };
+}
+
+/**
+ * The take's asset with its length: a take served from a provider cache may carry none, and the measured
+ * one still places its fade.
+ */
+export function timedAsset(take: MeasuredVoiceTake): AssetRef {
+  return { ...take.asset, durationMs: take.lengthMs };
 }
