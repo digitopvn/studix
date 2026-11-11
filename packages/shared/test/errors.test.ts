@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { isErrorCode, StudixError, toStudixError } from "../src/index.ts";
+import { isErrorCode, StudixError, schemaFailure, toStudixError } from "../src/index.ts";
 
 describe("StudixError", () => {
   it("defaults retryable by code and serializes to a stable payload", () => {
@@ -35,39 +35,62 @@ describe("StudixError", () => {
     expect(toStudixError(42).details).toEqual({ thrown: "42" });
   });
 
-  it("turns a thrown zod error into a one-line, actionable Studix defect", () => {
-    const schema = z.object({ audio: z.object({ tracks: z.array(z.number()).max(2) }), name: z.string() });
+  it("turns a zod error thrown inside a stage into one actionable line", () => {
+    const Ir = z.object({
+      audio: z.array(z.string()).max(2),
+      scenes: z.array(z.object({ text: z.string() })),
+    });
     const thrown = (() => {
       try {
-        schema.parse({ audio: { tracks: [1, 2, 3] }, name: 7 });
-      } catch (e) {
-        return e;
+        Ir.parse({ audio: ["a", "b", "c"], scenes: [{ text: 1 }] });
+      } catch (err) {
+        return err;
       }
     })();
     const error = toStudixError(thrown);
     expect(error.code).toBe("INTERNAL");
     expect(error.retryable).toBe(false);
-    expect(error.message).toMatch(/^Studix produced invalid data at audio\.tracks: .+ \(\+1 more\)$/);
+    expect(error.message).toBe(
+      "Schema check failed at /audio: Too big: expected array to have <=2 items (+1 more)",
+    );
     expect(error.message).not.toContain("\n");
     expect(error.suggestedAction).toContain("Studix defect");
+    expect(error.suggestedAction).toContain("shorter or simpler brief");
     expect(error.details).toEqual({
-      issues: [
-        { path: "audio.tracks", code: "too_big", message: expect.any(String) },
-        { path: "name", code: "invalid_type", message: expect.any(String) },
-      ],
+      kind: "schema",
       issueCount: 2,
+      issues: [
+        {
+          path: "/audio",
+          code: "schema",
+          constraint: "too_big",
+          message: "Too big: expected array to have <=2 items",
+        },
+        {
+          path: "/scenes/0/text",
+          code: "schema",
+          constraint: "invalid_type",
+          message: "Invalid input: expected string, received number",
+        },
+      ],
+    });
+    // A non-INTERNAL fallback keeps its own code and retry policy.
+    expect(toStudixError(thrown, "PROVIDER_ERROR")).toMatchObject({
+      code: "PROVIDER_ERROR",
+      retryable: true,
     });
   });
 
-  it("keeps a caller's own code for a schema failure and caps the issues it lists", () => {
-    const thrown = z.array(z.string()).safeParse([1, 2, 3, 4, 5, 6, 7]).error;
-    const error = toStudixError(thrown, "PROVIDER_ERROR");
-    expect(error.code).toBe("PROVIDER_ERROR");
-    expect(error.retryable).toBe(true);
-    expect(error.message).toMatch(/^Received invalid data at 0: .+ \(\+6 more\)$/);
-    expect(error.suggestedAction).toBeUndefined();
-    expect(error.details?.issues).toHaveLength(5);
-    expect(error.details?.issueCount).toBe(7);
+  it("compacts issues handed in by a caller, such as a template's IR validation", () => {
+    const error = schemaFailure("INTERNAL", "The template produced an invalid IR", [
+      { path: "", code: "duplicate_id", message: "duplicate\n  id" },
+      { path: "/audio", code: "schema", constraint: "too_big", message: "x".repeat(500) },
+    ]);
+    expect(error.message).toBe("The template produced an invalid IR at (root): duplicate id (+1 more)");
+    const issues = error.details?.issues as { path: string; message: string }[];
+    expect(issues[0]?.path).toBe("");
+    expect(issues[1]?.message).toHaveLength(200);
+    expect(error.suggestedAction).toContain("shorter or simpler brief");
   });
 
   it("guards error codes", () => {

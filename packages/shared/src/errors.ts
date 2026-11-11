@@ -87,58 +87,92 @@ export function isErrorCode(value: unknown): value is ErrorCode {
   return typeof value === "string" && (ERROR_CODES as readonly string[]).includes(value);
 }
 
-/** Issues kept on a schema failure: enough to locate the defect without flooding an agent's context. */
-const MAX_SCHEMA_ISSUES = 5;
+/** Suggested action for an INTERNAL error that a Studix defect, not the caller's input, caused. */
+export const STUDIX_DEFECT_ACTION =
+  "This is a Studix defect, not a problem with your request; retrying the same request fails the same way. Report the job id to the Studix team.";
 
-interface SchemaIssue {
+/** Extra hint when a size or count limit tripped: a smaller request may stay under it until the fix lands. */
+const SIZE_LIMIT_HINT = " Until it is fixed, a shorter or simpler brief may stay under the limit.";
+
+/** At most this many schema issues are kept in `details.issues`, so the payload stays small. */
+const MAX_SCHEMA_ISSUES = 5;
+const MAX_ISSUE_MESSAGE = 200;
+
+/**
+ * One schema issue: RFC 6901 JSON pointer (`""` is the root), an issue code, an optional constraint
+ * (the zod issue code, e.g. `too_big`) and a message.
+ */
+export interface SchemaIssue {
   path: string;
-  code?: string;
+  code: string;
+  constraint?: string;
   message: string;
 }
 
-/** A thrown zod error, matched by shape so a second zod copy in the bundle is still recognised. */
-function schemaIssues(err: Error): SchemaIssue[] | undefined {
-  const issues = (err as { issues?: unknown }).issues;
-  if (!/^\$?ZodError$/.test(err.name) || !Array.isArray(issues) || issues.length === 0) return undefined;
-  return issues.map((raw) => {
-    const issue = (raw ?? {}) as { path?: unknown; code?: unknown; message?: unknown };
-    const path = Array.isArray(issue.path) ? issue.path.map(String).join(".") : "";
-    return {
-      path: path || "(root)",
-      ...(typeof issue.code === "string" ? { code: issue.code } : {}),
-      message: typeof issue.message === "string" ? issue.message : "invalid value",
-    };
+/** RFC 6901 JSON pointer for a property path; the empty path is the root, `""`. */
+export function toPointer(path: ReadonlyArray<PropertyKey>): string {
+  if (path.length === 0) return "";
+  return `/${path.map((p) => String(p).replace(/~/g, "~0").replace(/\//g, "~1")).join("/")}`;
+}
+
+/**
+ * Read the issues of a zod error without importing zod's class, so a second zod copy still matches.
+ * Returns undefined for anything that is not a zod error.
+ */
+function schemaIssuesOf(err: Error): SchemaIssue[] | undefined {
+  if (err.name !== "ZodError" && err.name !== "$ZodError") return undefined;
+  const raw: unknown = (err as { issues?: unknown }).issues;
+  if (!Array.isArray(raw)) return undefined;
+  return raw.map((issue: { path?: unknown; code?: unknown; message?: unknown }) => ({
+    path: toPointer(Array.isArray(issue.path) ? issue.path : []),
+    code: "schema",
+    constraint: String(issue.code ?? "invalid"),
+    message: String(issue.message ?? "invalid value"),
+  }));
+}
+
+/** Keep a client-facing issue message on one short line. */
+function compactMessage(message: string): string {
+  const line = message.replace(/\s+/g, " ").trim();
+  return line.length > MAX_ISSUE_MESSAGE ? `${line.slice(0, MAX_ISSUE_MESSAGE - 1)}…` : line;
+}
+
+/**
+ * A one-line error for a failed schema check, instead of zod's multi-line JSON dump: the first issue's
+ * path and constraint in the message, the first few issues in `details.issues`. An INTERNAL one tells
+ * the caller it is a Studix defect, and hints at a smaller brief when a size limit tripped.
+ */
+export function schemaFailure(
+  code: ErrorCode,
+  what: string,
+  issues: readonly SchemaIssue[],
+  cause?: unknown,
+): StudixError {
+  const compact = issues.map((i) => ({ ...i, message: compactMessage(i.message) }));
+  const [first] = compact;
+  const more = compact.length > 1 ? ` (+${compact.length - 1} more)` : "";
+  const message = first ? `${what} at ${first.path || "(root)"}: ${first.message}${more}` : what;
+  const sizeLimit = compact.some((i) => i.constraint === "too_big" || i.constraint === "too_small");
+  return new StudixError(code, message, {
+    cause,
+    details: { kind: "schema", issueCount: compact.length, issues: compact.slice(0, MAX_SCHEMA_ISSUES) },
+    ...(code === "INTERNAL"
+      ? { suggestedAction: STUDIX_DEFECT_ACTION + (sizeLimit ? SIZE_LIMIT_HINT : ""), retryable: false }
+      : {}),
   });
 }
 
 /**
- * A schema rejected data Studix handled (e.g. a stage built an invalid IR). Report it as one line with the
- * failing path, never as the multi-line zod dump. Only an INTERNAL failure is named a Studix defect; a caller
- * that classifies it otherwise (e.g. PROVIDER_ERROR) keeps its code's own retry policy and wording.
+ * Wrap anything thrown into a StudixError; existing StudixErrors pass through unchanged. A zod error
+ * becomes a one-line message plus compact `details.issues`, never the raw multi-line dump.
  */
-function schemaFailure(err: Error, issues: SchemaIssue[], fallback: ErrorCode): StudixError {
-  const [first] = issues as [SchemaIssue, ...SchemaIssue[]];
-  const more = issues.length > 1 ? ` (+${issues.length - 1} more)` : "";
-  const where = `invalid data at ${first.path}: ${first.message}${more}`;
-  const details = { issues: issues.slice(0, MAX_SCHEMA_ISSUES), issueCount: issues.length };
-  if (fallback !== "INTERNAL") return new StudixError(fallback, `Received ${where}`, { details, cause: err });
-  return new StudixError("INTERNAL", `Studix produced ${where}`, {
-    retryable: false,
-    suggestedAction:
-      "This is a Studix defect, not a mistake in your request; retrying it unchanged fails the same way. Report it to Studix with the job or trace id. If a long brief led to it, a shorter one may avoid the limit meanwhile.",
-    details,
-    cause: err,
-  });
-}
-
-/** Wrap anything thrown into a StudixError; existing StudixErrors pass through unchanged. */
 export function toStudixError(err: unknown, fallback: ErrorCode = "INTERNAL"): StudixError {
   if (err instanceof StudixError) return err;
   if (err instanceof Error) {
-    const issues = schemaIssues(err);
-    if (issues) return schemaFailure(err, issues, fallback);
     if (err.name === "AbortError") return new StudixError("CANCELLED", err.message, { cause: err });
     if (err.name === "TimeoutError") return new StudixError("TIMEOUT", err.message, { cause: err });
+    const issues = schemaIssuesOf(err);
+    if (issues) return schemaFailure(fallback, "Schema check failed", issues, err);
     return new StudixError(fallback, err.message, { cause: err });
   }
   return new StudixError(fallback, typeof err === "string" ? err : "Unknown error", {

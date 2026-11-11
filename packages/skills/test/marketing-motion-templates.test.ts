@@ -1,5 +1,5 @@
 import { StudixError } from "@studix/shared";
-import { type VideoIR, validateVideoIR } from "@studix/video-ir";
+import { type VideoIR, validateVideoIR, withPromptFormat } from "@studix/video-ir";
 import { describe, expect, it } from "vitest";
 import {
   captionCues,
@@ -370,6 +370,13 @@ describe("motion graphic", () => {
     expect(resolveMotionStyle({ prompt: "zzzz qqqq" }).id).toBe("kinetic-typography");
     const style = resolveMotionStyle({ prompt: "x", tone: ["editorial"] });
     expect(style.id).toEqual(expect.any(String));
+  });
+
+  it("renders the length and frame shape the prompt states", () => {
+    const prompt =
+      "A 60-second 16:9 (1920x1080) English motion-graphic video about Lá Mây. Exactly 60 seconds.";
+    const ir = motionGraphicTemplate(withPromptFormat({ prompt }));
+    expect(ir.format).toMatchObject({ aspectRatio: "16:9", width: 1920, height: 1080, durationMs: 60_000 });
   });
 
   it("keeps the style profile's name off screen when the brief has no brand or title", () => {

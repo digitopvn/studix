@@ -1,4 +1,4 @@
-import { StudixError } from "@studix/shared";
+import { StudixError, schemaFailure } from "@studix/shared";
 import {
   ASPECT_RATIO_SIZES,
   type AspectRatio,
@@ -459,9 +459,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
   };
   const result = validateVideoIR(ir);
   if (!result.ok) {
-    throw new StudixError("INTERNAL", "The motion-graphic template produced an invalid IR", {
-      details: { issues: result.issues.slice(0, 10) },
-    });
+    throw schemaFailure("INTERNAL", "The motion-graphic template produced an invalid IR", result.issues);
   }
   return result.value;
 }
