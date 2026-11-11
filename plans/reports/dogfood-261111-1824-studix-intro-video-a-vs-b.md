@@ -77,5 +77,5 @@ Kết luận: A vẫn hơn rõ về độ "film" (UI thật, chiều sâu, khớ
 | #392, #393 | #411 | merged, deploy |
 | #412 | #414 | merged, deploy |
 | #420 | #422 | merged, deploy |
-| #431 | #432 | đang chờ CI |
+| #431 | #432 | merged, deploy |
 | #397 (cue mồ côi), #426 (CI apt), #351 (agent.runtime "none") | — | còn mở |
