@@ -23,7 +23,8 @@ export const VideoIR = z.object({
   assets: z.array(AssetRef).max(200),
   scenes: z.array(Scene).min(1).max(100),
   timeline: Timeline,
-  audio: z.array(AudioTrack).max(16).optional(),
+  /** Voice lines, cut SFX, accents and music of a long graphic; a film keeps its own lower cap. */
+  audio: z.array(AudioTrack).max(32).optional(),
   captions: Captions.optional(),
   /** Free-form, non-semantic metadata (template id, planner info). Renderers must ignore it. */
   metadata: z.record(z.string(), z.unknown()).optional(),
