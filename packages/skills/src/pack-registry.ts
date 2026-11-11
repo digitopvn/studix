@@ -51,6 +51,11 @@ export interface WorkflowPack {
    * refused up front instead of failing a queued job. Throws a StudixError; must be pure and free.
    */
   checkBrief?: (brief: unknown) => void;
+  /**
+   * True when a new job of this pack reaches an agent stage that has no template fallback, so a job created
+   * without an agent fails there unless a default model applies to its caller.
+   */
+  needsAgentModel?: boolean;
 }
 
 export interface PackRegistry {
