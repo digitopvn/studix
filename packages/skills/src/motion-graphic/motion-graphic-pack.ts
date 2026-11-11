@@ -341,8 +341,11 @@ export const motionGraphicAccentStage: StageDefinition = {
   },
 };
 
-/** Lines voiced at once: every line of a short graphic, a bounded share of a long one's twelve. */
-const VOICE_CONCURRENCY = 6;
+/**
+ * Lines voiced at once, like the other packs' media batches: under a speech provider's concurrent-request cap
+ * (ElevenLabs allows 5 on common plans), so a long graphic's twelve lines do not fail the stage with 429s.
+ */
+const VOICE_CONCURRENCY = 3;
 
 /**
  * What the voice stage needs to cut the cards again: the brief, the storyboard and the payload's assets.

@@ -73,6 +73,23 @@ describe("caption chunks", () => {
     ]);
     expect(captionCues("", 0, 1000)).toEqual([]);
   });
+
+  it("never leaves a one-word or sub-600 ms cue: the remainder joins the cue before it", () => {
+    const line = "Here is the one thing every founder should know about.";
+    expect(chunkCaption(line)).toEqual([line]);
+    const cues = captionCues(line, 32_000, 4500);
+    expect(cues).toEqual([{ startMs: 32_000, endMs: 36_500, text: line }]);
+    // A short clause folds into its neighbour while the two fit one cue; past that, they share the time.
+    expect(captionCues("Xin chào, hôm nay", 0, 2000)).toEqual([
+      { startMs: 0, endMs: 2000, text: "Xin chào, hôm nay" },
+    ]);
+    const busy = captionCues("Xin chào, hôm nay mình kể bạn nghe một chuyện nhỏ thôi.", 0, 3572);
+    expect(busy.map((c) => c.text)).toEqual(["Xin chào,", "hôm nay mình kể bạn nghe một chuyện nhỏ thôi."]);
+    expect(busy.map((c) => [c.startMs, c.endMs])).toEqual([
+      [0, 600],
+      [600, 3572],
+    ]);
+  });
 });
 
 describe("marketing script", () => {

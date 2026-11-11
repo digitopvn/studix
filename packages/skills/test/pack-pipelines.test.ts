@@ -171,7 +171,20 @@ function harness(
   const real = media.generate.bind(media);
   const listed = media.capabilities.bind(media);
   media.capabilities = async () => (await listed()).filter((c) => !options.unlistedKinds?.includes(c.kind));
+  // Voice takes in flight at once, as a provider with a concurrent-request cap would count them.
+  const voices = { inFlight: 0, peak: 0 };
   media.generate = async (c, request) => {
+    if (request.kind !== "voice") return generateChecked(c, request);
+    voices.peak = Math.max(voices.peak, ++voices.inFlight);
+    try {
+      // Yield so the stage's other lanes can start their takes before this one settles.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return await generateChecked(c, request);
+    } finally {
+      voices.inFlight--;
+    }
+  };
+  const generateChecked: typeof media.generate = async (c, request) => {
     if (options.unavailableKinds?.includes(request.kind)) {
       throw new StudixError("UNAVAILABLE", "multix is missing a key or setting: ELEVENLABS_API_KEY", {
         retryable: false,
@@ -298,7 +311,20 @@ function harness(
   }
   /** The outcome with the job's failure, so a failed expectation says why the job failed. */
   const failureOf = (outcome: unknown) => ({ outcome, failure: queue.fail.mock.calls.at(-1)?.[2] });
-  return { run, failureOf, jobs, projects, renders, storage, renderer, generate, usage, qaCalls, queue };
+  return {
+    run,
+    failureOf,
+    jobs,
+    projects,
+    renders,
+    storage,
+    renderer,
+    generate,
+    usage,
+    qaCalls,
+    queue,
+    voices,
+  };
 }
 
 async function newProject(h: ReturnType<typeof harness>, workflowTemplate: string, b: unknown = brief) {
@@ -1017,6 +1043,10 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     const ir = h.renderer.rendered[0] as VideoIR;
     expect(ir.metadata?.storyboard).toBe("agent");
     expect(ir.scenes).toHaveLength(12);
+    // Twelve lines, voiced a few at a time: never more than a provider's concurrent cap (ElevenLabs allows 5).
+    expect(h.generate.mock.calls.filter(([, r]) => r.kind === "voice")).toHaveLength(12);
+    expect(h.voices.peak).toBeGreaterThan(1);
+    expect(h.voices.peak).toBeLessThanOrEqual(3);
     // Eleven cuts: ten whooshes from one generated SFX, and the accent on the cut into the CTA card.
     expect(h.generate.mock.calls.filter(([, r]) => r.kind === "sfx")).toHaveLength(2);
     expect((ir.audio ?? []).filter((t) => t.assetId === "sfx-whoosh")).toHaveLength(10);
