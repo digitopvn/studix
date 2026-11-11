@@ -16,6 +16,7 @@ const CLAUSE_END = /[.,;:!?…]$/;
  * than `MIN_CAPTION_WORDS` stays with the chunk before it, which may then run one word over the limit.
  */
 export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string[] {
+  maxWords = Math.max(1, Math.floor(maxWords));
   const words = text.normalize("NFC").trim().split(/\s+/).filter(Boolean);
   const chunks: string[] = [];
   let start = 0;
@@ -41,13 +42,14 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
 /**
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
  * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. A cue
- * shorter than `MIN_CAPTION_MS` joins the cue before it (the first one, the cue after it).
+ * shorter than `MIN_CAPTION_MS` joins its neighbour when the two stay within one word of `maxWords`;
+ * otherwise the boundary between them moves so each stays up that long when the span allows.
  */
 export function captionCues(
   text: string,
   startMs: number,
   durationMs: number,
-  maxWords?: number,
+  maxWords = MAX_CAPTION_WORDS,
 ): CaptionCue[] {
   const chunks = chunkCaption(text, maxWords);
   // Timed by how long each chunk takes to say, so a chunk holding "AI-native" stays up while it is read.
@@ -62,17 +64,30 @@ export function captionCues(
     const to = startMs + Math.round((durationMs * words) / total);
     if (to > from) cues.push({ startMs: from, endMs: to, text: chunk });
   }
-  return mergeShortCues(cues);
+  return mergeShortCues(cues, maxWords);
 }
 
-/** Folds every cue shorter than `MIN_CAPTION_MS` into a neighbour, keeping the span covered end to end. */
-function mergeShortCues(cues: CaptionCue[]): CaptionCue[] {
+/**
+ * Gives every cue at least `MIN_CAPTION_MS` where the span allows, keeping it covered end to end: a short
+ * cue joins its neighbour when the joined text stays within one word of `maxWords` (the most a chunk may
+ * hold), else the neighbours share the time so neither overflows the frame's one or two lines.
+ */
+function mergeShortCues(cues: CaptionCue[], maxWords: number): CaptionCue[] {
   const out: CaptionCue[] = [];
   for (const cue of cues) {
     const prev = out.at(-1);
-    if (prev && (cue.endMs - cue.startMs < MIN_CAPTION_MS || prev.endMs - prev.startMs < MIN_CAPTION_MS)) {
+    if (!prev || (cue.endMs - cue.startMs >= MIN_CAPTION_MS && prev.endMs - prev.startMs >= MIN_CAPTION_MS)) {
+      out.push(cue);
+    } else if (wordCount(prev.text) + wordCount(cue.text) <= Math.max(1, maxWords) + 1) {
       out[out.length - 1] = { startMs: prev.startMs, endMs: cue.endMs, text: `${prev.text} ${cue.text}` };
-    } else out.push(cue);
+    } else {
+      const lo = prev.startMs + MIN_CAPTION_MS;
+      const hi = cue.endMs - MIN_CAPTION_MS;
+      const at =
+        lo <= hi ? Math.min(hi, Math.max(lo, cue.startMs)) : Math.round((prev.startMs + cue.endMs) / 2);
+      out[out.length - 1] = { ...prev, endMs: at };
+      out.push({ ...cue, startMs: at });
+    }
   }
   return out;
 }

@@ -79,12 +79,16 @@ describe("caption chunks", () => {
     expect(chunkCaption(line)).toEqual([line]);
     const cues = captionCues(line, 32_000, 4500);
     expect(cues).toEqual([{ startMs: 32_000, endMs: 36_500, text: line }]);
-    // A cue too short to read folds into its neighbour, and the span stays covered end to end.
-    const quick = captionCues("một hai ba bốn năm sáu bảy tám chín mười", 0, 1000, 5);
-    expect(quick).toEqual([{ startMs: 0, endMs: 1000, text: "một hai ba bốn năm sáu bảy tám chín mười" }]);
-    const long = captionCues("một hai ba bốn năm sáu bảy tám chín mười mười một", 0, 3000, 3);
-    expect(long.every((c) => wordCount(c.text) >= 2 && c.endMs - c.startMs >= 600)).toBe(true);
-    expect(long.at(-1)?.endMs).toBe(3000);
+    // A short clause folds into its neighbour while the two fit one cue; past that, they share the time.
+    expect(captionCues("Xin chào, hôm nay", 0, 2000)).toEqual([
+      { startMs: 0, endMs: 2000, text: "Xin chào, hôm nay" },
+    ]);
+    const busy = captionCues("Xin chào, hôm nay mình kể bạn nghe một chuyện nhỏ thôi.", 0, 3572);
+    expect(busy.map((c) => c.text)).toEqual(["Xin chào,", "hôm nay mình kể bạn nghe một chuyện nhỏ thôi."]);
+    expect(busy.map((c) => [c.startMs, c.endMs])).toEqual([
+      [0, 600],
+      [600, 3572],
+    ]);
   });
 });
 
