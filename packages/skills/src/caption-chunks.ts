@@ -3,12 +3,16 @@ import type { CaptionCue } from "@studix/video-ir";
 /** Longest caption cue, in words: a burned caption on a vertical frame stays one or two short lines. */
 export const MAX_CAPTION_WORDS = 9;
 
+/** Shortest caption cue on screen: a shorter one flashes past before it can be read. */
+export const MIN_CAPTION_MS = 600;
+
 const CLAUSE_END = /[.,;:!?…]$/;
 
 /**
  * Split a spoken line into caption chunks of at most `maxWords` words. A chunk ends at clause punctuation
  * when one falls inside the limit, so a cue never breaks a short clause in two; Vietnamese words (one
- * syllable each, diacritics intact) are counted like any other whitespace-separated word.
+ * syllable each, diacritics intact) are counted like any other whitespace-separated word. No chunk after
+ * the first is a single word: a one-word tail ("about.") takes the word before it along.
  */
 export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string[] {
   const words = text.normalize("NFC").trim().split(/\s+/).filter(Boolean);
@@ -24,6 +28,8 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
           break;
         }
       }
+      // A one-word tail would flash alone: hand it this chunk's last word, or take it in when two words remain.
+      if (words.length - end === 1) end = end - start > 2 ? end - 1 : words.length;
     }
     chunks.push(words.slice(start, end).join(" "));
     start = end;
@@ -33,7 +39,8 @@ export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string
 
 /**
  * Caption cues for one spoken line placed in `[startMs, startMs + durationMs)`: chunked with
- * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds.
+ * `chunkCaption` and timed in proportion to each chunk's `spokenLength`, in whole milliseconds. A cue
+ * shorter than `MIN_CAPTION_MS` joins its neighbour (`mergeShortCues`).
  */
 export function captionCues(
   text: string,
@@ -54,7 +61,37 @@ export function captionCues(
     const to = startMs + Math.round((durationMs * words) / total);
     if (to > from) cues.push({ startMs: from, endMs: to, text: chunk });
   }
-  return cues;
+  return mergeShortCues(cues, maxWords ?? MAX_CAPTION_WORDS);
+}
+
+/**
+ * Joins each cue shorter than `MIN_CAPTION_MS` to the cue before it (the first to the one after it). When
+ * the two together pass `maxWords`, their words are split evenly between them instead, timed as before.
+ */
+function mergeShortCues(cues: CaptionCue[], maxWords: number): CaptionCue[] {
+  const out: CaptionCue[] = [];
+  const short = (c: CaptionCue) => c.endMs - c.startMs < MIN_CAPTION_MS;
+  for (const cue of cues) {
+    const prev = out.at(-1);
+    if (!prev || !(short(cue) || (out.length === 1 && short(prev)))) {
+      out.push(cue);
+      continue;
+    }
+    const words = `${prev.text} ${cue.text}`.split(" ");
+    if (words.length <= maxWords) {
+      out[out.length - 1] = { startMs: prev.startMs, endMs: cue.endMs, text: words.join(" ") };
+      continue;
+    }
+    const half = Math.ceil(words.length / 2);
+    const first = words.slice(0, half).join(" ");
+    const second = words.slice(half).join(" ");
+    const a = Math.max(spokenLength(first), 0.1);
+    const b = Math.max(spokenLength(second), 0.1);
+    const mid = prev.startMs + Math.round(((cue.endMs - prev.startMs) * a) / (a + b));
+    out[out.length - 1] = { startMs: prev.startMs, endMs: mid, text: first };
+    out.push({ startMs: mid, endMs: cue.endMs, text: second });
+  }
+  return out;
 }
 
 /** Whitespace-separated word count (a Vietnamese syllable is a word). */

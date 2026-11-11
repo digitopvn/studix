@@ -8,6 +8,7 @@ import {
   HOOK_MAX_MS,
   irVariants,
   MAX_CAPTION_WORDS,
+  MIN_CAPTION_MS,
   marketingScript,
   marketingVideoTemplate,
   motionGraphicTemplate,
@@ -72,6 +73,27 @@ describe("caption chunks", () => {
       { startMs: 2000, endMs: 3000, text: "sáu bảy tám chín mười" },
     ]);
     expect(captionCues("", 0, 1000)).toEqual([]);
+  });
+
+  it("never leaves a one-word tail or a cue too short to read", () => {
+    const line =
+      "We turn every product brief into a launch video in minutes, start to finish, no editor needed about.";
+    for (const max of [3, 4, 5, 9]) {
+      const chunks = chunkCaption(line, max);
+      expect(chunks.slice(1).every((c) => wordCount(c) >= 2 && wordCount(c) <= max)).toBe(true);
+      expect(chunks.join(" ")).toBe(line);
+    }
+    expect(chunkCaption("one two three four five six seven eight nine about.")).toEqual([
+      "one two three four five six seven eight",
+      "nine about.",
+    ]);
+    // A two-word tail 400 ms long: it joins the cue before it, or shares its words when both cannot fit.
+    const line11 = "một hai ba bốn năm sáu bảy tám chín mười mốt";
+    expect(captionCues(line11, 0, 2200, 11)).toEqual([{ startMs: 0, endMs: 2200, text: line11 }]);
+    expect(captionCues(line11, 0, 2200, 9)).toEqual([
+      { startMs: 0, endMs: 1200, text: "một hai ba bốn năm sáu" },
+      { startMs: 1200, endMs: 2200, text: "bảy tám chín mười mốt" },
+    ]);
   });
 });
 
