@@ -275,7 +275,8 @@ một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm t
 ("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
 thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này.
 Caption burned chia mỗi lời đọc thành cue tối đa chín từ, ngắt ở dấu câu khi có, và định thời theo độ dài
-đọc; không cue nào chỉ một từ: từ dư cuối dòng gộp vào cue liền trước. Cue ngắn hơn 600 ms gộp vào cue
+đọc; không cue nào chỉ một từ: từ dư cuối dòng gộp vào cue liền trước. Số điện thoại không bị cắt ngang
+hai cue: cue mới bắt đầu từ số điện thoại, trừ khi cách đó để lại cue một từ. Cue ngắn hơn 600 ms gộp vào cue
 bên cạnh khi tổng không quá mười từ, nếu không thì hai cue chia lại thời gian để mỗi cue hiện ít nhất 600 ms
 (`captionCues`).
 Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12

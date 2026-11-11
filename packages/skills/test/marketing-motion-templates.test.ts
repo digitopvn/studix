@@ -74,6 +74,21 @@ describe("caption chunks", () => {
     expect(captionCues("", 0, 1000)).toEqual([]);
   });
 
+  it("keeps a phone number in one cue", () => {
+    const line = "Đặt hàng ngay hôm nay qua hotline 0901 234 567 để nhận quà tặng";
+    for (const durationMs of [1500, 2500, 3650]) {
+      expect(captionCues(line, 0, durationMs).map((c) => c.text)).toEqual([
+        "Đặt hàng ngay hôm nay qua hotline",
+        "0901 234 567 để nhận quà tặng",
+      ]);
+    }
+    expect(chunkCaption("Gọi ngay 0901 234 567 hôm nay nhé bạn", 4)).toEqual([
+      "Gọi ngay",
+      "0901 234 567 hôm",
+      "nay nhé bạn",
+    ]);
+  });
+
   it("never leaves a one-word or sub-600 ms cue: the remainder joins the cue before it", () => {
     const line = "Here is the one thing every founder should know about.";
     expect(chunkCaption(line)).toEqual([line]);
