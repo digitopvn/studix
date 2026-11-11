@@ -399,9 +399,10 @@ describe("motion graphic", () => {
     expect(validateVideoIR(ir).ok).toBe(true);
     const ink = (sceneId: string, shotId: string) =>
       ir.scenes.find((s) => s.id === sceneId)?.shots.find((s) => s.id === shotId)?.style?.color;
-    // Dark green primary: the cream background colour, not the near-black foreground or the orange accent.
-    expect(ir.scenes.find((s) => s.id === "message-1")?.background?.color).toBe("primary");
-    expect(ink("message-1", "message-1-text")).toBe("background");
+    // One base for every card; the dark green primary is kept for the call to action, where its ink is
+    // the cream background colour, not the near-black foreground or the orange accent.
+    expect(ir.scenes.find((s) => s.id === "message-1")?.background?.color).toBe("background");
+    expect(ink("message-1", "message-1-text")).toBe("foreground");
     expect(ir.scenes.find((s) => s.id === "cta")?.background?.color).toBe("primary");
     expect(ink("cta", "cta-text")).toBe("background");
     expect(ink("cta", "cta-logo")).toBe("background");

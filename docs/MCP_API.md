@@ -228,7 +228,11 @@ Behavior notes:
   seconds, a generated voice-over, a whoosh on every cut, one SFX accent where
   the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
-  for one. A script derived from the brief (hook, messages, call to action) is
+  for one. Each storyboard beat may pick a `layout` with short `items` (a typed
+  prompt, code lines, wired chips, a ticking checklist, a rolling counter, a
+  row of cards, brand swatches or a big stat) drawn under its headline; items
+  that do not fit drop that beat back to a headline card. Cards share the
+  style's background, and the brand colour is kept for the call to action. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
   longest spoken lines are shortened. The hook and call-to-action cards and the
   on-screen text are kept, but their spoken text may be shortened, the call to

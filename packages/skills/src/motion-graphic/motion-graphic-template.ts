@@ -13,6 +13,7 @@ import {
   type Scene,
   type SceneTransition,
   type Shot,
+  type ShotLayout,
   unwrapValidation,
   type VideoIR,
   validateCreativeBrief,
@@ -28,16 +29,19 @@ import {
   voiceoverWordBudget,
 } from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
+import { beatLayout } from "./motion-graphic-layouts.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 5;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 6;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
 const DEFAULT_STYLE = "kinetic-typography";
 const FPS = 30;
-const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 34 };
+const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 28 };
+/** A headline over a layout device is set smaller, so its lines hold more. */
+const LAYOUT_LINE_CHARS: Record<AspectRatio, number> = { "9:16": 26, "1:1": 30, "16:9": 40 };
 
 const words = (text: string) =>
   text
@@ -85,6 +89,8 @@ interface Line {
   enter?: MotionPreset;
   /** Relative length of the card (storyboard weight); even split when absent. */
   weight?: number;
+  /** Device the storyboard drew under the headline; absent for a plain headline card. */
+  layout?: ShotLayout;
 }
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
@@ -304,11 +310,20 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     MOTION_STYLE_PROFILES.find((p) => p.id === storyboard?.styleProfile) ?? resolveMotionStyle(brief);
   const motion = motionFor(style.energy);
   const lines: Line[] = storyboard
-    ? storyboard.beats.map((b) => ({
+    ? storyboard.beats.map((b, i) => ({
         onScreen: b.onScreen,
         ...(brief.voiceover === false ? {} : { voiceover: b.voiceover }),
         enter: b.enter,
         weight: b.weight,
+        ...(i === storyboard.beats.length - 1
+          ? {}
+          : {
+              layout: beatLayout(
+                b.layout,
+                b.items,
+                brief.brand?.palette ?? { primary: style.palette.accent, ...style.palette },
+              ),
+            }),
       }))
     : linesOf(brief, cta, totalMs, language).slice(0, 8);
   const voiceover = lines
@@ -369,7 +384,9 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       cues.push(...captionCues(line.voiceover, startAt + pad, durationMs - pad - tail));
     }
     const id = i === 0 ? "hook" : i === last ? "cta" : `message-${i}`;
-    const fill = i % 2 === 0 ? "background" : "primary";
+    // One base for the whole graphic (the style's background); the brand colour is kept for the call to
+    // action, where the emphasis belongs, instead of alternating mechanically card by card.
+    const fill = i === last ? "primary" : "background";
     const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
     if (i === last) {
@@ -405,6 +422,24 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         },
         animation: { enter, durationMs: 400 },
       });
+    } else if (line.layout) {
+      // The device's own choreography is the entrance, so the card itself only fades in.
+      shots.push({
+        id: `${id}-text`,
+        type: i === 0 ? "title" : "text",
+        startMs: 0,
+        durationMs,
+        text: breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio]).slice(0, i === 0 ? 160 : 500),
+        layout: line.layout,
+        style: {
+          textStyle: "heading",
+          color: inkOn(brand.palette, fill, "foreground"),
+          align: "center",
+          region: "middle",
+          ...(aspectRatio === "16:9" ? { emphasis: "high" as const } : {}),
+        },
+        animation: { enter: "fade", exit: motion.exit, durationMs: 300 },
+      });
     } else {
       shots.push({
         id: `${id}-text`,
@@ -413,7 +448,8 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         durationMs,
         text: breakLines(line.onScreen, chars).slice(0, i === 0 ? 160 : 500),
         style: {
-          textStyle: i === 0 ? "display" : "heading",
+          // Landscape has room: every headline card is set at display size there.
+          textStyle: i === 0 || aspectRatio === "16:9" ? "display" : "heading",
           color: inkOn(brand.palette, fill, "foreground"),
           align: "center",
           region: "middle",

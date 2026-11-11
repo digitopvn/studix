@@ -59,7 +59,7 @@ export function assignLanes(shots: readonly Shot[]): Shot[][] {
 export function compileScene(input: SceneCompileInput): CompiledScene {
   const { scene, palette, markup } = input;
   const prefix = `s-${scene.id}__`;
-  const ctx: ShotMarkupContext = { ...markup, prefix };
+  const ctx: ShotMarkupContext = { ...markup, prefix, palette };
   const { width, height } = markup.frame;
   const stageId = `${prefix}stage`;
   const safe = Math.round(0.07 * Math.min(width, height));
@@ -128,6 +128,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     // Full-bleed shots sit in the underlay behind the flowing regions.
     if (shot.style?.region === "full") underlay.push(rendered.html);
     writeShotMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, scene.durationMs, markup.frame);
+    rendered.motion?.(w);
   }
 
   const regions = REGIONS.map((region) => {
