@@ -8,6 +8,7 @@ import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-temp
 import {
   MAX_VOICE_DIRECTION_CHARS,
   MAX_VOICE_SPEEDUP,
+  VOICE_LEAD_PAD_MS,
   VOICE_OVERRUN_TOLERANCE_MS,
   voiceLines,
   voiceLineTrack,
@@ -200,6 +201,24 @@ describe("voice-over line tracks", () => {
   it("fails VALIDATION on a take too long to speed up into its beat", () => {
     const long = take("vo-2", Math.ceil(message.roomMs * MAX_VOICE_SPEEDUP) + 10);
     expect(() => voiceLineTrack(message, long, "t")).toThrowError(/runs past its beat/);
+  });
+
+  it("judges a measured take on its speech: silence is trimmed, not sped up", () => {
+    const room = { ...message, roomMs: 1800 };
+    // 2116 ms with 200 ms of silence before the speech and 150 ms after it: too long as a file.
+    const file = take("vo-1", 2116);
+    expect(() => voiceLineTrack(room, file, "t")).toThrowError(/runs past its beat/);
+    const track = voiceLineTrack(room, file, "t", { startMs: 200, endMs: 1966 });
+    expect(track).toMatchObject({ durationMs: 1800, trimStartMs: 200 - VOICE_LEAD_PAD_MS });
+    expect(track.playbackRate).toBeLessThanOrEqual(MAX_VOICE_SPEEDUP);
+    // Speech that fits plays at its pace, cut in the trailing silence with a fade clear of the last word.
+    const fits = voiceLineTrack(room, file, "t", { startMs: 200, endMs: 1700 });
+    expect(fits).toMatchObject({ durationMs: 1800, trimStartMs: 140, fadeOutMs: 150 });
+    expect(fits.playbackRate).toBeUndefined();
+    // A measured take gets no breath of tolerance: its speech past the room is sped up.
+    expect(voiceLineTrack(room, take("vo-1", 1900), "t", { startMs: 0, endMs: 1900 }).playbackRate).toBe(
+      1.056,
+    );
   });
 
   it("replaces every earlier voice-over track and its asset, keeping the rest of the mix", () => {
