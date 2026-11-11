@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AssetRef,
   applyPatch,
+  IR_MAX_AUDIO_TRACKS,
   invalidatedNodes,
   nodeDigests,
   type VideoIR,
@@ -96,6 +97,22 @@ describe("audio tracks", () => {
     expect(issues(withAudio({ ...music, fadeInMs: 3000, fadeOutMs: 2000 }))).toContain(
       "out_of_bounds /audio/0/fadeOutMs",
     );
+  });
+
+  it("carry up to IR_MAX_AUDIO_TRACKS tracks, the audio of a 60 s graphic", () => {
+    const many = (n: number) => {
+      const doc = withAudio(music);
+      doc.audio = Array.from({ length: n }, (_, i) => ({
+        ...music,
+        id: `track-${i}`,
+        durationMs: 1000,
+        fadeInMs: 0,
+        fadeOutMs: 0,
+      }));
+      return doc;
+    };
+    expect(issues(many(IR_MAX_AUDIO_TRACKS))).toEqual([]);
+    expect(issues(many(IR_MAX_AUDIO_TRACKS + 1)).some((i) => i.startsWith("schema /audio"))).toBe(true);
   });
 
   it("reject gain outside the mixer range", () => {

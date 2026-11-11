@@ -39,3 +39,16 @@ describe("StudixError", () => {
     expect(isErrorCode("NOPE")).toBe(false);
   });
 });
+
+describe("toStudixError on a schema failure", () => {
+  it("turns a ZodError into one readable line with the issues in details", async () => {
+    const { z } = await import("zod");
+    const parsed = z.object({ audio: z.array(z.number()).max(1) }).safeParse({ audio: [1, 2] });
+    const err = toStudixError(parsed.error);
+    expect(err.code).toBe("INTERNAL");
+    expect(err.message).toMatch(/^Invalid data: audio: /);
+    expect(err.message).not.toContain("\n");
+    expect(err.details).toMatchObject({ issues: [{ path: "audio" }] });
+    expect(err.suggestedAction).toMatch(/not caused by your input/);
+  });
+});

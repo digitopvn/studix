@@ -79,10 +79,8 @@ describe("host agent output validation", () => {
       rationale: "Clean type for a product launch.",
     };
     const check = packStageOutputValidator()("motion-graphic.storyboard", { storyboard });
-    expect(check).toMatchObject({
-      ok: true,
-      // The host schema is what the host was handed; the worker adds `source` when it reads the output.
-      output: { storyboard: { brandName: "Studix" } },
-    });
+    // The host submits only the storyboard; the stage records `source` itself.
+    expect(check).toMatchObject({ ok: true, output: { storyboard: { brandName: "Studix" } } });
+    expect(check.ok && "source" in check.output).toBe(false);
   });
 });
