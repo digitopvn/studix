@@ -1349,3 +1349,77 @@ describe("pack pipeline routing", () => {
     expect(MV_STAGES.script).toBe("marketing-video.script");
   });
 });
+
+describe("motion-graphic launch film with layouts (mock agent)", () => {
+  const beats = [
+    { onScreen: "Studix is open source", voiceover: "Studix is open source today." },
+    {
+      onScreen: "Every model, wired in",
+      voiceover: "It wires in every model you already use.",
+      layout: { kind: "chips", hub: "Studix", items: ["Claude", "Veo", "Kling", "ElevenLabs"] },
+    },
+    {
+      onScreen: "5,000 free credits",
+      voiceover: "One credit is one US cent.",
+      layout: { kind: "counter", from: 0, to: 5000, label: "free credits" },
+    },
+    {
+      onScreen: "MIT licensed",
+      voiceover: "And the code is MIT licensed.",
+      layout: { kind: "stat", value: "MIT", label: "Open source, forever" },
+    },
+    { onScreen: "Try Studix now", voiceover: "Try Studix now." },
+  ];
+  const storyboard = {
+    styleProfile: "swiss-kinetic-editorial",
+    beats: beats.map((b) => ({ ...b, visual: "Layout device under the headline", enter: "pop", weight: 1 })),
+    music: null,
+    brandName: "Studix",
+    rationale: "A launch film shows each claim as a device.",
+  };
+
+  it("keeps every card's captions and voice on that card after recutting around a long take", async () => {
+    const runtime: AgentRuntime = {
+      id: "mock",
+      run: async () => ({
+        output: { storyboard },
+        turns: 1,
+        costCents: 3,
+        inputTokens: 1,
+        outputTokens: 1,
+        model: "m",
+      }),
+    };
+    // The credits line runs long, so the cards are recut around it.
+    const h = harness({ agent: runtime, voiceMs: (text) => (text === beats[2]?.voiceover ? 6_000 : 1_800) });
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Launch film for Studix",
+      title: "Studix",
+      language: "en",
+      aspectRatio: "16:9",
+      durationMs: 20_000,
+    });
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.scenes.find((sc) => sc.id === "message-2")?.durationMs).toBeGreaterThan(5_000);
+    let at = 0;
+    const cards = ir.scenes.map((sc) => {
+      const span = { startMs: at, endMs: at + sc.durationMs };
+      at = span.endMs;
+      return span;
+    });
+    const voice = (ir.audio ?? []).filter((t) => t.kind === "voiceover");
+    expect(voice).toHaveLength(beats.length);
+    cards.forEach((card, i) => {
+      const said = (ir.captions?.cues ?? [])
+        .filter((c) => c.startMs >= card.startMs && c.endMs <= card.endMs)
+        .map((c) => c.text)
+        .join(" ");
+      expect(said).toBe(beats[i]?.voiceover);
+      const track = voice[i];
+      expect(track?.startMs).toBeGreaterThanOrEqual(card.startMs);
+      expect((track?.startMs ?? 0) + (track?.durationMs ?? 0)).toBeLessThanOrEqual(card.endMs);
+    });
+  });
+});
