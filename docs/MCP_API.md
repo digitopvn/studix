@@ -261,7 +261,8 @@ Behavior notes:
   length stays, nothing is sped up). Only when the takes outrun the whole
   graphic are lines voiced once more, brisker: first those that do not fit their
   card even read 1.12x faster, then, if still needed, the others that ran past
-  their card. If they still do not fit, the job fails with `VALIDATION`.
+  their card. If they still do not fit, the job fails with `VALIDATION` naming
+  the lines that ran past their cards and by how much (`details.lines`).
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action

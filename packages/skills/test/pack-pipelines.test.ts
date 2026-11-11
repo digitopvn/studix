@@ -823,7 +823,10 @@ describe("motion-graphic pipeline (fake providers)", () => {
     expect(failure).toEqual(
       expect.objectContaining({
         code: "VALIDATION",
-        message: "The voice-over runs longer than the 12s graphic",
+        // The lines that ran past their cards are named, so the caller knows which to shorten.
+        message: expect.stringMatching(
+          /^The voice-over runs longer than the 12s graphic; past their cards: line 1 "[^"]+" by \d+ ms/,
+        ),
       }),
     );
   });
@@ -1088,7 +1091,43 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(voices).toHaveLength(4);
     expect(voices.filter((r) => brisker(r.params)).map((r) => r.prompt)).toEqual([message]);
     const ir = h.renderer.rendered[0] as VideoIR;
-    expect(ir.scenes.reduce((ms, sc) => ms + sc.durationMs, 0)).toBe(10_000);
+    const cards = ir.scenes.map((sc) => sc.durationMs);
+    expect(cards.reduce((a, b) => a + b, 0)).toBe(10_000);
+    // Was [3300, 3500, 3200]: every card holds its take, sped up at most the allowed rate.
+    const voice = (ir.audio ?? []).filter((t) => t.kind === "voiceover");
+    expect(voice.every((t) => (t.playbackRate ?? 1) <= 1.12)).toBe(true);
+    let at = 0;
+    voice.forEach((t, i) => {
+      at += i === 0 ? 0 : (cards[i - 1] as number);
+      expect(t.startMs + (t.durationMs ?? 0)).toBeLessThanOrEqual(at + (cards[i] as number));
+    });
+  });
+
+  it("voices the lines that fit only sped up once more too, when the graphic still needs the time", async () => {
+    const message = storyboard.beats[1]?.voiceover as string;
+    const brisker = (params?: Record<string, unknown>) => String(params?.instructions).includes("brisker");
+    // The message line never fits its card; the others fit theirs only sped up, so they are voiced again,
+    // brisker, only after the message line's re-take still leaves the graphic short of time.
+    const h = harness({
+      agent: mockAgent({ storyboard }).runtime,
+      voiceMs: (text, params) =>
+        text === message ? (brisker(params) ? 4300 : 4500) : brisker(params) ? 2400 : 3200,
+    });
+    const { outcome } = await h.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
+    // Three first takes, the message line's re-take, then one re-take each of the other two; none twice.
+    expect(voices).toHaveLength(6);
+    const retaken = voices.filter((r) => brisker(r.params)).map((r) => r.prompt);
+    expect(retaken[0]).toBe(message);
+    expect(new Set(retaken).size).toBe(3);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    // The message card took the time its long take needs from the cards whose lines were re-read shorter.
+    const cards = ir.scenes.map((sc) => sc.durationMs);
+    expect(cards[1]).toBeGreaterThan(Math.max(cards[0] as number, cards[2] as number));
   });
 
   it("falls back to the template, both runs billed, when the voice-over still overruns the length after the repair turn", async () => {
