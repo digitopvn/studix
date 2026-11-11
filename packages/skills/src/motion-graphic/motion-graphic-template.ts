@@ -38,6 +38,8 @@ export const MOTION_GRAPHIC_MAX_MS = 60_000;
 const DEFAULT_STYLE = "kinetic-typography";
 const FPS = 30;
 const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 28 };
+/** A heading-size headline over a layout holds more per line than a display-size headline card. */
+const LAYOUT_LINE_CHARS: Record<AspectRatio, number> = { "9:16": 24, "1:1": 26, "16:9": 38 };
 
 const words = (text: string) =>
   text
@@ -438,7 +440,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           type: i === 0 ? "title" : "text",
           startMs: 0,
           durationMs,
-          text: breakLines(line.onScreen, chars + 4).slice(0, 160),
+          text: breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio]).slice(0, 160),
           style: {
             textStyle: "heading",
             color: inkOn(brand.palette, fill, "foreground"),

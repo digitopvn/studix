@@ -18,7 +18,7 @@ describe("VideoIR migrations", () => {
     const stored = loadFixture("brand-intro-9x16.json") as {
       scenes: { shots: Record<string, unknown>[] }[];
     };
-    const layout = { kind: "chips", hub: "Studix", items: ["MCP", "API", "CLI"] };
+    const layout = { kind: "counter", value: "1,200", prefix: "+", suffix: "%", label: "renders" };
     Object.assign(stored.scenes[0]?.shots[0] ?? {}, { layout });
     Object.assign(stored.scenes[1]?.shots[1] ?? {}, { layout });
     const { ir } = migrateVideoIR(stored);
