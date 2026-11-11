@@ -81,7 +81,7 @@ guide, the per-error value is authoritative.
 When a schema check fails inside Studix (for example a stage builds a Video IR
 that breaks a limit), the error is `INTERNAL` with a one-line message naming the
 first failing path and constraint, such as
-`Schema check failed at /audio: Too big: expected array to have <=16 items`.
+`Schema check failed at /audio: Too big: expected array to have <=64 items`.
 `details` carries `{ kind: "schema", issueCount, issues: [{ path, code, constraint?, message }] }`
 with at most five issues (`path` is a JSON pointer, `constraint` the failed
 zod check such as `too_big`), and `suggestedAction` says it is a Studix defect to
