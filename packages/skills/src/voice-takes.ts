@@ -8,6 +8,7 @@ import { generateStoredMedia, hasStoredOutput, type StoredMediaRequest } from ".
 import {
   MAX_VOICE_DIRECTION_CHARS,
   type SpokenSpan,
+  takeRoomMs,
   type VoiceLine,
   voiceLineTrack,
   voiceOverrunError,
@@ -40,7 +41,8 @@ export function voiceFitScope(line: Pick<VoiceLine, "roomMs">): string {
  * Names takes stored without a room check: the stage measures them first and fits the cards to them, so such
  * a take is never served to a request that needs one already judged against its room.
  */
-export const VOICE_TAKE_SCOPE = "voice-take@1";
+// Version 2: a take far past its card is turned down (`cappedVoiceTake`), so one stored before is not reused.
+export const VOICE_TAKE_SCOPE = "voice-take@2";
 
 const BRISKER_DIRECTION =
   "The previous read ran too long for its slot: read this one noticeably brisker with short pauses, " +
@@ -174,27 +176,34 @@ export interface MeasuredVoiceTake {
   usage: StageUsage[];
 }
 
+/** A take turned down by `accept`: billed, never stored or reused. */
+interface TurnedDown {
+  rejected: true;
+  usage: StageUsage[];
+}
+
 /**
- * Voice one line and measure the take, keeping it whatever its length (no re-take): for a stage that cuts
- * its cards to the takes instead of judging each take against a fixed room. A take served from storage is
- * fetched into `workDir` and measured there.
+ * Voice one line and measure the take; `accept` (given the take's length and speech) may turn it down. A take
+ * served from storage was accepted when it was stored: it is fetched into `workDir` and measured there.
  */
-export async function measuredVoiceTake(
+async function voiceAndMeasure(
   s: StageContext,
   stage: string,
   request: StoredMediaRequest,
   workDir: string,
-  measure: VoiceTakeMeasure = measureVoiceTake,
-): Promise<MeasuredVoiceTake> {
+  measure: VoiceTakeMeasure,
+  accept: (lengthMs: number | undefined, measured: MeasuredTake | undefined) => boolean = () => true,
+): Promise<MeasuredVoiceTake | TurnedDown> {
   const probe: { checked: boolean; measured?: MeasuredTake } = { checked: false };
-  const made = await generateStoredMedia(s, stage, request, async (filePath) => {
+  const made = await generateStoredMedia(s, stage, request, async (filePath, output) => {
     probe.checked = true;
     probe.measured = await measure(filePath, s.signal);
-    return true;
+    const lengthMs =
+      probe.measured?.durationMs ??
+      (output.durationMs === undefined ? undefined : Math.round(output.durationMs));
+    return accept(lengthMs, probe.measured);
   });
-  // Never rejected: the check above accepts every take.
-  if ("rejected" in made)
-    throw new StageFailedAfterSpend(toStudixError(new Error("take rejected")), [made.usage]);
+  if ("rejected" in made) return { rejected: true, usage: [made.usage] };
   try {
     if (!probe.checked) probe.measured = await measureStored(s, made.asset, workDir, measure);
   } catch (err) {
@@ -207,4 +216,60 @@ export async function measuredVoiceTake(
     ...(measured ? { measured } : {}),
     usage: [made.usage],
   };
+}
+
+/**
+ * Voice one line and measure the take, keeping it whatever its length (no re-take): for a stage that cuts
+ * its cards to the takes instead of judging each take against a fixed room. A take served from storage is
+ * fetched into `workDir` and measured there.
+ */
+export async function measuredVoiceTake(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+  workDir: string,
+  measure: VoiceTakeMeasure = measureVoiceTake,
+): Promise<MeasuredVoiceTake> {
+  const take = await voiceAndMeasure(s, stage, request, workDir, measure);
+  // Never turned down: the default check accepts every take.
+  if ("rejected" in take)
+    throw new StageFailedAfterSpend(toStudixError(new Error("take rejected")), take.usage);
+  return take;
+}
+
+/**
+ * `measuredVoiceTake`, but a take that needs more than `maxRoomMs` (as voiced, `takeRoomMs`) is taken for a
+ * broken read (repeated words, a long stall) rather than a slow one: it is turned down (billed, never stored
+ * or reused) and the line is voiced once more, brisker, keeping that re-take whatever its length. A re-take
+ * stored while the first take is not (an earlier attempt, or another job voicing the same line) means the
+ * first was turned down, so it is used instead of paying for the first take again.
+ */
+export async function cappedVoiceTake(
+  s: StageContext,
+  stage: string,
+  request: StoredMediaRequest,
+  workDir: string,
+  maxRoomMs: number,
+  measure: VoiceTakeMeasure = measureVoiceTake,
+): Promise<MeasuredVoiceTake> {
+  const retake = briskerTake(request);
+  if ((await hasStoredOutput(s, stage, retake)) && !(await hasStoredOutput(s, stage, request))) {
+    return measuredVoiceTake(s, stage, retake, workDir, measure);
+  }
+  const first = await voiceAndMeasure(s, stage, request, workDir, measure, (lengthMs, measured) => {
+    const room = takeRoomMs(lengthMs, measured);
+    return room === undefined || room <= maxRoomMs;
+  });
+  if (!("rejected" in first)) return first;
+  try {
+    const again = await measuredVoiceTake(s, stage, retake, workDir, measure);
+    return { ...again, usage: [...first.usage, ...again.usage] };
+  } catch (err) {
+    // The turned-down take was paid for as well as whatever the re-take spent.
+    const failed = err instanceof StageFailedAfterSpend;
+    throw new StageFailedAfterSpend(failed ? err.error : toStudixError(err), [
+      ...first.usage,
+      ...(failed ? err.usage : []),
+    ]);
+  }
 }

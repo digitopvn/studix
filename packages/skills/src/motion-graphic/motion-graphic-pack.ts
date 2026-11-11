@@ -25,7 +25,13 @@ import {
 } from "../stored-media.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { takeRoomMs, type VoiceLine, voiceLines, voiceLineTrack, withVoiceover } from "../voice-lines.ts";
-import { briskerTake, type MeasuredVoiceTake, measuredVoiceTake, VOICE_TAKE_SCOPE } from "../voice-takes.ts";
+import {
+  briskerTake,
+  cappedVoiceTake,
+  type MeasuredVoiceTake,
+  measuredVoiceTake,
+  VOICE_TAKE_SCOPE,
+} from "../voice-takes.ts";
 import { retimeCards } from "./motion-graphic-retime.ts";
 import {
   MG_STORYBOARD_STAGE,
@@ -402,6 +408,13 @@ function voiceTooLong(ir: VideoIR, takes: readonly MeasuredVoiceTake[]): StudixE
 }
 
 /**
+ * How many times its own card's room a first take may need before it is taken for a broken read (repeated
+ * words, a long stall) and voiced again: well past how far the script's reading-speed estimate misses (about
+ * 1.6x), so a slow read is still kept and the cards are recut around it.
+ */
+const MAX_TAKE_OVER_ROOM = 3;
+
+/**
  * The voice-over of the script, one line per card, each read with its card's direction and laid where that
  * card's captions start, so the call to action is heard with the CTA card. Its own stage, so a new voice
  * (another speech model, new direction) costs only the voice. Every line is voiced and measured first (on
@@ -415,8 +428,8 @@ export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
-  // Version 4 measures every take first and recuts the cards around them.
-  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 4, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Version 4 measures every take first and recuts the cards around them; 5 reads a broken take again.
+  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 5, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -432,10 +445,11 @@ export const motionGraphicVoiceStage: StageDefinition = {
       try {
         const voice = (request: StoredMediaRequest) =>
           measuredVoiceTake(s, MG_STAGES.voice, request, workDir);
+        // A first take far past its own card is a broken read, not a slow one: it is read again at once.
         const takes = await mapBounded(
           planned,
           VOICE_CONCURRENCY,
-          (v) => voice(v.request),
+          (v) => cappedVoiceTake(s, MG_STAGES.voice, v.request, workDir, v.line.roomMs * MAX_TAKE_OVER_ROOM),
           (t) => t.usage,
         );
         const lines = planned.map((v) => v.line);
