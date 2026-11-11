@@ -201,6 +201,10 @@ Behavior notes:
   `agent`) combines with any pack: the pack's pipeline runs and its agent stages
   (for example the motion-graphic storyboard) run on that Claude connection and
   model; with the default pack the Claude planner writes the IR.
+- A length or aspect ratio stated only in `brief.prompt` ("a 60-second 16:9
+  video", "1920x1080", "video dọc dài 1 phút") is used when `brief.durationMs`
+  or `brief.aspectRatio` is unset; the explicit field always wins. Each pack
+  still clamps the length to its own range.
 - `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
   entry (1 to 6); a brief without directions makes one ad whose hook is its
   first key message (else the brand name), and a brief with neither is refused
@@ -222,7 +226,7 @@ Behavior notes:
   uploads one file per ad (`renders[]`). Any image-to-video or audio stage
   without an approved storyboard fails with `APPROVAL_REQUIRED`.
 - `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
-  (6 to 60 s, default 15 s) in the style profile that best matches the brief,
+  (6 to 60 s, default 15 s 9:16) in the style profile that best matches the brief,
   with a generated voice-over, one SFX accent where the CTA card lands and
   burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
