@@ -855,13 +855,20 @@ describe("motion-graphic pipeline (fake providers)", () => {
     const voices = h.generate.mock.calls.filter(([, r]) => r.kind === "voice").map(([, r]) => r);
     expect(voices).toHaveLength(8);
     expect(voices.filter((r) => String(r.params?.instructions).includes("brisker"))).toHaveLength(4);
-    const failure = h.queue.fail.mock.calls.at(-1)?.[2] as { code: string; message: string } | undefined;
-    expect(failure).toEqual(
-      expect.objectContaining({
-        code: "VALIDATION",
-        message: "The voice-over runs longer than the 12s graphic",
-      }),
+    const failure = h.queue.fail.mock.calls.at(-1)?.[2] as
+      | { code: string; message: string; details?: Record<string, unknown> }
+      | undefined;
+    expect(failure?.code).toBe("VALIDATION");
+    // It names the lines that ran past their cards and by how much, so the caller knows what to shorten.
+    expect(failure?.message).toMatch(
+      /^The voice-over runs longer than the 12s graphic; past their cards: line 1 ".+" by \d+ ms/,
     );
+    expect(failure?.details).toMatchObject({
+      totalMs: 12_000,
+      lines: expect.arrayContaining([
+        expect.objectContaining({ line: 1, overrunMs: expect.any(Number), roomMs: expect.any(Number) }),
+      ]),
+    });
   });
 
   it("re-renders a stored version through render -> QA -> upload", async () => {

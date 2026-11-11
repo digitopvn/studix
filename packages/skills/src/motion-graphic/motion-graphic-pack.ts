@@ -393,18 +393,45 @@ function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR
   return sfx ? withAccent(next, sfx, whoosh) : next;
 }
 
-/** The VALIDATION failure of a voice-over whose takes, all together, run longer than the graphic. */
-function voiceTooLong(ir: VideoIR, takes: readonly MeasuredVoiceTake[]): StudixError {
+/**
+ * The VALIDATION failure of a voice-over whose takes, all together, run longer than the graphic. It names the
+ * lines that ran past their own cards and by how much, so the caller knows which lines to shorten.
+ */
+function voiceTooLong(
+  ir: VideoIR,
+  lines: readonly VoiceLine[],
+  takes: readonly MeasuredVoiceTake[],
+): StudixError {
   const totalMs = ir.format.durationMs;
-  return new StudixError("VALIDATION", `The voice-over runs longer than the ${totalMs / 1000}s graphic`, {
-    retryable: false,
-    details: {
-      totalMs,
-      speechMs: takes.reduce((n, t) => n + (takeRoomMs(t.lengthMs, t.measured) ?? 0), 0),
-      takes: takes.length,
-    },
-    suggestedAction: "Shorten the voice-over or lengthen the video, then create the job again.",
+  const speechMs = takes.reduce((n, t) => n + (takeRoomMs(t.lengthMs, t.measured) ?? 0), 0);
+  const over = lines.flatMap((line, i) => {
+    const take = takes[i];
+    const needMs = take ? takeRoomMs(take.lengthMs, take.measured) : undefined;
+    return needMs !== undefined && needMs > line.roomMs
+      ? [
+          {
+            line: i + 1,
+            text: line.text.slice(0, 60),
+            roomMs: line.roomMs,
+            speechMs: needMs,
+            overrunMs: needMs - line.roomMs,
+          },
+        ]
+      : [];
   });
+  const named = over
+    .slice(0, 4)
+    .map((o) => `line ${o.line} "${o.text.slice(0, 40)}" by ${o.overrunMs} ms`)
+    .join(", ");
+  return new StudixError(
+    "VALIDATION",
+    `The voice-over runs longer than the ${totalMs / 1000}s graphic${named ? `; past their cards: ${named}` : ""}`,
+    {
+      retryable: false,
+      details: { totalMs, speechMs, takes: takes.length, lines: over },
+      suggestedAction: "Shorten the lines named, or lengthen the video, then create the job again.",
+    },
+  );
 }
 
 /**
@@ -493,7 +520,7 @@ export const motionGraphicVoiceStage: StageDefinition = {
     })();
     const spent = usage();
     const next = await billedOnFailure(spent, () => {
-      if (!cardMs) throw voiceTooLong(ir, takes);
+      if (!cardMs) throw voiceTooLong(ir, lines, takes);
       const same = cardMs.every((ms, i) => ms === ir.scenes[i]?.durationMs);
       const cut = same ? ir : recut(s, ir, cardMs);
       // An IR the template did not make keeps its cards; a take that does not fit them fails as before.
