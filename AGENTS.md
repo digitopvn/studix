@@ -23,6 +23,20 @@ Rules for coding agents working in this repository.
   more satisfied, then propose it or apply it directly while you work, following the product
   philosophy above.
 
+## Working in parallel
+
+Several agent sessions work on this repository at once, and a scheduled routine starts on every issue
+labelled `ai-handle`.
+
+- Labels track an issue: `in progress`, then `blocked`, `in review`, `done` (PR open) and `shipped`
+  (merged). Before you start an issue, read its labels, assignees, comments and linked PRs. If it already
+  has `in progress` or a later label, or an open PR, another session owns it: leave it alone, or comment
+  there if you found something it needs.
+- A new issue that you label `ai-handle` starts its own session. Either let that session fix it, or leave
+  the label off and fix it yourself. Never do both.
+- Before you merge, fetch `dev` again. If someone already merged the same fix, close your PR as superseded
+  instead of merging over theirs.
+
 ## Definition of done
 
 - Use `pnpm`. Before reporting done, run `pnpm check` (lint, typecheck, QA and unit tests).
