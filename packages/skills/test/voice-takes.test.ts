@@ -407,6 +407,31 @@ describe("voicing a line", () => {
       const again = await cappedVoiceTake(h.s, "voice", request, await workDir(), 5400, h.measure);
       expect(h.calls).toHaveLength(2);
       expect(again.asset.storageKey).toBe("generated/job_1/voiceover-1-r1.mp3");
+      expect(again.retaken).toBe(true);
+    });
+
+    it("checks a take served from the journal too, and reads it again when it is past the cap", async () => {
+      // Kept by a run without the cap (an earlier deploy), then served from the journal to a capped run.
+      const h = stage([repeated, tooLong]);
+      await cappedVoiceTake(h.s, "voice", request, await workDir(), 60_000, h.measure);
+      expect(h.calls).toHaveLength(1);
+      const take = await cappedVoiceTake(h.s, "voice", request, await workDir(), 5400, h.measure);
+      expect(h.calls).toHaveLength(2);
+      expect(take.asset.storageKey).toBe("generated/job_1/voiceover-1-r1.mp3");
+      expect(take.retaken).toBe(true);
+    });
+
+    it("bills the turned-down take when its re-take fails after charging", async () => {
+      const charged = new MediaChargedError(
+        new StudixError("PROVIDER_ERROR", "result lost", { retryable: false }),
+        { provider: "multix", model: "elevenlabs:eleven_v3", costCents: 3, costSource: "receipt" },
+      );
+      const h = stage([repeated, charged]);
+      const err = await cappedVoiceTake(h.s, "voice", request, await workDir(), 5400, h.measure).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(StageFailedAfterSpend);
+      expect((err as StageFailedAfterSpend).usage.map((u) => u.item)).toContain("media-voiceover-1");
     });
   });
 

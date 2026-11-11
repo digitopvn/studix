@@ -174,6 +174,8 @@ export interface MeasuredVoiceTake {
   lengthMs: number | undefined;
   measured?: MeasuredTake;
   usage: StageUsage[];
+  /** The take is already the line's brisker re-take: reading it again would serve the same take. */
+  retaken?: true;
 }
 
 /** A take turned down by `accept`: billed, never stored or reused. */
@@ -254,16 +256,18 @@ export async function cappedVoiceTake(
 ): Promise<MeasuredVoiceTake> {
   const retake = briskerTake(request);
   if ((await hasStoredOutput(s, stage, retake)) && !(await hasStoredOutput(s, stage, request))) {
-    return measuredVoiceTake(s, stage, retake, workDir, measure);
+    return { ...(await measuredVoiceTake(s, stage, retake, workDir, measure)), retaken: true };
   }
-  const first = await voiceAndMeasure(s, stage, request, workDir, measure, (lengthMs, measured) => {
+  const fits = (lengthMs: number | undefined, measured: MeasuredTake | undefined) => {
     const room = takeRoomMs(lengthMs, measured);
     return room === undefined || room <= maxRoomMs;
-  });
-  if (!("rejected" in first)) return first;
+  };
+  const first = await voiceAndMeasure(s, stage, request, workDir, measure, fits);
+  // A take served from a journal or the reuse cache was not checked when it was served: check it here.
+  if (!("rejected" in first) && fits(first.lengthMs, first.measured)) return first;
   try {
     const again = await measuredVoiceTake(s, stage, retake, workDir, measure);
-    return { ...again, usage: [...first.usage, ...again.usage] };
+    return { ...again, usage: [...first.usage, ...again.usage], retaken: true };
   } catch (err) {
     // The turned-down take was paid for as well as whatever the re-take spent.
     const failed = err instanceof StageFailedAfterSpend;

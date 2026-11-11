@@ -460,7 +460,8 @@ export const motionGraphicVoiceStage: StageDefinition = {
           // and keep whichever take of each line is shorter.
           const long = lines.flatMap((line, i) => {
             const room = takeRoomMs(takes[i]?.lengthMs, takes[i]?.measured);
-            return room !== undefined && room > line.roomMs ? [i] : [];
+            // A line already read again, brisker, for a broken take would only be served that take again.
+            return room !== undefined && room > line.roomMs && !takes[i]?.retaken ? [i] : [];
           });
           const retakes = await mapBounded(
             long,
