@@ -67,7 +67,8 @@ const AgentOutput = z.object({ storyboard: MotionStoryboard });
 
 /** The stage output: an agent storyboard, or none when the graphic falls back to the template. */
 export const MotionStoryboardOutput = z.object({
-  source: z.enum(["agent", "template"]),
+  // A host agent submits the agent stage's `{ storyboard }`, which is an agent storyboard.
+  source: z.enum(["agent", "template"]).default("agent"),
   storyboard: MotionStoryboard.optional(),
   /** Why the template was used instead of an agent. */
   fallbackReason: z.string().max(500).optional(),
