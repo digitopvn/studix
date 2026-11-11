@@ -87,7 +87,7 @@ interface Line {
 }
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
-const MIN_SILENT_CARD_MS = 1500;
+export const MIN_SILENT_CARD_MS = 1500;
 
 const spokenWords = (line: Line) => (line.voiceover ?? "").trim().split(/\s+/).filter(Boolean);
 
@@ -279,6 +279,11 @@ export interface MotionGraphicOptions {
    * and weights replace the brief-derived cards. Absent, the cards come from the brief alone.
    */
   storyboard?: MotionStoryboard;
+  /**
+   * Card lengths to cut instead of the ones the script's estimate gives: one per card, summing to the
+   * graphic's length. The voice stage passes them after cutting the cards to the measured takes.
+   */
+  cardMs?: readonly number[];
 }
 
 /**
@@ -358,7 +363,18 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     : undefined;
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
   const chars = LINE_CHARS[aspectRatio];
-  const spans = durations(totalMs, lines, language);
+  const spans = options.cardMs ? [...options.cardMs] : durations(totalMs, lines, language);
+  if (
+    options.cardMs &&
+    (spans.length !== lines.length ||
+      spans.some((ms) => !Number.isInteger(ms) || ms <= 0) ||
+      spans.reduce((a, b) => a + b, 0) !== totalMs)
+  ) {
+    throw new StudixError("INTERNAL", "Motion-graphic card lengths do not add up to the graphic", {
+      retryable: false,
+      details: { cards: lines.length, cardMs: spans, totalMs },
+    });
+  }
   const last = lines.length - 1;
   let cursor = 0;
   const cues: CaptionCue[] = [];

@@ -8,7 +8,6 @@ import {
   HOOK_MAX_MS,
   irVariants,
   MAX_CAPTION_WORDS,
-  MIN_CAPTION_MS,
   marketingScript,
   marketingVideoTemplate,
   motionGraphicTemplate,
@@ -75,44 +74,21 @@ describe("caption chunks", () => {
     expect(captionCues("", 0, 1000)).toEqual([]);
   });
 
-  it("never leaves a one-word tail or a cue too short to read", () => {
-    const line =
-      "We turn every product brief into a launch video in minutes, start to finish, no editor needed about.";
-    for (const max of [3, 4, 5, 9]) {
-      const chunks = chunkCaption(line, max);
-      expect(chunks.slice(1).every((c) => wordCount(c) >= 2 && wordCount(c) <= max)).toBe(true);
-      expect(chunks.join(" ")).toBe(line);
-    }
-    expect(chunkCaption("one two three four five six seven eight nine about.")).toEqual([
-      "one two three four five six seven eight",
-      "nine about.",
+  it("never leaves a one-word or sub-600 ms cue: the remainder joins the cue before it", () => {
+    const line = "Here is the one thing every founder should know about.";
+    expect(chunkCaption(line)).toEqual([line]);
+    const cues = captionCues(line, 32_000, 4500);
+    expect(cues).toEqual([{ startMs: 32_000, endMs: 36_500, text: line }]);
+    // A short clause folds into its neighbour while the two fit one cue; past that, they share the time.
+    expect(captionCues("Xin chào, hôm nay", 0, 2000)).toEqual([
+      { startMs: 0, endMs: 2000, text: "Xin chào, hôm nay" },
     ]);
-    // Lines too dense for the plain chunks: every cue still reads for 600 ms, a phone number stays whole.
-    const dense = [
-      ["một hai ba bốn năm sáu bảy tám chín mười mốt", 2200],
-      ["một hai ba bốn năm sáu bảy tám chín mười mốt hai ba bốn năm sáu bảy tám chín mười", 2000],
-      [
-        "Chỉ cần một câu mô tả, Studix dựng video quảng cáo hoàn chỉnh cho bạn trong vài phút, không cần biên tập viên.",
-        1965,
-      ],
-      [
-        "Giảm 50% cho đơn đầu tiên, gọi ngay 0901 234 567 hoặc ghé studix.vn để nhận ưu đãi hôm nay nhé.",
-        2002,
-      ],
-    ] as const;
-    for (const [text, durationMs] of dense) {
-      const cues = captionCues(text, 500, durationMs);
-      expect(cues.map((c) => c.text).join(" ")).toBe(text);
-      expect(cues.every((c) => c.endMs - c.startMs >= MIN_CAPTION_MS)).toBe(true);
-      expect(cues.every((c) => wordCount(c.text) >= 2 && wordCount(c.text) <= MAX_CAPTION_WORDS)).toBe(true);
-      expect(cues.at(-1)?.endMs).toBe(500 + durationMs);
-    }
-    expect(captionCues(dense[3][0], 0, dense[3][1]).some((c) => c.text.includes("0901 234 567"))).toBe(true);
-    const hotline = "Đặt hàng ngay hôm nay qua hotline 0901 234 567 để nhận quà tặng";
-    for (const ms of [1500, 2500, 3600]) {
-      expect(captionCues(hotline, 0, ms).some((c) => c.text.includes("0901 234 567"))).toBe(true);
-    }
-    expect(chunkCaption("one two three", 2)).toEqual(["one two", "three"]);
+    const busy = captionCues("Xin chào, hôm nay mình kể bạn nghe một chuyện nhỏ thôi.", 0, 3572);
+    expect(busy.map((c) => c.text)).toEqual(["Xin chào,", "hôm nay mình kể bạn nghe một chuyện nhỏ thôi."]);
+    expect(busy.map((c) => [c.startMs, c.endMs])).toEqual([
+      [0, 600],
+      [600, 3572],
+    ]);
   });
 });
 
