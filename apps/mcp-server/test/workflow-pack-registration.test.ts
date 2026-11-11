@@ -64,24 +64,36 @@ describe("workflow packs on the MCP server", () => {
 });
 
 describe("host agent output validation", () => {
+  const storyboard = {
+    styleProfile: "saas-bento",
+    beats: ["Hook", "Message", "Try it"].map((onScreen) => ({
+      onScreen,
+      voiceover: `${onScreen}.`,
+      visual: "Big type",
+      enter: "fade",
+      weight: 1,
+    })),
+    music: null,
+    brandName: "Studix",
+    rationale: "Clean type for a product launch.",
+  };
+
   it("accepts a motion-graphic storyboard in the shape the host agent is given", () => {
-    const storyboard = {
-      styleProfile: "saas-bento",
-      beats: ["Hook", "Message", "Try it"].map((onScreen) => ({
-        onScreen,
-        voiceover: `${onScreen}.`,
-        visual: "Big type",
-        enter: "fade",
-        weight: 1,
-      })),
-      music: null,
-      brandName: "Studix",
-      rationale: "Clean type for a product launch.",
-    };
     const check = packStageOutputValidator()("motion-graphic.storyboard", { storyboard });
-    expect(check).toMatchObject({
-      ok: true,
-      output: { source: "agent", storyboard: { brandName: "Studix" } },
-    });
+    expect(check).toMatchObject({ ok: true, output: { storyboard: { brandName: "Studix" } } });
+    // `source` is the stage's own record: the worker adds it, the host never supplies it.
+    expect(check.ok && check.output).not.toHaveProperty("source");
+  });
+
+  it("rejects a template record sent by the host agent", () => {
+    const check = packStageOutputValidator()("motion-graphic.storyboard", { source: "template" });
+    expect(check.ok).toBe(false);
+    expect(check.ok ? [] : check.issues.map((i) => i.path)).toContain("storyboard");
+  });
+
+  it("drops a host-supplied source so the host cannot relabel its storyboard", () => {
+    const check = packStageOutputValidator()("motion-graphic.storyboard", { source: "template", storyboard });
+    expect(check).toMatchObject({ ok: true, output: { storyboard: { brandName: "Studix" } } });
+    expect(check.ok && check.output).not.toHaveProperty("source");
   });
 });
