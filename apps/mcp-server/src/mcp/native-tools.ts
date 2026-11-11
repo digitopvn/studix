@@ -22,6 +22,7 @@ import {
 } from "../agent-model-selection.ts";
 import type { AppDeps } from "../app-deps.ts";
 import { type ArtifactUrlDeps, isPlayable, signRender } from "../artifact-urls.ts";
+import { assertMediaAvailable } from "../media-availability.ts";
 import { assertPlannerSelection } from "../planner-selection.ts";
 import { jobWithVideo, projectView } from "../resource-views.ts";
 import { INSPECT_SECTIONS, inspectCapabilities } from "./inspect-capabilities.ts";
@@ -283,6 +284,7 @@ export const NATIVE_TOOLS = [
         tenant: ctx.tenant,
         limits: ctx.deps.limits,
         skills: ctx.deps.skills ?? [],
+        media: ctx.deps.media,
         toolNames: ctx.toolNames,
         include: input.include ?? [],
       });
@@ -314,6 +316,12 @@ export const NATIVE_TOOLS = [
         ? await resolveAgentSelection(ctx.deps, ctx.tenant, input.agent, needsDefault)
         : undefined;
       const roles = await resolveAgentRoles(ctx.deps, ctx.tenant, input.roles, input.agentMode !== "host");
+      assertMediaAvailable(
+        ctx.deps.media,
+        pack.id,
+        brief as Record<string, unknown>,
+        input.spec !== undefined,
+      );
       const result = await ctx.deps.studio.createVideoProject(ctx.tenant, {
         brief: brief as { prompt: string },
         spec: input.spec,

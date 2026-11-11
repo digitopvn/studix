@@ -95,6 +95,15 @@ export async function loadPackServices(
     });
   }
   const status = media.status();
+  if (!status.enabled) {
+    runtime.logger.warn(
+      "media generation is off; voice-over, SFX, music and generated-image stages will fail UNAVAILABLE",
+      {
+        reason: status.reason,
+        suggestedAction: "Set MULTIX_BIN on the worker and the app (see docs/DEPLOYMENT.md).",
+      },
+    );
+  }
   runtime.logger.info("pack services ready", {
     media: status.enabled ? media.id : `off (${status.reason})`,
     qa: qaStatus.ok ? "ready" : "toolchain missing",
