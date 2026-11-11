@@ -95,7 +95,9 @@ function settleShortCues(cues: CaptionCue[], maxWords: number): CaptionCue[] {
       cue.endMs += need;
     }
   }
-  const fits = (a: CaptionCue, b: CaptionCue) => wordCount(a.text) + wordCount(b.text) <= maxWords;
+  // A zero-length cue never shows, so it joins a neighbour past the cap rather than lose its words.
+  const fits = (a: CaptionCue, b: CaptionCue) =>
+    span(a) === 0 || span(b) === 0 || wordCount(a.text) + wordCount(b.text) <= maxWords;
   for (let i = 0; i < out.length && out.length > 1; ) {
     const cue = out[i] as CaptionCue;
     const prev = out[i - 1];

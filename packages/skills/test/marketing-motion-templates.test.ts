@@ -127,6 +127,13 @@ describe("caption chunks", () => {
     const cues = captionCues(words, 0, 2000);
     expect(cues.length).toBeGreaterThan(1);
     expect(cues.every((c) => wordCount(c.text) <= MAX_CAPTION_WORDS + 1 && c.text.length <= 300)).toBe(true);
+    // A cue squeezed to no time at all still keeps its words.
+    const clauses = "một hai ba bốn năm sáu bảy tám chín, một hai ba bốn năm sáu bảy tám chín,";
+    expect(
+      captionCues(clauses, 0, 1)
+        .map((c) => c.text)
+        .join(" "),
+    ).toBe(clauses);
     // A one-word limit has no tail to fold.
     expect(chunkCaption("a b c", 1)).toEqual(["a", "b", "c"]);
   });
