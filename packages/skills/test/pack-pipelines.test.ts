@@ -834,6 +834,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
       },
     ],
     music: "calm lo-fi pulse, 90 bpm",
+    brandName: "Lá Mây",
     rationale: "Swiss editorial suits a calm, factual tea brand.",
   };
   /** A scripted agent that records its tasks and bills 3¢ a run. */
