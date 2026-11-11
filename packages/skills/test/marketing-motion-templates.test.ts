@@ -1,5 +1,5 @@
 import { StudixError } from "@studix/shared";
-import { validateVideoIR } from "@studix/video-ir";
+import { type VideoIR, validateVideoIR } from "@studix/video-ir";
 import { describe, expect, it } from "vitest";
 import {
   captionCues,
@@ -597,6 +597,40 @@ describe("spoken length", () => {
     })();
     expect(err?.code).toBe("VALIDATION");
     expect(err?.details).toMatchObject({ words: 28, neededMs: 10_100, totalMs: 10_000 });
+  });
+
+  it("names the brand the storyboard found in the brief, not the hook line, on the kit, title and CTA", () => {
+    const named = (brandName: string | null) =>
+      motionGraphicTemplate(
+        { prompt: "A 10s launch motion graphic introducing Studix", language: "en", durationMs: 10_000 },
+        {
+          storyboard: {
+            styleProfile: "apple-clean",
+            beats: [
+              {
+                onScreen: "Describe a video. Get a film.",
+                voiceover: "Describe a video.",
+                enter: "fade",
+                weight: 1,
+              },
+              { onScreen: "Agents do the rest", voiceover: "Agents do the rest.", enter: "fade", weight: 1 },
+              { onScreen: "Try it now", voiceover: "Try it now.", enter: "fade", weight: 1 },
+            ],
+            music: null,
+            brandName,
+          } as never,
+        },
+      );
+    const ctaLogo = (ir: VideoIR) => ir.scenes.at(-1)?.shots.find((s) => s.id === "cta-logo");
+    const ir = named("Studix");
+    expect(ir.brand?.name).toBe("Studix");
+    expect(ir.title).toBe("Studix");
+    expect(ctaLogo(ir)).toMatchObject({ type: "logo", text: "Studix" });
+    // A name the brief never writes is dropped, and the CTA shows no hook line in its place.
+    for (const ir of [named("Acme"), named(null)]) {
+      expect(ir.brand?.name).toBe("Describe a video. Get a film.");
+      expect(ctaLogo(ir)).toBeUndefined();
+    }
   });
 
   it("gives a motion-graphic card the time a mixed-language line takes to say", () => {
