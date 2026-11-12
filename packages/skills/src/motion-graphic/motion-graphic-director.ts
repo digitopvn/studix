@@ -575,8 +575,9 @@ export const motionGraphicDirectorStage: StageDefinition = {
             ? { built: parsed.data, runs }
             : { failure: "the builder's answer is not a fragment", runs };
         } catch (err) {
-          // A stopped or parked job ends the fan-out; any other failure costs this scene alone.
-          if (s.signal.aborted || err instanceof StageSuspended) throw err;
+          // A stopped job ends the fan-out. Any other failure, a builder that reached its cap included,
+          // costs this scene alone: it keeps its card instead of parking the whole film on an approval.
+          if (s.signal.aborted) throw err;
           return { failure: reasonOf(err), runs: 2 };
         } finally {
           grants.release(grant);
