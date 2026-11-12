@@ -159,12 +159,13 @@ export function agentSpendOf(err: unknown): AgentSpend | undefined {
 
 /**
  * A run that fails after the agent reported usage still cost money. The spend rides on the error so the
- * caller can bill it, and the error is no longer retryable: a retry would pay again.
+ * caller can bill it, and the error is no longer retryable: a retry would pay again. The exception is an
+ * error raised with `details.retryableAfterSpend`, where a fresh run is the expected fix (a malformed reply).
  */
 export function withSpend(err: StudixError, spent: AgentSpend): StudixError {
   if (!(spent.costCents > 0 || spent.inputTokens > 0 || spent.outputTokens > 0)) return err;
   return new StudixError(err.code, err.message, {
-    retryable: false,
+    retryable: err.retryable && err.details?.retryableAfterSpend === true,
     suggestedAction: err.suggestedAction,
     details: { ...err.details, spent },
     cause: err,
