@@ -128,7 +128,10 @@ function findingText(f: HyperframeLintFinding): string {
  * internal failures (bad options, an unwritable work directory) both come back as `errors`, so the caller
  * can keep its built-in card.
  */
-export async function lintHtmlCard(pkg: HtmlCardPackage, opts: LintHtmlCardOptions): Promise<HtmlCardLintResult> {
+export async function lintHtmlCard(
+  pkg: HtmlCardPackage,
+  opts: LintHtmlCardOptions,
+): Promise<HtmlCardLintResult> {
   const parsed = HtmlCardPackage.safeParse(pkg);
   if (!parsed.success)
     return {
@@ -139,7 +142,10 @@ export async function lintHtmlCard(pkg: HtmlCardPackage, opts: LintHtmlCardOptio
   if (problems.length > 0) return { errors: problems, warnings: [] };
   const late = parsed.data.tweens
     .filter((t) => (t.at + t.duration) * 1000 > opts.durationMs)
-    .map((t) => `tween on "${t.target}" ends at ${t.at + t.duration} s, after the card ends at ${opts.durationMs / 1000} s`);
+    .map(
+      (t) =>
+        `tween on "${t.target}" ends at ${t.at + t.duration} s, after the card ends at ${opts.durationMs / 1000} s`,
+    );
 
   let dir: string | undefined;
   try {
@@ -149,17 +155,28 @@ export async function lintHtmlCard(pkg: HtmlCardPackage, opts: LintHtmlCardOptio
     const file = join(dir, "card.json");
     await writeFile(file, pkgJson, "utf8");
     const ir = cardIr(pkgJson, file, opts);
-    const build = buildComposition(ir, { width: opts.width, height: opts.height, assetFiles: { card: file } });
+    const build = buildComposition(ir, {
+      width: opts.width,
+      height: opts.height,
+      assetFiles: { card: file },
+    });
     const projectDir = join(dir, "project");
     await writeComposition(build, projectDir);
     const lint = await lintProject(projectDir);
     const findings = lint.results.flatMap((r) => r.result.findings);
     return {
       errors: findings.filter((f) => f.severity === "error").map(findingText),
-      warnings: [...late, ...build.warnings, ...findings.filter((f) => f.severity === "warning").map(findingText)],
+      warnings: [
+        ...late,
+        ...build.warnings,
+        ...findings.filter((f) => f.severity === "warning").map(findingText),
+      ],
     };
   } catch (err) {
-    return { errors: [`internal: the card could not be linted: ${err instanceof Error ? err.message : String(err)}`], warnings: late };
+    return {
+      errors: [`internal: the card could not be linted: ${err instanceof Error ? err.message : String(err)}`],
+      warnings: late,
+    };
   } finally {
     if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }

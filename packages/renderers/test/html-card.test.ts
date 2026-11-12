@@ -5,6 +5,7 @@ import { StudixError } from "@studix/shared";
 import { RENDER_PRESETS, type VideoIR, validateVideoIR } from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
 import { planFonts } from "../src/hyperframes/bundled-fonts.ts";
+import { sanitizeHtmlCard } from "../src/hyperframes/html-card.ts";
 import {
   buildComposition,
   HtmlCardPackage,
@@ -29,43 +30,70 @@ async function scratch(prefix: string): Promise<string> {
 }
 
 describe("htmlCardProblems", () => {
-  it("passes a clean card with inline SVG, nested CSS and a GSAP script", () => {
+  it("passes a clean card with inline SVG, card CSS and tweens", () => {
     expect(HtmlCardPackage.parse(CLEAN_CARD)).toEqual(CLEAN_CARD);
     expect(htmlCardProblems(CLEAN_CARD)).toEqual([]);
-    // Identifiers that merely contain a blocked word are fine.
-    expect(
-      htmlCardProblems({
-        ...CLEAN_CARD,
-        script: "var updated = 1; var evaluate = 2; tl.to(root, { top: 0 });",
-      }),
-    ).toEqual([]);
   });
 
-  it("names every rule a card breaks", () => {
-    const problems = htmlCardProblems({
-      ...CLEAN_CARD,
-      html: '<img src="https://x.test/a.png"><div onclick="go()" style="background: url(/a.png)">x</div><style>a{}</style>',
-      css: "@import 'x.css'; @font-face { src: url(https://x.test/f.woff2) }",
-      script: 'fetch("/x"); setTimeout(f, 1); var n = Math.random() + Date.now(); root.innerHTML = "<b>";',
-    });
-    for (const expected of [
-      "html: <img>",
-      "html: <style>",
-      "html: inline on* event",
-      "html: http(s) URLs",
-      "html: url(...)",
-      "css: @import",
-      "css: @font-face",
-      "css: url(...)",
-      "script: fetch",
-      "script: setTimeout",
-      "script: Math.random",
-      "script: Date",
-      "script: innerHTML",
+  it("rejects the bypasses of a deny-list and names each rule", () => {
+    const html = (markup: string) => htmlCardProblems({ ...CLEAN_CARD, html: markup });
+    const css = (sheet: string) => htmlCardProblems({ ...CLEAN_CARD, css: sheet });
+    expect(html("<svg/onload=alert(1)></svg>")).toEqual(['html: attribute "onload" is not allowed']);
+    expect(html('<div title=">" onclick=x>a</div>')).toEqual([
+      'html: attribute "title" is not allowed',
+      'html: attribute "onclick" is not allowed',
+    ]);
+    expect(html('<img src="https://x.test/a.png"><style>a{}</style>')).toEqual([
+      "html: <img> is not allowed (cards use text elements and inline SVG only)",
+      "html: <style> is not allowed (cards use text elements and inline SVG only)",
+    ]);
+    expect(html('<svg><rect fill="url(https://x.test/a.svg#p)" /></svg>')).toEqual([
+      "html: url(...) may only point at #ids inside the card",
+    ]);
+    expect(html("<svg><div>x</div></svg><p><div>y</div></p>")).toEqual([
+      "html: <div> is not allowed inside <svg>",
+      "html: <div> is not allowed inside <p> (inline content only)",
+    ]);
+    expect(css("} body{display:none} #z {")[0]).toMatch(/^css: parse error: Unexpected }/);
+    expect(css(".a {} body {display:none}")).toEqual([
+      'css: selector "body" must not target :root, html or body',
+    ]);
+    expect(css("@import 'x.css';")).toEqual(["css: @import is not allowed (no at-rules)"]);
+    expect(css(".a { background: url(https://x.test/a.png) }")).toEqual([
+      "css: url(...) may only point at #ids inside the card",
+    ]);
+    expect(css("+ .x { color: red } .a { b: c !important; d: expression(1) }")).toEqual([
+      'css: selector "+ .x" must not start with + or ~ (it would leave the card)',
+      "css: !important is not allowed",
+      "css: expression(), image-set() and element() are not allowed",
+    ]);
+    // Tweens are data: an unknown property, an ease outside the list or a complex selector fails the schema.
+    for (const tween of [
+      { target: ".a", at: 0, duration: 1, to: { width: 10 } },
+      { target: ".a", at: 0, duration: 1, to: { x: 1 }, ease: "steps(4)" },
+      { target: ".a, body", at: 0, duration: 1, to: { x: 1 } },
+      { target: ".a", at: 0, duration: 1 },
     ])
-      expect(problems.some((p) => p.startsWith(expected))).toBe(true);
-    expect(HtmlCardPackage.safeParse({ ...CLEAN_CARD, html: "x".repeat(16_001) }).success).toBe(false);
-    expect(HtmlCardPackage.safeParse({ ...CLEAN_CARD, extra: 1 }).success).toBe(false);
+      expect(HtmlCardPackage.safeParse({ ...CLEAN_CARD, tweens: [tween] }).success).toBe(false);
+    expect(HtmlCardPackage.safeParse({ ...CLEAN_CARD, script: "x" }).success).toBe(false);
+  });
+
+  it("re-serializes the checked tree and namespaces ids and url(#id) references", () => {
+    const card = sanitizeHtmlCard(
+      {
+        ...CLEAN_CARD,
+        html: '<P CLASS="a">x &lt;b&gt;<!-- c --></P><svg viewbox="0 0 1 1"><linearGradient id="g"></linearGradient><rect fill="url(#g)" /></svg>',
+        css: "fill: url('#g'); .a, #g > .b { color: red }",
+      },
+      "s-x__shot-c",
+    );
+    expect(card.problems).toEqual([]);
+    expect(card.html).toBe(
+      '<p class="a">x &lt;b&gt;</p><svg viewBox="0 0 1 1"><linearGradient id="s-x__shot-c-g"></linearGradient><rect fill="url(#s-x__shot-c-g)"></rect></svg>',
+    );
+    expect(card.css).toBe(
+      "#s-x__shot-c {\n  fill: url(#s-x__shot-c-g);\n}\n#s-x__shot-c .a,\n#s-x__shot-c #s-x__shot-c-g > .b {\n  color: red;\n}",
+    );
   });
 });
 
@@ -84,7 +112,7 @@ describe("HTML card composition shots", () => {
     expect(hasCompositionShots(other)).toBe(true);
   });
 
-  it("compile inline with a CSP, scoped CSS and a wrapped script, and lint clean", async () => {
+  it("compile inline with a CSP, scoped CSS and a generated script, and lint clean", async () => {
     const dir = await scratch("card-compile");
     const ir = cardIr(await writeCard(dir));
     expect(validateVideoIR(ir).ok).toBe(true);
@@ -95,7 +123,7 @@ describe("HTML card composition shots", () => {
     });
     expect(build.warnings).toEqual([]);
     expect(build.files.get("index.html")).toContain(
-      `<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'self' data: blob:; form-action 'none'" />`,
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self' data: blob:; form-action 'none'" />`,
     );
     const hero = build.files.get("compositions/hero.html")!;
     expect(hero).toContain('<div id="s-hero__shot-card" class="html-card"><div class="wrap">');
@@ -104,10 +132,21 @@ describe("HTML card composition shots", () => {
     expect(hero.indexOf('class="html-card"')).toBeLessThan(hero.indexOf('class="captions"'));
     expect(hero).toContain('--font-heading: "Be Vietnam Pro", sans-serif;');
     expect(hero).toMatch(/#s-hero__shot-card \{\n\s*background: radial-gradient/);
-    expect(hero).toContain(
-      '})(sub, document.getElementById("s-hero__shot-card"), {"width":540,"height":960,"duration":2.3});',
+    expect(hero).toContain('<circle id="s-hero__shot-card-arc"');
+    expect(hero).toContain('stroke="url(#s-hero__shot-card-g)"');
+    // The script is generated: the only card-derived strings in it are JSON-encoded selectors.
+    const script = hero.slice(hero.indexOf("<script>"), hero.indexOf("</script>"));
+    expect(script).toContain('var root = document.getElementById("s-hero__shot-card");');
+    expect(script).toContain(
+      'q = root.querySelectorAll("#s-hero__shot-card-arc"); if (q.length) sub.fromTo(q, {"strokeDashoffset":252}, {"strokeDashoffset":0,"duration":0.9,"ease":"power2.out"}, 0);',
     );
-    expect(hero).toContain("tl.add(sub, 0.2);");
+    expect(script).toContain(
+      'q = root.querySelectorAll(".ring"); if (q.length) sub.to(q, {"scale":1.08,"duration":0.5,"ease":"sine.inOut"}, 1.6);',
+    );
+    expect(script).toContain("tl.add(sub, 0.2);");
+    const strings = [...script.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+    for (const text of ["Ra mắt", "wrap", "radial-gradient"])
+      expect(strings.some((v) => v?.includes(text))).toBe(false);
     // The card and caption weights are bundled; the code asset is not copied as media.
     const copies = [...build.copies.keys()];
     expect(copies).toContain("assets/fonts/be-vietnam-pro-vietnamese-800-normal.woff2");
@@ -130,14 +169,14 @@ describe("HTML card composition shots", () => {
     const bad = join(dir, "bad.json");
     await writeFile(bad, "{", "utf8");
     expect(() => build(bad)).toThrow(/not readable JSON/);
-    await writeFile(bad, JSON.stringify({ ...CLEAN_CARD, script: "fetch('/x')" }), "utf8");
+    await writeFile(bad, JSON.stringify({ ...CLEAN_CARD, html: '<div onclick="x">a</div>' }), "utf8");
     try {
       build(bad);
       expect.unreachable();
     } catch (err) {
       expect(err).toBeInstanceOf(StudixError);
       expect((err as StudixError).code).toBe("VALIDATION");
-      expect((err as StudixError).details?.problems).toEqual(["script: fetch is not allowed (no network)"]);
+      expect((err as StudixError).details?.problems).toEqual(['html: attribute "onclick" is not allowed']);
     }
   });
 });
@@ -148,15 +187,17 @@ describe("lintHtmlCard", () => {
     const opts = { width: 1080, height: 1920, durationMs: 3000, palette: { primary: "#112233" }, workDir };
     expect((await lintHtmlCard(CLEAN_CARD, opts)).errors).toEqual([]);
     expect((await lintHtmlCard({ ...CLEAN_CARD, html: "<iframe></iframe>" }, opts)).errors).toEqual([
-      "html: <iframe> is not allowed (cards use inline SVG and CSS only)",
+      "html: <iframe> is not allowed (cards use text elements and inline SVG only)",
     ]);
-    // A safe card the HyperFrames linter rejects: a script syntax error and an unbundled font family.
+    // A safe card the HyperFrames linter rejects: a font family that is not bundled.
     const linted = await lintHtmlCard(
-      { ...CLEAN_CARD, css: '.title { font-family: "Comic Sans MS"; }', script: "tl.to(root, { x: 1 }" },
+      { ...CLEAN_CARD, css: '.title { font-family: "Comic Sans MS"; }' },
       opts,
     );
-    expect(linted.errors.some((e) => e.startsWith("invalid_inline_script_syntax:"))).toBe(true);
     expect(linted.errors.some((e) => e.startsWith("font_family_without_font_face:"))).toBe(true);
+    // Internal failures come back as errors instead of throwing.
+    const odd = await lintHtmlCard(CLEAN_CARD, { ...opts, width: 1000, height: 1200 });
+    expect(odd.errors[0]).toMatch(/^internal: .*matches no supported aspect ratio/);
   });
 });
 
