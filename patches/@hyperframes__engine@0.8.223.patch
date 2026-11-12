@@ -1,5 +1,5 @@
 diff --git a/dist/services/browserManager.js b/dist/services/browserManager.js
-index e63332ce62774085282c0565b30d140b9e2a4d2f..a7ca739700895ea62993500b288f41dab1d5caae 100644
+index e63332ce62774085282c0565b30d140b9e2a4d2f..6bab5e040c9f138ffca873ae9a163ae1fe1ed4c5 100644
 --- a/dist/services/browserManager.js
 +++ b/dist/services/browserManager.js
 @@ -25,7 +25,7 @@ let hostHandlesSigint = false;
@@ -11,14 +11,15 @@ index e63332ce62774085282c0565b30d140b9e2a4d2f..a7ca739700895ea62993500b288f41da
  function isSoftwareWebGlRenderer(rendererInfo) {
      const renderer = rendererInfo.trim().toLowerCase();
      return (renderer.includes("swiftshader") ||
-@@ -847,6 +847,16 @@ export function usesSoftwareWebGpu(requiresWebGpu, config) {
+@@ -847,6 +847,17 @@ export function usesSoftwareWebGpu(requiresWebGpu, config) {
          !(config.disableGpu ?? DEFAULT_CONFIG.disableGpu) &&
          (config.browserGpuMode ?? DEFAULT_CONFIG.browserGpuMode) === "software");
  }
-+// Studix: page scripts must not reach any network from the capture browser. Every request goes to a
-+// proxy that does not exist, so it fails without a fallback; Chrome always bypasses proxies for
-+// loopback, which keeps the producer's own file server (http://localhost:<port>) reachable. Host names
-+// other than localhost never resolve, and WebRTC may only use the (dead) proxy, so no UDP leaves either.
++// Studix: page scripts must not reach any network from the capture browser. Routable destinations go to
++// a proxy that does not exist and fail without a DIRECT fallback. Chrome skips proxies for loopback and
++// link-local (169.254.0.0/16, fe80::/10) targets; those are stopped by the resolver rules, which fail every
++// host name and IP literal except the name "localhost", the producer's file server (http://localhost:<port>).
++// WebRTC may only use the dead proxy, so no UDP leaves either.
 +export const CAPTURE_NETWORK_ISOLATION_ARGS = [
 +    "--proxy-server=socks5://127.0.0.1:9",
 +    "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
@@ -28,7 +29,7 @@ index e63332ce62774085282c0565b30d140b9e2a4d2f..a7ca739700895ea62993500b288f41da
  export function buildChromeArgs(options, config) {
      const platform = options.platform ?? process.platform;
      const gpuDisabled = config?.disableGpu ?? DEFAULT_CONFIG.disableGpu;
-@@ -904,6 +914,7 @@ export function buildChromeArgs(options, config) {
+@@ -904,6 +915,7 @@ export function buildChromeArgs(options, config) {
          // autoplay policy and causes the AudioContext to stay suspended. The
          // frame-capture loop then blocks waiting for it, deadlocking the render.
          "--autoplay-policy=no-user-gesture-required",

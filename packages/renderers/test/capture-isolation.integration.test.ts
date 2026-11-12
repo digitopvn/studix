@@ -56,13 +56,18 @@ function frameColor(file: string, seconds: number): [number, number, number] {
 }
 
 // The page script stands for any JavaScript that reaches a capture: it tries every route out of the render.
-function hostileIndexHtml(canary: string, stunPort: number, secretSrcs: string[]): string {
-  const media = secretSrcs
-    .map(
-      (src, i) =>
-        `    <video id="leak-${i}" data-start="0" data-duration="1" data-track-index="2" src="${src}" muted playsinline style="position:absolute;inset:0;width:160px;height:90px"></video>`,
-    )
-    .join("\n");
+function videoTag(id: string, src: string): string {
+  return `    <video id="${id}" data-start="0" data-duration="1" data-track-index="2" src="${src}" muted playsinline style="position:absolute;inset:0;width:160px;height:90px"></video>`;
+}
+
+function hostileIndexHtml(
+  canary: string,
+  stunPort: number,
+  secretSrcs: string[],
+  projectSrcs: string[],
+): string {
+  const media = secretSrcs.map((src, i) => videoTag(`leak-${i}`, src)).join("\n");
+  const staticMedia = projectSrcs.map((src, i) => videoTag(`clip-${i}`, src)).join("\n");
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -71,7 +76,9 @@ function hostileIndexHtml(canary: string, stunPort: number, secretSrcs: string[]
     <style>html, body, #root { margin: 0; width: 160px; height: 90px; overflow: hidden; background: #000; }</style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90"></div>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90">
+${staticMedia}
+    </div>
     <script>
       (function () {
         var canary = ${JSON.stringify(canary)};
@@ -129,10 +136,15 @@ async function startCanary(address: string) {
   };
 }
 
-describe.skipIf(!toolchain.ok || !host)(
-  `HyperFrames capture isolation${toolchain.ok ? "" : ` (skipped: ${toolchain.reason})`}`,
+const skipReason = !toolchain.ok ? toolchain.reason : host ? "" : "no non-loopback IPv4 address";
+
+describe.skipIf(skipReason !== "")(
+  `HyperFrames capture isolation${skipReason ? ` (skipped: ${skipReason})` : ""}`,
   () => {
-    async function capture(secretSrcs: (secret: string, canaryUrl: string) => string[]) {
+    async function capture(
+      secretSrcs: (secret: string, canaryUrl: string) => string[],
+      projectSrcs: string[] = [],
+    ) {
       const canary = await startCanary(host!);
       const { dir, cleanup } = await tempDir("capture-isolation");
       cleanups.push(cleanup);
@@ -156,9 +168,11 @@ describe.skipIf(!toolchain.ok || !host)(
         require.resolve("gsap/dist/gsap.min.js"),
         join(projectDir, "assets", "vendor", "gsap.min.js"),
       );
+      await mkdir(join(projectDir, "assets", "media"), { recursive: true });
+      await copyFile(secret, join(projectDir, "assets", "media", "red.mp4"));
       await writeFile(
         join(projectDir, "index.html"),
-        hostileIndexHtml(canary.url, canary.stunPort, secretSrcs(secret, canary.url)),
+        hostileIndexHtml(canary.url, canary.stunPort, secretSrcs(secret, canary.url), projectSrcs),
       );
       const outputPath = join(dir, "out.mp4");
       await renderWithProducer({
@@ -182,8 +196,23 @@ describe.skipIf(!toolchain.ok || !host)(
       expect(frameColor(outputPath, 0.5)).toEqual([0, 0, 0]);
     });
 
+    // Positive control: the same clip inside the project reaches the frame. The producer re-discovers it from
+    // the DOM, so it passes the same guard; a black frame below means the guard dropped a source.
+    it("still renders project media that the guard checks", async () => {
+      const { hits, outputPath } = await capture(() => [], ["assets/media/red.mp4"]);
+      const [r, g, b] = frameColor(outputPath, 0.5);
+      expect(r).toBeGreaterThan(200);
+      expect(g + b).toBeLessThan(40);
+      expect(hits).toEqual([]);
+    });
+
     it.each([
       ["an encoded ../ path", () => "..%2f..%2f..%2fsecret%2fsecret.mp4"],
+      ["an encoded ..\\ path", () => "..%5c..%5c..%5csecret%5csecret.mp4"],
+      [
+        "a double-encoded ../ path",
+        () => "%252e%252e%252f%252e%252e%252f%252e%252e%252fsecret%252fsecret.mp4",
+      ],
       ["a file: URL", (secret: string) => `file://${secret}`],
       ["an http: URL", (_: string, canaryUrl: string) => `${canaryUrl}/media.mp4`],
     ])("keeps runtime media with %s out of the render", async (_name, src) => {
