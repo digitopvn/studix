@@ -19,6 +19,7 @@ import {
   resolvePalette,
   type SceneFragment,
   sceneFragmentFile,
+  timingWord,
 } from "@studix/renderers";
 import { toStudixError } from "@studix/shared";
 import { type AssetRef, CreativeBrief, type Scene, VideoIR } from "@studix/video-ir";
@@ -81,6 +82,17 @@ export const directorCompositionId = (jobId: string) =>
     .replace(/[^A-Za-z0-9_-]/g, "")
     .slice(-56)
     .padStart(6, "0")}`;
+
+/**
+ * Whether one more builder run and one more render fit in what the job has left; the tier's reservation covers
+ * one of each, so a repair turn the budget cannot hold is skipped and the card stays.
+ */
+function repairAffordable(s: StageContext): boolean {
+  const left =
+    s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
+  const render = Math.ceil(RENDER_TIMEOUT_SECONDS / 60) * (s.services.compositions?.centsPerMinute ?? 0);
+  return left >= MG_SCENE_BUILD_LIMITS.maxCostCents + render;
+}
 
 /** What the director tier may spend at most: both agent calls and the sandbox minutes of one render. */
 function tierCents(s: StageContext): number {
@@ -230,6 +242,28 @@ function buildInput(
   };
 }
 
+/**
+ * The direction with each scene's focal words cut to the words that scene really speaks (as the timing spells
+ * them): a word the director misheard or took from another scene is dropped, never a reason to lose the tier.
+ */
+export function spokenFocalWords(ir: VideoIR, direction: DirectionBrief): DirectionBrief {
+  return {
+    ...direction,
+    scenes: direction.scenes.map((d) => {
+      const id = ir.scenes[d.scene - 1]?.id;
+      if (!id) return { ...d, focalWords: [] };
+      const spoken = new Set(sceneWords(ir, id).map(([w]) => w));
+      return { ...d, focalWords: d.focalWords.map(timingWord).filter((w) => spoken.has(w)) };
+    }),
+  };
+}
+
+/** A contract or check problem as a repair issue: `html: ...` names the part it is about. */
+const problemIssue = (problem: string) => {
+  const part = /^(html|css|js):/.exec(problem)?.[1];
+  return { path: part ?? "fragment", message: problem };
+};
+
 /** The scene whose picture is now the rendered clip, muted (the film's mix carries the sound). */
 function authoredScene(scene: Scene, asset: AssetRef): Scene {
   // The clip owns its whole picture: no template camera move, depth planes or motif drawn over it.
@@ -303,9 +337,10 @@ export const motionGraphicDirectorStage: StageDefinition = {
     };
     const workDir = await stageWorkDir(s, MG_DIRECTOR_STAGE);
     try {
-      const { direction } = z
+      const { direction: authored } = z
         .object({ direction: DirectionBrief })
         .parse(await call(directionAgent, directionInput(s, ir)));
+      const direction = spokenFocalWords(ir, authored);
       const handoff = Object.fromEntries(
         direction.scenes.flatMap((d) => {
           const id = ir.scenes[d.scene - 1]?.id;
@@ -313,47 +348,64 @@ export const motionGraphicDirectorStage: StageDefinition = {
         }),
       );
       const timing = sceneClipTiming(ir, scene.id, handoff);
-      const built = (await call(sceneBuildAgent, buildInput(ir, direction, index, timing))) as BuildOutput;
       const words = timing.scenes[scene.id]?.lines.flatMap((l) => l.words.map(([w]) => w)) ?? [];
-      const checked = checkSceneFragment(built, { sid: scene.id, words });
-      if (checked.problems.length > 0) {
-        return keepCard(`the fragment breaks the contract: ${checked.problems.slice(0, 3).join("; ")}`);
-      }
-      const project = buildDirectorProject({
-        width: ir.format.width,
-        height: ir.format.height,
-        timing,
-        theme: { palette: resolvePalette(ir.brand), ...(ir.brand ? { fonts: ir.brand.fonts } : {}) },
-        scenes: [{ sid: scene.id, fragment: checked }],
-      });
       const compositionId = directorCompositionId(s.job.id);
-      record.compositionId = compositionId;
-      await storeTree(s, compositionId, await treeFiles(project, scene.id, built, { timing, direction }));
-
-      const clip = `out/${scene.id}.mp4`;
       const compositions = s.services.compositions!;
-      const run = await compositions.runner.run(booked(), {
-        compositionId,
-        command: `hyperframes check . && hyperframes render . -o ${clip} --quiet`,
-        timeoutSeconds: RENDER_TIMEOUT_SECONDS,
-        check: {
-          path: clip,
+      const clip = `out/${scene.id}.mp4`;
+      const task = buildInput(ir, direction, index, timing);
+      // One repair turn in all: a fragment that breaks the contract or fails the sandbox check goes back to the
+      // builder with what is wrong once, before the card is kept.
+      let repair: { issues: Array<{ path: string; message: string }>; output: BuildOutput } | undefined;
+      let built: BuildOutput;
+      let run: Awaited<ReturnType<typeof compositions.runner.run>>;
+      for (;;) {
+        built = (await call(sceneBuildAgent, repair ? { ...task, repair } : task)) as BuildOutput;
+        const canRepair = !repair && repairAffordable(booked());
+        const checked = checkSceneFragment(built, { sid: scene.id, words });
+        if (checked.problems.length > 0) {
+          if (canRepair) {
+            repair = { issues: checked.problems.slice(0, 10).map(problemIssue), output: built };
+            continue;
+          }
+          return keepCard(`the fragment breaks the contract: ${checked.problems.slice(0, 3).join("; ")}`);
+        }
+        const project = buildDirectorProject({
           width: ir.format.width,
           height: ir.format.height,
-          durationMs: scene.durationMs,
-          durationToleranceMs: 250,
-        },
-      });
-      usage.push({
-        item: `render-${scene.id}`.slice(0, 64),
-        kind: "compute",
-        quantity: Math.round(run.durationMs) / 1000,
-        unit: "second",
-        costCents: Math.max(1, Math.ceil(run.durationMs / 60_000)) * compositions.centsPerMinute,
-        metadata: { exitCode: run.exitCode, compositionId },
-      });
-      if (run.exitCode !== 0 || (run.check && !run.check.passed)) {
+          timing,
+          theme: { palette: resolvePalette(ir.brand), ...(ir.brand ? { fonts: ir.brand.fonts } : {}) },
+          scenes: [{ sid: scene.id, fragment: checked }],
+        });
+        record.compositionId = compositionId;
+        await storeTree(s, compositionId, await treeFiles(project, scene.id, built, { timing, direction }));
+
+        run = await compositions.runner.run(booked(), {
+          compositionId,
+          command: `hyperframes check . && hyperframes render . -o ${clip} --quiet`,
+          timeoutSeconds: RENDER_TIMEOUT_SECONDS,
+          check: {
+            path: clip,
+            width: ir.format.width,
+            height: ir.format.height,
+            durationMs: scene.durationMs,
+            durationToleranceMs: 250,
+          },
+        });
+        usage.push({
+          item: `render-${scene.id}${repair ? "-repair" : ""}`.slice(0, 64),
+          kind: "compute",
+          quantity: Math.round(run.durationMs) / 1000,
+          unit: "second",
+          costCents: Math.max(1, Math.ceil(run.durationMs / 60_000)) * compositions.centsPerMinute,
+          metadata: { exitCode: run.exitCode, compositionId },
+        });
+        if (run.exitCode === 0 && (!run.check || run.check.passed)) break;
         const why = run.exitCode !== 0 ? `exit ${run.exitCode}` : (run.check?.problems ?? []).join("; ");
+        if (!repair && repairAffordable(booked())) {
+          const message = `the sandbox check or render failed (${why}): ${run.log.slice(-600)}`;
+          repair = { issues: [{ path: "fragment", message }], output: built };
+          continue;
+        }
         return keepCard(`the sandbox check or render failed (${why}): ${run.log.slice(-240)}`);
       }
 

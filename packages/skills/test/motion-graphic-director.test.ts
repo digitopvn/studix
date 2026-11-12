@@ -63,11 +63,14 @@ describe("motion-graphic authored hook scene", () => {
       allowed?: boolean;
       build?: unknown;
       exitCode?: number;
+      /** Replies per agent, in order; the default reply once a queue runs out. */
+      replies?: Record<string, unknown[]>;
     } = {},
   ) {
     dir = await mkdtemp(join(tmpdir(), "mg-director-"));
     const objects = new Map<string, Uint8Array>();
     const tasks: string[] = [];
+    const inputs: Array<Record<string, unknown>> = [];
     const runs: CompositionRunRequest[] = [];
     const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
     const storage = {
@@ -96,9 +99,15 @@ describe("motion-graphic authored hook scene", () => {
     };
     const runtime = {
       id: "fake",
-      async run(_ctx: unknown, task: { skill: string }) {
+      async run(_ctx: unknown, task: { skill: string; input: Record<string, unknown> }) {
         tasks.push(task.skill);
-        const output = task.skill === MG_DIRECTION_AGENT ? { direction } : (opts.build ?? fragment);
+        inputs.push(task.input);
+        const queued = opts.replies?.[task.skill];
+        const output = queued?.length
+          ? queued.shift()
+          : task.skill === MG_DIRECTION_AGENT
+            ? { direction }
+            : (opts.build ?? fragment);
         return { output, costCents: 3, inputTokens: 1, outputTokens: 1, turns: 1 };
       },
     };
@@ -123,7 +132,7 @@ describe("motion-graphic authored hook scene", () => {
       },
       agents: { runtime, latestOverrun: async () => undefined, grantedOverruns: async () => 0 },
     } as unknown as StageContext;
-    return { s, ir, objects, tasks, runs };
+    return { s, ir, objects, tasks, inputs, runs };
   }
 
   it("leaves a standard graphic untouched", async () => {
@@ -172,13 +181,86 @@ describe("motion-graphic authored hook scene", () => {
     expect(result.usage?.reduce((sum, u) => sum + (u.costCents ?? 0), 0)).toBe(8);
   });
 
-  it("falls back to the card when the fragment breaks the contract, booking the spend", async () => {
-    const { s, ir, runs } = await setup({ build: { ...fragment, js: 'fetch("/x");' } });
+  it("falls back to the card when the fragment still breaks the contract after its repair turn", async () => {
+    const { s, ir, runs, tasks, inputs } = await setup({ build: { ...fragment, js: 'fetch("/x");' } });
     const result = await motionGraphicDirectorStage.run(s);
     const out = result.output as { ir: VideoIR; warning: string };
     expect(out.warning).toMatch(/breaks the contract: js: network access/);
     expect(out.ir.scenes).toEqual(ir.scenes);
     expect(runs).toEqual([]);
+    expect(tasks).toEqual([MG_DIRECTION_AGENT, MG_SCENE_BUILD_AGENT, MG_SCENE_BUILD_AGENT]);
+    expect(inputs[2]?.repair).toMatchObject({
+      issues: [expect.objectContaining({ path: "js", message: expect.stringMatching(/network access/) })],
+      output: { js: 'fetch("/x");' },
+    });
+    expect(result.usage?.length).toBe(3);
+  });
+
+  it("authors the hook once the builder repairs a fragment that broke the contract", async () => {
+    const { s, runs } = await setup({
+      replies: { [MG_SCENE_BUILD_AGENT]: [{ ...fragment, js: 'fetch("/x");' }, fragment] },
+    });
+    const out = (await motionGraphicDirectorStage.run(s)).output as { ir: VideoIR; warning?: string };
+    expect(out.warning).toBeUndefined();
+    expect(runs).toHaveLength(1);
+    expect(out.ir.metadata?.authoredScenes).toHaveLength(1);
+  });
+
+  it("reads a drifted but sound direction: long text, string numbers, odd keys, a fourth or unspoken focal word", async () => {
+    const long = (n: number) => "the prompt pill glides and morphs ".repeat(20).slice(0, n);
+    const drifted = JSON.stringify({
+      direction: {
+        concept: long(354),
+        motif: long(290),
+        rhythm: long(304),
+        scenes: [
+          {
+            scene: "1",
+            shot: long(306),
+            focal_words: ["Film.", "get", "studix", "describe"],
+            exit: long(121),
+            exitRect: { x: "120", y: 300, w: 840, h: 220, r: 40, unit: "px" },
+            mood: "calm",
+          },
+          { Scene: 2, shot: long(248), focalWords: "sign-up", exit: long(86), exitRect: null },
+        ],
+      },
+    });
+    const { s, inputs } = await setup({
+      replies: { [MG_DIRECTION_AGENT]: [`\`\`\`json\n${drifted}\n\`\`\``] },
+    });
+    const out = (await motionGraphicDirectorStage.run(s)).output as { ir: VideoIR; warning?: string };
+    expect(out.warning).toBeUndefined();
+    const build = inputs[1] as {
+      direction: { rhythm: string };
+      scene: { focalWords: string[]; exitRect: unknown };
+    };
+    expect(build.direction.rhythm.length).toBeLessThanOrEqual(300);
+    // "studix" is not spoken in the hook, and only three focal words are read.
+    expect(build.scene.focalWords).toEqual(["film", "get"]);
+    expect(build.scene.exitRect).toEqual({ x: 120, y: 300, w: 840, h: 220, r: 40 });
+  });
+
+  it("sends a direction that fails its schema back once, and names the failing paths when it stays broken", async () => {
+    const broken = {
+      direction: { concept: "x", motif: "y", rhythm: "z", scenes: [{ scene: 0, shot: "s", exit: "e" }] },
+    };
+    const repaired = await setup({ replies: { [MG_DIRECTION_AGENT]: [broken, { direction }] } });
+    const ok = (await motionGraphicDirectorStage.run(repaired.s)).output as { warning?: string };
+    expect(ok.warning).toBeUndefined();
+    expect(repaired.tasks.slice(0, 2)).toEqual([MG_DIRECTION_AGENT, MG_DIRECTION_AGENT]);
+    expect(repaired.inputs[1]?.repair).toMatchObject({
+      output: broken,
+      issues: expect.arrayContaining([expect.objectContaining({ path: "direction.scenes.0.scene" })]),
+    });
+
+    const failing = await setup({ replies: { [MG_DIRECTION_AGENT]: [broken, broken] } });
+    const result = await motionGraphicDirectorStage.run(failing.s);
+    const out = result.output as { warning: string };
+    expect(out.warning).toMatch(
+      /fails its schema \(direction\.scenes\.0\.scene: .*direction\.scenes\.0\.focalWords/,
+    );
+    expect(failing.tasks).toEqual([MG_DIRECTION_AGENT, MG_DIRECTION_AGENT]);
     expect(result.usage?.length).toBe(2);
   });
 
