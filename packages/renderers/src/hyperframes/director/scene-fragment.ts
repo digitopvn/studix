@@ -61,6 +61,22 @@ export const SCENE_FRAGMENT_HELPERS: Readonly<Record<string, string>> = {
   "fadeOut(e, t) / flash(t) / shake(e, t)": "exits and punctuation (flash and shake for drops only)",
   "rng(seed)": "seeded random numbers; Math.random is not allowed",
   "envKeys(e, t0, t1, step, map)": "keyframes from the voice envelope (flat when there is none)",
+  "caretBlink(e, from, to)": "blink a .sx-caret on the beat between two times (a typing cursor)",
+  "railTo(e, t, frac, d)": "fill a .sx-rail progress bar to a 0..1 fraction (a job rendering, a counter)",
+};
+
+/**
+ * Film-system classes of shell v2 a fragment may wear (each is styled by the shell, in the film's accent and
+ * tokens): every scene that draws the product draws it from these, so the film shows one surface throughout.
+ */
+export const SCENE_FRAGMENT_COMPONENTS: Readonly<Record<string, string>> = {
+  "sx-panel": "the product window: rounded surface, hairline border, soft shadow (position it absolutely)",
+  "sx-pill":
+    "a prompt box or input field: rounded pill of body text (add a .sx-caret inside to type into it)",
+  "sx-chip": "a small status tag in the accent tint (a job state, a model, a duration)",
+  "sx-caret": "a typing cursor in the accent; blink it with caretBlink",
+  "sx-rail": "a progress track (position it absolutely, give it a width); fill it with railTo",
+  "sx-fill": "the accent fill inside a .sx-rail (railTo makes it when missing)",
 };
 
 /** Section element id of a scene in the shell. */
@@ -121,8 +137,10 @@ const fragmentUrlsOnly = (value: string) =>
 
 /** Classes the shell styles or owns (scene sections, captions, helper-made bars); a fragment element may not wear them. */
 const RESERVED_CLASS = /^(?:scene|cap|cap-box|cw|sx-[\w-]*)$/;
+/** Shell v2 component classes a fragment may wear despite the `sx-` prefix. */
+const COMPONENT_CLASS = new Set(Object.keys(SCENE_FRAGMENT_COMPONENTS));
 
-function htmlProblems(html: string, problems: string[]): void {
+function htmlProblems(html: string, problems: string[], shellVersion: number): void {
   const doc = parseDocument(html, { lowerCaseTags: true, lowerCaseAttributeNames: true });
   const seen = new Set<string>();
   const once = (p: string) => {
@@ -144,7 +162,7 @@ function htmlProblems(html: string, problems: string[]): void {
       }
       if (tag === "section") once("html: write the scene's content only; Studix adds its <section>");
       for (const cls of (node.attribs.class ?? "").split(/\s+/))
-        if (RESERVED_CLASS.test(cls))
+        if (RESERVED_CLASS.test(cls) && !(shellVersion >= 2 && COMPONENT_CLASS.has(cls)))
           once(
             `html: class "${cls}" is reserved by the Studix shell (it hides or restyles the element); rename it`,
           );
@@ -336,6 +354,8 @@ export const SCENE_SHELL_NAMES: readonly string[] = [
   "morphRect",
   "camTo",
   "drift",
+  "caretBlink",
+  "railTo",
 ];
 const SHELL_NAME_ALT = SCENE_SHELL_NAMES.map((n) => n.replace(/\$/g, "\\$")).join("|");
 /** `const sid =`, `function W(`, `class tl`, and simple destructuring such as `const { t0, t1 } =`. */
@@ -357,6 +377,8 @@ export interface SceneFragmentCheck {
    * (opacity between 0.2 and 0.6). Omitted: not checked.
    */
   headlinePx?: number;
+  /** Director shell version the fragment is assembled with; the current one (2) when omitted. */
+  shellVersion?: number;
 }
 
 export interface CheckedSceneFragment {
@@ -384,7 +406,7 @@ export function checkSceneFragment(fragment: SceneFragment, check: SceneFragment
   const sectionId = sceneSectionId(check.sid);
   if ([html, css, js].some((part) => SHELL_MARKER.test(part)))
     problems.push("fragment: shell markers such as /*TIMING:BEGIN*/ or <!--SCENES:END--> are not allowed");
-  htmlProblems(html, problems);
+  htmlProblems(html, problems, check.shellVersion ?? 2);
   const scoped = scopedCss(css, sectionId, problems, check.headlinePx);
 
   // A syntax check without running anything; comments go, so they cannot trip the token checks below.
