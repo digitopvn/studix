@@ -29,6 +29,7 @@ import {
   FUNDING_SOURCES,
   type FundingSource,
   JobAgentSelection,
+  MAX_TRACE_RUNS,
   type ModelChoice,
   type ModelSelectionSource,
   PlannerSelection,
@@ -104,7 +105,7 @@ export interface WorkerAgentHarnessDeps {
   /** Host paths of the media a stage run left outside /work/out, stored as preview artifacts. */
   previewFiles?: (stage: StageContext) => Promise<string[]>;
   /** Where each run's session trace is stored (`agentTraceKey`); omitted, runs are not traced. */
-  traceStorage?: Pick<StorageAdapter, "put">;
+  traceStorage?: Pick<StorageAdapter, "put" | "head">;
   /** Test seam; production heartbeats every `AGENT_TRACE_HEARTBEAT_MS`. */
   heartbeatMs?: number;
 }
@@ -436,13 +437,20 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
    * The session trace of one run, opened with what the run was asked to do. Needs trace storage and the
    * stage's activity record (it numbers the runs of the attempt); otherwise the run is not traced.
    */
-  function sessionTrace(stage: StageContext, task: AgentTask): AgentSessionTrace | undefined {
+  async function sessionTrace(stage: StageContext, task: AgentTask): Promise<AgentSessionTrace | undefined> {
     const activity = stage.activity;
-    if (!deps.traceStorage || !activity) return undefined;
+    const storage = deps.traceStorage;
+    if (!storage || !activity) return undefined;
+    // A job released at shutdown runs again under the same attempt number: skip the runs already stored.
+    const keyOf = (run: number) => agentTraceKey(stage.job.id, activity.stage, activity.attempt, run);
+    let run = activity.nextRun();
+    while (run < MAX_TRACE_RUNS - 1 && (await storage.head(stage.ctx, keyOf(run)).catch(() => undefined))) {
+      run = activity.nextRun();
+    }
     const trace = createAgentSessionTrace({
-      storage: deps.traceStorage,
+      storage,
       ctx: stage.ctx,
-      key: agentTraceKey(stage.job.id, activity.stage, activity.attempt, activity.nextRun()),
+      key: keyOf(run),
       clock,
       logger: log,
       onActivity: () => activity.touch(),
@@ -452,7 +460,8 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         type: "run",
         skill: task.skill,
         instructions: preview(task.instructions),
-        input: preview(JSON.stringify(task.input) ?? ""),
+        // Redacted as an object first, so secrets are caught by their key before the text is cut.
+        input: preview(JSON.stringify(redactDeep(task.input)) ?? ""),
         ...(task.tools?.length ? { tools: task.tools.map((t) => t.name) } : {}),
         ...(task.inputFiles?.length ? { inputFiles: task.inputFiles.map((f) => f.path) } : {}),
         ...(task.images?.length ? { images: task.images.length } : {}),
@@ -469,7 +478,7 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     // Reported on the stage's usage line; it names the runtime that actually ran once a run has started.
     let id = "worker-harness";
     const run = async (ctx: TenantContext, task: AgentTask): Promise<AgentRunResult> => {
-      const trace = sessionTrace(stage, task);
+      const trace = await sessionTrace(stage, task);
       const sink =
         deps.events || trace
           ? createAgentEventSink(

@@ -65,7 +65,8 @@ export function createAgentEventSink(
   let timer: NodeJS.Timeout | undefined;
 
   const write = (event: HarnessAgentEvent) => {
-    const attributes = redactDeep(compact(event)) as Record<string, unknown>;
+    // Redacted before the preview cut, so a secret is still caught by its key and never half-kept.
+    const attributes = compact(redactDeep(event) as HarnessAgentEvent);
     trace?.append(attributes);
     if (!activity) return;
     chain = chain.then(() =>

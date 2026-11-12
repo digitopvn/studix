@@ -136,7 +136,9 @@ export async function readJobTrace(
         startedAt: s.startedAt,
         finishedAt: s.finishedAt,
         ...(s.lastActivityAt ? { lastActivityAt: s.lastActivityAt } : {}),
-        ...(idle !== undefined && idle >= STAGE_STALL_MS ? { stalled: true } : {}),
+        ...(job.status === "running" && idle !== undefined && idle >= STAGE_STALL_MS
+          ? { stalled: true }
+          : {}),
         runs: runs.map((events, run) => summarizeAgentTrace(run, events)),
       });
     }

@@ -381,7 +381,7 @@ export const NATIVE_TOOLS = [
     name: NATIVE_TOOL_NAMES.jobTrace,
     title: "Job trace",
     description:
-      "What each agent stage run of a job did, from its session trace. view=summary (default): per stage, runs with runtime, model, turns, tokens, cost, tool calls, slowest steps, errors and last activity. view=full: one stage's events in order (prompt, model turns, tool calls and results, shell exit codes, artifacts, errors, heartbeats), paged by cursor. Use it when a stage is stalled or failed.",
+      "What a job's agent runs did. view=summary: per-stage turns, tokens, cost, tools, slowest steps, errors, last activity. view=full: one stage's events, paged by cursor. Use on a stalled or failed stage.",
     input: JobTraceInput,
     readOnly: true,
     async run(ctx, input) {

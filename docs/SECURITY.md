@@ -17,6 +17,10 @@ maintainers, not in a public issue.
   not leak existence.
 - Object storage keys are prefixed by tenant; signed URLs are issued only after
   a scoped repository read.
+- Agent session traces (`traces/jobs/...`, see
+  [MCP_API.md](MCP_API.md#agent-session-traces)) hold redacted prompts, tool
+  arguments and tool output, capped at 4 MB per run. They are read only through
+  `studix_job_trace` after a scoped job read, and are not deleted automatically.
 - The connector registry, tool catalog and grants are per workspace. There is
   no global catalog that could expose another tenant's tool metadata.
 

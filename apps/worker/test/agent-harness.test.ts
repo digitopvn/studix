@@ -221,6 +221,8 @@ function createWorld(
         traces.set(key, new TextDecoder().decode(body as Uint8Array));
         return { key, bytes: 0, sha256: "", contentType: "application/x-ndjson" };
       },
+      head: async (_c, key) =>
+        traces.has(key) ? { key, bytes: 0, sha256: "", contentType: "application/x-ndjson" } : undefined,
     },
     logger,
     // The real Pi SDK runtime, pointed at the fake endpoint with a declared price ($1/M in, $2/M out).
@@ -263,6 +265,8 @@ function createWorld(
   } as unknown as Job;
 
   const run = async () => {
+    // A fresh stage context numbers its runs from 0, as after a worker restart under the same attempt.
+    let runs = 0;
     const sctx = {
       ctx,
       job,
@@ -275,7 +279,7 @@ function createWorld(
         attempt: 1,
         touch: () => void activity.touches++,
         heartbeat: async () => void activity.heartbeats++,
-        nextRun: () => 0,
+        nextRun: () => runs++,
       },
     } as unknown as StageContext;
     sctx.agents = {
@@ -389,6 +393,9 @@ describe("worker agent harness", () => {
     expect(trace.at(-1)).toMatchObject({ type: "status", status: "succeeded", runtime: "pi" });
     expect(world.activity.touches).toBeGreaterThan(0);
     expect(world.activity.heartbeats).toBe(1);
+    // Run again under the same attempt (a restart): the stored trace is kept, the new run gets the next slot.
+    await world.run();
+    expect(world.traces.has(agentTraceKey("job_harness", STAGE, 1, 1))).toBe(true);
   });
 
   it("tags a run on the requester's personal key as member-funded", async () => {

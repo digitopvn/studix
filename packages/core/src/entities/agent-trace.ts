@@ -127,11 +127,12 @@ export function summarizeAgentTrace(run: number, events: readonly AgentTraceEven
         summary.status = str(e.status);
         summary.runtime = str(e.runtime) ?? summary.runtime;
         summary.model = str(e.model) ?? summary.model;
-        if (e.status === "failed" && str(e.error))
-          summary.errors.push({ at: e.ts, message: str(e.error) ?? "" });
+        // A failed run also writes an `error` line with the code and suggested action; that one is listed.
         break;
       case "turn":
-        summary.turns += 1;
+        // A `turn` line is one usage report; `turn` is the runtime's own running count (Claude Code and
+        // Codex may report once for many turns).
+        summary.turns = Math.max(summary.turns + (typeof e.turn === "number" ? 0 : 1), num(e.turn));
         summary.inputTokens += num(e.inputTokens);
         summary.outputTokens += num(e.outputTokens);
         summary.costCents += num(e.costCents);

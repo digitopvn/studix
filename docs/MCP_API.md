@@ -905,7 +905,7 @@ Every in-worker agent run (Pi, Claude, Codex, in or out of the skill sandbox) al
   - `message` and `reasoning`: the merged text.
   - `tool_start`: the tool's arguments, as a preview when they are large.
   - `tool_end`: `ok`, the head and tail of the result (a failing command prints its error last), `durationMs`, and the shell `exitCode` when the runtime reports one.
-  - `turn`: per-turn `inputTokens`, `outputTokens`, `costCents`, `latencyMs` and model.
+  - `turn`: one usage report, with the `inputTokens`, `outputTokens` and `costCents` added since the previous one, the model, `latencyMs` since the last turn or tool result, and the runtime's running `turn` count. Pi reports every turn. Claude Code and Codex may report once for many turns, so one line can span the whole run.
   - `artifact`, and `error` with the code, message and `suggestedAction`.
   - `heartbeat`: written every 30 seconds with `idleMs` since the last real event.
   - `truncated`: the run hit its cap (5,000 events or 4 MB) and later events were dropped.

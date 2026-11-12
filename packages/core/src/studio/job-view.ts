@@ -179,7 +179,8 @@ export function toJobView(
   queue?: JobQueueView,
   now: Date = new Date(),
 ): JobView {
-  const stalled = stages.flatMap((s) => {
+  // Only a running job's stages can stall; a parked or finished job's leftover running row is not live.
+  const stalled = (job.status === "running" ? stages : []).flatMap((s) => {
     const idleMs = stageIdleMs(s, now);
     return idleMs !== undefined && idleMs >= STAGE_STALL_MS ? [{ name: s.name, idleMs }] : [];
   });
