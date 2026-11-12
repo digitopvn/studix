@@ -48,8 +48,14 @@ import { MG_STORYBOARD_STAGE, MotionStoryboardOutput, premiumDirector } from "./
 
 export const MG_DIRECTOR_STAGE = "motion-graphic.authored-scenes";
 
-/** Wall time of the sandbox check and render of one authored scene clip. */
+/** Most wall time of the sandbox check and render of one authored scene clip. */
 const RENDER_TIMEOUT_SECONDS = 600;
+/**
+ * Wall time for one scene's check and render: a minute of start-up plus 40 s per second of clip, so a scene
+ * that hangs the renderer fails fast and its repair turn still fits the job deadline.
+ */
+export const sceneRenderTimeoutSeconds = (durationMs: number) =>
+  Math.min(RENDER_TIMEOUT_SECONDS, Math.ceil(60 + (40 * Math.max(0, durationMs)) / 1000));
 /** Smallest text a fragment may set, at a 1080 px short frame edge. */
 const MIN_TEXT_AT_1080 = 20;
 
@@ -442,7 +448,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
         run = await compositions.runner.run(booked(), {
           compositionId,
           command: `hyperframes check . && hyperframes render . -o ${clip} --quiet`,
-          timeoutSeconds: RENDER_TIMEOUT_SECONDS,
+          timeoutSeconds: sceneRenderTimeoutSeconds(scene.durationMs),
           check: {
             path: clip,
             width: ir.format.width,

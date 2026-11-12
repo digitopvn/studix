@@ -207,12 +207,16 @@ export const sceneBuildAgent = createAgentStage({
     'placed in frame pixels (`frame.width` x `frame.height`); wrap the composition in <div class="cam"> so it ' +
     "can move as one camera. Inline SVG is fine. No <script>, <style>, <img>, media, iframes, forms, links, " +
     "event handlers or URLs: draw everything with HTML, CSS and SVG. Give text that should enter word by word " +
-    "the class `split` (the shell wraps each word in a `.w` span); `.mask` clips a line for lineIn.\n" +
+    "the class `split` (the shell wraps each word in a `.w` span); `.mask` clips a line for lineIn. The shell " +
+    "owns the classes `scene`, `cap`, `cap-box`, `cw` and `sx-*` (never use them); `layer` and `cam` fill the " +
+    "frame, `draw` hides a stroke until draw() runs, `sweep` and `ripple` only mark the empty element their " +
+    "helper animates: give your own containers their own class names.\n" +
     "- `css`: plain rules without at-rules, animations or transitions; Studix scopes every selector to the " +
     "scene. Colours and fonts only from the theme tokens in `theme.tokens` (var(--bg), var(--ink), " +
     "var(--accent), var(--primary), var(--mute), var(--hair), var(--surface), var(--font-heading), ...). Text " +
     "is at least `frame.minTextPx` px. Keep everything above the caption band (`frame.captionBandPx` from the " +
-    "bottom) and `frame.marginPx` from the other edges.\n" +
+    "bottom) and `frame.marginPx` from the other edges. No `filter`, blur, `backdrop-filter` or `will-change` " +
+    "in css or js: they make the render too slow; draw glows with a transparent radial-gradient.\n" +
     "- `js`: the choreography body, run once while the page builds. Every tween goes on `tl` at an absolute " +
     `time; times come from the timing helpers, never from guesses. In scope: ${HELPERS}.\n` +
     "`sid` (this scene's id), `S`, `t0`, `t1`, `$s`, `$$s`, `tl` and every helper above are already defined: " +
