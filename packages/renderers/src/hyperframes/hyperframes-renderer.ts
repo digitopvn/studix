@@ -6,9 +6,11 @@ import type {
   RendererSupport,
   RenderOptions,
   RenderOutput,
+  StillsOptions,
+  StillsOutput,
 } from "@studix/core";
 import { createLogger, type Logger, StudixError, toStudixError } from "@studix/shared";
-import { type RenderSpec, renderDimensions, type VideoIR } from "@studix/video-ir";
+import { RENDER_PRESETS, type RenderSpec, renderDimensions, type VideoIR } from "@studix/video-ir";
 import { type AudioSourceInfo, mixAudio, planAudioClips } from "../ffmpeg/audio-mix.ts";
 import { type ExtraDelivery, type FinishedFile, finishDeliveries } from "../ffmpeg/ffmpeg-finish.ts";
 import { FfmpegProbe, probeMismatches } from "../ffmpeg/ffmpeg-probe.ts";
@@ -18,6 +20,7 @@ import { hasCompositionShots, renderFilmCompositions } from "../film-engine/film
 import { buildComposition, writeComposition } from "./compile-composition.ts";
 import { hyperframesSupport } from "./hyperframes-support.ts";
 import { renderWithProducer } from "./producer-render.ts";
+import { planStillGrid } from "./still-frame-grid.ts";
 
 export interface HyperFramesRendererOptions {
   /** ffmpeg binary (config.FFMPEG_PATH). */
@@ -187,6 +190,82 @@ export class HyperFramesRenderer implements RendererAdapter {
       await Promise.all(
         [rawPath, mixPath, normalizedMixPath].map((p) => rm(p, { force: true }).catch(() => undefined)),
       );
+    }
+  }
+
+  /**
+   * Stills for a visual review: the same compile and capture as `render` (fonts, film scenes and videos
+   * included), but at the preview size, on the coarsest frame grid that has a frame in every window (1 to 6
+   * fps instead of the film's rate), and without the sound mix, finish or verification. A 60 s film is
+   * tens of frames instead of 1800.
+   */
+  async stills(ir: VideoIR, options: StillsOptions): Promise<StillsOutput> {
+    const { workDir, signal, deadlineAt } = options;
+    const spec = RENDER_PRESETS.preview;
+    const support = this.supports(ir, spec);
+    if (!support.supported) {
+      throw new StudixError("VALIDATION", `IR cannot be rendered by HyperFrames: ${support.reasons[0]}`, {
+        details: { reasons: support.reasons },
+        retryable: false,
+      });
+    }
+    if (!isAbsolute(workDir))
+      throw new StudixError("VALIDATION", "StillsOptions.workDir must be an absolute path");
+    const grid = planStillGrid(options.windows);
+    const { width, height } = renderDimensions(ir.format, spec);
+    const projectDir = join(workDir, "composition");
+    const filePath = join(workDir, "stills.mp4");
+    const report = (progress: number, phase: string) => {
+      try {
+        options.onProgress?.({ progress: Math.min(1, Math.max(0, progress)), phase });
+      } catch (err) {
+        this.log.warn("stills progress callback threw", { error: String(err) });
+      }
+    };
+    try {
+      await mkdir(workDir, { recursive: true });
+      await rm(projectDir, { recursive: true, force: true });
+      let renderIr = ir;
+      let assetFiles = options.assetFiles;
+      if (hasCompositionShots(ir)) {
+        const film = await renderFilmCompositions({
+          ir,
+          assetFiles,
+          workDir,
+          fps: grid.fps,
+          quality: "draft",
+          crf: spec.crf,
+          workers: this.options.workers,
+          logger: this.log,
+          signal,
+          deadlineAt,
+          onProgress: (p) => report(p * FILM_SHARE, "film"),
+        });
+        renderIr = film.ir;
+        assetFiles = film.assetFiles;
+      }
+      const build = buildComposition(renderIr, { width, height, assetFiles });
+      await writeComposition(build, projectDir);
+      if (signal?.aborted) throw new StudixError("CANCELLED", "Stills capture cancelled");
+      await renderWithProducer({
+        projectDir,
+        outputPath: filePath,
+        fps: grid.fps,
+        quality: "draft",
+        crf: spec.crf,
+        workers: this.options.workers,
+        logger: this.log,
+        signal,
+        deadlineAt,
+        onProgress: (p, stage) => report(FILM_SHARE + p * (1 - FILM_SHARE), stage),
+      });
+      report(1, "complete");
+      // Half a grid step early: the first frame decoded from there is the still's own frame.
+      const half = 500 / grid.fps;
+      const frames = Math.ceil((ir.format.durationMs * grid.fps) / 1000);
+      return { filePath, seekMs: grid.timesMs.map((t) => Math.max(0, t - half)), frames };
+    } catch (err) {
+      throw toStudixError(err);
     }
   }
 

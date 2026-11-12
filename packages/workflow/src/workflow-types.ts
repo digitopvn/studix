@@ -11,6 +11,7 @@ import type {
   PlannerSelection,
   ProviderExecutionRecorder,
   RendererAdapter,
+  StillsOutput,
   StorageAdapter,
   TenantContext,
 } from "@studix/core";
@@ -331,6 +332,15 @@ export interface EngineStages {
    * `{ projectVersionId }`.
    */
   storyboardReady: StageDefinition;
+  /**
+   * Captures stills of `ir` (one per window) for a visual review, far cheaper than a render: undefined when
+   * the worker's renderer cannot. Downloads the IR's assets like the render does; the file is the caller's.
+   */
+  stills?(
+    s: StageContext,
+    ir: VideoIR,
+    windows: readonly { fromMs: number; toMs: number }[],
+  ): Promise<StillsOutput>;
 }
 
 /** Which video.create job a pack pipeline is asked to plan. */

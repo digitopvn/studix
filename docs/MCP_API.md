@@ -167,11 +167,13 @@ Behavior notes:
   brief's aspect ratio, duration within 0.5 s of the brief, audible voice-over, -16 LUFS +/-2 with
   true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
   each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
-- `motion-graphic` takes `roles.director` only: it turns on the premium tier (the director writes the
+- `motion-graphic` takes `roles.director` and `roles.builder`: the director turns on the premium tier (the director writes the
   storyboard under larger caps and may author 2-3 hero cards as allowlisted HTML/CSS plus declarative tweens, no agent code; each kept only when it
   passes the HTML-card safety rules and the HyperFrames linter, else the built-in card stays and the
-  `motion-graphic.heroes` stage records a `warning`). Other roles with `motion-graphic` are refused with
-  `VALIDATION`.
+  `motion-graphic.heroes` stage records a `warning`). On a worker with a skill sandbox the director also
+  writes the film's direction and `roles.builder` (default: the job's `agent`) authors the hook scene
+  (`motion-graphic.scene-build`). `roles.builder` without `roles.director`, and `roles.qa`, are refused
+  with `VALIDATION`.
 - `roles: {director?, builder?, qa?}` (`skill-agent`, each an `agent` object from any catalogue
   runtime and model, e.g. `pi` + `deepseek-v4.1-flash` as builder): the director writes the script and
   direction first; the builder makes the video (default: the job's `agent`); QA watches each render,

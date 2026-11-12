@@ -80,6 +80,13 @@ export interface AgentTask {
   signal?: AbortSignal;
   /** Live events of the run; a runtime calls it best-effort and never waits on it. */
   onEvent?: (event: AgentStreamEvent) => void;
+  /**
+   * Why an output fails the caller's schema (`path: message` pairs, empty when it passes). The harness records a
+   * failing output as a trace `error`, so the run's summary says why its stage rejected it.
+   */
+  outputIssues?: (output: unknown) => Array<{ path: string; message: string }>;
+  /** A failing output earns a repair turn: the harness records it as a `warning` (`willRepair`), not an error. */
+  willRepair?: boolean;
 }
 
 export interface AgentRunResult {
