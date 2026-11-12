@@ -167,12 +167,21 @@ to the exact same version in `packages/renderers/package.json` (currently
   the engine patch makes `downloadToTemp` and `fetchPublicHttpsText` refuse
   every URL. The producer patch skips script inlining and gives font embedding a
   fetch that always fails, because its Google Fonts request carries the page's
-  characters. It also never copies a file from outside the project, and it
-  never converts one as an animated GIF or HEIC image.
+  characters. It turns system font capture off, so a family that is not
+  bundled but is installed on the worker (an HTML card may name any
+  `font-family`) is never read from the host font directories and embedded;
+  the browser falls back to the generic family. It also never copies a file
+  from outside the project, and it never converts one as an animated GIF or
+  HEIC image.
   `engine-launch-options.test.ts` checks that no request reaches the download
   transport, and the same integration test checks that such markup leaves the
   frame black and makes no request
-  ([#457](https://github.com/digitopvn/studix/issues/457)). All of these
+  ([#457](https://github.com/digitopvn/studix/issues/457)).
+  `compile-egress.integration.test.ts` renders hostile IR text and a hostile
+  page while trapping DNS, HTTP(S), `fetch`, TCP and TLS connects, copies and
+  reads of host font files in the render process
+  ([#464](https://github.com/digitopvn/studix/issues/464)). Its font check
+  needs Carlito installed (Debian `fonts-crosextra-carlito`). All of these
   patches are keyed to the exact version, like the SIGTERM one below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through
   `ownedLaunchOptions()`, which leaves Puppeteer's `handleSIGTERM` at `true`,
