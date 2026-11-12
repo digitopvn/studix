@@ -1,0 +1,57 @@
+diff --git a/dist/index.js b/dist/index.js
+index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..7da1d4f23349372b738e321c1d25365bda4a1107 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -8065,6 +8065,43 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+     hasAncestorBackgroundImage
+   };
+ }
++/**
++ * Studix: whether a media src found in the live DOM names a file inside the project. Page scripts
++ * control these values, and the engine reads them on the host: it downloads URLs and accepts
++ * absolute or percent-encoded `../` paths. Only the file server's own URLs and plain relative
++ * paths that stay inside the project directory survive, under every percent-decoding.
++ */
++function isProjectMediaSrc(src, fileServer) {
++  if (!src || src === "about:blank") return true;
++  let path = src;
++  if (fileServer && src.startsWith(`${fileServer.url}/`)) {
++    path = src.slice(fileServer.url.length + 1);
++  } else if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("//")) {
++    return false;
++  }
++  path = path.replace(/[?#][\s\S]*$/, "");
++  for (let i = 0; i < 4; i++) {
++    const unixPath = path.replace(/\\/g, "/");
++    if (unixPath.startsWith("/") || /^[a-z]:/i.test(unixPath) || unixPath.includes("\0")) return false;
++    if (unixPath.split("/").includes("..")) return false;
++    let decoded;
++    try {
++      decoded = decodeURIComponent(path);
++    } catch {
++      return false;
++    }
++    if (decoded === path) return true;
++    path = decoded;
++  }
++  return false;
++}
++function keepProjectMedia(browserMedia, fileServer, log) {
++  return browserMedia.filter((el) => {
++    if (isProjectMediaSrc(el.src, fileServer)) return true;
++    log.warn("Ignoring runtime media outside the project", { id: el.id, tagName: el.tagName });
++    return false;
++  });
++}
+ async function discoverMediaFromBrowser(page) {
+   const elements = await page.evaluate(() => {
+     const results = [];
+@@ -8929,7 +8966,7 @@ async function runProbeStage(input) {
+         }
+       }
+       log.info("Discovering media assets from browser DOM...");
+-      const browserMedia = await discoverMediaFromBrowser(session.page);
++      const browserMedia = keepProjectMedia(await discoverMediaFromBrowser(session.page), fileServer, log);
+       assertNotAborted();
+       if (browserMedia.length > 0) {
+         const existingVideoIds = new Set(composition.videos.map((v) => v.id));

@@ -469,6 +469,29 @@ Owner: `redact()` and the logger in `packages/shared`, spans in
 - Raw prompts and downstream payloads are not logged by default; traces record
   provider, model, latency, tokens, cost, bytes and outcome.
 
+## Render capture isolation
+
+A HyperFrames capture runs page JavaScript in headless Chrome on the worker, and
+the producer reads the media that the live DOM names. Studix patches HyperFrames
+so that a capture cannot reach anything outside its project
+([RENDERER.md](RENDERER.md#hyperframes-version)):
+
+- The browser sends every non-loopback request, WebSockets and WebRTC included,
+  to a proxy that cannot resolve. Nothing falls back to a direct connection, and
+  DNS lookups fail for every host except `localhost`.
+- Request interception aborts every page request whose origin is not the
+  producer's file server, including other loopback ports and navigations.
+  Popup blocking stays on, and popups are closed.
+- Runtime media must be a file-server URL or a relative path inside the project.
+  The producer drops every other value before it downloads or reads anything on
+  the host.
+
+Residual risk: requests from a dedicated worker to another loopback port pass
+only through request interception, and the render process itself has no egress
+policy. Its own downloads are limited to authored HTTPS media, which Studix
+compositions do not use. A network policy on the worker pod that denies egress
+except to its database, storage and providers closes the remaining gap.
+
 ## Threat list
 
 Each item maps to a negative test in the owning package.
@@ -503,3 +526,4 @@ Each item maps to a negative test in the owning package.
 | Expired artifact URL still valid                         | Presign expiry tests                                                                                       |
 | Host header / origin spoofing                            | Host allow-list derived from `STUDIX_*_URL`                                                                |
 | Argument injection or file/network access through ffmpeg | Shell-free argv, path and protocol checks, forced `-protocol_whitelist`, offline per-job sandbox           |
+| Capture page script reaching the network or host files   | Dead-proxy launch flags, file-server-only request interception, project-only runtime media                 |
