@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,10 +11,14 @@ interface BrowserManager {
 }
 
 /** The engine the producer actually loads; it is not a direct dependency of this package. */
-async function loadBrowserManager(): Promise<BrowserManager> {
+function engineServicesDir(): string {
   const producer = import.meta.resolve("@hyperframes/producer");
   const enginePackage = createRequire(producer).resolve("@hyperframes/engine/package.json");
-  return import(pathToFileURL(join(dirname(enginePackage), "dist", "services", "browserManager.js")).href);
+  return join(dirname(enginePackage), "dist", "services");
+}
+
+async function loadBrowserManager(): Promise<BrowserManager> {
+  return import(pathToFileURL(join(engineServicesDir(), "browserManager.js")).href);
 }
 
 /**
@@ -48,6 +52,13 @@ describe("@hyperframes/engine launch options", () => {
       serverUrl: "http://localhost:41234",
     });
     expect(args).toContain("--proxy-bypass-list=<-loopback>;localhost:41234");
+    // Fail closed: a browser launched without a file server reaches no loopback port at all.
+    expect((await loadBrowserManager()).buildChromeArgs({ width: 160, height: 90 })).toContain(
+      "--proxy-bypass-list=<-loopback>",
+    );
+    // The capture session must hand its file server to the launch args, or every capture breaks.
+    const frameCapture = readFileSync(join(engineServicesDir(), "frameCapture.js"), "utf8");
+    expect(frameCapture).toMatch(/buildChromeArgs\(\{[^}]*\bserverUrl\b[^}]*\}/);
   });
 });
 

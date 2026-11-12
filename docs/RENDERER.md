@@ -143,15 +143,16 @@ to the exact same version in `packages/renderers/package.json` (currently
 - **Capture isolation patches.** `patches/@hyperframes__engine@0.8.223.patch`
   also adds `CAPTURE_NETWORK_ISOLATION_ARGS` to the Chrome flags. A proxy that
   does not exist (`socks5://127.0.0.1:9`) fails every routable request without
-  a DIRECT fallback. Chrome skips proxies for loopback and link-local targets
-  (including the `169.254.169.254` metadata address), so
+  a DIRECT fallback. Chrome would skip the proxy for loopback and link-local
+  targets (including the `169.254.169.254` metadata address), so
+  `--proxy-bypass-list=<-loopback>` removes that bypass, and
   `--host-resolver-rules` fails every host name and IP literal except the name
   `localhost`, which the producer's file server uses
   (`http://localhost:<port>`). If upstream switches that URL to `127.0.0.1`,
-  every capture breaks. WebRTC is limited to proxied UDP. A capture browser also
-  gets `--proxy-bypass-list=<-loopback>;localhost:<port>`: loopback goes to the
-  dead proxy too, except the file server's own port, so a page cannot reach
-  other loopback ports of the worker. Request interception would miss
+  every capture breaks. WebRTC is limited to proxied UDP. A capture browser's bypass
+  list names only its file server (`<-loopback>;localhost:<port>`), so a page
+  cannot reach other loopback ports of the worker; a browser without a file
+  server gets no bypass at all. Request interception would miss
   WebSockets and workers; this flag does not
   ([#462](https://github.com/digitopvn/studix/issues/462)). The flag carries the
   port, so the browser pool never shares a browser between file servers.

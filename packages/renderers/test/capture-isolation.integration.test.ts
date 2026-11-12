@@ -127,7 +127,8 @@ ${staticMarkup}
 
 /**
  * A started canary: an HTTP/WebSocket server and a UDP (STUN) socket. `url` is a non-loopback address;
- * `loopbackUrl` is the same server through `localhost`, which the browser flags do not block.
+ * `loopbackUrls` reach the same server through `localhost` and `127.0.0.1`, other loopback ports than the
+ * producer's file server, which the page must not reach either.
  */
 async function startCanary(address: string) {
   const hits: string[] = [];
@@ -150,7 +151,10 @@ async function startCanary(address: string) {
   return {
     hits,
     url: `http://${address}:${(http.address() as AddressInfo).port}`,
-    loopbackUrl: `http://localhost:${(http.address() as AddressInfo).port}`,
+    loopbackUrls: [
+      `http://localhost:${(http.address() as AddressInfo).port}`,
+      `http://127.0.0.1:${(http.address() as AddressInfo).port}`,
+    ],
     stunPort: (udp.address() as AddressInfo).port,
   };
 }
@@ -195,7 +199,7 @@ describe.skipIf(skipReason !== "")(
       await writeFile(
         join(projectDir, "index.html"),
         hostileIndexHtml(
-          [canary.url, canary.loopbackUrl],
+          [canary.url, ...canary.loopbackUrls],
           canary.stunPort,
           secretSrcs(secret, canary.url),
           projectSrcs,

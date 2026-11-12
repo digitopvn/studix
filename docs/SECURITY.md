@@ -432,8 +432,8 @@ or a path guard as a security boundary:
 - A HyperFrames capture assumes any page script may be hostile, even though Studix compositions carry no
   agent JavaScript. Two pinned patches (see [RENDERER.md](RENDERER.md#hyperframes-version)) keep it off the
   network and the host filesystem. The capture browser sends routable requests to a proxy that does not
-  exist. It resolves no host name or IP literal except the name `localhost`, which also covers the link-local
-  and metadata addresses that Chrome never proxies. WebRTC may use only that proxy. Fetches, navigations,
+  exist. It resolves no host name or IP literal except the name `localhost`, and Chrome's implicit proxy bypass
+  for loopback, link-local and metadata addresses is removed. WebRTC may use only that proxy. Fetches, navigations,
   popups, WebSockets and STUN/UDP therefore never leave the worker. Loopback goes through the same dead proxy,
   except the producer's file server port, so a page cannot reach any other loopback port of its pod either
   (WebSockets and workers included). Media that a page script adds at runtime is ignored unless its source is a
