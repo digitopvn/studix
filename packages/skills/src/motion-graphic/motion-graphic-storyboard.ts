@@ -1,5 +1,5 @@
 import { JobAgentRoles, stageAgentSelection } from "@studix/core";
-import { HTML_CARD_LIMITS, HtmlCardTween } from "@studix/renderers/html-card";
+import { HTML_CARD_EASES, HTML_CARD_LIMITS, HtmlCardTween } from "@studix/renderers/html-card";
 import { StudixError, toStudixError } from "@studix/shared";
 import { ASPECT_RATIO_SIZES, CreativeBrief, LayoutSpec, MotionPreset } from "@studix/video-ir";
 import {
@@ -84,7 +84,11 @@ export function motionBeatRange(durationMs: number): { target: number; min: numb
  * beat `beat` (0-based, never the call to action). Checked by the heroes stage (safety rules, linter) before use.
  */
 export const MotionHeroCard = z.object({
-  beat: z.number().int().min(0).max(MG_MAX_BEATS - 2),
+  beat: z
+    .number()
+    .int()
+    .min(0)
+    .max(MG_MAX_BEATS - 2),
   /** The beat's on-screen line, so a hero whose beat moved (a repair changed the beats) is dropped. */
   onScreen: z.string().trim().min(1).max(120),
   html: z.string().min(1).max(HTML_CARD_LIMITS.htmlChars),
@@ -197,7 +201,8 @@ const PREMIUM_INSTRUCTIONS =
   "but url(#id). The card runs no code: `tweens` (at most 40) animate it, each `{ target, at, duration, from, " +
   "to, ease, stagger }` where `target` is a simple selector inside the card (`.title`, `#ring`, `.row span`), " +
   "`at` and `duration` are seconds from the card start, and `from`/`to` hold numbers for x, y, xPercent, " +
-  "yPercent, scale, scaleX, scaleY, rotation, skewX, skewY, opacity or strokeDashoffset. Animate in within the " +
+  "yPercent, scale, scaleX, scaleY, rotation, skewX, skewY, opacity or strokeDashoffset; `ease` is one of " +
+  `${HTML_CARD_EASES.join(", ")}. A \`#id\` target names an id you wrote in \`html\`. Animate in within the ` +
   "first second, then hold readable to the end. A hero that breaks a rule or fails the HyperFrames linter is " +
   "replaced by the built-in card, so keep it simple and valid.";
 
@@ -273,7 +278,11 @@ const premiumStage = agentStageFor(undefined, true);
  * The storyboard as the job's tier and brief allow it: a pinned profile replaces the agent's pick, and a
  * standard (non-premium) storyboard carries no hero cards; a hero stays only on the beat whose line it names.
  */
-export function settledStoryboard(brief: CreativeBrief, storyboard: MotionStoryboard, premium: boolean): MotionStoryboard {
+export function settledStoryboard(
+  brief: CreativeBrief,
+  storyboard: MotionStoryboard,
+  premium: boolean,
+): MotionStoryboard {
   const pinned = namedMotionStyle(brief)?.id;
   const { heroes, ...rest } = storyboard;
   // A hero stays only on the beat whose line it was written for.

@@ -172,7 +172,12 @@ describe("motion-graphic hero cards", () => {
     const ir = motionGraphicTemplate(brief(), { storyboard: storyboard("glass-keynote") });
     const { s, puts } = stage(ir, [
       { beat: 0, onScreen: "Ship faster", ...hero },
-      { beat: 1, onScreen: "One tool", ...hero, html: '<div><script>fetch("https://example.com")</script></div>' },
+      {
+        beat: 1,
+        onScreen: "One tool",
+        ...hero,
+        html: '<div><script>fetch("https://example.com")</script></div>',
+      },
       { beat: 2, onScreen: "Try it", ...hero },
     ]);
     const result = await motionGraphicHeroesStage.run(s);
