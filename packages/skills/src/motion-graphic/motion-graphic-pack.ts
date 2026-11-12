@@ -39,6 +39,7 @@ import {
   motionGraphicStoryboardStage,
 } from "./motion-graphic-storyboard.ts";
 import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion-graphic-template.ts";
+import { motionGraphicRenderStage } from "./motion-graphic-visual-qa.ts";
 import { voiceGraphic } from "./motion-graphic-voice-retime.ts";
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
@@ -64,7 +65,8 @@ export const motionGraphicSkill: Skill = {
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
     "generated voice-over with burned captions, a whoosh on each cut and one SFX accent on the CTA card; the accent and music bed " +
-    "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
+    "are skipped with a warning when their provider is not set. After the render a vision review scores each card and the " +
+    "failed cards are redesigned and re-rendered (at most 2 rounds, under budget; scores in the job result as `visualQa`). Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). No image-to-video.",
   version: 1,
   get inputSchema() {
@@ -453,8 +455,9 @@ export const motionGraphicQaStage: StageDefinition = {
 
 /**
  * New project: storyboard (agent, or template fallback) -> compose -> SFX accent -> voice-over -> music bed
- * (when the storyboard asked for one) -> render -> QA -> upload. Re-render of a version:
- * render -> QA -> upload.
+ * (when the storyboard asked for one) -> render with the visual QA loop -> store the version -> QA ->
+ * upload. The version is stored after the render because the visual review may redesign cards. Re-render of
+ * a version: render -> QA -> upload.
  */
 export const motionGraphicPipeline: PackPipeline = {
   renderer: "hyperframes",
@@ -468,12 +471,20 @@ export const motionGraphicPipeline: PackPipeline = {
           motionGraphicAccentStage,
           motionGraphicVoiceStage,
           motionGraphicMusicStage,
+          motionGraphicRenderStage(e.render),
           e.validateIr,
-          e.render,
           motionGraphicQaStage,
           e.upload,
           e.finalize,
         ],
+  // The finalize output, with the visual review of the render (card scores per round) when one ran.
+  result: (outputs) => {
+    const visualQa = outputs.render?.visualQa;
+    return {
+      ...(outputs.finalize ?? outputs.storyboard_ready ?? {}),
+      ...(visualQa ? { visualQa } : {}),
+    };
+  },
 };
 
 export const motionGraphicPack: WorkflowPack = {

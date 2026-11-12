@@ -333,6 +333,19 @@ lần với chỉ dẫn đọc gọn hơn (tính tiền cả hai lần đọc, b
 quá dài mới fail `VALIDATION`. Ước tính chi phí vẫn tính một lần đọc mỗi dòng. File không đo được (không có
 FFmpeg) thì cả file được tính, dư tới 250 ms (hơi thở cuối) thì cắt kèm fade.
 
+Visual QA sau render ([`motion-graphic-visual-qa.ts`](../packages/skills/src/motion-graphic/motion-graphic-visual-qa.ts)):
+stage `render` của pack dựng contact sheet (một frame giữ của mỗi card, lấy sau phần vào của card) và gửi cho
+agent của job (stage `motion-graphic.visual-qa`, ảnh đi qua `AgentTask.images`) chấm từng card 0–10 với các
+lỗi `blank`, `too-small`, `illegible`, `repetitive`, `off-brief`, `headline-only` (card đầu và cuối được là
+card chỉ có tiêu đề). Card có lỗi hoặc điểm dưới 6 quay về storyboard agent để thiết kế lại riêng các card
+đó; lời đọc và weight được giữ nên voice, caption, SFX và thời lượng card không đổi, không tốn tiền voice lại.
+Sau đó graphic render lại, tối đa 2 vòng và chỉ khi ngân sách job còn đủ cho một lượt chấm, một lượt sửa và
+một lần render. Version được lưu sau stage này (`validate_ir` chạy sau `render`), nên version luôn là IR đã
+render cuối cùng. Kết quả nằm trong job result ở `visualQa`. Bước này không bao giờ làm job fail: không có
+agent harness, chạy `agentMode: "host"`, model không đọc được ảnh (runtime trả `UNAVAILABLE`) hay agent chấm
+lỗi thì bỏ qua kèm `reason`. Storyboard agent cũng bị cấm card chỉ có tiêu đề (mọi card message phải có
+layout) và câu đọc gộp hai ý.
+
 ```json
 {
   "workflowTemplate": "motion-graphic",

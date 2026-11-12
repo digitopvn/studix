@@ -242,7 +242,18 @@ Behavior notes:
   job. Every voice take is measured first: a line longer than its card re-times
   the cards (same total length, captions and SFX moved with them), and only
   speech that cannot fit the whole video fails with `VALIDATION` naming the
-  lines and by how many milliseconds.
+  lines and by how many milliseconds. The storyboard agent gives every message
+  card a layout device and each spoken line one idea in one sentence. After the
+  render a vision model reviews a contact sheet (one hold frame per card) and
+  scores each card 0 to 10 for `blank`, `too-small`, `illegible`, `repetitive`,
+  `off-brief` or `headline-only`; failed cards (an issue, or a score below 6)
+  go back to the storyboard agent, which redesigns only those cards (their
+  voice-over and timing kept), and the graphic renders again: at most two
+  rounds, only while the job budget holds a review, a redesign and a render.
+  The job result carries the scores as `visualQa` (`status`: `passed`, `fixed`,
+  `failed` or `skipped`, with a `reason`, and `rounds[].cards[]`). The review
+  never fails the job: it is skipped with a reason in host mode, without an
+  agent, or when the agent's model cannot read images.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action

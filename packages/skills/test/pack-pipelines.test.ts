@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,7 +30,14 @@ import {
   type WorkerJobQueue,
 } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MG_STAGES, MG_STORYBOARD_LIMITS, MV_STAGES, packPipelines, packRegistry } from "../src/index.ts";
+import {
+  MG_STAGES,
+  MG_STORYBOARD_LIMITS,
+  MG_VISUAL_QA_STAGE,
+  MV_STAGES,
+  packPipelines,
+  packRegistry,
+} from "../src/index.ts";
 
 const clock = { now: () => new Date() };
 const ctx: TenantContext = {
@@ -112,7 +120,7 @@ function memoryStorage(): StorageAdapter & { keys(): string[] } {
   };
 }
 
-function fakeRenderer(): RendererAdapter & { rendered: VideoIR[] } {
+function fakeRenderer(realVideo = false): RendererAdapter & { rendered: VideoIR[] } {
   const rendered: VideoIR[] = [];
   return {
     id: "hyperframes",
@@ -122,7 +130,14 @@ function fakeRenderer(): RendererAdapter & { rendered: VideoIR[] } {
       rendered.push(ir);
       for (const asset of ir.assets) expect(opts.assetFiles[asset.id]).toBeDefined();
       const filePath = join(opts.workDir, "out.mp4");
-      await writeFile(filePath, `mp4:${ir.title}`);
+      if (realVideo) {
+        // A real (tiny, still) video, so frames can be read from it.
+        execFileSync("ffmpeg", [
+          ...["-nostdin", "-loglevel", "error", "-f", "lavfi"],
+          ...["-i", `color=c=0x336699:s=160x90:r=5:d=${ir.format.durationMs / 1000}`],
+          ...["-pix_fmt", "yuv420p", "-y", filePath],
+        ]);
+      } else await writeFile(filePath, `mp4:${ir.title}`);
       return {
         filePath,
         mime: "video/mp4",
@@ -153,13 +168,15 @@ function harness(
     unlistedKinds?: readonly string[];
     /** Length of the voice take the fake provider returns for a request (2 s when undefined). */
     voiceMs?: (request: { prompt: string; params?: Record<string, unknown> }) => number | undefined;
+    /** The fake renderer writes a real video (the visual review reads its frames). */
+    realVideo?: boolean;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
   const projects = createInMemoryProjectRepository(clock);
   const renders = createInMemoryRenderRepository(clock);
   const storage = memoryStorage();
-  const renderer = fakeRenderer();
+  const renderer = fakeRenderer(options.realVideo);
   const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
   const real = media.generate.bind(media);
   const listed = media.capabilities.bind(media);
@@ -875,6 +892,77 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     ]);
     expect(ir.audio?.find((t) => t.kind === "music")).toMatchObject({ startMs: 0, volume: 0.18 });
     expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3]);
+  });
+
+  it("reviews the render, redesigns only the failed card and renders it again, keeping voice and timing", async () => {
+    const restyled = {
+      ...storyboard,
+      beats: storyboard.beats.map((b, i) =>
+        i === 1
+          ? { ...b, voiceover: "Câu khác hẳn.", layout: "stat", items: ["100%", "hái tay"] }
+          : { ...b, onScreen: "Đổi lén" },
+      ),
+    };
+    const score = (card: number, issues: string[] = [], value = 8) => ({
+      card,
+      score: value,
+      issues,
+      note: "",
+    });
+    const reviews = [
+      // Card 1 is a headline card, which the hook may be; only card 2 fails.
+      { cards: [score(1, ["headline-only"]), score(2, ["too-small"], 4), score(3)] },
+      { cards: [score(1), score(2), score(3)] },
+    ];
+    const tasks: AgentTask[] = [];
+    const runtime: AgentRuntime = {
+      id: "mock",
+      run: async (_ctx, task) => {
+        tasks.push(task);
+        const output =
+          task.skill === MG_VISUAL_QA_STAGE
+            ? reviews[tasks.filter((t) => t.skill === MG_VISUAL_QA_STAGE).length - 1]
+            : { storyboard: (task.input as { repair?: unknown }).repair ? restyled : storyboard };
+        return { output, turns: 1, costCents: 3, inputTokens: 4000, outputTokens: 600, model: "mock-model" };
+      },
+    };
+    const h = harness({ agent: runtime, realVideo: true });
+    const projectId = await newProject(h, "motion-graphic", graphic);
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+
+    // The reviewer sees one contact sheet image and what each card meant to show.
+    const critiques = tasks.filter((t) => t.skill === MG_VISUAL_QA_STAGE);
+    expect(critiques).toHaveLength(2);
+    expect(critiques[0]?.images).toEqual([{ mimeType: "image/jpeg", data: expect.any(String) }]);
+    expect((critiques[0] as AgentTask).input.cards).toHaveLength(3);
+    const repair = tasks.find((t) => (t.input as { repair?: unknown }).repair)?.input as {
+      repair: { cards: number[]; problem: string };
+    };
+    expect(repair.repair.cards).toEqual([2]);
+    expect(repair.repair.problem).toMatch(/card 2.*too-small/);
+
+    // Only card 2 changed: a layout device, its voice line and every card's length kept.
+    const [before, after] = h.renderer.rendered as [VideoIR, VideoIR];
+    expect(h.renderer.rendered).toHaveLength(2);
+    expect(after.scenes.map((sc) => sc.durationMs)).toEqual(before.scenes.map((sc) => sc.durationMs));
+    expect(after.scenes[0]).toEqual(before.scenes[0]);
+    expect(after.scenes[2]).toEqual(before.scenes[2]);
+    expect(after.scenes[1]?.shots[0]).toMatchObject({ layout: { kind: "stat" } });
+    expect(after.audio).toEqual(before.audio);
+    expect(after.captions).toEqual(before.captions);
+    expect(h.generate.mock.calls.filter(([, r]) => r.kind === "voice")).toHaveLength(3);
+
+    // The stored version is the IR that was rendered last, and the scores are in the job result.
+    const project = await h.projects.get(ctx, projectId);
+    const version = await h.projects.getVersion(ctx, project?.currentVersionId as string);
+    expect(version?.ir).toEqual(after);
+    const result = h.queue.complete.mock.calls.at(-1)?.[2] as { visualQa: Record<string, unknown> };
+    expect(result.visualQa).toMatchObject({
+      status: "fixed",
+      rounds: [{ round: 0, repaired: [2] }, { round: 1 }],
+    });
+    expect(h.usage.filter((u) => u.kind === "render.seconds")).toHaveLength(2);
   });
 
   it("adds no music when the storyboard asks for none", async () => {
