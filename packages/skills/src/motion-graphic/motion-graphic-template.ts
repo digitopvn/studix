@@ -29,10 +29,11 @@ import {
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
 import type { BrandSource } from "./motion-graphic-brand.ts";
 import { luminance, motionDepthFor, planCameras, planTransitions } from "./motion-graphic-camera.ts";
+import { splitCtaLine } from "./motion-graphic-cta.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionEnter, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 11;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 12;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -463,7 +464,10 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       // the brand kit's name is the hook line, which the hook card already shows.
       // With a logo and a name, the lockup draws both; a logo without a brand name stands alone.
       const ctaName = realName ?? brief.title;
-      if (logo || brief.brand || brandName || brief.title)
+      const named = Boolean(logo || brief.brand || brandName || brief.title);
+      // The end card is a lockup centred as one group: the brand large (its logo, else a display wordmark),
+      // then the line, an accent rule and the URL large under it.
+      if (named)
         shots.push({
           id: "cta-logo",
           type: "logo",
@@ -473,19 +477,22 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
             ? { assetId: logo.id, ...(ctaName ? { text: truncateText(ctaName, 60), lockup: true } : {}) }
             : { text: truncateText(brand.name, 60) }),
           style: {
-            textStyle: "heading",
-            color: inkOn(brand.palette, fill, "accent"),
+            textStyle: "display",
+            color: inkOn(brand.palette, fill, "foreground"),
             align: "center",
-            region: "top",
+            region: "middle",
+            emphasis: "high",
           },
           animation: { enter, durationMs: 400 },
         });
+      const said = splitCtaLine(line.onScreen, named ? (logo ? ctaName : brand.name) : undefined);
       shots.push({
         id: "cta-text",
         type: "cta",
         startMs: 300,
         durationMs: durationMs - 300,
-        text: breakLines(line.onScreen, chars - 2).slice(0, 120),
+        text: breakLines(said.text, chars - 2).slice(0, 120),
+        ...(said.url ? { url: said.url.slice(0, 300) } : {}),
         style: {
           textStyle: "heading",
           color: inkOn(brand.palette, fill, "foreground"),
