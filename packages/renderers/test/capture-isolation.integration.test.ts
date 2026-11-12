@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createSocket } from "node:dgram";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
@@ -148,6 +148,8 @@ describe.skipIf(!toolchain.ok)(
       const port = (server.address() as AddressInfo).port;
       const udpPort = (udp.address() as AddressInfo).port;
       const lan = `http://${host}:${port}`;
+      const victim = join(dir, "victim");
+      await mkdir(victim);
       // Other loopback ports, as the producer's file server is on localhost too.
       const local = `http://localhost:${port}`;
       const script = [
@@ -170,6 +172,8 @@ describe.skipIf(!toolchain.ok)(
         runtimeAudio("by-encoded-dots", "..%2fsecret.wav"),
         runtimeAudio("by-spaced-path", ` ${secret}`, true),
         runtimeAudio("by-spaced-dots", " ../secret.wav", true),
+        // The engine joins media ids into work-directory paths; this one points back at `victim`.
+        runtimeAudio(`${"../".repeat(16)}${victim.slice(1)}/pwned`, "inside.wav"),
       ].join("\n");
 
       const { output, logs } = await capture("hostile", script);
@@ -184,6 +188,8 @@ describe.skipIf(!toolchain.ok)(
       for (const id of ["by-url", "by-file-url", "by-encoded-dots", "by-spaced-path", "by-spaced-dots"]) {
         expect(logs).toContain(`"id":"${id}"`);
       }
+      expect(logs).toContain("/pwned");
+      expect(await readdir(victim)).toEqual([]);
     });
   },
 );

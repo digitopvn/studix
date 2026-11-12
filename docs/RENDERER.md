@@ -116,7 +116,9 @@ to the exact same version in `packages/renderers/package.json` (currently
     Page scripts control those values, even `currentSrc`. A src is kept only
     when it is exactly a file-server URL whose path is plain segments of
     `[A-Za-z0-9._~-]`, and the file it names resolves (symlinks included)
-    inside the compiled or project directory. Everything else is dropped with an
+    inside the compiled or project directory, and its id holds no `/`, `\\`
+    or bare `..`, since the engine builds work-directory paths from it.
+    Everything else is dropped with an
     `Ignoring runtime media outside the project` warning before the worker
     downloads or reads it. This covers URLs, `file:`, absolute paths, `../`,
     percent-encoding and leading whitespace.

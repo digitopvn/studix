@@ -486,7 +486,9 @@ so that a capture cannot reach anything outside its project
 - Runtime media must be a file-server URL with a plain path that resolves inside
   the project. The producer drops every other value before it downloads or reads
   anything on the host. Page scripts cannot change this by overriding
-  `currentSrc`, by adding whitespace or by percent-encoding.
+  `currentSrc`, by adding whitespace or by percent-encoding. The element id must
+  not be a path either, because the engine joins it into work-directory paths
+  that it writes and later removes.
 
 Residual risk: the render process itself has no egress policy. Its own downloads
 are limited to authored HTTPS media, which Studix compositions do not use. A
