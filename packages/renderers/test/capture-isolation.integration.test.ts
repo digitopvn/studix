@@ -5,7 +5,8 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createLogger } from "@studix/shared";
 import { afterAll, describe, expect, it } from "vitest";
 import { renderWithProducer } from "../src/hyperframes/producer-render.ts";
@@ -28,6 +29,16 @@ function externalAddress(): string | undefined {
 }
 
 const host = externalAddress();
+
+/** The engine instance the producer imports; its download transport can be replaced in tests. */
+async function loadEngine(): Promise<{
+  _setDownloadFetchForTests: (replacement: typeof fetch | undefined) => void;
+}> {
+  const enginePackage = createRequire(import.meta.resolve("@hyperframes/producer")).resolve(
+    "@hyperframes/engine/package.json",
+  );
+  return import(pathToFileURL(join(dirname(enginePackage), "dist", "index.js")).href);
+}
 
 /** Mean RGB of one frame at `seconds`, as 0..255 integers. */
 function frameColor(file: string, seconds: number): [number, number, number] {
@@ -65,6 +76,7 @@ function hostileIndexHtml(
   stunPort: number,
   secretSrcs: string[],
   projectSrcs: string[],
+  staticMarkup: string,
 ): string {
   const media = secretSrcs.map((src, i) => videoTag(`leak-${i}`, src)).join("\n");
   const staticMedia = projectSrcs.map((src, i) => videoTag(`clip-${i}`, src)).join("\n");
@@ -78,6 +90,7 @@ function hostileIndexHtml(
   <body>
     <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90">
 ${staticMedia}
+${staticMarkup}
     </div>
     <script>
       (function () {
@@ -144,6 +157,7 @@ describe.skipIf(skipReason !== "")(
     async function capture(
       secretSrcs: (secret: string, canaryUrl: string) => string[],
       projectSrcs: string[] = [],
+      staticMarkup = "",
     ) {
       const canary = await startCanary(host!);
       const { dir, cleanup } = await tempDir("capture-isolation");
@@ -162,6 +176,8 @@ describe.skipIf(skipReason !== "")(
         "yuv420p",
         secret,
       ]);
+      execFileSync("ffmpeg", ["-v", "error", "-i", secret, "-frames:v", "1", join(dir, "secret", "red.png")]);
+      execFileSync("ffmpeg", ["-v", "error", "-i", secret, "-frames:v", "3", join(dir, "secret", "red.gif")]);
       const projectDir = join(dir, "a", "b", "project");
       await mkdir(join(projectDir, "assets", "vendor"), { recursive: true });
       await copyFile(
@@ -172,7 +188,13 @@ describe.skipIf(skipReason !== "")(
       await copyFile(secret, join(projectDir, "assets", "media", "red.mp4"));
       await writeFile(
         join(projectDir, "index.html"),
-        hostileIndexHtml(canary.url, canary.stunPort, secretSrcs(secret, canary.url), projectSrcs),
+        hostileIndexHtml(
+          canary.url,
+          canary.stunPort,
+          secretSrcs(secret, canary.url),
+          projectSrcs,
+          staticMarkup,
+        ),
       );
       const outputPath = join(dir, "out.mp4");
       await renderWithProducer({
@@ -219,6 +241,49 @@ describe.skipIf(skipReason !== "")(
       const { hits, outputPath } = await capture((secret, canaryUrl) => [src(secret, canaryUrl)]);
       expect(frameColor(outputPath, 0.5)).toEqual([0, 0, 0]);
       expect(hits).toEqual([]);
+    });
+
+    // The compiler reads the page as a string before any browser starts: user text that looks like CSS
+    // (`background:url(https://…)` in a caption) must not make the worker download it, a font family must not
+    // make it ask Google Fonts (the request carries the page's characters), and markup that points outside the
+    // project must not copy or convert a host file (PNG, animated GIF) into the render.
+    it("keeps the compiler off the network and the host filesystem", async () => {
+      const engine = await loadEngine();
+      const requests: string[] = [];
+      const recordingFetch = (async (input: string | URL | Request) => {
+        requests.push(String(input instanceof Request ? input.url : input));
+        return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+      }) as typeof fetch;
+      // The engine downloader has its own transport; font embedding uses the global fetch.
+      engine._setDownloadFetchForTests(recordingFetch);
+      const globalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.startsWith("http://localhost:")) return globalFetch(input, init);
+        return recordingFetch(input, init);
+      }) as typeof fetch;
+      try {
+        const box = "position:absolute;inset:0;width:160px;height:90px";
+        const { hits, outputPath } = await capture(
+          () => [],
+          [],
+          [
+            `    <img src="../../../secret/red.png" alt="" style="${box}" />`,
+            `    <img src="../../../secret/red.gif" alt="" style="${box}" />`,
+            `    <div style="${box};background-image:url(../../../secret/red.png);background-size:cover"></div>`,
+            `    <p style="color:#000;font-family:Roboto">background:url(https://example.com/bg.png) background-image: url(https://example.com/x.png)</p>`,
+          ].join("\n"),
+        );
+        // The host file is red; a missing image may leave a faint grey placeholder.
+        const [r, g, b] = frameColor(outputPath, 0.5);
+        expect(r).toBeLessThan(20);
+        expect(Math.abs(r - g) + Math.abs(r - b)).toBeLessThan(6);
+        expect(hits).toEqual([]);
+      } finally {
+        engine._setDownloadFetchForTests(undefined);
+        globalThis.fetch = globalFetch;
+      }
+      expect(requests).toEqual([]);
     });
   },
 );
