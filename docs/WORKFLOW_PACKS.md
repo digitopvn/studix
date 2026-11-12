@@ -441,7 +441,9 @@ sửa nhưng chưa được chấm lại). Model không nhận ảnh theo metada
 file không còn (job chạy tiếp trên worker khác). Kết quả nằm trong job result ở `visualQa`. Bước này không bao
 giờ làm job fail: không có agent harness, chạy `agentMode: "host"`, model không đọc được ảnh, agent chấm lỗi,
 sửa card lỗi hay render lại lỗi thì dừng kèm `reason` và giữ render tốt cuối cùng; render đầu tiên lỗi thì bỏ
-qua review, stage `render` render sau khi version đã được lưu và báo lỗi thật. Storyboard agent cũng bị cấm
+qua review, stage `render` render sau khi version đã được lưu và báo lỗi thật. Scene authored (director tier) cũng được chấm trên contact sheet; scene lỗi quay về builder một lần với lỗi review
+(chỉ khi ngân sách và deadline còn đủ cho builder, render sandbox, chụp lại và render cuối), render lại trong sandbox;
+sửa lỗi thì giữ clip cũ. Storyboard agent cũng bị cấm
 card chỉ có tiêu đề (mọi card message phải có layout) và câu đọc gộp hai ý.
 
 ```json
