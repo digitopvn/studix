@@ -284,6 +284,14 @@ Mỗi beat của storyboard agent có thể kèm `layout` có kiểu (`prompt-bo
 dựng dần bên dưới (shot `layout`, renderer tự vẽ). `visual` chỉ là mô tả. Beat cuối luôn là card CTA, bỏ qua
 layout. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
 màu `primary`, thay vì xen kẽ nền từng card.
+Mỗi card có một chuyển động camera (`push-in`, `pull-back`, `pan-left`, `pan-right`, `parallax`, `static`):
+beat của storyboard có thể chọn `camera`, còn lại lấy theo vòng camera của style; hai card kề nhau không bao giờ
+trùng camera (template đổi card lặp sang camera kế tiếp, `planCameras`). Mọi card dùng chung depth layer của style
+(`motionDepthFor`: glow và vignette trên nền tối, grid cho style kỹ thuật, grain cho style in ấn/film, corner
+brackets cho style năng lượng ≥ 4, bokeh cho style tối và êm) và một motif (ring, bar, square hoặc circle) chạy dọc
+mép khung qua mọi lần cắt. Card hook cắt sang card đầu tiên bằng `match-cut`; card vào CTA dùng transition đặc
+trưng mà profile khoá (kiểu và độ dài; profile hard cut thì mọi lần cắt là `cut`); các lần cắt giữa xen kẽ transition
+đó với bộ transition theo nhịp của style (`planTransitions`).
 Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
 (60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì
 giữ mỗi card lâu hơn. Storyboard sai số beat được một lượt sửa như dưới (cùng mọi lỗi khác trong một thông
@@ -342,7 +350,7 @@ port từ thư viện style của ak-motion-video: họ aesthetic, house và bra
 nằm trong [`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Mỗi profile
 khoá palette (khi brief không có `brand`), type (font heading và body trong bộ font renderer đóng gói, có subset
 tiếng Việt; font của brand kit vẫn thắng), pacing (entrance dài đúng một beat ở giữa dải bpm, 250-700 ms) và juice
-(các entrance được dùng, entrance đầu là mặc định; exit; transition giữa các card). Beat chọn entrance ngoài bộ của
+(các entrance được dùng, entrance đầu là mặc định; exit; transition đặc trưng vào CTA). Beat chọn entrance ngoài bộ của
 profile thì nhận entrance mặc định. `directions[0].visualStyle` trùng id hoặc tên một profile (không phân biệt hoa
 thường, ví dụ `glass-keynote` hay "Glass Keynote") là preset bị khoá: nó thắng profile mà agent storyboard chọn.
 Không nêu tên thì agent chọn trong 12 profile hợp brief nhất (cộng kinetic typography), template tự chọn theo

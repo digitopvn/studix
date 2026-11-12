@@ -46,8 +46,8 @@ exports[`buildComposition (brand-intro 9:16) > matches the golden composition sn
 "<template id="s-intro__template">
   <div data-composition-id="intro" data-width="540" data-height="960" data-duration="4">
     <div id="s-intro__stage" data-scene-role="intro">
-      <div class="underlay"></div>
-      <div class="content"><div class="region region-top"></div><div class="region region-middle"><div class="lane"><div id="s-intro__shot-intro-logo" class="shot shot-logo">Sương Mai</div></div></div><div class="region region-bottom"><div class="lane"><div id="s-intro__shot-intro-tagline" class="shot shot-text">Cà phê rang mộc từ Cầu Đất</div></div></div></div>
+      <div id="s-intro__plane-underlay" class="underlay"></div>
+      <div id="s-intro__plane-content" class="content"><div class="region region-top"></div><div class="region region-middle"><div class="lane"><div id="s-intro__shot-intro-logo" class="shot shot-logo">Sương Mai</div></div></div><div class="region region-bottom"><div class="lane"><div id="s-intro__shot-intro-tagline" class="shot shot-text">Cà phê rang mộc từ Cầu Đất</div></div></div></div>
       <div class="captions"><div id="s-intro__cue-0" class="cue">Sương Mai Coffee, rang mộc từ Cầu Đất</div></div>
     </div>
     <style>

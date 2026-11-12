@@ -40,6 +40,10 @@ export function cssColor(value: ColorValue): string {
   return value.startsWith("#") ? value : `var(--c-${value})`;
 }
 
+/** A tint of a palette role over the scene fill. */
+export const tint = (role: ColorRole, pct: number) =>
+  `color-mix(in srgb, var(--c-${role}) ${pct}%, transparent)`;
+
 export type FontSlot = "heading" | "body" | "mono";
 
 /** Monospace family for code layouts; bundled like the brand fonts (see bundled-fonts.ts). */

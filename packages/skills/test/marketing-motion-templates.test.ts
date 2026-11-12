@@ -431,7 +431,9 @@ describe("motion graphic", () => {
     expect(ir.brand?.fonts).toEqual({ heading: "Plus Jakarta Sans", body: "Plus Jakarta Sans" });
     expect(ir.brand?.palette.accent).toBe(glass?.palette.accent);
     expect(ir.scenes.map((s) => s.shots.at(-1)?.animation?.enter)).toEqual(["scale", "slide-up", "slide-up"]);
-    expect(ir.scenes[0]?.transitionOut).toEqual(glass?.juice.transition);
+    // The hook match-cuts on the motif; the cut into the call to action is the profile's locked transition.
+    expect(ir.scenes[0]?.transitionOut?.kind).toBe("match-cut");
+    expect(ir.scenes[1]?.transitionOut).toEqual(glass?.juice.transition);
     // One beat at 123 bpm.
     expect(ir.scenes[1]?.shots[0]?.animation?.durationMs).toBe(488);
     // Every profile sets type only in bundled fonts and opens with an entrance it allows.
@@ -731,7 +733,7 @@ describe("spoken length", () => {
       "background",
       "background",
     ]);
-    expect(ir.metadata?.templateVersion).toBe(9);
+    expect(ir.metadata?.templateVersion).toBe(10);
     // Landscape has the room: a short headline over a layout is set at display size too.
     expect(hook.shots[0]?.style?.textStyle).toBe("display");
   });

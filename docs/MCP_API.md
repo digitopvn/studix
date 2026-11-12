@@ -255,7 +255,13 @@ Behavior notes:
   `visual` field stays a description. On a 16:9 frame headlines are set at
   display size and layouts drawn larger, so a card fills the frame. Burned
   captions are 44 px at a 1080 px short edge, and a layout is centred above
-  them. Cards share the style profile's
+  them. Every card moves a camera (`push-in`, `pull-back`, `pan-left`,
+  `pan-right`, `parallax` or `static`; a beat may pick its own `camera`, and two
+  adjacent cards never share one), draws the style's depth planes (grid, glow,
+  grain, vignette behind; corner brackets or bokeh in front) and carries one motif
+  shape along the frame edge from card to card: the hook hard-cuts into the
+  first message on a match cut, the other cuts vary through the style's
+  transitions (`fade`, `slide`, `wipe`, `zoom`, `iris`, `whip`). Cards share the style profile's
   background; a high-energy profile fills the call-to-action card with its
   accent. A style profile (70 presets) locks the palette (without a brand kit),
   the type (bundled fonts; a brand kit's fonts win), the pacing (entrances one

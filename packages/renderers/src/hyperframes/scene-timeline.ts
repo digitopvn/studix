@@ -173,7 +173,7 @@ export function sceneTransitions(
   const prev = index > 0 ? scenes[index - 1] : undefined;
   const cap = Math.floor(scene.durationMs * 0.4);
   const half = (t: Scene["transitionOut"]): ResolvedTransition | undefined =>
-    t && t.kind !== "cut" && t.durationMs > 0
+    t && t.kind !== "cut" && t.kind !== "match-cut" && t.durationMs > 0
       ? { kind: t.kind, durationMs: Math.min(cap, Math.round(t.durationMs / 2)) }
       : undefined;
   const isLast = index === scenes.length - 1;
@@ -211,7 +211,19 @@ export function writeTransition(
       if (inbound) tween({ opacity: 0, scale: 0.86 }, { opacity: 1, scale: 1 }, "power2.out");
       else tween({ opacity: 1, scale: 1 }, { opacity: 0, scale: 1.18 }, "power2.in");
       return;
+    case "iris":
+      if (inbound)
+        tween({ clipPath: "circle(0% at 50% 50%)" }, { clipPath: "circle(75% at 50% 50%)" }, "power2.out");
+      else tween({ clipPath: "circle(75% at 50% 50%)" }, { clipPath: "circle(0% at 50% 50%)" }, "power2.in");
+      return;
+    case "whip":
+      // Faster and more violent than a slide: a short lateral throw with a lean, fading at the far end.
+      if (inbound)
+        tween({ xPercent: 40, skewX: -10, opacity: 0 }, { xPercent: 0, skewX: 0, opacity: 1 }, "expo.out");
+      else tween({ xPercent: 0, skewX: 0, opacity: 1 }, { xPercent: -40, skewX: 10, opacity: 0 }, "expo.in");
+      return;
     case "cut":
+    case "match-cut":
       return;
   }
 }

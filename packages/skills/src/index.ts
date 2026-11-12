@@ -65,6 +65,7 @@ export * from "./marketing-video/marketing-script.ts";
 export * from "./marketing-video/marketing-video-pack.ts";
 export * from "./marketing-video/marketing-video-template.ts";
 export * from "./marketing-video/marketing-video-variants.ts";
+export * from "./motion-graphic/motion-graphic-camera.ts";
 export * from "./motion-graphic/motion-graphic-pack.ts";
 export * from "./motion-graphic/motion-graphic-storyboard.ts";
 export * from "./motion-graphic/motion-graphic-template.ts";

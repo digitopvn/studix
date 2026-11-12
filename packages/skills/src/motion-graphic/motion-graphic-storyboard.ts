@@ -1,6 +1,6 @@
 import { CompositionId, CompositionPath, compositionFileKey, stageAgentSelection } from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
-import { CreativeBrief, LayoutSpec, lintHeroHtml, MotionPreset } from "@studix/video-ir";
+import { CameraMove, CreativeBrief, LayoutSpec, lintHeroHtml, MotionPreset } from "@studix/video-ir";
 import {
   createAgentStage,
   type StageContext,
@@ -65,6 +65,11 @@ export const MotionStoryboardBeat = z.object({
   /** Premium tier only: custom HTML that replaces the card's built-in headline and layout. Never on the last beat. */
   hero: MotionHeroCard.nullable().optional(),
   enter: MotionPreset.exclude(["none"]),
+  /**
+   * How the camera moves over the card, or null/absent to let the style choose. Adjacent cards never share a
+   * move; the template changes a repeat to the style's next move.
+   */
+  camera: CameraMove.nullable().optional(),
   /** Relative length of the beat; the compose stage scales the weights to the video length. */
   weight: z.number().min(0.5).max(3),
 });
@@ -191,7 +196,7 @@ const HERO_INSTRUCTIONS =
 const agentStageFor = (repair?: Repair, premium = false) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
-    version: 5,
+    version: 6,
     inputSchema: StoryboardInput,
     outputSchema: AgentOutput,
     instructions:
@@ -212,7 +217,10 @@ const agentStageFor = (repair?: Repair, premium = false) =>
       "`stat` (one big `value` and its `label`). A beat's layout, headline and spoken line show and say the " +
       "same fact (the line over a 5,000 counter speaks of the 5,000, not of the next card). Use the brief's own facts and words in it, vary the layouts " +
       "across the video, put no layout on the last beat (the call to action), and set `layout` null where " +
-      "the headline alone is stronger. The whole voice-over must " +
+      "the headline alone is stronger. Give a beat a `camera` move when the card calls for one: `push-in` to " +
+      "build tension on a claim, `pull-back` to reveal the whole, `pan-left`/`pan-right` to travel along a " +
+      "list or flow, `parallax` for depth on a hero line, `static` for a dense layout; never give two " +
+      "adjacent beats the same move, or set it null to let the style choose. The whole voice-over must " +
       "stay within `wordBudget` words, where a Vietnamese syllable is one word and an English word or brand " +
       'name counts about two thirds of a word per syllable ("AI-native" is about three). When `voiceover` is false nothing is spoken: the on-screen lines carry ' +
       "the message alone, each beat's `voiceover` just repeats its on-screen line, and the weights give every " +

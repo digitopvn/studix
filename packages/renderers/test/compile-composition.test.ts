@@ -312,6 +312,84 @@ describe("buildComposition layouts", () => {
   });
 });
 
+describe("buildComposition camera, depth and match cuts", () => {
+  const ir = structuredClone(brandIntro);
+  const moves = ["push-in", "parallax", "pan-left"] as const;
+  ir.scenes = moves.map((camera, i) => ({
+    id: `c${i}`,
+    role: "feature",
+    durationMs: 3000,
+    background: { color: "background" },
+    shots: [{ id: `c${i}-text`, type: "text", startMs: 0, durationMs: 3000, text: `Card ${i}` }],
+    camera,
+    depth: { background: ["glow", "grid", "grain", "vignette"], foreground: ["corners", "bokeh"] },
+    motif: { shape: "ring", color: "accent" },
+    ...(i === 0 ? { transitionOut: { kind: "match-cut", durationMs: 0 } } : {}),
+    ...(i === 1 ? { transitionOut: { kind: "iris", durationMs: 400 } } : {}),
+  }));
+  ir.timeline = buildSequentialTimeline(ir.scenes);
+  ir.format.durationMs = 9000;
+  delete ir.captions;
+  ir.audio = [];
+  const build = buildComposition(ir, previewSize);
+  const scene = (i: number) => build.files.get(`compositions/c${i}.html`)!;
+
+  it("accepts the camera, depth and motif fields as valid IR", () => {
+    expect(validateVideoIR(ir).ok).toBe(true);
+  });
+  const motifTween = (html: string) => {
+    const m = /tl\.fromTo\("#s-c\d__motif", (\{[^}]*\}), (\{[^}]*\}), 0\);/.exec(html);
+    if (!m) throw new Error("no motif tween");
+    const { duration: _d, ease: _e, ...to } = JSON.parse(m[2]!) as Record<string, number>;
+    return { from: JSON.parse(m[1]!) as Record<string, number>, to };
+  };
+
+  it("draws the depth planes back to front, with captions and the lens unmoved by the camera", () => {
+    const html = scene(0);
+    const order = ["plane-back", "plane-underlay", "__motif", "plane-content", "plane-front", 'class="lens"'];
+    // Corner brackets sit on the fixed lens, so no camera move pushes them out of the frame.
+    expect(html.indexOf('class="corners"')).toBeGreaterThan(html.indexOf('class="lens"'));
+    const at = order.map((id) => html.indexOf(id));
+    expect(at.every((n) => n > 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    for (const layer of ["glow", "grid", "corners", "bokeh", "vignette", "grain"])
+      expect(html).toContain(`class="${layer}"`);
+    expect(html).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
+  });
+
+  it("moves each plane by its depth over the whole scene", () => {
+    const push = scene(0);
+    expect(push).toContain('tl.fromTo("#s-c0__plane-content", {"scale":1}, {"scale":1.06,"duration":3');
+    expect(push).toContain('tl.fromTo("#s-c0__plane-back", {"scale":1}, {"scale":1.03,"duration":3');
+    expect(push).toContain('tl.fromTo("#s-c0__plane-front", {"scale":1}, {"scale":1.084,"duration":3');
+    // Parallax spreads the planes: the front plane travels further than the content, the back less.
+    const travel = (plane: string) =>
+      Number(new RegExp(`"#s-c1__plane-${plane}", \\{"x":(\\d+)`).exec(scene(1))?.[1]);
+    expect(travel("front")).toBeGreaterThan(travel("content"));
+    expect(travel("content")).toBeGreaterThan(travel("back"));
+    expect(scene(2)).toMatch(/"#s-c2__plane-content", \{"x":\d+\}, \{"x":-\d+/);
+    // A sideways move scales the underlay just enough that its edges never show.
+    expect(scene(2)).toMatch(/"#s-c2__plane-underlay", \{"x":\d+,"scale":1\.0\d+\}/);
+  });
+
+  it("hands the motif over at every cut and plays no stage tween on a match cut", () => {
+    for (let i = 0; i < 2; i++) expect(motifTween(scene(i + 1)).from).toEqual(motifTween(scene(i)).to);
+    expect(scene(0)).not.toMatch(/tl\.fromTo\("#s-c0__stage"/);
+    expect(scene(1)).not.toMatch(/tl\.fromTo\("#s-c1__stage", [^\n]*, 0\);/);
+    expect(scene(1)).toContain('{"clipPath":"circle(0% at 50% 50%)"');
+    expect(scene(2)).toContain('{"clipPath":"circle(0% at 50% 50%)"');
+  });
+
+  it("passes the HyperFrames linter with no errors", async () => {
+    const { dir, cleanup } = await tempDir("compile-depth");
+    cleanups.push(cleanup);
+    await writeComposition(build, dir);
+    const result = await lintProject(dir);
+    const errors = result.results.flatMap((r) => r.result.findings.filter((f) => f.severity === "error"));
+    expect(errors).toEqual([]);
+  });
+});
+
 describe("buildComposition without text shots", () => {
   it("still bundles a face for the family the stage CSS names, so no font is fetched", () => {
     const ir = structuredClone(brandIntro);
@@ -342,7 +420,7 @@ describe("buildComposition html hero cards", () => {
     const sel = "#s-hook__shot-hero";
     // Full-card by default, in the underlay; the style block is removed from the markup and scoped.
     expect(hook).toContain(
-      `<div class="underlay"><div id="s-hook__shot-hero" class="shot shot-html"><div class="hero-stage"><div class="card" data-enter="pop" data-hf-e="0">`,
+      `class="underlay"><div id="s-hook__shot-hero" class="shot shot-html"><div class="hero-stage"><div class="card" data-enter="pop" data-hf-e="0">`,
     );
     expect(hook).not.toContain("<style>:root");
     const stage = `${sel} > .hero-stage`;
