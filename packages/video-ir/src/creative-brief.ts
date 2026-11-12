@@ -36,8 +36,11 @@ export type CreativeDirection = z.infer<typeof CreativeDirection>;
 /** A public https URL; never fetched by the IR itself. */
 const HttpsUrl = z.url({ protocol: /^https$/ }).max(2048);
 
-/** Longest uploaded logo data URL: about 512 KB of image once base64 is decoded. */
-export const MAX_BRAND_LOGO_DATA_URL_CHARS = 700_000;
+/**
+ * Longest uploaded logo data URL: about 146 KB of image once base64 is decoded, so a brief carrying one still
+ * fits the 256 KB REST body limit. A larger logo is passed as an https URL.
+ */
+export const MAX_BRAND_LOGO_DATA_URL_CHARS = 200_000;
 
 /**
  * An uploaded logo: a public https URL, or a base64 `data:` URL of a PNG, JPEG, WebP or SVG image. Only the

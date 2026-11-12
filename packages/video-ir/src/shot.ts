@@ -78,8 +78,9 @@ export const LogoShot = ShotBase.extend({
   assetId: IrId.optional(),
   text: z.string().min(1).max(60).optional(),
   /**
-   * Draw a lockup: the logo image with `text` (or the brand name) beside it, both sized by the style's text
-   * role. Without a logo image the lockup is the wordmark alone.
+   * Draw a lockup: the logo image with `text` beside it, both sized by the style's text role. A logo image
+   * without `text` stands alone at that size; without a logo image the lockup is the wordmark (`text`, else the
+   * brand name).
    */
   lockup: z.boolean().optional(),
 });

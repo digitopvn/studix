@@ -192,7 +192,9 @@ const agentStageFor = (repair?: Repair) =>
       "storyboard again, changed only as `repair.problem` says (fewer words in the named beats, or the " +
       "number of beats it asks for), and nothing else. Return only JSON matching the output schema.",
     taskInput: ({ outputs: { brief } }) => ({
-      brief: brief.brief,
+      // The logo is drawn, never written about: an uploaded data URL would cost the prompt tens of thousands
+      // of tokens for nothing.
+      brief: (({ brandLogo: _logo, ...rest }) => rest)(brief.brief),
       durationMs: lengthOf(brief.brief),
       voiceover: brief.brief.voiceover !== false,
       wordBudget: voiceoverWordBudget(lengthOf(brief.brief)),

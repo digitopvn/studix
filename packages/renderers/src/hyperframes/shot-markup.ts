@@ -183,9 +183,10 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       if (shot.lockup) {
         // The mark and the name side by side, both sized by the text role, so a lockup reads as one unit.
         const role = shot.style?.textStyle ?? "heading";
-        const name = shot.text ?? ctx.brand?.name ?? "";
+        // A mark without `text` stands alone; a wordmark lockup falls back to the brand name.
+        const name = shot.text ?? (assetId ? "" : (ctx.brand?.name ?? ""));
         const mark = assetId
-          ? `<img class="lk-mark" src="${escapeHtml(assetPath(ctx, shot, assetId))}" alt="${escapeHtml(ctx.brand?.name ?? name ?? "logo")}" />`
+          ? `<img class="lk-mark" src="${escapeHtml(assetPath(ctx, shot, assetId))}" alt="${escapeHtml(ctx.brand?.name ?? (name || "logo"))}" />`
           : "";
         const label = name ? `<span class="lk-name">${escapeHtml(name)}</span>` : "";
         return {

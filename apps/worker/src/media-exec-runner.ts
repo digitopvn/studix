@@ -135,10 +135,10 @@ export interface PublicFetch {
  */
 export async function fetchPublic(
   raw: string,
-  options: { maxBytes: number },
+  options: { maxBytes: number; truncate?: boolean },
   signal: AbortSignal,
 ): Promise<PublicFetch> {
-  const { maxBytes } = options;
+  const { maxBytes, truncate = false } = options;
   let url = assertPublicHttpsUrl(raw);
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const response = await new Promise<{ location?: string; body?: Buffer; contentType?: string }>(
@@ -165,7 +165,7 @@ export async function fetchPublic(
               return;
             }
             const declared = Number(res.headers["content-length"] ?? 0);
-            if (declared > maxBytes) {
+            if (declared > maxBytes && !truncate) {
               res.destroy();
               reject(refusedUrl("larger than the input limit"));
               return;
@@ -177,7 +177,11 @@ export async function fetchPublic(
               bytes += c.length;
               if (bytes > maxBytes) {
                 res.destroy();
-                reject(refusedUrl("larger than the input limit"));
+                // A truncating read keeps the first `maxBytes` (a page's <head> comes first).
+                if (truncate) {
+                  chunks.push(c.subarray(0, c.length - (bytes - maxBytes)));
+                  resolve({ body: Buffer.concat(chunks), contentType });
+                } else reject(refusedUrl("larger than the input limit"));
                 return;
               }
               chunks.push(c);

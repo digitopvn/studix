@@ -145,6 +145,8 @@ describe("validateCreativeBrief", () => {
       "http://example.com/logo.png",
       "data:text/html;base64,PGh0bWw+",
       "data:image/png;base64,not base64!",
+      // Over the 200,000-character cap that keeps a brief inside the 256 KB REST body.
+      `data:image/png;base64,${"A".repeat(200_000)}`,
     ]) {
       const bad = validateCreativeBrief({ prompt: "x", brandLogo });
       expect(bad.ok).toBe(false);

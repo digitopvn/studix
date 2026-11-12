@@ -110,7 +110,8 @@ export interface StageServices {
    */
   fetchPublic?: (
     url: string,
-    options: { maxBytes: number },
+    /** `truncate` keeps the first `maxBytes` of a larger body instead of refusing it. */
+    options: { maxBytes: number; truncate?: boolean },
     signal: AbortSignal,
   ) => Promise<{ body: Uint8Array; contentType: string; url: string }>;
 }

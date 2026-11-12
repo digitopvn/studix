@@ -273,7 +273,7 @@ Behavior notes:
   naming the lines past their cards and by how many milliseconds (`details.lines`).
 - Brand kit for `motion-graphic`: `brief.brandUrl` (the brand's https site),
   `brief.brandLogo` (an https URL or a base64 `data:image/png|jpeg|webp|svg+xml`
-  URL, at most 700,000 characters) and `brief.brandColors` (1 to 4 hex
+  URL, at most 200,000 characters, about 146 KB of image; pass a larger logo as an https URL) and `brief.brandColors` (1 to 4 hex
   colours, most important first). The `motion-graphic.brand` stage reads the
   site's name (`og:site_name`, `application-name`, else the title), colours
   (`theme-color`, tile and mask-icon colours; greys dropped) and logo (SVG icon,

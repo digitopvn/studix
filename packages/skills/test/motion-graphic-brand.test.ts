@@ -4,7 +4,11 @@ import { InMemoryStorageAdapter } from "@studix/storage";
 import type { AssetRef, CreativeBrief, Shot } from "@studix/video-ir";
 import type { StageContext, StageServices } from "@studix/workflow";
 import { describe, expect, it, vi } from "vitest";
-import { motionGraphicBrandStage, readBrandPage } from "../src/motion-graphic/motion-graphic-brand.ts";
+import {
+  motionGraphicBrandStage,
+  readBrandPage,
+  sniffLogo,
+} from "../src/motion-graphic/motion-graphic-brand.ts";
 import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
 
 const ctx: TenantContext = {
@@ -46,6 +50,29 @@ describe("readBrandPage", () => {
 
   it("falls back to the title's first segment for the name", () => {
     expect(readBrandPage("<title>Acme — Rockets</title>", "https://acme.example/").name).toBe("Acme");
+  });
+
+  it("names the brand, not the page, from a title that leads with a page word", () => {
+    const name = (title: string, url: string) => readBrandPage(`<title>${title}</title>`, url).name;
+    expect(name("Home | Acme", "https://www.acme.com/")).toBe("Acme");
+    expect(name("Trang chủ - Lá Mây", "https://lamay.com.vn/")).toBe("Lá Mây");
+    expect(name("Welcome · Rockets for all", "https://example.org/")).toBe("Rockets for all");
+    expect(name("Fast rockets | Acme Labs", "https://acmelabs.io/")).toBe("Acme Labs");
+  });
+});
+
+describe("sniffLogo", () => {
+  const bytes = (text: string) => new TextEncoder().encode(text);
+  it("takes an SVG document after a BOM, XML declaration, comment and doctype", () => {
+    const svg =
+      '\uFEFF<?xml version="1.0"?>\n<!-- logo -->\n<!DOCTYPE svg>\n<svg xmlns="http://www.w3.org/2000/svg"/>';
+    expect(sniffLogo(bytes(svg))).toEqual({ mime: "image/svg+xml", ext: "svg" });
+    expect(sniffLogo(PNG)).toEqual({ mime: "image/png", ext: "png" });
+  });
+
+  it("refuses an HTML page that only contains an inline SVG", () => {
+    expect(sniffLogo(bytes("<!doctype html><html><body><svg></svg></body></html>"))).toBeUndefined();
+    expect(sniffLogo(bytes("not found <svg></svg>"))).toBeUndefined();
   });
 });
 
@@ -182,5 +209,34 @@ describe("motion-graphic brand kit", () => {
     expect(ir.brand?.palette).toMatchObject({ primary: "#123456", accent: "#123456" });
     expect(logoShot(ir.scenes[0]?.shots ?? [])).toBeUndefined();
     expect(logoShot(ir.scenes.at(-1)?.shots ?? [])).toMatchObject({ text: "Lá Mây" });
+  });
+
+  it("keeps the name the brief writes over the site's name", () => {
+    const ir = motionGraphicTemplate(
+      { prompt: "A launch motion graphic for Studix", language: "en" },
+      {
+        brandSource: { name: "Home", colors: [] },
+        storyboard: {
+          styleProfile: "apple-clean",
+          beats: [
+            { onScreen: "Describe a video.", voiceover: "Describe a video.", enter: "fade", weight: 1 },
+            { onScreen: "Try it now", voiceover: "Try it now.", enter: "fade", weight: 1 },
+          ],
+          music: null,
+          brandName: "Studix",
+        } as never,
+      },
+    );
+    expect(ir.brand?.name).toBe("Studix");
+  });
+
+  it("draws the mark alone on the hook when no name is known", () => {
+    const ir = motionGraphicTemplate(
+      { prompt: "x", title: "Fresh tea every morning", keyMessages: ["Hand-picked"] },
+      { brandSource: { colors: [], logo } },
+    );
+    const hook = logoShot(ir.scenes[0]?.shots ?? []);
+    expect(hook).toMatchObject({ id: "hook-logo", assetId: "brand-logo", lockup: true });
+    expect(hook).not.toHaveProperty("text");
   });
 });

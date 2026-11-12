@@ -29,7 +29,10 @@ export function brandSourceOf(output: MotionBrandOutput | undefined): BrandSourc
   return source.name || source.colors || source.logo ? source : undefined;
 }
 
+/** The part of a home page read: its <head>, where names, colours and icons live, comes first. */
 const MAX_HTML_BYTES = 1_500_000;
+/** Time the whole stage may spend on the network, so a slow site cannot hold a free stage for minutes. */
+const BRAND_DEADLINE_MS = 30_000;
 const MAX_LOGO_BYTES = 2_000_000;
 /** Site logo candidates tried before giving up, so a page full of broken icons cannot stall the job. */
 const MAX_LOGO_TRIES = 4;
@@ -125,6 +128,37 @@ function jsonLdLogos(value: unknown, out: string[], depth = 0): void {
   for (const [key, v] of Object.entries(record)) if (key !== "logo") jsonLdLogos(v, out, depth + 1);
 }
 
+/** Words a title segment names a page by, never a brand ("Home | Acme", "Trang chủ - Acme"). */
+const PAGE_WORDS = /^(home|homepage|home page|welcome|trang chủ|trang chu|official site|official website)$/iu;
+const letters = (text: string) =>
+  text
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
+/**
+ * The brand in a page title: the segment that spells the site's host name ("Acme" on acme.com), else the first
+ * segment that is not a page word, else none.
+ */
+function titleName(title: string, baseUrl: string): string | undefined {
+  const segments = title
+    .split(/\s+[|\-—–·:]\s+/)
+    .map((t) => t.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  let host = "";
+  try {
+    const labels = new URL(baseUrl).hostname.replace(/^www\./, "").split(".");
+    host = letters(labels.length > 2 && labels.at(-2)!.length <= 3 ? labels.at(-3)! : (labels[0] ?? ""));
+  } catch {
+    // No base URL: the host cannot help.
+  }
+  const byHost = host
+    ? (segments.find((t) => letters(t) === host) ?? segments.find((t) => letters(t).includes(host)))
+    : undefined;
+  return byHost ?? segments.find((t) => !PAGE_WORDS.test(t));
+}
+
 /**
  * The brand's name, colours and logo candidates read from its home page with a few regular expressions (no
  * DOM): name from `og:site_name`, else `application-name`, else the title's first segment; colours from
@@ -151,7 +185,7 @@ export function readBrandPage(html: string, baseUrl: string): BrandPage {
   const name =
     cleanName(meta("og:site_name")[0]) ??
     cleanName(meta("application-name")[0]) ??
-    cleanName(title?.split(/ \| | - | — | · /)[0]);
+    cleanName(titleName(decodeEntities(title ?? ""), baseUrl));
 
   const colors = [
     ...meta("theme-color"),
@@ -207,7 +241,13 @@ export function sniffLogo(bytes: Uint8Array): { mime: string; ext: string } | un
   if (starts([0x47, 0x49, 0x46, 0x38])) return { mime: "image/gif", ext: "gif" };
   if (starts([0x52, 0x49, 0x46, 0x46]) && starts([0x57, 0x45, 0x42, 0x50], 8))
     return { mime: "image/webp", ext: "webp" };
-  if (/<svg[\s>]/i.test(new TextDecoder().decode(bytes))) return { mime: "image/svg+xml", ext: "svg" };
+  // An SVG document starts with its <svg> root, after at most a BOM, an XML declaration, comments and a doctype;
+  // an HTML page that only contains an inline <svg> (a soft 404) is no logo.
+  const head = new TextDecoder()
+    .decode(bytes.subarray(0, 4096))
+    .replace(/^\uFEFF/, "")
+    .replace(/^(?:\s|<\?xml[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>]*>)*/i, "");
+  if (/^<svg[\s>]/i.test(head)) return { mime: "image/svg+xml", ext: "svg" };
   return undefined;
 }
 
@@ -222,12 +262,14 @@ const reasonOf = (err: unknown) => toStudixError(err).message.replace(/\.$/, "")
 async function logoBytes(
   s: StageContext,
   source: string,
+  signal: AbortSignal,
 ): Promise<{ bytes: Uint8Array; sourceUrl?: string } | { error: string }> {
   const data = /^data:image\/[a-z0-9.+-]+;base64,(.*)$/i.exec(source);
   if (data) return { bytes: new Uint8Array(Buffer.from(data[1] ?? "", "base64")) };
   if (!s.services.fetchPublic) return { error: "this worker cannot fetch public URLs" };
   try {
-    const res = await s.services.fetchPublic(source, { maxBytes: MAX_LOGO_BYTES }, s.signal);
+    const res = await s.services.fetchPublic(source, { maxBytes: MAX_LOGO_BYTES }, signal);
+    if (/html/.test(res.contentType)) return { error: "it is a web page, not an image" };
     return { bytes: res.body, sourceUrl: res.url };
   } catch (err) {
     abortedBy(s, err);
@@ -239,12 +281,13 @@ async function logoBytes(
 async function storeLogo(
   s: StageContext,
   sources: readonly string[],
+  signal: AbortSignal,
 ): Promise<{ logo?: AssetRef; error?: string }> {
   const storage = s.services.storage;
   if (!storage) return { error: "no storage is configured" };
   let error: string | undefined;
   for (const source of sources) {
-    const read = await logoBytes(s, source);
+    const read = await logoBytes(s, source, signal);
     if ("error" in read) {
       error ??= read.error;
       continue;
@@ -290,13 +333,19 @@ export const motionGraphicBrandStage: StageDefinition = {
     const { brief } = (s.input as BrandInput).outputs.brief;
     if (!brief.brandUrl && !brief.brandLogo) return { output: {} };
     const warnings: string[] = [];
+    // The job's own abort still aborts (abortedBy); running out of the deadline only ends the reading.
+    const signal = AbortSignal.any([s.signal, AbortSignal.timeout(BRAND_DEADLINE_MS)]);
     let page: BrandPage | undefined;
     if (brief.brandUrl) {
       if (!s.services.fetchPublic) {
         warnings.push(`The brand site ${brief.brandUrl} was not read: this worker cannot fetch public URLs.`);
       } else {
         try {
-          const res = await s.services.fetchPublic(brief.brandUrl, { maxBytes: MAX_HTML_BYTES }, s.signal);
+          const res = await s.services.fetchPublic(
+            brief.brandUrl,
+            { maxBytes: MAX_HTML_BYTES, truncate: true },
+            signal,
+          );
           if (res.contentType && !/html|xml/.test(res.contentType)) {
             warnings.push(`The brand site ${brief.brandUrl} is not an HTML page (${res.contentType}).`);
           } else {
@@ -310,12 +359,12 @@ export const motionGraphicBrandStage: StageDefinition = {
     }
     let logo: AssetRef | undefined;
     if (brief.brandLogo) {
-      const uploaded = await storeLogo(s, [brief.brandLogo]);
+      const uploaded = await storeLogo(s, [brief.brandLogo], signal);
       logo = uploaded.logo;
       if (!logo) warnings.push(`The uploaded logo could not be used: ${uploaded.error ?? "unknown reason"}.`);
     }
     if (!logo && page) {
-      const site = await storeLogo(s, page.logoUrls.slice(0, MAX_LOGO_TRIES));
+      const site = await storeLogo(s, page.logoUrls.slice(0, MAX_LOGO_TRIES), signal);
       logo = site.logo;
       if (!logo)
         warnings.push(

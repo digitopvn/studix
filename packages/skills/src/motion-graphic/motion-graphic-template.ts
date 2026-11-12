@@ -348,11 +348,11 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     });
   }
   const source = options.brandSource;
-  // The brand's site names it; else the brand the storyboard found in the brief, kept only when the brief
-  // really writes it.
+  // The brand as the brief writes it (the storyboard's name, kept only when the brief really writes it), else
+  // the name its site gives (a page title can name a page rather than the brand, so it comes second).
   const brandName = brief.brand
     ? undefined
-    : (source?.name ?? namedInBrief(brief, storyboard?.brandName, lines[0]?.onScreen ?? ""));
+    : (namedInBrief(brief, storyboard?.brandName, lines[0]?.onScreen ?? "") ?? source?.name);
   // What the graphic is called without a brand: its title, else its hook. Never the style profile's name.
   const unbrandedName = brief.title ?? (lines[0]?.onScreen || "Motion graphic");
   const baseBrand: BrandKit = brief.brand ?? {
@@ -428,8 +428,10 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         type: "logo",
         startMs: 0,
         durationMs,
+        // Always a lockup, so its height is reserved above the hook's layout; with no real name it is the mark alone.
+        lockup: true,
         ...(logo ? { assetId: logo.id } : {}),
-        ...(realName ? { text: truncateText(realName, 60), lockup: true } : {}),
+        ...(realName ? { text: truncateText(realName, 60) } : {}),
         style: {
           textStyle: "body",
           color: inkOn(brand.palette, fill, "accent"),

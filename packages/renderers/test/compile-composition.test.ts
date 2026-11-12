@@ -361,6 +361,15 @@ describe("buildComposition product UI layouts", () => {
   const build = buildComposition(ir, previewSize);
   const scene = (i: number) => build.files.get(`compositions/u${i}.html`)!;
 
+  it("draws accent text in the foreground colour when the accent is too faint on the background", () => {
+    const faint = structuredClone(ir);
+    faint.brand!.palette = { ...faint.brand!.palette, accent: "#2a1e18" };
+    const toolCss = (b: ReturnType<typeof buildComposition>) =>
+      /\.lo-v \{[^}]*color: ([^;]+);/.exec(b.files.get("compositions/u1.html")!)?.[1];
+    expect(toolCss(build)).toBe("var(--c-accent)");
+    expect(toolCss(buildComposition(faint, previewSize))).toBe("var(--c-foreground)");
+  });
+
   it("validates the product UI layouts and rejects impossible ones", () => {
     expect(validateVideoIR(ir).ok).toBe(true);
     const bad = (layout: unknown) => {
@@ -456,6 +465,32 @@ describe("buildComposition logo lockup", () => {
     const fieldPx = (h: string) => Number(/\.lo-field \{[^}]*font-size: (\d+)px;/.exec(h)?.[1]);
     const plain = buildComposition(without, size).files.get(`compositions/${scene.id}.html`)!;
     expect(fieldPx(html)).toBeLessThan(fieldPx(plain));
+  });
+
+  it("draws the mark alone, named for the brand, when the lockup has no text", async () => {
+    const promo = loadIrFixture("product-promo-16x9-assets");
+    const { dir, cleanup } = await tempDir("compile-lockup-mark");
+    cleanups.push(cleanup);
+    const scene = promo.scenes[0]!;
+    const shots: Shot[] = [
+      {
+        id: "brand",
+        type: "logo",
+        assetId: "logo",
+        lockup: true,
+        startMs: 0,
+        durationMs: scene.durationMs,
+        style: { textStyle: "body", region: "top" },
+      },
+    ];
+    const ir = { ...promo, scenes: [{ ...scene, shots }, ...promo.scenes.slice(1)] };
+    const files = { logo: await writePng(dir, "logo.png"), hero: await writePng(dir, "hero.webp") };
+    const html = buildComposition(ir, { width: 1920, height: 1080, assetFiles: files }).files.get(
+      `compositions/${scene.id}.html`,
+    )!;
+    expect(html).toContain('<img class="lk-mark" src="assets/media/logo.png"');
+    expect(html).toContain(`alt="${promo.brand?.name ?? "logo"}"`);
+    expect(html).not.toContain('<span class="lk-name">');
   });
 });
 

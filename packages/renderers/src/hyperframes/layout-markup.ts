@@ -38,6 +38,16 @@ function inkOnAccent(ctx: ShotMarkupContext): string {
 }
 
 /**
+ * The ink for text set in the accent colour: the accent when it reads on the scene fill (WCAG AA large text,
+ * 3:1), else the foreground, so a light brand colour on a light style keeps its words legible.
+ */
+function accentInk(ctx: ShotMarkupContext): string {
+  const p = ctx.palette;
+  if (!p || contrast(p.accent, p.background) >= 3) return "var(--c-accent)";
+  return "var(--c-foreground)";
+}
+
+/**
  * Factor (at most `factor`) that keeps one unbroken line of `chars` characters inside `width`, taking a
  * display glyph as about 0.62em wide.
  */
@@ -317,7 +327,7 @@ export function renderLayoutMarkup(
       ]);
       rule(".lo-no", ["position: relative;", "opacity: 0.4;", "width: 2.6em;", "flex: 0 0 auto;"]);
       rule(".lo-src", ["position: relative;"]);
-      rule(".lo-str", ["color: var(--c-accent);"]);
+      rule(".lo-str", [`color: ${accentInk(ctx)};`]);
       rule(".lo-cmt", ["opacity: 0.55;"]);
       const marked = new Set(layout.highlight ?? []);
       const lines = layout.lines
@@ -521,7 +531,7 @@ export function renderLayoutMarkup(
       ]);
       rule(".lo-strip", ["display: flex;", "flex-direction: column;"]);
       rule(".lo-strip span", ["height: 1.15em;", "text-align: center;"]);
-      rule(".lo-affix", ["color: var(--c-accent);"]);
+      rule(".lo-affix", [`color: ${accentInk(ctx)};`]);
       rule(".lo-clabel", [...fontCss(ctx, body, 1.05, 500), "opacity: 0.75;", `margin-top: ${px(ctx, 8)};`]);
       const strip = Array.from(STRIP, (d) => `<span>${d}</span>`).join("");
       // A separator belongs to the digit before it, so it shows and hides with that digit.
@@ -564,7 +574,7 @@ export function renderLayoutMarkup(
         "box-sizing: border-box;",
       ]);
       rule(".lo-hot", ["border-color: var(--c-accent);", `background: ${tint("accent", 16)};`]);
-      rule(".lo-idx", [...fontCss(ctx, TEXT_STYLES.caption, 0.9, 700), "color: var(--c-accent);"]);
+      rule(".lo-idx", [...fontCss(ctx, TEXT_STYLES.caption, 0.9, 700), `color: ${accentInk(ctx)};`]);
       // A word breaks only when it cannot fit its card at all: the type shrinks to fit the longest word first.
       const inner =
         (Math.round(width * 0.96) - (cols - 1) * 24 * ctx.scale) / cols - 2 * (26 + 3) * ctx.scale;
@@ -813,7 +823,7 @@ export function renderLayoutMarkup(
         `height: ${px(c, 52)};`,
         `border-radius: ${px(c, 14)};`,
         `background: ${tint("accent", 20)};`,
-        "color: var(--c-accent);",
+        `color: ${accentInk(c)};`,
       ]);
       rule(".lo-tglyph svg", ["width: 62%;", "height: 62%;"]);
       rule(".lo-tname", [
@@ -866,7 +876,7 @@ export function renderLayoutMarkup(
         "overflow-wrap: anywhere;",
       ]);
       rule(".lo-k", ["opacity: 0.6;"]);
-      rule(".lo-v", ["color: var(--c-accent);"]);
+      rule(".lo-v", [`color: ${accentInk(ctx)};`]);
       rule(".lo-tres", [
         ...fontCss(c, body, 0.85, 600),
         "display: flex;",
@@ -875,7 +885,7 @@ export function renderLayoutMarkup(
         `border-top: ${px(c, 2)} solid ${tint("foreground", 12)};`,
         "opacity: 0;",
       ]);
-      rule(".lo-tres i", ["font-style: normal;", "color: var(--c-accent);"]);
+      rule(".lo-tres i", ["font-style: normal;", `color: ${accentInk(c)};`]);
       const rows = args
         .map(
           (a, i) =>
