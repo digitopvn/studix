@@ -272,6 +272,23 @@ async function critique(
   }
 }
 
+/**
+ * Whether a repair round (redesign the failed cards, then render once) still fits in the time and budget left.
+ * The re-review after it is not reserved: a repaired render is better than the reviewed one even when no
+ * time is left to score it again, so the first fix round is applied whenever the repair itself fits.
+ */
+export function repairFits(input: {
+  timeLeftMs: number;
+  renderMs: number;
+  centsLeft: number;
+  renderCents: number;
+}): "fits" | "no-budget" | "no-time" {
+  // A redesign may overshoot its cap by a turn: keep a second cap in hand so the job never ends over budget.
+  if (input.centsLeft < MG_STORYBOARD_LIMITS.maxCostCents * 2 + input.renderCents) return "no-budget";
+  if (input.timeLeftMs < MG_STORYBOARD_LIMITS.timeoutMs + input.renderMs) return "no-time";
+  return "fits";
+}
+
 const costOf = (usage: readonly StageUsage[]) => usage.reduce((sum, u) => sum + (u.costCents ?? 0), 0);
 
 /** Why no review can run on this job, or undefined when one can. */
@@ -408,10 +425,18 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
   const renderMs = Date.now() - startedAt;
   const rounds: VisualQaReport["rounds"] = [];
   for (let round = 0; ; round++) {
+    const repaired = rounds.at(-1)?.repaired;
     const stop = (status: "skipped" | "failed", reason: string) =>
-      done({ status: round === 0 ? status : "failed", reason, rounds });
+      done({
+        status: round === 0 ? status : "failed",
+        // The repaired render is kept even when it cannot be reviewed again.
+        reason: repaired
+          ? `Cards ${repaired.join(", ")} were repaired but not reviewed again: ${reason}`
+          : reason,
+        rounds,
+      });
     if (left() < reviewCents) return stop("skipped", "Not enough job budget left for a visual review");
-    if (timeLeft() < MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
+    if (timeLeft() < MG_VISUAL_QA_LIMITS.timeoutMs) {
       return stop("skipped", "Not enough time left before the job deadline for a visual review");
     }
     const review = await critique(booked(), ir, rendered.filePath, brief, dir);
@@ -430,14 +455,15 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
     if (!storyboard) {
       return done({ status: "failed", reason: "A template graphic has no storyboard to redesign", rounds });
     }
-    if (left() < MG_STORYBOARD_LIMITS.maxCostCents * 2 + renderCents + reviewCents) {
+    const fits = repairFits({ timeLeftMs: timeLeft(), renderMs, centsLeft: left(), renderCents });
+    if (fits === "no-budget") {
       return done({
         status: "failed",
         reason: "Not enough job budget left to redesign and re-render",
         rounds,
       });
     }
-    if (timeLeft() < MG_STORYBOARD_LIMITS.timeoutMs + 2 * renderMs + MG_VISUAL_QA_LIMITS.timeoutMs) {
+    if (fits === "no-time") {
       return done({ status: "failed", reason: "Not enough time left to redesign and re-render", rounds });
     }
     const cards = failed.map((c) => c.card);

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { StageContext, StageDefinition } from "@studix/workflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MG_VISUAL_QA_STAGE, motionGraphicRenderStage } from "../src/index.ts";
+import { MG_STORYBOARD_LIMITS } from "../src/motion-graphic/motion-graphic-storyboard.ts";
+import { repairFits } from "../src/motion-graphic/motion-graphic-visual-qa.ts";
 
 const probe = { durationMs: 1000, width: 160, height: 90, fps: 5, videoCodec: "h264", bytes: 0 };
 
@@ -42,5 +44,22 @@ describe("motion-graphic render stage after the visual review", () => {
     expect(await stage.estimateCostCents?.(s)).toBe(7);
     await stage.run(s);
     expect(engine.run).toHaveBeenCalledWith(s);
+  });
+});
+
+describe("visual review repair round", () => {
+  const renderMs = 90_000;
+  const roomy = { renderMs, centsLeft: 1000, renderCents: 50 };
+
+  it("applies a fix round when the redesign and one render fit, without reserving a second review", () => {
+    // Enough for the redesign (180 s cap) and one render, not for another render and review after it.
+    expect(repairFits({ ...roomy, timeLeftMs: MG_STORYBOARD_LIMITS.timeoutMs + renderMs + 1 })).toBe("fits");
+  });
+
+  it("stops when the redesign and render do not fit in the time or budget left", () => {
+    expect(repairFits({ ...roomy, timeLeftMs: MG_STORYBOARD_LIMITS.timeoutMs + renderMs - 1 })).toBe(
+      "no-time",
+    );
+    expect(repairFits({ ...roomy, timeLeftMs: Number.POSITIVE_INFINITY, centsLeft: 60 })).toBe("no-budget");
   });
 });
