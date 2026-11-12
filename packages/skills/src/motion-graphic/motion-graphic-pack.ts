@@ -33,6 +33,7 @@ import {
   measuredVoiceTake,
   VOICE_TAKE_SCOPE,
 } from "../voice-takes.ts";
+import { BrandStageOutput, MG_BRAND_STAGE, motionGraphicBrandStage } from "./motion-graphic-brand.ts";
 import { retimeCards } from "./motion-graphic-retime.ts";
 import {
   MG_STORYBOARD_STAGE,
@@ -43,6 +44,7 @@ import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
 export const MG_STAGES = {
+  brand: MG_BRAND_STAGE,
   storyboard: MG_STORYBOARD_STAGE,
   compose: "motion-graphic.compose",
   /**
@@ -82,6 +84,8 @@ const ComposeInput = z.object({
     brief: z.object({ brief: CreativeBrief }),
     // Optional: jobs checkpointed before the storyboard stage existed resume without it.
     [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
+    // Optional: jobs checkpointed before the brand stage existed resume without it.
+    [MG_BRAND_STAGE]: BrandStageOutput.optional(),
   }),
 });
 type ComposeInput = z.infer<typeof ComposeInput>;
@@ -99,6 +103,7 @@ export const motionGraphicComposeStage: StageDefinition = {
       brief: input.outputs.brief.brief,
       assets: input.payload.assets ?? [],
       storyboard: input.outputs[MG_STORYBOARD_STAGE]?.storyboard ?? null,
+      brand: input.outputs[MG_BRAND_STAGE]?.brand ?? null,
     });
   },
   async run(s) {
@@ -108,6 +113,7 @@ export const motionGraphicComposeStage: StageDefinition = {
         ir: motionGraphicTemplate(input.outputs.brief.brief, {
           assets: input.payload.assets,
           storyboard: input.outputs[MG_STORYBOARD_STAGE]?.storyboard,
+          brandFound: input.outputs[MG_BRAND_STAGE]?.brand,
         }),
       },
     };
@@ -364,6 +370,7 @@ const RecutInput = z.object({
   outputs: z.object({
     brief: z.object({ brief: CreativeBrief }),
     [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
+    [MG_BRAND_STAGE]: BrandStageOutput.optional(),
   }),
 });
 
@@ -381,6 +388,7 @@ function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR
   const cut = motionGraphicTemplate(input.data.outputs.brief.brief, {
     assets: input.data.payload.assets,
     storyboard: input.data.outputs[MG_STORYBOARD_STAGE]?.storyboard,
+    brandFound: input.data.outputs[MG_BRAND_STAGE]?.brand,
     cardMs,
   });
   const next: VideoIR = {
@@ -675,7 +683,7 @@ export const motionGraphicQaStage: StageDefinition = {
 };
 
 /**
- * New project: storyboard (agent, or template fallback) -> compose -> SFX accent -> voice-over -> music bed
+ * New project: brand kit (when the brief gives `brandUrl`, `brandLogo` or `brandColors`) -> storyboard (agent, or template fallback) -> compose -> SFX accent -> voice-over -> music bed
  * (when the storyboard asked for one) -> render -> QA -> upload. Re-render of a version:
  * render -> QA -> upload.
  */
@@ -686,6 +694,7 @@ export const motionGraphicPipeline: PackPipeline = {
       ? [e.plan, e.validateIr, e.render, motionGraphicQaStage, e.upload, e.finalize]
       : [
           e.brief,
+          motionGraphicBrandStage,
           motionGraphicStoryboardStage,
           motionGraphicComposeStage,
           motionGraphicAccentStage,
@@ -705,6 +714,7 @@ export const motionGraphicPack: WorkflowPack = {
   version: 1,
   templates: [motionGraphicSkill],
   stages: [
+    motionGraphicBrandStage,
     motionGraphicStoryboardStage,
     motionGraphicComposeStage,
     motionGraphicAccentStage,

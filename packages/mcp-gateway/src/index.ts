@@ -37,3 +37,4 @@ export {
   createPinnedLookup,
   type GuardedFetchSession,
 } from "./url-policy/pinned-guarded-fetch.ts";
+export * from "./url-policy/public-web-fetcher.ts";

@@ -62,6 +62,20 @@ function layoutWords(layout: LayoutSpec): string {
       return layout.items.map((i) => i.label ?? i.color).join(", ");
     case "stat":
       return `${layout.value} ${layout.label}`;
+    case "chat":
+      return layout.messages.map((m) => m.text).join("\n");
+    case "tool-call":
+      return [layout.name, ...(layout.args ?? []).map((a) => `${a.key}: ${a.value}`), layout.result ?? ""]
+        .filter(Boolean)
+        .join("\n");
+    case "pipeline":
+      return layout.steps.map((s) => s.label).join(" → ");
+    case "player":
+      return [layout.title, layout.action ?? ""].filter(Boolean).join(", ");
+    case "meter":
+      return [`${layout.used} / ${layout.cap}${layout.unit ? ` ${layout.unit}` : ""}`, layout.label ?? ""]
+        .filter(Boolean)
+        .join(" ");
   }
 }
 

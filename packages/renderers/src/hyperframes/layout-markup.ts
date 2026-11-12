@@ -149,6 +149,58 @@ function groupDigits(n: number, language: string | undefined): string {
 /** Digit strip of a counter column: three turns of 0-9, so low columns can spin past their target. */
 const STRIP = "012345678901234567890123456789";
 
+const vietnamese = (language: string | undefined) => language?.toLowerCase().startsWith("vi") ?? false;
+
+/** Words the product UI layouts print themselves, in the IR's language. */
+function uiWords(language: string | undefined) {
+  return vietnamese(language)
+    ? { running: "Đang chạy", done: "Xong", approve: "Duyệt", cap: "Hạn mức" }
+    : { running: "Running", done: "Done", approve: "Approve", cap: "Cap" };
+}
+
+/** A meter amount: whole numbers grouped by thousands, decimals with the language's decimal mark. */
+function amount(n: number, language: string | undefined): string {
+  if (Number.isInteger(n)) return groupDigits(n, language);
+  const [whole, frac] = n.toFixed(2).replace(/0+$/, "").split(".");
+  return `${groupDigits(Number(whole), language)}${vietnamese(language) ? "," : "."}${frac}`;
+}
+
+const PLAY_SVG =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>';
+
+/** A spinner ring: a faint circle with one accent quarter, turned by the timeline. */
+function spinnerCss(rule: (s: string, decls: string[]) => void, cls: string, size: string, stroke: string) {
+  rule(cls, [
+    "display: inline-block;",
+    "flex: 0 0 auto;",
+    `width: ${size};`,
+    `height: ${size};`,
+    "border-radius: 50%;",
+    `border: ${stroke} solid ${tint("foreground", 18)};`,
+    "border-top-color: var(--c-accent);",
+    "box-sizing: border-box;",
+  ]);
+}
+
+/**
+ * Bubble type size of a chat layout: the body size, shrunk until every message, wrapped to the bubble
+ * width, fits the height a layout may take.
+ */
+function chatFactor(ctx: ShotMarkupContext, texts: readonly string[], bubble: number, room: number): number {
+  let k = 1;
+  for (let pass = 0; pass < 3; pass++) {
+    const font = TEXT_STYLES.body.sizeAt1080 * ctx.scale * 0.95 * k;
+    const perLine = Math.max(4, Math.floor((bubble - 2 * 28 * ctx.scale) / (0.55 * font)));
+    const height = texts.reduce(
+      (h, t) =>
+        h + Math.ceil(Array.from(t).length / perLine) * font * 1.3 + 2 * 18 * ctx.scale + 16 * ctx.scale,
+      120 * ctx.scale,
+    );
+    k = Math.min(1, k * (room / height));
+  }
+  return Math.max(0.55, k);
+}
+
 /** HTML and CSS for a layout shot; `sel` is the shot's outer element selector. */
 export function renderLayoutMarkup(
   frameCtx: ShotMarkupContext,
@@ -591,6 +643,444 @@ export function renderLayoutMarkup(
         `<div class="lo lo-stat"><div class="lo-value">${escapeHtml(layout.value)}</div><div class="lo-rule"></div><div class="lo-slabel">${escapeHtml(layout.label)}</div></div>`,
       );
     }
+    case "chat": {
+      const chatWidth = Math.round(width * (portrait(ctx) ? 1 : 0.78));
+      const k = chatFactor(
+        ctx,
+        layout.messages.map((m) => m.text),
+        chatWidth * 0.82,
+        layoutHeight(ctx) - (layout.title ? 70 * ctx.scale : 0),
+      );
+      rule(".lo-chat", [
+        `width: ${chatWidth}px;`,
+        `border: ${px(ctx, 2)} solid ${tint("foreground", 18)};`,
+        `border-radius: ${px(ctx, 28)};`,
+        `background: ${tint("foreground", 6)};`,
+        "overflow: hidden;",
+        "text-align: left;",
+      ]);
+      rule(".lo-ctitle", [
+        ...fontCss(ctx, TEXT_STYLES.caption, 0.85, 600),
+        "display: flex;",
+        "align-items: center;",
+        `gap: ${px(ctx, 14)};`,
+        `padding: ${px(ctx, 16)} ${px(ctx, 26)};`,
+        `border-bottom: ${px(ctx, 2)} solid ${tint("foreground", 12)};`,
+      ]);
+      rule(".lo-ctitle i", [
+        `width: ${px(ctx, 16)};`,
+        `height: ${px(ctx, 16)};`,
+        "border-radius: 50%;",
+        "background: var(--c-accent);",
+      ]);
+      rule(".lo-msgs", [
+        "display: flex;",
+        "flex-direction: column;",
+        `gap: ${px(ctx, 16 * k)};`,
+        `padding: ${px(ctx, 24 * k)};`,
+      ]);
+      rule(".lo-msg", [
+        ...fontCss(ctx, body, 0.95 * k, 500),
+        "max-width: 82%;",
+        `padding: ${px(ctx, 18 * k)} ${px(ctx, 28 * k)};`,
+        `border-radius: ${px(ctx, 26 * k)};`,
+        "overflow-wrap: anywhere;",
+        "line-height: 1.3;",
+      ]);
+      rule(".lo-user", [
+        "align-self: flex-end;",
+        "background: var(--c-accent);",
+        `color: ${inkOnAccent(ctx)};`,
+        `border-bottom-right-radius: ${px(ctx, 8)};`,
+      ]);
+      rule(".lo-agent", [
+        "align-self: flex-start;",
+        `background: ${tint("foreground", 12)};`,
+        `border-bottom-left-radius: ${px(ctx, 8)};`,
+      ]);
+      rule(".lo-ch", ["opacity: 0;"]);
+      const msgs = layout.messages
+        .map((m, i) => {
+          const text =
+            m.from === "user"
+              ? typingChunks(m.text, TYPING_STEPS)
+                  .map((c, j) => `<span class="lo-ch lo-m${i}c${j}">${escapeHtml(c)}</span>`)
+                  .join("")
+              : escapeHtml(m.text);
+          return `<div class="lo-msg lo-m${i} lo-${m.from}">${text}</div>`;
+        })
+        .join("");
+      const title = layout.title ? `<div class="lo-ctitle"><i></i>${escapeHtml(layout.title)}</div>` : "";
+      return done(`<div class="lo lo-chat">${title}<div class="lo-msgs">${msgs}</div></div>`);
+    }
+    case "tool-call": {
+      const words = uiWords(ctx.language);
+      const cardWidth = Math.round(width * (portrait(ctx) ? 1 : 0.74));
+      const mono = Math.min(
+        Math.round(body.sizeAt1080 * ctx.scale * 0.85),
+        Math.floor(
+          (cardWidth * 0.9) /
+            (Math.max(16, ...(layout.args ?? []).map((a) => a.key.length + a.value.length + 4)) * 0.6),
+        ),
+      );
+      ctx.fontWeights.mono.add(500);
+      ctx.fontWeights.mono.add(700);
+      rule(".lo-tool", [
+        `width: ${cardWidth}px;`,
+        `border: ${px(ctx, 3)} solid ${tint("foreground", 18)};`,
+        `border-radius: ${px(ctx, 26)};`,
+        `background: ${tint("foreground", 6)};`,
+        `padding: ${px(ctx, 26)} ${px(ctx, 30)};`,
+        "box-sizing: border-box;",
+        "text-align: left;",
+        "display: flex;",
+        "flex-direction: column;",
+        `gap: ${px(ctx, 18)};`,
+      ]);
+      rule(".lo-thead", ["display: flex;", "align-items: center;", `gap: ${px(ctx, 18)};`]);
+      rule(".lo-tname", [
+        `font-family: ${ctx.fontStacks.mono};`,
+        `font-size: ${Math.round(body.sizeAt1080 * ctx.scale * fitFactor(ctx, body, 1, layout.name.length + 12, cardWidth))}px;`,
+        "font-weight: 700;",
+        "flex: 1 1 auto;",
+        "min-width: 0;",
+        "overflow-wrap: anywhere;",
+      ]);
+      rule(".lo-tstate", ["display: grid;", "flex: 0 0 auto;"]);
+      rule(".lo-tstate > *", ["grid-area: 1 / 1;", "justify-self: end;"]);
+      rule(".lo-pill", [
+        ...fontCss(ctx, TEXT_STYLES.caption, 0.85, 700),
+        "display: inline-flex;",
+        "align-items: center;",
+        `gap: ${px(ctx, 12)};`,
+        `padding: ${px(ctx, 10)} ${px(ctx, 22)};`,
+        "border-radius: 999px;",
+        "white-space: nowrap;",
+      ]);
+      rule(".lo-run", [`background: ${tint("accent", 16)};`]);
+      rule(".lo-ok", ["background: var(--c-accent);", `color: ${inkOnAccent(ctx)};`, "opacity: 0;"]);
+      rule(".lo-ok svg", ["width: 1.1em;", "height: 1.1em;"]);
+      spinnerCss(rule, ".lo-spin", "1.05em", px(ctx, 4));
+      rule(".lo-args", [
+        `font-family: ${ctx.fontStacks.mono};`,
+        `font-size: ${mono}px;`,
+        "font-weight: 500;",
+        "line-height: 1.5;",
+        `padding: ${px(ctx, 14)} ${px(ctx, 20)};`,
+        `border-radius: ${px(ctx, 16)};`,
+        `background: ${tint("foreground", 6)};`,
+        "white-space: pre-wrap;",
+        "overflow-wrap: anywhere;",
+      ]);
+      rule(".lo-key", ["opacity: 0.6;"]);
+      rule(".lo-val", ["color: var(--c-accent);"]);
+      rule(".lo-result", [
+        ...fontCss(ctx, body, 0.9, 600),
+        "display: flex;",
+        "align-items: center;",
+        `gap: ${px(ctx, 14)};`,
+        "opacity: 0;",
+      ]);
+      rule(".lo-result svg", [
+        "width: 1.1em;",
+        "height: 1.1em;",
+        "color: var(--c-accent);",
+        "flex: 0 0 auto;",
+      ]);
+      const args = (layout.args ?? [])
+        .map(
+          (a, i) =>
+            `<div class="lo-arg lo-a${i}"><span class="lo-key">${escapeHtml(a.key)}: </span><span class="lo-val">${escapeHtml(a.value)}</span></div>`,
+        )
+        .join("");
+      const ok =
+        layout.status === "done"
+          ? `<span class="lo-pill lo-ok">${CHECK_SVG}${escapeHtml(words.done)}</span>`
+          : "";
+      const result =
+        layout.status === "done" && layout.result
+          ? `<div class="lo-result">${CHECK_SVG}<span>${escapeHtml(layout.result)}</span></div>`
+          : "";
+      return done(
+        `<div class="lo lo-tool"><div class="lo-thead"><span class="lo-tname">${escapeHtml(layout.name)}</span><span class="lo-tstate"><span class="lo-pill lo-run"><span class="lo-spin"></span>${escapeHtml(words.running)}</span>${ok}</span></div>${args ? `<div class="lo-args">${args}</div>` : ""}${result}</div>`,
+      );
+    }
+    case "pipeline": {
+      const n = layout.steps.length;
+      const column = portrait(ctx) && n > 3;
+      // A column step is about 100 px tall at 1080 with 26 px between: it shrinks to the height left.
+      const k = column ? Math.min(1, layoutHeight(ctx) / ((n * 100 + (n - 1) * 26) * ctx.scale)) : 1;
+      const c = k < 1 ? { ...ctx, scale: ctx.scale * k } : ctx;
+      const rowWidth = Math.round(width * (column ? 0.86 : 0.96));
+      const mark = column ? 72 : Math.min(84, (rowWidth / ctx.scale / n) * 0.55);
+      const longest = Math.max(
+        ...layout.steps.flatMap((s) => s.label.split(/\s+/).map((w) => Array.from(w).length)),
+      );
+      const labelFactor = column
+        ? 1.05
+        : Math.max(
+            0.55,
+            Math.min(0.9, ((rowWidth / n) * 0.92) / (longest * 0.6 * body.sizeAt1080 * ctx.scale)),
+          );
+      rule(".lo-pipe", [
+        "position: relative;",
+        "display: grid;",
+        column ? `gap: ${px(c, 26)};` : `grid-template-columns: repeat(${n}, minmax(0, 1fr));`,
+        `width: ${rowWidth}px;`,
+        "text-align: left;",
+      ]);
+      rule(".lo-node", [
+        "position: relative;",
+        "display: flex;",
+        column ? "flex-direction: row;" : "flex-direction: column;",
+        "align-items: center;",
+        `gap: ${px(c, column ? 26 : 18)};`,
+        "min-width: 0;",
+      ]);
+      rule(".lo-pmark", [
+        "position: relative;",
+        "z-index: 1;",
+        "flex: 0 0 auto;",
+        `width: ${px(c, mark)};`,
+        `height: ${px(c, mark)};`,
+        "border-radius: 50%;",
+        `border: ${px(c, 4)} solid ${tint("foreground", 35)};`,
+        "background: var(--c-background);",
+        "box-sizing: border-box;",
+        "display: grid;",
+        "place-items: center;",
+      ]);
+      rule(".lo-done .lo-pmark", [
+        "border-color: var(--c-accent);",
+        "background: var(--c-accent);",
+        `color: ${inkOnAccent(c)};`,
+      ]);
+      rule(".lo-active .lo-pmark", ["border-color: var(--c-accent);"]);
+      rule(".lo-pmark svg", ["width: 58%;", "height: 58%;"]);
+      rule(".lo-pdot", [
+        "width: 38%;",
+        "height: 38%;",
+        "border-radius: 50%;",
+        "background: var(--c-accent);",
+      ]);
+      spinnerCss(rule, ".lo-pspin", `calc(100% + ${px(c, 20)})`, px(c, 4));
+      rule(".lo-pspin", [
+        "position: absolute;",
+        `inset: -${px(c, 10)};`,
+        "width: auto;",
+        "height: auto;",
+        "opacity: 0;",
+      ]);
+      rule(".lo-plabel", [
+        ...fontCss(c, body, labelFactor, 600),
+        column ? "text-align: left;" : "text-align: center;",
+        "overflow-wrap: anywhere;",
+        "min-width: 0;",
+      ]);
+      rule(".lo-todo .lo-plabel", ["opacity: 0.6;"]);
+      // Links run between neighbouring marks' centres, behind them; a link fills once the step after it starts.
+      const half = `calc(${px(c, mark)} / 2)`;
+      rule(
+        ".lo-link",
+        column
+          ? [
+              "position: absolute;",
+              `left: calc(${half} - ${px(c, 2)});`,
+              `width: ${px(c, 4)};`,
+              `background: ${tint("foreground", 22)};`,
+            ]
+          : [
+              "position: absolute;",
+              `top: calc(${half} - ${px(c, 2)});`,
+              `height: ${px(c, 4)};`,
+              `width: calc(100% / ${n});`,
+              `background: ${tint("foreground", 22)};`,
+            ],
+      );
+      rule(".lo-lfill", [
+        "position: absolute;",
+        "inset: 0;",
+        "background: var(--c-accent);",
+        column ? "transform-origin: top center;" : "transform-origin: left center;",
+      ]);
+      const links = layout.steps
+        .slice(0, -1)
+        .map((_step, i) => {
+          const next = layout.steps[i + 1];
+          const filled = next && next.state !== "todo";
+          const pos = column
+            ? `top: calc(${i} * (100% + ${px(c, 26)}) / ${n} + ${half}); height: calc((100% + ${px(c, 26)}) / ${n});`
+            : `left: calc(${2 * i + 1} * 100% / ${2 * n});`;
+          return `<div class="lo-link lo-n${i}" style="${pos}">${filled ? '<div class="lo-lfill"></div>' : ""}</div>`;
+        })
+        .join("");
+      const nodes = layout.steps
+        .map((step, i) => {
+          const inner =
+            step.state === "done"
+              ? CHECK_SVG
+              : step.state === "active"
+                ? '<span class="lo-pdot"></span><span class="lo-pspin"></span>'
+                : "";
+          return `<div class="lo-node lo-p${i} lo-${step.state}"><span class="lo-pmark">${inner}</span><span class="lo-plabel">${escapeHtml(step.label)}</span></div>`;
+        })
+        .join("");
+      return done(`<div class="lo lo-pipe">${links}${nodes}</div>`);
+    }
+    case "player": {
+      const words = uiWords(ctx.language);
+      // In a landscape card the Approve button stands beside the player, so the player takes the full height.
+      const wide = landscape(ctx.frame);
+      const controls = (wide ? 70 : 200) * ctx.scale;
+      const maxWidth = width * (portrait(ctx) ? 1 : wide ? 0.62 : 0.72);
+      const screenWidth = Math.round(Math.min(maxWidth, ((layoutHeight(ctx) - controls) * 16) / 9));
+      const screenHeight = Math.round((screenWidth * 9) / 16);
+      rule(".lo-player", [
+        "display: flex;",
+        wide ? "flex-direction: row;" : "flex-direction: column;",
+        "align-items: center;",
+        `gap: ${px(ctx, wide ? 40 : 22)};`,
+      ]);
+      rule(".lo-frame", [
+        `width: ${screenWidth}px;`,
+        `border-radius: ${px(ctx, 24)};`,
+        "overflow: hidden;",
+        `border: ${px(ctx, 3)} solid ${tint("foreground", 18)};`,
+        `background: ${tint("foreground", 6)};`,
+      ]);
+      rule(".lo-screen", [
+        "position: relative;",
+        `height: ${screenHeight}px;`,
+        `background: linear-gradient(135deg, ${tint("accent", 55)}, ${tint("primary", 25)} 60%, ${tint("foreground", 10)});`,
+      ]);
+      rule(".lo-ptitle", [
+        ...fontCss(
+          ctx,
+          TEXT_STYLES.heading,
+          fitFactor(ctx, TEXT_STYLES.heading, 0.7, Math.min(layout.title.length, 28), screenWidth),
+          700,
+        ),
+        "position: absolute;",
+        `left: ${px(ctx, 26)};`,
+        `right: ${px(ctx, 26)};`,
+        `bottom: ${px(ctx, 20)};`,
+        "text-align: left;",
+        "line-height: 1.15;",
+        "overflow-wrap: anywhere;",
+      ]);
+      rule(".lo-play", [
+        "position: absolute;",
+        "left: 50%;",
+        "top: 42%;",
+        `width: ${px(ctx, 120)};`,
+        `height: ${px(ctx, 120)};`,
+        `margin: -${px(ctx, 60)} 0 0 -${px(ctx, 60)};`,
+        "border-radius: 50%;",
+        "background: var(--c-foreground);",
+        "color: var(--c-background);",
+        "display: grid;",
+        "place-items: center;",
+      ]);
+      rule(".lo-play svg", ["width: 46%;", "height: 46%;", "margin-left: 8%;"]);
+      rule(".lo-bar2", [
+        "display: flex;",
+        "align-items: center;",
+        `gap: ${px(ctx, 18)};`,
+        `padding: ${px(ctx, 16)} ${px(ctx, 22)};`,
+        ...fontCss(ctx, TEXT_STYLES.caption, 0.8, 600),
+      ]);
+      rule(".lo-track", [
+        "position: relative;",
+        "flex: 1 1 auto;",
+        `height: ${px(ctx, 10)};`,
+        "border-radius: 999px;",
+        `background: ${tint("foreground", 18)};`,
+        "overflow: hidden;",
+      ]);
+      rule(".lo-prog", [
+        "position: absolute;",
+        "inset: 0;",
+        "background: var(--c-accent);",
+        "transform-origin: left center;",
+      ]);
+      rule(".lo-approve", [
+        ...fontCss(ctx, body, 1, 700),
+        "display: inline-flex;",
+        "align-items: center;",
+        `gap: ${px(ctx, 14)};`,
+        `padding: ${px(ctx, 18)} ${px(ctx, 44)};`,
+        "border-radius: 999px;",
+        "background: var(--c-accent);",
+        `color: ${inkOnAccent(ctx)};`,
+        "white-space: nowrap;",
+      ]);
+      rule(".lo-approve svg", ["width: 1.05em;", "height: 1.05em;", "opacity: 0;"]);
+      const time = layout.duration ? `<span>${escapeHtml(layout.duration)}</span>` : "";
+      return done(
+        `<div class="lo lo-player"><div class="lo-frame"><div class="lo-screen"><div class="lo-play">${PLAY_SVG}</div><div class="lo-ptitle">${escapeHtml(layout.title)}</div></div><div class="lo-bar2"><span class="lo-track"><span class="lo-prog"></span></span>${time}</div></div><div class="lo-approve">${CHECK_SVG}<span>${escapeHtml(layout.action ?? words.approve)}</span></div></div>`,
+      );
+    }
+    case "meter": {
+      const words = uiWords(ctx.language);
+      const meterWidth = Math.round(width * (portrait(ctx) ? 0.94 : 0.7));
+      const unit = layout.unit ? ` ${layout.unit}` : "";
+      const figure = `${amount(layout.used, ctx.language)} / ${amount(layout.cap, ctx.language)}${unit}`;
+      const pct = Math.round((layout.used / layout.cap) * 1000) / 10;
+      rule(".lo-meter", [
+        `width: ${meterWidth}px;`,
+        "display: flex;",
+        "flex-direction: column;",
+        `gap: ${px(ctx, 20)};`,
+        "text-align: left;",
+      ]);
+      rule(".lo-mhead", [
+        "display: flex;",
+        "align-items: baseline;",
+        "justify-content: space-between;",
+        `gap: ${px(ctx, 24)};`,
+      ]);
+      rule(".lo-mlabel", [...fontCss(ctx, body, 1, 600), "min-width: 0;", "overflow-wrap: anywhere;"]);
+      rule(".lo-mfig", [
+        ...fontCss(
+          ctx,
+          TEXT_STYLES.heading,
+          fitFactor(ctx, TEXT_STYLES.heading, 0.9, figure.length, meterWidth * 0.6),
+          700,
+        ),
+        "white-space: nowrap;",
+        "font-variant-numeric: tabular-nums;",
+      ]);
+      rule(".lo-mtrack", [
+        "position: relative;",
+        `height: ${px(ctx, 44)};`,
+        "border-radius: 999px;",
+        `background: ${tint("foreground", 12)};`,
+        `box-shadow: inset 0 0 0 ${px(ctx, 3)} ${tint("foreground", 18)};`,
+        "overflow: hidden;",
+      ]);
+      rule(".lo-mfill", [
+        "position: absolute;",
+        "left: 0;",
+        "top: 0;",
+        "bottom: 0;",
+        `width: ${pct}%;`,
+        "border-radius: 999px;",
+        "background: var(--c-accent);",
+        "transform-origin: left center;",
+      ]);
+      rule(".lo-mfoot", [
+        ...fontCss(ctx, TEXT_STYLES.caption, 0.85, 600),
+        "display: flex;",
+        "justify-content: space-between;",
+        "opacity: 0.75;",
+      ]);
+      const label = layout.label
+        ? `<span class="lo-mlabel">${escapeHtml(layout.label)}</span>`
+        : "<span></span>";
+      return done(
+        `<div class="lo lo-meter"><div class="lo-mhead">${label}<span class="lo-mfig">${escapeHtml(figure)}</span></div><div class="lo-mtrack"><div class="lo-mfill"></div></div><div class="lo-mfoot"><span>${escapeHtml(`${Math.round(pct)}%`)}</span><span>${escapeHtml(`${words.cap} ${amount(layout.cap, ctx.language)}${unit}`)}</span></div></div>`,
+      );
+    }
   }
 }
 
@@ -788,6 +1278,152 @@ export function writeLayoutMotion(
         seconds(begin + 280),
       );
       upIn(`${sel} .lo-slabel`, seconds(begin + 420));
+      return;
+    }
+    case "chat": {
+      // Each message gets a share of the build: a user message the time it takes to type, a reply a beat.
+      const plan = layout.messages.map((m) =>
+        m.from === "user"
+          ? { chunks: typingChunks(m.text, TYPING_STEPS).length, ms: 0 }
+          : { chunks: 0, ms: 520 },
+      );
+      for (const p of plan) if (p.chunks > 0) p.ms = 260 + p.chunks * 45;
+      const total = plan.reduce((a, p) => a + p.ms, 0);
+      const f = Math.min(1, (span * 0.9) / Math.max(1, total));
+      let t = begin;
+      layout.messages.forEach((m, i) => {
+        const p = plan[i] as { chunks: number; ms: number };
+        const sel2 = `${sel} .lo-m${i}`;
+        if (m.from === "user") {
+          upIn(sel2, seconds(t), 300);
+          const at = stagger(
+            p.chunks,
+            t + Math.round(200 * f),
+            Math.max(0, Math.round((p.ms - 260) * f)),
+            80,
+          );
+          for (let j = 0; j < p.chunks; j++) w.set(`${sel} .lo-m${i}c${j}`, { opacity: 1 }, at(j));
+        } else {
+          pop(sel2, seconds(t + Math.round(120 * f)), 380);
+        }
+        t += Math.round(p.ms * f);
+      });
+      return;
+    }
+    case "tool-call": {
+      upIn(`${sel} .lo-tool`, seconds(begin));
+      const n = layout.args?.length ?? 0;
+      const at = stagger(n, begin + 200, Math.floor(span * 0.4), 160);
+      for (let i = 0; i < n; i++) {
+        w.fromTo(
+          `${sel} .lo-a${i}`,
+          { clipPath: "inset(0% 100% 0% 0%)" },
+          { clipPath: "inset(0% 0% 0% 0%)", duration: dur(320), ease: "power2.out" },
+          at(i),
+        );
+      }
+      const doneAt = layout.status === "done" ? begin + Math.floor(span * 0.85) : end;
+      // The spinner turns a full circle every 0.8 s while the call runs.
+      const spinMs = Math.max(100, doneAt - begin);
+      w.fromTo(
+        `${sel} .lo-spin`,
+        { rotation: 0 },
+        { rotation: Math.round((spinMs / 800) * 360), duration: seconds(spinMs), ease: "none" },
+        seconds(begin),
+      );
+      if (layout.status === "done") {
+        w.fromTo(
+          `${sel} .lo-run`,
+          { opacity: 1 },
+          { opacity: 0, duration: dur(200), ease: EASE },
+          seconds(doneAt),
+        );
+        pop(`${sel} .lo-ok`, seconds(doneAt), 380);
+        if (layout.result) upIn(`${sel} .lo-result`, seconds(doneAt + 160), 380);
+      }
+      return;
+    }
+    case "pipeline": {
+      const n = layout.steps.length;
+      const at = stagger(n, begin, Math.floor(span * 0.7), 320);
+      const column = frame.height > frame.width && n > 3;
+      layout.steps.forEach((step, i) => {
+        pop(`${sel} .lo-p${i} .lo-pmark`, at(i), 380);
+        upIn(`${sel} .lo-p${i} .lo-plabel`, at(i) + 0.08, 360);
+        const next = layout.steps[i + 1];
+        if (next && next.state !== "todo") {
+          w.fromTo(
+            `${sel} .lo-n${i} .lo-lfill`,
+            column ? { scaleY: 0 } : { scaleX: 0 },
+            { ...(column ? { scaleY: 1 } : { scaleX: 1 }), duration: dur(300), ease: EASE },
+            at(i) + 0.12,
+          );
+        }
+        if (step.state === "active") {
+          const from = at(i) + 0.2;
+          const spin = `${sel} .lo-p${i} .lo-pspin`;
+          w.fromTo(spin, { opacity: 0 }, { opacity: 1, duration: 0.2, ease: EASE }, from);
+          const ms = Math.max(100, end - Math.round(from * 1000));
+          w.fromTo(
+            spin,
+            { rotation: 0 },
+            { rotation: Math.round((ms / 900) * 360), duration: seconds(ms), ease: "none" },
+            from,
+          );
+        }
+      });
+      return;
+    }
+    case "player": {
+      upIn(`${sel} .lo-frame`, seconds(begin));
+      const play = begin + Math.round(Math.min(400, span * 0.15));
+      w.fromTo(
+        `${sel} .lo-play`,
+        { scale: 1 },
+        { scale: 0.85, duration: 0.12, ease: "power2.in" },
+        seconds(play),
+      );
+      w.fromTo(
+        `${sel} .lo-play`,
+        { opacity: 1 },
+        { opacity: 0, duration: dur(260), ease: EASE },
+        seconds(play + 120),
+      );
+      const playMs = Math.max(100, Math.floor(span * 0.55));
+      w.fromTo(
+        `${sel} .lo-prog`,
+        { scaleX: 0 },
+        { scaleX: 1, duration: seconds(playMs), ease: "none" },
+        seconds(play),
+      );
+      const button = `${sel} .lo-approve`;
+      const shown = play + playMs;
+      pop(button, seconds(shown), 420);
+      const press = shown + 520;
+      if (press + 300 < end) {
+        w.fromTo(button, { scale: 1 }, { scale: 0.9, duration: 0.12, ease: "power2.in" }, seconds(press));
+        w.fromTo(button, { scale: 0.9 }, { scale: 1, duration: 0.16, ease: EASE }, seconds(press + 120));
+        w.fromTo(
+          `${button} svg`,
+          { opacity: 0 },
+          { opacity: 1, duration: 0.2, ease: EASE },
+          seconds(press + 120),
+        );
+      } else {
+        w.set(`${button} svg`, { opacity: 1 }, seconds(shown));
+      }
+      return;
+    }
+    case "meter": {
+      upIn(`${sel} .lo-mhead`, seconds(begin));
+      const fillMs = Math.max(100, Math.min(1400, Math.floor(span * 0.8)));
+      w.fromTo(
+        `${sel} .lo-mfill`,
+        { scaleX: 0 },
+        { scaleX: 1, duration: seconds(fillMs), ease: "power2.out" },
+        seconds(begin + 150),
+      );
+      upIn(`${sel} .lo-mfoot`, seconds(begin + 250));
       return;
     }
   }

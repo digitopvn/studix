@@ -1128,6 +1128,9 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 60
+                    },
+                    "lockup": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -1873,6 +1876,204 @@
                             "kind",
                             "value",
                             "label"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "chat"
+                            },
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 40
+                            },
+                            "messages": {
+                              "minItems": 1,
+                              "maxItems": 4,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "from": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "agent"
+                                    ]
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 160
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "text"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "messages"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "tool-call"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 48
+                            },
+                            "args": {
+                              "maxItems": 4,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 24
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 60
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "value"
+                                ]
+                              }
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "running",
+                                "done"
+                              ]
+                            },
+                            "result": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "pipeline"
+                            },
+                            "steps": {
+                              "minItems": 2,
+                              "maxItems": 6,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "label": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 28
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "done",
+                                      "active",
+                                      "todo"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "label",
+                                  "state"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "steps"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "player"
+                            },
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 60
+                            },
+                            "duration": {
+                              "type": "string",
+                              "pattern": "^\\d{1,2}:\\d{2}$"
+                            },
+                            "action": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 24
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "title"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "meter"
+                            },
+                            "used": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 999999999
+                            },
+                            "cap": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 999999999
+                            },
+                            "unit": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 12
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 60
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "used",
+                            "cap"
                           ]
                         }
                       ]

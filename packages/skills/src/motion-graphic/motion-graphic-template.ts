@@ -28,10 +28,11 @@ import {
   voiceoverWordBudget,
 } from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
+import type { BrandFound } from "./motion-graphic-brand.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 8;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 9;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -285,6 +286,11 @@ export interface MotionGraphicOptions {
    */
   storyboard?: MotionStoryboard;
   /**
+   * The brand kit the brand stage read from `brandUrl`, `brandLogo` and `brandColors`: its name, colours (the
+   * first becomes the accent and the CTA fill) and stored logo. The brief's own `brand` wins over it.
+   */
+  brandFound?: BrandFound;
+  /**
    * Card lengths to cut instead of the ones the script's estimate gives: one per card, summing to the
    * graphic's length. The voice stage passes them after cutting the cards to the measured takes.
    */
@@ -340,17 +346,25 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       suggestedAction: `Cut the voice-over to at most ${budget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables), or lengthen the video.`,
     });
   }
-  // The brand the storyboard found in the brief, kept only when the brief really writes it.
+  const found = options.brandFound;
+  // The brand's own site names it; else the brand the storyboard found in the brief, kept only when the
+  // brief really writes it.
   const brandName = brief.brand
     ? undefined
-    : namedInBrief(brief, storyboard?.brandName, lines[0]?.onScreen ?? "");
+    : (found?.name ?? namedInBrief(brief, storyboard?.brandName, lines[0]?.onScreen ?? ""));
   // What the graphic is called without a brand: its title, else its hook. Never the style profile's name.
   const unbrandedName = brief.title ?? (lines[0]?.onScreen || "Motion graphic");
+  // Brand colours restyle the profile: the main one fills the CTA card and is the accent wherever it reads
+  // on the profile's background, else the second one is, else the profile keeps its own accent.
+  const [main, second] = found?.colors ?? [];
+  const reads = (c: string | undefined): c is string =>
+    c !== undefined && contrast(c, style.palette.background) >= MIN_CONTRAST;
   const baseBrand: BrandKit = brief.brand ?? {
     name: truncateText(brandName ?? unbrandedName, 120),
     palette: {
-      primary: style.palette.accent,
-      accent: style.palette.accent,
+      primary: main ?? style.palette.accent,
+      ...(second ? { secondary: second } : {}),
+      accent: reads(main) ? main : reads(second) ? second : style.palette.accent,
       background: style.palette.background,
       foreground: style.palette.foreground,
     },
@@ -364,10 +378,16 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       background: offBlack(baseBrand.palette.background),
     },
   };
-  const logo = brand.logoAssetId
-    ? options.assets?.find((a) => a.id === brand.logoAssetId && a.kind === "image")
-    : undefined;
+  const logo =
+    (brand.logoAssetId
+      ? options.assets?.find((a) => a.id === brand.logoAssetId && a.kind === "image")
+      : undefined) ?? (found?.logo?.kind === "image" ? found.logo : undefined);
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
+  // A lockup sets the brand's real name beside its mark, unless the mark is a wide wordmark that already
+  // carries it.
+  const realName = brief.brand?.name ?? brandName;
+  const wordmark = logo?.width && logo.height ? logo.width / logo.height > 2.2 : false;
+  const lockupText = realName && !wordmark ? truncateText(realName, 60) : undefined;
   const chars = LINE_CHARS[aspectRatio];
   const spans = options.cardMs ? [...options.cardMs] : durations(totalMs, lines, language);
   if (
@@ -399,6 +419,26 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     const fill = i === last && style.energy >= 4 ? "primary" : "background";
     const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
+    if (logo && i === 0) {
+      // The hook opens on the brand's lockup above its headline.
+      shots.push({
+        id: "hook-logo",
+        type: "logo",
+        startMs: 0,
+        durationMs,
+        assetId: logo.id,
+        lockup: true,
+        ...(lockupText ? { text: lockupText } : {}),
+        style: {
+          textStyle: "body",
+          emphasis: "high",
+          color: inkOn(brand.palette, fill, "foreground"),
+          align: "center",
+          region: "top",
+        },
+        animation: { enter: "fade", exit: motion.exit, durationMs: 400 },
+      });
+    }
     if (i === last) {
       // The CTA names the brand only with a logo or a real name: without a brand, a named brand or a title,
       // the brand kit's name is the hook line, which the hook card already shows.
@@ -408,7 +448,10 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           type: "logo",
           startMs: 0,
           durationMs,
-          ...(logo ? { assetId: logo.id } : { text: truncateText(brand.name, 60) }),
+          // A square mark with a real name is set as a lockup; a wordmark logo stands alone.
+          ...(logo
+            ? { assetId: logo.id, ...(lockupText ? { lockup: true, text: lockupText } : {}) }
+            : { text: truncateText(brand.name, 60) }),
           style: {
             textStyle: "heading",
             color: inkOn(brand.palette, fill, "accent"),
@@ -499,7 +542,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     title: truncateText(brief.title ?? brief.brand?.name ?? brandName ?? unbrandedName, 200),
     language,
     format: { aspectRatio, ...ASPECT_RATIO_SIZES[aspectRatio], fps: FPS, durationMs: totalMs },
-    brand: logo ? brand : brandNoLogo,
+    brand: logo ? { ...brand, logoAssetId: logo.id } : brandNoLogo,
     assets: logo ? [logo] : [],
     scenes,
     timeline: buildSequentialTimeline(scenes),

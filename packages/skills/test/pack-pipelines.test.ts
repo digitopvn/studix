@@ -26,6 +26,7 @@ import {
   type JobExecutorDeps,
   type QaExpectation,
   type QaGate,
+  type StageWebFetcher,
   type WorkerJobQueue,
 } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -99,8 +100,8 @@ function memoryStorage(): StorageAdapter & { keys(): string[] } {
   return {
     keys: () => [...objects.keys()],
     async put(_ctx, key, body, opts) {
-      if (!("filePath" in body)) throw new Error("memory storage takes files only");
-      const bytes = await readFile(body.filePath);
+      if (body instanceof ReadableStream) throw new Error("memory storage takes files or bytes only");
+      const bytes = body instanceof Uint8Array ? Buffer.from(body) : await readFile(body.filePath);
       objects.set(key, bytes);
       return { key, bytes: bytes.length, sha256: sha(bytes), contentType: opts.contentType };
     },
@@ -160,6 +161,8 @@ function harness(
     unlistedKinds?: readonly string[];
     /** Length of the voice take of a line, by what it says; the fake's default take otherwise. */
     voiceMs?: (text: string, instructions?: string) => number | undefined;
+    /** Public web pages the worker reads (a brand site and its logo); the worker reads none when omitted. */
+    web?: StageWebFetcher;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
@@ -289,7 +292,7 @@ function harness(
       } as typeof cache;
     })(),
     storyboardStatus: async () => options.storyboard,
-    services: { media, storage, renderer, qa, workRoot },
+    services: { media, storage, renderer, qa, workRoot, ...(options.web ? { web: options.web } : {}) },
   });
 
   let seq = 0;
@@ -653,6 +656,90 @@ describe("marketing-video pipeline (fake providers)", () => {
     expect(h.generate).not.toHaveBeenCalled();
     const failure = h.queue.fail.mock.calls.at(-1)?.[2] as { code: string } | undefined;
     expect(failure?.code).toBe("VALIDATION");
+  });
+});
+
+/** A 64x64 PNG header: enough bytes for the logo sniffing to read its type and size. */
+const PNG_64 = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 64, 0, 0, 0,
+  64, 8, 6, 0, 0, 0,
+]);
+
+describe("motion-graphic brand kit (fake web)", () => {
+  const page = `<!doctype html><html><head><title>Lá Mây | Trà hái tay</title>
+    <meta name="theme-color" content="#2F6B4F"><link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
+    </head><body></body></html>`;
+
+  it("reads the brand's site and puts its logo lockup on the hook and the CTA", async () => {
+    const got: string[] = [];
+    const web: StageWebFetcher = {
+      async get(url) {
+        got.push(url);
+        if (url === "https://lamay.example/")
+          return { url, contentType: "text/html", body: new TextEncoder().encode(page) };
+        if (url === "https://lamay.example/icon.png") return { url, contentType: "image/png", body: PNG_64 };
+        throw new StudixError("PROVIDER_ERROR", `unexpected ${url}`);
+      },
+    };
+    const h = harness({ web });
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic giới thiệu tiệm trà",
+      language: "vi",
+      durationMs: 9_000,
+      keyMessages: ["Trà hái tay mỗi sớm"],
+      callToAction: "Đặt trà ngay",
+      brandUrl: "https://lamay.example/",
+    });
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(got).toEqual(["https://lamay.example/", "https://lamay.example/icon.png"]);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    const logo = ir.assets.find((a) => a.id === "brand-logo");
+    expect(logo).toEqual(
+      expect.objectContaining({ kind: "image", mime: "image/png", width: 64, height: 64 }),
+    );
+    expect(h.storage.keys()).toContain(logo?.storageKey);
+    expect(ir.brand).toEqual(
+      expect.objectContaining({
+        name: "Lá Mây",
+        logoAssetId: "brand-logo",
+        palette: expect.objectContaining({ primary: "#2f6b4f" }),
+      }),
+    );
+    const lockups = ir.scenes.flatMap((sc) => sc.shots.filter((sh) => sh.type === "logo"));
+    expect(
+      lockups.map((sh) => [sh.id, sh.type === "logo" && sh.lockup, sh.type === "logo" && sh.text]),
+    ).toEqual([
+      ["hook-logo", true, "Lá Mây"],
+      ["cta-logo", true, "Lá Mây"],
+    ]);
+  });
+
+  it("keeps going with a warning when the brand's site cannot be read", async () => {
+    const web: StageWebFetcher = {
+      get: async () => {
+        throw new StudixError("FORBIDDEN", "Connector host resolves to a refused address: private");
+      },
+    };
+    const h = harness({ web });
+    const projectId = await newProject(h, "motion-graphic", {
+      prompt: "Motion graphic giới thiệu tiệm trà Lá Mây",
+      language: "vi",
+      durationMs: 9_000,
+      callToAction: "Đặt trà ngay",
+      brandUrl: "https://lamay.example/",
+      brandColors: ["#2f6b4f"],
+    });
+    const { job, outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.assets.some((a) => a.id === "brand-logo")).toBe(false);
+    // The brief's own colour still restyles the graphic.
+    expect(ir.brand?.palette.primary).toBe("#2f6b4f");
+    const stage = (await h.jobs.listStages(ctx, job.id)).find((st) => st.name === MG_STAGES.brand);
+    expect(stage?.output).toEqual(
+      expect.objectContaining({ warning: expect.stringContaining("brandUrl was not read") }),
+    );
   });
 });
 

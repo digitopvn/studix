@@ -280,7 +280,8 @@ hai cue: cue mới bắt đầu từ số điện thoại, trừ khi cách đó 
 bên cạnh khi tổng không quá mười từ, nếu không thì hai cue chia lại thời gian để mỗi cue hiện ít nhất 600 ms
 (`captionCues`).
 Mỗi beat của storyboard agent có thể kèm `layout` có kiểu (`prompt-box`, `code`, `chips`, `checklist`, `counter`,
-`cards-row`, `swatches`, `stat`, schema `LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
+`cards-row`, `swatches`, `stat`, và bộ UI sản phẩm `chat`, `tool-call`, `pipeline`, `player`, `meter`, schema
+`LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
 dựng dần bên dưới (shot `layout`, renderer tự vẽ). `visual` chỉ là mô tả. Beat cuối luôn là card CTA, bỏ qua
 layout. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
 màu `primary`, thay vì xen kẽ nền từng card.
@@ -333,6 +334,18 @@ Job này dừng ở storyboard (`in_review`). Sau khi người duyệt storyboar
 image-to-video, audio, render, QA và publish.
 
 ### motion-graphic
+
+Brand kit: brief có `brandUrl` (site https của brand), `brandLogo` (URL https của ảnh logo, hoặc ảnh tải lên dạng
+data URL PNG/JPEG/WebP/SVG tới khoảng 500 KB) hoặc `brandColors` (1-4 mã hex, màu chính đứng đầu) thì stage
+`motion-graphic.brand` (trước storyboard, miễn phí) đọc trang để lấy tên (`og:site_name`, `application-name`, phần
+đầu `<title>`), màu (`theme-color`, `mask-icon`, biến CSS `--brand`/`--primary`/`--accent`; bỏ màu xám, gần trắng,
+gần đen) và logo (ưu tiên apple-touch-icon lớn nhất, rồi `logo` của JSON-LD, `<img>` tên logo, icon SVG hay lớn).
+Logo và màu của brief thắng những gì trang nói; `brand` của brief thắng cả ba. Logo được lưu vào storage của
+workspace thành asset IR `brand-logo` (SVG có script hay tham chiếu ngoài bị từ chối). Card hook và CTA hiện lockup
+(logo cạnh tên brand; logo chữ ngang rộng hơn 2,2 lần chiều cao thì đứng một mình), màu chính thành accent và nền
+card CTA. Worker đọc trang qua `createPublicWebFetcher` của `@studix/mcp-gateway`: chỉ https công khai, kiểm tra
+lại mọi lần redirect theo chính sách SSRF, giới hạn byte và thời gian. Trang hay logo không đọc được thì stage ghi
+`warning` và job vẫn chạy tiếp.
 
 Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prompt. Brief không có `brand` thì agent
 storyboard trả `brandName` đúng như brief viết (ví dụ "Studix" trong "introducing Studix"); tên đó làm tên

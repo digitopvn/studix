@@ -103,6 +103,23 @@ export interface StageServices {
   workRoot?: string;
   /** Where media calls are recorded as `provider_executions` rows; calls go unrecorded when not wired. */
   executions?: ProviderExecutionRecorder;
+  /** Reads public https resources (a brand's site, its logo) through the SSRF guard; stages skip such reads without it. */
+  web?: StageWebFetcher;
+}
+
+/** A public web resource a stage read: the final URL after redirects, its media type and its bytes. */
+export interface StageWebResponse {
+  url: string;
+  contentType: string;
+  body: Uint8Array;
+}
+
+/** GET of a public https URL; refused hosts, bad statuses and bodies over `maxBytes` throw a StudixError. */
+export interface StageWebFetcher {
+  get(
+    url: string,
+    options: { maxBytes: number; accept?: string; signal?: AbortSignal },
+  ): Promise<StageWebResponse>;
 }
 
 /** A media output an earlier job of the tenant paid for and stored, found by the content key of its request. */

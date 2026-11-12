@@ -11,6 +11,7 @@ import {
   type TenantContext,
 } from "@studix/core";
 import { createRepositories, type StudixDb } from "@studix/database";
+import { createPublicWebFetcher } from "@studix/mcp-gateway";
 import { type Clock, type Logger, systemClock } from "@studix/shared";
 import { packPipelines, packRegistry } from "@studix/skills";
 import {
@@ -28,6 +29,7 @@ import {
   type QaGate,
   type SpeechProbe,
   type StageContext,
+  type StageWebFetcher,
   type WorkerPool,
   type WorkerPoolStatus,
 } from "@studix/workflow";
@@ -76,6 +78,11 @@ export interface WorkerPorts {
   qa?: QaGate;
   /** Optional: detects a human voice in a generated sound effect. Without it effects are not checked. */
   speech?: SpeechProbe;
+  /**
+   * Optional: reads public https resources for stages (a brand site and its logo). Defaults to the
+   * SSRF-guarded fetcher of `@studix/mcp-gateway`.
+   */
+  web?: StageWebFetcher;
   /** Optional: safe media readiness (Multix executable and which vendor keys exist) reported by `/readyz`. */
   mediaStatus?(): Promise<WorkerMediaStatus>;
   /** Optional: skill sandbox readiness reported by `/readyz`; absent while the sandbox is off. */
@@ -149,6 +156,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
       renderer: deps.renderer,
       qa: deps.qa,
       ...(deps.speech ? { speech: deps.speech } : {}),
+      web: deps.web ?? createPublicWebFetcher(),
       workRoot: settings.workDir,
       executions: repos.usage,
     },

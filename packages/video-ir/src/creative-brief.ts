@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BrandKit } from "./brand-kit.ts";
-import { AspectRatio, IrId, LanguageTag } from "./primitives.ts";
+import { AspectRatio, HexColor, IrId, LanguageTag } from "./primitives.ts";
 
 /** One beat of a creative direction: what the frame shows, the words on screen and the line spoken. */
 export const CreativeBeat = z.object({
@@ -53,6 +53,32 @@ export const CreativeBrief = z.object({
    */
   voiceover: z.boolean().optional(),
   brand: BrandKit.optional(),
+  /**
+   * The brand's website. Studix reads its name, theme colours and logo from the page for what `brand`,
+   * `brandLogo` and `brandColors` leave unset. Honoured by `motion-graphic`.
+   */
+  brandUrl: z
+    .url({ protocol: /^https$/ })
+    .max(2048)
+    .optional(),
+  /**
+   * The brand's logo: an https URL of the image, or the uploaded image itself as a data URL (PNG, JPEG,
+   * WebP or SVG, up to about 500 KB). Wins over a logo found at `brandUrl`. Honoured by `motion-graphic`.
+   */
+  brandLogo: z
+    .union([
+      z.url({ protocol: /^https$/ }).max(2048),
+      z
+        .string()
+        .max(700_000)
+        .regex(/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/, "an image data URL"),
+    ])
+    .optional(),
+  /**
+   * Brand colours, the main one first: it becomes the accent (and the CTA fill) of the graphic, a second one
+   * its secondary colour. Wins over colours found at `brandUrl`. Honoured by `motion-graphic`.
+   */
+  brandColors: z.array(HexColor).min(1).max(4).optional(),
   /** Storage keys or URLs of reference material supplied by the user. */
   references: z.array(z.string().min(1).max(2048)).max(20).optional(),
   constraints: z.array(z.string().min(1).max(300)).max(20).optional(),

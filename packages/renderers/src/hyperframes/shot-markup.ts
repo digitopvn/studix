@@ -29,6 +29,15 @@ export interface ShotMarkup {
   css: string[];
 }
 
+/** Whether a `#rrggbb` colour is dark (WCAG relative luminance below 0.2). */
+function isDark(hex: string): boolean {
+  const channel = (i: number) => {
+    const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5) < 0.2;
+}
+
 export const shotDomId = (prefix: string, shotId: string): string => `${prefix}shot-${shotId}`;
 
 const EMPHASIS_SCALE = { none: 1, low: 0.88, high: 1.15 } as const;
@@ -173,6 +182,47 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       if (assetId) {
         const src = assetPath(ctx, shot, assetId);
         const alt = ctx.brand?.name ?? "logo";
+        if (shot.lockup) {
+          // A lockup: the mark at one and a half times the type size, `text` set beside it on one line (a
+          // lockup without `text` is the mark alone at that size: a wordmark logo carries its name).
+          const name = shot.text;
+          const role = shot.style?.textStyle ?? "heading";
+          const size =
+            TEXT_STYLES[role].sizeAt1080 * ctx.scale * EMPHASIS_SCALE[shot.style?.emphasis ?? "none"];
+          return {
+            html: `${open}<div class="lockup"><img src="${escapeHtml(src)}" alt="${escapeHtml(name ? "" : alt)}" />${name ? `<span>${escapeHtml(name)}</span>` : ""}</div></div>`,
+            css: [
+              cssRule(sel, [...base, "max-width: 100%;"]),
+              cssRule(`${sel} .lockup`, [
+                "display: flex;",
+                "align-items: center;",
+                `gap: ${Math.round(size * 0.45)}px;`,
+                "max-width: 100%;",
+              ]),
+              cssRule(`${sel} .lockup img`, [
+                "display: block;",
+                "flex: 0 0 auto;",
+                `height: ${Math.round(size * 1.5)}px;`,
+                `max-width: ${Math.round(size * (name ? 4 : 7))}px;`,
+                "object-fit: contain;",
+                "border-radius: 18%;",
+                // A dark mark on a transparent ground would sink into a dark card: a light rim keeps its edge.
+                ...(ctx.palette && isDark(ctx.palette.background)
+                  ? [
+                      `filter: drop-shadow(0 0 ${Math.max(1, Math.round(2 * ctx.scale))}px rgba(255, 255, 255, 0.7));`,
+                    ]
+                  : []),
+              ]),
+              cssRule(`${sel} .lockup span`, [
+                ...textCss(ctx, role, shot.style),
+                "white-space: nowrap;",
+                "overflow: hidden;",
+                "text-overflow: ellipsis;",
+                "min-width: 0;",
+              ]),
+            ],
+          };
+        }
         return {
           html: `${open}<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" /></div>`,
           css: [

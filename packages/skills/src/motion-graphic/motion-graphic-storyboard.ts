@@ -151,10 +151,17 @@ interface Repair {
   storyboard: MotionStoryboard;
 }
 
+/** The brief with an uploaded logo (a data URL) left out. */
+function withoutLogoData(brief: CreativeBrief): CreativeBrief {
+  if (!brief.brandLogo?.startsWith("data:")) return brief;
+  const { brandLogo: _logo, ...rest } = brief;
+  return rest;
+}
+
 const agentStageFor = (repair?: Repair) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
-    version: 4,
+    version: 5,
     inputSchema: StoryboardInput,
     outputSchema: AgentOutput,
     instructions:
@@ -171,7 +178,12 @@ const agentStageFor = (repair?: Repair) =>
       "wired to the tools or channels it connects), `checklist` (steps that are `done`, `active` or `todo`), " +
       "`counter` (a whole number counting up `from` to `to`, with `prefix`, `suffix`, `label`), `cards-row` (2-5 " +
       "short cards, `highlight` the one that wins), `swatches` (palette roles like `accent` or hex colours) or " +
-      "`stat` (one big `value` and its `label`). A beat's layout, headline and spoken line show and say the " +
+      "`stat` (one big `value` and its `label`); for a software product, show its UI: `chat` (a chat window, 1-4 " +
+      "`messages` `from` `user` (typed in) or `agent`), `tool-call` (a tool card: `name`, up to 4 `args` " +
+      "`key`/`value`, spinning while `running`, or `done` with a `result`), `pipeline` (2-6 job `steps` in a " +
+      "row, `done`, `active` or `todo`), `player` (a preview player of `title`, optional `duration` like " +
+      '"0:15", then an `action` button, "Approve" by default, is pressed) or `meter` (a usage bar to `used` of ' +
+      "its `cap`, with `unit` and `label`). A beat's layout, headline and spoken line show and say the " +
       "same fact (the line over a 5,000 counter speaks of the 5,000, not of the next card). Use the brief's own facts and words in it, vary the layouts " +
       "across the video, put no layout on the last beat (the call to action), and set `layout` null where " +
       "the headline alone is stronger. The whole voice-over must " +
@@ -187,7 +199,8 @@ const agentStageFor = (repair?: Repair) =>
       "storyboard again, changed only as `repair.problem` says (fewer words in the named beats, or the " +
       "number of beats it asks for), and nothing else. Return only JSON matching the output schema.",
     taskInput: ({ outputs: { brief } }) => ({
-      brief: brief.brief,
+      // The logo is pixels, not words: an uploaded image would only cost the agent tokens.
+      brief: withoutLogoData(brief.brief),
       durationMs: lengthOf(brief.brief),
       voiceover: brief.brief.voiceover !== false,
       wordBudget: voiceoverWordBudget(lengthOf(brief.brief)),

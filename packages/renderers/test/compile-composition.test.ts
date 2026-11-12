@@ -201,6 +201,32 @@ describe("buildComposition layouts", () => {
     { kind: "cards-row", items: ["Hook", "Demo", "CTA"], highlight: 1 },
     { kind: "swatches", items: [{ color: "accent", label: "Cam" }, { color: "#112233" }] },
     { kind: "stat", value: "3×", label: "nhanh hơn" },
+    {
+      kind: "chat",
+      title: "Claude",
+      messages: [
+        { from: "user", text: "Làm video 15 giây cho <Studix>" },
+        { from: "agent", text: "Đã tạo job, đang dựng storyboard." },
+      ],
+    },
+    {
+      kind: "tool-call",
+      name: "studix_create_video",
+      args: [{ key: "workflowTemplate", value: "motion-graphic" }],
+      status: "done",
+      result: "job_42 queued",
+    },
+    {
+      kind: "pipeline",
+      steps: [
+        { label: "Storyboard", state: "done" },
+        { label: "Voice", state: "done" },
+        { label: "Render", state: "active" },
+        { label: "QA", state: "todo" },
+      ],
+    },
+    { kind: "player", title: "Studix teaser", duration: "0:15" },
+    { kind: "meter", used: 1250.5, cap: 2000, unit: "credit", label: "Tháng này" },
   ];
   const ir = structuredClone(brandIntro);
   ir.scenes = layouts.map((layout, i) => ({
@@ -242,6 +268,21 @@ describe("buildComposition layouts", () => {
     expect(scene(6)).toContain("background: var(--c-accent);");
     expect(scene(6)).toContain("background: #112233;");
     expect(scene(7)).toContain('<div class="lo-value">3×</div>');
+    // The user's message is typed in (escaped), the agent's reply is a bubble; the card's words are Vietnamese.
+    expect(scene(8)).toContain('class="lo-msg lo-m0 lo-user"');
+    expect(scene(8)).toContain('class="lo-msg lo-m1 lo-agent">Đã tạo job, đang dựng storyboard.</div>');
+    expect(scene(8)).not.toContain("<Studix>");
+    expect(scene(9)).toContain("Đang chạy");
+    expect(scene(9)).toContain('<span class="lo-pill lo-ok">');
+    expect(scene(9)).toContain("job_42 queued");
+    // Links fill up to the step in progress: Storyboard -> Voice -> Render, never into QA.
+    expect(scene(10).match(/class="lo-lfill"/g)).toHaveLength(2);
+    expect(scene(10)).toContain("lo-node lo-p2 lo-active");
+    expect(scene(11)).toContain("<span>Duyệt</span>");
+    expect(scene(11)).toContain("<span>0:15</span>");
+    expect(scene(12)).toContain("1.250,5 / 2.000 credit");
+    expect(scene(12)).toContain("width: 62.5%;");
+    expect(scene(12)).toContain("Hạn mức 2.000 credit");
   });
 
   it("builds each layout in with seek-safe tweens after the shot enters", () => {
@@ -257,7 +298,12 @@ describe("buildComposition layouts", () => {
     // Only separators that exist are faded in: 1.250 has one, after its first digit.
     const targets = [...scene(4).matchAll(/layout \.(lo-p\d+)"/g)].map((m) => m[1]);
     expect(targets).toEqual(["lo-p0"]);
-    for (let i = 0; i < 8; i++) {
+    // The tool call spins while it runs, then settles on done; the player's Approve button is pressed.
+    expect(scene(9)).toMatch(/tl\.fromTo\("#s-l9__shot-l9-layout \.lo-spin", \{"rotation":0\}/);
+    expect(scene(9)).toContain('"#s-l9__shot-l9-layout .lo-ok", {"opacity":0,"scale":0.6}');
+    expect(scene(11)).toContain('"#s-l11__shot-l11-layout .lo-approve", {"scale":1}, {"scale":0.9');
+    expect(scene(12)).toContain('"#s-l12__shot-l12-layout .lo-mfill", {"scaleX":0}');
+    for (let i = 0; i < layouts.length; i++) {
       expect(scene(i)).not.toContain('"repeat"');
       expect(scene(i)).not.toContain("onUpdate");
     }
