@@ -13,6 +13,7 @@ import {
 } from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
 import { assignLanes } from "../src/hyperframes/scene-composition.ts";
+import { planeMoves } from "../src/hyperframes/scene-depth.ts";
 import { buildComposition, GSAP_ASSET, hyperframesSupport, writeComposition } from "../src/index.ts";
 import { loadIrFixture, tempDir, writePng } from "./render-test-helpers.ts";
 
@@ -355,29 +356,58 @@ describe("buildComposition camera, depth and motif", () => {
   });
 
   it("plays each camera move as one seek-safe tween per plane over the whole scene", () => {
-    expect(scene("hook")).toContain(
-      'tl.fromTo("#s-hook__stage .plane-mid", {"scale":1}, {"scale":1.06,"duration":3,"ease":"sine.inOut"}, 0);',
+    expect(scene("hook")).toMatch(
+      /tl\.fromTo\("#s-hook__stage \.plane-mid", \{"scale":1\}, \{"scale":1\.0\d+,"duration":3,"ease":"sine\.inOut"\}, 0\);/,
     );
-    // pan-left: content drifts left, 2% of the 540px width.
     expect(scene("intro")).toContain(
-      'tl.fromTo("#s-intro__stage .plane-mid", {"x":11}, {"x":-11,"duration":4,"ease":"sine.inOut"}, 0);',
+      'tl.fromTo("#s-intro__stage .plane-mid", {"x":11}, {"x":-11,"duration":4',
     );
-    // parallax: the content travels further than the back plane; no front plane without accents.
-    expect(scene("feature")).toContain('tl.fromTo("#s-feature__stage .plane-mid", {"x":8}, {"x":-8');
-    expect(scene("feature")).toContain('tl.fromTo("#s-feature__stage .plane-back", {"x":2,"scale":1.06}');
+    // A zoom leaves the edge accents where they are; no front plane without accents.
+    expect(scene("hook")).not.toContain('.plane-front", {');
     expect(scene("feature")).not.toContain(".plane-front");
-    expect(scene("hook")).toContain('tl.fromTo("#s-hook__stage .plane-front", {"scale":1}, {"scale":1.09');
     expect(scene("cta")).not.toContain('.plane-mid", {');
+  });
+
+  it("keeps content in its safe area and accents in frame for every move, size and intensity", () => {
+    const sizes = [
+      { width: 1920, height: 1080 },
+      { width: 1080, height: 1920 },
+      { width: 1080, height: 1080 },
+    ];
+    const moves = ["push-in", "pull-back", "pan-left", "pan-right", "parallax"] as const;
+    for (const frame of sizes)
+      for (const move of moves)
+        for (const intensity of [0.25, 1, 2]) {
+          const s = Math.min(frame.width, frame.height);
+          const planes = planeMoves({ move, intensity }, frame)!;
+          const reach = (p: (typeof planes)[number]) => {
+            if (!p) return 0;
+            const scale = Math.max(Number(p.from.scale ?? 1), Number(p.to.scale ?? 1));
+            const half = Math.max(frame.width, frame.height) / 2 - 0.07 * s;
+            return Math.abs(Number(p.from.x ?? 0)) + (scale - 1) * half;
+          };
+          // Content moves at most half its safe inset; accents never scale and stay inside their inset.
+          expect(reach(planes[1])).toBeLessThanOrEqual(0.035 * s + 1);
+          expect(planes[2]?.from.scale ?? 1).toBe(1);
+          expect(Math.abs(Number(planes[2]?.from.x ?? 0))).toBeLessThan(0.0175 * s);
+        }
   });
 
   it("carries the motif across a match cut and cuts the stage hard", () => {
     // The hook's motif pops in; the next scene's motif starts where the hook's sat and travels on.
     expect(scene("hook")).toContain('tl.fromTo("#s-hook__stage .motif", {"scale":0}');
-    expect(scene("intro")).toMatch(/tl\.fromTo\("#s-intro__stage \.motif", \{"x":\d+,"y":-\d+,"scale":1\}/);
+    // 540x960: a medium motif is 54px with its centre 86px in from the edges, so the hook's sits at
+    // (454, 86) and the intro's at (86, 874). The intro's starts offset by exactly that difference.
+    expect(scene("intro")).toContain('tl.fromTo("#s-intro__stage .motif", {"x":368,"y":-788,"scale":1}');
     // The feature scene has no motif, so the intro's leaves at the end of its scene.
     expect(scene("intro")).toContain('tl.fromTo("#s-intro__stage .motif", {"scale":1}, {"scale":0');
     expect(scene("hook")).not.toContain('tl.fromTo("#s-hook__stage", {"opacity"');
     expect(scene("intro")).not.toContain('tl.fromTo("#s-intro__stage", {"opacity":0}');
+  });
+
+  it("takes neighbours from the timeline, whatever order the scenes array is in", () => {
+    const shuffled = { ...ir, scenes: [...ir.scenes].reverse() };
+    expect([...buildComposition(shuffled, previewSize).files]).toEqual([...build.files]);
   });
 
   it("plays the whip and iris transitions as two halves on the stage", () => {

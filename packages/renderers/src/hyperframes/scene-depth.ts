@@ -88,7 +88,7 @@ export function foregroundAccents(
 ): { html: string; css: string[] } {
   const accents = scene.depth?.foreground ?? [];
   const s = short(frame);
-  const inset = Math.round(0.035 * s);
+  const inset = Math.round(ACCENT_INSET * s);
   const stroke = Math.max(2, Math.round(0.004 * s));
   const css: string[] = [];
   const html = accents.map((accent) => {
@@ -116,8 +116,9 @@ export function foregroundAccents(
         css.push(
           cssRule(sel, [
             "position: absolute;",
-            `left: ${inset * 2}px;`,
-            `top: ${inset * 2}px;`,
+            // Inside the frame margin, clear of the content's safe area.
+            `left: ${inset}px;`,
+            `top: ${inset}px;`,
             `width: ${Math.round(0.14 * s)}px;`,
             `height: ${Math.max(4, Math.round(0.009 * s))}px;`,
             "background: var(--c-accent);",
@@ -142,7 +143,7 @@ export function foregroundAccents(
           cssRule(sel, [
             "position: absolute;",
             // On the right edge, half way down: the corners stay free for the motif.
-            `right: ${inset}px;`,
+            `right: ${Math.round(inset / 2)}px;`,
             `top: calc(50% - ${Math.round(gap * 2)}px);`,
             `width: ${gap * 2}px;`,
             `height: ${gap * 4}px;`,
@@ -158,37 +159,60 @@ export function foregroundAccents(
   return { html: html.join(""), css };
 }
 
-/** Per-plane camera travel: [back, content, front]. Content moves as the move is named. */
-function planeMoves(
+/** Inset of the foreground accents from the frame edge, as a fraction of the short edge. */
+const ACCENT_INSET = 0.035;
+/** Safe inset of the content (see `compileScene`), as a fraction of the short edge. */
+const CONTENT_SAFE = 0.07;
+
+/**
+ * Per-plane camera travel: [back, content, front]. Content moves as the move is named. Travel is bounded so
+ * nothing leaves the frame at any intensity: content moves at most half its safe inset (a zoom scales its
+ * farthest edge by no more than that), and the front accents, which hug the edges, never scale and drift
+ * at most 40% of their inset. The back plane is held larger than the frame, so it has room to move.
+ */
+export function planeMoves(
   camera: SceneCamera | undefined,
   frame: Frame,
-): Array<{ from: Vars; to: Vars }> | undefined {
+): Array<{ from: Vars; to: Vars } | undefined> | undefined {
   if (!camera || camera.move === "static") return undefined;
   const k = camera.intensity ?? 1;
-  const zoom = (rates: number[], inward: boolean) =>
-    rates.map((r) => {
-      const big = Number(num(1 + r * k));
-      return inward ? { from: { scale: 1 }, to: { scale: big } } : { from: { scale: big }, to: { scale: 1 } };
-    });
-  // The back plane is held a little larger while it drifts, so its edges never come into frame.
-  const drift = (dx: number, rates: number[]) =>
-    rates.map((r, i) => {
-      const d = Math.round(dx * r * k);
+  const s = short(frame);
+  const safe = CONTENT_SAFE * s;
+  const maxShift = safe / 2;
+  // The content's farthest edge sits (long edge / 2 - safe) from the centre, and a zoom moves it by that x (scale - 1).
+  const maxZoom = maxShift / (Math.max(frame.width, frame.height) / 2 - safe);
+  const frontShift = Math.round(0.4 * ACCENT_INSET * s);
+  const scaleBy = (amount: number) => Number(num(1 + amount));
+  const zoom = (inward: boolean) => {
+    const [back, content] = [scaleBy(Math.min(0.06, 0.03 * k)), scaleBy(Math.min(maxZoom, 0.04 * k))].map(
+      (big) =>
+        inward ? { from: { scale: 1 }, to: { scale: big } } : { from: { scale: big }, to: { scale: 1 } },
+    );
+    return [back, content, undefined];
+  };
+  const drift = (sign: 1 | -1, rates: [number, number, number]) => {
+    const base = 0.02 * frame.width * k;
+    const d = [
+      Math.round(Math.min(base * rates[0], 0.025 * frame.width)),
+      Math.round(Math.min(base * rates[1], maxShift)),
+      Math.round(Math.min(base * rates[2], frontShift)),
+    ].map((v) => v * sign);
+    return d.map((v, i) => {
       const hold: Vars = i === 0 ? { scale: 1.06 } : {};
-      return { from: { x: -d, ...hold }, to: { x: d, ...hold } };
+      return { from: { x: -v, ...hold }, to: { x: v, ...hold } };
     });
-  const travel = 0.02 * frame.width;
+  };
   switch (camera.move) {
     case "push-in":
-      return zoom([0.03, 0.06, 0.09], true);
+      return zoom(true);
     case "pull-back":
-      return zoom([0.03, 0.06, 0.09], false);
+      return zoom(false);
     case "pan-left":
-      return drift(-travel, [0.6, 1, 1.4]);
+      return drift(-1, [0.6, 1, 1.4]);
     case "pan-right":
-      return drift(travel, [0.6, 1, 1.4]);
+      return drift(1, [0.6, 1, 1.4]);
     case "parallax":
-      return drift(-0.75 * travel, [0.3, 1, 2.2]);
+      return drift(-1, [0.25, 0.75, 1.6]);
   }
 }
 
@@ -200,8 +224,8 @@ export function writeCamera(w: TimelineWriter, stage: string, scene: Scene, fram
   if (!moves) return;
   const planes = ["back", "mid", "front"];
   moves.forEach((m, i) => {
-    // The front plane exists only when the scene draws foreground accents.
-    if (i === 2 && (scene.depth?.foreground ?? []).length === 0) return;
+    // The front plane exists only when the scene draws foreground accents, and holds still on a zoom.
+    if (!m || (i === 2 && (scene.depth?.foreground ?? []).length === 0)) return;
     w.fromTo(
       `#${stage} .plane-${planes[i]}`,
       m.from,

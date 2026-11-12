@@ -22,6 +22,7 @@ import {
   wordCount,
 } from "../src/index.ts";
 import { VO_WORDS_PER_SECOND } from "../src/marketing-video/marketing-script.ts";
+import { cardCameras } from "../src/motion-graphic/motion-graphic-template.ts";
 import { voiceLines } from "../src/voice-lines.ts";
 
 const brief = {
@@ -750,6 +751,17 @@ describe("spoken length", () => {
     expect(kinds).toContain("match-cut");
     expect(new Set(kinds).size).toBeGreaterThan(1);
     expect(ir.metadata?.templateVersion).toBe(9);
+  });
+
+  it("never lets the style's default displace a camera the storyboard picked", () => {
+    const cycle = ["push-in", "pan-left", "parallax"] as const;
+    expect(cardCameras([undefined, "push-in"], cycle)).toEqual(["pan-left", "push-in"]);
+    expect(cardCameras(["parallax", "parallax", undefined], cycle)).toEqual([
+      "parallax",
+      "push-in",
+      "parallax",
+    ]);
+    expect(cardCameras(["static", "static"], cycle)).toEqual(["static", "static"]);
   });
 
   it("rejects a storyboard layout outside its typed shape", () => {

@@ -135,21 +135,22 @@ const MOTIF_PATH: readonly SceneMotif["anchor"][] = ["top-right", "bottom-left",
 
 /**
  * One camera move per card: the storyboard's pick, else the energy's cycle. Adjacent cards never share a
- * move (other than `static`): a repeat takes the next move of the cycle that differs from both neighbours.
+ * move (other than `static`). A card left to the style takes the first move of the cycle, from its own
+ * place in it, that differs from both neighbours, so it never displaces a pick; only a pick that repeats the
+ * pick before it is swapped.
  */
 export function cardCameras(wanted: ReadonlyArray<CameraMove | undefined>, cycle: readonly CameraMove[]) {
   const out: CameraMove[] = [];
   wanted.forEach((pick, i) => {
     const prev = out[i - 1];
-    const move = pick ?? (cycle[i % cycle.length] as CameraMove);
-    if (move === "static" || move !== prev) {
-      out.push(move);
+    if (pick && (pick === "static" || pick !== prev)) {
+      out.push(pick);
       return;
     }
     const next = wanted[i + 1];
-    const alt =
-      cycle.find((m) => m !== prev && m !== next) ?? cycle.find((m) => m !== prev) ?? ("static" as const);
-    out.push(alt);
+    const from = pick ? 0 : i % cycle.length;
+    const order = [...cycle.slice(from), ...cycle.slice(0, from)];
+    out.push(order.find((m) => m !== prev && m !== next) ?? order.find((m) => m !== prev) ?? "static");
   });
   return out;
 }
@@ -460,17 +461,19 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
   }
   const last = lines.length - 1;
   // A vignette deepens a dark card but greys the edges of a light one, which gets grain instead.
-  const darkCard = luminance(brand.palette.background) < 0.2;
-  const depth: SceneDepth = {
+  const depthOn = (fill: "background" | "primary"): SceneDepth => ({
     ...motion.depth,
     background: [
       ...new Set(
         (motion.depth.background ?? []).map((layer) =>
-          layer === "vignette" && !darkCard ? ("grain" as const) : layer,
+          layer === "vignette" && luminance(brand.palette[fill]) >= 0.2 ? ("grain" as const) : layer,
         ),
       ),
     ],
-  };
+  });
+  // The motif keeps one colour on every card, so it reads as the same object across each cut: the accent,
+  // unless a card is filled with the primary (often the accent itself), then the foreground everywhere.
+  const motifColor = style.energy >= 4 ? "foreground" : "accent";
   const cameras = cardCameras(
     lines.map((l) => l.camera),
     motion.cameras,
@@ -586,13 +589,13 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       shots,
       ...(i === last ? {} : { transitionOut: motion.transitions[i % motion.transitions.length] }),
       camera: { move: cameras[i] as CameraMove },
-      depth,
+      depth: depthOn(fill),
       // One shape carried card to card, corner to corner, clear of the centred headlines and captions.
       motif: {
         shape: motion.motif,
         anchor: MOTIF_PATH[i % MOTIF_PATH.length] as SceneMotif["anchor"],
         size: "medium",
-        color: fill === "primary" ? "foreground" : "accent",
+        color: motifColor,
       },
     };
   });
