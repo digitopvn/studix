@@ -204,10 +204,11 @@ const PREMIUM_INSTRUCTIONS =
   "strong, em, b, i, br, ul, ol, li and inline svg (g, path, circle, rect, line, polyline, polygon, ellipse, " +
   "text, tspan, defs, linearGradient, radialGradient, stop, clipPath, mask) with class, id and svg geometry " +
   "and paint attributes only (no style attribute, no href, no URL), and it shows the beat's on-screen line. " +
-  "Colour SVG through classes in `css` (`.ring { stroke: var(--c-primary) }`); a fill or stroke attribute holds " +
+  "Colour SVG through classes in `css` (`.ring { stroke: var(--c-accent) }`); a fill or stroke attribute holds " +
   "a plain colour, url(#id) or a bare var(--token), never another function. " +
   "`css` is plain rules scoped to the card (every selector is prefixed with the card root, so write " +
-  "`.title { ... }`), using var(--c-background), var(--c-foreground), var(--c-primary), var(--c-accent) and " +
+  "`.title { ... }`), using var(--c-background), var(--c-foreground) and var(--c-accent) (the film's one accent: " +
+  "every highlight, outline, stroke and glow; never a second hue, so the card matches the film) and " +
   "only var(--font-heading) or var(--font-body) as font-family, sizes in % or vmin (never px: the card renders " +
   "at preview and final sizes); keep the bottom 18% clear for the burned captions; no at-rules and no url() " +
   "but url(#id). The card runs no code: `tweens` (at most 40) animate it, each `{ target, at, duration, from, " +
@@ -230,10 +231,11 @@ interface Repair {
   cards?: number[];
 }
 
-const agentStageFor = (repair?: Repair, premium = false) =>
+/** Caps of one storyboard run; `timeoutMs` overrides the tier's time cap (a visual repair sized to the deadline). */
+const agentStageFor = (repair?: Repair, premium = false, timeoutMs?: number) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
-    version: 9,
+    version: 10,
     inputSchema: StoryboardInput,
     outputSchema: AgentOutput,
     instructions:
@@ -301,7 +303,10 @@ const agentStageFor = (repair?: Repair, premium = false) =>
         : {}),
       ...(repair ? { repair } : {}),
     }),
-    limits: premium ? MG_PREMIUM_STORYBOARD_LIMITS : MG_STORYBOARD_LIMITS,
+    limits: {
+      ...(premium ? MG_PREMIUM_STORYBOARD_LIMITS : MG_STORYBOARD_LIMITS),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    },
   });
 
 const agentStage = agentStageFor();
@@ -405,10 +410,11 @@ async function repairTurn(
   repair: Repair,
   first: StageUsage[],
   premium: boolean,
+  timeoutMs?: number,
 ): Promise<{ storyboard: MotionStoryboard; usage: StageUsage[] } | { failure: string; usage: StageUsage[] }> {
   const booked = { ...s, job: { ...s.job, spentCents: s.job.spentCents + costOf(first) } };
   try {
-    const result = await agentStageFor(repair, premium).run(booked);
+    const result = await agentStageFor(repair, premium, timeoutMs).run(booked);
     return {
       storyboard: AgentOutput.parse(result.output).storyboard,
       usage: [...first, ...(result.usage ?? [])],
@@ -531,7 +537,9 @@ export function keepOutsideCards(
 
 /**
  * A visual repair turn after the render: the storyboard agent redesigns only the cards that failed the
- * visual review (`problem` says why), under MG_STORYBOARD_LIMITS and the job budget. Their voice-over and
+ * visual review (`problem` says why), under MG_STORYBOARD_LIMITS (its time cap is `timeoutMs`, which the
+ * caller sizes to the job deadline) and the job budget. The hero cards are not sent: the agent echoes only the
+ * beats, which keeps the turn short, and the merge keeps the heroes as they were. Their voice-over and
  * weight, and every other beat, are kept whatever the agent returns, so the voice-over and timing are
  * reused. Never throws for the agent's trouble (a cap, bad output, a storyboard that no longer fits): it
  * reports a failure with whatever was spent; an abort still throws with the spend attached.
@@ -542,14 +550,17 @@ export async function restyleCards(
   storyboard: MotionStoryboard,
   cards: number[],
   problem: string,
+  timeoutMs: number = MG_STORYBOARD_LIMITS.timeoutMs,
 ): Promise<{ storyboard: MotionStoryboard; usage: StageUsage[] } | { failure: string; usage: StageUsage[] }> {
   if (!s.agents) return { failure: "This worker runs no agent services", usage: [] };
   const input: StoryboardInput = { outputs: { brief: { brief } } };
+  const { heroes: _heroes, ...beatsOnly } = storyboard;
   const turn = await repairTurn(
     { ...s, input },
-    { problem: truncateText(problem, 1_500), storyboard, cards },
+    { problem: truncateText(problem, 1_500), storyboard: beatsOnly, cards },
     [],
     false,
+    timeoutMs,
   );
   if ("failure" in turn) return turn;
   const merged = keepOutsideCards(storyboard, turn.storyboard, cards);

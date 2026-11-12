@@ -162,7 +162,7 @@ export function compileDepth(
     back.push('<div class="glow"></div>');
     css.push(
       cssRule(`#${stageId} .glow`, [
-        `background: radial-gradient(circle at 72% 28%, ${tint("accent", 34)} 0%, transparent 46%), radial-gradient(circle at 22% 80%, ${tint("primary", 22)} 0%, transparent 42%);`,
+        `background: radial-gradient(circle at 72% 28%, ${tint("accent", 34)} 0%, transparent 46%), radial-gradient(circle at 22% 80%, ${tint("accent", 16)} 0%, transparent 42%);`,
       ]),
     );
   }

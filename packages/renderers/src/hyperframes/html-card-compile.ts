@@ -97,6 +97,10 @@ export function htmlCardMarkup(
         "contain: paint;",
         "box-sizing: border-box;",
         "opacity: 0;",
+        // One accent across the film: a card that reaches for the primary or secondary still wears the accent
+        // every other card uses, never a second hue.
+        "--c-primary: var(--c-accent);",
+        "--c-secondary: var(--c-accent);",
         `--font-heading: ${fontStacks.heading};`,
         `--font-body: ${fontStacks.body};`,
         "font-family: var(--font-body);",

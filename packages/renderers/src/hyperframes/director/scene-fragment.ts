@@ -172,8 +172,39 @@ const slowCssDecl = (prop: string, value: string) =>
   /^(?:-[a-z]+-)?(?:backdrop-filter|will-change)$/i.test(prop) ||
   (/^(?:-[a-z]+-)?filter$/i.test(prop) && /\bblur\s*\(/i.test(value));
 
+/** Below this opacity a headline reads as a ghost behind the scene, not as its message. */
+const GHOST_OPACITY = 0.6;
+/** At or under this opacity large text is decor (a faint backdrop numeral), not a ghosted headline. */
+const DECOR_OPACITY = 0.2;
+
+/**
+ * Headline-sized rules (a px font-size of at least `headlinePx`) that set the text ghosted: an opacity between
+ * DECOR_OPACITY (decor, or an entry state at 0) and GHOST_OPACITY.
+ */
+function ghostedHeadlineProblems(root: Root, headlinePx: number, problems: string[]): void {
+  root.walkRules((rule) => {
+    let size = 0;
+    let opacity: number | undefined;
+    rule.walkDecls((decl) => {
+      const prop = decl.prop.toLowerCase();
+      if (prop === "font-size") {
+        const px = /^\s*(\d+(?:\.\d+)?)px\s*$/i.exec(decl.value);
+        if (px) size = Number(px[1]);
+      } else if (prop === "opacity") {
+        const v = /^\s*(\d*\.?\d+)(%?)\s*$/.exec(decl.value);
+        if (v) opacity = Number(v[1]) / (v[2] ? 100 : 1);
+      }
+    });
+    if (size < headlinePx) return;
+    if (opacity !== undefined && opacity > DECOR_OPACITY && opacity < GHOST_OPACITY)
+      problems.push(
+        `css: "${rule.selector}" sets headline-sized text (${size}px) ghosted (opacity between ${DECOR_OPACITY} and ${GHOST_OPACITY}); set the headline once, fully opaque, in var(--ink)`,
+      );
+  });
+}
+
 /** The fragment's CSS with every selector under `#<sectionId>`; problems are appended. */
-function scopedCss(css: string, sectionId: string, problems: string[]): string {
+function scopedCss(css: string, sectionId: string, problems: string[], headlinePx?: number): string {
   let root: Root;
   try {
     root = postcss.parse(css);
@@ -184,6 +215,7 @@ function scopedCss(css: string, sectionId: string, problems: string[]): string {
     return "";
   }
   const scope = `#${sectionId}`;
+  if (headlinePx !== undefined) ghostedHeadlineProblems(root, headlinePx, problems);
   root.walkAtRules((rule) => {
     problems.push(
       `css: @${rule.name} is not allowed (no at-rules: fonts, keyframes and media come from the shell)`,
@@ -319,6 +351,11 @@ export interface SceneFragmentCheck {
   sid: string;
   /** Spoken words of the scene as W() looks them up; omitted when the job has no word timings. */
   words?: readonly string[];
+  /**
+   * The headline floor of the frame (px): a CSS rule setting text at least this large must not ghost it
+   * (opacity between 0.2 and 0.6). Omitted: not checked.
+   */
+  headlinePx?: number;
 }
 
 export interface CheckedSceneFragment {
@@ -347,7 +384,7 @@ export function checkSceneFragment(fragment: SceneFragment, check: SceneFragment
   if ([html, css, js].some((part) => SHELL_MARKER.test(part)))
     problems.push("fragment: shell markers such as /*TIMING:BEGIN*/ or <!--SCENES:END--> are not allowed");
   htmlProblems(html, problems);
-  const scoped = scopedCss(css, sectionId, problems);
+  const scoped = scopedCss(css, sectionId, problems, check.headlinePx);
 
   // A syntax check without running anything; comments go, so they cannot trip the token checks below.
   let code = "";
