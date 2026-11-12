@@ -1,13 +1,14 @@
-import { access, mkdir, readFile, rename, rm } from "node:fs/promises";
+import { access, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { StillsOutput } from "@studix/core";
 import { writeContactSheet } from "@studix/renderers";
 import { toStudixError } from "@studix/shared";
 import { type AssetRef, CreativeBrief, resolveSceneSpans, type Shot, VideoIR } from "@studix/video-ir";
 import {
   createAgentStage,
+  type EngineStages,
   irOf,
   RenderOutput,
-  read,
   requireService,
   type StageContext,
   type StageDefinition,
@@ -120,6 +121,32 @@ export function holdTimesMs(ir: VideoIR): number[] {
   });
 }
 
+/**
+ * Where each card's still may be taken: from its hold time to just before it ends. The capture takes the
+ * first frame of its coarse grid inside each window, so a still is never earlier than the hold time.
+ */
+export function stillWindowsMs(ir: VideoIR): { fromMs: number; toMs: number }[] {
+  const spans = new Map(resolveSceneSpans(ir.timeline, ir.scenes).map((span) => [span.sceneId, span]));
+  return holdTimesMs(ir).map((fromMs, i) => {
+    const span = spans.get(ir.scenes[i]?.id ?? "");
+    return { fromMs, toMs: Math.max(fromMs, (span ? span.endMs : fromMs) - 150) };
+  });
+}
+
+/** Final render wall time per second of film at 1080p 30 fps: prod rendered 60 s in about 500 s. */
+export const MG_RENDER_MS_PER_FILM_SECOND = 9000;
+/** Time kept for one stills capture before the first one is measured (the target for a 60 s film). */
+export const MG_STILLS_CAPTURE_BUDGET_MS = 60_000;
+
+/**
+ * How long the final render of `ir` is expected to take, scaled from prod by film length, frame size and
+ * rate. The review keeps this time free before the deadline: the render stage runs after it, always.
+ */
+export function finalRenderMsEstimate(ir: VideoIR): number {
+  const pixels = (ir.format.width * ir.format.height) / (1920 * 1080);
+  return (ir.format.durationMs / 1000) * MG_RENDER_MS_PER_FILM_SECOND * pixels * (ir.format.fps / 30);
+}
+
 /** What each card was meant to show, for the reviewer. */
 function cardBriefs(ir: VideoIR) {
   return ir.scenes.map((scene, i) => {
@@ -203,8 +230,6 @@ export function withRestyledCards(
   return VideoIR.parse({ ...ir, scenes });
 }
 
-type Rendered = z.infer<typeof RenderOutput>;
-
 type Turn = { cards: VisualCardScore[]; usage: StageUsage[] } | { failure: string; usage: StageUsage[] };
 
 /** What a paid step that threw had already spent. */
@@ -213,28 +238,18 @@ const spentBy = (err: unknown) =>
 const messageOf = (err: unknown) =>
   truncateText(err instanceof StageFailedAfterSpend ? err.error.message : toStudixError(err).message, 200);
 
-/**
- * Job-level folder of the reviewed renders: outside the attempt folder the engine render clears before it
- * renders, so the last good render survives a re-render that fails. Finalize removes the job folder.
- */
+/** Job-level folder of the review's contact sheets. Finalize removes the job folder. */
 async function reviewDir(s: StageContext): Promise<string> {
   const dir = join(requireService(s, "workRoot"), s.job.id, "visual-qa");
   await mkdir(dir, { recursive: true });
   return dir;
 }
 
-/** Moves a render out of the engine's attempt folder into the review folder. */
-async function keep(rendered: Rendered, dir: string, name: string): Promise<Rendered> {
-  const filePath = join(dir, name);
-  await rename(rendered.filePath, filePath);
-  return { ...rendered, filePath };
-}
-
-/** One review of the rendered file. Never throws for the reviewer's trouble; an abort throws with the spend. */
+/** One review of the captured stills. Never throws for the reviewer's trouble; an abort throws with the spend. */
 async function critique(
   s: StageContext,
   ir: VideoIR,
-  filePath: string,
+  stills: StillsOutput,
   brief: CreativeBrief,
   dir: string,
 ): Promise<Turn> {
@@ -242,11 +257,11 @@ async function critique(
   const sheetPath = join(workDir, "contact-sheet.jpg");
   const columns = ir.format.aspectRatio === "16:9" ? 3 : 4;
   try {
-    await writeContactSheet(filePath, ir.format.durationMs, ir.scenes.length, sheetPath, {
+    await writeContactSheet(stills.filePath, ir.format.durationMs, ir.scenes.length, sheetPath, {
       ffmpegPath: process.env.FFMPEG_PATH,
       signal: s.signal,
       workDir,
-      times: holdTimesMs(ir),
+      times: stills.seekMs,
       columns,
       width: ir.format.aspectRatio === "16:9" ? 480 : 300,
     });
@@ -273,26 +288,29 @@ async function critique(
 }
 
 /**
- * Whether a repair round (redesign the failed cards, then render once) still fits in the time and budget left.
- * The re-review after it is not reserved: a repaired render is better than the reviewed one even when no
- * time is left to score it again, so the first fix round is applied whenever the repair itself fits.
+ * Whether a repair round still fits in the time and budget left: redesign the failed cards, capture their
+ * stills, and still leave the final render (`renderMs`, `renderCents`) its time and money. The re-review
+ * after the repair is not reserved: a repaired graphic is better than the reviewed one even when no time is
+ * left to score it again, so the first fix round is applied whenever the repair itself fits.
  */
 export function repairFits(input: {
   timeLeftMs: number;
+  captureMs: number;
   renderMs: number;
   centsLeft: number;
   renderCents: number;
 }): "fits" | "no-budget" | "no-time" {
   // A redesign may overshoot its cap by a turn: keep a second cap in hand so the job never ends over budget.
   if (input.centsLeft < MG_STORYBOARD_LIMITS.maxCostCents * 2 + input.renderCents) return "no-budget";
-  if (input.timeLeftMs < MG_STORYBOARD_LIMITS.timeoutMs + input.renderMs) return "no-time";
+  if (input.timeLeftMs < MG_STORYBOARD_LIMITS.timeoutMs + input.captureMs + input.renderMs) return "no-time";
   return "fits";
 }
 
 const costOf = (usage: readonly StageUsage[]) => usage.reduce((sum, u) => sum + (u.costCents ?? 0), 0);
 
 /** Why no review can run on this job, or undefined when one can. */
-function skipReason(s: StageContext): string | undefined {
+function skipReason(s: StageContext, engine: ReviewEngine): string | undefined {
+  if (!engine.stills) return "This worker's renderer cannot capture stills for a review";
   if (!s.agents?.runtime) return "This worker runs no agent harness to review the render";
   if ((s.job.payload as { agentMode?: unknown } | undefined)?.agentMode === "host") {
     return "A host agent runs this job's stages; the render is not reviewed in the worker";
@@ -311,48 +329,65 @@ const ReviewInput = z.object({
     .passthrough(),
 });
 
-/** The review checkpoint: the IR to store and render, its scores, and the reviewed render when one was kept. */
+/**
+ * The review checkpoint: the IR to store and render, and its scores. `render` is only read: checkpoints of
+ * the earlier review, which rendered the whole film, carry the render for the render stage to reuse.
+ */
 const VisualQaOutput = z.object({
   ir: z.unknown(),
   visualQa: VisualQaReport,
   render: RenderOutput.optional(),
 });
 
+/** What the review needs from the engine: the final render (its cost is reserved) and the stills capture. */
+type ReviewEngine = Pick<EngineStages, "render" | "stills">;
+
+/** How often a review without an agent run stores its last activity, so `get_job` never sees it stalled. */
+const ACTIVITY_BEAT_MS = 15_000;
+
 /**
- * Visual QA of the motion graphic, before its version is stored. It renders the graphic and sends a contact
- * sheet (one hold frame per card) to a vision model that scores each card for blank, too small, illegible,
+ * Visual QA of the motion graphic, before its version is stored. It captures one still per card (its hold
+ * frame, on a coarse 1-6 fps grid at the preview size: tens of frames, not a full render) and sends their
+ * contact sheet to a vision model that scores each card for blank, too small, illegible,
  * repetitive, off-brief or headline-only. Failed cards go back to the storyboard agent, which redesigns only
- * those cards (voice-over and timing kept), and the graphic renders again: at most MG_VISUAL_QA_ROUNDS times,
- * only while the job budget and deadline hold a review, a redesign and a render. The output (a durable
- * checkpoint) carries the IR the version stores and the render draws, the scores (`visualQa`, also in the
- * job result) and the last good render, which the render stage reuses while its file exists.
+ * those cards (voice-over and timing kept), and their stills are captured again: at most
+ * MG_VISUAL_QA_ROUNDS times, only while the job budget and deadline hold a review, a redesign and a capture
+ * while keeping the final render's cost and time free. The output (a durable checkpoint) carries the IR the version stores and the render stage draws,
+ * once, and the scores (`visualQa`, also in the job result).
  *
- * The review never fails the job: without an agent, in host mode, with a model that cannot read images, or
- * on any error of the reviewer, the redesign or a re-render it ends with a reason and keeps the last good
- * render and its IR. When even the first render fails, the review is skipped and the engine's render stage
- * renders (and reports the failure) after the version is stored.
+ * The review never fails the job: without an agent or a stills capture, in host mode, with a model that
+ * cannot read images, or on any error of the reviewer, the redesign or a capture it ends with a reason and
+ * keeps the last reviewed IR. It runs no agent session between critiques, so it marks its stage active
+ * while it captures and stores that on a heartbeat; each critique is traced by the agent harness.
  */
-export function motionGraphicVisualQaStage(render: StageDefinition): StageDefinition {
+export function motionGraphicVisualQaStage(engine: ReviewEngine): StageDefinition {
   return {
     name: MG_VISUAL_QA_STAGE,
     outputSchema: VisualQaOutput,
-    estimateCostCents: (s) => (skipReason(s) ? 0 : (render.estimateCostCents?.(s) ?? 0)),
     async run(s) {
       const usage: StageUsage[] = [];
+      s.activity?.touch();
+      void s.activity?.heartbeat();
+      const beat = setInterval(() => void s.activity?.heartbeat(), ACTIVITY_BEAT_MS);
       try {
-        return await reviewLoop(s, render, usage);
+        return await reviewLoop(s, engine, usage);
       } catch (err) {
         // Only an abort reaches here; what was spent until then still has to be booked.
         throw new StageFailedAfterSpend(
           err instanceof StageFailedAfterSpend ? err.error : toStudixError(err),
           [...usage, ...spentBy(err)],
         );
+      } finally {
+        clearInterval(beat);
       }
     },
   };
 }
 
-/** The engine render, which reuses the render the visual review kept for the reviewed IR while it exists. */
+/**
+ * The engine render, which reuses a render kept by a checkpoint of the earlier review (it rendered the whole
+ * film) while its file exists; the stills review keeps none, so the render stage renders once.
+ */
 export function motionGraphicRenderStage(render: StageDefinition): StageDefinition {
   const reviewed = async (s: StageContext) => {
     const kept = VisualQaOutput.safeParse(s.outputs[MG_VISUAL_QA_STAGE]).data?.render;
@@ -366,7 +401,7 @@ export function motionGraphicRenderStage(render: StageDefinition): StageDefiniti
   };
   return {
     ...render,
-    // The review billed the render it kept.
+    // That review billed the render it kept.
     estimateCostCents: async (s) => ((await reviewed(s)) ? 0 : ((await render.estimateCostCents?.(s)) ?? 0)),
     async run(s) {
       const kept = await reviewed(s);
@@ -375,15 +410,15 @@ export function motionGraphicRenderStage(render: StageDefinition): StageDefiniti
   };
 }
 
-async function reviewLoop(s: StageContext, render: StageDefinition, usage: StageUsage[]) {
+async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsage[]) {
   let ir = irOf(s);
-  let rendered: Rendered | undefined;
   const done = (report: VisualQaReport) => ({
-    output: { ir, visualQa: VisualQaReport.parse(report), ...(rendered ? { render: rendered } : {}) },
+    output: { ir, visualQa: VisualQaReport.parse(report) },
     usage,
   });
-  const skip = skipReason(s);
-  if (skip) return done({ status: "skipped", reason: skip, rounds: [] });
+  const skip = skipReason(s, engine);
+  const captureStills = engine.stills;
+  if (skip || !captureStills) return done({ status: "skipped", reason: skip, rounds: [] });
   const input = ReviewInput.safeParse({ payload: s.job.payload ?? {}, outputs: s.outputs });
   if (!input.success) {
     return done({ status: "skipped", reason: "The job has no brief to review against", rounds: [] });
@@ -407,22 +442,43 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
     s.job.deadlineAt ? s.job.deadlineAt.getTime() - Date.now() : Number.POSITIVE_INFINITY;
   // An agent run may overshoot its cap by a turn: keep a second cap in hand so the job never ends over budget.
   const reviewCents = 2 * MG_VISUAL_QA_LIMITS.maxCostCents;
-  const renderCents = (await render.estimateCostCents?.(s)) ?? 0;
+  // The final render runs after the review: what it costs stays reserved.
+  const renderCents = (await engine.render.estimateCostCents?.(s)) ?? 0;
   if (left() < renderCents + reviewCents) {
     return done({ status: "skipped", reason: "Not enough job budget left for a visual review", rounds: [] });
   }
+  // The final render runs after the review, whatever it finds: its time is never spent here.
+  const renderMs = finalRenderMsEstimate(ir);
+  if (timeLeft() < MG_STILLS_CAPTURE_BUDGET_MS + MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
+    return done({
+      status: "skipped",
+      reason: "Not enough time left before the job deadline for a visual review and the final render",
+      rounds: [],
+    });
+  }
   const dir = await reviewDir(s);
+  // Every capture progress marks the stage active; the stage's heartbeat stores it.
+  const capture = (next: VideoIR) =>
+    captureStills(
+      {
+        ...s,
+        reportProgress: (p) => {
+          s.activity?.touch();
+          s.reportProgress(p);
+        },
+      },
+      next,
+      stillWindowsMs(next),
+    );
   const startedAt = Date.now();
+  let stills: StillsOutput;
   try {
-    const first = await render.run(s);
-    usage.push(...(first.usage ?? []));
-    rendered = await keep(read(RenderOutput, first.output, "render output"), dir, "render-0.mp4");
+    stills = await capture(ir);
   } catch (err) {
     if (s.signal.aborted) throw err;
-    usage.push(...spentBy(err));
-    return done({ status: "skipped", reason: `The review render failed: ${messageOf(err)}`, rounds: [] });
+    return done({ status: "skipped", reason: `The review capture failed: ${messageOf(err)}`, rounds: [] });
   }
-  const renderMs = Date.now() - startedAt;
+  const captureMs = Date.now() - startedAt;
   const rounds: VisualQaReport["rounds"] = [];
   for (let round = 0; ; round++) {
     const repaired = rounds.at(-1)?.repaired;
@@ -436,11 +492,13 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
         rounds,
       });
     if (left() < reviewCents) return stop("skipped", "Not enough job budget left for a visual review");
-    if (timeLeft() < MG_VISUAL_QA_LIMITS.timeoutMs) {
+    if (timeLeft() < MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
       return stop("skipped", "Not enough time left before the job deadline for a visual review");
     }
-    const review = await critique(booked(), ir, rendered.filePath, brief, dir);
+    s.activity?.touch();
+    const review = await critique(booked(), ir, stills, brief, dir);
     usage.push(...review.usage);
+    s.activity?.touch();
     if ("failure" in review) return stop("skipped", `Visual review failed: ${review.failure}`);
     // An authored scene is a rendered clip, not a template card: redesigning it would throw the clip away.
     const authored = new Set(authoredScenesOf(ir));
@@ -455,7 +513,7 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
     if (!storyboard) {
       return done({ status: "failed", reason: "A template graphic has no storyboard to redesign", rounds });
     }
-    const fits = repairFits({ timeLeftMs: timeLeft(), renderMs, centsLeft: left(), renderCents });
+    const fits = repairFits({ timeLeftMs: timeLeft(), captureMs, renderMs, centsLeft: left(), renderCents });
     if (fits === "no-budget") {
       return done({
         status: "failed",
@@ -472,28 +530,15 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
     if ("failure" in restyled) {
       return done({ status: "failed", reason: `Card redesign failed: ${restyled.failure}`, rounds });
     }
-    // The IR, storyboard and render move on together, only once the new render exists.
+    // The IR, storyboard and stills move on together, only once the new stills exist.
     try {
       const next = withRestyledCards(ir, brief, restyled.storyboard, cards, compose);
-      // The newest output carrying an IR is the one the render draws.
-      const again = await render.run({
-        ...booked(),
-        outputs: { ...s.outputs, [MG_VISUAL_QA_STAGE]: { ir: next } },
-      });
-      usage.push(...(again.usage ?? []).map((u) => ({ ...u, item: `${u.item}-r${round + 1}` })));
-      const kept = await keep(
-        read(RenderOutput, again.output, "render output"),
-        dir,
-        `render-${round + 1}.mp4`,
-      );
-      await rm(rendered.filePath, { force: true });
-      rendered = kept;
+      stills = await capture(next);
       ir = next;
       storyboard = restyled.storyboard;
     } catch (err) {
       if (s.signal.aborted) throw err;
-      usage.push(...spentBy(err));
-      return done({ status: "failed", reason: `The re-render failed: ${messageOf(err)}`, rounds });
+      return done({ status: "failed", reason: `The review capture failed: ${messageOf(err)}`, rounds });
     }
     (rounds[rounds.length - 1] as VisualQaReport["rounds"][number]).repaired = cards;
   }

@@ -1,5 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { USAGE_KINDS } from "@studix/billing";
 import {
   type CompositionManifest,
   compositionContentType,
@@ -19,6 +20,7 @@ import {
   resolvePalette,
   type SceneFragment,
   sceneFragmentFile,
+  timingWord,
 } from "@studix/renderers";
 import { toStudixError } from "@studix/shared";
 import { type AssetRef, CreativeBrief, type Scene, VideoIR } from "@studix/video-ir";
@@ -82,13 +84,31 @@ export const directorCompositionId = (jobId: string) =>
     .slice(-56)
     .padStart(6, "0")}`;
 
-/** What the director tier may spend at most: both agent calls and the sandbox minutes of one render. */
+/** The most one sandbox check and render may cost. */
+const renderCents = (s: StageContext) =>
+  Math.ceil(RENDER_TIMEOUT_SECONDS / 60) * (s.services.compositions?.centsPerMinute ?? 0);
+const budgetLeft = (s: StageContext) =>
+  s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
+
+/**
+ * Whether one more builder run and one more render fit in what the job has left. The tier is admitted for one of
+ * each; a repair turn (a schema repair inside an agent call, or a builder repair here) is paid from what is left,
+ * so a repair the budget cannot hold is skipped and the card stays.
+ */
+function repairAffordable(s: StageContext, extraCents = 0): boolean {
+  return budgetLeft(s) >= extraCents + MG_SCENE_BUILD_LIMITS.maxCostCents + renderCents(s);
+}
+
+/** Scene numbers whose direction has no focal word left once unspoken words are dropped. */
+const unfocused = (direction: DirectionBrief) =>
+  direction.scenes.filter((d) => d.focalWords.length === 0).map((d) => d.scene);
+
+/**
+ * What the tier needs before it starts: both agent calls and the sandbox minutes of one render. Repair turns
+ * are not reserved; each runs only when what is left still holds it, and every render is checked the same way.
+ */
 function tierCents(s: StageContext): number {
-  return (
-    MG_DIRECTION_LIMITS.maxCostCents +
-    MG_SCENE_BUILD_LIMITS.maxCostCents +
-    Math.ceil(RENDER_TIMEOUT_SECONDS / 60) * (s.services.compositions?.centsPerMinute ?? 0)
-  );
+  return MG_DIRECTION_LIMITS.maxCostCents + MG_SCENE_BUILD_LIMITS.maxCostCents + renderCents(s);
 }
 
 /**
@@ -230,6 +250,28 @@ function buildInput(
   };
 }
 
+/**
+ * The direction with each scene's focal words cut to the words that scene really speaks (as the timing spells
+ * them): a word the director misheard or took from another scene is dropped, never a reason to lose the tier.
+ */
+export function spokenFocalWords(ir: VideoIR, direction: DirectionBrief): DirectionBrief {
+  return {
+    ...direction,
+    scenes: direction.scenes.map((d) => {
+      const id = ir.scenes[d.scene - 1]?.id;
+      if (!id) return { ...d, focalWords: [] };
+      const spoken = new Set(sceneWords(ir, id).map(([w]) => w));
+      return { ...d, focalWords: d.focalWords.map(timingWord).filter((w) => spoken.has(w)) };
+    }),
+  };
+}
+
+/** A contract or check problem as a repair issue: `html: ...` names the part it is about. */
+const problemIssue = (problem: string) => {
+  const part = /^(html|css|js):/.exec(problem)?.[1];
+  return { path: part ?? "fragment", message: problem };
+};
+
 /** The scene whose picture is now the rendered clip, muted (the film's mix carries the sound). */
 function authoredScene(scene: Scene, asset: AssetRef): Scene {
   // The clip owns its whole picture: no template camera move, depth planes or motif drawn over it.
@@ -261,7 +303,8 @@ function authoredScene(scene: Scene, asset: AssetRef): Scene {
  * silent clip, which replaces the hook card as a full-frame video shot; agent-written scripts never reach the
  * in-worker renderer. Any failure (no sandbox, an agent cap, a fragment that breaks the contract, a failed
  * check or render) keeps the template card with a warning, so a premium job never fails where a standard one
- * renders. Both agent calls are tool-less structured output; spend is booked either way.
+ * renders. Both agent calls are tool-less structured output; each may earn one repair turn (the agent gets its
+ * rejected output back with what is wrong), paid only from budget that is left. Spend is booked either way.
  */
 export const motionGraphicDirectorStage: StageDefinition = {
   name: MG_DIRECTOR_STAGE,
@@ -291,10 +334,13 @@ export const motionGraphicDirectorStage: StageDefinition = {
       ...s,
       job: { ...s.job, spentCents: s.job.spentCents + costOf(usage) },
     });
+    /** Agent runs the last call made: 2 when it already used its own schema repair turn. */
+    let lastRuns = 0;
     const call = async (agent: StageDefinition, input: Record<string, unknown>): Promise<unknown> => {
       try {
         const result = await agent.run({ ...booked(), input });
         usage.push(...(result.usage ?? []));
+        lastRuns = (result.usage ?? []).filter((u) => u.kind === USAGE_KINDS.agentRun).length;
         return result.output;
       } catch (err) {
         usage.push(...spentBy(err));
@@ -303,9 +349,36 @@ export const motionGraphicDirectorStage: StageDefinition = {
     };
     const workDir = await stageWorkDir(s, MG_DIRECTOR_STAGE);
     try {
-      const { direction } = z
-        .object({ direction: DirectionBrief })
-        .parse(await call(directionAgent, directionInput(s, ir)));
+      const Direction = z.object({ direction: DirectionBrief });
+      const { direction: authored } = Direction.parse(await call(directionAgent, directionInput(s, ir)));
+      let direction = spokenFocalWords(ir, authored);
+      let missing = unfocused(direction);
+      // A scene left without a spoken focal word goes back to the director once, unless its call already
+      // used its repair turn or the budget cannot hold the repair and the rest of the tier.
+      if (
+        missing.length > 0 &&
+        lastRuns < 2 &&
+        repairAffordable(booked(), MG_DIRECTION_LIMITS.maxCostCents)
+      ) {
+        const issues = missing.slice(0, 10).map((n) => ({
+          path: `direction.scenes.${direction.scenes.findIndex((d) => d.scene === n)}.focalWords`,
+          message: `none of these words is spoken in scene ${n}; pick one to three from that scene's words`,
+        }));
+        try {
+          const repair = { issues, output: { direction: authored } };
+          const again = Direction.parse(await call(directionAgent, { ...directionInput(s, ir), repair }));
+          const next = spokenFocalWords(ir, again.direction);
+          if (unfocused(next).length < missing.length) direction = next;
+        } catch (err) {
+          // The first direction is still sound: a failed repair keeps it, unless the job stops or parks.
+          if (s.signal.aborted || err instanceof StageSuspended) throw err;
+        }
+        missing = unfocused(direction);
+      }
+      const focalWarning =
+        missing.length > 0
+          ? `Scene ${missing.join(", ")} of the direction has no spoken focal word; its moves key to beats only`
+          : undefined;
       const handoff = Object.fromEntries(
         direction.scenes.flatMap((d) => {
           const id = ir.scenes[d.scene - 1]?.id;
@@ -313,47 +386,71 @@ export const motionGraphicDirectorStage: StageDefinition = {
         }),
       );
       const timing = sceneClipTiming(ir, scene.id, handoff);
-      const built = (await call(sceneBuildAgent, buildInput(ir, direction, index, timing))) as BuildOutput;
       const words = timing.scenes[scene.id]?.lines.flatMap((l) => l.words.map(([w]) => w)) ?? [];
-      const checked = checkSceneFragment(built, { sid: scene.id, words });
-      if (checked.problems.length > 0) {
-        return keepCard(`the fragment breaks the contract: ${checked.problems.slice(0, 3).join("; ")}`);
-      }
-      const project = buildDirectorProject({
-        width: ir.format.width,
-        height: ir.format.height,
-        timing,
-        theme: { palette: resolvePalette(ir.brand), ...(ir.brand ? { fonts: ir.brand.fonts } : {}) },
-        scenes: [{ sid: scene.id, fragment: checked }],
-      });
       const compositionId = directorCompositionId(s.job.id);
-      record.compositionId = compositionId;
-      await storeTree(s, compositionId, await treeFiles(project, scene.id, built, { timing, direction }));
-
-      const clip = `out/${scene.id}.mp4`;
       const compositions = s.services.compositions!;
-      const run = await compositions.runner.run(booked(), {
-        compositionId,
-        command: `hyperframes check . && hyperframes render . -o ${clip} --quiet`,
-        timeoutSeconds: RENDER_TIMEOUT_SECONDS,
-        check: {
-          path: clip,
+      const clip = `out/${scene.id}.mp4`;
+      const task = buildInput(ir, direction, index, timing);
+      // One repair turn in all: a fragment that breaks the contract or fails the sandbox check goes back to the
+      // builder with what is wrong once, before the card is kept.
+      let repair: { issues: Array<{ path: string; message: string }>; output: BuildOutput } | undefined;
+      let built: BuildOutput;
+      let run: Awaited<ReturnType<typeof compositions.runner.run>>;
+      for (;;) {
+        built = (await call(sceneBuildAgent, repair ? { ...task, repair } : task)) as BuildOutput;
+        // At most two builder runs in all: none here when the call already used its own schema repair turn.
+        const canRepair = !repair && lastRuns < 2 && repairAffordable(booked());
+        const checked = checkSceneFragment(built, { sid: scene.id, words });
+        if (checked.problems.length > 0) {
+          if (canRepair) {
+            repair = { issues: checked.problems.slice(0, 10).map(problemIssue), output: built };
+            continue;
+          }
+          return keepCard(`the fragment breaks the contract: ${checked.problems.slice(0, 3).join("; ")}`);
+        }
+        const project = buildDirectorProject({
           width: ir.format.width,
           height: ir.format.height,
-          durationMs: scene.durationMs,
-          durationToleranceMs: 250,
-        },
-      });
-      usage.push({
-        item: `render-${scene.id}`.slice(0, 64),
-        kind: "compute",
-        quantity: Math.round(run.durationMs) / 1000,
-        unit: "second",
-        costCents: Math.max(1, Math.ceil(run.durationMs / 60_000)) * compositions.centsPerMinute,
-        metadata: { exitCode: run.exitCode, compositionId },
-      });
-      if (run.exitCode !== 0 || (run.check && !run.check.passed)) {
+          timing,
+          theme: { palette: resolvePalette(ir.brand), ...(ir.brand ? { fonts: ir.brand.fonts } : {}) },
+          scenes: [{ sid: scene.id, fragment: checked }],
+        });
+        // An agent repair turn may have spent what the render needed: never overshoot the job budget.
+        if (budgetLeft(booked()) < renderCents(s)) {
+          return keepCard(
+            "the job budget left cannot hold the sandbox render after the agents' repair turns",
+          );
+        }
+        record.compositionId = compositionId;
+        await storeTree(s, compositionId, await treeFiles(project, scene.id, built, { timing, direction }));
+
+        run = await compositions.runner.run(booked(), {
+          compositionId,
+          command: `hyperframes check . && hyperframes render . -o ${clip} --quiet`,
+          timeoutSeconds: RENDER_TIMEOUT_SECONDS,
+          check: {
+            path: clip,
+            width: ir.format.width,
+            height: ir.format.height,
+            durationMs: scene.durationMs,
+            durationToleranceMs: 250,
+          },
+        });
+        usage.push({
+          item: `render-${scene.id}${repair ? "-repair" : ""}`.slice(0, 64),
+          kind: "compute",
+          quantity: Math.round(run.durationMs) / 1000,
+          unit: "second",
+          costCents: Math.max(1, Math.ceil(run.durationMs / 60_000)) * compositions.centsPerMinute,
+          metadata: { exitCode: run.exitCode, compositionId },
+        });
+        if (run.exitCode === 0 && (!run.check || run.check.passed)) break;
         const why = run.exitCode !== 0 ? `exit ${run.exitCode}` : (run.check?.problems ?? []).join("; ");
+        if (!repair && lastRuns < 2 && repairAffordable(booked())) {
+          const message = `the sandbox check or render failed (${why}): ${run.log.slice(-600)}`;
+          repair = { issues: [{ path: "fragment", message }], output: built };
+          continue;
+        }
         return keepCard(`the sandbox check or render failed (${why}): ${run.log.slice(-240)}`);
       }
 
@@ -387,7 +484,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
         assets: [...ir.assets.filter((a) => a.id !== asset.id), asset],
         metadata: { ...ir.metadata, authoredScenes: [scene.id] },
       });
-      return { output: { ir: withRecord(next) }, usage };
+      return { output: { ir: withRecord(next), ...(focalWarning ? { warning: focalWarning } : {}) }, usage };
     } catch (err) {
       if (s.signal.aborted) {
         throw new StageFailedAfterSpend(

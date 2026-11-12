@@ -29,6 +29,22 @@ function memoryStorage() {
 }
 
 describe("agent session trace", () => {
+  it("keeps one line per contiguous text or reasoning block and summarizes the final message", async () => {
+    const storage = memoryStorage();
+    const key = "traces/jobs/job_1/motion-graphic.direction/1/0.jsonl";
+    const trace = createAgentSessionTrace({ storage, ctx: testTenant(), key, clock: fakeClock(), logger });
+    for (let i = 0; i < 200; i++) trace.append({ type: "reasoning", delta: "think " });
+    trace.append({ type: "message", delta: '{"direction":' });
+    trace.append({ type: "message", delta: '{"concept":"x"}}' });
+    trace.append({ type: "usage", turns: 1, inputTokens: 1, outputTokens: 1, costCents: 1 });
+    await trace.close();
+    const events = parseAgentTrace(storage.objects.get(key) ?? "");
+    expect(events.map((e) => e.type)).toEqual(["reasoning", "message", "turn"]);
+    expect(events[0]?.delta).toBe("think ".repeat(200));
+    expect(events.map((e) => e.seq)).toEqual([0, 1, 2]);
+    expect(summarizeAgentTrace(0, events).finalMessage).toBe('{"direction":{"concept":"x"}}');
+  });
+
   it("stores redacted events with per-turn usage, tool durations and heartbeats while the run goes", async () => {
     const clock = fakeClock();
     const storage = memoryStorage();
@@ -96,10 +112,11 @@ describe("agent session trace", () => {
       logger,
       maxEvents: 3,
     });
-    for (let i = 0; i < 6; i++) trace.append({ type: "message", delta: `m${i}` });
+    // Alternating types, so no two deltas merge into one line.
+    for (let i = 0; i < 6; i++) trace.append({ type: i % 2 ? "reasoning" : "message", delta: `m${i}` });
     await trace.close();
     const events = parseAgentTrace(storage.objects.get("k.jsonl") ?? "");
-    expect(events.map((e) => e.type)).toEqual(["message", "message", "truncated", "truncated"]);
+    expect(events.map((e) => e.type)).toEqual(["message", "reasoning", "truncated", "truncated"]);
     expect(events.at(-1)).toMatchObject({ dropped: 3 });
   });
 });

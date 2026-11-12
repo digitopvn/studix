@@ -8,7 +8,7 @@ import type {
   ReasoningEffort,
   TenantContext,
 } from "@studix/core";
-import { type Clock, registerSecret, StudixError } from "@studix/shared";
+import { type Clock, parseModelJson, registerSecret, StudixError } from "@studix/shared";
 import {
   type AgentUsageReport,
   abortReason,
@@ -17,7 +17,6 @@ import {
   toolResultText,
   withSpend,
 } from "./bounded-agent-runtime.ts";
-import { parseModelJson } from "./model-json-repair.ts";
 import { type PiTaskWorkspace, type PiTaskWorkspaceProvider, sandboxFilesNote } from "./pi-task-workspace.ts";
 import { SANDBOX_OUTPUT_DIR, SANDBOX_WORK_DIR } from "./sandbox-docker.ts";
 
