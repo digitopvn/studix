@@ -177,6 +177,7 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
   const scenes = ir.scenes.map((scene, index) =>
     compileScene({
       scene,
+      sceneIndex: index,
       palette,
       transitions: sceneTransitions(ir.scenes, index),
       captions: { position, cues: cues.get(scene.id) ?? [] },

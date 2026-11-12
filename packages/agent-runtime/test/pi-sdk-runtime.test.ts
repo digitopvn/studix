@@ -271,11 +271,23 @@ describe("Pi SDK runtime", () => {
     const error = await runtime
       .run(testTenant(), task({ outputSchema: { type: "object" } }))
       .catch((e: unknown) => e);
-    expect(error).toMatchObject({ code: "VALIDATION" });
-    expect(agentSpendOf(error)?.costCents).toBeCloseTo(100, 0);
+    expect(error).toMatchObject({ code: "VALIDATION", retryable: true });
+    // The first answer and both repair turns are paid for.
+    expect(agentSpendOf(error)?.costCents).toBeCloseTo(300, 0);
     // The spend is tagged with the connection that paid it.
     expect(error).toMatchObject({ details: { funding: "member" } });
-    expect(seen).toHaveLength(1);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("asks again with the parse error after a bad JSON reply, and counts both turns", async () => {
+    seen.length = 0;
+    respond = () => ({ status: 200, text: seen.length === 1 ? '{"ok": tru' : 'Here it is: {"ok":true}' });
+    const runtime = createPiSdkAgentRuntime({ resolver: staticResolver(binding()) });
+    const result = await runtime.run(testTenant(), task({ outputSchema: { type: "object" } }));
+    expect(result.output).toEqual({ ok: true });
+    expect(result.costCents).toBeCloseTo(200, 0);
+    expect(seen).toHaveLength(2);
+    expect(JSON.stringify(seen[1]!.body)).toContain("was not valid JSON");
   });
 
   it("makes no provider call when cancelled while the binding is still resolving", async () => {
