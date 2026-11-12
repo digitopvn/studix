@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 interface BrowserManager {
   ownedLaunchOptions: () => Record<string, unknown>;
-  buildChromeArgs: (options: { width: number; height: number }) => string[];
+  buildChromeArgs: (options: { width: number; height: number; serverUrl?: string }) => string[];
 }
 
 /** The engine the producer actually loads; it is not a direct dependency of this package. */
@@ -38,6 +38,16 @@ describe("@hyperframes/engine launch options", () => {
         "--webrtc-ip-handling-policy=disable_non_proxied_udp",
       ]),
     );
+  });
+
+  // Chrome never proxies loopback on its own, so without this a page reaches every loopback port of the worker.
+  it("keep a capture page on the producer's file server port", async () => {
+    const args = (await loadBrowserManager()).buildChromeArgs({
+      width: 160,
+      height: 90,
+      serverUrl: "http://localhost:41234",
+    });
+    expect(args).toContain("--proxy-bypass-list=<-loopback>;localhost:41234");
   });
 });
 

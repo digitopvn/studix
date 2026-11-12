@@ -72,7 +72,7 @@ function videoTag(id: string, src: string): string {
 }
 
 function hostileIndexHtml(
-  canary: string,
+  canaries: string[],
   stunPort: number,
   secretSrcs: string[],
   projectSrcs: string[],
@@ -94,17 +94,19 @@ ${staticMarkup}
     </div>
     <script>
       (function () {
-        var canary = ${JSON.stringify(canary)};
-        try { fetch(canary + "/fetch", { mode: "no-cors" }).catch(function () {}); } catch (e) {}
-        try { navigator.sendBeacon(canary + "/beacon", "x"); } catch (e) {}
-        try { new Image().src = canary + "/image"; } catch (e) {}
-        try { new WebSocket(canary.replace("http", "ws") + "/ws"); } catch (e) {}
-        try { window.open(canary + "/popup"); } catch (e) {}
-        try {
-          var frame = document.createElement("iframe");
-          frame.src = canary + "/iframe";
-          document.body.appendChild(frame);
-        } catch (e) {}
+        ${JSON.stringify(canaries)}.forEach(function (canary) {
+          try { fetch(canary + "/fetch", { mode: "no-cors" }).catch(function () {}); } catch (e) {}
+          try { fetch(canary + "/post", { method: "POST", mode: "no-cors", body: "x" }).catch(function () {}); } catch (e) {}
+          try { navigator.sendBeacon(canary + "/beacon", "x"); } catch (e) {}
+          try { new Image().src = canary + "/image"; } catch (e) {}
+          try { new WebSocket(canary.replace("http", "ws") + "/ws"); } catch (e) {}
+          try { window.open(canary + "/popup"); } catch (e) {}
+          try {
+            var frame = document.createElement("iframe");
+            frame.src = canary + "/iframe";
+            document.body.appendChild(frame);
+          } catch (e) {}
+        });
         try {
           var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:${host}:${stunPort}" }] });
           pc.createDataChannel("x");
@@ -123,7 +125,10 @@ ${staticMarkup}
 `;
 }
 
-/** A started canary: an HTTP/WebSocket server and a UDP (STUN) socket on a non-loopback address. */
+/**
+ * A started canary: an HTTP/WebSocket server and a UDP (STUN) socket. `url` is a non-loopback address;
+ * `loopbackUrl` is the same server through `localhost`, which the browser flags do not block.
+ */
 async function startCanary(address: string) {
   const hits: string[] = [];
   const http = createServer((req, res) => {
@@ -145,6 +150,7 @@ async function startCanary(address: string) {
   return {
     hits,
     url: `http://${address}:${(http.address() as AddressInfo).port}`,
+    loopbackUrl: `http://localhost:${(http.address() as AddressInfo).port}`,
     stunPort: (udp.address() as AddressInfo).port,
   };
 }
@@ -189,7 +195,7 @@ describe.skipIf(skipReason !== "")(
       await writeFile(
         join(projectDir, "index.html"),
         hostileIndexHtml(
-          canary.url,
+          [canary.url, canary.loopbackUrl],
           canary.stunPort,
           secretSrcs(secret, canary.url),
           projectSrcs,
@@ -212,7 +218,7 @@ describe.skipIf(skipReason !== "")(
       return { hits: canary.hits, outputPath };
     }
 
-    it("sends no request from page scripts off the machine", async () => {
+    it("sends no request from page scripts off the machine or to other loopback ports", async () => {
       const { hits, outputPath } = await capture(() => []);
       expect(hits).toEqual([]);
       expect(frameColor(outputPath, 0.5)).toEqual([0, 0, 0]);

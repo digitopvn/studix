@@ -148,7 +148,13 @@ to the exact same version in `packages/renderers/package.json` (currently
   `--host-resolver-rules` fails every host name and IP literal except the name
   `localhost`, which the producer's file server uses
   (`http://localhost:<port>`). If upstream switches that URL to `127.0.0.1`,
-  every capture breaks. WebRTC is limited to proxied UDP.
+  every capture breaks. WebRTC is limited to proxied UDP. A capture browser also
+  gets `--proxy-bypass-list=<-loopback>;localhost:<port>`: loopback goes to the
+  dead proxy too, except the file server's own port, so a page cannot reach
+  other loopback ports of the worker. Request interception would miss
+  WebSockets and workers; this flag does not
+  ([#462](https://github.com/digitopvn/studix/issues/462)). The flag carries the
+  port, so the browser pool never shares a browser between file servers.
   `patches/@hyperframes__producer@0.8.223.patch` makes the producer ignore
   media that the page creates at runtime unless its source stays inside the
   project. The probe stage's `discoverMediaFromBrowser` is the only place that
@@ -156,7 +162,8 @@ to the exact same version in `packages/renderers/package.json` (currently
   host path or downloads a URL for it.
   `capture-isolation.integration.test.ts` renders a page that tries fetch,
   beacon, image, WebSocket, popup, iframe, WebRTC and runtime `<video>` sources
-  (`..%2f`, `..%5c`, double encoding, `file:`, `http:`). A canary server must see
+  (`..%2f`, `..%5c`, double encoding, `file:`, `http:`), against both a
+  non-loopback address and another `localhost` port. A canary server must see
   nothing and the frame must stay black, while a project clip still renders
   ([#451](https://github.com/digitopvn/studix/issues/451)).
   The producer's compiler also scans the page as a string before any browser

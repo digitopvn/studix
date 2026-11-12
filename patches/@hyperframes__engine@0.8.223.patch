@@ -1,5 +1,5 @@
 diff --git a/dist/services/browserManager.js b/dist/services/browserManager.js
-index e63332ce62774085282c0565b30d140b9e2a4d2f..6bab5e040c9f138ffca873ae9a163ae1fe1ed4c5 100644
+index e63332ce62774085282c0565b30d140b9e2a4d2f..79b9cdd3ba19073275e1f85ac6637b50ad8412da 100644
 --- a/dist/services/browserManager.js
 +++ b/dist/services/browserManager.js
 @@ -25,7 +25,7 @@ let hostHandlesSigint = false;
@@ -11,7 +11,7 @@ index e63332ce62774085282c0565b30d140b9e2a4d2f..6bab5e040c9f138ffca873ae9a163ae1
  function isSoftwareWebGlRenderer(rendererInfo) {
      const renderer = rendererInfo.trim().toLowerCase();
      return (renderer.includes("swiftshader") ||
-@@ -847,6 +847,17 @@ export function usesSoftwareWebGpu(requiresWebGpu, config) {
+@@ -847,6 +847,25 @@ export function usesSoftwareWebGpu(requiresWebGpu, config) {
          !(config.disableGpu ?? DEFAULT_CONFIG.disableGpu) &&
          (config.browserGpuMode ?? DEFAULT_CONFIG.browserGpuMode) === "software");
  }
@@ -26,17 +26,39 @@ index e63332ce62774085282c0565b30d140b9e2a4d2f..6bab5e040c9f138ffca873ae9a163ae1
 +    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 +    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
 +];
++// Studix: Chrome never proxies loopback by default, so a page could still reach every loopback port of the
++// worker through "localhost". "<-loopback>" sends loopback through the dead proxy as well, and only the
++// producer's file server port bypasses it. This also covers WebSockets and workers, which request
++// interception cannot see.
++export function fileServerOnlyArgs(serverUrl) {
++    const { hostname, port } = new URL(serverUrl);
++    return [`--proxy-bypass-list=<-loopback>;${hostname}:${port}`];
++}
  export function buildChromeArgs(options, config) {
      const platform = options.platform ?? process.platform;
      const gpuDisabled = config?.disableGpu ?? DEFAULT_CONFIG.disableGpu;
-@@ -904,6 +915,7 @@ export function buildChromeArgs(options, config) {
+@@ -904,6 +923,8 @@ export function buildChromeArgs(options, config) {
          // autoplay policy and causes the AudioContext to stay suspended. The
          // frame-capture loop then blocks waiting for it, deadlocking the render.
          "--autoplay-policy=no-user-gesture-required",
 +        ...CAPTURE_NETWORK_ISOLATION_ARGS,
++        ...(options.serverUrl ? fileServerOnlyArgs(options.serverUrl) : []),
      ];
      if (browserGpuMode !== "software" || options.requiresWebGpu) {
          chromeArgs.push(WEBGPU_FLAG);
+diff --git a/dist/services/frameCapture.js b/dist/services/frameCapture.js
+index b6395efe8dfb2899e06f7d42232526945b90a6f7..8ef739a3a6903137fc5f489d0275af65b3187d89 100644
+--- a/dist/services/frameCapture.js
++++ b/dist/services/frameCapture.js
+@@ -903,7 +903,7 @@ export async function createCaptureSession(serverUrl, outputDir, options, onBefo
+             .then(compositionRequiresWebGpu)
+             .catch(() => false));
+     const gpuConfig = { ...config, browserGpuMode: resolvedGpuMode };
+-    const chromeArgs = buildChromeArgs({ width: options.width, height: options.height, captureMode: preMode, requiresWebGpu }, gpuConfig);
++    const chromeArgs = buildChromeArgs({ width: options.width, height: options.height, captureMode: preMode, requiresWebGpu, serverUrl }, gpuConfig);
+     const withoutWaylandDisplay = await captureWithoutWaylandDisplay(resolvedGpuMode);
+     const browserLease = await acquireBrowser(chromeArgs, { ...config, withoutWaylandDisplay });
+     return constructCaptureSessionWithRollback({
 diff --git a/dist/utils/urlDownloader.js b/dist/utils/urlDownloader.js
 index b188946d8e573bdbe84f6d6116adf9268de5392c..35dcfa81c9c6b6a53dc34dc8294f182a225d344e 100644
 --- a/dist/utils/urlDownloader.js
