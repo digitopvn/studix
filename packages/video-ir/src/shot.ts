@@ -192,6 +192,16 @@ export const LayoutShot = ShotBase.extend({
   layout: LayoutSpec,
 });
 
+/**
+ * A premium hero card: custom markup written by a motion-graphic director, drawn by renderers that can host
+ * HTML. It must pass `lintHeroHtml` (enforced by validateVideoIR).
+ */
+export const HtmlShot = ShotBase.extend({
+  type: z.literal("html"),
+  /** Custom card markup (see lintHeroHtml): an HTML fragment with at most one <style> block, no scripts or external resources; motion via data-enter / data-at / data-duration attributes. */
+  html: z.string().min(1).max(24_000),
+});
+
 export const SHOT_TYPES = [
   "title",
   "text",
@@ -201,6 +211,7 @@ export const SHOT_TYPES = [
   "cta",
   "composition",
   "layout",
+  "html",
 ] as const;
 export const ShotType = z.enum(SHOT_TYPES);
 export type ShotType = z.infer<typeof ShotType>;
@@ -214,5 +225,6 @@ export const Shot = z.discriminatedUnion("type", [
   CtaShot,
   CompositionShot,
   LayoutShot,
+  HtmlShot,
 ]);
 export type Shot = z.infer<typeof Shot>;

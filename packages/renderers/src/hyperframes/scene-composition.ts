@@ -13,10 +13,17 @@ import { writeLayoutMotion } from "./layout-markup.ts";
 import {
   type ResolvedTransition,
   TimelineWriter,
+  writeHeroMotion,
   writeShotMotion,
   writeTransition,
 } from "./scene-timeline.ts";
-import { renderShotMarkup, type ShotMarkupContext, shotDomId, videoClipTag } from "./shot-markup.ts";
+import {
+  renderShotMarkup,
+  type ShotMarkupContext,
+  shotDomId,
+  shotRegion,
+  videoClipTag,
+} from "./shot-markup.ts";
 
 /** A burned-in caption cue in scene-local milliseconds. */
 export interface SceneCaptionCue {
@@ -75,10 +82,11 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   const captionClearance =
     input.captions.position === "bottom" &&
     input.captions.cues.length > 0 &&
-    scene.shots.some((s) => s.type === "layout" && (s.style?.region ?? "middle") === "middle")
+    scene.shots.some((s) => s.type === "layout" && shotRegion(s) === "middle")
       ? Math.max(0, burnedCaptionBand(markup.frame) + gap - safe)
       : 0;
 
+  // Stage rules use child combinators so class names inside shots (html hero cards) never pick them up.
   const css: string[] = [
     cssRule(`#${stageId}`, [
       ...COLOR_ROLES.map((role) => `--c-${role}: ${palette[role]};`),
@@ -92,28 +100,28 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       "color: var(--c-foreground);",
       `font-family: ${markup.fontStacks.body};`,
     ]),
-    cssRule(`#${stageId} .underlay, #${stageId} .underlay > *`, ["position: absolute;", "inset: 0;"]),
-    cssRule(`#${stageId} .content`, [
+    cssRule(`#${stageId} > .underlay, #${stageId} > .underlay > *`, ["position: absolute;", "inset: 0;"]),
+    cssRule(`#${stageId} > .content`, [
       "position: absolute;",
       `inset: ${safe}px;`,
       "display: flex;",
       "flex-direction: column;",
       `gap: ${gap}px;`,
     ]),
-    cssRule(`#${stageId} .region`, [
+    cssRule(`#${stageId} > .content > .region`, [
       "display: flex;",
       "flex-direction: column;",
       `gap: ${gap}px;`,
       "min-height: 0;",
     ]),
-    cssRule(`#${stageId} .region-middle`, [
+    cssRule(`#${stageId} > .content > .region-middle`, [
       "flex: 1 1 auto;",
       "justify-content: center;",
       // A layout fills the middle of its card, so it is centred above the burned captions, never under them.
       ...(captionClearance > 0 ? [`padding-bottom: ${captionClearance}px;`] : []),
     ]),
-    cssRule(`#${stageId} .lane`, ["display: grid;", "align-items: center;"]),
-    cssRule(`#${stageId} .lane > .shot`, ["grid-area: 1 / 1;"]),
+    cssRule(`#${stageId} > .content > .region > .lane`, ["display: grid;", "align-items: center;"]),
+    cssRule(`#${stageId} > .content > .region > .lane > .shot`, ["grid-area: 1 / 1;"]),
   ];
 
   const underlay: string[] = [];
@@ -131,7 +139,9 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
             })
           : `<img class="bg" src="${escapeHtml(src)}" alt="" />`,
       );
-      css.push(cssRule(`#${stageId} .bg`, ["width: 100%;", "height: 100%;", "object-fit: cover;"]));
+      css.push(
+        cssRule(`#${stageId} > .underlay > .bg`, ["width: 100%;", "height: 100%;", "object-fit: cover;"]),
+      );
     }
   }
 
@@ -145,13 +155,14 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     const align = shot.style?.align ?? "center";
     css.push(cssRule(`#${shotDomId(prefix, shot.id)}`, [`justify-self: ${JUSTIFY[align]};`]));
     // Full-bleed shots sit in the underlay behind the flowing regions.
-    if (shot.style?.region === "full") underlay.push(rendered.html);
+    if (shotRegion(shot) === "full") underlay.push(rendered.html);
     writeShotMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, scene.durationMs, markup.frame);
     if (shot.type === "layout") writeLayoutMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, markup.frame);
+    if (shot.type === "html") writeHeroMotion(w, `#${shotDomId(prefix, shot.id)}`, shot);
   }
 
   const regions = REGIONS.map((region) => {
-    const shots = scene.shots.filter((s) => (s.style?.region ?? "middle") === region);
+    const shots = scene.shots.filter((s) => shotRegion(s) === region);
     const lanes = assignLanes(shots).map(
       (lane) => `<div class="lane">${lane.map((s) => html.get(s.id)).join("")}</div>`,
     );
@@ -214,7 +225,7 @@ function captionsMarkup(
   const placement =
     position === "top" ? [`top: ${edge}px;`] : position === "middle" ? ["top: 50%;"] : [`bottom: ${edge}px;`];
   css.push(
-    cssRule(`#${stageId} .captions`, [
+    cssRule(`#${stageId} > .captions`, [
       "position: absolute;",
       `left: ${edge}px;`,
       `right: ${edge}px;`,
@@ -222,7 +233,7 @@ function captionsMarkup(
       "display: grid;",
       "justify-items: center;",
     ]),
-    cssRule(`#${stageId} .cue`, [
+    cssRule(`#${stageId} > .captions > .cue`, [
       "grid-area: 1 / 1;",
       "opacity: 0;",
       `font-family: ${fontStacks[token.font]};`,

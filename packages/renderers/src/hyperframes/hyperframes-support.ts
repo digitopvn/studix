@@ -10,7 +10,8 @@ import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from "./compile-composition.ts";
 
 /**
  * What the HyperFrames renderer can draw: every shot type (video shots play as timed clips; composition shots
- * that name a film scene code asset are captured with the film engine and play as clips), colour, image
+ * that name a film scene code asset are captured with the film engine and play as clips; html hero cards are
+ * hosted as scoped markup), colour, image
  * or video scene backgrounds, all transitions, burned captions, and audio tracks mixed by the FFmpeg
  * finish. Media types the browser or the frame extractor cannot read are reported instead of being
  * silently dropped.

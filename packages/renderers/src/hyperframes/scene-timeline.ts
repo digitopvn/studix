@@ -1,5 +1,6 @@
 // Adapted from motion-mcp packages/hyperframes-adapter/src/motion.ts @ 408ceccd (MIT, Copyright (c) 2026 Digitop).
 import type { MotionPreset, Scene, Shot, TransitionKind } from "@studix/video-ir";
+import { prepareHero } from "./hero-html.ts";
 import { num, scriptJson, seconds } from "./html-utils.ts";
 
 type Vars = Record<string, string | number | boolean>;
@@ -66,6 +67,52 @@ function exitOffset(preset: MotionPreset, travel: number): Vars {
   );
 }
 
+/** One preset entrance: from hidden and offset to settled, at `startSec` for `durationSec`. */
+function writeEnter(
+  w: TimelineWriter,
+  selector: string,
+  preset: MotionPreset,
+  travel: number,
+  startSec: number,
+  durationSec: number,
+): void {
+  const off = presetOffset(preset, travel);
+  const ease = preset === "pop" ? "back.out(1.7)" : ENTER_EASE;
+  w.fromTo(
+    selector,
+    { opacity: 0, ...off },
+    { opacity: 1, ...settled(off), duration: durationSec, ease },
+    startSec,
+  );
+}
+
+/**
+ * Inner motion of an html hero card: each `data-enter` element plays its preset entrance `data-at` seconds
+ * after the shot starts (see prepareHero for the defaults), clamped so it finishes by the shot's end.
+ * Elements are addressed by the `data-hf-e` attribute prepareHero adds. Times are scene-local.
+ */
+/** Short edge of the frame a hero card is authored in; the renderer zooms the card to the real frame. */
+export const HERO_REFERENCE_EDGE = 1080;
+
+export function writeHeroMotion(
+  w: TimelineWriter,
+  selector: string,
+  shot: { startMs: number; durationMs: number; html: string },
+): void {
+  const { entrances } = prepareHero(shot.html);
+  // The card's elements sit inside the zoomed hero stage, so travel is in reference pixels.
+  const travel = Math.round(0.03 * HERO_REFERENCE_EDGE);
+  const shotSec = shot.durationMs / 1000;
+  for (const e of entrances) {
+    const at = Math.min(e.atSec, shotSec);
+    const duration = Math.min(e.durationSec, shotSec - at);
+    const target = `${selector} [data-hf-e="${e.index}"]`;
+    const start = seconds(shot.startMs + at * 1000);
+    if (duration <= 0) w.set(target, { opacity: 1 }, start);
+    else writeEnter(w, target, e.preset, travel, start, seconds(duration * 1000));
+  }
+}
+
 /**
  * Shot visibility and motion. Shots start hidden (CSS opacity 0), appear at startMs with their enter
  * preset, and disappear at their end with the exit preset or a hard cut when they end before the scene.
@@ -92,9 +139,7 @@ export function writeShotMotion(
   if (enter === "none" || animMs === 0) {
     w.set(selector, { opacity: 1 }, start);
   } else {
-    const off = presetOffset(enter, travel);
-    const ease = enter === "pop" ? "back.out(1.7)" : ENTER_EASE;
-    w.fromTo(selector, { opacity: 0, ...off }, { opacity: 1, ...settled(off), duration: d, ease }, start);
+    writeEnter(w, selector, enter, travel, start, d);
   }
 
   if (exit !== "none" && animMs > 0) {

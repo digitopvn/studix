@@ -50,9 +50,34 @@ export interface RendererSupport {
   reasons: string[];
 }
 
+/** A layout or markup problem found before rendering. */
+export interface RenderIssue {
+  sceneId: string;
+  shotId?: string;
+  code: "lint" | "overflow" | "caption-overlap" | "text-clipped" | "blank";
+  message: string;
+}
+
+export interface RenderInspection {
+  issues: RenderIssue[];
+  /** PNG snapshots of inspected html shots (absolute paths under workDir). */
+  snapshots: { sceneId: string; shotId: string; filePath: string; atMs: number }[];
+}
+
+export interface RenderInspectOptions {
+  spec: RenderSpec;
+  /** Scratch directory owned by this inspection; snapshots are written under it and kept. */
+  workDir: string;
+  /** Map of IR asset id -> local file path, already downloaded and hash-verified by the caller. */
+  assetFiles?: Readonly<Record<string, string>>;
+  signal?: AbortSignal;
+}
+
 /** Turns a validated VideoIR into a local media file. Storage upload is the caller's job. */
 export interface RendererAdapter {
   readonly id: string;
   supports(ir: VideoIR, spec: RenderSpec): RendererSupport;
   render(ir: VideoIR, options: RenderOptions): Promise<RenderOutput>;
+  /** Pre-render visual QA of custom markup (html shots): lint findings and measured layout problems. */
+  inspect?(ir: VideoIR, options: RenderInspectOptions): Promise<RenderInspection>;
 }

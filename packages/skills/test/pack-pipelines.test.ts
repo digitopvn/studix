@@ -1307,7 +1307,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(agent.tasks).toHaveLength(2);
     expect(agent.tasks[0]?.maxCostCents).toBe(MG_PREMIUM_LIMITS.maxCostCents);
     expect(agent.tasks[0]?.instructions).toContain("Premium tier");
-    expect((agent.tasks[1]?.input as { repair: { problem: string } }).repair.problem).toMatch(
+    expect((agent.tasks[1]?.input as { repair?: { problem: string } } | undefined)?.repair?.problem).toMatch(
       /Beat 2 hero: lint/,
     );
     const stages = await h.jobs.listStages(ctx, job.id);
@@ -1359,7 +1359,9 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     const board = (await plain.jobs.listStages(ctx, base.job.id)).find(
       (st) => st.name === MG_STAGES.storyboard,
     );
-    expect((board?.output as MotionStoryboardOutput).warnings?.[0]).toMatch(/premium director tier/);
+    expect((board?.output as MotionStoryboardOutput | undefined)?.warnings?.[0]).toMatch(
+      /premium director tier/,
+    );
   });
 
   it("falls back to the template when the agent's cards cannot each hold their line", async () => {

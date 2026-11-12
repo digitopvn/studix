@@ -1,6 +1,7 @@
 import { StudixError } from "@studix/shared";
 import type { BrandKit, ColorRole, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
-import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
+import { COLOR_ROLES, cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
+import { prepareHero, scopeCss } from "./hero-html.ts";
 import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
 import { renderLayoutMarkup } from "./layout-markup.ts";
 
@@ -30,6 +31,13 @@ export interface ShotMarkup {
 }
 
 export const shotDomId = (prefix: string, shotId: string): string => `${prefix}shot-${shotId}`;
+
+/** Where a shot sits: its style region, else the middle; an html hero card fills the whole card by default. */
+export const shotRegion = (shot: Shot): NonNullable<ShotStyle["region"]> =>
+  shot.style?.region ?? (shot.type === "html" ? "full" : "middle");
+
+/** Weights bundled for hero cards, whose CSS may ask for any of them. */
+const HERO_WEIGHTS: Record<"heading" | "body", number[]> = { heading: [700, 800], body: [400, 600] };
 
 const EMPHASIS_SCALE = { none: 1, low: 0.88, high: 1.15 } as const;
 const TEXT_ALIGN = { start: "left", center: "center", end: "right" } as const;
@@ -129,7 +137,7 @@ export function videoClipTag(clip: {
 export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup {
   const id = shotDomId(ctx.prefix, shot.id);
   const sel = `#${id}`;
-  const full = shot.style?.region === "full";
+  const full = shotRegion(shot) === "full";
   const base = ["opacity: 0;", "min-width: 0;", "box-sizing: border-box;", ...boxCss(ctx, shot.style)];
   const open = `<div id="${id}" class="shot shot-${shot.type}">`;
 
@@ -240,6 +248,36 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
         shot.layout,
         cssColor(shot.style?.color ?? "foreground"),
       );
+    case "html": {
+      // Hero card: the linted fragment inside the shot root; its <style> block is scoped to that root.
+      // The brand is exposed as custom properties on the root: colours `var(--color-primary)`,
+      // `--color-secondary`, `--color-accent`, `--color-background`, `--color-foreground`, `--color-muted`,
+      // and fonts `var(--font-heading)` / `var(--font-body)` (bundled offline at 400/600 body and 700/800
+      // heading). Font families named directly in the fragment CSS are not bundled and fall back to the system.
+      // The card is authored in pixels of a reference frame whose short edge is 1080 (1920x1080, 1080x1920,
+      // 1080x1080) and zoomed to the render size, so a preview render lays it out exactly like the final one.
+      const hero = prepareHero(shot.html);
+      const stage = `${sel} > .hero-stage`;
+      for (const slot of ["heading", "body"] as const)
+        for (const weight of HERO_WEIGHTS[slot]) ctx.fontWeights[slot].add(weight);
+      const sizing = full ? ["width: 100%;", "height: 100%;"] : ["position: relative;"];
+      const vars = [
+        ...COLOR_ROLES.map((role) => `--color-${role}: var(--c-${role});`),
+        `--font-heading: ${ctx.fontStacks.heading};`,
+        `--font-body: ${ctx.fontStacks.body};`,
+      ];
+      const reference = full
+        ? [`width: ${num(ctx.frame.width / ctx.scale)}px;`, `height: ${num(ctx.frame.height / ctx.scale)}px;`]
+        : [];
+      const css = [
+        cssRule(sel, [...base, ...sizing, ...vars]),
+        cssRule(stage, [`zoom: ${num(ctx.scale)};`, ...reference]),
+      ];
+      if (hero.css) css.push(scopeCss(hero.css, stage));
+      // The shot stays hidden until its entrance even if the card CSS styles its root.
+      css.push(cssRule(sel, ["opacity: 0;"]));
+      return { html: `${open}<div class="hero-stage">${hero.html}</div></div>`, css };
+    }
     case "video": {
       const src = assetPath(ctx, shot, shot.assetId);
       const sizing = full ? ["width: 100%;", "height: 100%;"] : [];

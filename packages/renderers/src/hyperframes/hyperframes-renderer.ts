@@ -4,6 +4,8 @@ import type {
   RenderDelivery,
   RendererAdapter,
   RendererSupport,
+  RenderInspection,
+  RenderInspectOptions,
   RenderOptions,
   RenderOutput,
 } from "@studix/core";
@@ -16,6 +18,7 @@ import type { GradeLook } from "../ffmpeg/grade.ts";
 import { normalizeLoudness } from "../ffmpeg/loudness.ts";
 import { hasCompositionShots, renderFilmCompositions } from "../film-engine/film-composition-render.ts";
 import { buildComposition, writeComposition } from "./compile-composition.ts";
+import { inspectHeroCards } from "./hero-inspect.ts";
 import { hyperframesSupport } from "./hyperframes-support.ts";
 import { renderWithProducer } from "./producer-render.ts";
 
@@ -73,8 +76,29 @@ export class HyperFramesRenderer implements RendererAdapter {
     return hyperframesSupport(ir, spec);
   }
 
-  async render(ir: VideoIR, options: HyperFramesRenderOptions): Promise<RenderOutput> {
-    const { spec, workDir, signal, deadlineAt } = options;
+  /**
+   * Pre-render visual QA of html hero cards (see inspectHeroCards): HyperFrames lint findings plus layout
+   * problems measured in headless Chrome, with a PNG snapshot per card. Free when the IR has no html shots.
+   */
+  async inspect(ir: VideoIR, options: RenderInspectOptions): Promise<RenderInspection> {
+    const { spec, workDir } = options;
+    this.assertRenderable(ir, spec, workDir);
+    const { width, height } = renderDimensions(ir.format, spec);
+    return inspectHeroCards({
+      ir,
+      width,
+      height,
+      fps: spec.fps ?? ir.format.fps,
+      workDir,
+      assetFiles: options.assetFiles,
+      logger: this.log,
+      signal: options.signal,
+    }).catch((err: unknown) => {
+      throw toStudixError(err);
+    });
+  }
+
+  private assertRenderable(ir: VideoIR, spec: RenderSpec, workDir: string): void {
     const support = this.supports(ir, spec);
     if (!support.supported) {
       throw new StudixError("VALIDATION", `IR cannot be rendered by HyperFrames: ${support.reasons[0]}`, {
@@ -85,6 +109,11 @@ export class HyperFramesRenderer implements RendererAdapter {
     }
     if (!isAbsolute(workDir))
       throw new StudixError("VALIDATION", "RenderOptions.workDir must be an absolute path");
+  }
+
+  async render(ir: VideoIR, options: HyperFramesRenderOptions): Promise<RenderOutput> {
+    const { spec, workDir, signal, deadlineAt } = options;
+    this.assertRenderable(ir, spec, workDir);
     const report = (progress: number, phase: string) => {
       try {
         options.onProgress?.({ progress: Math.min(1, Math.max(0, progress)), phase });

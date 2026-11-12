@@ -351,7 +351,9 @@ Không nêu tên thì agent chọn trong 12 profile hợp brief nhất (cộng k
 Premium director tier: job `motion-graphic` có `roles.director` (một agent mạnh hơn) chạy storyboard trên agent
 đó với cap lớn hơn (`MG_PREMIUM_LIMITS`), và agent được viết tay HTML cho tối đa 3 hero card (không bao giờ là card
 CTA). Agent của host (`agentMode: "host"`) cũng là director nên cũng được viết hero; host có thể ghi file HTML bằng
-`studix_composition_write` rồi trỏ `hero: {compositionId, path}`, stage storyboard đọc file vào `hero.html`. Mỗi hero
+`studix_composition_write` rồi trỏ `hero: {compositionId, path}`, stage storyboard đọc file vào `hero.html`. Hero được
+viết theo pixel của khung tham chiếu có cạnh ngắn 1080 (1920x1080, 1080x1920, 1080x1080) và renderer zoom nó theo
+kích thước render, nên bản preview dàn trang y hệt bản final. Mỗi hero
 qua ba cổng: lint (`lintHeroHtml` trong `@studix/video-ir`: chỉ thẻ và thuộc tính trong allowlist, không script,
 ảnh, link, `@` rule, `url()` ngoài `url(#id)`), check (hero phải hiện đúng dòng `onScreen` của beat, tối đa 3 hero)
 và visual QA trước mọi chi phí (stage compose gọi `RendererAdapter.inspect`: HyperFrames lint composition rồi chụp

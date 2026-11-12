@@ -16,7 +16,9 @@ export type ValidationIssueCode =
   /** Lipsync routing disagrees with who speaks on screen. */
   | "lipsync"
   /** A prerequisite of the requested production phase is missing. */
-  | "not_ready";
+  | "not_ready"
+  /** An html shot's markup fails lintHeroHtml. */
+  | "hero_html";
 
 /** One problem, addressed by RFC 6901 JSON pointer into the validated document. */
 export interface ValidationIssue {

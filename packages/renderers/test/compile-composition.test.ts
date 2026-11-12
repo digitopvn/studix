@@ -329,6 +329,39 @@ describe("buildComposition without text shots", () => {
   });
 });
 
+describe("buildComposition html hero cards", () => {
+  it("scopes the card CSS to the shot, exposes brand variables and writes data-enter tweens", () => {
+    const ir = structuredClone(brandIntro);
+    const html = [
+      "<style>:root { --gap: 8px; } body > .card, h1:hover { color: var(--color-accent); }</style>",
+      '<div class="card" data-enter="pop"><h1 data-enter="slide-up" data-at="0.5" data-duration="0.4">Mới</h1></div>',
+    ].join("");
+    ir.scenes[0]!.shots = [{ id: "hero", type: "html", startMs: 0, durationMs: 3000, html }];
+    expect(hyperframesSupport(ir, RENDER_PRESETS.preview)).toEqual({ supported: true, reasons: [] });
+    const hook = buildComposition(ir, previewSize).files.get("compositions/hook.html")!;
+    const sel = "#s-hook__shot-hero";
+    // Full-card by default, in the underlay; the style block is removed from the markup and scoped.
+    expect(hook).toContain(
+      `<div class="underlay"><div id="s-hook__shot-hero" class="shot shot-html"><div class="hero-stage"><div class="card" data-enter="pop" data-hf-e="0">`,
+    );
+    expect(hook).not.toContain("<style>:root");
+    const stage = `${sel} > .hero-stage`;
+    expect(hook).toContain(`${stage} { --gap: 8px; }`);
+    expect(hook).toContain(`${stage} > .card, ${stage} h1:hover { color: var(--color-accent); }`);
+    // Authored in a 1080 px reference frame: the stage zooms to the render size.
+    expect(hook).toMatch(/> \.hero-stage \{[^}]*zoom: 0\.5;/);
+    expect(hook).toContain("--color-accent: var(--c-accent);");
+    expect(hook).toMatch(/--font-heading: "Be Vietnam Pro"/);
+    // Default entrance: first element at 0.15 s; explicit data-at/data-duration otherwise; travel 3% of the 1080 reference edge.
+    expect(hook).toContain(
+      `tl.fromTo("${sel} [data-hf-e=\\"0\\"]", {"opacity":0,"scale":0.6}, {"opacity":1,"scale":1,"duration":0.5,"ease":"back.out(1.7)"}, 0.15);`,
+    );
+    expect(hook).toContain(
+      `tl.fromTo("${sel} [data-hf-e=\\"1\\"]", {"opacity":0,"y":32}, {"opacity":1,"y":0,"duration":0.4,"ease":"power3.out"}, 0.5);`,
+    );
+  });
+});
+
 describe("assignLanes", () => {
   const shot = (id: string, startMs: number, durationMs: number): Shot => ({
     id,

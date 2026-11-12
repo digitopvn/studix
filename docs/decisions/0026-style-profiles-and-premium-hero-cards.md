@@ -20,7 +20,9 @@ own markup and nothing checked such markup before render (issue #437).
 - The IR gets an `html` shot: an HTML fragment with one optional `<style>` block, no scripts or external
   resources, motion declared with `data-enter` / `data-at` / `data-duration` and played by the renderer's
   GSAP timeline. `lintHeroHtml` in `@studix/video-ir` is the allowlist; `validateVideoIR` rejects a shot
-  that fails it, so no path can store or render unlinted markup.
+  that fails it, so no path can store or render unlinted markup. The card is authored in pixels of a
+  reference frame whose short edge is 1080 and the renderer zooms it to the render size, so a preview
+  render lays out exactly like the final one.
 - `RendererAdapter.inspect` is an optional pre-render visual QA. HyperFrames lints the compiled
   composition and captures each html shot where it settles, reporting lint errors, content outside the
   frame or its 3% margin, overlap with the caption band, clipped text and blank cards.

@@ -36,9 +36,27 @@ export function shotScript(shot: Shot): string | undefined {
       return shot.text;
     case "layout":
       return layoutWords(shot.layout);
+    case "html":
+      return heroWords(shot.html);
     default:
       return undefined;
   }
+}
+
+/** The visible words of a hero card's markup: tags and the style block dropped, whitespace collapsed. */
+function heroWords(html: string): string | undefined {
+  const words = html
+    .replace(/<style[\s\S]*?<\/style\s*>|<!--[\s\S]*?-->/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+  return words || undefined;
 }
 
 /** The words a built-in layout shows, in reading order. */
@@ -81,6 +99,8 @@ export function shotDescription(shot: Shot): string {
       return `Composition ${shot.entry ?? "default"} from ${shot.assetId}`;
     case "layout":
       return `Layout ${shot.layout.kind} "${words}"`;
+    case "html":
+      return words ? `Hero card "${words}"` : "Hero card";
     default:
       return `${shot.type === "title" ? "Title" : "Text"} "${words}"`;
   }

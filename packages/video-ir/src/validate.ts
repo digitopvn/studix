@@ -1,5 +1,6 @@
 import type { AssetMediaKind } from "./asset-ref.ts";
 import { CreativeBrief } from "./creative-brief.ts";
+import { lintHeroHtml } from "./hero-html-lint.ts";
 import {
   safeValidate,
   toPointer,
@@ -66,6 +67,8 @@ export function semanticIssues(ir: VideoIR): ValidationIssue[] {
         if (code?.kind === "code" && code.assetVersionId === undefined)
           add([...path, "assetId"], "unpinned_code", `code asset "${shot.assetId}" has no assetVersionId`);
       }
+      if (shot.type === "html")
+        for (const problem of lintHeroHtml(shot.html)) add([...path, "html"], "hero_html", problem);
       if (shot.type === "logo") {
         checkAsset([...path, "assetId"], shot.assetId, ["image"]);
         if (!shot.assetId && !shot.text && !ir.brand?.logoAssetId) {

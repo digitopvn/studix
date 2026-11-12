@@ -17,7 +17,7 @@ export interface ProducerRenderInput {
   onProgress: (progress: number, stage: string) => void;
 }
 
-type ProducerModule = typeof import("@hyperframes/producer");
+export type ProducerModule = typeof import("@hyperframes/producer");
 type ConsoleMethod = "log" | "info" | "debug";
 
 let consoleRedirects = 0;
@@ -28,7 +28,7 @@ const originalConsole: Partial<Record<ConsoleMethod, (...args: unknown[]) => voi
  * protocol channel for stdio MCP servers, so while a render runs, stdout-bound console output is routed to
  * the logger at debug level. Reference-counted so overlapping renders restore the console only once.
  */
-async function withConsoleOnLogger<T>(log: Logger, fn: () => Promise<T>): Promise<T> {
+export async function withConsoleOnLogger<T>(log: Logger, fn: () => Promise<T>): Promise<T> {
   const methods: ConsoleMethod[] = ["log", "info", "debug"];
   if (consoleRedirects++ === 0) {
     for (const m of methods) {
@@ -52,7 +52,7 @@ async function withConsoleOnLogger<T>(log: Logger, fn: () => Promise<T>): Promis
 let producerPromise: Promise<ProducerModule> | undefined;
 
 /** Lazy import: the producer pulls in Puppeteer, which only the worker role should pay for. */
-function loadProducer(): Promise<ProducerModule> {
+export function loadProducer(): Promise<ProducerModule> {
   producerPromise ??= import("@hyperframes/producer").catch((err: unknown) => {
     producerPromise = undefined;
     throw new StudixError("UNAVAILABLE", "The HyperFrames producer could not be loaded", {

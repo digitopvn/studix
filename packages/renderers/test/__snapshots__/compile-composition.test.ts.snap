@@ -164,32 +164,32 @@ exports[`buildComposition (brand-intro 9:16) > matches the golden composition sn
         color: var(--c-foreground);
         font-family: "Inter", sans-serif;
       }
-      #s-intro__stage .underlay, #s-intro__stage .underlay > * {
+      #s-intro__stage > .underlay, #s-intro__stage > .underlay > * {
         position: absolute;
         inset: 0;
       }
-      #s-intro__stage .content {
+      #s-intro__stage > .content {
         position: absolute;
         inset: 38px;
         display: flex;
         flex-direction: column;
         gap: 16px;
       }
-      #s-intro__stage .region {
+      #s-intro__stage > .content > .region {
         display: flex;
         flex-direction: column;
         gap: 16px;
         min-height: 0;
       }
-      #s-intro__stage .region-middle {
+      #s-intro__stage > .content > .region-middle {
         flex: 1 1 auto;
         justify-content: center;
       }
-      #s-intro__stage .lane {
+      #s-intro__stage > .content > .region > .lane {
         display: grid;
         align-items: center;
       }
-      #s-intro__stage .lane > .shot {
+      #s-intro__stage > .content > .region > .lane > .shot {
         grid-area: 1 / 1;
       }
       #s-intro__shot-intro-logo {
@@ -231,7 +231,7 @@ exports[`buildComposition (brand-intro 9:16) > matches the golden composition sn
       #s-intro__shot-intro-tagline {
         justify-self: center;
       }
-      #s-intro__stage .captions {
+      #s-intro__stage > .captions {
         position: absolute;
         left: 49px;
         right: 49px;
@@ -239,7 +239,7 @@ exports[`buildComposition (brand-intro 9:16) > matches the golden composition sn
         display: grid;
         justify-items: center;
       }
-      #s-intro__stage .cue {
+      #s-intro__stage > .captions > .cue {
         grid-area: 1 / 1;
         opacity: 0;
         font-family: "Inter", sans-serif;

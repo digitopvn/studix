@@ -176,9 +176,10 @@ interface Repair {
 const HERO_INSTRUCTIONS =
   " Premium tier: you may hand-write `hero` cards for up to " +
   `${MG_MAX_HEROES}` +
-  " beats that carry the video (the hook, the key reveal), never the last beat. A hero is `{html}`: an HTML " +
-  "fragment of div, span, p, h1-h6, strong, em, ul/ol/li, figure and inline svg (path, circle, rect, line, g, " +
-  "linearGradient, text...) with one optional <style> block, sized for the whole card. No scripts, images, " +
+  " beats that carry the video (the hook, the key reveal), never the last beat. A hero is `{html}`, or " +
+  "`{compositionId, path}` naming a file you wrote with composition_write: an HTML fragment of div, span, p, h1-h6, strong, em, ul/ol/li, figure and inline svg (path, circle, rect, line, g, " +
+  "linearGradient, text...) with one optional <style> block, sized for the whole card and laid out in pixels of a reference frame whose " +
+  "short edge is 1080 (1920x1080 landscape, 1080x1920 portrait, 1080x1080 square); the renderer scales it. No scripts, images, " +
   "links, iframes, event handlers, @ rules, url() other than url(#id), or position: fixed. Colours come from " +
   "var(--color-background), var(--color-foreground), var(--color-primary) and var(--color-accent), fonts from " +
   "var(--font-heading) and var(--font-body), so the profile and brand stay locked. Motion: give elements " +

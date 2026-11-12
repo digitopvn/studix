@@ -298,7 +298,8 @@
                     "logo",
                     "cta",
                     "composition",
-                    "layout"
+                    "layout",
+                    "html"
                   ]
                 },
                 "description": {
