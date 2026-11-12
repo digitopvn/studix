@@ -7,6 +7,7 @@ import {
   burnedCaptionEdge,
   COLOR_ROLES,
   cssColor,
+  withBrandSwatches,
 } from "./brand-tokens.ts";
 import { htmlCardScript } from "./html-card-compile.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
@@ -170,7 +171,8 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   // HTML cards are full-frame layers above the underlay and the regions, below the captions.
   const cards: string[] = [];
   const isCard = (shot: Shot) => shot.type === "composition" && markup.htmlCards?.has(shot.assetId) === true;
-  for (const shot of scene.shots) {
+  // A swatch row shows only the colours the brand kit really gives.
+  for (const shot of scene.shots.map((s) => withBrandSwatches(s, markup.brand))) {
     const rendered = renderShotMarkup(ctx, shot);
     css.push(...rendered.css);
     if (shot.type === "composition" && isCard(shot)) {

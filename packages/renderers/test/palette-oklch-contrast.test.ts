@@ -1,5 +1,6 @@
+import type { Shot } from "@studix/video-ir";
 import { describe, expect, it } from "vitest";
-import { resolvePalette } from "../src/hyperframes/brand-tokens.ts";
+import { resolvePalette, withBrandSwatches } from "../src/hyperframes/brand-tokens.ts";
 import { sameColour, shiftHue, withContrastingRoles } from "../src/hyperframes/palette-oklch-contrast.ts";
 
 const blue = "#4a86ff";
@@ -25,6 +26,30 @@ describe("palette contrast", () => {
   it("returns the colour itself for a zero shift and leaves an unparsable colour alone", () => {
     expect(sameColour(shiftHue(blue, 0), blue)).toBe(true);
     expect(shiftHue("red", 180)).toBe("red");
+  });
+
+  it("drops swatches of palette roles the brand kit does not really give", () => {
+    const brand = {
+      palette: { primary: blue, accent: blue, background: "#111111", foreground: "#ffffff" },
+    } as Parameters<typeof resolvePalette>[0];
+    const items = [
+      { color: "primary", label: "Primary" },
+      { color: "accent", label: "Accent" },
+      { color: "secondary", label: "Secondary" },
+      { color: "foreground", label: "Type" },
+      { color: "#123456", label: "Hex" },
+    ];
+    const shot = {
+      id: "sw",
+      type: "layout",
+      startMs: 0,
+      durationMs: 1000,
+      layout: { kind: "swatches", items },
+    } as unknown as Shot; // a minimal layout shot; only `layout.items` matters here
+    const out = withBrandSwatches(shot, brand);
+    const labels = out.type === "layout" && out.layout.kind === "swatches" ? out.layout.items : [];
+    expect(labels.map((i) => i.label)).toEqual(["Primary", "Type", "Hex"]);
+    expect(withBrandSwatches(shot, undefined)).toBe(shot);
   });
 
   it("applies when a brand kit names only one colour", () => {
