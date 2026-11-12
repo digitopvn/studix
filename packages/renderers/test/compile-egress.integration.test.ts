@@ -6,6 +6,7 @@ import https from "node:https";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { join, relative, resolve } from "node:path";
+import tls from "node:tls";
 import { createLogger } from "@studix/shared";
 import { resolveRenderSpec } from "@studix/video-ir";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -40,13 +41,13 @@ function hostOf(target: unknown): string {
 }
 
 /**
- * Every outbound DNS lookup, HTTP(S) request, fetch and TCP connect the render process makes to a host that
- * is not loopback is recorded and refused, so nothing really leaves the machine while the test runs. Every
- * file copy is recorded too, so a host file that reaches the render shows up by its source path.
+ * Every outbound DNS lookup, HTTP(S) request, fetch, TCP and TLS connect the render process makes to a host
+ * that is not loopback is recorded and refused, so nothing really leaves the machine while the test runs.
+ * Every file the process opens, reads or copies is recorded too, as `<call> <path>`.
  */
-function trapEgress(): { attempts: string[]; copies: string[]; restore: () => void } {
+function trapEgress(): { attempts: string[]; files: string[]; restore: () => void } {
   const attempts: string[] = [];
-  const copies: string[] = [];
+  const files: string[] = [];
   const restores: (() => void)[] = [];
   const refuse = (kind: string, host: string) => {
     attempts.push(`${kind} ${host}`);
@@ -81,16 +82,25 @@ function trapEgress(): { attempts: string[]; copies: string[]; restore: () => vo
   wrap(dns.promises, "lookup", "dns.promises", (a) => a[0]);
   wrap(net, "connect", "net", (a) => (typeof a[0] === "object" ? a[0] : a[1]));
   wrap(net, "createConnection", "net", (a) => (typeof a[0] === "object" ? a[0] : a[1]));
+  wrap(tls, "connect", "tls", (a) => (typeof a[0] === "object" ? a[0] : a[1]));
   for (const [obj, key] of [
     [fs, "copyFileSync"],
     [fs, "copyFile"],
     [fs, "cpSync"],
+    [fs, "readFileSync"],
+    [fs, "readFile"],
+    [fs, "openSync"],
+    [fs, "open"],
+    [fs, "createReadStream"],
     [fs.promises, "copyFile"],
     [fs.promises, "cp"],
+    [fs.promises, "readFile"],
+    [fs.promises, "open"],
   ] as const) {
     const original = (obj as Record<string, unknown>)[key] as (...args: unknown[]) => unknown;
     (obj as Record<string, unknown>)[key] = function (this: unknown, ...args: unknown[]) {
-      copies.push(resolve(String(args[0])));
+      if (typeof args[0] === "string" || args[0] instanceof URL)
+        files.push(`${key} ${resolve(String(args[0]))}`);
       return original.apply(this, args);
     };
     restores.push(() => {
@@ -100,7 +110,7 @@ function trapEgress(): { attempts: string[]; copies: string[]; restore: () => vo
   syncBuiltinESMExports();
   return {
     attempts,
-    copies,
+    files,
     restore: () => {
       for (const r of restores.reverse()) r();
       syncBuiltinESMExports();
@@ -166,7 +176,7 @@ describe.skipIf(!toolchain.ok)(
       expect(leaked).toEqual([]);
     });
 
-    it("fetches no script, stylesheet or image and copies no ../ host file from a compiled page", async () => {
+    it("fetches no script, stylesheet, font or image and reads no host file from a compiled page", async () => {
       const { dir, cleanup } = await tempDir("egress-page");
       cleanups.push(cleanup);
       const secret = join(dir, "secret.png");
@@ -189,6 +199,7 @@ describe.skipIf(!toolchain.ok)(
     <link rel="stylesheet" href="https://canary.example/fonts.css" />
     <style>
       html, body, #root { margin: 0; width: 160px; height: 90px; overflow: hidden; background: #000; }
+      .font { font-family: "Lobster", sans-serif; }
       .remote { background-image: url(https://canary.example/bg.png); }
       .host { background-image: url(${up}); }
     </style>
@@ -197,6 +208,7 @@ describe.skipIf(!toolchain.ok)(
     <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90">
       <img src="${up}" alt="" style="width: 10px" />
       <img src="https://canary.example/img.png" alt="" style="width: 10px" />
+      <p class="font">Studix</p>
       <div class="remote host" style="background: url(${up}); width: 10px; height: 10px"></div>
     </div>
     <script>
@@ -219,8 +231,13 @@ describe.skipIf(!toolchain.ok)(
         onProgress: () => {},
       });
 
-      const hostCopies = trap.copies.filter((source) => source === secret);
-      expect({ attempts: trap.attempts, hostCopies }).toEqual({ attempts: [], hostCopies: [] });
+      // Copying the host file would serve it to the page; reading a system font would embed it in the render.
+      // (Probing the header of a ../ image for a type check stays possible: it puts no bytes in the render.)
+      const hostFiles = trap.files.filter(
+        (call) =>
+          (/^(copyFile|cp)/.test(call) && call.endsWith(` ${secret}`)) || call.includes(" /usr/share/fonts/"),
+      );
+      expect({ attempts: trap.attempts, hostFiles }).toEqual({ attempts: [], hostFiles: [] });
     });
   },
 );

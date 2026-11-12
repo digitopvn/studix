@@ -9,7 +9,7 @@ patchedDependencies:
     hash: ffd00ad02236ffeadbcb141e4ee2b8403bedca593214fa898d170dcf8ffcab4c
     path: patches/@hyperframes__engine@0.8.223.patch
   '@hyperframes/producer@0.8.223':
-    hash: 11972cc1d2ea2b227d6bfe7d45efcdf966c52380b8126fc0d450ef1327de686b
+    hash: deead21f62dbce3c15cb91611669245b8ab49caf38e1ca207a9db9bca8d8adff
     path: patches/@hyperframes__producer@0.8.223.patch
 
 importers:
@@ -504,7 +504,7 @@ importers:
         version: 0.8.223
       '@hyperframes/producer':
         specifier: 0.8.223
-        version: 0.8.223(patch_hash=11972cc1d2ea2b227d6bfe7d45efcdf966c52380b8126fc0d450ef1327de686b)(@types/node@24.19.2)(yauzl@2.10.0)
+        version: 0.8.223(patch_hash=deead21f62dbce3c15cb91611669245b8ab49caf38e1ca207a9db9bca8d8adff)(@types/node@24.19.2)(yauzl@2.10.0)
       '@studix/core':
         specifier: workspace:*
         version: link:../core
@@ -4653,7 +4653,7 @@ snapshots:
     transitivePeerDependencies:
       - canvas
 
-  '@hyperframes/producer@0.8.223(patch_hash=11972cc1d2ea2b227d6bfe7d45efcdf966c52380b8126fc0d450ef1327de686b)(@types/node@24.19.2)(yauzl@2.10.0)':
+  '@hyperframes/producer@0.8.223(patch_hash=deead21f62dbce3c15cb91611669245b8ab49caf38e1ca207a9db9bca8d8adff)(@types/node@24.19.2)(yauzl@2.10.0)':
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.14)
       '@hyperframes/core': 0.8.223(@types/node@24.19.2)

@@ -166,14 +166,23 @@ to the exact same version in `packages/renderers/package.json` (currently
   `fetchPublicHttpsText` throw, so every remote download fails and the
   producer keeps the original URL, which the capture browser cannot load.
   The producer patch makes `inlineExternalScripts` leave external scripts
-  unfetched, and makes `collectExternalAssets` skip every path outside the
-  project instead of copying it to `compiled/hf-ext/`.
+  unfetched, makes `collectExternalAssets` skip every path outside the
+  project instead of copying it to `compiled/hf-ext/`, and gives the
+  deterministic font pass a fetch that always fails with
+  `allowSystemFontCapture: false`. A family that is not bundled (an HTML card
+  may name any `font-family`) therefore never reaches Google Fonts or embeds a
+  host system font; the browser falls back to the generic family.
   `compile-egress.integration.test.ts` renders hostile composition text and a
-  hostile page while trapping DNS, HTTP(S), `fetch`, TCP connects and file
-  copies in the render process. Without the patches it sees a raw `fetch`,
-  DNS lookups and a copy of the host file; with them it sees none
-  ([#457](https://github.com/digitopvn/studix/issues/457)).
+  hostile page while trapping DNS, HTTP(S), `fetch`, TCP and TLS connects and
+  file access in the render process. Without the patches it sees a raw
+  `fetch`, DNS lookups, a Google Fonts request and a copy of the host file;
+  with them it sees none ([#457](https://github.com/digitopvn/studix/issues/457)).
   `engine-launch-options.test.ts` also fails if a bump drops the engine part.
+  Still allowed, because no bytes reach the render: the media type check
+  probes the header of a local `src` even when it points outside the project.
+  Studix writes every `src` under `assets/`. The GSAP CDN fallback for a
+  missing local GSAP no longer works, and Studix always ships its own GSAP
+  file.
   All of these patches are keyed to the exact version, like the SIGTERM one
   below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through

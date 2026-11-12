@@ -439,12 +439,15 @@ or a path guard as a security boundary:
   responses there. Media that a page script adds at runtime is ignored unless its source is a
   project-relative path that stays inside the project (or an inline `data:image`), so the producer never reads
   a host file or downloads a URL on its behalf.
-- The producer's Node-side compile step never touches the network or host files outside the project either.
-  It scans the compiled page as a string after re-serializing it, so character references in user text do not
-  hide a `url(https://…)` from it. The patched engine refuses every remote download and text fetch, the
-  producer leaves external `<script src>` tags alone instead of fetching them, and it never copies a
-  `src`/`href`/CSS `url()` target that resolves outside the project into the render. Studix never needs any
-  of this: `compileComposition` copies every asset into `assets/media/` and fonts are bundled.
+- The producer's Node-side compile step sends nothing over the network and puts no host file from outside the
+  project into the render. It scans the compiled page as a string after re-serializing it, so character
+  references in user text do not hide a `url(https://…)` from it. The patched engine refuses every remote
+  download and text fetch. The producer leaves external `<script src>` tags alone instead of fetching them,
+  never copies a `src`/`href`/CSS `url()` target that resolves outside the project, and never fetches Google
+  Fonts or embeds a host system font for a family a page names. Studix never needs any of this:
+  `compileComposition` copies every asset into `assets/media/` and fonts are bundled. The media type check
+  may still read the header of a local `src` outside the project; Studix markup has none, and no bytes reach
+  the render.
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its
