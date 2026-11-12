@@ -124,4 +124,10 @@ export {
   type HyperFramesRenderOptions,
 } from "./hyperframes/hyperframes-renderer.ts";
 export { hyperframesSupport } from "./hyperframes/hyperframes-support.ts";
+export {
+  MAX_STILL_FPS,
+  planStillGrid,
+  type StillFrameGrid,
+  type StillWindow,
+} from "./hyperframes/still-frame-grid.ts";
 export { renderToolchain } from "./render-toolchain.ts";

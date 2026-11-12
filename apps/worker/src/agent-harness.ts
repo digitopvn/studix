@@ -502,7 +502,26 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
         : undefined;
       beat?.unref();
       try {
-        return await runWith(ctx, task, sink);
+        const result = await runWith(ctx, task, sink);
+        const issues = task.outputIssues?.(result.output) ?? [];
+        if (issues.length > 0) {
+          const where = issues
+            .slice(0, 3)
+            .map((i) => `${i.path}: ${i.message}`)
+            .join("; ");
+          trace?.append(
+            redactDeep({
+              // A repair turn follows: the summary lists only failures the stage did not recover from.
+              type: task.willRepair ? "warning" : "error",
+              ...(task.willRepair ? { willRepair: true } : {}),
+              code: "VALIDATION",
+              stage: task.skill,
+              message: `Agent output of stage ${task.skill} fails its schema (${where})`,
+              issues: issues.slice(0, 10),
+            }) as Record<string, unknown>,
+          );
+        }
+        return result;
       } catch (err) {
         const { code, message, retryable, suggestedAction } = toStudixError(err);
         trace?.append(
