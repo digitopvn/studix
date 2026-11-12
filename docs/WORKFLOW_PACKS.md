@@ -432,7 +432,7 @@ sheet (một frame giữ của mỗi card, lấy sau phần vào của card) và
 `AgentTask.images`) chấm từng card 0–10 với các lỗi `blank`, `too-small`, `illegible`, `repetitive`,
 `off-brief`, `headline-only` (card đầu và cuối được là card chỉ có tiêu đề). Card có lỗi hoặc điểm dưới 6 quay
 về storyboard agent để thiết kế lại riêng các card đó; lời đọc và weight được giữ nên voice, caption, SFX và
-thời lượng card không đổi, không tốn tiền voice lại; headline và layout của card mới vẫn vào đúng lúc stage voice đặt theo lời đọc (layout mới chưa có thì vào giữa card). Sau đó graphic render lại, tối đa 2 vòng và chỉ khi ngân
+thời lượng card không đổi, không tốn tiền voice lại; headline và layout của card mới vẫn vào đúng lúc stage voice đặt theo lời đọc (layout mới chưa có thì vào 300 ms sau headline, không muộn hơn 450 ms sau lần cắt). Sau đó graphic render lại, tối đa 2 vòng và chỉ khi ngân
 sách và deadline của job còn đủ cho một lượt chấm, một lượt sửa và một lần render. Checkpoint của stage giữ IR
 đã duyệt, điểm và file render tốt cuối cùng (trong thư mục của job, ngoài thư mục attempt); `validate_ir` lưu
 đúng IR đó, stage `render` dùng lại file đó (không tính tiền render lần nữa) hoặc render lại đúng IR đó khi

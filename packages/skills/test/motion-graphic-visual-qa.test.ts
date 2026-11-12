@@ -4,6 +4,9 @@ import { join } from "node:path";
 import type { StageContext, StageDefinition } from "@studix/workflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MG_VISUAL_QA_STAGE, motionGraphicRenderStage } from "../src/index.ts";
+import { LAYOUT_LATEST_MS } from "../src/motion-graphic/motion-graphic-reveals.ts";
+import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
+import { withRestyledCards } from "../src/motion-graphic/motion-graphic-visual-qa.ts";
 
 const probe = { durationMs: 1000, width: 160, height: 90, fps: 5, videoCodec: "h264", bytes: 0 };
 
@@ -53,5 +56,40 @@ describe("motion-graphic render stage after the visual review", () => {
     expect(await stage.estimateCostCents?.(s)).toBe(7);
     expect((await stage.run(s)).output).toMatchObject({ mime: "video/mp4" });
     expect(engine.run).toHaveBeenCalledWith(s);
+  });
+});
+
+describe("withRestyledCards", () => {
+  const brief = { prompt: "A launch video introducing Studix", language: "en", durationMs: 15_000 } as never;
+  const beat = (onScreen: string, layout?: unknown) => ({
+    onScreen,
+    voiceover: `${onScreen}.`,
+    visual: "A dark card.",
+    enter: "fade",
+    weight: 1,
+    ...(layout ? { layout } : {}),
+  });
+  // A minimal storyboard; the template validates it as it draws.
+  const storyboard = (second?: unknown) =>
+    ({
+      styleProfile: "kinetic-typography",
+      beats: [
+        beat("Type a prompt"),
+        beat("Plug in any agent", second),
+        beat("Watch it build"),
+        beat("Start free"),
+      ],
+      music: null,
+    }) as never;
+
+  it("reveals a layout a redesigned card gains within the reveal deadline, not halfway through", () => {
+    const ir = motionGraphicTemplate(brief, { storyboard: storyboard() });
+    expect(ir.scenes[1]!.shots.some((s) => s.type === "layout")).toBe(false);
+    const chips = { kind: "chips", hub: "Studix MCP", items: ["Claude", "ChatGPT"] };
+    const out = withRestyledCards(ir, brief, storyboard(chips), [2]);
+    const layout = out.scenes[1]!.shots.find((s) => s.type === "layout");
+    expect(layout).toBeDefined();
+    expect(layout!.startMs).toBeLessThanOrEqual(LAYOUT_LATEST_MS);
+    expect(out.scenes[1]!.durationMs).toBe(ir.scenes[1]!.durationMs);
   });
 });

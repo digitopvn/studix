@@ -187,7 +187,8 @@ export function compileDepth(
   }
 
   const lens: string[] = [];
-  if (foreground.has("corners")) {
+  // The motif travels the corners of the gutter, where the brackets sit: a scene with a motif draws no brackets.
+  if (foreground.has("corners") && !scene.motif) {
     const arm = Math.round(0.06 * short);
     const line = Math.max(2, Math.round(0.004 * short));
     // Corner brackets frame the picture like a viewfinder: they sit on the fixed lens, so no camera move

@@ -9,7 +9,7 @@ export const REVEAL_LEAD_MS = 120;
  */
 export const HEADLINE_LATEST_MS = 150;
 /** A layout enters this long after its headline, so the two do not enter as one. */
-const LAYOUT_AFTER_HEADLINE_MS = 300;
+export const LAYOUT_AFTER_HEADLINE_MS = 300;
 /**
  * A layout (the card's device) enters no later than this after its cut, so it is on screen within about
  * 0.6 s and its own motion (a count, a typed line, a pipeline) plays while the voice describes it.
