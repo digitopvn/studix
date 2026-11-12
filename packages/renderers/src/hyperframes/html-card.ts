@@ -233,12 +233,6 @@ function balanced(value: string): boolean {
   return open.length === 0;
 }
 
-/**
- * Text as markup: HTML-escaped, with `(` and `:` as character references too, so no string regex over the
- * compiled page (the producer localizes `url(https://...)` it finds anywhere) can read a URL in it.
- */
-const escapeText = (text: string) => escapeHtml(text).replace(/\(/g, "&#40;").replace(/:/g, "&#58;");
-
 /** Rewrite `url(#id)` to the card's namespaced id; true when every `url(` in `value` was a fragment. */
 function namespaceUrls(value: string, cardId: string): { value: string; ok: boolean } {
   const fragments = value.match(FRAGMENT_URL)?.length ?? 0;
@@ -264,7 +258,7 @@ function sanitizeHtml(html: string, cardId: string, problems: Set<string>): stri
   const walk = (nodes: readonly ChildNode[], parent: string | undefined, inSvg: boolean): string =>
     nodes
       .map((node) => {
-        if (node.type === "text") return escapeText(node.data);
+        if (node.type === "text") return escapeHtml(node.data);
         if (node.type === "comment") return "";
         if (node.type === "cdata" || node.type === "root" || node.type === "directive") {
           problems.add("html: doctype, CDATA and processing instructions are not allowed");

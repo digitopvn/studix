@@ -124,7 +124,21 @@ describe("buildComposition escaping and assets", () => {
     shot.text = '</script><img src=x onerror="alert(1)">';
     const hook = buildComposition(ir, previewSize).files.get("compositions/hook.html")!;
     expect(hook).not.toContain("<img src=x");
-    expect(hook).toContain("&lt;/script&gt;&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+    expect(hook).toContain("&lt;/script&gt;&lt;img src=x onerror=&quot;alert&#40;1)&quot;&gt;");
+  });
+
+  it("never lets user text read as a url(...) the HyperFrames compiler would fetch or copy", () => {
+    const hostile = "background:url(https://canary.example/x.png) background-image:url(../../../etc/hostname)";
+    const ir = structuredClone(brandIntro);
+    ir.title = hostile;
+    const shot = ir.scenes[0]!.shots[0]!;
+    if (shot.type !== "title") throw new Error("fixture changed");
+    shot.text = hostile;
+    ir.captions!.cues[0]!.text = hostile;
+    const build = buildComposition(ir, previewSize);
+    const pages = [...build.files.values()].join("\n");
+    expect(pages).not.toMatch(/url\(\s*["']?(?:[a-z][a-z0-9+.-]*:|\/|\.\.)/i);
+    expect(pages).toContain("background&#58;url&#40;https&#58;//canary.example/x.png)");
   });
 
   it("copies image assets into the project and requires a local file for referenced images", async () => {
