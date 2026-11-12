@@ -254,7 +254,10 @@ Behavior notes:
   word timestamps, else estimated); `metadata.beatSync` and `metadata.wordSync`
   report what was synced. Each storyboard beat may name a typed `layout` (a prompt being typed,
   code lines, chips wired to a hub, a checklist, a rolling counter, a row of
-  cards, colour swatches or a stat) that the card draws under its headline; the
+  cards, colour swatches, a stat, or a product UI device: a chat window typing a
+  prompt and its reply, a tool-call card spinning on "running" then done, a job
+  pipeline lit up to its running stage, a preview player pressed to Approve, a
+  usage meter filling to its cap) that the card draws under its headline; the
   `visual` field stays a description. On a 16:9 frame headlines are set at
   display size and layouts drawn larger, so a card fills the frame. Burned
   captions are 44 px at a 1080 px short edge, and a layout is centred above
@@ -279,6 +282,20 @@ Behavior notes:
   that fits its card read up to 1.12x faster is voiced again only when the
   graphic still needs the time), and only speech that cannot fit the whole video fails with `VALIDATION`
   naming the lines past their cards and by how many milliseconds (`details.lines`).
+- Brand kit for `motion-graphic`: `brief.brandUrl` (the brand's https site),
+  `brief.brandLogo` (an https URL or a base64 `data:image/png|jpeg|webp|svg+xml`
+  URL, at most 200,000 characters, about 146 KB of image; pass a larger logo as an https URL) and `brief.brandColors` (1 to 4 hex
+  colours, most important first). The `motion-graphic.brand` stage reads the
+  site's name (`og:site_name`, `application-name`, else the title), colours
+  (`theme-color`, tile and mask-icon colours; greys dropped) and logo (SVG icon,
+  apple-touch-icon, `og:logo`, JSON-LD `logo`, other icons) through the
+  SSRF-guarded fetch, and stores the logo (the uploaded one wins; PNG, JPEG,
+  WebP, GIF or SVG checked by its bytes). The brand's name, else the site's,
+  and its logo are drawn as a lockup on the hook and CTA cards. The first
+  colour becomes primary and accent, the second secondary; `brandColors` wins
+  over `brand.palette`, and site colours are used only when the brief sets
+  neither. A site or logo that cannot be read never fails the job: the stage
+  reports a `warning` and the graphic goes on without it.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action

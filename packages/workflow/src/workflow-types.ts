@@ -103,6 +103,17 @@ export interface StageServices {
   workRoot?: string;
   /** Where media calls are recorded as `provider_executions` rows; calls go unrecorded when not wired. */
   executions?: ProviderExecutionRecorder;
+  /**
+   * SSRF-guarded GET of a public https URL: every redirect is re-checked, private and metadata addresses are
+   * refused at connect time and the body is capped at `maxBytes`. `url` is the final URL after redirects.
+   * Rejects with a StudixError when the URL is refused or cannot be fetched. Stages without it skip the fetch.
+   */
+  fetchPublic?: (
+    url: string,
+    /** `truncate` keeps the first `maxBytes` of a larger body instead of refusing it. */
+    options: { maxBytes: number; truncate?: boolean },
+    signal: AbortSignal,
+  ) => Promise<{ body: Uint8Array; contentType: string; url: string }>;
 }
 
 /** A media output an earlier job of the tenant paid for and stored, found by the content key of its request. */

@@ -287,7 +287,8 @@ hai cue: cue mới bắt đầu từ số điện thoại, trừ khi cách đó 
 bên cạnh khi tổng không quá mười từ, nếu không thì hai cue chia lại thời gian để mỗi cue hiện ít nhất 600 ms
 (`captionCues`).
 Mỗi beat của storyboard agent có thể kèm `layout` có kiểu (`prompt-box`, `code`, `chips`, `checklist`, `counter`,
-`cards-row`, `swatches`, `stat`, schema `LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
+`cards-row`, `swatches`, `stat`, và bộ UI sản phẩm `chat`, `tool-call`, `pipeline`, `player`, `usage`; schema
+`LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
 dựng dần bên dưới (shot `layout`, renderer tự vẽ). `visual` chỉ là mô tả. Beat cuối luôn là card CTA, bỏ qua
 layout. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
 màu `primary`, thay vì xen kẽ nền từng card.

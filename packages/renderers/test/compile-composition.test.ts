@@ -407,6 +407,171 @@ describe("buildComposition without text shots", () => {
   });
 });
 
+describe("buildComposition product UI layouts", () => {
+  const layouts: LayoutSpec[] = [
+    { kind: "chat", title: "Studix", prompt: "Làm video 15 giây <ra mắt>", reply: "Đang dựng storyboard…" },
+    {
+      kind: "tool-call",
+      name: "studix_create_video",
+      args: [
+        { key: "pack", value: "motion-graphic" },
+        { key: "aspect", value: "9:16" },
+      ],
+      status: "done",
+      result: "Job đã xếp hàng",
+    },
+    { kind: "pipeline", items: ["Brief", "Storyboard", "Render", "QA"], active: 2 },
+    { kind: "player", title: "Bản xem trước" },
+    { kind: "usage", used: 8.5, cap: 10, prefix: "$", label: "Ngân sách job" },
+  ];
+  const ir = structuredClone(brandIntro);
+  ir.scenes = layouts.map((layout, i) => ({
+    id: `u${i}`,
+    role: "feature",
+    durationMs: 4000,
+    background: { color: "background" },
+    shots: [{ id: `u${i}-layout`, type: "layout", startMs: 0, durationMs: 4000, layout }],
+  }));
+  ir.timeline = buildSequentialTimeline(ir.scenes);
+  ir.format.durationMs = 4000 * layouts.length;
+  delete ir.captions;
+  ir.audio = [];
+  const build = buildComposition(ir, previewSize);
+  const scene = (i: number) => build.files.get(`compositions/u${i}.html`)!;
+
+  it("draws accent text in the foreground colour when the accent is too faint on the background", () => {
+    const faint = structuredClone(ir);
+    faint.brand!.palette = { ...faint.brand!.palette, accent: "#2a1e18" };
+    const toolCss = (b: ReturnType<typeof buildComposition>) =>
+      /\.lo-v \{[^}]*color: ([^;]+);/.exec(b.files.get("compositions/u1.html")!)?.[1];
+    expect(toolCss(build)).toBe("var(--c-accent)");
+    expect(toolCss(buildComposition(faint, previewSize))).toBe("var(--c-foreground)");
+  });
+
+  it("validates the product UI layouts and rejects impossible ones", () => {
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const bad = (layout: unknown) => {
+      const next = structuredClone(ir);
+      next.scenes[0]!.shots[0] = { ...next.scenes[0]!.shots[0]!, layout } as Shot;
+      return validateVideoIR(next).ok;
+    };
+    expect(bad({ kind: "usage", used: 12, cap: 10 })).toBe(false);
+    expect(bad({ kind: "pipeline", items: ["A", "B"], active: 2 })).toBe(false);
+    expect(bad({ kind: "tool-call", name: "a\nb" })).toBe(false);
+    expect(hyperframesSupport(ir, RENDER_PRESETS.preview).reasons).toEqual([]);
+  });
+
+  it("draws each device from its typed content, in the IR language", () => {
+    // Chat: the prompt is typed into the input, then sent as an escaped bubble; the reply waits its turn.
+    expect(scene(0)).toContain('<div class="lo-me">Làm video 15 giây &lt;ra mắt&gt;</div>');
+    expect(scene(0)).not.toContain("<ra mắt>");
+    expect(scene(0)).toContain('<div class="lo-ai">Đang dựng storyboard…</div>');
+    // Tool call: Vietnamese status words, the arguments and the result once done.
+    expect(scene(1)).toContain("Đang chạy");
+    expect(scene(1)).toContain("Hoàn tất");
+    expect(scene(1)).toContain('<span class="lo-v">"motion-graphic"</span>');
+    expect(scene(1)).toContain("Job đã xếp hàng");
+    // Pipeline: two stages done, the third running, the fourth to do.
+    expect(scene(2).match(/class="lo-ptick"/g)).toHaveLength(2);
+    expect(scene(2)).toContain('<div class="lo-pnode lo-n2"><span class="lo-pmark"><span class="lo-pring">');
+    expect(scene(2)).toContain('<div class="lo-pnode lo-n3"><span class="lo-pmark"></span>');
+    // Player: the default approve label in the IR language.
+    expect(scene(3)).toContain("<span>Duyệt</span>");
+    // Usage: Vietnamese decimal comma, one label per counting step, the cap marked.
+    expect(scene(4)).toContain('<span class="lo-u12">$8,5</span>');
+    expect(scene(4)).toContain("Giới hạn &#183; $10");
+    const en = buildComposition({ ...ir, language: "en" }, previewSize);
+    expect(en.files.get("compositions/u1.html")).toContain("Running");
+    expect(en.files.get("compositions/u3.html")).toContain("<span>Approve</span>");
+    expect(en.files.get("compositions/u4.html")).toContain('<span class="lo-u12">$8.5</span>');
+  });
+
+  it("animates each device with seek-safe tweens that finish inside the card", () => {
+    const positions = (html: string) =>
+      [...html.matchAll(/tl\.(?:fromTo|set)\([^;]*, ([\d.]+)\);/g)].map((m) => Number(m[1]));
+    for (let i = 0; i < layouts.length; i++) {
+      expect(scene(i)).not.toContain('"repeat"');
+      expect(scene(i)).not.toContain("onUpdate");
+      expect(Math.max(...positions(scene(i)))).toBeLessThanOrEqual(4);
+    }
+    // The chat hides what was typed once it is sent, and the reply rises after the typing dots.
+    expect(scene(0)).toContain('tl.set("#s-u0__shot-u0-layout .lo-typed", {"opacity":0}');
+    expect(scene(0)).toContain('"#s-u0__shot-u0-layout .lo-ai", {"opacity":0');
+    // The spinner turns, then settles on done.
+    expect(scene(1)).toContain('"#s-u1__shot-u1-layout .lo-spin", {"rotation":0}, {"rotation":360');
+    expect(scene(1)).toContain('tl.set("#s-u1__shot-u1-layout .lo-trun", {"opacity":0}');
+    // The pipeline fill (a column: four stages on a portrait frame) stops at the running stage: two of three gaps.
+    expect(scene(2)).toMatch(/\.lo-pfill", \{"scaleY":0\}, \{"scaleY":0\.6666/);
+    // The player scrubs to the end and presses approve.
+    expect(scene(3)).toContain('"#s-u3__shot-u3-layout .lo-pkt", {"xPercent":0}, {"xPercent":100');
+    expect(scene(3)).toContain('"#s-u3__shot-u3-layout .lo-acheck"');
+    // The meter fills to 85% of its cap and shows the last step at the end of the fill.
+    expect(scene(4)).toContain('{"scaleX":0.85,');
+    expect(scene(4)).toContain('tl.set("#s-u4__shot-u4-layout .lo-u12", {"opacity":1}');
+  });
+});
+
+describe("buildComposition logo lockup", () => {
+  it("draws the mark beside the name and keeps a layout clear of a lockup above it", async () => {
+    const promo = loadIrFixture("product-promo-16x9-assets");
+    const { dir, cleanup } = await tempDir("compile-lockup");
+    cleanups.push(cleanup);
+    const scene = promo.scenes[0]!;
+    const layout: LayoutSpec = { kind: "chat", prompt: "Make a launch video" };
+    const shots: Shot[] = [
+      {
+        id: "brand",
+        type: "logo",
+        assetId: "logo",
+        text: "Acme <Labs>",
+        lockup: true,
+        startMs: 0,
+        durationMs: scene.durationMs,
+        style: { textStyle: "body", region: "top" },
+      },
+      { id: "chat", type: "layout", startMs: 0, durationMs: scene.durationMs, layout },
+    ];
+    const withLockup = { ...promo, scenes: [{ ...scene, shots }, ...promo.scenes.slice(1)] };
+    const without = { ...promo, scenes: [{ ...scene, shots: shots.slice(1) }, ...promo.scenes.slice(1)] };
+    const files = { logo: await writePng(dir, "logo.png"), hero: await writePng(dir, "hero.webp") };
+    const size = { width: 1920, height: 1080, assetFiles: files };
+    const html = buildComposition(withLockup, size).files.get(`compositions/${scene.id}.html`)!;
+    expect(html).toContain('<img class="lk-mark" src="assets/media/logo.png"');
+    expect(html).toContain('<span class="lk-name">Acme &lt;Labs&gt;</span>');
+    // The mark is 1.5x the body size: 66 px at a 1080 px short edge.
+    expect(html).toMatch(/\.lk-mark \{[^}]*height: 66px;/);
+    const fieldPx = (h: string) => Number(/\.lo-field \{[^}]*font-size: (\d+)px;/.exec(h)?.[1]);
+    const plain = buildComposition(without, size).files.get(`compositions/${scene.id}.html`)!;
+    expect(fieldPx(html)).toBeLessThan(fieldPx(plain));
+  });
+
+  it("draws the mark alone, named for the brand, when the lockup has no text", async () => {
+    const promo = loadIrFixture("product-promo-16x9-assets");
+    const { dir, cleanup } = await tempDir("compile-lockup-mark");
+    cleanups.push(cleanup);
+    const scene = promo.scenes[0]!;
+    const shots: Shot[] = [
+      {
+        id: "brand",
+        type: "logo",
+        assetId: "logo",
+        lockup: true,
+        startMs: 0,
+        durationMs: scene.durationMs,
+        style: { textStyle: "body", region: "top" },
+      },
+    ];
+    const ir = { ...promo, scenes: [{ ...scene, shots }, ...promo.scenes.slice(1)] };
+    const files = { logo: await writePng(dir, "logo.png"), hero: await writePng(dir, "hero.webp") };
+    const html = buildComposition(ir, { width: 1920, height: 1080, assetFiles: files }).files.get(
+      `compositions/${scene.id}.html`,
+    )!;
+    expect(html).toContain('<img class="lk-mark" src="assets/media/logo.png"');
+    expect(html).toContain(`alt="${promo.brand?.name ?? "logo"}"`);
+    expect(html).not.toContain('<span class="lk-name">');
+  });
+});
+
 describe("assignLanes", () => {
   const shot = (id: string, startMs: number, durationMs: number): Shot => ({
     id,
