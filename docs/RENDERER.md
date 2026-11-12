@@ -158,8 +158,19 @@ to the exact same version in `packages/renderers/package.json` (currently
   beacon, image, WebSocket, popup, iframe, WebRTC and runtime `<video>` sources
   (`..%2f`, `..%5c`, double encoding, `file:`, `http:`). A canary server must see
   nothing and the frame must stay black, while a project clip still renders
-  ([#451](https://github.com/digitopvn/studix/issues/451)). Both patches are
-  keyed to the exact version, like the SIGTERM one below.
+  ([#451](https://github.com/digitopvn/studix/issues/451)).
+  The producer's compiler also scans the page as a string before any browser
+  starts. It downloads every `https:` URL that its regexes find (for example
+  `background:url(https://…)`, even inside caption text), inlines external
+  `<script src>`, and copies host files that markup points to outside the
+  project. Studix stages every asset in the project and bundles its fonts, so
+  the engine patch makes `downloadToTemp` and `fetchPublicHttpsText` refuse
+  every URL, and the producer patch skips script inlining and never copies a
+  file from outside the project. `engine-launch-options.test.ts` checks that no
+  request reaches the download transport, and the same integration test checks
+  that such markup leaves the frame black
+  ([#457](https://github.com/digitopvn/studix/issues/457)). All of these
+  patches are keyed to the exact version, like the SIGTERM one below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through
   `ownedLaunchOptions()`, which leaves Puppeteer's `handleSIGTERM` at `true`,
   so a worker SIGTERM closed Chrome mid-render and lost the grace period.
