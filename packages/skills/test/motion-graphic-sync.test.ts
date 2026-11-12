@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { beatsOf, MIN_SECTION_MS, musicSections } from "../src/motion-graphic/motion-graphic-music.ts";
+import { MG_STAGES, motionGraphicVoiceStage } from "../src/motion-graphic/motion-graphic-pack.ts";
 import {
   cardMinimums,
   snapCutsToBeats,
@@ -186,5 +187,22 @@ describe("estimateWords", () => {
       expect(w.startMs).toBeGreaterThanOrEqual(words[i]?.endMs ?? 0);
     });
     expect(estimateWords("", { startMs: 0, endMs: 100 })).toEqual([]);
+  });
+});
+
+describe("voice checkpoint", () => {
+  const bed = { id: "music-bed-track", kind: "music" as const, assetId: "m", startMs: 0, volume: 0.3 };
+  const voiced = (audio: (typeof bed)[], wordSync?: string) => ({
+    ir: { ...ir, audio, metadata: { ...ir.metadata, ...(wordSync ? { wordSync } : {}) } },
+  });
+  const valid = (output: unknown, saved: Record<string, unknown>) =>
+    motionGraphicVoiceStage.isCheckpointValid?.(output as never, saved as never);
+
+  it("is voiced again when it predates word sync or was laid without the music bed", () => {
+    const music = { [MG_STAGES.music]: { ir: { ...ir, audio: [bed] } } };
+    expect(valid(voiced([bed], "estimate"), music)).toBe(true);
+    expect(valid(voiced([bed]), music)).toBe(false);
+    expect(valid(voiced([], "alignment"), music)).toBe(false);
+    expect(valid(voiced([], "alignment"), {})).toBe(true);
   });
 });

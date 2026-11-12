@@ -370,16 +370,19 @@ cắt kèm fade.
 
 Music bed (khi storyboard xin) chạy trước voice-over. Nó được soạn theo ba section (`musicSections` trong
 [`motion-graphic-music.ts`](../packages/skills/src/motion-graphic/motion-graphic-music.ts)): intro dưới card hook,
-build dưới các card message và drop đúng lúc card CTA bắt đầu. Mỗi section dài ít nhất 3 giây; video quá ngắn
+build dưới các card message và drop ở chỗ card CTA bắt đầu theo storyboard. Mỗi section dài ít nhất 3 giây; video quá ngắn
 thì còn build và drop, hoặc một section. Prompt nêu BPM của style profile. Beat của bed được tìm cục bộ bằng FFmpeg
 (`analyzeBeats`, không gọi API trả phí) và lưu ở `metadata.beats`. Bed ở mức 0.3 và hạ 9 dB khi có lời đọc
 (`duckDb`). Sau khi chia card theo bản đọc, stage voice dời từng lần cắt tới downbeat gần nhất trong 400 ms
 (lần cắt vào card CTA, chỗ nhạc drop: 800 ms), không có thì tới beat gần nhất trong 250 ms
 (`snapCutsToBeats`). Một lần cắt chỉ được dời khi cả hai card hai bên vẫn đủ chỗ cho bản đọc của mình, và
 tổng độ dài giữ nguyên. `metadata.beatSync` ghi BPM, số lần cắt và số lần cắt rơi đúng beat. Không có bed,
-hoặc bed không có nhịp rõ, thì nhịp cắt giữ nguyên.
+hoặc bed không có nhịp rõ, thì nhịp cắt giữ nguyên. Drop được soạn cho lần cắt vào card CTA đã lên kế hoạch:
+khi bản đọc chia lại card, lần cắt đó có thể lệch khỏi drop (nó vẫn được dời tới downbeat gần nhất). Vì nhạc
+được tạo trước, một job thất bại ở voice (lời đọc dài hơn cả video) vẫn đã trả phí nhạc;
+checkpoint của stage nhạc được giữ nên chạy tiếp job đó không phải trả tiền nhạc lần nữa.
 
-Headline và layout của mỗi card có lời đọc xuất hiện theo lời
+Headline và layout của mỗi card có lời đọc (trừ headline của card mở đầu, luôn hiện ngay từ đầu) xuất hiện theo lời
 ([`motion-graphic-reveals.ts`](../packages/skills/src/motion-graphic/motion-graphic-reveals.ts)). Headline (hay câu
 CTA) vào ở từ đầu tiên nó có chung với lời đọc, nếu từ đó nằm trong 40% đầu card, không thì ở từ đầu tiên được
 đọc. Layout vào ở từ ngay sau từ cuối cùng trùng với headline (lời đọc chuyển sang chi tiết layout minh họa),

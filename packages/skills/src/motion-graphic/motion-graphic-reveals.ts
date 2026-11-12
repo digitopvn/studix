@@ -40,9 +40,10 @@ function reveal(shot: Shot, startMs: number, cardMs: number): Shot {
  * The headline (or the CTA line) enters on the first word it shares with the voice, when that word comes
  * early in the card, else on the first spoken word. The layout enters on the first word after the last one
  * it shares with the headline (the voice moving on to the detail the layout shows), else halfway through
- * the line, and always after the headline and long enough before the card ends to be seen.
+ * the line, and always after the headline and long enough before the card ends to be seen. The opening
+ * card's headline stays on from its first frame.
  */
-function revealCard(scene: Scene, words: readonly SpokenWord[]): Scene {
+function revealCard(scene: Scene, words: readonly SpokenWord[], opening: boolean): Scene {
   const first = words[0];
   if (!first) return scene;
   const cardMs = scene.durationMs;
@@ -62,7 +63,8 @@ function revealCard(scene: Scene, words: readonly SpokenWord[]): Scene {
   return {
     ...scene,
     shots: scene.shots.map((sh) => {
-      if (sh === headline) return reveal(sh, headlineAt, cardMs);
+      // The opening frame (a feed's preview and thumbnail) always shows the hook's headline.
+      if (sh === headline) return opening ? sh : reveal(sh, headlineAt, cardMs);
       // A card too short to show its layout after its headline reveals both together.
       if (sh === layout) return reveal(sh, Math.max(layoutAt, headlineAt), cardMs);
       return sh;
@@ -98,7 +100,7 @@ export function withSpokenReveals(
     ...ir,
     scenes: ir.scenes.map((sc, i) => {
       const words = byCard.get(i);
-      return words ? revealCard(sc, words) : sc;
+      return words ? revealCard(sc, words, i === 0) : sc;
     }),
   };
 }

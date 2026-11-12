@@ -66,9 +66,12 @@ export async function readStoredWords(
   workDir: string,
 ): Promise<SpokenWord[] | undefined> {
   const file = join(workDir, `${basename(storageKey)}.words.json`);
+  const storage = requireService(s, "storage");
   try {
-    const { bytes } = await requireService(s, "storage").download(s.ctx, wordsKeyOf(storageKey), file);
-    if (bytes > MAX_WORDS_BYTES) return undefined;
+    // Sized first, so an object that is not a line's timings is never fetched whole.
+    const head = await storage.head(s.ctx, wordsKeyOf(storageKey));
+    if (!head || head.bytes > MAX_WORDS_BYTES) return undefined;
+    await storage.download(s.ctx, wordsKeyOf(storageKey), file);
     const parsed = StoredWords.safeParse(JSON.parse(await readFile(file, "utf8")));
     return parsed.success && parsed.data.length > 0 ? parsed.data : undefined;
   } catch (err) {

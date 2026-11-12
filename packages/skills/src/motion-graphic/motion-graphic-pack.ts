@@ -69,7 +69,7 @@ export const motionGraphicSkill: Skill = {
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
     "generated voice-over with burned captions, a soft whoosh on each cut and one SFX accent on the CTA card; " +
-    "the agent's storyboard has about one card every five seconds (3–12); a music bed drops on the CTA card, " +
+    "the agent's storyboard has about one card every five seconds (3–12); a music bed is composed to drop where the CTA card starts, " +
     "dips under the voice and the cuts land on its beats; headlines and layouts enter on their spoken words; " +
     "the whoosh, accent and music bed " +
     "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
@@ -509,6 +509,15 @@ export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
+  // A voice-over checkpointed before the music stage moved ahead of it was laid without the bed (and without
+  // word sync): it is voiced again on the music's IR, reusing its stored takes, so the bed is never dropped.
+  isCheckpointValid: (output, saved) => {
+    const voiced = IrOutput.safeParse(output);
+    if (!voiced.success || voiced.data.ir.metadata?.wordSync === undefined) return false;
+    const music = IrOutput.safeParse(saved[MG_STAGES.music]);
+    const bed = music.success && music.data.ir.audio?.some((t) => t.id === "music-bed-track");
+    return !bed || (voiced.data.ir.audio ?? []).some((t) => t.id === "music-bed-track");
+  },
   // Version 4 measures every take first and recuts the cards around them; 5 reads a broken take again; 6
   // cuts on the music's beats and reveals each card on its spoken words.
   cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 6, { ir: irOf(s), media: s.services.media?.id ?? null }),
@@ -743,32 +752,38 @@ export const motionGraphicMusicStage: StageDefinition = {
       await rm(workDir, { recursive: true, force: true });
       return withoutMusic(ir, toStudixError(err).message);
     }
-    const beats = await musicBeats(s, music, workDir, ir.format.durationMs);
-    const { beats: _stale, ...metadata } = ir.metadata ?? {};
-    const durationMs = Math.min(ir.format.durationMs, music.asset.durationMs ?? ir.format.durationMs);
-    const next = {
-      ...ir,
-      assets: [...ir.assets.filter((a) => a.id !== music.asset.id), music.asset],
-      audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "music-bed-track"),
-        {
-          id: "music-bed-track",
-          kind: "music" as const,
-          assetId: music.asset.id,
-          startMs: 0,
-          durationMs,
-          volume: MUSIC_VOLUME,
-          duckDb: MUSIC_DUCK_DB,
-          fadeOutMs: Math.min(MUSIC_FADE_OUT_MS, durationMs),
-        },
-      ],
-      metadata: { ...metadata, ...(beats ? { beats } : {}) },
-    };
-    await rm(workDir, { recursive: true, force: true });
-    return {
-      output: { ir: await billedOnFailure([music.usage], () => VideoIR.parse(next)) },
-      usage: [music.usage],
-    };
+    // The bed is paid for from here on: a cancel during its analysis still bills it, and the scratch goes.
+    try {
+      const beats = await billedOnFailure([music.usage], () =>
+        musicBeats(s, music, workDir, ir.format.durationMs),
+      );
+      const { beats: _stale, ...metadata } = ir.metadata ?? {};
+      const durationMs = Math.min(ir.format.durationMs, music.asset.durationMs ?? ir.format.durationMs);
+      const next = {
+        ...ir,
+        assets: [...ir.assets.filter((a) => a.id !== music.asset.id), music.asset],
+        audio: [
+          ...(ir.audio ?? []).filter((t) => t.id !== "music-bed-track"),
+          {
+            id: "music-bed-track",
+            kind: "music" as const,
+            assetId: music.asset.id,
+            startMs: 0,
+            durationMs,
+            volume: MUSIC_VOLUME,
+            duckDb: MUSIC_DUCK_DB,
+            fadeOutMs: Math.min(MUSIC_FADE_OUT_MS, durationMs),
+          },
+        ],
+        metadata: { ...metadata, ...(beats ? { beats } : {}) },
+      };
+      return {
+        output: { ir: await billedOnFailure([music.usage], () => VideoIR.parse(next)) },
+        usage: [music.usage],
+      };
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
   },
 };
 
