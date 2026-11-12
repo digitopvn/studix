@@ -11,7 +11,15 @@ import {
 import { htmlCardScript } from "./html-card-compile.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
 import { writeLayoutMotion } from "./layout-markup.ts";
-import { cameraScales, compileDepth, type Plane, PUSH, planeId, writeCamera } from "./scene-depth.ts";
+import {
+  cameraScales,
+  compileDepth,
+  type Plane,
+  PUSH,
+  planeId,
+  SAFE_INSET,
+  writeCamera,
+} from "./scene-depth.ts";
 import {
   type ResolvedTransition,
   TimelineWriter,
@@ -79,7 +87,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   const prefix = `s-${scene.id}__`;
   const { width, height } = markup.frame;
   const stageId = `${prefix}stage`;
-  const safe = Math.round(0.07 * Math.min(width, height));
+  const safe = Math.round(SAFE_INSET * Math.min(width, height));
   const gap = Math.round(0.03 * Math.min(width, height));
   // A logo lockup over the content (a brand mark on the hook) takes its height from what a layout may fill.
   const lockups = scene.shots.filter((s) => s.type === "logo" && s.lockup && s.style?.region === "top");

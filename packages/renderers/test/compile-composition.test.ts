@@ -425,8 +425,21 @@ describe("buildComposition camera, depth and match cuts", () => {
     for (let i = 0; i < 2; i++) expect(motifTween(scene(i + 1)).from).toEqual(motifTween(scene(i)).to);
     expect(scene(0)).not.toMatch(/tl\.fromTo\("#s-c0__stage"/);
     expect(scene(1)).not.toMatch(/tl\.fromTo\("#s-c1__stage", [^\n]*, 0\);/);
-    expect(scene(1)).toContain('{"clipPath":"circle(0% at 50% 50%)"');
-    expect(scene(2)).toContain('{"clipPath":"circle(0% at 50% 50%)"');
+    expect(scene(1)).toContain('{"clipPath":"circle(12% at 50% 50%)"');
+    expect(scene(2)).toContain('{"clipPath":"circle(12% at 50% 50%)"');
+  });
+
+  it("keeps the motif in the safe-area gutter, outside every text box", () => {
+    const gutter = Math.round(0.07 * Math.min(previewSize.width, previewSize.height));
+    for (let i = 0; i < 3; i++) {
+      const size = Number(/#s-c\d__motif \{[^}]*width: (\d+)px/.exec(scene(i))?.[1]);
+      for (const pose of Object.values(motifTween(scene(i)))) {
+        const cx = pose.x! + size / 2;
+        const cy = pose.y! + size / 2;
+        expect(Math.min(cx, previewSize.width - cx)).toBeLessThanOrEqual(gutter / 2 + 1);
+        expect(Math.min(cy, previewSize.height - cy)).toBeLessThanOrEqual(gutter / 2 + 1);
+      }
+    }
   });
 
   it("passes the HyperFrames linter with no errors", async () => {

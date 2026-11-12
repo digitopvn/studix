@@ -100,18 +100,20 @@ const GRAIN_TILE = `url("data:image/svg+xml,${encodeURIComponent(
 )}")`;
 
 /**
- * Where the motif rests at each cut, as fractions of the frame (centre x, centre y): the four corners in
- * clockwise order, so each scene carries it along one edge of the frame and never across the headline in the
- * middle. Scene `i` moves from pose `i` to pose `i + 1` and turns a quarter, from diagonal at one corner to
- * diagonal at the next, so a bar lies along the edge it travels; the next scene picks the motif up exactly
- * where, and as turned as, this one left it.
+ * Where the motif rests at each cut: the four corners of the frame in clockwise order, each centred in the
+ * safe-area gutter that the content (headline, layout, captions) never enters. Scene `i` moves from pose `i`
+ * to pose `i + 1` along that gutter and turns a quarter, so the motif never crosses text, and the next scene
+ * picks it up exactly where, and as turned as, this one left it. Every pose is a pure function of the scene
+ * index and the frame, so a render is deterministic.
  */
-const MOTIF_POSES: ReadonlyArray<readonly [number, number]> = [
-  [0.9, 0.1],
-  [0.9, 0.8],
-  [0.1, 0.8],
-  [0.1, 0.1],
+const MOTIF_CORNERS: ReadonlyArray<readonly [0 | 1, 0 | 1]> = [
+  [1, 0],
+  [1, 1],
+  [0, 1],
+  [0, 0],
 ];
+/** The content inset, as a fraction of the frame's short edge (the `.content` safe area of a scene). */
+export const SAFE_INSET = 0.07;
 
 export interface DepthMarkup {
   /** Planes behind the underlay, behind the content (the motif) and in front of it, and the fixed lens. */
@@ -240,8 +242,10 @@ export function compileDepth(
   let motif = "";
   if (scene.motif) {
     const id = `${prefix}motif`;
-    const size = Math.round((scene.motif.shape === "bar" ? 0.16 : 0.09) * short);
-    const height = scene.motif.shape === "bar" ? Math.round(size / 6) : size;
+    // The motif fits in the gutter between the frame edge and the content, so it never overlaps text.
+    const gutter = Math.round(SAFE_INSET * short);
+    const size = Math.round((scene.motif.shape === "bar" ? 1 : 0.7) * gutter);
+    const height = scene.motif.shape === "bar" ? Math.max(4, Math.round(size / 5)) : size;
     const colour = cssColor(scene.motif.color ?? "accent");
     const fill =
       scene.motif.shape === "ring"
@@ -263,10 +267,12 @@ export function compileDepth(
       ]),
     );
     const pose = (k: number): Vars => {
-      const [cx, cy] = MOTIF_POSES[k % MOTIF_POSES.length]!;
+      const [right, bottom] = MOTIF_CORNERS[k % MOTIF_CORNERS.length]!;
+      const cx = right ? frame.width - gutter / 2 : gutter / 2;
+      const cy = bottom ? frame.height - gutter / 2 : gutter / 2;
       return {
-        x: Math.round(cx * frame.width - size / 2),
-        y: Math.round(cy * frame.height - height / 2),
+        x: Math.round(cx - size / 2),
+        y: Math.round(cy - height / 2),
         rotation: 45 + 90 * k,
       };
     };

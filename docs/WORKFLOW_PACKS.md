@@ -415,10 +415,10 @@ checkpoint của stage nhạc được giữ nên chạy tiếp job đó không 
 
 Headline và layout của mỗi card có lời đọc (trừ headline của card mở đầu, luôn hiện ngay từ đầu) xuất hiện theo lời
 ([`motion-graphic-reveals.ts`](../packages/skills/src/motion-graphic/motion-graphic-reveals.ts)). Headline (hay câu
-CTA) vào ở từ đầu tiên nó có chung với lời đọc, nếu từ đó nằm trong 40% đầu card, không thì ở từ đầu tiên được
-đọc. Layout vào ở từ ngay sau từ cuối cùng trùng với headline (lời đọc chuyển sang chi tiết layout minh họa),
-không thì ở giữa câu. Layout luôn vào sau headline ít nhất 300 ms và còn ít nhất 1.5 giây trên màn hình. Mỗi
-lần reveal bắt đầu sớm 120 ms để chuyển động đang chạy khi nghe thấy từ. Timing lấy từ word timestamps của
+CTA) vào ở từ đầu tiên nó có chung với lời đọc (không thì từ đầu tiên được đọc), nhưng không muộn hơn 150 ms sau
+lần cắt, nên không card nào mở bằng khung trống. Layout vào 300 ms sau headline và không muộn hơn 450 ms sau lần
+cắt, nên thiết bị luôn có trên màn hình trong khoảng 0.6 giây rồi mới chạy chuyển động của nó. Mỗi lần reveal
+bắt đầu sớm 120 ms để chuyển động đang chạy khi nghe thấy từ. Timing lấy từ word timestamps của
 ElevenLabs. Route khác, hoặc take cũ không có timing, thì từ được ước lượng trong khoảng lời đã đo.
 `metadata.wordSync` là `alignment`, `estimate` hoặc `mixed`.
 
