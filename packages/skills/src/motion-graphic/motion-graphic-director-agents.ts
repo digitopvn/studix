@@ -16,8 +16,11 @@ export const MG_SCENE_BUILD_AGENT = "motion-graphic.scene-build";
 
 /** Caps of the director's brief: one tool-less structured call on the strongest configured model. */
 export const MG_DIRECTION_LIMITS = { maxTurns: 2, maxTokens: 40_000, maxCostCents: 30, timeoutMs: 240_000 };
-/** Caps of one scene builder: one tool-less structured call that writes a fragment. */
-export const MG_SCENE_BUILD_LIMITS = { maxTurns: 2, maxTokens: 60_000, maxCostCents: 40, timeoutMs: 300_000 };
+/**
+ * Caps of one scene builder: one tool-less structured call that writes a fragment. Five builders share one
+ * provider at once, so each call runs slower than alone: ten minutes, not five.
+ */
+export const MG_SCENE_BUILD_LIMITS = { maxTurns: 2, maxTokens: 60_000, maxCostCents: 40, timeoutMs: 600_000 };
 
 // Models drift in harmless ways: a few characters over a length, numbers as strings, `focal_words` for
 // `focalWords`, a fourth focal word, a stray key, the object wrapped in a JSON string or fence. The schemas
