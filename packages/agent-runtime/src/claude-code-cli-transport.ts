@@ -51,6 +51,7 @@ export function claudeCodeCliArgs(options: ClaudeQueryOptions): string[] {
 /** A `query` that spawns the Claude Code executable directly and reads its stream-json output. */
 export function createClaudeCodeCliQuery(executable: string): ClaudeQueryFn {
   return async function* ({ prompt, options }): AsyncGenerator<ClaudeMessage> {
+    if (typeof prompt !== "string") throw imagesUnsupported();
     const child = options.spawnClaudeCodeProcess({
       command: executable,
       args: claudeCodeCliArgs(options),
@@ -97,14 +98,30 @@ export interface ClaudeCodeCliTransportOptions
   executable: string;
 }
 
-/** `ClaudeAgentTransport` for `subscription` credentials, over the Claude Code binary only. */
+function imagesUnsupported(): StudixError {
+  return new StudixError("UNAVAILABLE", "Claude subscription runs cannot send images to the model", {
+    retryable: false,
+    suggestedAction: "Use an Anthropic API key for tasks that send images.",
+  });
+}
+
+/**
+ * `ClaudeAgentTransport` for `subscription` credentials, over the Claude Code binary only. It sends a text
+ * prompt only, so a session with images is refused before the binary starts.
+ */
 export function createClaudeCodeCliTransport(options: ClaudeCodeCliTransportOptions): ClaudeAgentTransport {
   const { executable, ...rest } = options;
-  return createClaudeSdkTransport({
+  const transport = createClaudeSdkTransport({
     ...rest,
     query: createClaudeCodeCliQuery(executable),
     credentialKind: "subscription",
   });
+  return {
+    start(request) {
+      if (request.images?.length) throw imagesUnsupported();
+      return transport.start(request);
+    },
+  };
 }
 
 /**

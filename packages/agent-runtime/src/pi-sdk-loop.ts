@@ -41,6 +41,8 @@ export interface PiSdkLoopOptions {
   workspace?: PiTaskWorkspaceProvider;
   /** Retry of a turn that hit a rate limit or overload (default PI_TURN_RETRY); false fails at once. */
   turnRetry?: false | typeof PI_TURN_RETRY;
+  /** The task carries images: a model that cannot read them is refused before anything is spent. */
+  needsImages?: boolean;
 }
 
 interface Usage {
@@ -189,6 +191,7 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
           }
           const output = await runAttempt(binding, task, total, model, {
             scratchRoot: options.scratchRoot,
+            needsImages: (task.images?.length ?? 0) > 0,
             reasoningEffort: resolved.reasoningEffort,
             turnRetry: options.turnRetry ?? PI_TURN_RETRY,
             ...(workspace ? { workspace, tools } : {}),
@@ -214,7 +217,10 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
             // Best effort: the run fails either way, and the next pre-check re-tests the key.
             await binding.markRejected().catch(() => undefined);
           }
-          const fallbackAllowed = error instanceof StudixError && FALLBACK_CODES.has(error.code);
+          // A model that cannot read the task's images spent nothing; a consented fallback may.
+          const fallbackAllowed =
+            error instanceof StudixError &&
+            (FALLBACK_CODES.has(error.code) || error.details?.cannotReadImages === true);
           if (!fallbackAllowed || task.signal.aborted) break;
         }
       }
@@ -270,6 +276,8 @@ interface AttemptOptions {
   workspace?: PiTaskWorkspace;
   tools?: SandboxToolName[];
   turnRetry?: false | typeof PI_TURN_RETRY;
+  /** The task carries images: a model that cannot read them is refused before anything is spent. */
+  needsImages?: boolean;
 }
 
 /**
@@ -369,6 +377,13 @@ async function openSession(
       } as Parameters<ModelRuntime["registerProvider"]>[1]);
       model = modelRuntime.getModel(binding.provider, binding.modelId);
     }
+  }
+  if (model && attempt.needsImages && !model.input?.includes("image")) {
+    throw new StudixError("UNAVAILABLE", `Model ${binding.provider}/${binding.modelId} cannot read images`, {
+      retryable: false,
+      suggestedAction: "Choose a vision-capable model for this stage in Settings → AI & Providers.",
+      details: { cannotReadImages: true },
+    });
   }
   if (!model) {
     throw new StudixError(
@@ -518,8 +533,11 @@ async function runAttempt(
     });
 
     let prompt = buildPrompt(task);
+    // The images go with the first prompt only; a JSON repair turn is the same conversation.
+    let images = task.images?.map((i) => ({ type: "image" as const, data: i.data, mimeType: i.mimeType }));
     for (let retry = 0; ; retry++) {
-      await active.prompt(prompt);
+      await active.prompt(prompt, images?.length ? { images } : undefined);
+      images = undefined;
       if (sandboxCap) throw sandboxCap;
       throwIfAborted(task);
       const reply = [...active.messages].reverse().find((m) => m.role === "assistant");

@@ -7,6 +7,7 @@ export {
   mixAudio,
   planAudioClips,
 } from "./ffmpeg/audio-mix.ts";
+export { analyzeBeats, type BeatGrid, beatGridOf } from "./ffmpeg/beat-grid.ts";
 export {
   type DeliveryKind,
   type ExtraDelivery,

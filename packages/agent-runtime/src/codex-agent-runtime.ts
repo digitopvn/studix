@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type {
+  AgentInputImage,
   AgentRunResult,
   AgentRuntime,
   AgentStreamEvent,
@@ -31,6 +32,11 @@ export const CODEX_AGENT_RUNTIME_ID = "codex-cli";
 const CODEX_HOME = `${SANDBOX_WORK_DIR}/.codex`;
 const TASK_DIR = `${SANDBOX_WORK_DIR}/.task`;
 const SAFE_ARG = /^[A-Za-z0-9._:/-]{1,200}$/;
+const IMAGE_EXTENSIONS: Record<AgentInputImage["mimeType"], string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+};
 
 export type CodexCredential =
   | {
@@ -232,6 +238,12 @@ export function createCodexAgentRuntime(options: CodexAgentRuntimeOptions): Agen
         await sandbox.run(["sh", "-c", `cat > ${TASK_DIR}/prompt.md`], {
           stdin: sandboxTaskPrompt(task, workspace),
         });
+        const images: string[] = [];
+        for (const [i, image] of (task.images ?? []).entries()) {
+          const path = `${TASK_DIR}/image-${i}.${IMAGE_EXTENSIONS[image.mimeType]}`;
+          await sandbox.run(["sh", "-c", `cat > ${path}`], { stdin: Buffer.from(image.data, "base64") });
+          images.push(path);
+        }
         if (task.outputSchema) {
           await sandbox.run(["sh", "-c", `cat > ${TASK_DIR}/schema.json`], {
             stdin: JSON.stringify(task.outputSchema),
@@ -239,6 +251,8 @@ export function createCodexAgentRuntime(options: CodexAgentRuntimeOptions): Agen
         }
         const args = [
           "codex exec --json --skip-git-repo-check --ephemeral",
+          // `--image` takes many values; the `=` form keeps it from swallowing the arguments after it.
+          ...(images.length ? [`--image=${images.join(",")}`] : []),
           `-C ${SANDBOX_WORK_DIR}`,
           `-m ${options.model}`,
           ...(options.reasoningEffort ? [`-c model_reasoning_effort=${options.reasoningEffort}`] : []),

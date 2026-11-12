@@ -149,6 +149,17 @@ export function createClaudeCodeSandboxRuntime(options: ClaudeCodeSandboxRuntime
     id: CLAUDE_CODE_SANDBOX_RUNTIME_ID,
     ...(options.clock ? { clock: options.clock } : {}),
     loop: async (ctx, task): Promise<AgentRunResult> => {
+      // `claude --print` reads a text prompt only; refuse images before the sandbox starts.
+      if (task.images?.length) {
+        throw new StudixError(
+          "UNAVAILABLE",
+          "The Claude Code sandbox runtime cannot send images to the model",
+          {
+            retryable: false,
+            suggestedAction: "Run tasks that send images on the Claude Agent SDK runtime with an API key.",
+          },
+        );
+      }
       const credential = await options.credential(ctx);
       registerSecret(credential.secret);
       // A subscription is paid by the plan; an API key's spend is what Claude Code reports.

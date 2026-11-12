@@ -16,6 +16,7 @@ import {
   parseCheckKeys,
   parseMultixEnvelope,
 } from "../src/index.ts";
+import { spokenWordsFromTimestamps } from "../src/multix-provider.ts";
 
 /** One scripted CLI reply. `files` are written before the envelope is returned, as multix would. */
 interface Reply {
@@ -1733,6 +1734,116 @@ describe("MultixProvider synchronous audio", () => {
     await expect(
       multix.estimateCostCents({ kind: "sfx", prompt: "door slam", maxCostCents: 50 }),
     ).resolves.toBe(30);
+  });
+
+  describe("speech word timings", () => {
+    const timings = {
+      alignment: {
+        characters: [..."Hi  there"],
+        character_start_times_seconds: [0, 0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7],
+        character_end_times_seconds: [0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8234],
+      },
+      normalized_alignment: null,
+    };
+    const timedRequest = (): MediaGenerationRequest => ({
+      kind: "voice",
+      prompt: "Hi  there",
+      params: { timestamps: true },
+      idempotencyKey: "stage-3:timed",
+      maxCostCents: 10,
+      workDir,
+    });
+    const timedCli = (timestamps: string) =>
+      scriptedCli((argv) => {
+        if (argv.includes("--estimate"))
+          return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+        const out = flagValue(argv, "output")!;
+        return {
+          files: { [out]: "mp3", [`${out}.timestamps.json`]: timestamps },
+          envelope: { outputs: [{ path: out }] },
+        };
+      });
+
+    it("reads the words of an ElevenLabs take, also when the completed take is reused", async () => {
+      const cli = timedCli(JSON.stringify(timings));
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+      const result = await multix.generate(ctx, timedRequest());
+      expect(cli.calls[1]!.argv).toContain("--timestamps");
+      const words = [
+        { text: "Hi", startMs: 0, endMs: 200 },
+        { text: "there", startMs: 300, endMs: 823 },
+      ];
+      expect(result.outputs[0]!.words).toEqual(words);
+      const again = await multix.generate(ctx, timedRequest());
+      expect(cli.calls).toHaveLength(2);
+      expect(again.outputs[0]!.words).toEqual(words);
+    });
+
+    it("keeps the paid take without words when its timings are malformed", async () => {
+      const multix = new MultixProvider({ bin: "multix", runner: timedCli("{not json").runner });
+      const result = await multix.generate(ctx, timedRequest());
+      expect(result.outputs).toHaveLength(1);
+      expect(result.outputs[0]!.words).toBeUndefined();
+    });
+
+    it("turns character timings into words, falling back to the normalized alignment", () => {
+      const normalized = { alignment: null, normalized_alignment: timings.alignment };
+      expect(spokenWordsFromTimestamps(normalized).map((w) => w.text)).toEqual(["Hi", "there"]);
+      const short = { alignment: { ...timings.alignment, character_end_times_seconds: [0.1] } };
+      expect(spokenWordsFromTimestamps(short)).toEqual([]);
+      const negative = {
+        alignment: { ...timings.alignment, character_start_times_seconds: Array(9).fill(-1) },
+      };
+      expect(spokenWordsFromTimestamps(negative)).toEqual([]);
+      expect(spokenWordsFromTimestamps(null)).toEqual([]);
+      expect(spokenWordsFromTimestamps({ alignment: "x" })).toEqual([]);
+    });
+  });
+
+  it("writes the composition plan into the run directory before a sectioned ElevenLabs music run", async () => {
+    let written: unknown;
+    const cli = scriptedCli((argv) => {
+      const out = flagValue(argv, "output")!;
+      return {
+        files: { [out]: "mp3" },
+        envelope: { outputs: [{ path: out }] },
+      };
+    });
+    const runner: MultixRunner = async (argv, options) => {
+      const plan = flagValue(argv, "plan");
+      if (plan) written = JSON.parse(await readFile(join(options.cwd, plan), "utf8"));
+      return cli.runner(argv, options);
+    };
+    const multix = new MultixProvider({ bin: "multix", runner });
+    const request: MediaGenerationRequest = {
+      kind: "music",
+      prompt: "warm synth bed",
+      params: {
+        sections: [
+          { name: "intro", durationMs: 10_000 },
+          { name: "drop", durationMs: 20_000, styles: ["big drums"] },
+        ],
+      },
+      idempotencyKey: "stage-2:music",
+      maxCostCents: 50,
+      workDir,
+    };
+    // Billed for the 30 s the sections add up to.
+    await expect(multix.estimateCostCents(request)).resolves.toBe(45);
+    const result = await multix.generate(ctx, request);
+    const argv = cli.calls[0]!.argv;
+    expect(argv).toContain("--plan=composition-plan.json");
+    expect(argv.some((a) => a.startsWith("--prompt=") || a.startsWith("--music-length-ms="))).toBe(false);
+    expect(written).toMatchObject({
+      positive_global_styles: ["warm synth bed"],
+      negative_global_styles: ["vocals"],
+      sections: [
+        { section_name: "intro", duration_ms: 10_000 },
+        { section_name: "drop", duration_ms: 20_000, positive_local_styles: ["big drums"] },
+      ],
+    });
+    expect(result).toMatchObject({ costCents: 45, costSource: "estimate" });
+    expect(result.outputs).toHaveLength(1);
   });
 });
 

@@ -69,6 +69,7 @@ export * from "./motion-graphic/motion-graphic-camera.ts";
 export * from "./motion-graphic/motion-graphic-pack.ts";
 export * from "./motion-graphic/motion-graphic-storyboard.ts";
 export * from "./motion-graphic/motion-graphic-template.ts";
+export * from "./motion-graphic/motion-graphic-visual-qa.ts";
 export * from "./motion-graphic/motion-style-profiles.ts";
 export * from "./narrative-film/anime-pack.ts";
 export * from "./narrative-film/film-boards.ts";

@@ -38,6 +38,13 @@ export interface AgentInputFile {
   path: string;
 }
 
+/** An image the model sees with the task (a vision input), inline as base64. */
+export interface AgentInputImage {
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  /** Base64 of the image bytes, without a `data:` prefix. */
+  data: string;
+}
+
 export interface AgentTask {
   /** Skill or template id that framed the task. */
   skill: string;
@@ -56,6 +63,11 @@ export interface AgentTask {
    * over the network. Needs a sandboxed (tool-using) run.
    */
   inputFiles?: AgentInputFile[];
+  /**
+   * Images the model looks at with the input (vision). A runtime or model that cannot read images refuses
+   * the task with a non-retryable UNAVAILABLE before it spends anything.
+   */
+  images?: AgentInputImage[];
   signal?: AbortSignal;
   /** Live events of the run; a runtime calls it best-effort and never waits on it. */
   onEvent?: (event: AgentStreamEvent) => void;

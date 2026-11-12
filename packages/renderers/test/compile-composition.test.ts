@@ -83,6 +83,17 @@ describe("buildComposition (brand-intro 9:16)", () => {
     expect(scene("cta")).toContain('window.__timelines["cta"] = tl;');
   });
 
+  it("takes transitions and motif poses from the timeline, whatever order the scenes array is in", () => {
+    const ir = structuredClone(brandIntro);
+    ir.scenes.forEach((scene) => {
+      scene.motif = { shape: "circle" };
+    });
+    const shuffled = { ...ir, scenes: [...ir.scenes].reverse() };
+    expect([...buildComposition(shuffled, previewSize).files]).toEqual([
+      ...buildComposition(ir, previewSize).files,
+    ]);
+  });
+
   it("is deterministic", () => {
     const again = buildComposition(brandIntro, previewSize);
     expect([...again.files.entries()]).toEqual([...build.files.entries()]);
