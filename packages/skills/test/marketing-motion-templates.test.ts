@@ -8,11 +8,14 @@ import {
   HOOK_MAX_MS,
   irVariants,
   MAX_CAPTION_WORDS,
+  MOTION_FONTS,
+  MOTION_STYLE_PROFILES,
   MotionStoryboard,
   marketingScript,
   marketingVideoTemplate,
   motionGraphicStoryboardStage,
   motionGraphicTemplate,
+  motionStyleChoices,
   packPipelines,
   packRegistry,
   resolveMotionStyle,
@@ -406,6 +409,36 @@ describe("motion graphic", () => {
     expect(style.id).toEqual(expect.any(String));
   });
 
+  it("locks a named profile's palette, type, pacing and juice over the storyboard's pick", () => {
+    const brief = {
+      prompt: "Studix launch",
+      directions: [{ id: "a", name: "a", concept: "a", visualStyle: "Glass Keynote" }],
+    };
+    expect(motionStyleChoices(brief).map((p) => p.id)).toEqual(["glass-keynote"]);
+    const storyboard = {
+      styleProfile: "manga-ink",
+      beats: [
+        { onScreen: "Studix", voiceover: "Studix.", visual: "title", enter: "pop", weight: 1 },
+        { onScreen: "Fast", voiceover: "Fast.", visual: "card", enter: "slide-right", weight: 1 },
+        { onScreen: "Try it", voiceover: "Try it.", visual: "cta", enter: "slide-up", weight: 1 },
+      ],
+      music: null,
+      rationale: "x",
+    } as const;
+    const ir = motionGraphicTemplate(brief, { storyboard });
+    const glass = MOTION_STYLE_PROFILES.find((p) => p.id === "glass-keynote");
+    expect(ir.metadata).toMatchObject({ styleProfile: "glass-keynote" });
+    expect(ir.brand?.fonts).toEqual({ heading: "Plus Jakarta Sans", body: "Plus Jakarta Sans" });
+    expect(ir.brand?.palette.accent).toBe(glass?.palette.accent);
+    expect(ir.scenes.map((s) => s.shots.at(-1)?.animation?.enter)).toEqual(["scale", "slide-up", "slide-up"]);
+    expect(ir.scenes[0]?.transitionOut).toEqual(glass?.juice.transition);
+    // One beat at 123 bpm.
+    expect(ir.scenes[1]?.shots[0]?.animation?.durationMs).toBe(488);
+    // Every profile sets type only in bundled fonts and opens with an entrance it allows.
+    for (const p of MOTION_STYLE_PROFILES) expect(MOTION_FONTS).toContain(p.type.heading);
+    expect(MOTION_STYLE_PROFILES.length).toBe(70);
+  });
+
   it("renders the length and frame shape the prompt states", () => {
     const prompt =
       "A 60-second 16:9 (1920x1080) English motion-graphic video about Lá Mây. Exactly 60 seconds.";
@@ -698,7 +731,7 @@ describe("spoken length", () => {
       "background",
       "background",
     ]);
-    expect(ir.metadata?.templateVersion).toBe(8);
+    expect(ir.metadata?.templateVersion).toBe(9);
     // Landscape has the room: a short headline over a layout is set at display size too.
     expect(hook.shots[0]?.style?.textStyle).toBe("display");
   });

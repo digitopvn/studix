@@ -12,14 +12,12 @@ import {
   type LayoutSpec,
   type MotionPreset,
   type Scene,
-  type SceneTransition,
   type Shot,
   unwrapValidation,
   type VideoIR,
   validateCreativeBrief,
   validateVideoIR,
 } from "@studix/video-ir";
-import { DEFAULT_BRAND_FONTS } from "../brand-intro/brief-draft.ts";
 import { captionCues, spokenLength } from "../caption-chunks.ts";
 import {
   spokenMs,
@@ -31,7 +29,7 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 8;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 9;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -48,22 +46,45 @@ const words = (text: string) =>
     .split(/[^\p{L}\p{N}]+/u)
     .filter((w) => w.length > 2);
 
+const scoreStyle = (profile: MotionStyleProfile, wanted: ReadonlySet<string>) =>
+  words([...profile.bestFor, profile.summary].join(" ")).filter((w) => wanted.has(w)).length;
+
+const briefWords = (brief: CreativeBrief) =>
+  new Set(
+    words(
+      [
+        ...(brief.tone ?? []),
+        brief.objective ?? "",
+        brief.directions?.[0]?.visualStyle ?? "",
+        brief.prompt,
+      ].join(" "),
+    ),
+  );
+
 /**
- * The style profile of a brief: the profile its first direction names in `visualStyle`, else the one whose
- * use cases and look share the most words with the brief's tone, objective and prompt, else kinetic
- * typography (words as the visuals, the natural fit for a voice-over-led graphic). Deterministic.
+ * The style profile the brief itself names: its first direction's `visualStyle` is a profile id or name (any
+ * case, so "glass-keynote" and "Glass Keynote" both match). A named profile is a locked preset: it wins over
+ * the profile an agent's storyboard picks.
+ */
+export function namedMotionStyle(brief: CreativeBrief): MotionStyleProfile | undefined {
+  const named = brief.directions?.[0]?.visualStyle?.trim().toLowerCase();
+  if (!named) return undefined;
+  return MOTION_STYLE_PROFILES.find((p) => p.id === named || p.name.toLowerCase() === named);
+}
+
+/**
+ * The style profile of a brief: the profile it names (`namedMotionStyle`), else the one whose use cases and
+ * look share the most words with the brief's tone, objective and prompt, else kinetic typography (words as
+ * the visuals, the natural fit for a voice-over-led graphic). Deterministic.
  */
 export function resolveMotionStyle(brief: CreativeBrief): MotionStyleProfile {
-  const named = brief.directions?.[0]?.visualStyle?.trim().toLowerCase();
-  const exact = MOTION_STYLE_PROFILES.find((p) => p.id === named);
-  if (exact) return exact;
-  const wanted = new Set(
-    words([...(brief.tone ?? []), brief.objective ?? "", named ?? "", brief.prompt].join(" ")),
-  );
+  const named = namedMotionStyle(brief);
+  if (named) return named;
+  const wanted = briefWords(brief);
   let best: MotionStyleProfile | undefined;
   let bestScore = 0;
   for (const profile of MOTION_STYLE_PROFILES) {
-    const score = words([...profile.bestFor, profile.summary].join(" ")).filter((w) => wanted.has(w)).length;
+    const score = scoreStyle(profile, wanted);
     if (score > bestScore) {
       best = profile;
       bestScore = score;
@@ -72,12 +93,59 @@ export function resolveMotionStyle(brief: CreativeBrief): MotionStyleProfile {
   return best ?? (MOTION_STYLE_PROFILES.find((p) => p.id === DEFAULT_STYLE) as MotionStyleProfile);
 }
 
-/** GSAP presets and the scene transition an energy level calls for (calm fades .. hard pops). */
-function motionFor(energy: number): { enter: MotionPreset; exit: MotionPreset; transition: SceneTransition } {
-  if (energy <= 2) return { enter: "fade", exit: "fade", transition: { kind: "fade", durationMs: 500 } };
-  if (energy === 3)
-    return { enter: "slide-up", exit: "fade", transition: { kind: "slide", durationMs: 350 } };
-  return { enter: "pop", exit: "scale", transition: { kind: "zoom", durationMs: 250 } };
+/**
+ * The profiles an agent picks from for a brief: only the named one when the brief names a profile, else the
+ * `limit` that fit the brief best (ties in library order) plus the default, so the agent's prompt stays small
+ * however large the library grows. Deterministic.
+ */
+export function motionStyleChoices(brief: CreativeBrief, limit = 12): MotionStyleProfile[] {
+  const named = namedMotionStyle(brief);
+  if (named) return [named];
+  const wanted = briefWords(brief);
+  const ranked = MOTION_STYLE_PROFILES.map((profile, i) => ({
+    profile,
+    i,
+    score: scoreStyle(profile, wanted),
+  }))
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .slice(0, limit)
+    .map((r) => r.profile);
+  const fallback = MOTION_STYLE_PROFILES.find((p) => p.id === DEFAULT_STYLE) as MotionStyleProfile;
+  return ranked.includes(fallback) ? ranked : [...ranked, fallback];
+}
+
+/**
+ * The profile a graphic is drawn in: the one the brief names (a locked preset), else the storyboard's pick,
+ * else the brief's best match.
+ */
+export function motionStyleOf(brief: CreativeBrief, storyboard?: MotionStoryboard): MotionStyleProfile {
+  return (
+    namedMotionStyle(brief) ??
+    MOTION_STYLE_PROFILES.find((p) => p.id === storyboard?.styleProfile) ??
+    resolveMotionStyle(brief)
+  );
+}
+
+/**
+ * The motion a profile locks: an entrance only from its own set (anything else becomes its default), its
+ * exit and cut transition, and entrances one beat long at the middle of its tempo range (250-700 ms).
+ */
+function motionFor(style: MotionStyleProfile) {
+  const [lo, hi] = style.bpm;
+  const beatMs = Math.round(Math.min(700, Math.max(250, 120_000 / (lo + hi))));
+  const allowed: readonly MotionPreset[] = style.juice.enter;
+  return {
+    enter: style.juice.enter[0],
+    exit: style.juice.exit,
+    transition: style.juice.transition,
+    beatMs,
+    entrance: (wanted: MotionPreset | undefined, fallback: MotionPreset = style.juice.enter[0]) =>
+      wanted && allowed.includes(wanted)
+        ? wanted
+        : allowed.includes(fallback)
+          ? fallback
+          : style.juice.enter[0],
+  };
 }
 
 interface Line {
@@ -310,9 +378,8 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     brief.callToAction ??
     (language.startsWith("vi") ? "Tìm hiểu ngay" : "Learn more");
   const storyboard = options.storyboard;
-  const style =
-    MOTION_STYLE_PROFILES.find((p) => p.id === storyboard?.styleProfile) ?? resolveMotionStyle(brief);
-  const motion = motionFor(style.energy);
+  const style = motionStyleOf(brief, storyboard);
+  const motion = motionFor(style);
   const lines: Line[] = storyboard
     ? storyboard.beats.map((b) => ({
         onScreen: b.onScreen,
@@ -354,7 +421,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       background: style.palette.background,
       foreground: style.palette.foreground,
     },
-    fonts: DEFAULT_BRAND_FONTS,
+    fonts: { heading: style.type.heading, body: style.type.body },
   };
   const brand: BrandKit = {
     ...baseBrand,
@@ -397,7 +464,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     // One surface for the whole graphic, as the style profile paints it; a high-energy profile spends its
     // accent on the closing card only, so colour marks the call to action instead of every other card.
     const fill = i === last && style.energy >= 4 ? "primary" : "background";
-    const enter = line.enter ?? motion.enter;
+    const enter = motion.entrance(line.enter);
     const shots: Shot[] = [];
     if (i === last) {
       // The CTA names the brand only with a logo or a real name: without a brand, a named brand or a title,
@@ -415,7 +482,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
             align: "center",
             region: "top",
           },
-          animation: { enter, durationMs: 400 },
+          animation: { enter, durationMs: motion.beatMs },
         });
       shots.push({
         id: "cta-text",
@@ -430,7 +497,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           region: "middle",
           emphasis: "high",
         },
-        animation: { enter, durationMs: 400 },
+        animation: { enter, durationMs: motion.beatMs },
       });
     } else if (line.layout) {
       // A layout card: the headline sits on top and the layout builds under it. In landscape a headline that
@@ -452,7 +519,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
             region: "top",
             emphasis: "low",
           },
-          animation: { enter: line.enter ?? motion.enter, exit: motion.exit, durationMs: 400 },
+          animation: { enter, exit: motion.exit, durationMs: motion.beatMs },
         },
         {
           id: `${id}-layout`,
@@ -461,7 +528,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           durationMs,
           layout: line.layout,
           style: { color: inkOn(brand.palette, fill, "foreground"), align: "center", region: "middle" },
-          animation: { enter: "fade", exit: motion.exit, durationMs: 300 },
+          animation: { enter: "fade", exit: motion.exit, durationMs: Math.round(motion.beatMs * 0.75) },
         },
       );
     } else {
@@ -479,9 +546,9 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           region: "middle",
         },
         animation: {
-          enter: line.enter ?? (i === 0 ? "scale" : motion.enter),
+          enter: i === 0 ? motion.entrance(line.enter, "scale") : enter,
           exit: motion.exit,
-          durationMs: 400,
+          durationMs: motion.beatMs,
         },
       });
     }
@@ -509,6 +576,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       templateVersion: MOTION_GRAPHIC_TEMPLATE_VERSION,
       styleProfile: style.id,
       bpm: style.bpm,
+      fonts: style.type,
       ...(voiceover ? { voiceover } : {}),
       storyboard: storyboard ? "agent" : "template",
       ...(storyboard?.music ? { music: storyboard.music } : {}),

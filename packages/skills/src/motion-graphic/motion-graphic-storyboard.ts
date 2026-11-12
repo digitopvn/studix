@@ -18,7 +18,7 @@ import { motionDesignPack } from "../knowledge/packs/motion-design-pack.ts";
 import { voiceoverWordBudget } from "../marketing-video/marketing-script.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { voiceLines } from "../voice-lines.ts";
-import { motionGraphicTemplate } from "./motion-graphic-template.ts";
+import { motionGraphicTemplate, motionStyleChoices } from "./motion-graphic-template.ts";
 import { MOTION_STYLE_PROFILES } from "./motion-style-profiles.ts";
 
 export const MG_STORYBOARD_STAGE = "motion-graphic.storyboard";
@@ -135,12 +135,14 @@ export function motionCraftDigest(brief: CreativeBrief): string {
   return digest.trim();
 }
 
-const styleMenu = () =>
-  MOTION_STYLE_PROFILES.map((p) => ({
+/** The profiles that fit the brief best (only the one it names, when it names one), each in a few words. */
+const styleMenu = (brief: CreativeBrief) =>
+  motionStyleChoices(brief).map((p) => ({
     id: p.id,
     energy: p.energy,
     bestFor: p.bestFor.slice(0, 4),
     summary: truncateText(p.summary, 140),
+    entrances: p.juice.enter,
   }));
 
 const lengthOf = (brief: CreativeBrief) => Math.min(60_000, Math.max(6_000, brief.durationMs ?? 15_000));
@@ -154,14 +156,15 @@ interface Repair {
 const agentStageFor = (repair?: Repair) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
-    version: 4,
+    version: 5,
     inputSchema: StoryboardInput,
     outputSchema: AgentOutput,
     instructions:
       "You are a motion designer writing the script and storyboard of a short HTML/GSAP kinetic motion " +
       "graphic. Read the brief and the craft digest (distilled from the motion-design, motion-craft and " +
       "composition-timing knowledge packs) and apply it. Pick the one style profile from `styles` that fits " +
-      "the brief best. Write `beats.target` beats (never fewer than `beats.min` or more than `beats.max`: about " +
+      "the brief best (when `styles` holds one, the brief chose it). A profile locks the palette, type, pacing " +
+      "and entrances: give each beat an `enter` from the profile's `entrances` (any other becomes its first). Write `beats.target` beats (never fewer than `beats.min` or more than `beats.max`: about " +
       "one every five seconds, so a long video gets more cards, not longer held ones): a hook that stops the " +
       "scroll first, the call to action last. " +
       "Each beat has a short on-screen line (a headline, not the voice-over repeated), the line spoken over " +
@@ -192,7 +195,7 @@ const agentStageFor = (repair?: Repair) =>
       voiceover: brief.brief.voiceover !== false,
       wordBudget: voiceoverWordBudget(lengthOf(brief.brief)),
       beats: motionBeatRange(lengthOf(brief.brief)),
-      styles: styleMenu(),
+      styles: styleMenu(brief.brief),
       craft: motionCraftDigest(brief.brief),
       ...(repair ? { repair } : {}),
     }),
