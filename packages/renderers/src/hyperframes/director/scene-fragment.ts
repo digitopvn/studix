@@ -118,6 +118,9 @@ const URL_CALL = /url\(\s*(["']?)([^)"']*)\1\s*\)/gi;
 const fragmentUrlsOnly = (value: string) =>
   [...value.matchAll(URL_CALL)].every((m) => (m[2] ?? "").trim().startsWith("#"));
 
+/** Classes the shell styles or owns (scene sections, captions, helper-made bars); a fragment element may not wear them. */
+const RESERVED_CLASS = /^(?:scene|cap|cap-box|cw|sx-[\w-]*)$/;
+
 function htmlProblems(html: string, problems: string[]): void {
   const doc = parseDocument(html, { lowerCaseTags: true, lowerCaseAttributeNames: true });
   const seen = new Set<string>();
@@ -139,6 +142,11 @@ function htmlProblems(html: string, problems: string[]): void {
         continue;
       }
       if (tag === "section") once("html: write the scene's content only; Studix adds its <section>");
+      for (const cls of (node.attribs.class ?? "").split(/\s+/))
+        if (RESERVED_CLASS.test(cls))
+          once(
+            `html: class "${cls}" is reserved by the Studix shell (it hides or restyles the element); rename it`,
+          );
       for (const [name, value] of Object.entries(node.attribs)) {
         const attr = name.toLowerCase();
         if (attr.startsWith("on")) once(`html: event handler attribute "${name}" is not allowed`);
@@ -156,6 +164,13 @@ function htmlProblems(html: string, problems: string[]): void {
 
 /** Properties that would run time outside the timeline or bind behaviour. */
 const BANNED_PROPERTIES = /^(?:-[a-z]+-)?(?:animation|transition)(?:-|$)|^(?:behavior|-moz-binding)$/i;
+
+/** Blur filters and compositor hints: each one multiplies the per-frame cost of the sandbox render. */
+const SLOW_RENDER_CSS =
+  "blur filters, backdrop-filter and will-change make the render too slow; use a radial-gradient with transparency for glows";
+const slowCssDecl = (prop: string, value: string) =>
+  /^(?:-[a-z]+-)?(?:backdrop-filter|will-change)$/i.test(prop) ||
+  (/^(?:-[a-z]+-)?filter$/i.test(prop) && /\bblur\s*\(/i.test(value));
 
 /** The fragment's CSS with every selector under `#<sectionId>`; problems are appended. */
 function scopedCss(css: string, sectionId: string, problems: string[]): string {
@@ -177,6 +192,7 @@ function scopedCss(css: string, sectionId: string, problems: string[]): string {
   root.walkDecls((decl) => {
     if (BANNED_PROPERTIES.test(decl.prop))
       problems.push(`css: ${decl.prop} is not allowed (every motion runs on the timeline)`);
+    if (slowCssDecl(decl.prop, decl.value)) problems.push(`css: ${decl.prop}: ${SLOW_RENDER_CSS}`);
     if (!fragmentUrlsOnly(decl.value) || URL_SCHEME.test(decl.value))
       problems.push(`css: the value of ${decl.prop} loads a URL; url(...) may only point at #ids`);
     if (/\b(?:expression|image-set|element)\s*\(/i.test(decl.value))
@@ -233,6 +249,10 @@ const BANNED_JS: ReadonlyArray<[RegExp, string]> = [
   [
     /createElement(?:NS)?\s*\([^)]*["'`](?:script|style|link|img|image|iframe|video|audio|source|object|embed|foreignObject)["'`]/i,
     "elements that load files",
+  ],
+  [
+    /(?:^|[{,\s])["']?(?:filter|backdropFilter|webkitFilter|WebkitFilter|backdrop-filter|willChange|will-change)["']?\s*:|\.style\.(?:filter|backdropFilter|willChange)\b|\bsetProperty\s*\(\s*["'`](?:filter|backdrop-filter|will-change)/,
+    "tweening or setting filter, backdropFilter or willChange (blur makes the render too slow; fade a radial-gradient glow with opacity instead)",
   ],
   [/__timelines\b/, "the timeline registry (the shell registers `tl`)"],
 ];

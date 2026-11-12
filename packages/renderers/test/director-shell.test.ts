@@ -67,6 +67,30 @@ describe("scene fragment contract", () => {
     expect(problemsOf({ js: 'const sidebar = $s(".a"); const $t = 1; pop(sidebar, t0 + $t);' })).toEqual([]);
   });
 
+  it("rejects blur filters, backdrop-filter and will-change that stall the render", () => {
+    const css =
+      ".aura{filter:blur(80px)} .g{backdrop-filter:blur(4px)} .s{will-change:transform} .ok{filter:saturate(1.2)}";
+    const problems = problemsOf({ css });
+    expect(problems.filter((p) => p.includes("too slow"))).toHaveLength(3);
+    expect(problems.some((p) => p.startsWith("css: filter: ") && p.includes("radial-gradient"))).toBe(true);
+    expect(problemsOf({ js: 'tl.to(".g", { filter: "blur(1.5px)", duration: 1 }, t0);' })).toEqual([
+      expect.stringMatching(/^js: tweening or setting filter.*too slow/),
+    ]);
+    expect(
+      problemsOf({ js: "const xs = [1, 2].filter((x) => x > 1 ? true : false); pop(S, t0 + xs.length);" }),
+    ).toEqual([]);
+  });
+
+  it("rejects classes the shell owns but lets a container reuse a helper class name", () => {
+    expect(problemsOf({ html: '<div class="cam"><p class="scene cap">Hi</p></div>' })).toEqual([
+      expect.stringContaining('class "scene" is reserved'),
+      expect.stringContaining('class "cap" is reserved'),
+    ]);
+    expect(
+      problemsOf({ html: '<div class="film-frame sweep"><svg></svg><i class="glass"></i></div>' }),
+    ).toEqual([]);
+  });
+
   it("round-trips through the stored scene file", () => {
     const file = sceneFragmentFile("s01-hook", HOOK_FRAGMENT);
     expect(parseSceneFragmentFile(file)).toEqual({ sid: "s01-hook", fragment: HOOK_FRAGMENT });
@@ -126,6 +150,19 @@ describe("director shell assembly", () => {
     }).files.get("index.html") as string;
     expect(page.indexOf("window.TIMING={")).toBeGreaterThan(page.indexOf("/*TIMING:BEGIN*/ .x{}"));
     expect(page).not.toContain("window.TIMING=null");
+  });
+
+  it("styles only the helper-owned sweep and ripple bars, never a fragment's .sweep container", () => {
+    const page = build({
+      ...HOOK_FRAGMENT,
+      html: '<div class="film-frame sweep"><svg></svg></div>',
+      css: ".film-frame{left:160px;top:400px;width:760px;height:428px}",
+      js: 'sweep(".film-frame", t0 + 0.5);',
+    }).files.get("index.html") as string;
+    const shellCss = page.slice(0, page.indexOf("/*SCENE-CSS:BEGIN*/"));
+    expect(shellCss).not.toMatch(/(?:^|[\s,}])\.(?:sweep|ripple)\b[^{]*\{/);
+    expect(shellCss).toMatch(/\.sx-sweep-bar \{[^}]*opacity: 0/);
+    expect(page).toContain('sw = document.createElement("i")');
   });
 
   it("refuses a fragment that breaks the contract", () => {
