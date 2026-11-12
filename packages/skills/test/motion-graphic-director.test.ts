@@ -409,7 +409,7 @@ describe("motion-graphic film mode", () => {
     }>;
     expect(builds.map((b) => b.scene.role)).toEqual(["hook", ...ids.slice(2).map(() => "scene"), "cta"]);
     expect(builds[1]?.scene).not.toHaveProperty("onScreen");
-    expect(builds[1]?.frame).not.toHaveProperty("headlinePx");
+    expect(builds[1]?.frame).toHaveProperty("headlinePx");
     expect(builds[0]?.frame).toHaveProperty("headlinePx");
     // The surface carries across cuts: the hook opens at the system anchor, each scene where the last one left it.
     const enter = (i: number) => (builds[i]?.scene as { enterRect?: unknown } | undefined)?.enterRect;

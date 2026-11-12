@@ -330,7 +330,7 @@ function buildInput(
       captionBandPx: burnedCaptionBand(frame),
       marginPx: Math.round(0.05 * Math.min(frame.width, frame.height)),
       minTextPx: Math.round(MIN_TEXT_AT_1080 * frameScale(frame)),
-      ...(role === "scene" ? {} : { headlinePx: Math.round(HEADLINE_AT_1080 * frameScale(frame)) }),
+      headlinePx: Math.round(HEADLINE_AT_1080 * frameScale(frame)),
     },
     theme: {
       filmAccent: { token: "--film-accent", color: palette[accent] },
@@ -594,7 +594,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
             sid,
             words: words(sid),
             shellVersion: DIRECTOR_SHELL_VERSION,
-            ...(sceneRole(index, ir.scenes.length) === "scene" ? {} : { headlinePx }),
+            headlinePx,
           });
         },
       });
