@@ -90,3 +90,29 @@ Kết luận: A vẫn hơn rõ về độ "film" (UI thật, chiều sâu, khớ
   - bộ đếm lăn hiện số lỗi "4,0'5" ([#470](https://github.com/digitopvn/studix/issues/470));
   - QA hình ảnh chấm điểm nhưng không kịp sửa và có thể không nhìn thấy ảnh ([#471](https://github.com/digitopvn/studix/issues/471)).
 - So với A v2: vẫn kém, chủ yếu vì các card trống quá lâu và motif lộn xộn. Khi sửa xong #468 và #469, khoảng cách sẽ hẹp đáng kể.
+
+## Vòng 7 (director tier lần đầu, [#476](https://github.com/digitopvn/studix/pull/476), [#481](https://github.com/digitopvn/studix/pull/481))
+
+- Job `job_01m77bv0e2rbwk9x9815sxdek6`: 60 s, 124¢, 16,5 phút. Hook rơi về card vì director vượt schema (`rhythm` dài 304 ký tự).
+- Lỗi khác: device xuất hiện muộn, motif đè chữ, bộ đếm hỏng chữ số, một frame trống ở khoảng 37 s, elip CTA cắt chữ, palette chỉ có một màu xanh.
+- Đã sửa: [#477](https://github.com/digitopvn/studix/pull/477) (schema lỏng hơn, có lượt repair), [#478](https://github.com/digitopvn/studix/pull/478) (visual QA dùng ảnh tĩnh), [#479](https://github.com/digitopvn/studix/pull/479), [#480](https://github.com/digitopvn/studix/pull/480), [#482](https://github.com/digitopvn/studix/pull/482) (lỗi hình). Release [#483](https://github.com/digitopvn/studix/pull/483).
+
+## Thử hook 15 s (director và builder chạy kimi-k3.1-pro)
+
+| Lần | Job | Kết quả | Nguyên nhân, cách sửa |
+| --- | --- | --- | --- |
+| a | `job_01m77f5jq7s6h5w4b0nag82x5g` | fail ở visual-qa | match-cut cần motif, nhưng scene authored không có motif. Sửa ở [#484](https://github.com/digitopvn/studix/pull/484) (đổi thành `cut`) |
+| b | `job_01m77h5wcrj9qvzpxypxe4d72s` | hook rơi về card | builder khai báo lại `const sid`, sau bundle thành `sid2` và gây lỗi TDZ. Sửa ở [#485](https://github.com/digitopvn/studix/pull/485) (static check, bọc js trong khối riêng) |
+| c | `job_01m77jsezqzf1p7737wbb27mxw` | hook vào phim nhưng mất khung chính; dựng scene mất 16 phút | class `sweep` của shell làm container của builder có opacity 0; `filter: blur(80px)` treo render đến khi bị kill ở 600 s. Sửa ở [#487](https://github.com/digitopvn/studix/pull/487) |
+| d | `job_01m77ndxk40a5m0y8qdfa7bepb` | thành công: 11 phút, 61¢, dựng scene 4 phút | hook do director dựng có khung kính và từ khoá sáng theo giọng đọc |
+
+## Vòng 8 (sau release [#486](https://github.com/digitopvn/studix/pull/486) và #487, builder chạy kimi-k3.1-pro)
+
+- Job `job_01m77p919k4fpaxhkpsvh3w848`: thành công ngay lần đầu, 60,0 s, 165¢, khoảng 25 phút. File `video-b-r8/b-r8.mp4`.
+- Tiến bộ so với vòng 7: không còn frame trống; palette có xanh và vàng; mỗi beat có một device rõ ràng (so sánh paint vs spell, sơ đồ /mcp, `edit_scene`, timeline async, preview có Approve, bộ đếm 5,000, thanh ngân sách, MIT); hook do director dựng đã vào phim.
+- Còn yếu:
+  - hook nhỏ: khung nằm ở một phần ba trên, chữ khoảng 20 px;
+  - thẻ đoàn làm phim (director, producer, frame check) quá nhỏ, visual QA chấm 6/10;
+  - visual QA không chấm scene authored.
+- Đang làm: visual QA chấm cả scene authored và có một lượt repair builder; prompt builder có ngưỡng tỉ lệ khung hình.
+- So với A v2: B đã gần về cấu trúc và độ rõ thông tin. A vẫn hơn ở hook điện ảnh và chuyển động của hero. Chưa đạt mức ngang A.
