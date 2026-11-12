@@ -28,10 +28,12 @@ const rectSchema = z.object({
 
 /** A string a model may overshoot: trimmed and cut at `max` instead of rejected. */
 const softText = (max: number) =>
-  z.preprocess(
-    (v) => (typeof v === "string" ? truncateText(v.trim(), max) : v),
-    z.string().trim().min(1).max(max),
-  );
+  z.preprocess((v) => {
+    if (typeof v !== "string") return v;
+    // truncateText counts what is visible; the schema counts UTF-16 units, so cut again when they differ.
+    const cut = truncateText(v.trim(), max);
+    return cut.length > max ? cut.slice(0, max) : cut;
+  }, z.string().trim().min(1).max(max));
 /** A number a model may send as a numeric string. */
 const looseNumber = <T extends z.ZodType>(schema: T) =>
   z.preprocess(

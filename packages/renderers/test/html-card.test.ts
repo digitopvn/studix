@@ -165,6 +165,7 @@ describe("HTML card composition shots", () => {
     expect(hero).toMatch(/#s-hero__shot-card \{\n\s*background: radial-gradient/);
     expect(hero).toContain('<circle id="s-hero__shot-card-arc"');
     expect(hero).toContain('stroke="url(#s-hero__shot-card-g)"');
+    expect(hero).toContain('style="stroke: var(--c-accent)"');
     // The script is generated: the only card-derived strings in it are JSON-encoded selectors.
     const script = hero.slice(hero.indexOf("<script>"), hero.indexOf("</script>"));
     expect(script).toContain('var root = document.getElementById("s-hero__shot-card");');

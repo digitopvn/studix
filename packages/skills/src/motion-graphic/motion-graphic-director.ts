@@ -83,24 +83,27 @@ export const directorCompositionId = (jobId: string) =>
     .slice(-56)
     .padStart(6, "0")}`;
 
+/** The most one sandbox check and render may cost. */
+const renderCents = (s: StageContext) =>
+  Math.ceil(RENDER_TIMEOUT_SECONDS / 60) * (s.services.compositions?.centsPerMinute ?? 0);
+const budgetLeft = (s: StageContext) =>
+  s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
+
 /**
- * Whether one more builder run and one more render fit in what the job has left; the tier's reservation covers
- * one of each, so a repair turn the budget cannot hold is skipped and the card stays.
+ * Whether one more builder run and one more render fit in what the job has left. The tier is admitted for one of
+ * each; a repair turn (a schema repair inside an agent call, or a builder repair here) is paid from what is left,
+ * so a repair the budget cannot hold is skipped and the card stays.
  */
 function repairAffordable(s: StageContext): boolean {
-  const left =
-    s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
-  const render = Math.ceil(RENDER_TIMEOUT_SECONDS / 60) * (s.services.compositions?.centsPerMinute ?? 0);
-  return left >= MG_SCENE_BUILD_LIMITS.maxCostCents + render;
+  return budgetLeft(s) >= MG_SCENE_BUILD_LIMITS.maxCostCents + renderCents(s);
 }
 
-/** What the director tier may spend at most: both agent calls and the sandbox minutes of one render. */
+/**
+ * What the tier needs before it starts: both agent calls and the sandbox minutes of one render. Repair turns
+ * are not reserved; each runs only when what is left still holds it, and every render is checked the same way.
+ */
 function tierCents(s: StageContext): number {
-  return (
-    MG_DIRECTION_LIMITS.maxCostCents +
-    MG_SCENE_BUILD_LIMITS.maxCostCents +
-    Math.ceil(RENDER_TIMEOUT_SECONDS / 60) * (s.services.compositions?.centsPerMinute ?? 0)
-  );
+  return MG_DIRECTION_LIMITS.maxCostCents + MG_SCENE_BUILD_LIMITS.maxCostCents + renderCents(s);
 }
 
 /**
@@ -295,7 +298,8 @@ function authoredScene(scene: Scene, asset: AssetRef): Scene {
  * silent clip, which replaces the hook card as a full-frame video shot; agent-written scripts never reach the
  * in-worker renderer. Any failure (no sandbox, an agent cap, a fragment that breaks the contract, a failed
  * check or render) keeps the template card with a warning, so a premium job never fails where a standard one
- * renders. Both agent calls are tool-less structured output; spend is booked either way.
+ * renders. Both agent calls are tool-less structured output; each may earn one repair turn (the agent gets its
+ * rejected output back with what is wrong), paid only from budget that is left. Spend is booked either way.
  */
 export const motionGraphicDirectorStage: StageDefinition = {
   name: MG_DIRECTOR_STAGE,
@@ -376,6 +380,12 @@ export const motionGraphicDirectorStage: StageDefinition = {
           theme: { palette: resolvePalette(ir.brand), ...(ir.brand ? { fonts: ir.brand.fonts } : {}) },
           scenes: [{ sid: scene.id, fragment: checked }],
         });
+        // An agent repair turn may have spent what the render needed: never overshoot the job budget.
+        if (budgetLeft(booked()) < renderCents(s)) {
+          return keepCard(
+            "the job budget left cannot hold the sandbox render after the agents' repair turns",
+          );
+        }
         record.compositionId = compositionId;
         await storeTree(s, compositionId, await treeFiles(project, scene.id, built, { timing, direction }));
 

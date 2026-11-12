@@ -291,8 +291,8 @@ function sanitizeHtml(html: string, cardId: string, problems: Set<string>): stri
           problems.add("html: <li> must sit directly inside <ul> or <ol>, and lists hold only <li>");
 
         const attrs: string[] = [];
-        // `fill="var(--c-primary)"`: a custom property reference only, moved into a generated style attribute
-        // because Chrome does not resolve var() in an SVG presentation attribute.
+        // `fill="var(--c-primary)"`: a bare custom property reference only. It is moved into a style attribute
+        // the sanitizer writes itself, so the value the browser parses as CSS is always exactly `var(--name)`.
         const tokenPaint: string[] = [];
         for (const [rawName, rawValue] of Object.entries(node.attribs)) {
           const attr = ATTRIBUTE_NAMES.get(rawName.toLowerCase());

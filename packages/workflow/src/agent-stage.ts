@@ -306,6 +306,10 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
             maxCostCents: costCap,
             deadlineAt: new Date(Date.now() + limits.timeoutMs),
             signal: s.signal,
+            outputIssues: (output) => {
+              const checked = spec.outputSchema.safeParse(output);
+              return checked.success ? [] : issuesOf(checked.error.issues);
+            },
           });
         } catch (err) {
           const error = toStudixError(err);
