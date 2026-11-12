@@ -53,6 +53,7 @@ describe("buildComposition (brand-intro 9:16)", () => {
     const copies = [...build.copies.keys()];
     expect(copies).toContain(GSAP_ASSET);
     expect(copies).toContain("assets/fonts/be-vietnam-pro-vietnamese-800-normal.woff2");
+    expect(copies).toContain("assets/fonts/inter-vietnamese-600-normal.woff2");
     expect(build.warnings).toEqual([]);
   });
 

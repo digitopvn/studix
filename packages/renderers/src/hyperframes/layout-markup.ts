@@ -112,13 +112,27 @@ const layoutHeight = (ctx: ShotMarkupContext) => layoutRoomHeight(ctx.frame, ctx
 /**
  * How much larger a layout is drawn in a landscape frame than its short edge alone would make it: a 16:9
  * frame is almost twice as wide as its short edge, so a layout sized by that edge alone floats small under its
- * headline. Every layout still shrinks to the width and height its card leaves it.
+ * headline. Short devices (a chip row, swatches, a meter, a number) take `FILL_LANDSCAPE_BOOST`; panels whose
+ * chrome already fills the card's height (code, chat, a tool call, a player, a checklist) keep
+ * `LANDSCAPE_LAYOUT_BOOST`, since a larger chrome would only leave their text smaller. Every layout still
+ * shrinks to the width and height its card leaves it.
  */
-export const LANDSCAPE_LAYOUT_BOOST = 1.6;
+export const LANDSCAPE_LAYOUT_BOOST = 1.25;
+export const FILL_LANDSCAPE_BOOST = 1.6;
+const HEIGHT_BOUND: ReadonlySet<LayoutSpec["kind"]> = new Set([
+  "code",
+  "chat",
+  "tool-call",
+  "player",
+  "checklist",
+]);
 
-/** The layout scale of a frame: its short-edge scale, boosted in landscape. */
-export const layoutScale = (frame: { width: number; height: number }) =>
-  frameScale(frame) * (landscape(frame) ? LANDSCAPE_LAYOUT_BOOST : 1);
+/** The boost a layout is drawn at in `frame` (1 unless landscape). */
+export function layoutBoost(layout: LayoutSpec, frame: { width: number; height: number }): number {
+  if (!landscape(frame)) return 1;
+  if (layout.kind === "chips") return chipsPlan(layout.items, frame).boost;
+  return HEIGHT_BOUND.has(layout.kind) ? LANDSCAPE_LAYOUT_BOOST : FILL_LANDSCAPE_BOOST;
+}
 
 /**
  * Side (px) of each swatch square: up to 220 px at the layout scale, shrunk so `cols` squares and their gaps
@@ -139,18 +153,28 @@ const MIN_CHIP_FACTOR = 0.6;
  * How a chips layout sits: side by side, each label sized to stay on one line of its track, or hung off a
  * spine when the labels would be set below `MIN_CHIP_FACTOR` side by side (and always for four or more
  * chips on a portrait frame). A landscape row never hangs: there its labels keep the floor size and wrap
- * between words. Shared by the markup and the motion, so both draw the same arrangement.
+ * between words. A landscape row is drawn at `FILL_LANDSCAPE_BOOST` when its labels still fit one line at
+ * the floor size there, else at `LANDSCAPE_LAYOUT_BOOST`. Shared by the markup and the motion, so both draw the
+ * same arrangement.
  */
-function chipsPlan(items: readonly string[], frame: { width: number; height: number }) {
+export function chipsPlan(items: readonly string[], frame: { width: number; height: number }) {
   const n = items.length;
-  const scale = layoutScale(frame);
   const width = frame.width - 2 * Math.round(0.07 * Math.min(frame.width, frame.height));
-  const track = (Math.round(width * 0.94) - (n - 1) * 20 * scale) / n - 2 * 33 * scale;
   const longest = Math.max(...items.map((l) => Array.from(l).length));
-  const fit = (track * 0.95) / (longest * 0.6 * TEXT_STYLES.body.sizeAt1080 * scale);
+  const fitAt = (boost: number) => {
+    const scale = frameScale(frame) * boost;
+    const track = (Math.round(width * 0.94) - (n - 1) * 20 * scale) / n - 2 * 33 * scale;
+    return (track * 0.95) / (longest * 0.6 * TEXT_STYLES.body.sizeAt1080 * scale);
+  };
+  const boost = !landscape(frame)
+    ? 1
+    : fitAt(FILL_LANDSCAPE_BOOST) >= MIN_CHIP_FACTOR
+      ? FILL_LANDSCAPE_BOOST
+      : LANDSCAPE_LAYOUT_BOOST;
+  const fit = fitAt(boost);
   const factor = Math.max(MIN_CHIP_FACTOR, Math.min(n > 4 ? 0.75 : 0.9, fit));
   const column = (frame.height > frame.width && n > 3) || (!landscape(frame) && fit < MIN_CHIP_FACTOR);
-  return { column, factor: column ? 1 : factor };
+  return { column, factor: column ? 1 : factor, boost };
 }
 
 const CHECK_SVG =
@@ -250,7 +274,7 @@ export function renderLayoutMarkup(
   // in a frame almost twice as wide. There it is drawn larger (widths, heights and the type sized to fit them
   // are still capped by the content area), so the layout fills the card instead of floating in it.
   const ctx = landscape(frameCtx.frame)
-    ? { ...frameCtx, scale: frameCtx.scale * LANDSCAPE_LAYOUT_BOOST }
+    ? { ...frameCtx, scale: frameCtx.scale * layoutBoost(layout, frameCtx.frame) }
     : frameCtx;
   const width = contentWidth(ctx);
   const css: string[] = [
@@ -263,22 +287,25 @@ export function renderLayoutMarkup(
 
   switch (layout.kind) {
     case "prompt-box": {
+      // The prompt wraps in its field (the box less its padding and the send button): shrink the box until
+      // its lines and padding (about 58 px at 1080) fit the card's height.
+      const sendW = layout.action ? (Array.from(layout.action).length * 0.6 * 34 + 82) * ctx.scale : 0;
+      const fieldW = width * (portrait(ctx) ? 1 : 0.8) - 84 * ctx.scale - sendW;
+      const fieldPx = body.sizeAt1080 * 1.1 * ctx.scale;
+      const promptLines = wrappedLines(Array.from(layout.text).length, fieldW, fieldPx);
+      const k = Math.min(1, layoutHeight(ctx) / (promptLines * fieldPx * body.lineHeight + 58 * ctx.scale));
+      const c = k < 1 ? { ...ctx, scale: ctx.scale * k } : ctx;
       rule(".lo-prompt", [
         "display: flex;",
         "align-items: center;",
-        `gap: ${px(ctx, 22)};`,
-        `width: ${Math.round(width * (portrait(ctx) ? 1 : 0.8))}px;`,
-        `padding: ${px(ctx, 26)} ${px(ctx, 26)} ${px(ctx, 26)} ${px(ctx, 36)};`,
-        `border: ${px(ctx, 3)} solid ${tint("foreground", 35)};`,
-        `border-radius: ${px(ctx, 30)};`,
+        `gap: ${px(c, 22)};`,
+        `width: ${Math.round(width * (portrait(c) ? 1 : 0.8))}px;`,
+        `padding: ${px(c, 26)} ${px(c, 26)} ${px(c, 26)} ${px(c, 36)};`,
+        `border: ${px(c, 3)} solid ${tint("foreground", 35)};`,
+        `border-radius: ${px(c, 30)};`,
         `background: ${tint("foreground", 7)};`,
       ]);
-      rule(".lo-field", [
-        ...fontCss(ctx, body, 1.1),
-        "flex: 1 1 auto;",
-        "text-align: left;",
-        "min-width: 0;",
-      ]);
+      rule(".lo-field", [...fontCss(c, body, 1.1), "flex: 1 1 auto;", "text-align: left;", "min-width: 0;"]);
       rule(".lo-ch", ["opacity: 0;"]);
       rule(".lo-caret", [
         "display: inline-block;",
@@ -290,12 +317,12 @@ export function renderLayoutMarkup(
         "opacity: 0;",
       ]);
       rule(".lo-send", [
-        ...fontCss(ctx, TEXT_STYLES.caption, 1, 700),
+        ...fontCss(c, TEXT_STYLES.caption, 1, 700),
         "flex: 0 0 auto;",
-        `padding: ${px(ctx, 14)} ${px(ctx, 30)};`,
+        `padding: ${px(c, 14)} ${px(c, 30)};`,
         "border-radius: 999px;",
         "background: var(--c-accent);",
-        `color: ${inkOnAccent(ctx)};`,
+        `color: ${inkOnAccent(c)};`,
         "white-space: nowrap;",
       ]);
       const chunks = typingChunks(layout.text, TYPING_STEPS)
@@ -617,7 +644,7 @@ export function renderLayoutMarkup(
         "flex-direction: column;",
         "justify-content: space-between;",
         `gap: ${px(ctx, 20)};`,
-        `min-height: ${Math.round(Math.min((portrait(ctx) ? 200 : 260) * ctx.scale, layoutHeight(ctx) * 0.8))}px;`,
+        `min-height: ${Math.round(Math.min((portrait(ctx) ? 200 : 260) * ctx.scale, (layoutHeight(ctx) * 0.8) / Math.ceil(n / cols)))}px;`,
         `padding: ${px(ctx, 26)};`,
         `border-radius: ${px(ctx, 24)};`,
         `border: ${px(ctx, 3)} solid ${tint("foreground", 16)};`,
@@ -631,9 +658,22 @@ export function renderLayoutMarkup(
       const inner =
         (Math.round(width * 0.96) - (cols - 1) * 24 * ctx.scale) / cols - 2 * (26 + 3) * ctx.scale;
       const word = Math.max(...layout.items.flatMap((l) => l.split(/\s+/).map((w) => Array.from(w).length)));
-      const cardFactor = Math.min(
+      const widthFactor = Math.min(
         n > 3 ? 0.85 : 1,
         (inner * 0.95) / (word * 0.62 * body.sizeAt1080 * ctx.scale),
+      );
+      // The tallest card (its index, the gap and padding take about 120 px at 1080) fits the card's height,
+      // one row of cards in landscape, two in portrait with more than three.
+      const rows = Math.ceil(n / cols);
+      const longestLabel = Math.max(...layout.items.map((l) => Array.from(l).length));
+      const labelLines = wrappedLines(longestLabel, inner, body.sizeAt1080 * widthFactor * ctx.scale);
+      const perRow = (layoutHeight(ctx) - (rows - 1) * 24 * ctx.scale) / rows;
+      const cardFactor = Math.min(
+        widthFactor,
+        Math.max(
+          0.1,
+          (perRow - 120 * ctx.scale) / (labelLines * body.sizeAt1080 * body.lineHeight * ctx.scale),
+        ),
       );
       rule(".lo-ctext", [...fontCss(ctx, body, cardFactor, 700), "overflow-wrap: anywhere;"]);
       const cards = layout.items
