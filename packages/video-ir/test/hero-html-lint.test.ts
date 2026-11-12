@@ -8,7 +8,6 @@ const CLEAN = `
   .card { display: grid; gap: var(--gap); color: var(--color-foreground); }
   .ring { fill: url(#glow); }
 </style>
-<!-- hero -->
 <div class="card" role="group" aria-label="Launch">
   <h1 data-enter="slide-up" data-at="0.2" data-duration="0.6">Ra mắt <em>hôm nay</em></h1>
   <p data-enter="fade">Nhanh hơn<br>gọn hơn</p>
@@ -34,6 +33,25 @@ describe("lintHeroHtml", () => {
     ["bad data-at", '<div data-at="1e9">a</div>', "must be seconds"],
     ["unclosed", "<div><span>a</div>", "</span> was expected"],
     ["entity-encoded javascript", '<div style="x: &#106;avascript:1">a</div>', "javascript:"],
+    // Markup the renderer's plain patterns would read differently from the lint.
+    [
+      "a comment opened in an attribute",
+      '<div class="<!--"></div><style>-->"><script>x</script></style>',
+      '"<" and ">"',
+    ],
+    [
+      "a comment opened in the style block",
+      "<style>x{} <!--</style><div>--></div>",
+      '"<" is not allowed in CSS',
+    ],
+    ["an HTML comment", "<div><!-- note --></div>", "HTML comments are not allowed"],
+    ["CSS nesting with &", "<style>.a{ :not(&){display:none} }</style><p>a</p>", "nested rule blocks"],
+    ["a bare &", "<style>& .a{color:red}</style><p>a</p>", "CSS nesting"],
+    [
+      "-webkit-image-set",
+      "<div style='background: -webkit-image-set(\"https://x.test/a.png\" 1x)'>a</div>",
+      "image-set()",
+    ],
   ])("rejects %s", (_, html, problem) => {
     expect(lintHeroHtml(html).join("\n")).toContain(problem);
   });

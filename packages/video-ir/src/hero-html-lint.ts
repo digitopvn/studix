@@ -156,14 +156,27 @@ function valueProblems(raw: string, where: string, css: boolean): string[] {
         `${where}: ${match[0].slice(0, 60)} loads an external resource; only url(#id) references to ids in the card are allowed`,
       );
   }
-  if (/(?:^|[^\w-])(?:image-set|src)\s*\(/.test(text))
-    problems.push(`${where}: image-set()/src() load external resources and are not allowed`);
+  if (/(?:image-set|cross-fade|image|element|src)\s*\(/.test(text))
+    problems.push(`${where}: image-set(), cross-fade(), image(), element() and src() are not allowed`);
   if (css) {
     const outsideStrings = text.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
     for (const match of outsideStrings.matchAll(/@[a-z-]+/g))
       problems.push(
         `${where}: ${match[0]} is not allowed (no at-rules: no @import, @font-face, @keyframes or @media; animate with data-enter)`,
       );
+    // The renderer splits the fragment with plain patterns, so markup characters never appear in the CSS.
+    if (outsideStrings.includes("<") || text.includes("<"))
+      problems.push(`${where}: "<" is not allowed in CSS`);
+    // No CSS nesting: a nested block or "&" could resolve outside the card's scope.
+    if (outsideStrings.includes("&")) problems.push(`${where}: "&" (CSS nesting) is not allowed`);
+    let depth = 0;
+    for (const c of outsideStrings) {
+      if (c === "{" && ++depth > 1) {
+        problems.push(`${where}: nested rule blocks are not allowed; write flat rules`);
+        break;
+      }
+      if (c === "}") depth = Math.max(0, depth - 1);
+    }
     if (/position\s*:\s*fixed/.test(text))
       problems.push(`${where}: position: fixed is not allowed; use absolute positioning inside the card`);
   }
@@ -185,6 +198,8 @@ function attributeProblems(tag: string, name: string, value: string | undefined)
   if (!ALLOWED_ATTRS.has(lower) && !/^aria-[a-z]+$/.test(lower))
     return [`${where}: attribute "${name}" is not allowed`];
   const v = value ?? "";
+  // The renderer re-reads the markup with plain patterns, so attribute values never hold markup characters.
+  if (/[<>]/.test(v)) return [`${where}: "<" and ">" are not allowed in attribute values`];
   if (lower === "data-enter" && !(ENTER_PRESETS as string[]).includes(v))
     return [`${where}: "${v}" is not a motion preset; use one of ${ENTER_PRESETS.join(", ")}`];
   if ((lower === "data-at" || lower === "data-duration") && seconds(v) === undefined)
@@ -200,7 +215,7 @@ const ATTR = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/y;
  * Lints the markup of an `html` hero card. The fragment is plain HTML and inline SVG from a small allowlist,
  * styled by at most one `<style>` block (scoped to the card by the renderer) and animated by `data-enter`
  * (a MotionPreset), `data-at` and `data-duration` (seconds after the shot starts). No scripts, links,
- * external resources, at-rules or fixed positioning. Pure and DOM-free; returns problems an agent can act
+ * external resources, comments, at-rules, CSS nesting or fixed positioning. Pure and DOM-free; returns problems an agent can act
  * on, empty when the fragment is clean.
  */
 export function lintHeroHtml(html: string): string[] {
@@ -219,11 +234,9 @@ export function lintHeroHtml(html: string): string[] {
     if (lt < 0) break;
     i = lt;
     if (html.startsWith("<!--", i)) {
+      add("HTML comments are not allowed");
       const end = html.indexOf("-->", i + 4);
-      if (end < 0) {
-        add("an HTML comment is not closed with -->");
-        break;
-      }
+      if (end < 0) break;
       i = end + 3;
       continue;
     }

@@ -17,8 +17,9 @@ own markup and nothing checked such markup before render (issue #437).
   storyboard's pick.
 - The premium director tier is the `director` role on a `motion-graphic` job (or a host agent): the
   storyboard runs on that agent with larger caps and may hand-write HTML for up to 3 hero cards.
-- The IR gets an `html` shot: an HTML fragment with one optional `<style>` block, no scripts or external
-  resources, motion declared with `data-enter` / `data-at` / `data-duration` and played by the renderer's
+- The IR gets an `html` shot: an HTML fragment with one optional `<style>` block, no scripts, external
+  resources, comments, CSS nesting or markup characters in attribute values and CSS (the renderer splits
+  the fragment with plain patterns, so the lint keeps it unambiguous), motion declared with `data-enter` / `data-at` / `data-duration` and played by the renderer's
   GSAP timeline. `lintHeroHtml` in `@studix/video-ir` is the allowlist; `validateVideoIR` rejects a shot
   that fails it, so no path can store or render unlinted markup. The card is authored in pixels of a
   reference frame whose short edge is 1080 and the renderer zooms it to the render size, so a preview

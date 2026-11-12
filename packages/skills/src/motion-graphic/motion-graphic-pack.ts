@@ -106,6 +106,15 @@ const heroBeatsOf = (ir: VideoIR) =>
   ir.scenes.flatMap((scene, i) => (scene.shots.some((shot) => shot.type === "html") ? [i] : []));
 
 /**
+ * The hero cards a recut to `cardMs` keeps: only those that passed the visual QA (still in the IR), and only
+ * on a card at least as long as the one QA measured; a shorter card would cut its entrances short unchecked,
+ * so it is drawn built-in.
+ */
+export function recutHeroBeats(ir: VideoIR, cardMs: readonly number[]): number[] {
+  return heroBeatsOf(ir).filter((beat) => (cardMs[beat] ?? 0) >= (ir.scenes[beat]?.durationMs ?? 0));
+}
+
+/**
  * The visual QA of the hero cards, before anything is paid for: the renderer lints the composition and
  * captures each hero card where it settles, and a card with any issue (lint, outside the frame or its safe
  * margin, over the caption band, clipped text, nothing painted) is drawn as a built-in card. A renderer
@@ -443,8 +452,7 @@ function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR
     assets: input.data.payload.assets,
     storyboard: input.data.outputs[MG_STORYBOARD_STAGE]?.storyboard,
     cardMs,
-    // Only the hero cards that passed the visual QA come back.
-    heroBeats: heroBeatsOf(ir),
+    heroBeats: recutHeroBeats(ir, cardMs),
   });
   const next: VideoIR = {
     ...cut,

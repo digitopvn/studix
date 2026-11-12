@@ -363,12 +363,12 @@ CTA). Agent của host (`agentMode: "host"`) cũng là director nên cũng đư�
 viết theo pixel của khung tham chiếu có cạnh ngắn 1080 (1920x1080, 1080x1920, 1080x1080) và renderer zoom nó theo
 kích thước render, nên bản preview dàn trang y hệt bản final. Mỗi hero
 qua ba cổng: lint (`lintHeroHtml` trong `@studix/video-ir`: chỉ thẻ và thuộc tính trong allowlist, không script,
-ảnh, link, `@` rule, `url()` ngoài `url(#id)`), check (hero phải hiện đúng dòng `onScreen` của beat, tối đa 3 hero)
+ảnh, link, `@` rule, `url()` ngoài `url(#id)`, comment HTML, CSS lồng nhau, `<`/`>` trong giá trị attribute hay CSS), check (hero phải hiện đúng dòng `onScreen` của beat, tối đa 3 hero)
 và visual QA trước mọi chi phí (stage compose gọi `RendererAdapter.inspect`: HyperFrames lint composition rồi chụp
 hero ở lúc nó đứng yên để đo phần tử ra ngoài khung hay lề an toàn 3%, đè lên dải caption, chữ bị cắt, hoặc không vẽ
-gì). Hero lỗi lint hay check được trả lại agent trong lượt sửa; hero vẫn lỗi, hero ngoài premium tier và hero bị
+gì). Hero lỗi lint hay check được trả lại agent trong lượt sửa; hero vẫn lỗi, hero ngoài premium tier, hero bị
 visual QA gắn cờ được vẽ thành card dựng sẵn, kèm `warnings` ở output stage storyboard hoặc `heroQa` ở output stage
-compose. Renderer không có `inspect` thì mọi hero thành card dựng sẵn. Voice-over
+compose. Renderer không có `inspect` thì mọi hero thành card dựng sẵn. Lần recut ở stage voice giữ hero chỉ khi card không ngắn hơn lúc visual QA đo; card ngắn lại thì vẽ card dựng sẵn. Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
 từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất, tới khi mọi card đủ thời gian đọc câu của nó. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
 nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do

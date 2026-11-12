@@ -38,6 +38,7 @@ import {
   motionBeatRange,
   packPipelines,
   packRegistry,
+  recutHeroBeats,
 } from "../src/index.ts";
 
 const clock = { now: () => new Date() };
@@ -1320,6 +1321,28 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
       ["text"],
       ["logo", "cta"],
     ]);
+  });
+
+  it("keeps a hero through a recut only on a card at least as long as the one the visual QA measured", () => {
+    const scene = (id: string, durationMs: number, type: "html" | "text") => ({
+      id,
+      durationMs,
+      background: { color: "background" as const },
+      shots: [
+        type === "html"
+          ? { id: `${id}-hero`, type, startMs: 0, durationMs, html: "<p>a</p>" }
+          : { id: `${id}-text`, type, startMs: 0, durationMs, text: "a" },
+      ],
+    });
+    const ir = {
+      scenes: [
+        scene("hook", 3000, "html"),
+        scene("message-1", 3000, "text"),
+        scene("message-2", 3000, "html"),
+      ],
+    } as unknown as VideoIR;
+    expect(recutHeroBeats(ir, [3000, 2000, 3500])).toEqual([0, 2]);
+    expect(recutHeroBeats(ir, [2900, 4000, 3000])).toEqual([2]);
   });
 
   it("draws a hero the visual QA flags, or any hero outside the premium tier, as a built-in card", async () => {

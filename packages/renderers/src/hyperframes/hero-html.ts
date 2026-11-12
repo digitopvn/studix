@@ -2,8 +2,8 @@ import type { MotionPreset } from "@studix/video-ir";
 
 /**
  * Helpers for `html` hero cards. The markup reaching the renderer already passed lintHeroHtml (enforced by
- * validateVideoIR): balanced allowlisted tags, at most one <style> block without at-rules, no scripts. These
- * helpers rely on that and stay regex-based.
+ * validateVideoIR): balanced allowlisted tags, no comments, no "<" or ">" in attribute values, at most one
+ * <style> block without "<", at-rules or nesting, no scripts. These helpers rely on that and stay regex-based.
  */
 
 /** Entrance of one `data-enter` element; times are seconds after the shot starts. */
@@ -118,7 +118,7 @@ function scopeSelector(selector: string, root: string): string {
 
 /**
  * Prefixes every top-level selector of `css` with `root`; `html`, `body`, `:root` and `:host` map to the
- * root itself. Nested rule blocks are copied verbatim (CSS nesting resolves them against the scoped parent).
+ * root itself. The lint rejects nested rule blocks, so every block here is a flat declaration list.
  */
 export function scopeCss(css: string, root: string): string {
   const source = css.replace(/\/\*[\s\S]*?\*\//g, "");
