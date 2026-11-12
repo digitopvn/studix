@@ -782,6 +782,9 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 60
+        },
+        "lockup": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1527,6 +1530,178 @@
                 "kind",
                 "value",
                 "label"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "chat"
+                },
+                "prompt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "reply": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 40
+                }
+              },
+              "required": [
+                "kind",
+                "prompt"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "tool-call"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 48,
+                  "pattern": "^[^\\r\\n]*$"
+                },
+                "args": {
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 24
+                      },
+                      "value": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 48
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "value"
+                    ]
+                  }
+                },
+                "status": {
+                  "default": "done",
+                  "type": "string",
+                  "enum": [
+                    "running",
+                    "done"
+                  ]
+                },
+                "result": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 60
+                }
+              },
+              "required": [
+                "kind",
+                "name"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "pipeline"
+                },
+                "items": {
+                  "minItems": 2,
+                  "maxItems": 6,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 24
+                  }
+                },
+                "active": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 5
+                }
+              },
+              "required": [
+                "kind",
+                "items"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "player"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 48
+                },
+                "action": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 24
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "usage"
+                },
+                "used": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 999999999
+                },
+                "cap": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 999999999
+                },
+                "prefix": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4
+                },
+                "suffix": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 12
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 60
+                }
+              },
+              "required": [
+                "kind",
+                "used",
+                "cap"
               ]
             }
           ]

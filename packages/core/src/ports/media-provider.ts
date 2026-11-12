@@ -44,6 +44,13 @@ export interface MediaGenerationRequest {
   journal?: MediaJobJournal;
 }
 
+/** One spoken word and when it is heard, in milliseconds on the timeline of the file it was spoken in. */
+export interface SpokenWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
 export interface GeneratedMedia {
   /** Absolute path of the generated file inside workDir. */
   filePath: string;
@@ -51,6 +58,11 @@ export interface GeneratedMedia {
   width?: number;
   height?: number;
   durationMs?: number;
+  /**
+   * Word timings of a speech output on the file's own timeline, in spoken order, when the provider reports
+   * them (absent otherwise; callers estimate timings themselves then).
+   */
+  words?: SpokenWord[];
 }
 
 /** A job the upstream provider runs asynchronously; its id is enough to resume it without paying again. */

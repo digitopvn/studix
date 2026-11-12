@@ -122,7 +122,9 @@ const CreateVideoInput = z
     brief: z
       .record(z.string(), z.unknown())
       .optional()
-      .describe("CreativeBrief object (schema via studix_inspect include=schemas); overrides prompt."),
+      .describe(
+        "CreativeBrief object (schema via studix_inspect include=schemas; brandUrl/brandLogo/brandColors for a brand kit); overrides prompt.",
+      ),
     spec: z
       .record(z.string(), z.unknown())
       .optional()

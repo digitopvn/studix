@@ -90,7 +90,10 @@ describe("codex agent runtime", () => {
         },
       }),
     });
-    const result = await runtime.run(testTenant(), task({ outputSchema: { type: "object" } }));
+    const result = await runtime.run(
+      testTenant(),
+      task({ outputSchema: { type: "object" }, images: [{ mimeType: "image/png", data: "aW1n" }] }),
+    );
     expect(result).toMatchObject({
       output: { ok: true },
       turns: 1,
@@ -102,6 +105,8 @@ describe("codex agent runtime", () => {
     expect(exec).toContain("-m gpt-5.5");
     expect(exec).toContain("model_reasoning_effort=high");
     expect(exec).toContain("--output-schema /work/.task/schema.json");
+    expect(exec).toContain("--image=/work/.task/image-0.png");
+    expect(ws.files.get("/work/.task/image-0.png")).toBe("img");
     // The login goes in through stdin, never on the command line.
     expect(ws.commands.join("\n")).not.toContain("first");
     expect(ws.files.get("/work/.codex/auth.json")).toBe('{"tokens":"rotated"}');

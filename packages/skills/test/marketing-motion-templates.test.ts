@@ -9,6 +9,7 @@ import {
   irVariants,
   MAX_CAPTION_WORDS,
   MOTION_FONTS,
+  MOTION_GRAPHIC_TEMPLATE_VERSION,
   MOTION_STYLE_PROFILES,
   MotionStoryboard,
   marketingScript,
@@ -22,6 +23,7 @@ import {
   spokenLength,
   variantIr,
   voiceoverWordBudget,
+  withRestyledCards,
   wordCount,
 } from "../src/index.ts";
 import { VO_WORDS_PER_SECOND } from "../src/marketing-video/marketing-script.ts";
@@ -409,6 +411,28 @@ describe("motion graphic", () => {
     expect(style.id).toEqual(expect.any(String));
   });
 
+  it("draws a hero only where allowed, never on a card the visual review redesigns", () => {
+    const brief = { prompt: "Studix launch" };
+    const hero = { html: '<div class="c"><h1 data-enter="fade">Fast</h1></div>' };
+    const storyboard: MotionStoryboard = {
+      styleProfile: "kinetic-typography",
+      beats: [
+        { onScreen: "Studix", voiceover: "Studix.", visual: "title", enter: "fade", weight: 1 },
+        { onScreen: "Fast", voiceover: "Fast.", visual: "card", enter: "fade", weight: 1, hero },
+        { onScreen: "Try it", voiceover: "Try it.", visual: "cta", enter: "fade", weight: 1 },
+      ],
+      music: null,
+      rationale: "x",
+    };
+    const types = (ir: VideoIR) => ir.scenes.map((sc) => sc.shots.map((sh) => sh.type));
+    const ir = motionGraphicTemplate(brief, { storyboard });
+    expect(types(ir)[1]).toEqual(["html"]);
+    expect(types(motionGraphicTemplate(brief, { storyboard, heroBeats: [] }))[1]).not.toContain("html");
+    const restyled = withRestyledCards(ir, brief, storyboard, [2]);
+    expect(types(restyled)[1]).not.toContain("html");
+    expect(withRestyledCards(ir, brief, storyboard, [1]).scenes[1]).toEqual(ir.scenes[1]);
+  });
+
   it("locks a named profile's palette, type, pacing and juice over the storyboard's pick", () => {
     const brief = {
       prompt: "Studix launch",
@@ -733,7 +757,7 @@ describe("spoken length", () => {
       "background",
       "background",
     ]);
-    expect(ir.metadata?.templateVersion).toBe(10);
+    expect(ir.metadata?.templateVersion).toBe(MOTION_GRAPHIC_TEMPLATE_VERSION);
     // Landscape has the room: a short headline over a layout is set at display size too.
     expect(hook.shots[0]?.style?.textStyle).toBe("display");
   });

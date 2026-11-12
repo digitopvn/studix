@@ -28,11 +28,12 @@ import {
   voiceoverWordBudget,
 } from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
+import type { BrandSource } from "./motion-graphic-brand.ts";
 import { luminance, motionDepthFor, planCameras, planTransitions } from "./motion-graphic-camera.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 10;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 11;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -370,6 +371,12 @@ export interface MotionGraphicOptions {
    * that passes `lintHeroHtml` is drawn. The compose stage narrows it to the heroes that pass visual QA.
    */
   heroBeats?: readonly number[];
+  /**
+   * The brand read from `brief.brandUrl` and `brief.brandLogo` (the pack's brand stage). Its name is used when
+   * the brief has no `brand`; its colours when the brief has neither `brandColors` nor `brand`; its logo when
+   * the brief's brand names none.
+   */
+  brandSource?: BrandSource;
 }
 
 /**
@@ -422,10 +429,12 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       suggestedAction: `Cut the voice-over to at most ${budget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables), or lengthen the video.`,
     });
   }
-  // The brand the storyboard found in the brief, kept only when the brief really writes it.
+  const source = options.brandSource;
+  // The brand as the brief writes it (the storyboard's name, kept only when the brief really writes it), else
+  // the name its site gives (a page title can name a page rather than the brand, so it comes second).
   const brandName = brief.brand
     ? undefined
-    : namedInBrief(brief, storyboard?.brandName, lines[0]?.onScreen ?? "");
+    : (namedInBrief(brief, storyboard?.brandName, lines[0]?.onScreen ?? "") ?? source?.name);
   // What the graphic is called without a brand: its title, else its hook. Never the style profile's name.
   const unbrandedName = brief.title ?? (lines[0]?.onScreen || "Motion graphic");
   const baseBrand: BrandKit = brief.brand ?? {
@@ -438,18 +447,24 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     },
     fonts: { heading: style.type.heading, body: style.type.body },
   };
+  // The user's own colours win over a brand palette; the site's never override one the brief sets.
+  const [first, second] = brief.brandColors ?? (brief.brand ? [] : (source?.colors ?? []));
+  const palette: BrandPalette = {
+    ...baseBrand.palette,
+    ...(first ? { primary: first, accent: first } : {}),
+    ...(second ? { secondary: second } : {}),
+  };
   const brand: BrandKit = {
     ...baseBrand,
-    palette: {
-      ...baseBrand.palette,
-      primary: offBlack(baseBrand.palette.primary),
-      background: offBlack(baseBrand.palette.background),
-    },
+    palette: { ...palette, primary: offBlack(palette.primary), background: offBlack(palette.background) },
   };
-  const logo = brand.logoAssetId
-    ? options.assets?.find((a) => a.id === brand.logoAssetId && a.kind === "image")
-    : undefined;
+  const logo =
+    (brand.logoAssetId
+      ? options.assets?.find((a) => a.id === brand.logoAssetId && a.kind === "image")
+      : undefined) ?? (source?.logo?.kind === "image" ? source.logo : undefined);
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
+  // A name that is the brand's own, never the title or hook line a brandless graphic is called by.
+  const realName = brief.brand?.name ?? brandName;
   const chars = LINE_CHARS[aspectRatio];
   const spans = options.cardMs ? [...options.cardMs] : durations(totalMs, lines, language);
   if (
@@ -489,16 +504,52 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     const fill = i === last && style.energy >= 4 ? "primary" : "background";
     const enter = motion.entrance(line.enter);
     const shots: Shot[] = [];
+    // The hook names the brand from its first frame: a small lockup above the headline. A wordmark alone is
+    // left out when the hook line already says the name, and on a hero card, which designs the whole frame.
+    if (
+      i === 0 &&
+      i !== last &&
+      !line.hero &&
+      (logo ||
+        (realName &&
+          !line.onScreen.normalize("NFC").toLowerCase().includes(realName.normalize("NFC").toLowerCase())))
+    ) {
+      shots.push({
+        id: "hook-logo",
+        type: "logo",
+        startMs: 0,
+        durationMs,
+        // Always a lockup, so its height is reserved above the hook's layout; with no real name it is the mark alone.
+        lockup: true,
+        ...(logo ? { assetId: logo.id } : {}),
+        ...(realName ? { text: truncateText(realName, 60) } : {}),
+        style: {
+          textStyle: "body",
+          color: inkOn(brand.palette, fill, "accent"),
+          align: "center",
+          region: "top",
+        },
+        animation: {
+          enter: line.enter ?? (line.layout ? motion.enter : "scale"),
+          exit: motion.exit,
+          durationMs: 400,
+        },
+      });
+    }
     if (i === last) {
       // The CTA names the brand only with a logo or a real name: without a brand, a named brand or a title,
       // the brand kit's name is the hook line, which the hook card already shows.
+      // With a logo and a name, the lockup draws both; a logo without a brand name stands alone.
+      const ctaName = realName ?? brief.title;
       if (logo || brief.brand || brandName || brief.title)
         shots.push({
           id: "cta-logo",
           type: "logo",
           startMs: 0,
           durationMs,
-          ...(logo ? { assetId: logo.id } : { text: truncateText(brand.name, 60) }),
+          ...(logo
+            ? { assetId: logo.id, ...(ctaName ? { text: truncateText(ctaName, 60), lockup: true } : {}) }
+            : { text: truncateText(brand.name, 60) }),
           style: {
             textStyle: "heading",
             color: inkOn(brand.palette, fill, "accent"),
@@ -602,7 +653,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     title: truncateText(brief.title ?? brief.brand?.name ?? brandName ?? unbrandedName, 200),
     language,
     format: { aspectRatio, ...ASPECT_RATIO_SIZES[aspectRatio], fps: FPS, durationMs: totalMs },
-    brand: logo ? brand : brandNoLogo,
+    brand: logo ? { ...brand, logoAssetId: logo.id } : brandNoLogo,
     assets: logo ? [logo] : [],
     scenes,
     timeline: buildSequentialTimeline(scenes),
