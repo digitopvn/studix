@@ -50,9 +50,9 @@ describe("htmlCardProblems", () => {
     expect(html('<svg><rect fill="url(https://x.test/a.svg#p)" /></svg>')).toEqual([
       "html: url(...) may only point at #ids inside the card",
     ]);
-    expect(html("<svg><div>x</div></svg><p><div>y</div></p>")).toEqual([
+    expect(html("<svg><div>x</div></svg><span><div>y</div></span>")).toEqual([
       "html: <div> is not allowed inside <svg>",
-      "html: <div> is not allowed inside <p> (inline content only)",
+      "html: <div> is not allowed inside <span> (inline content only)",
     ]);
     expect(css("} body{display:none} #z {")[0]).toMatch(/^css: parse error: Unexpected }/);
     expect(css(".a {} body {display:none}")).toEqual([
