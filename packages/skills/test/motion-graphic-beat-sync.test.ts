@@ -127,13 +127,17 @@ describe("snapping cuts to beats", () => {
 describe("music composition plan", () => {
   it("drops on the call to action at the style's tempo, every section long enough, adding up to the length", () => {
     const { ir } = voicedGraphic();
-    const plan = musicCompositionPlan(ir, "upbeat electronic");
+    // An agent's mood may span lines; the plan carries it as one plain style.
+    const plan = musicCompositionPlan(ir, "upbeat electronic,\n\twarm pads");
+    expect(plan.positiveGlobalStyles[0]).toBe("upbeat electronic, warm pads");
     const ctaStart = 12_000 - ir.scenes.at(-1)!.durationMs;
     expect(plan.sections.reduce((n, s) => n + s.durationMs, 0)).toBe(12_000);
     expect(plan.sections.every((s) => s.durationMs >= 3000)).toBe(true);
     const drop = plan.sections.at(-1)!;
     expect(drop.name).toBe("Drop");
-    expect(12_000 - drop.durationMs).toBe(Math.min(ctaStart, 9000));
+    // The drop starts at the CTA on a 500 ms grid, so a small re-time of the cards keeps the same plan.
+    expect(12_000 - drop.durationMs).toBe(Math.min(Math.round(ctaStart / 500) * 500, 9000));
+    expect(plan.sections.every((sec) => sec.durationMs % 500 === 0)).toBe(true);
     expect(plan.positiveGlobalStyles.some((s) => /\d+ BPM/.test(s))).toBe(true);
   });
 });

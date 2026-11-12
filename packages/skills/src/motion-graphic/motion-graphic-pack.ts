@@ -405,7 +405,8 @@ const withoutMusic = (ir: VideoIR, reason: string) => ({
 
 /**
  * An instrumental bed under the whole graphic, only when the agent's storyboard asked for one (a template
- * graphic has none). Its own stage, so a re-voice does not pay for the music again. A call that cannot be
+ * graphic has none). Its own stage, so a re-voice does not pay for the music again while the cards keep
+ * their timing to the composition plan's 500 ms grid. A call that cannot be
  * made (UNAVAILABLE: no key, no price, no music model) skips the bed with a warning instead of failing the
  * job; the runner never caches a warned output, so the bed is retried next run.
  */
@@ -441,35 +442,38 @@ export const motionGraphicMusicStage: StageDefinition = {
       await rm(workDir, { recursive: true, force: true });
       return withoutMusic(ir, toStudixError(err).message);
     }
-    // The cards' cuts move onto the music's downbeats (only where every line still fits its card).
-    const beats = await musicBeats(s, music, ir, workDir);
-    const synced = beats ? snapCutsToBeats(ir, beats) : { ir, cuts: [] };
-    const base = synced.ir;
-    const next = {
-      ...base,
-      assets: [...base.assets.filter((a) => a.id !== music.asset.id), music.asset],
-      audio: [
-        ...(base.audio ?? []).filter((t) => t.id !== "music-bed-track"),
-        {
-          id: "music-bed-track",
-          kind: "music" as const,
-          assetId: music.asset.id,
-          startMs: 0,
-          durationMs: Math.min(base.format.durationMs, music.asset.durationMs ?? base.format.durationMs),
-          volume: MUSIC_VOLUME,
-          duckDb: MUSIC_DUCK_DB,
-        },
-      ],
-      metadata: {
-        ...(base.metadata ?? {}),
-        ...(beats ? { musicBeats: { bpm: beats.bpm, snappedCuts: synced.cuts.length } } : {}),
-      },
-    };
-    await rm(workDir, { recursive: true, force: true });
-    return {
-      output: { ir: await billedOnFailure([music.usage], () => VideoIR.parse(next)) },
-      usage: [music.usage],
-    };
+    // The music is paid for from here on: whatever fails next still bills it, and the scratch copy goes.
+    try {
+      // The cards' cuts move onto the music's downbeats (only where every line still fits its card).
+      const beats = await musicBeats(s, music, ir, workDir);
+      const ready = await billedOnFailure([music.usage], () => {
+        const synced = beats ? snapCutsToBeats(ir, beats) : { ir, cuts: [] };
+        const base = synced.ir;
+        return VideoIR.parse({
+          ...base,
+          assets: [...base.assets.filter((a) => a.id !== music.asset.id), music.asset],
+          audio: [
+            ...(base.audio ?? []).filter((t) => t.id !== "music-bed-track"),
+            {
+              id: "music-bed-track",
+              kind: "music" as const,
+              assetId: music.asset.id,
+              startMs: 0,
+              durationMs: Math.min(base.format.durationMs, music.asset.durationMs ?? base.format.durationMs),
+              volume: MUSIC_VOLUME,
+              duckDb: MUSIC_DUCK_DB,
+            },
+          ],
+          metadata: {
+            ...(base.metadata ?? {}),
+            ...(beats ? { musicBeats: { bpm: beats.bpm, snappedCuts: synced.cuts.length } } : {}),
+          },
+        });
+      });
+      return { output: { ir: ready }, usage: [music.usage] };
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
   },
 };
 

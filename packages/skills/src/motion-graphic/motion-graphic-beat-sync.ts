@@ -15,8 +15,15 @@ import { type CardWords, SPOKEN_WORDS_KEY, spokenWordsOf } from "./motion-graphi
 const DOWNBEAT_TOLERANCE_MS = 400;
 /** With no downbeat in reach, a cut moves to a beat at most this far away. */
 const BEAT_TOLERANCE_MS = 150;
-/** Silence kept between a card's last word and the cut after it. */
-const SPEECH_GAP_MS = 100;
+/**
+ * Silence kept between a card's last word and the cut after it: room for the 150 ms fade a voice track is
+ * cut with, so the fade never reaches the word.
+ */
+const SPEECH_GAP_MS = 150;
+/** Fade given to a voice track a snap cut shorter, so its trailing room tone never ends on a click. */
+const SNAP_FADE_MS = 40;
+/** Section boundaries of a composed bed fall on this grid, so a small re-time of the cards reuses the bed. */
+const SECTION_GRID_MS = 500;
 /** Shortest card a snapped cut may leave. */
 const MIN_CARD_MS = 1000;
 /** Shortest section ElevenLabs composes. */
@@ -152,7 +159,9 @@ export function snapCutsToBeats(ir: VideoIR, beats: MusicBeats): { ir: VideoIR; 
     const startMs = t.startMs + (shift[i] as number);
     const room = newEnd(i) - startMs;
     const durationMs = Math.max(1, Math.min(t.durationMs ?? room, room));
-    const fadeOutMs = t.fadeOutMs === undefined ? undefined : Math.min(t.fadeOutMs, durationMs);
+    const shortened = durationMs < (t.durationMs ?? room);
+    const fade = t.fadeOutMs ?? (shortened ? SNAP_FADE_MS : undefined);
+    const fadeOutMs = fade === undefined ? undefined : Math.min(fade, durationMs);
     return { ...t, startMs, durationMs, ...(fadeOutMs !== undefined ? { fadeOutMs } : {}) };
   });
   const cues = ir.captions?.cues.flatMap((c): CaptionCue[] => {
@@ -219,8 +228,9 @@ export function bpmSearchRange(ir: VideoIR): readonly [number, number] | undefin
 export function musicCompositionPlan(ir: VideoIR, mood: string): MusicCompositionPlan {
   const total = ir.format.durationMs;
   const scenes = ir.scenes;
-  const ctaStart = total - (scenes.at(-1)?.durationMs ?? 0);
-  const firstCut = scenes[0]?.durationMs ?? 0;
+  const grid = (ms: number) => Math.round(ms / SECTION_GRID_MS) * SECTION_GRID_MS;
+  const ctaStart = grid(total - (scenes.at(-1)?.durationMs ?? 0));
+  const firstCut = grid(scenes[0]?.durationMs ?? 0);
   const dropAt = Math.max(MIN_SECTION_MS, Math.min(ctaStart, total - MIN_SECTION_MS));
   const introEnd = Math.min(Math.max(MIN_SECTION_MS, firstCut), dropAt);
   const bpm = targetBpm(ir);
@@ -247,7 +257,10 @@ export function musicCompositionPlan(ir: VideoIR, mood: string): MusicCompositio
         : [{ ...intro, durationMs: dropAt }, drop];
   return {
     positiveGlobalStyles: [
-      mood.slice(0, 200),
+      // One plain line: the agent's mood may hold line breaks, which a style entry refuses.
+      Array.from(mood.replace(/[\s\p{Cc}]+/gu, " ").trim())
+        .slice(0, 200)
+        .join("") || "instrumental bed",
       "instrumental",
       ...(bpm !== undefined ? [`${bpm} BPM`, "steady 4/4 beat with clear downbeats"] : ["clear 4/4 beat"]),
     ],
