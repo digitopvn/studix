@@ -5,8 +5,13 @@ import type { StageContext, StageDefinition } from "@studix/workflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MG_VISUAL_QA_STAGE, motionGraphicRenderStage } from "../src/index.ts";
 import { LAYOUT_LATEST_MS } from "../src/motion-graphic/motion-graphic-reveals.ts";
+import { MG_STORYBOARD_LIMITS } from "../src/motion-graphic/motion-graphic-storyboard.ts";
 import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
-import { withRestyledCards } from "../src/motion-graphic/motion-graphic-visual-qa.ts";
+import {
+  MG_STILLS_CAPTURE_BUDGET_MS,
+  repairFits,
+  withRestyledCards,
+} from "../src/motion-graphic/motion-graphic-visual-qa.ts";
 
 const probe = { durationMs: 1000, width: 160, height: 90, fps: 5, videoCodec: "h264", bytes: 0 };
 
@@ -56,6 +61,27 @@ describe("motion-graphic render stage after the visual review", () => {
     expect(await stage.estimateCostCents?.(s)).toBe(7);
     expect((await stage.run(s)).output).toMatchObject({ mime: "video/mp4" });
     expect(engine.run).toHaveBeenCalledWith(s);
+  });
+});
+
+describe("visual review repair round", () => {
+  const renderMs = 90_000;
+  const captureMs = 80_000;
+  const roomy = { renderMs, captureMs, centsLeft: 1000, renderCents: 50 };
+  // The redesign (180 s cap), a re-capture with half again in hand, and the final render; no second review.
+  const need = MG_STORYBOARD_LIMITS.timeoutMs + 1.5 * captureMs + renderMs;
+
+  it("applies a fix round when the redesign, a re-capture and the final render fit", () => {
+    expect(repairFits({ ...roomy, timeLeftMs: need })).toBe("fits");
+  });
+
+  it("stops when the redesign and render do not fit in the time or budget left", () => {
+    expect(repairFits({ ...roomy, timeLeftMs: need - 1 })).toBe("no-time");
+    // A quick first capture still reserves the capture cap for the re-capture.
+    const quick = MG_STORYBOARD_LIMITS.timeoutMs + MG_STILLS_CAPTURE_BUDGET_MS + renderMs;
+    expect(repairFits({ ...roomy, captureMs: 1000, timeLeftMs: quick - 1 })).toBe("no-time");
+    expect(repairFits({ ...roomy, captureMs: 1000, timeLeftMs: quick })).toBe("fits");
+    expect(repairFits({ ...roomy, timeLeftMs: Number.POSITIVE_INFINITY, centsLeft: 60 })).toBe("no-budget");
   });
 });
 
