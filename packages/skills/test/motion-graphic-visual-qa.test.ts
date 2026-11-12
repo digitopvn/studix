@@ -5,9 +5,10 @@ import type { StageContext, StageDefinition } from "@studix/workflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MG_VISUAL_QA_STAGE, motionGraphicRenderStage } from "../src/index.ts";
 import { LAYOUT_LATEST_MS } from "../src/motion-graphic/motion-graphic-reveals.ts";
-import { MG_STORYBOARD_LIMITS } from "../src/motion-graphic/motion-graphic-storyboard.ts";
 import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
 import {
+  cardRedesignTimeoutMs,
+  MG_CARD_REDESIGN_MS,
   MG_STILLS_CAPTURE_BUDGET_MS,
   repairFits,
   withRestyledCards,
@@ -68,8 +69,8 @@ describe("visual review repair round", () => {
   const renderMs = 90_000;
   const captureMs = 80_000;
   const roomy = { renderMs, captureMs, centsLeft: 1000, renderCents: 50 };
-  // The redesign (180 s cap), a re-capture with half again in hand, and the final render; no second review.
-  const need = MG_STORYBOARD_LIMITS.timeoutMs + 1.5 * captureMs + renderMs;
+  // The redesign (its floor), a re-capture with half again in hand, and the final render; no second review.
+  const need = MG_CARD_REDESIGN_MS.floor + 1.5 * captureMs + renderMs;
 
   it("applies a fix round when the redesign, a re-capture and the final render fit", () => {
     expect(repairFits({ ...roomy, timeLeftMs: need })).toBe("fits");
@@ -78,10 +79,22 @@ describe("visual review repair round", () => {
   it("stops when the redesign and render do not fit in the time or budget left", () => {
     expect(repairFits({ ...roomy, timeLeftMs: need - 1 })).toBe("no-time");
     // A quick first capture still reserves the capture cap for the re-capture.
-    const quick = MG_STORYBOARD_LIMITS.timeoutMs + MG_STILLS_CAPTURE_BUDGET_MS + renderMs;
+    const quick = MG_CARD_REDESIGN_MS.floor + MG_STILLS_CAPTURE_BUDGET_MS + renderMs;
     expect(repairFits({ ...roomy, captureMs: 1000, timeLeftMs: quick - 1 })).toBe("no-time");
     expect(repairFits({ ...roomy, captureMs: 1000, timeLeftMs: quick })).toBe("fits");
     expect(repairFits({ ...roomy, timeLeftMs: Number.POSITIVE_INFINITY, centsLeft: 60 })).toBe("no-budget");
+  });
+
+  it("sizes the redesign's time cap to what the deadline leaves, between its floor and cap", () => {
+    const spare = 1.5 * captureMs + renderMs;
+    // Not the storyboard stage's own cap: the deadline decides.
+    expect(cardRedesignTimeoutMs({ timeLeftMs: spare + 250_000, captureMs, renderMs })).toBe(250_000);
+    expect(cardRedesignTimeoutMs({ timeLeftMs: Number.POSITIVE_INFINITY, captureMs, renderMs })).toBe(
+      MG_CARD_REDESIGN_MS.cap,
+    );
+    expect(
+      cardRedesignTimeoutMs({ timeLeftMs: spare + 250_000, captureMs, renderMs, otherMs: 200_000 }),
+    ).toBe(MG_CARD_REDESIGN_MS.floor);
   });
 });
 

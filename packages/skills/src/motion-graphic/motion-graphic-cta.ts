@@ -41,5 +41,34 @@ export function splitCtaLine(line: string, brandName?: string): CtaLine {
     const rest = text.replace(lead, "").replace(EDGE_RE, "");
     if (rest !== "") text = rest;
   }
-  return text === "" ? { text: url } : { text, url };
+  return { text: text === "" ? url : text, url };
+}
+
+/**
+ * The end card's copy: `onScreen` split as splitCtaLine does. A line that is only a URL still gets words, so
+ * the card is a lockup (line, rule, URL) and never a bare URL: the first of `fallbacks` (the closing voice-over
+ * line, the brief's call to action, its title) that says something besides a URL. With none, the text stays
+ * the URL and the card shows the URL alone.
+ */
+export function ctaCopy(
+  onScreen: string,
+  fallbacks: ReadonlyArray<string | undefined>,
+  brandName?: string,
+): CtaLine {
+  const said = splitCtaLine(onScreen, brandName);
+  if (!said.url || said.text !== said.url) return said;
+  for (const line of fallbacks) {
+    if (!line?.trim()) continue;
+    const alt = splitCtaLine(line.trim(), brandName);
+    if (alt.text !== "" && alt.text !== alt.url) return { text: alt.text, url: said.url };
+  }
+  return said;
+}
+
+/** `text` cut to at most `max` characters at a word boundary, never mid-word (a single overlong word is cut). */
+export function cutOnWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max + 1);
+  const end = head.search(/\s\S*$/);
+  return (end > 0 ? head.slice(0, end) : text.slice(0, max)).replace(/[\s,;:–—-]+$/u, "");
 }

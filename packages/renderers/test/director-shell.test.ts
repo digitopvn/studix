@@ -67,6 +67,20 @@ describe("scene fragment contract", () => {
     expect(problemsOf({ js: 'const sidebar = $s(".a"); const $t = 1; pop(sidebar, t0 + $t);' })).toEqual([]);
   });
 
+  it("rejects a ghosted headline: headline-sized text between 0.2 and 0.6 opacity", () => {
+    const withFloor = (css: string) =>
+      sceneFragmentProblems({ ...HOOK_FRAGMENT, css }, { ...check, headlinePx: 72 });
+    expect(withFloor(".ghost{font-size:180px;opacity:0.25}").join()).toContain("ghosted");
+    // Faint decor (a backdrop numeral) and a dimmed ink pass.
+    expect(withFloor(".num{font-size:200px;opacity:.15} .d{font-size:120px;color:var(--faint)}")).toEqual([]);
+    // An entry state (opacity 0), an opaque headline and small dim labels pass.
+    expect(withFloor(".h{font-size:96px;opacity:0;color:var(--ink)} .l{font-size:24px;opacity:.4}")).toEqual(
+      [],
+    );
+    // Without a floor the rule is not checked.
+    expect(problemsOf({ css: ".ghost{font-size:180px;opacity:0.25}" })).toEqual([]);
+  });
+
   it("rejects blur filters, backdrop-filter and will-change that stall the render", () => {
     const css =
       ".aura{filter:blur(80px)} .g{backdrop-filter:blur(4px)} .s{will-change:transform} .ok{filter:saturate(1.2)}";

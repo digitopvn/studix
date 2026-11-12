@@ -1104,7 +1104,9 @@ export function renderLayoutMarkup(
       const approveW = Math.round(
         (Array.from(actionLabel).length * 0.62 * 0.95 * body.sizeAt1080 + 130) * ctx.scale,
       );
-      const below = (side ? 60 : 200) * ctx.scale;
+      // The title is its own row between the screen and the scrubber, so the bar never runs over it.
+      const titleRow = layout.title ? TEXT_STYLES.caption.sizeAt1080 * 0.9 * 1.25 + 18 : 0;
+      const below = ((side ? 60 : 200) + titleRow) * ctx.scale;
       const room = side ? width * 0.95 - approveW - 40 * ctx.scale : width * (portrait(ctx) ? 1 : 0.72);
       const w = Math.round(Math.min(room, ((layoutHeight(ctx) - below) * 16) / 9));
       const h = Math.round((w * 9) / 16);
@@ -1141,20 +1143,19 @@ export function renderLayoutMarkup(
         `height: ${Math.round(h * 0.75)}px;`,
         `left: ${Math.round(w * 0.5)}px;`,
         `top: ${Math.round(-h * 0.15)}px;`,
-        `background: radial-gradient(circle, ${tint("secondary", 65)}, transparent 70%);`,
+        `background: radial-gradient(circle, ${tint("accent", 45)}, transparent 70%);`,
       ]);
       rule(".lo-o3", [
         `width: ${Math.round(h * 0.5)}px;`,
         `height: ${Math.round(h * 0.5)}px;`,
         `left: ${Math.round(w * 0.62)}px;`,
         `top: ${Math.round(h * 0.55)}px;`,
-        `background: radial-gradient(circle, ${tint("primary", 60)}, transparent 70%);`,
+        `background: radial-gradient(circle, ${tint("foreground", 22)}, transparent 70%);`,
       ]);
       rule(".lo-ptitle", [
-        "position: absolute;",
-        `left: ${px(ctx, 26)};`,
-        `right: ${px(ctx, 26)};`,
-        `bottom: ${px(ctx, 20)};`,
+        `width: ${w}px;`,
+        "box-sizing: border-box;",
+        `padding: 0 ${px(ctx, 6)};`,
         ...fontCss(ctx, TEXT_STYLES.caption, 0.9, 700),
         "text-align: left;",
         "white-space: nowrap;",
@@ -1227,7 +1228,7 @@ export function renderLayoutMarkup(
       const title = layout.title ? `<div class="lo-ptitle">${escapeHtml(layout.title)}</div>` : "";
       const approve = `<div class="lo-approve"><span class="lo-acheck">${CHECK_SVG}</span><span>${escapeHtml(actionLabel)}</span></div>`;
       return done(
-        `<div class="lo lo-player"><div class="lo-pmain"><div class="lo-screen"><div class="lo-art"><i class="lo-o1"></i><i class="lo-o2"></i><i class="lo-o3"></i></div>${title}<div class="lo-pplay">${PLAY_SVG}</div></div>` +
+        `<div class="lo lo-player"><div class="lo-pmain"><div class="lo-screen"><div class="lo-art"><i class="lo-o1"></i><i class="lo-o2"></i><i class="lo-o3"></i></div><div class="lo-pplay">${PLAY_SVG}</div></div>${title}` +
           `<div class="lo-pctl"><span class="lo-pbtn">${PLAY_SVG}</span><div class="lo-pbar"><div class="lo-pprog"></div><div class="lo-pkt"><div class="lo-pknob"></div></div></div></div></div>` +
           `${approve}</div>`,
       );
