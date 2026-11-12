@@ -11,6 +11,7 @@ import {
   type MediaKind,
   mediaExecutionRecord,
   type ProviderJobRef,
+  type SpokenWord,
 } from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
 import { type AssetMediaKind, type AssetRef, contentDigest, type VideoIR } from "@studix/video-ir";
@@ -23,6 +24,7 @@ import {
   sha256File,
   stageMediaDir,
 } from "@studix/workflow";
+import { storeWords } from "./spoken-words.ts";
 
 /** One media asset a pack stage generates and keeps in tenant storage. */
 export interface StoredMediaRequest {
@@ -76,6 +78,11 @@ export interface StoredMedia {
   filePath?: string;
   /** Set when an earlier job's stored output was reused: nothing was generated or charged. */
   reusedFrom?: { jobId?: string };
+  /**
+   * Word timings of a speech output, as the provider reported them for this call; kept next to the stored
+   * object (`storeWords`), so a take served from storage reads them back with `readStoredWords`.
+   */
+  words?: SpokenWord[];
 }
 
 /**
@@ -551,8 +558,12 @@ export async function generateStoredMedia(
         });
       }
     }
+    const words =
+      output.words?.length && (await storeWords(s, stored.key, output.filePath, output.words))
+        ? output.words
+        : [];
     if (reuseKey !== undefined) await s.mediaOutputs?.put(reuseKey, asset);
-    return { asset, filePath: output.filePath, usage };
+    return { asset, filePath: output.filePath, usage, ...(words.length > 0 ? { words } : {}) };
   } catch (err) {
     throw new StageFailedAfterSpend(toStudixError(err), [usage]);
   }

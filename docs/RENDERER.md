@@ -12,7 +12,7 @@ records the contract and the measurements behind it.
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Title, text, image shots, captions | HTML + GSAP timeline per scene (`hyperframes/scene-composition.ts`, `shot-markup.ts`); burned captions are 44 px semibold at a 1080 px short edge                                                                                                                                                                                                                                         |
 | Video shot, video background       | Muted `<video>` with scene-local `data-start` / `data-media-start` (`trimStartMs`); HyperFrames extracts the frames with FFmpeg and injects them                                                                                                                                                                                                                                          |
-| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `playbackRate` (atempo, pitch kept), `volume` x `gainDb`, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`)                                                                                                                                                                                 |
+| Audio tracks (all kinds)           | Mixed by FFmpeg, never by the browser: trim, `playbackRate` (atempo, pitch kept), `volume` x `gainDb`, music `duckDb` under speech, `fadeInMs` / `fadeOutMs`, delay to `startMs`, summed without normalisation (`ffmpeg/audio-mix.ts`)                                                                                                                                                    |
 | Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                                                                                                                                                                                                                                     |
 | Layout shot                        | Built-in layout drawn from typed content (`prompt-box`, `code`, `chips`, `checklist`, `counter`, `cards-row`, `swatches`, `stat`) in palette roles, its parts built in by the same seek-safe GSAP timeline (`hyperframes/layout-markup.ts`); code uses bundled JetBrains Mono. A landscape (wider than tall) frame draws it 1.25x larger, and it is centred above the burned-caption band |
 | Composition shot (film scene)      | Captured first by the ported film engine (`film-engine/film-composition-render.ts`), each scene as its own HyperFrames root composition, then spliced back as a muted video shot                                                                                                                                                                                                          |
@@ -111,8 +111,17 @@ own `FinishSpec` (`HyperFramesRendererOptions.finish` or the per-render
 - `RenderSpec.grade?: "warm" | "neutral" | "night" | "dusk"`
 - `RenderSpec.deliveries?: ("preview" | "phone")[]`
 
-Music is not ducked under `dialogue` / `voiceover` yet; the IR allows it but the
-mix sums tracks at their own levels. Looping a short bed would need an IR field.
+A music track with `duckDb` (-40..0) dips by that many dB while any `voiceover`
+or `dialogue` clip plays: the gain ramps down over 150 ms before the speech and
+back up over 350 ms after it, and speech gaps shorter than the two ramps are
+bridged (`planAudioClips` / `audioMixGraph`). A music track without `duckDb`
+keeps its own level. Looping a short bed would need an IR field.
+
+`analyzeBeats` (`ffmpeg/beat-grid.ts`) finds the tempo, beats and downbeats of
+an audio file locally: FFmpeg decodes it to mono PCM, an onset envelope is
+autocorrelated over 70–180 BPM, and each beat is moved to its nearest onset.
+Tempos above about 170 BPM come back at half speed. It returns undefined for
+silence, files under 4 s and sound without a clear pulse.
 
 ## Pinned browser build
 

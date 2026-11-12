@@ -1,6 +1,8 @@
 import { rm } from "node:fs/promises";
+import { extname, join } from "node:path";
+import { analyzeBeats } from "@studix/renderers";
 import { StudixError, toStudixError } from "@studix/shared";
-import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
+import { AssetRef, type AudioTrack, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
 import {
   irOf,
   mapBounded,
@@ -17,6 +19,7 @@ import {
 import { z } from "zod";
 import { MAX_VOICE_SPEEDUP } from "../marketing-video/marketing-script.ts";
 import type { Skill, WorkflowPack } from "../pack-registry.ts";
+import { estimateWords } from "../spoken-words.ts";
 import {
   billedOnFailure,
   estimateMediaCents,
@@ -33,7 +36,9 @@ import {
   measuredVoiceTake,
   VOICE_TAKE_SCOPE,
 } from "../voice-takes.ts";
-import { retimeCards } from "./motion-graphic-retime.ts";
+import { beatsOf, type MusicBeats, musicSections } from "./motion-graphic-music.ts";
+import { cardMinimums, cardsOf, retimeCards, snapCutsToBeats } from "./motion-graphic-retime.ts";
+import { withSpokenReveals } from "./motion-graphic-reveals.ts";
 import {
   MG_STORYBOARD_STAGE,
   MotionStoryboardOutput,
@@ -64,7 +69,9 @@ export const motionGraphicSkill: Skill = {
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
     "generated voice-over with burned captions, a soft whoosh on each cut and one SFX accent on the CTA card; " +
-    "the agent's storyboard has about one card every five seconds (3–12); the whoosh, accent and music bed " +
+    "the agent's storyboard has about one card every five seconds (3–12); a music bed drops on the CTA card, " +
+    "dips under the voice and the cuts land on its beats; headlines and layouts enter on their spoken words; " +
+    "the whoosh, accent and music bed " +
     "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). No image-to-video.",
   version: 1,
@@ -132,7 +139,8 @@ function voiceLineRequests(s: StageContext): Array<{ line: VoiceLine; request: S
       assetId: `voiceover-${i + 1}`,
       kind: "voice",
       prompt: line.text,
-      params: { language: ir.language, instructions: line.instructions },
+      // Word timings, where the speech route reports them, put each card's reveals on its words.
+      params: { language: ir.language, instructions: line.instructions, timestamps: true },
       keyPrefix: `generated/${s.job.id}/voiceover-${i + 1}`,
       maxCostCents: 0,
       reuse: { scope: VOICE_TAKE_SCOPE },
@@ -387,6 +395,8 @@ function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR
     ...cut,
     assets: [...cut.assets, ...ir.assets.filter((a) => !cut.assets.some((b) => b.id === a.id))],
     audio: (ir.audio ?? []).filter((t) => t.id !== ACCENT_TRACK && !t.id.startsWith(WHOOSH_TRACK)),
+    // What later stages added (the music bed's beats) stays; the template's own keys are its new ones.
+    metadata: { ...ir.metadata, ...cut.metadata },
   };
   const asset = (id: string | undefined) => ir.assets.find((a) => a.id === id);
   const sfx = asset(ir.audio?.find((t) => t.id === ACCENT_TRACK)?.assetId);
@@ -436,6 +446,49 @@ function voiceTooLong(
 }
 
 /**
+ * The voiced graphic with each card's headline and layout revealed on its spoken words: the provider's word
+ * timings where it reported them, else words estimated over the take's measured speech. The metadata says
+ * which (`wordSync`) and, with a music bed, how many cuts landed on its beats (`beatSync`).
+ */
+function withSync(
+  ir: VideoIR,
+  lines: readonly VoiceLine[],
+  takes: readonly MeasuredVoiceTake[],
+  tracks: readonly AudioTrack[],
+  snapped: number,
+): VideoIR {
+  const cards = cardsOf(ir, lines);
+  const reported = takes.filter((t) => t.words?.length).length;
+  const heard = lines.flatMap((line, i) => {
+    const take = takes[i];
+    const track = tracks[i];
+    const card = cards[i] ?? -1;
+    if (!take || !track || card < 0) return [];
+    const speech = take.measured ?? { startMs: 0, endMs: take.lengthMs ?? track.durationMs ?? 0 };
+    const words = take.words?.length ? take.words : estimateWords(line.text, speech);
+    return [{ card, words, track }];
+  });
+  const grid = beatsOf(ir);
+  const synced = withSpokenReveals(ir, heard);
+  return {
+    ...synced,
+    metadata: {
+      ...synced.metadata,
+      wordSync: reported === 0 ? "estimate" : reported === takes.length ? "alignment" : "mixed",
+      ...(grid
+        ? {
+            beatSync: {
+              bpm: (ir.metadata?.beats as { bpm?: number } | undefined)?.bpm,
+              cuts: Math.max(0, ir.scenes.length - 1),
+              onBeat: snapped,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+/**
  * How many times its own card's room a first take may need before it is taken for a broken read (repeated
  * words, a long stall) and voiced again: well past how far the script's reading-speed estimate misses (about
  * 1.6x), so a slow read is still kept and the cards are recut around it.
@@ -456,8 +509,9 @@ export const motionGraphicVoiceStage: StageDefinition = {
   name: MG_STAGES.voice,
   knowledge: ["voice-performance"],
   outputSchema: IrOutput,
-  // Version 4 measures every take first and recuts the cards around them; 5 reads a broken take again.
-  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 5, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Version 4 measures every take first and recuts the cards around them; 5 reads a broken take again; 6
+  // cuts on the music's beats and reveals each card on its spoken words.
+  cacheKey: (s) => stageCacheKey(MG_STAGES.voice, 6, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -469,7 +523,7 @@ export const motionGraphicVoiceStage: StageDefinition = {
     if (planned.length === 0) return { output: { ir } };
     const workDir = await stageWorkDir(s, MG_STAGES.voice);
     // The takes fetched to measure them go with the scratch directory, however the stage ends.
-    const { takes, lines, cardMs, usage } = await (async () => {
+    const retimed = await (async () => {
       try {
         const voice = (request: StoredMediaRequest) =>
           measuredVoiceTake(s, MG_STAGES.voice, request, workDir);
@@ -527,9 +581,16 @@ export const motionGraphicVoiceStage: StageDefinition = {
         await rm(workDir, { recursive: true, force: true });
       }
     })();
+    const { takes, lines, usage } = retimed;
+    let cardMs = retimed.cardMs;
     const spent = usage();
     const next = await billedOnFailure(spent, () => {
       if (!cardMs) throw voiceTooLong(ir, lines, takes);
+      // With a music bed, the cuts move onto its beats where every card keeps the room its take needs.
+      const grid = beatsOf(ir);
+      const mins = grid ? cardMinimums(ir, lines, takes, cardMs) : undefined;
+      const onBeat = grid && mins ? snapCutsToBeats(cardMs, mins, grid) : undefined;
+      if (onBeat) cardMs = onBeat.cardMs;
       const same = cardMs.every((ms, i) => ms === ir.scenes[i]?.durationMs);
       const cut = same ? ir : recut(s, ir, cardMs);
       // An IR the template did not make keeps its cards; a take that does not fit them fails as before.
@@ -551,13 +612,13 @@ export const motionGraphicVoiceStage: StageDefinition = {
           take.measured,
         );
       });
-      return VideoIR.parse(
-        withVoiceover(
-          laid,
-          tracks,
-          takes.map((t) => t.asset),
-        ),
+      const voiced = withVoiceover(
+        laid,
+        tracks,
+        takes.map((t) => t.asset),
       );
+      if (laid.metadata?.template !== "motion-graphic") return VideoIR.parse(voiced);
+      return VideoIR.parse(withSync(voiced, timed, takes, tracks, onBeat && cut ? onBeat.snapped : 0));
     });
     return { output: { ir: next }, usage: spent };
   },
@@ -565,17 +626,31 @@ export const motionGraphicVoiceStage: StageDefinition = {
 const musicOf = (ir: VideoIR) =>
   typeof ir.metadata?.music === "string" && ir.metadata.music !== "" ? ir.metadata.music : undefined;
 
-/** The music bed the storyboard asked for, the length of the graphic; none when it asked for none. */
+/**
+ * The music bed the storyboard asked for, the length of the graphic, composed in sections (`musicSections`:
+ * intro, build, and the drop where the CTA card starts) at the style profile's tempo with a steady pulse, so
+ * its beats can be found and the cuts laid on them; none when it asked for none.
+ */
 async function musicRequests(s: StageContext): Promise<StoredMediaRequest[]> {
   const ir = irOf(s);
   const mood = musicOf(ir);
   if (!mood) return [];
+  const bpm = typeof ir.metadata?.bpm === "number" ? Math.round(ir.metadata.bpm) : undefined;
+  const sections = musicSections(ir);
+  const drop = sections.length > 1 ? ir.format.durationMs - (sections.at(-1)?.durationMs ?? 0) : undefined;
+  const prompt = [
+    `Instrumental music bed, ${mood}`,
+    ...(bpm ? [`${bpm} BPM`] : []),
+    "steady clear pulse",
+    ...(drop !== undefined ? [`builds to a drop at ${(drop / 1000).toFixed(1)}s`] : []),
+    "no vocals",
+  ].join(", ");
   return [
     await capped(s, {
       assetId: "music-bed",
       kind: "music",
-      prompt: `Instrumental music bed, ${mood}, no vocals`,
-      params: { durationMs: ir.format.durationMs },
+      prompt,
+      params: { durationMs: ir.format.durationMs, sections },
       keyPrefix: `generated/${s.job.id}/music-bed`,
       maxCostCents: 0,
       reuse: {},
@@ -583,8 +658,43 @@ async function musicRequests(s: StageContext): Promise<StoredMediaRequest[]> {
   ];
 }
 
-/** Music level under the voice-over: a bed, not a lead. */
-const MUSIC_VOLUME = 0.18;
+/** Music level between the lines: present, not a lead. */
+const MUSIC_VOLUME = 0.3;
+/** How far the bed dips while the voice speaks: about 0.1 under the voice, as the bed sat before ducking. */
+const MUSIC_DUCK_DB = -9;
+const MUSIC_FADE_OUT_MS = 800;
+
+/**
+ * The bed's beats on the graphic's timeline (it is laid from 0, untrimmed), found locally with FFmpeg; a
+ * file that cannot be fetched or analysed leaves the graphic without a grid, so its cuts stay where they are.
+ */
+async function musicBeats(
+  s: StageContext,
+  music: StoredMedia,
+  workDir: string,
+  lengthMs: number,
+): Promise<MusicBeats | undefined> {
+  try {
+    let file = music.filePath;
+    if (!file && music.asset.storageKey) {
+      file = join(workDir, `music-bed${extname(music.asset.storageKey)}`);
+      await requireService(s, "storage").download(s.ctx, music.asset.storageKey, file);
+    }
+    if (!file) return undefined;
+    const grid = await analyzeBeats(file, { ffmpegPath: process.env.FFMPEG_PATH, signal: s.signal });
+    if (!grid) return undefined;
+    const inside = (t: number) => t >= 0 && t < lengthMs;
+    const beats = {
+      bpm: Math.round(grid.bpm * 10) / 10,
+      beatsMs: grid.beatsMs.filter(inside).map(Math.round).slice(0, 2000),
+      downbeatsMs: grid.downbeatsMs.filter(inside).map(Math.round).slice(0, 1000),
+    };
+    return beats.downbeatsMs.length > 0 ? beats : undefined;
+  } catch (err) {
+    if (s.signal.aborted) throw err;
+    return undefined;
+  }
+}
 
 /** The graphic without its music bed, and why: the bed is decoration, so a missing provider never fails the job. */
 const withoutMusic = (ir: VideoIR, reason: string) => ({
@@ -593,7 +703,9 @@ const withoutMusic = (ir: VideoIR, reason: string) => ({
 
 /**
  * An instrumental bed under the whole graphic, only when the agent's storyboard asked for one (a template
- * graphic has none). Its own stage, so a re-voice does not pay for the music again. A call that cannot be
+ * graphic has none): composed in sections so it drops on the CTA card, analysed for its beats (kept in
+ * `metadata.beats` for the voice stage to cut on) and ducked under the voice. Its own stage, before the
+ * voice-over, so a re-voice does not pay for the music again. A call that cannot be
  * made (UNAVAILABLE: no key, no price, no music model) skips the bed with a warning instead of failing the
  * job; the runner never caches a warned output, so the bed is retried next run.
  */
@@ -601,7 +713,9 @@ export const motionGraphicMusicStage: StageDefinition = {
   name: MG_STAGES.music,
   knowledge: ["sound"],
   outputSchema: AccentOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.music, 1, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Version 2 composes the bed in sections, finds its beats and ducks it under the voice; it runs before the
+  // voice-over now, so the voice stage can cut on its beats.
+  cacheKey: (s) => stageCacheKey(MG_STAGES.music, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) => {
     try {
       return await estimateMediaCents(s, await musicRequests(s));
@@ -629,6 +743,9 @@ export const motionGraphicMusicStage: StageDefinition = {
       await rm(workDir, { recursive: true, force: true });
       return withoutMusic(ir, toStudixError(err).message);
     }
+    const beats = await musicBeats(s, music, workDir, ir.format.durationMs);
+    const { beats: _stale, ...metadata } = ir.metadata ?? {};
+    const durationMs = Math.min(ir.format.durationMs, music.asset.durationMs ?? ir.format.durationMs);
     const next = {
       ...ir,
       assets: [...ir.assets.filter((a) => a.id !== music.asset.id), music.asset],
@@ -639,10 +756,13 @@ export const motionGraphicMusicStage: StageDefinition = {
           kind: "music" as const,
           assetId: music.asset.id,
           startMs: 0,
-          durationMs: Math.min(ir.format.durationMs, music.asset.durationMs ?? ir.format.durationMs),
+          durationMs,
           volume: MUSIC_VOLUME,
+          duckDb: MUSIC_DUCK_DB,
+          fadeOutMs: Math.min(MUSIC_FADE_OUT_MS, durationMs),
         },
       ],
+      metadata: { ...metadata, ...(beats ? { beats } : {}) },
     };
     await rm(workDir, { recursive: true, force: true });
     return {
@@ -675,8 +795,9 @@ export const motionGraphicQaStage: StageDefinition = {
 };
 
 /**
- * New project: storyboard (agent, or template fallback) -> compose -> SFX accent -> voice-over -> music bed
- * (when the storyboard asked for one) -> render -> QA -> upload. Re-render of a version:
+ * New project: storyboard (agent, or template fallback) -> compose -> SFX accent -> music bed (when the
+ * storyboard asked for one) -> voice-over (cuts on the bed's beats, reveals on the spoken words) -> render
+ * -> QA -> upload. Re-render of a version:
  * render -> QA -> upload.
  */
 export const motionGraphicPipeline: PackPipeline = {
@@ -689,8 +810,8 @@ export const motionGraphicPipeline: PackPipeline = {
           motionGraphicStoryboardStage,
           motionGraphicComposeStage,
           motionGraphicAccentStage,
-          motionGraphicVoiceStage,
           motionGraphicMusicStage,
+          motionGraphicVoiceStage,
           e.validateIr,
           e.render,
           motionGraphicQaStage,
@@ -708,8 +829,8 @@ export const motionGraphicPack: WorkflowPack = {
     motionGraphicStoryboardStage,
     motionGraphicComposeStage,
     motionGraphicAccentStage,
-    motionGraphicVoiceStage,
     motionGraphicMusicStage,
+    motionGraphicVoiceStage,
     motionGraphicQaStage,
   ],
   pipeline: motionGraphicPipeline,

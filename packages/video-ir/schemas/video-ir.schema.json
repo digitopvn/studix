@@ -2055,6 +2055,11 @@
             "type": "number",
             "minimum": 0.5,
             "maximum": 2
+          },
+          "duckDb": {
+            "type": "number",
+            "minimum": -40,
+            "maximum": 0
           }
         },
         "required": [

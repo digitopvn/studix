@@ -588,7 +588,7 @@ export const marketingAudioStage: StageDefinition = {
         startMs: g.at,
         durationMs: Math.max(1, length),
         volume: g.role === "music" ? 0.35 : 0.6,
-        ...(g.role === "music" ? { fadeInMs: 300, fadeOutMs: 800 } : {}),
+        ...(g.role === "music" ? { fadeInMs: 300, fadeOutMs: 800, duckDb: -8 } : {}),
       };
     });
     const assets: AssetRef[] = generated.map((g) => g.asset);

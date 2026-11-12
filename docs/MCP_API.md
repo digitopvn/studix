@@ -247,7 +247,12 @@ Behavior notes:
   when the agent writes the storyboard, one soft whoosh (generated once) on every cut except the one into the CTA card, one SFX accent where
   the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
-  for one. Each storyboard beat may name a typed `layout` (a prompt being typed,
+  for one. The bed is composed as intro, build and a drop on the CTA card, dips
+  under the voice, and its beats are found locally: cuts move onto a near
+  downbeat (or beat) wherever every card keeps room for its line. Each card's
+  headline and layout enter on the words the voice says them with (ElevenLabs
+  word timestamps, else estimated); `metadata.beatSync` and `metadata.wordSync`
+  report what was synced. Each storyboard beat may name a typed `layout` (a prompt being typed,
   code lines, chips wired to a hub, a checklist, a rolling counter, a row of
   cards, colour swatches or a stat) that the card draws under its headline; the
   `visual` field stays a description. On a 16:9 frame headlines are set at
