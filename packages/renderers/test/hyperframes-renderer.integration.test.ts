@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolveRenderSpec } from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
 import { FfmpegProbe, HyperFramesRenderer } from "../src/index.ts";
+import { cardIr, writeCard } from "./html-card-fixture.ts";
 import { loadIrFixture, renderToolchain, tempDir } from "./render-test-helpers.ts";
 
 const toolchain = renderToolchain();
@@ -47,6 +48,23 @@ describe.skipIf(!toolchain.ok)(
       expect(values.at(-1)).toBe(1);
       expect(values).toEqual([...values].sort((a, b) => a - b));
       expect(new Set(progress.map((p) => p.phase))).toContain("capture");
+    });
+
+    it("renders an HTML hero card between a scene's depth planes", async () => {
+      const { dir, cleanup } = await tempDir("render-card");
+      cleanups.push(cleanup);
+      const file = await writeCard(dir);
+      const ir = cardIr(file);
+      // The hero scene moves a camera and draws depth planes in front of and behind the card.
+      ir.scenes = ir.scenes.map((scene, i) => ({
+        ...scene,
+        camera: i === 0 ? "static" : "push-in",
+        depth: { background: ["glow", "grain"], foreground: ["corners"] },
+        motif: { shape: "ring", color: "accent" },
+      }));
+      const output = await renderer.render(ir, { spec, workDir: dir, assetFiles: { "hero-card": file } });
+      expect(output.probe).toMatchObject({ width: 270, height: 480, videoCodec: "h264" });
+      expect(Math.abs(output.probe.durationMs - 4000)).toBeLessThanOrEqual(200);
     });
 
     it("stops with CANCELLED when aborted mid-render", async () => {
