@@ -1,5 +1,5 @@
 import { JobAgentRoles, stageAgentSelection } from "@studix/core";
-import { HTML_CARD_LIMITS } from "@studix/renderers/html-card";
+import { HTML_CARD_LIMITS, HtmlCardTween } from "@studix/renderers/html-card";
 import { StudixError, toStudixError } from "@studix/shared";
 import { ASPECT_RATIO_SIZES, CreativeBrief, LayoutSpec, MotionPreset } from "@studix/video-ir";
 import {
@@ -84,14 +84,12 @@ export function motionBeatRange(durationMs: number): { target: number; min: numb
  * beat `beat` (0-based, never the call to action). Checked by the heroes stage (safety rules, linter) before use.
  */
 export const MotionHeroCard = z.object({
-  beat: z
-    .number()
-    .int()
-    .min(0)
-    .max(MG_MAX_BEATS - 2),
+  beat: z.number().int().min(0).max(MG_MAX_BEATS - 2),
+  /** The beat's on-screen line, so a hero whose beat moved (a repair changed the beats) is dropped. */
+  onScreen: z.string().trim().min(1).max(120),
   html: z.string().min(1).max(HTML_CARD_LIMITS.htmlChars),
   css: z.string().max(HTML_CARD_LIMITS.cssChars),
-  script: z.string().max(HTML_CARD_LIMITS.scriptChars),
+  tweens: z.array(HtmlCardTween).max(HTML_CARD_LIMITS.tweens),
 });
 export type MotionHeroCard = z.infer<typeof MotionHeroCard>;
 
@@ -186,19 +184,22 @@ export function premiumDirector(payload: unknown): boolean {
 
 const PREMIUM_INSTRUCTIONS =
   " Premium tier: you are the director. Also write `heroes`: two or three hero cards (never the last beat) " +
-  "that replace the built-in card of beat `beat` (0-based) with custom HTML/GSAP. Pick the beats where a " +
-  "bespoke visual beats a headline (the hook, a key number, the product moment). Each hero is a full-frame " +
-  "card of `premium.frame` size: `html` is markup only (div, span, p, h1-h3, inline svg; never script, style, " +
-  "img, video, link, iframe, form, on* attributes or any URL) and shows the beat's on-screen line; `css` is " +
-  "nested under the card root, so write `.title { ... }`, uses var(--c-background), var(--c-foreground), " +
-  "var(--c-primary), var(--c-accent), and only var(--font-heading) or var(--font-body) as font-family, sizes in " +
-  "% or vmin (never px: the card renders at preview and final sizes), and " +
-  "keeps the bottom 18% clear for the burned captions (no @import, @font-face or url() but url(#id)); " +
-  "`script` is the body of function (tl, root, frame): add tweens only to the paused GSAP timeline `tl`, at " +
-  "seconds from the card start (0 to frame.duration), find elements with root.querySelector, and use no " +
-  "timers, randomness, Date, network, storage or HTML writes. Animate in within the first second, then hold " +
-  "readable to the end. A hero that breaks a rule or fails the HyperFrames linter is replaced by the built-in " +
-  "card, so keep it simple and valid.";
+  "that replace the built-in card of beat `beat` (0-based) with a bespoke full-frame card of `premium.frame` " +
+  "size. Pick the beats where a custom visual beats a headline (the hook, a key number, the product moment). " +
+  "Set `onScreen` to that beat's on-screen line, exactly. `html` is markup only from div, span, p, h1-h3, " +
+  "strong, em, b, i, br, ul, ol, li and inline svg (g, path, circle, rect, line, polyline, polygon, ellipse, " +
+  "text, tspan, defs, linearGradient, radialGradient, stop, clipPath, mask) with class, id and svg geometry " +
+  "and paint attributes only (no style attribute, no href, no URL), and it shows the beat's on-screen line. " +
+  "`css` is plain rules scoped to the card (every selector is prefixed with the card root, so write " +
+  "`.title { ... }`), using var(--c-background), var(--c-foreground), var(--c-primary), var(--c-accent) and " +
+  "only var(--font-heading) or var(--font-body) as font-family, sizes in % or vmin (never px: the card renders " +
+  "at preview and final sizes); keep the bottom 18% clear for the burned captions; no at-rules and no url() " +
+  "but url(#id). The card runs no code: `tweens` (at most 40) animate it, each `{ target, at, duration, from, " +
+  "to, ease, stagger }` where `target` is a simple selector inside the card (`.title`, `#ring`, `.row span`), " +
+  "`at` and `duration` are seconds from the card start, and `from`/`to` hold numbers for x, y, xPercent, " +
+  "yPercent, scale, scaleX, scaleY, rotation, skewX, skewY, opacity or strokeDashoffset. Animate in within the " +
+  "first second, then hold readable to the end. A hero that breaks a rule or fails the HyperFrames linter is " +
+  "replaced by the built-in card, so keep it simple and valid.";
 
 const lengthOf = (brief: CreativeBrief) => Math.min(60_000, Math.max(6_000, brief.durationMs ?? 15_000));
 
@@ -270,15 +271,19 @@ const premiumStage = agentStageFor(undefined, true);
 
 /**
  * The storyboard as the job's tier and brief allow it: a pinned profile replaces the agent's pick, and a
- * standard (non-premium) storyboard carries no hero cards.
+ * standard (non-premium) storyboard carries no hero cards; a hero stays only on the beat whose line it names.
  */
-function settled(brief: CreativeBrief, storyboard: MotionStoryboard, premium: boolean): MotionStoryboard {
+export function settledStoryboard(brief: CreativeBrief, storyboard: MotionStoryboard, premium: boolean): MotionStoryboard {
   const pinned = namedMotionStyle(brief)?.id;
   const { heroes, ...rest } = storyboard;
+  // A hero stays only on the beat whose line it was written for.
+  const kept = premium
+    ? (heroes ?? []).filter((h) => rest.beats[h.beat]?.onScreen.trim() === h.onScreen.trim())
+    : [];
   return {
     ...rest,
     ...(pinned ? { styleProfile: pinned } : {}),
-    ...(premium && heroes && heroes.length > 0 ? { heroes } : {}),
+    ...(kept.length > 0 ? { heroes: kept } : {}),
   };
 }
 
@@ -426,7 +431,7 @@ export const motionGraphicStoryboardStage: StageDefinition = {
       throw err;
     }
     const { brief } = (s.input as StoryboardInput).outputs.brief;
-    const storyboard = settled(brief, AgentOutput.parse(result.output).storyboard, premium);
+    const storyboard = settledStoryboard(brief, AgentOutput.parse(result.output).storyboard, premium);
     const problem = fitProblem(brief, storyboard);
     if (problem === undefined) return { output: { source: "agent", storyboard }, usage: result.usage };
     const usage = result.usage ?? [];
@@ -449,7 +454,7 @@ export const motionGraphicStoryboardStage: StageDefinition = {
         usage: repaired.usage,
       };
     }
-    const second = settled(brief, repaired.storyboard, premium);
+    const second = settledStoryboard(brief, repaired.storyboard, premium);
     if (voiceFitProblem(brief, second) === undefined) return agentOutput(second, repaired.usage);
     if (firstFits) return agentOutput(storyboard, repaired.usage);
     const next = fitProblem(brief, second);

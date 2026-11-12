@@ -77,9 +77,12 @@ function captionsByScene(ir: VideoIR): Map<string, SceneCaptionCue[]> {
   return result;
 }
 
-/** Same policy as the film engine template: agent-authored code can reach nothing outside the project. */
+/**
+ * Defense in depth for pages with HTML cards (cards run no agent code): the film engine page policy without
+ * 'unsafe-eval', so the page loads nothing from outside the project.
+ */
 export const HTML_CARD_CSP =
-  "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'self' data: blob:; form-action 'none'";
+  "default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self' data: blob:; form-action 'none'";
 
 function indexHtml(ir: VideoIR, width: number, height: number, background: string, csp: boolean): string {
   const spans = new Map(resolveSceneSpans(ir.timeline, ir.scenes).map((s) => [s.sceneId, s]));

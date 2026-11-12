@@ -149,7 +149,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       const id = shotDomId(prefix, shot.id);
       cards.push(rendered.html);
       writeShotMotion(w, `#${id}`, shot, scene.durationMs, markup.frame);
-      w.lines.push(...htmlCardScript(id, shot, markup.htmlCards!.get(shot.assetId)!, markup.frame));
+      w.lines.push(...htmlCardScript(id, shot, markup.htmlCards!.get(shot.assetId)!));
       continue;
     }
     html.set(shot.id, rendered.html);

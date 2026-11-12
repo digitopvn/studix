@@ -11,6 +11,7 @@ import {
   MG_STORYBOARD_STAGE,
   type MotionStoryboard,
   premiumDirector,
+  settledStoryboard,
 } from "../src/motion-graphic/motion-graphic-storyboard.ts";
 import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
 import { MOTION_STYLE_PROFILES } from "../src/motion-graphic/motion-style-profiles.ts";
@@ -104,6 +105,20 @@ describe("motion style presets", () => {
     expect(premiumDirector({ roles: { qa: agent } })).toBe(false);
     expect(premiumDirector(undefined)).toBe(false);
   });
+
+  it("keeps a hero only on the premium tier and only on the beat whose line it names", () => {
+    const hero = { html: "<p>x</p>", css: "", tweens: [] };
+    const sb: MotionStoryboard = {
+      ...storyboard("glass-keynote"),
+      heroes: [
+        { beat: 0, onScreen: "Ship faster", ...hero },
+        // A repair moved the beats: this card was written for a line beat 1 no longer shows.
+        { beat: 1, onScreen: "Two tools", ...hero },
+      ],
+    };
+    expect(settledStoryboard(brief(), sb, true).heroes?.map((h) => h.beat)).toEqual([0]);
+    expect(settledStoryboard(brief(), sb, false).heroes).toBeUndefined();
+  });
 });
 
 const ctx: TenantContext = {
@@ -114,9 +129,11 @@ const ctx: TenantContext = {
 
 const hero = {
   html: '<div class="wrap"><h1 class="title">Ship faster</h1><svg class="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" stroke-width="4"/></svg></div>',
-  css: ".wrap { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--c-foreground); } .title { font-family: var(--font-heading); font-size: 8vh; margin: 0; } .ring { width: 30%; color: var(--c-accent); }",
-  script:
-    'tl.from(root.querySelector(".title"), { y: 40, opacity: 0, duration: 0.6, ease: "power3.out" }, 0);\ntl.from(root.querySelector(".ring"), { scale: 0.6, opacity: 0, duration: 0.8, ease: "expo.out" }, 0.2);',
+  css: ".wrap { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--c-foreground); } .title { font-family: var(--font-heading); font-size: 8vmin; margin: 0; } .ring { width: 30%; color: var(--c-accent); }",
+  tweens: [
+    { target: ".title", at: 0, duration: 0.6, from: { y: 40, opacity: 0 }, ease: "power3.out" },
+    { target: ".ring", at: 0.2, duration: 0.8, from: { scale: 0.6, opacity: 0 }, ease: "expo.out" },
+  ],
 };
 
 describe("motion-graphic hero cards", () => {
@@ -154,9 +171,9 @@ describe("motion-graphic hero cards", () => {
   it("swaps a valid hero in as an HTML-card shot and keeps the built-in card for a broken one", async () => {
     const ir = motionGraphicTemplate(brief(), { storyboard: storyboard("glass-keynote") });
     const { s, puts } = stage(ir, [
-      { beat: 0, ...hero },
-      { beat: 1, ...hero, script: 'fetch("https://example.com"); tl.to(root, { opacity: 1 }, 0);' },
-      { beat: 2, ...hero },
+      { beat: 0, onScreen: "Ship faster", ...hero },
+      { beat: 1, onScreen: "One tool", ...hero, html: '<div><script>fetch("https://example.com")</script></div>' },
+      { beat: 2, onScreen: "Try it", ...hero },
     ]);
     const result = await motionGraphicHeroesStage.run(s);
     const out = result.output as { ir: VideoIR; warning?: string };
@@ -171,7 +188,7 @@ describe("motion-graphic hero cards", () => {
     });
     expect(message?.shots.some((sh) => sh.type === "composition")).toBe(false);
     expect(cta?.shots.some((sh) => sh.type === "composition")).toBe(false);
-    expect(out.warning).toMatch(/beat 1: .*fetch/i);
+    expect(out.warning).toMatch(/beat 1: .*script/i);
     expect(out.warning).toMatch(/beat 2/);
     expect(out.ir.metadata?.heroCards).toBe(1);
     expect(puts).toEqual(["generated/job_1/heroes/hook.json"]);

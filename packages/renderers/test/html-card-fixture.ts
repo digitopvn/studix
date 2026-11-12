@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { buildSequentialTimeline, type VideoIR } from "@studix/video-ir";
 import { HTML_CARD_FORMAT, HTML_CARD_MIME, type HtmlCardPackage } from "../src/index.ts";
 
-/** A hero card shaped like what a director agent writes: inline SVG, nested CSS, a GSAP script. */
+/** A hero card shaped like what a director agent writes: inline SVG, card CSS and declarative tweens. */
 export const CLEAN_CARD: HtmlCardPackage = {
   format: HTML_CARD_FORMAT,
   version: 1,
@@ -13,7 +13,7 @@ export const CLEAN_CARD: HtmlCardPackage = {
     '<div class="wrap">',
     '  <svg class="ring" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">',
     '    <defs><linearGradient id="g"><stop offset="0" stop-color="#f59e0b" /><stop offset="1" stop-color="#ef4444" /></linearGradient></defs>',
-    '    <circle cx="50" cy="50" r="40" fill="none" stroke="url(#g)" stroke-width="8" />',
+    '    <circle id="arc" cx="50" cy="50" r="40" fill="none" stroke="url(#g)" stroke-width="8" stroke-dasharray="252" />',
     "  </svg>",
     '  <h1 class="title">Ra mắt Studix 2.0</h1>',
     '  <p class="sub">Video AI, nhanh gấp đôi</p>',
@@ -26,13 +26,13 @@ export const CLEAN_CARD: HtmlCardPackage = {
     ".title { font-family: var(--font-heading); font-weight: 800; font-size: 11vmin; color: var(--c-foreground); margin: 0; }",
     ".sub { font-family: var(--font-body); font-weight: 600; font-size: 6vmin; color: var(--c-accent); margin: 0; }",
   ].join("\n"),
-  script: [
-    'var title = root.querySelector(".title");',
-    'var sub = root.querySelector(".sub");',
-    'tl.fromTo(root.querySelector(".ring"), { rotation: -90, scale: 0.6 }, { rotation: 0, scale: 1, duration: 0.8, ease: "power3.out" }, 0);',
-    'tl.fromTo(title, { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 0.2);',
-    'tl.fromTo(sub, { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" }, frame.duration * 0.25);',
-  ].join("\n"),
+  tweens: [
+    { target: "#arc", at: 0, duration: 0.9, from: { strokeDashoffset: 252 }, to: { strokeDashoffset: 0 }, ease: "power2.out" },
+    { target: ".ring", at: 0, duration: 0.8, from: { rotation: -90, scale: 0.6 }, to: { rotation: 0, scale: 1 }, ease: "back.out(1.4)" },
+    { target: ".title", at: 0.2, duration: 0.6, from: { y: 40, opacity: 0 }, to: { y: 0, opacity: 1 }, ease: "power3.out" },
+    { target: ".sub", at: 0.5, duration: 0.5, from: { y: 30, opacity: 0 }, to: { y: 0, opacity: 1 }, ease: "power2.out" },
+    { target: ".ring", at: 1.6, duration: 0.5, to: { scale: 1.08 }, ease: "sine.inOut" },
+  ],
 };
 
 /** Write `card` as a code asset file in `dir`; returns its path. */

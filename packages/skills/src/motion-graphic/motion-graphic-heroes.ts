@@ -40,7 +40,7 @@ const packageOf = (hero: MotionHeroCard): HtmlCardPackage => ({
   version: 1,
   html: hero.html,
   css: hero.css,
-  script: hero.script,
+  tweens: hero.tweens,
 });
 
 /** Why a hero card is not used, in one short line for the stage warning. */
@@ -84,13 +84,14 @@ export const motionGraphicHeroesStage: StageDefinition = {
           warnings.push(rejected(hero.beat, problems));
           continue;
         }
+        // A linter that cannot run keeps the built-in card; only storage trouble fails the stage.
         const lint = await lintHtmlCard(pkg, {
           width: ir.format.width,
           height: ir.format.height,
           durationMs: scene.durationMs,
           ...(ir.brand ? { palette: ir.brand.palette, fonts: ir.brand.fonts } : {}),
           workDir,
-        });
+        }).catch((err: unknown) => ({ errors: [toStudixError(err).message], warnings: [] }));
         if (lint.errors.length > 0) {
           warnings.push(
             rejected(

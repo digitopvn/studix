@@ -14,7 +14,7 @@ import {
 } from "@studix/video-ir";
 import { DEFAULT_FONT_FAMILY, DEFAULT_PALETTE } from "./brand-tokens.ts";
 import { buildComposition, writeComposition } from "./compile-composition.ts";
-import { HTML_CARD_MIME, type HtmlCardPackage, htmlCardProblems } from "./html-card.ts";
+import { HTML_CARD_MIME, HtmlCardPackage, htmlCardProblems } from "./html-card.ts";
 
 export interface LintHtmlCardOptions {
   /** Render frame size the card is checked at. */
@@ -123,38 +123,44 @@ function findingText(f: HyperframeLintFinding): string {
 }
 
 /**
- * Check an HTML card before it is stored: the static safety rules first, then the HyperFrames linter on a
- * one-scene project built from the card exactly as a render would compile it. Findings are returned, never
- * thrown; only internal failures (bad options, an unwritable work directory) throw.
+ * Check an HTML card before it is stored: the schema and allowlists first, then the HyperFrames linter on a
+ * one-scene project built from the card exactly as a render would compile it. Never throws: findings and
+ * internal failures (bad options, an unwritable work directory) both come back as `errors`, so the caller
+ * can keep its built-in card.
  */
-export async function lintHtmlCard(
-  pkg: HtmlCardPackage,
-  opts: LintHtmlCardOptions,
-): Promise<HtmlCardLintResult> {
-  const problems = htmlCardProblems(pkg);
+export async function lintHtmlCard(pkg: HtmlCardPackage, opts: LintHtmlCardOptions): Promise<HtmlCardLintResult> {
+  const parsed = HtmlCardPackage.safeParse(pkg);
+  if (!parsed.success)
+    return {
+      errors: parsed.error.issues.map((i) => `schema: ${i.path.join(".") || "/"}: ${i.message}`),
+      warnings: [],
+    };
+  const problems = htmlCardProblems(parsed.data);
   if (problems.length > 0) return { errors: problems, warnings: [] };
+  const late = parsed.data.tweens
+    .filter((t) => (t.at + t.duration) * 1000 > opts.durationMs)
+    .map((t) => `tween on "${t.target}" ends at ${t.at + t.duration} s, after the card ends at ${opts.durationMs / 1000} s`);
 
-  await mkdir(opts.workDir, { recursive: true });
-  const dir = await mkdtemp(join(opts.workDir, "html-card-lint-"));
+  let dir: string | undefined;
   try {
-    const pkgJson = JSON.stringify(pkg);
+    await mkdir(opts.workDir, { recursive: true });
+    dir = await mkdtemp(join(opts.workDir, "html-card-lint-"));
+    const pkgJson = JSON.stringify(parsed.data);
     const file = join(dir, "card.json");
     await writeFile(file, pkgJson, "utf8");
     const ir = cardIr(pkgJson, file, opts);
-    const build = buildComposition(ir, {
-      width: opts.width,
-      height: opts.height,
-      assetFiles: { card: file },
-    });
+    const build = buildComposition(ir, { width: opts.width, height: opts.height, assetFiles: { card: file } });
     const projectDir = join(dir, "project");
     await writeComposition(build, projectDir);
     const lint = await lintProject(projectDir);
     const findings = lint.results.flatMap((r) => r.result.findings);
     return {
       errors: findings.filter((f) => f.severity === "error").map(findingText),
-      warnings: [...build.warnings, ...findings.filter((f) => f.severity === "warning").map(findingText)],
+      warnings: [...late, ...build.warnings, ...findings.filter((f) => f.severity === "warning").map(findingText)],
     };
+  } catch (err) {
+    return { errors: [`internal: the card could not be linted: ${err instanceof Error ? err.message : String(err)}`], warnings: late };
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
