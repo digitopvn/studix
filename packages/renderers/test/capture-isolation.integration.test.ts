@@ -119,7 +119,9 @@ async function startCanary(address: string) {
   const udp = createSocket("udp4");
   udp.on("message", () => hits.push("udp stun"));
   await new Promise<void>((resolve) => udp.bind(0, "0.0.0.0", resolve));
-  cleanups.push(() => udp.close());
+  cleanups.push(() => {
+    udp.close();
+  });
   return {
     hits,
     url: `http://${address}:${(http.address() as AddressInfo).port}`,
