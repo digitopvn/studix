@@ -14,7 +14,7 @@ import {
   abortReason,
   createBoundedAgentRuntime,
   emitAgentEvent,
-  eventText,
+  toolResultText,
   withSpend,
 } from "./bounded-agent-runtime.ts";
 import { parseModelJson } from "./model-json-repair.ts";
@@ -185,7 +185,8 @@ export function codexStreamEventsOf(line: string): AgentStreamEvent[] {
         id: item.id,
         name,
         ok,
-        result: eventText(item.aggregated_output ?? item.status ?? ""),
+        result: toolResultText(item.aggregated_output ?? item.status ?? ""),
+        ...(typeof item.exit_code === "number" ? { exitCode: item.exit_code } : {}),
       },
     ];
   }

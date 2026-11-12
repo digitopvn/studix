@@ -50,6 +50,7 @@ describe("Codex exec --json events", () => {
       name: "bash",
       ok: false,
       result: "done",
+      exitCode: 1,
     });
     expect(
       codexStreamEventsOf(

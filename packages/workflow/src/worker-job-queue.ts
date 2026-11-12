@@ -139,6 +139,11 @@ export interface WorkerJobQueue {
   ): Promise<boolean>;
   /** Upsert the stage row (job, name, this attempt). */
   writeStage(job: Job, workerId: string, stage: StageWrite): Promise<boolean>;
+  /**
+   * Set the last activity time of this attempt's stage, only while it is still running, so a late heartbeat
+   * never reverts a finished stage. Optional: a queue without it records no activity.
+   */
+  touchStage?(job: Job, workerId: string, stage: string, at: Date): Promise<boolean>;
   /** Record one usage event (idempotent by its dedupe key). */
   recordUsage(job: Job, workerId: string, usage: UsageInput): Promise<boolean>;
   /**
@@ -410,6 +415,21 @@ export function createWorkerJobQueue(db: StudixDb, options: WorkerJobQueueOption
     writeStage: (job, workerId, stage) =>
       fenced(job, workerId, (tx, ctx) =>
         upsertStageRow(tx, clock, ctx, { ...stage, jobId: job.id, attempt: job.attempts }),
+      ),
+
+    touchStage: (job, workerId, name, at) =>
+      fenced(job, workerId, (tx) =>
+        tx
+          .update(stages)
+          .set({ lastActivityAt: at })
+          .where(
+            and(
+              eq(stages.jobId, job.id),
+              eq(stages.name, name),
+              eq(stages.attempt, job.attempts),
+              eq(stages.status, "running"),
+            ),
+          ),
       ),
 
     recordUsage: (job, workerId, usage) =>

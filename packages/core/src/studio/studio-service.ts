@@ -15,6 +15,7 @@ import {
 } from "./approval-operations.ts";
 import { verifyAttachableProviderJob } from "./attach-media-job-verification.ts";
 import { type CreateVideoProjectResult, createVideoProject } from "./create-video-project.ts";
+import { type JobTraceInput, type JobTraceView, readJobTrace } from "./job-trace.ts";
 import {
   decideStoryboard,
   type FeedbackResult,
@@ -85,6 +86,11 @@ export class StudioService {
     const job = await this.deps.jobs.get(ctx, jobId);
     if (!job) throw new StudixError("NOT_FOUND", `job ${jobId} not found`);
     return loadJobView(this.deps, ctx, job);
+  }
+
+  /** What each agent stage run of a job did, from its session traces (`studix_job_trace`). */
+  getJobTrace(ctx: TenantContext, input: JobTraceInput): Promise<JobTraceView> {
+    return readJobTrace(this.deps, ctx, input);
   }
 
   async cancelJob(ctx: TenantContext, jobId: string, reason?: string): Promise<JobView> {

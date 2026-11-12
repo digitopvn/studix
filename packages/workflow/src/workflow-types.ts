@@ -16,6 +16,7 @@ import type {
 } from "@studix/core";
 import type { AssetRef, CreativeBrief, VideoIR } from "@studix/video-ir";
 import type { z } from "zod";
+import type { CompositionRunner } from "./composition-run-workflow.ts";
 import type { FencedRepositories } from "./worker-job-queue.ts";
 
 /** JSON-safe stage output; stored as the stage checkpoint. */
@@ -114,6 +115,16 @@ export interface StageServices {
     options: { maxBytes: number; truncate?: boolean },
     signal: AbortSignal,
   ) => Promise<{ body: Uint8Array; contentType: string; url: string }>;
+  /**
+   * The skill sandbox over a composition tree (ADR-0024), priced per started minute; unset when the worker has
+   * no sandbox. Stages that author code (the motion-graphic director tier) render it only here.
+   */
+  compositions?: {
+    runner: CompositionRunner;
+    centsPerMinute: number;
+    /** Whether the workspace may use the sandbox (sidecar allowlist); absent means every workspace may. */
+    allows?(ctx: TenantContext): boolean;
+  };
 }
 
 /** A media output an earlier job of the tenant paid for and stored, found by the content key of its request. */
@@ -174,6 +185,25 @@ export interface StageContext {
   services: StageServices;
   /** Services agent stages run on; undefined when the worker was wired without them. */
   agents?: AgentStageServices;
+  /** This stage attempt's identity and liveness record; set by the stage runner. */
+  activity?: StageActivity;
+}
+
+/**
+ * Liveness of one stage attempt. Agent runs mark real work with `touch`, write it on their heartbeat, and
+ * number their session traces with `nextRun`, so every run of the attempt gets its own trace object.
+ */
+export interface StageActivity {
+  /** The stage's name, as on the job's stage rows. */
+  readonly stage: string;
+  /** The job attempt the stage runs in. */
+  readonly attempt: number;
+  /** Mark real work now (an agent event); cheap, written on the next heartbeat. */
+  touch(): void;
+  /** Store the last activity time when it moved since the previous write; best-effort, never throws. */
+  heartbeat(): Promise<void>;
+  /** The next run number of this attempt, from 0. */
+  nextRun(): number;
 }
 
 /** What an agent stage needs from the engine: the harness runtime and the state of its approvals and host task. */

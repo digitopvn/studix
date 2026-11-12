@@ -87,6 +87,21 @@ export function eventText(value: unknown, max = 600): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/**
+ * A tool result for the live stream and the trace: short ones whole, long ones as their head and tail, since
+ * a failing command prints its error last.
+ */
+export function toolResultText(value: unknown, head = 300, tail = 900): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  return text.length > head + tail ? `${text.slice(0, head)}\n…\n${text.slice(-tail)}` : text;
+}
+
+/** The exit code a shell tool reports in its output ("Command exited with code 2"), if any. */
+export function shellExitCode(text: string): number | undefined {
+  const match = /exited with code (\d+)/i.exec(text);
+  return match ? Number(match[1]) : undefined;
+}
+
 export function abortReason(signal: AbortSignal): StudixError {
   const reason: unknown = signal.reason;
   return reason instanceof StudixError ? reason : new StudixError("CANCELLED", "agent task was cancelled");

@@ -136,6 +136,8 @@ export interface SkillSandbox {
   forStage(stage: StageContext): PiTaskWorkspaceProvider;
   /** Readiness for `/readyz`. */
   status(): WorkerSandboxStatus;
+  /** Whether the workspace may open this sandbox (the sidecar allowlist); checked before anything is paid for. */
+  allows(ctx: TenantContext): boolean;
 }
 
 /** Shared with the app (apps/mcp-server/src/worker-sandbox-report.ts): sha256 hex prefix of a workspace id. */
@@ -219,6 +221,7 @@ export async function createSkillSandbox(options: {
   const { sidecar } = settings;
   return {
     status,
+    allows: (ctx) => !sidecar || sidecar.workspaces === "all" || sidecar.workspaces.has(ctx.workspaceId),
     forStage(stage) {
       const provider = createPiTaskWorkspaceProvider({
         driver,

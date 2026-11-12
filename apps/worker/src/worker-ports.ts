@@ -230,6 +230,7 @@ function agentHarness(
     snapshots: repos.modelSnapshots,
     executions: repos.usage,
     events: repos.activity,
+    traceStorage: storage,
     ...(transport && settings.claudePlanner
       ? { claude: { transport, plannerModel: settings.claudePlanner.model } }
       : {}),
@@ -480,6 +481,7 @@ export async function loadWorkerPorts(
     ? {
         runner: createCompositionRunner({ sandbox, storage, workDir: settings.workDir, logger }),
         centsPerMinute: loadMediaExecSettings(runtime.env).centsPerMinute,
+        allows: sandbox.allows,
       }
     : undefined;
   return {

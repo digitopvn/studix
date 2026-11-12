@@ -21,7 +21,16 @@ export type AgentStreamEvent =
   | { type: "message"; delta: string }
   | { type: "reasoning"; delta: string }
   | { type: "tool_start"; id: string; name: string; args?: unknown }
-  | { type: "tool_end"; id: string; name: string; ok: boolean; result?: string }
+  | {
+      type: "tool_end";
+      id: string;
+      name: string;
+      ok: boolean;
+      /** Head and tail of the output, so a failed shell command keeps its stderr tail. */
+      result?: string;
+      /** Exit code of a shell command, when the runtime knows it. */
+      exitCode?: number;
+    }
   | {
       type: "usage";
       turns: number;
