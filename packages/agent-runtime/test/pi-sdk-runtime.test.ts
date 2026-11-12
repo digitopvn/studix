@@ -245,6 +245,42 @@ describe("Pi SDK runtime", () => {
     expect(result.funding).toBe("workspace");
   });
 
+  it("sends a task's images only to a model that reads them, falling back past a text-only one", async () => {
+    seen.length = 0;
+    respond = () => ({ status: 200, text: '{"ok":1}' });
+    const models = (input: Array<"text" | "image">) => [
+      { id: "acme-1", input, cost: { input: 1, output: 1 }, contextWindow: 8000, maxTokens: 1000 },
+    ];
+    const at = (input: Array<"text" | "image">) => ({
+      baseUrl,
+      api: "openai-completions" as const,
+      models: models(input),
+    });
+    const runtime = createPiSdkAgentRuntime({
+      turnRetry: false,
+      resolver: staticResolver(
+        binding({ apiKey: "text-key-0123456789", endpoint: at(["text"]) }),
+        binding({ connectionId: "pcon_2", apiKey: "eyes-key-0123456789", endpoint: at(["text", "image"]) }),
+      ),
+    });
+    // A valid 1x1 PNG: the SDK re-encodes images and drops one it cannot read.
+    const image = {
+      mimeType: "image/png" as const,
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    };
+    const result = await runtime.run(
+      testTenant(),
+      task({ outputSchema: { type: "object" }, images: [image] }),
+    );
+    expect(result.output).toEqual({ ok: 1 });
+    expect(result.resolved?.usedFallback).toBe(true);
+    // The text-only model was refused before any call; the vision model got the image with the prompt.
+    expect(seen.map((s) => s.auth)).toEqual(["Bearer eyes-key-0123456789"]);
+    const body = JSON.stringify(seen[0]?.body);
+    expect(body).toContain('"image_url"');
+    expect(body).not.toContain("Image omitted");
+  });
+
   it("never sends an empty tenant key and never reads the server environment", async () => {
     seen.length = 0;
     process.env.OPENAI_API_KEY = "operator-env-key-0123456789";
@@ -271,11 +307,23 @@ describe("Pi SDK runtime", () => {
     const error = await runtime
       .run(testTenant(), task({ outputSchema: { type: "object" } }))
       .catch((e: unknown) => e);
-    expect(error).toMatchObject({ code: "VALIDATION" });
-    expect(agentSpendOf(error)?.costCents).toBeCloseTo(100, 0);
+    expect(error).toMatchObject({ code: "VALIDATION", retryable: true });
+    // The first answer and both repair turns are paid for.
+    expect(agentSpendOf(error)?.costCents).toBeCloseTo(300, 0);
     // The spend is tagged with the connection that paid it.
     expect(error).toMatchObject({ details: { funding: "member" } });
-    expect(seen).toHaveLength(1);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("asks again with the parse error after a bad JSON reply, and counts both turns", async () => {
+    seen.length = 0;
+    respond = () => ({ status: 200, text: seen.length === 1 ? '{"ok": tru' : 'Here it is: {"ok":true}' });
+    const runtime = createPiSdkAgentRuntime({ resolver: staticResolver(binding()) });
+    const result = await runtime.run(testTenant(), task({ outputSchema: { type: "object" } }));
+    expect(result.output).toEqual({ ok: true });
+    expect(result.costCents).toBeCloseTo(200, 0);
+    expect(seen).toHaveLength(2);
+    expect(JSON.stringify(seen[1]!.body)).toContain("was not valid JSON");
   });
 
   it("makes no provider call when cancelled while the binding is still resolving", async () => {

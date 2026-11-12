@@ -230,9 +230,16 @@ Lý do của các ràng buộc:
   retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
 - Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent ở card CTA và một
   whoosh ngắn sinh một lần, đặt ở mọi lần cắt còn lại; bỏ qua kèm `warning` khi lời gọi trả `UNAVAILABLE`; lời
-  gọi dùng cả key của workspace), `motion-graphic.voice` (voice), `motion-graphic.music` (music, bỏ qua kèm `warning` khi thiếu
-  provider/key),
+  gọi dùng cả key của workspace), `motion-graphic.voice` (voice, xin word timestamps), `motion-graphic.music` (music theo composition plan,
+  bỏ qua kèm `warning` khi thiếu provider/key),
   `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
+- Speech: `params.timestamps: true` xin thời điểm từng từ. Route ElevenLabs gọi `multix elevenlabs tts
+  --timestamps` và trả `GeneratedMedia.words`; route khác bỏ qua param. Timing được lưu cạnh take trong storage
+  (`<storageKey>.words.json`), nên take tái dùng vẫn có timing.
+- Music: `params.sections` (1–8 section `{ name, durationMs 3000–120000, styles? }`, cộng lại bằng
+  `params.durationMs`) và `params.negativeStyles` (mặc định `["vocals"]`). Route ElevenLabs ghi composition
+  plan rồi gọi `multix elevenlabs music --plan`; MiniMax chỉ dùng prompt.
+- Music track có `duckDb` thì renderer hạ nó khi có lời đọc. `marketing-video` dùng `-8`, `motion-graphic` `-9`.
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).
 
 ### Atlas
@@ -280,10 +287,18 @@ hai cue: cue mới bắt đầu từ số điện thoại, trừ khi cách đó 
 bên cạnh khi tổng không quá mười từ, nếu không thì hai cue chia lại thời gian để mỗi cue hiện ít nhất 600 ms
 (`captionCues`).
 Mỗi beat của storyboard agent có thể kèm `layout` có kiểu (`prompt-box`, `code`, `chips`, `checklist`, `counter`,
-`cards-row`, `swatches`, `stat`, schema `LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
+`cards-row`, `swatches`, `stat`, và bộ UI sản phẩm `chat`, `tool-call`, `pipeline`, `player`, `usage`; schema
+`LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
 dựng dần bên dưới (shot `layout`, renderer tự vẽ). `visual` chỉ là mô tả. Beat cuối luôn là card CTA, bỏ qua
 layout. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
 màu `primary`, thay vì xen kẽ nền từng card.
+Mỗi card có một chuyển động camera (`push-in`, `pull-back`, `pan-left`, `pan-right`, `parallax`, `static`):
+beat của storyboard có thể chọn `camera`, còn lại lấy theo vòng camera của style; hai card kề nhau không bao giờ
+trùng camera (template đổi card lặp sang camera kế tiếp, `planCameras`). Mọi card dùng chung depth layer của style
+(`motionDepthFor`: glow và vignette trên nền tối, grid cho style kỹ thuật, grain cho style in ấn/film, corner
+brackets cho style năng lượng ≥ 4, bokeh cho style tối và êm) và một motif (ring, bar, square hoặc circle) chạy dọc
+mép khung qua mọi lần cắt. Card hook cắt sang card đầu tiên bằng `match-cut`; card vào CTA dùng transition đặc
+trưng của style; các lần cắt giữa thay đổi theo bộ transition của style (`planTransitions`).
 Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
 (60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì
 giữ mỗi card lâu hơn. Storyboard sai số beat được một lượt sửa như dưới (cùng mọi lỗi khác trong một thông
@@ -342,7 +357,8 @@ bị bỏ qua; không có tên nào thì card CTA không hiện tên brand thay 
 [`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts); id do brief
 chỉ định được khoá, agent storyboard không đổi được. Mỗi profile là một preset khoá palette, font (cặp font
 bundle có subset tiếng Việt: Be Vietnam Pro, Inter, Playfair Display, Oswald, Space Grotesk, Plus Jakarta Sans,
-JetBrains Mono), pacing (các kiểu vào card được phép, kiểu ra, transition giữa card) và juice (card CTA tô màu
+JetBrains Mono), pacing (các kiểu vào card được phép, kiểu ra, transition đặc trưng vào card CTA và độ dài mọi transition;
+hook vẫn match-cut sang message đầu, các cut giữa message xoay vòng theo nhịp của style) và juice (card CTA tô màu
 accent hay không, whoosh ở mỗi cut hay không). Entrance agent chọn ngoài tập của profile bị thay bằng entrance
 mặc định của profile. `brand` của brief vẫn thắng palette và font. Ngoài họ "aesthetic", thư viện có các
 profile sản phẩm/công nghệ như `cinematic-product-launch` (không whoosh, fade 600 ms), `glass-keynote`,
@@ -354,11 +370,12 @@ với cap lớn hơn và có thể viết 2-3 hero card bằng HTML tuỳ biến
 không at-rule, không `url()` trừ `url(#id)`) và `tweens` (dữ liệu khai báo `{ target, at, duration, from, to,
 ease, stagger }`). Card không chạy code của agent: renderer tự sinh timeline GSAP từ `tweens` đã kiểm, parse rồi
 serialize lại HTML/CSS và gắn namespace cho id. Mỗi card ghi `onScreen` của beat, nên khi bước sửa storyboard đổi
-beat thì card lệch bị bỏ. Stage `motion-graphic.heroes` (sau music,
-trước render) kiểm từng card bằng luật an toàn của HTML card và HyperFrames linter; card đạt được lưu thành code
+beat thì card lệch bị bỏ. Stage `motion-graphic.heroes` (sau voice-over,
+trước visual QA) kiểm từng card bằng luật an toàn của HTML card và HyperFrames linter; card đạt được lưu thành code
 asset `application/vnd.studix.html-card+json` và thay card dựng sẵn của beat đó, card không đạt (hoặc trỏ vào
-card CTA, hoặc linter không chạy được) giữ card dựng sẵn và ghi `warning`, nên premium không làm hỏng job mà bản thường render được. Render
-sau đó qua cổng QA như mọi frame khác. Không có `roles.director` thì `heroes` bị bỏ.
+card CTA, hoặc linter không chạy được) giữ card dựng sẵn và ghi `warning`, nên premium không làm hỏng job mà bản thường render được. Visual
+QA sau đó chấm cả hero card như mọi card khác; card bị chấm hỏng được thiết kế lại thành card dựng sẵn, rồi bản
+render qua cổng QA. Không có `roles.director` thì `heroes` bị bỏ.
 
 Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
@@ -381,6 +398,45 @@ vẫn không vừa, các dòng dài hơn card mới được đọc lại một 
 graphic". Mọi bản đọc được giữ đều được lưu, nên retry job không trả tiền giọng lần nữa. Ước tính chi phí vẫn tính một
 lần đọc mỗi dòng. File không đo được (không có FFmpeg) thì cả file được tính, dư tới 250 ms (hơi thở cuối) thì
 cắt kèm fade.
+
+Music bed (khi storyboard xin) chạy trước voice-over. Nó được soạn theo ba section (`musicSections` trong
+[`motion-graphic-music.ts`](../packages/skills/src/motion-graphic/motion-graphic-music.ts)): intro dưới card hook,
+build dưới các card message và drop ở chỗ card CTA bắt đầu theo storyboard. Mỗi section dài ít nhất 3 giây; video quá ngắn
+thì còn build và drop, hoặc một section. Prompt nêu BPM của style profile. Beat của bed được tìm cục bộ bằng FFmpeg
+(`analyzeBeats`, không gọi API trả phí) và lưu ở `metadata.beats`. Bed ở mức 0.3 và hạ 9 dB khi có lời đọc
+(`duckDb`). Sau khi chia card theo bản đọc, stage voice dời từng lần cắt tới downbeat gần nhất trong 400 ms
+(lần cắt vào card CTA, chỗ nhạc drop: 800 ms), không có thì tới beat gần nhất trong 250 ms
+(`snapCutsToBeats`). Một lần cắt chỉ được dời khi cả hai card hai bên vẫn đủ chỗ cho bản đọc của mình, và
+tổng độ dài giữ nguyên. `metadata.beatSync` ghi BPM, số lần cắt và số lần cắt rơi đúng beat. Không có bed,
+hoặc bed không có nhịp rõ, thì nhịp cắt giữ nguyên. Drop được soạn cho lần cắt vào card CTA đã lên kế hoạch:
+khi bản đọc chia lại card, lần cắt đó có thể lệch khỏi drop (nó vẫn được dời tới downbeat gần nhất). Vì nhạc
+được tạo trước, một job thất bại ở voice (lời đọc dài hơn cả video) vẫn đã trả phí nhạc;
+checkpoint của stage nhạc được giữ nên chạy tiếp job đó không phải trả tiền nhạc lần nữa.
+
+Headline và layout của mỗi card có lời đọc (trừ headline của card mở đầu, luôn hiện ngay từ đầu) xuất hiện theo lời
+([`motion-graphic-reveals.ts`](../packages/skills/src/motion-graphic/motion-graphic-reveals.ts)). Headline (hay câu
+CTA) vào ở từ đầu tiên nó có chung với lời đọc, nếu từ đó nằm trong 40% đầu card, không thì ở từ đầu tiên được
+đọc. Layout vào ở từ ngay sau từ cuối cùng trùng với headline (lời đọc chuyển sang chi tiết layout minh họa),
+không thì ở giữa câu. Layout luôn vào sau headline ít nhất 300 ms và còn ít nhất 1.5 giây trên màn hình. Mỗi
+lần reveal bắt đầu sớm 120 ms để chuyển động đang chạy khi nghe thấy từ. Timing lấy từ word timestamps của
+ElevenLabs. Route khác, hoặc take cũ không có timing, thì từ được ước lượng trong khoảng lời đã đo.
+`metadata.wordSync` là `alignment`, `estimate` hoặc `mixed`.
+
+Visual QA sau render ([`motion-graphic-visual-qa.ts`](../packages/skills/src/motion-graphic/motion-graphic-visual-qa.ts)):
+stage `motion-graphic.visual-qa` chạy sau voice-over và trước `validate_ir`. Stage render graphic, dựng contact
+sheet (một frame giữ của mỗi card, lấy sau phần vào của card) và gửi cho agent của job (ảnh đi qua
+`AgentTask.images`) chấm từng card 0–10 với các lỗi `blank`, `too-small`, `illegible`, `repetitive`,
+`off-brief`, `headline-only` (card đầu và cuối được là card chỉ có tiêu đề). Card có lỗi hoặc điểm dưới 6 quay
+về storyboard agent để thiết kế lại riêng các card đó; lời đọc và weight được giữ nên voice, caption, SFX và
+thời lượng card không đổi, không tốn tiền voice lại; headline và layout của card mới vẫn vào đúng lúc stage voice đặt theo lời đọc (layout mới chưa có thì vào giữa card). Sau đó graphic render lại, tối đa 2 vòng và chỉ khi ngân
+sách và deadline của job còn đủ cho một lượt chấm, một lượt sửa và một lần render. Checkpoint của stage giữ IR
+đã duyệt, điểm và file render tốt cuối cùng (trong thư mục của job, ngoài thư mục attempt); `validate_ir` lưu
+đúng IR đó, stage `render` dùng lại file đó (không tính tiền render lần nữa) hoặc render lại đúng IR đó khi
+file không còn (job chạy tiếp trên worker khác). Kết quả nằm trong job result ở `visualQa`. Bước này không bao
+giờ làm job fail: không có agent harness, chạy `agentMode: "host"`, model không đọc được ảnh, agent chấm lỗi,
+sửa card lỗi hay render lại lỗi thì dừng kèm `reason` và giữ render tốt cuối cùng; render đầu tiên lỗi thì bỏ
+qua review, stage `render` render sau khi version đã được lưu và báo lỗi thật. Storyboard agent cũng bị cấm
+card chỉ có tiêu đề (mọi card message phải có layout) và câu đọc gộp hai ý.
 
 ```json
 {

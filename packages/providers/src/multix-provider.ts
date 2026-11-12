@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -19,6 +19,7 @@ import {
   type ProviderJobInfo,
   type ProviderJobInspector,
   type ProviderJobRef,
+  type SpokenWord,
   type TenantContext,
 } from "@studix/core";
 import { type Clock, type StudixConfig, StudixError, systemClock, toStudixError } from "@studix/shared";
@@ -1040,11 +1041,17 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
       job,
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
     });
+    // Speech timings multix saved next to the audio, when the route reports them.
+    const withWords = async (output: GeneratedMedia): Promise<GeneratedMedia> => {
+      if (plan.role !== "voice") return output;
+      const words = await readSpokenWords(`${output.filePath}.timestamps.json`);
+      return words.length > 0 ? { ...output, words } : output;
+    };
     if (existing?.state === "completed" && (await fileSize(file)) > 0) {
       // Records written before the id was derived hold the literal "sync".
       const journaled = existing.job?.id === "sync" ? undefined : existing.job?.id;
       return result(
-        [{ filePath: file, mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream" }],
+        [await withWords({ filePath: file, mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream" })],
         existing.receiptCents ?? existing.estimatedCostCents,
         existing.receiptCents !== undefined ? "receipt" : "estimate",
         execution(journaled, existing.attempt),
@@ -1054,6 +1061,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     assertWithinBudget(estimate, request.maxCostCents, this.id);
     throwIfAborted(request.signal);
     await mkdir(outDir, { recursive: true });
+    for (const input of plan.files ?? []) await writeFile(join(outDir, input.name), input.content);
     const envelope = await this.runAudioLimited(plan, request.signal, () =>
       this.exec(
         plan.argv.slice(0, 2).join(" "),
@@ -1077,7 +1085,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     } catch (err) {
       throw err instanceof StudixError ? failed(err) : err;
     }
-    const outputs = (await this.outputsIn(envelope, outDir, outDir)).filter((o) => o.filePath === file);
+    const outputs = await Promise.all(
+      (await this.outputsIn(envelope, outDir, outDir)).filter((o) => o.filePath === file).map(withWords),
+    );
     if (outputs.length === 0) {
       throw failed(
         new StudixError("PROVIDER_ERROR", `multix ${plan.argv.slice(0, 2).join(" ")} wrote no output`, {
@@ -1333,6 +1343,83 @@ function paramsOfRole(role: MultixRole): Record<string, unknown> {
   if (role === "imageUpscale") return { image: "x" };
   if (role === "videoUpscale") return { video: "x" };
   return {};
+}
+
+const MAX_SPOKEN_WORDS = 2000;
+const MAX_WORD_LENGTH = 200;
+/** Far above the timings of the longest line a speech call takes. */
+const MAX_TIMESTAMPS_BYTES = 16 * 1024 * 1024;
+
+interface CharacterAlignment {
+  characters: unknown[];
+  starts: unknown[];
+  ends: unknown[];
+}
+
+function characterAlignment(value: unknown): CharacterAlignment | undefined {
+  if (!isObject(value)) return undefined;
+  const { characters, character_start_times_seconds: starts, character_end_times_seconds: ends } = value;
+  if (!Array.isArray(characters) || !Array.isArray(starts) || !Array.isArray(ends)) return undefined;
+  if (characters.length === 0 || starts.length !== characters.length || ends.length !== characters.length) {
+    return undefined;
+  }
+  return { characters, starts, ends };
+}
+
+const seconds = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+/**
+ * Words from the character timings ElevenLabs reports for speech (`<audio>.timestamps.json` as multix
+ * saves it: `alignment`, else `normalized_alignment`). A word is a run of non-space characters; it starts
+ * when its first character starts and ends when its last one ends, in whole milliseconds. Anything
+ * malformed yields no words rather than an error: the speech itself is fine and already paid for.
+ */
+export function spokenWordsFromTimestamps(json: unknown): SpokenWord[] {
+  if (!isObject(json)) return [];
+  const alignment = characterAlignment(json.alignment) ?? characterAlignment(json.normalized_alignment);
+  if (!alignment) return [];
+  const words: SpokenWord[] = [];
+  let text = "";
+  let startS = 0;
+  let endS = 0;
+  const flush = () => {
+    if (text !== "" && words.length < MAX_SPOKEN_WORDS) {
+      const startMs = Math.round(startS * 1000);
+      words.push({
+        text: text.slice(0, MAX_WORD_LENGTH),
+        startMs,
+        endMs: Math.max(startMs, Math.round(endS * 1000)),
+      });
+    }
+    text = "";
+  };
+  for (let i = 0; i < alignment.characters.length; i += 1) {
+    const char = alignment.characters[i];
+    const start = seconds(alignment.starts[i]);
+    const end = seconds(alignment.ends[i]);
+    if (typeof char !== "string" || start === undefined || end === undefined) return [];
+    if (char.trim() === "") {
+      flush();
+      continue;
+    }
+    if (text === "") startS = start;
+    text += char;
+    endS = end;
+  }
+  flush();
+  return words;
+}
+
+/** The words of a timestamps file, or none when it is missing or unreadable. */
+async function readSpokenWords(path: string): Promise<SpokenWord[]> {
+  const size = await fileSize(path);
+  if (size === 0 || size > MAX_TIMESTAMPS_BYTES) return [];
+  try {
+    return spokenWordsFromTimestamps(JSON.parse(await readFile(path, "utf8")));
+  } catch {
+    return [];
+  }
 }
 
 async function fileSize(path: string): Promise<number> {

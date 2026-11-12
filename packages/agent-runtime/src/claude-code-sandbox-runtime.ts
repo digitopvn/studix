@@ -21,6 +21,7 @@ import {
   mapClaudeError,
 } from "./claude-agent-runtime.ts";
 import { sandboxTaskPrompt } from "./codex-agent-runtime.ts";
+import { parseModelJson } from "./model-json-repair.ts";
 import type { PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
 import { SANDBOX_OUTPUT_DIR, SANDBOX_WORK_DIR } from "./sandbox-docker.ts";
 
@@ -148,6 +149,17 @@ export function createClaudeCodeSandboxRuntime(options: ClaudeCodeSandboxRuntime
     id: CLAUDE_CODE_SANDBOX_RUNTIME_ID,
     ...(options.clock ? { clock: options.clock } : {}),
     loop: async (ctx, task): Promise<AgentRunResult> => {
+      // `claude --print` reads a text prompt only; refuse images before the sandbox starts.
+      if (task.images?.length) {
+        throw new StudixError(
+          "UNAVAILABLE",
+          "The Claude Code sandbox runtime cannot send images to the model",
+          {
+            retryable: false,
+            suggestedAction: "Run tasks that send images on the Claude Agent SDK runtime with an API key.",
+          },
+        );
+      }
       const credential = await options.credential(ctx);
       registerSecret(credential.secret);
       // A subscription is paid by the plan; an API key's spend is what Claude Code reports.
@@ -221,7 +233,7 @@ export function createClaudeCodeSandboxRuntime(options: ClaudeCodeSandboxRuntime
         let output: unknown = result.structured_output ?? String(result.result ?? "").trim();
         if (task.outputSchema && result.structured_output === undefined) {
           try {
-            output = JSON.parse(String(result.result ?? ""));
+            output = parseModelJson(String(result.result ?? ""));
           } catch {
             throw withSpend(
               new StudixError("PROVIDER_ERROR", "Claude Code did not return JSON for the output schema"),

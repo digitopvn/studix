@@ -22,6 +22,7 @@ import {
   emitAgentEvent,
   eventText,
 } from "./bounded-agent-runtime.ts";
+import { parseModelJson } from "./model-json-repair.ts";
 import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
 import type { PiBindingResolver, PiRunBinding, ReasoningEffort } from "./pi-binding.ts";
 import { estimatePiModel, findLivePiModel } from "./pi-live-models.ts";
@@ -40,6 +41,8 @@ export interface PiSdkLoopOptions {
   workspace?: PiTaskWorkspaceProvider;
   /** Retry of a turn that hit a rate limit or overload (default PI_TURN_RETRY); false fails at once. */
   turnRetry?: false | typeof PI_TURN_RETRY;
+  /** The task carries images: a model that cannot read them is refused before anything is spent. */
+  needsImages?: boolean;
 }
 
 interface Usage {
@@ -82,11 +85,17 @@ function buildPrompt(task: BoundedAgentTask): string {
   return parts.join("\n\n");
 }
 
-/** Pull a JSON value out of a model reply, tolerating a markdown code fence around it. */
-export function parseModelJson(text: string): unknown {
-  const trimmed = text.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
-  return JSON.parse(fenced ? fenced[1]! : trimmed);
+/** Follow-up turns that ask the model to fix a reply that held no parseable JSON, before the run fails. */
+const JSON_REPAIR_RETRIES = 2;
+
+function jsonRetryPrompt(error: unknown, truncated: boolean): string {
+  const reason = error instanceof Error ? error.message : String(error);
+  return (
+    `Your last reply was not valid JSON (${reason.slice(0, 300)}). ` +
+    (truncated ? "It was cut off at the output limit, so keep the values shorter. " : "") +
+    "Reply again with exactly one complete JSON value that satisfies the schema, with no code fence, " +
+    "comments or text around it."
+  );
 }
 
 function throwIfAborted(task: BoundedAgentTask): void {
@@ -182,6 +191,7 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
           }
           const output = await runAttempt(binding, task, total, model, {
             scratchRoot: options.scratchRoot,
+            needsImages: (task.images?.length ?? 0) > 0,
             reasoningEffort: resolved.reasoningEffort,
             turnRetry: options.turnRetry ?? PI_TURN_RETRY,
             ...(workspace ? { workspace, tools } : {}),
@@ -207,7 +217,10 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
             // Best effort: the run fails either way, and the next pre-check re-tests the key.
             await binding.markRejected().catch(() => undefined);
           }
-          const fallbackAllowed = error instanceof StudixError && FALLBACK_CODES.has(error.code);
+          // A model that cannot read the task's images spent nothing; a consented fallback may.
+          const fallbackAllowed =
+            error instanceof StudixError &&
+            (FALLBACK_CODES.has(error.code) || error.details?.cannotReadImages === true);
           if (!fallbackAllowed || task.signal.aborted) break;
         }
       }
@@ -263,6 +276,8 @@ interface AttemptOptions {
   workspace?: PiTaskWorkspace;
   tools?: SandboxToolName[];
   turnRetry?: false | typeof PI_TURN_RETRY;
+  /** The task carries images: a model that cannot read them is refused before anything is spent. */
+  needsImages?: boolean;
 }
 
 /**
@@ -362,6 +377,13 @@ async function openSession(
       } as Parameters<ModelRuntime["registerProvider"]>[1]);
       model = modelRuntime.getModel(binding.provider, binding.modelId);
     }
+  }
+  if (model && attempt.needsImages && !model.input?.includes("image")) {
+    throw new StudixError("UNAVAILABLE", `Model ${binding.provider}/${binding.modelId} cannot read images`, {
+      retryable: false,
+      suggestedAction: "Choose a vision-capable model for this stage in Settings → AI & Providers.",
+      details: { cannotReadImages: true },
+    });
   }
   if (!model) {
     throw new StudixError(
@@ -510,27 +532,49 @@ async function runAttempt(
       }
     });
 
-    await active.prompt(buildPrompt(task));
-    if (sandboxCap) throw sandboxCap;
-    throwIfAborted(task);
-    const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
-    if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");
-    if (reply.stopReason === "error" || reply.stopReason === "aborted") {
-      throw mapProviderFailure(reply.errorMessage, binding, retriedMs);
-    }
-    const text = reply.content
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => part.text)
-      .join("");
-    if (!task.outputSchema) return text;
-    try {
-      return parseModelJson(text);
-    } catch {
-      // A model answering badly is not a provider outage, so it must not move to a fallback.
-      throw new StudixError("VALIDATION", "The model did not return valid JSON", {
-        retryable: false,
-        details: { provider: binding.provider, modelId: binding.modelId },
-      });
+    let prompt = buildPrompt(task);
+    // The images go with the first prompt only; a JSON repair turn is the same conversation.
+    let images = task.images?.map((i) => ({ type: "image" as const, data: i.data, mimeType: i.mimeType }));
+    for (let retry = 0; ; retry++) {
+      await active.prompt(prompt, images?.length ? { images } : undefined);
+      images = undefined;
+      if (sandboxCap) throw sandboxCap;
+      throwIfAborted(task);
+      const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
+      if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");
+      if (reply.stopReason === "error" || reply.stopReason === "aborted") {
+        throw mapProviderFailure(reply.errorMessage, binding, retriedMs);
+      }
+      const text = reply.content
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+      if (!task.outputSchema) return text;
+      try {
+        return parseModelJson(text);
+      } catch (error) {
+        // Malformed JSON is transient: ask the same session again; every turn's spend is already counted.
+        if (retry < JSON_REPAIR_RETRIES) {
+          prompt = jsonRetryPrompt(error, reply.stopReason === "length");
+          continue;
+        }
+        // A model answering badly is not a provider outage, so it must not move to a fallback.
+        throw new StudixError(
+          "VALIDATION",
+          `The model did not return valid JSON after ${JSON_REPAIR_RETRIES + 1} attempts`,
+          {
+            retryable: true,
+            suggestedAction: "Retry the job, or pick a stronger model for this stage.",
+            details: {
+              // The paid run still stays retryable: a fresh run usually answers well-formed JSON.
+              retryableAfterSpend: true,
+              provider: binding.provider,
+              modelId: binding.modelId,
+              reason: error instanceof Error ? error.message.slice(0, 300) : String(error),
+            },
+          },
+        );
+      }
     }
   } finally {
     unsubscribe?.();

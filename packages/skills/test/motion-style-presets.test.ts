@@ -68,12 +68,14 @@ describe("motion style presets", () => {
     expect(ir.brand?.fonts).toEqual({ heading: "Inter", body: "Inter" });
     // "pop" is not a cinematic entrance: the profile's default replaces it.
     expect(ir.scenes[0]?.shots[0]?.animation?.enter).toBe("fade");
-    expect(ir.scenes[0]?.transitionOut).toEqual({ kind: "fade", durationMs: 600 });
+    // The hook match-cuts into the first message; the cut into the call to action is the preset's own.
+    expect(ir.scenes[0]?.transitionOut?.kind).toBe("match-cut");
+    expect(ir.scenes.at(-2)?.transitionOut).toEqual({ kind: "fade", durationMs: 600 });
     expect(ir.scenes.at(-1)?.background?.color).toBe("background");
 
     const hype = motionGraphicTemplate(brief(), { storyboard: storyboard("athletic-impact") });
     expect(hype.scenes[0]?.shots[0]?.animation?.enter).toBe("pop");
-    expect(hype.scenes[0]?.transitionOut?.kind).toBe("cut");
+    expect(hype.scenes.at(-2)?.transitionOut?.kind).toBe("cut");
     expect(hype.scenes.at(-1)?.background?.color).toBe("primary");
     expect(hype.brand?.fonts.heading).toBe("Oswald");
   });

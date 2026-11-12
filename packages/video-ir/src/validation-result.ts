@@ -15,6 +15,8 @@ export type ValidationIssueCode =
   | "continuity"
   /** Lipsync routing disagrees with who speaks on screen. */
   | "lipsync"
+  /** Adjacent scenes break the camera grammar (same move twice, a match cut without motifs). */
+  | "camera"
   /** A prerequisite of the requested production phase is missing. */
   | "not_ready";
 
