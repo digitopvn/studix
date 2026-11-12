@@ -162,14 +162,22 @@ to the exact same version in `packages/renderers/package.json` (currently
   runs in Node, where those flags do not apply, and matches URLs over the whole
   compiled HTML, user text included. The engine patch makes `downloadToTemp` and
   `fetchPublicHttpsText` throw `RemoteFetchDisabledError` before any request,
-  which covers remote media, images, `background:url(…)`, font faces, external
-  stylesheets, media probing and the audio/video extractors. The producer patch
-  stops `inlineExternalScripts` from fetching and `collectExternalAssets` from
-  copying any path outside the project. Compositions must reference project
-  files only, which `compileComposition` already guarantees. The same test file
-  renders a composition whose title, text shot and caption carry
-  `background:url(https://…)` and `url('../../…')` and checks that no request
-  leaves and no host file reaches the frame
+  which covers remote media, images, `background:url(…)`, remote `@font-face`
+  sources, external stylesheets, media probing and the audio/video extractors.
+  The producer patch stops `inlineExternalScripts` from fetching and
+  `collectExternalAssets` from copying any path outside the project. It also
+  gives `injectDeterministicFontFaces` (from `@hyperframes/core`) a fetch that
+  always fails and turns off system font capture. Otherwise a `font-family`
+  without `@font-face`, such as `Helvetica` in an HTML card, made the compiler
+  ask Google Fonts with every character of the page, or embed a host font file.
+  Compositions must reference project files only, which `compileComposition`
+  already guarantees, and Studix fonts always come with `@font-face`. The same
+  test file renders a composition whose title, text shot and caption carry
+  `background:url(https://…)`, and HTML cards using `Helvetica` and `Lobster`,
+  and checks that no download or non-loopback `fetch` happens with an empty font
+  cache (`HYPERFRAMES_FONT_CACHE_DIR`). A raw page whose `<img>`, inline style and
+  stylesheet point at a host file outside the project checks that the file never
+  reaches the frame
   ([#457](https://github.com/digitopvn/studix/issues/457)). Both patches are
   keyed to the exact version, like the SIGTERM one below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through

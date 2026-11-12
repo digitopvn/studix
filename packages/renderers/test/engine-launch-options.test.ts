@@ -49,7 +49,7 @@ describe("@hyperframes/engine launch options", () => {
 
   // The compiler hands these helpers URLs it matches in compiled HTML, user text included, so they must never
   // fetch. capture-isolation.integration.test.ts proves the whole compile end to end.
-  it("never download a URL found in a composition", async () => {
+  it("refuse to download any URL found in a composition", async () => {
     const engine = await loadEngineModule<UrlDownloader>("index.js");
     const transport = vi.fn(async () => new Response("leak"));
     engine._setDownloadFetchForTests(transport);

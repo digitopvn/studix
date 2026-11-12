@@ -12,6 +12,7 @@ import { buildSequentialTimeline, resolveRenderSpec, type VideoIR } from "@studi
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { renderWithProducer } from "../src/hyperframes/producer-render.ts";
 import { HyperFramesRenderer } from "../src/index.ts";
+import { CLEAN_CARD, cardIr, writeCard } from "./html-card-fixture.ts";
 import { PNG_1X1, renderToolchain, tempDir } from "./render-test-helpers.ts";
 
 const toolchain = renderToolchain();
@@ -236,9 +237,12 @@ async function loadEngine(): Promise<{
   return import(pathToFileURL(join(dirname(enginePackage), "dist", "index.js")).href);
 }
 
-/** Text a user could type into a title, a text shot or a caption, aimed at the compiler's URL rewriters. */
+/**
+ * Text a user could type into a title, a text shot or a caption, aimed at the compiler's URL rewriters. Text
+ * cannot become an element or attribute, so the host-file copy is guarded by the raw-page test below.
+ */
 const HOSTILE_TEXT =
-  "background:url(https://egress-canary.example/bg.png) background-image: url('../../../secret/red.png')";
+  "background:url(https://egress-canary.example/bg.png) @font-face{src:url(https://egress-canary.example/f.woff2)}";
 
 /** A text-only composition whose title, text shot and caption all carry `text`. */
 function textIr(text: string): VideoIR {
@@ -274,32 +278,56 @@ const requestUrl = (input: unknown) => (input instanceof Request ? input.url : S
 describe.skipIf(!toolchain.ok)(
   `HyperFrames compile isolation${toolchain.ok ? "" : ` (skipped: ${toolchain.reason})`}`,
   () => {
-    it("makes no outbound request for URLs written into composition text", async () => {
+    /** Render `ir` and return every download and non-loopback fetch the compile and capture made. */
+    async function remoteRequests(ir: VideoIR, assetFiles: Record<string, string> = {}): Promise<string[]> {
       const engine = await loadEngine();
-      const downloads: string[] = [];
+      const requests: string[] = [];
       engine._setDownloadFetchForTests(async (input) => {
-        downloads.push(requestUrl(input));
+        requests.push(`download ${requestUrl(input)}`);
         return new Response(PNG_1X1, { headers: { "content-type": "image/png" } });
       });
       const fetchSpy = vi.spyOn(globalThis, "fetch");
       const { dir, cleanup } = await tempDir("compile-isolation");
       cleanups.push(cleanup);
       try {
-        const output = await new HyperFramesRenderer({ workers: 1 }).render(textIr(HOSTILE_TEXT), {
+        const output = await new HyperFramesRenderer({ workers: 1 }).render(ir, {
           spec: resolveRenderSpec("preview", { fps: 12 }),
           workDir: dir,
-          assetFiles: {},
+          assetFiles,
         });
         expect(output.probe).toMatchObject({ videoCodec: "h264" });
       } finally {
         engine._setDownloadFetchForTests();
-        fetchSpy.mockRestore();
       }
-      const remoteFetches = fetchSpy.mock.calls
-        .map(([input]) => requestUrl(input))
-        .filter((u) => !isLoopback(u));
-      expect(downloads).toEqual([]);
-      expect(remoteFetches).toEqual([]);
+      // mockRestore() also clears the recorded calls, so read them first.
+      const calls = [...fetchSpy.mock.calls];
+      fetchSpy.mockRestore();
+      for (const [input] of calls) {
+        const url = requestUrl(input);
+        if (!isLoopback(url)) requests.push(`fetch ${url}`);
+      }
+      return requests;
+    }
+
+    it("makes no outbound request for URLs written into composition text", async () => {
+      expect(await remoteRequests(textIr(HOSTILE_TEXT))).toEqual([]);
+    });
+
+    // A family without @font-face would make the compiler ask Google Fonts, sending the page's characters.
+    it.each(["Helvetica", "Lobster"])("makes no outbound request for a card font %s", async (family) => {
+      const { dir, cleanup } = await tempDir("compile-card-font");
+      cleanups.push(cleanup);
+      // An empty font cache: a cached Google Fonts response would hide the request.
+      vi.stubEnv("HYPERFRAMES_FONT_CACHE_DIR", join(dir, "font-cache"));
+      cleanups.push(() => {
+        vi.unstubAllEnvs();
+      });
+      expect(CLEAN_CARD.css).toContain("font-family: var(--font-heading);");
+      const file = await writeCard(dir, {
+        ...CLEAN_CARD,
+        css: CLEAN_CARD.css.replace("font-family: var(--font-heading);", `font-family: ${family};`),
+      });
+      expect(await remoteRequests(cardIr(file), { "hero-card": file })).toEqual([]);
     });
 
     it("never copies a host file outside the project into the render", async () => {

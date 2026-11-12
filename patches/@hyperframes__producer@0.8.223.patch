@@ -1,5 +1,5 @@
 diff --git a/dist/index.js b/dist/index.js
-index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..a5dcef3e3d55af1fac93599649100be2e9ddf8ad 100644
+index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..2d24ef45eaf59a64492ebec97fec815a9f3aab35 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -7448,6 +7448,9 @@ async function inlineExternalScripts(html) {
@@ -21,7 +21,19 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..a5dcef3e3d55af1fac93599649100be2
      if (!existsSync10(absPath)) return null;
      const safeKey = toExternalAssetKey(absPath);
      externalAssets.set(safeKey, absPath);
-@@ -8065,6 +8070,31 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+@@ -7938,7 +7943,10 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+   const coalescedHtml = await injectDeterministicFontFaces(normalizedFontHtml, {
+     logger: defaultLogger,
+     failClosedFontFetch: options.failClosedFontFetch === true,
+-    allowSystemFontCapture: options.allowSystemFontCapture,
++    // Studix: fonts are bundled with @font-face. A family without one must not make the compiler ask Google
++    // Fonts (the request carries the page's characters) or embed host font files.
++    allowSystemFontCapture: false,
++    fetchImpl: () => Promise.reject(new Error("[Compiler] Remote font fetches are disabled")),
+     abortSignal: options.abortSignal
+   });
+   const assembledHtml = await inlineExternalScripts(coalescedHtml);
+@@ -8065,6 +8073,31 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
      hasAncestorBackgroundImage
    };
  }
@@ -53,7 +65,7 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..a5dcef3e3d55af1fac93599649100be2
  async function discoverMediaFromBrowser(page) {
    const elements = await page.evaluate(() => {
      const results = [];
-@@ -8944,6 +8974,10 @@ async function runProbeStage(input) {
+@@ -8944,6 +8977,10 @@ async function runProbeStage(input) {
            if (fileServer && src.startsWith(fileServer.url)) {
              src = src.slice(fileServer.url.length).replace(/^\//, "");
            }

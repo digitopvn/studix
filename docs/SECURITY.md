@@ -440,11 +440,13 @@ or a path guard as a security boundary:
   project-relative path that stays inside the project (or an inline `data:image`), so the producer never reads
   a host file or downloads a URL on its behalf.
 - The producer's compile step runs in Node, outside the browser flags, and scans the compiled HTML (user text
-  included) for URLs in `background:url(…)`, media and image tags, font faces, stylesheets and scripts. The
-  patched engine refuses every remote download (`downloadToTemp`, `fetchPublicHttpsText`), and the patched
-  producer neither fetches external scripts nor copies a file outside the project into the render. Studix
-  needs none of this: `compileComposition` copies every asset into the project and fonts are bundled. A URL or
-  `../` path in a title or caption therefore stays inert text
+  included) for URLs in `background:url(…)`, media and image tags, font faces, stylesheets and scripts. It
+  also resolves any `font-family` without `@font-face` through Google Fonts, sending the page's characters. The
+  patched engine refuses every remote download (`downloadToTemp`, `fetchPublicHttpsText`). The patched
+  producer neither fetches external scripts or fonts nor copies a file (including a system font) from outside
+  the project into the render. Studix needs none of this: `compileComposition` copies every asset into the
+  project and every Studix font comes with `@font-face`. A URL in a title or caption, or an unknown font in an
+  HTML card, therefore causes no request
   ([#457](https://github.com/digitopvn/studix/issues/457)).
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
