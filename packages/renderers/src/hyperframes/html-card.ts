@@ -217,8 +217,8 @@ function sanitizeHtml(html: string, cardId: string, problems: Set<string>): stri
       .map((node) => {
         if (node.type === "text") return escapeHtml(node.data);
         if (node.type === "comment") return "";
-        if (node.type !== "tag") {
-          problems.add(`html: <${"name" in node ? node.name : node.type}> is not allowed`);
+        if (node.type === "cdata" || node.type === "root" || node.type === "directive") {
+          problems.add("html: doctype, CDATA and processing instructions are not allowed");
           return "";
         }
         const name = node.name.toLowerCase();
