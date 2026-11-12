@@ -5,15 +5,28 @@ import { join } from "node:path";
 import type { CompositionRunRequest } from "@studix/core";
 import { type VideoIR, validateVideoIR } from "@studix/video-ir";
 import type { StageContext } from "@studix/workflow";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MG_DIRECTION_AGENT,
   MG_SCENE_BUILD_AGENT,
+  MG_VISUAL_QA_STAGE,
   motionGraphicDirectorStage,
   motionGraphicTemplate,
+  motionGraphicVisualQaStage,
   sceneClipTiming,
   withoutMotifCuts,
 } from "../src/index.ts";
+
+// The contact sheet is drawn with ffmpeg; here it is any file the reviewer is sent.
+vi.mock("@studix/renderers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@studix/renderers")>()),
+  writeContactSheet: async (_video: string, _ms: number, _n: number, out: string) => {
+    const { mkdir } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    await mkdir(dirname(out), { recursive: true });
+    await writeFile(out, "jpg");
+  },
+}));
 
 const brief = { prompt: "Introduce Studix: describe a video, get a finished film", durationMs: 15_000 };
 const director = { runtime: "pi", connectionId: "conn_1", provider: "anthropic" } as const;
@@ -64,6 +77,10 @@ describe("motion-graphic authored hook scene", () => {
       allowed?: boolean;
       build?: unknown;
       exitCode?: number;
+      /** Exit code per sandbox run, in order; `exitCode` once the list runs out. */
+      exitCodes?: number[];
+      /** Sandbox run (from 1) that throws instead of answering. */
+      throwOnRun?: number;
       /** Replies per agent, in order; the default reply once a queue runs out. */
       replies?: Record<string, unknown[]>;
     } = {},
@@ -93,9 +110,15 @@ describe("motion-graphic authored hook scene", () => {
     const runner = {
       async run(_s: StageContext, request: CompositionRunRequest) {
         runs.push(request);
+        if (opts.throwOnRun === runs.length) throw new Error("sandbox lost");
         const clip = request.check?.path as string;
         objects.set(`compositions/${request.compositionId}/files/${clip}`, new TextEncoder().encode("mp4"));
-        return { exitCode: opts.exitCode ?? 0, durationMs: 30_000, log: "rendered", changed: [] };
+        return {
+          exitCode: opts.exitCodes?.[runs.length - 1] ?? opts.exitCode ?? 0,
+          durationMs: 30_000,
+          log: "rendered",
+          changed: [],
+        };
       },
     };
     const runtime = {
@@ -277,6 +300,104 @@ describe("motion-graphic authored hook scene", () => {
     expect(out.warning).toMatch(/sandbox check or render failed \(exit 1\)/);
     expect(out.ir.scenes).toEqual(ir.scenes);
     expect(out.ir.metadata?.director).toMatchObject({ scenes: [{ status: "card" }] });
+  });
+
+  describe("visual review of the authored hook", () => {
+    const tooSmall = {
+      cards: [
+        { card: 1, score: 3, issues: ["too-small", "illegible"], note: "the visual sits in a small box" },
+      ],
+    };
+    const passed = { cards: [{ card: 1, score: 8, issues: [], note: "" }] };
+    const bigger = {
+      ...fragment,
+      css: ".head { position: absolute; left: 80px; top: 500px; font-size: 140px; }",
+    };
+
+    /** Runs the director, then the review over its IR with a stills capture that records what it drew. */
+    async function review(opts: Parameters<typeof setup>[0], failCapture?: number) {
+      const env = await setup(opts);
+      const authored = ((await motionGraphicDirectorStage.run(env.s)).output as { ir: VideoIR }).ir;
+      const captured: VideoIR[] = [];
+      const engine = {
+        render: { name: "render", estimateCostCents: () => 5, run: async () => ({ output: {} }) },
+        stills: async (_s: StageContext, ir: VideoIR) => {
+          captured.push(ir);
+          if (failCapture === captured.length) throw new Error("capture lost");
+          return { filePath: join(dir as string, "stills.mp4"), seekMs: ir.scenes.map(() => 0), frames: 1 };
+        },
+      };
+      const s = {
+        ...env.s,
+        outputs: { brief: { brief }, "motion-graphic.authored-scenes": { ir: authored } },
+      } as unknown as StageContext;
+      const result = await motionGraphicVisualQaStage(engine as never).run(s);
+      const out = result.output as { ir: VideoIR; visualQa: { status: string; reason?: string } };
+      return { ...env, authored, captured, out };
+    }
+
+    it("sends the authored hook's still and its line to the reviewer", async () => {
+      const { out, inputs, tasks } = await review({ replies: { [MG_VISUAL_QA_STAGE]: [passed] } });
+      expect(tasks.at(-1)).toBe(MG_VISUAL_QA_STAGE);
+      const cards = inputs.at(-1)?.cards as unknown[] | undefined;
+      expect(cards?.[0]).toMatchObject({ card: 1, authored: true });
+      expect(out.visualQa.status).toBe("passed");
+    });
+
+    it("sends a hook that reads too small back to its builder once and swaps in the fixed clip", async () => {
+      const { out, authored, inputs, tasks, runs, captured } = await review({
+        replies: { [MG_VISUAL_QA_STAGE]: [tooSmall, passed], [MG_SCENE_BUILD_AGENT]: [fragment, bigger] },
+      });
+      expect(tasks.filter((t) => t === MG_SCENE_BUILD_AGENT)).toHaveLength(2);
+      const fix = inputs.findLast((i) => "repair" in i)?.repair as { issues: Array<{ message: string }> };
+      expect(fix.issues[0]?.message).toMatch(/too-small, illegible\): the visual sits in a small box/);
+      expect(fix).toMatchObject({ output: fragment });
+      expect(runs).toHaveLength(2);
+      const hook = authored.scenes[0]?.id as string;
+      const shot = out.ir.scenes[0]?.shots[0] as { assetId: string };
+      expect(shot.assetId).toBe(`${hook}-authored-fix`);
+      expect(out.ir.assets.some((a) => a.id === `${hook}-authored`)).toBe(false);
+      expect(captured).toHaveLength(2);
+      expect(out.visualQa.status).toBe("fixed");
+    });
+
+    it("keeps the repaired clip, not reviewed again, when the capture after the repair fails", async () => {
+      const { out, authored } = await review(
+        { replies: { [MG_VISUAL_QA_STAGE]: [tooSmall], [MG_SCENE_BUILD_AGENT]: [fragment, bigger] } },
+        2,
+      );
+      const hook = authored.scenes[0]?.id as string;
+      expect(out.ir.scenes[0]?.shots[0]).toMatchObject({ assetId: `${hook}-authored-fix` });
+      expect(out.visualQa.status).toBe("failed");
+      expect(out.visualQa.reason).toMatch(/repaired but not reviewed again: the review capture failed/);
+    });
+
+    it("keeps the current clip and its fragment when the sandbox throws during the repair", async () => {
+      const { out, authored, objects, runs } = await review({
+        throwOnRun: 2,
+        replies: { [MG_VISUAL_QA_STAGE]: [tooSmall], [MG_SCENE_BUILD_AGENT]: [fragment, bigger] },
+      });
+      expect(out.ir).toEqual(authored);
+      expect(out.visualQa.reason).toMatch(/kept its clip: sandbox lost/);
+      const hook = authored.scenes[0]?.id as string;
+      const stored = objects.get(`compositions/${runs[0]?.compositionId}/files/scenes/${hook}.scene.html`);
+      expect(new TextDecoder().decode(stored)).toContain("font-size: 96px");
+    });
+
+    it("keeps the current clip when the repaired scene fails its render", async () => {
+      const { out, authored, objects, runs } = await review({
+        exitCodes: [0, 1],
+        replies: { [MG_VISUAL_QA_STAGE]: [tooSmall], [MG_SCENE_BUILD_AGENT]: [fragment, bigger] },
+      });
+      expect(runs).toHaveLength(2);
+      expect(out.ir).toEqual(authored);
+      expect(out.visualQa.status).toBe("failed");
+      expect(out.visualQa.reason).toMatch(/kept its clip: the sandbox check or render failed/);
+      // The tree is put back on the fragment the film shows.
+      const hook = authored.scenes[0]?.id as string;
+      const stored = objects.get(`compositions/${runs[0]?.compositionId}/files/scenes/${hook}.scene.html`);
+      expect(new TextDecoder().decode(stored)).toContain("font-size: 96px");
+    });
   });
 
   it("gives the clip the hook's words and the bed's beats", () => {

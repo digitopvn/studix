@@ -195,7 +195,7 @@ const HELPERS = Object.entries(SCENE_FRAGMENT_HELPERS)
 
 export const sceneBuildAgent = createAgentStage({
   name: MG_SCENE_BUILD_AGENT,
-  version: 2,
+  version: 3,
   inputSchema: TaskInput,
   outputSchema: BuildOutput,
   cacheable: false,
@@ -214,7 +214,9 @@ export const sceneBuildAgent = createAgentStage({
     "- `css`: plain rules without at-rules, animations or transitions; Studix scopes every selector to the " +
     "scene. Colours and fonts only from the theme tokens in `theme.tokens` (var(--bg), var(--ink), " +
     "var(--accent), var(--primary), var(--mute), var(--hair), var(--surface), var(--font-heading), ...). Text " +
-    "is at least `frame.minTextPx` px. Keep everything above the caption band (`frame.captionBandPx` from the " +
+    "is at least `frame.minTextPx` px (a floor for small labels, not a size to aim for). Scale: the main " +
+    "visual fills most of the frame (at least 60% of its width or height), the headline is at least " +
+    "`frame.headlinePx` px, and nothing important sits in a small box or corner. Keep everything above the caption band (`frame.captionBandPx` from the " +
     "bottom) and `frame.marginPx` from the other edges. No `filter`, blur, `backdrop-filter` or `will-change` " +
     "in css or js: they make the render too slow; draw glows with a transparent radial-gradient.\n" +
     "- `js`: the choreography body, run once while the page builds. Every tween goes on `tl` at an absolute " +
@@ -231,7 +233,8 @@ export const sceneBuildAgent = createAgentStage({
     'JSON, each value one string: {"html":"...","css":"...","js":"..."} (css may be "").' +
     REPAIR_RULE +
     " A `repair.issues` path of html, css or js names the part of the fragment that broke the contract or " +
-    "failed the HyperFrames check.",
+    "failed the HyperFrames check. An issue from the visual review of the rendered scene is fixed by " +
+    "re-laying out and enlarging what it names, which may change any part of the fragment.",
   taskInput: (input) => input,
   limits: MG_SCENE_BUILD_LIMITS,
 });

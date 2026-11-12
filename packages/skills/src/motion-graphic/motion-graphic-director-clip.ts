@@ -1,0 +1,244 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  type CompositionManifest,
+  compositionContentType,
+  compositionFileKey,
+  compositionManifestKey,
+  loadCompositionManifest,
+  mergeManifest,
+  saveCompositionManifest,
+} from "@studix/core";
+import {
+  buildDirectorProject,
+  checkSceneFragment,
+  type DirectorProject,
+  resolvePalette,
+  type SceneFragment,
+  sceneFragmentFile,
+} from "@studix/renderers";
+import type { AssetRef, Scene, VideoIR } from "@studix/video-ir";
+import type { StageContext, StageUsage } from "@studix/workflow";
+import type { sceneClipTiming } from "./motion-graphic-director-timing.ts";
+
+/**
+ * One authored scene clip, shared by the director stage (first build) and the visual review (a repair):
+ * check the fragment, store the composition tree, render the clip in the skill sandbox, book its minutes,
+ * and turn the rendered clip into the scene's picture.
+ */
+
+/** Most wall time of the sandbox check and render of one authored scene clip. */
+export const RENDER_TIMEOUT_SECONDS = 600;
+/**
+ * Wall time for one scene's check and render: a minute of start-up plus 40 s per second of clip, so a scene
+ * that hangs the renderer fails fast and its repair turn still fits the job deadline.
+ */
+export const sceneRenderTimeoutSeconds = (durationMs: number) =>
+  Math.min(RENDER_TIMEOUT_SECONDS, Math.ceil(60 + (40 * Math.max(0, durationMs)) / 1000));
+
+/** The most one sandbox check and render may cost. */
+export const sandboxRenderCents = (s: StageContext) =>
+  Math.ceil(RENDER_TIMEOUT_SECONDS / 60) * (s.services.compositions?.centsPerMinute ?? 0);
+
+export type ClipTiming = ReturnType<typeof sceneClipTiming>;
+
+/** Writes files into the composition tree (created on first use) and saves its manifest. */
+async function storeTree(
+  s: StageContext,
+  id: string,
+  files: ReadonlyArray<{ path: string; body: Uint8Array }>,
+): Promise<void> {
+  const storage = s.services.storage!;
+  const existing = await storage.head(s.ctx, compositionManifestKey(id));
+  const manifest: CompositionManifest = existing
+    ? await loadCompositionManifest(storage, s.ctx, id)
+    : { id, title: "Motion graphic: authored scenes", files: [], updatedAt: new Date().toISOString() };
+  const written = [];
+  for (const f of files) {
+    const contentType = compositionContentType(f.path);
+    const put = await storage.put(s.ctx, compositionFileKey(id, f.path), f.body, { contentType });
+    written.push({ path: f.path, bytes: f.body.byteLength, sha256: put.sha256, contentType });
+  }
+  await saveCompositionManifest(storage, s.ctx, mergeManifest(manifest, written));
+}
+
+/** The project's files, its fragment as stored for later edits, and the data files (`data/<name>.json`). */
+async function treeFiles(
+  project: DirectorProject,
+  sid: string,
+  fragment: SceneFragment,
+  extra: Record<string, unknown>,
+) {
+  const enc = new TextEncoder();
+  const files: Array<{ path: string; body: Uint8Array }> = [];
+  for (const [path, text] of project.files) files.push({ path, body: enc.encode(text) });
+  for (const [path, source] of project.copies)
+    files.push({ path, body: new Uint8Array(await readFile(source)) });
+  files.push({ path: fragmentPath(sid), body: enc.encode(sceneFragmentFile(sid, fragment)) });
+  for (const [name, value] of Object.entries(extra))
+    files.push({ path: `data/${name}.json`, body: enc.encode(JSON.stringify(value, null, 2)) });
+  return files;
+}
+
+/** Stores only the fragment file: puts the tree back on the fragment the film still shows. */
+export async function storeFragment(
+  s: StageContext,
+  compositionId: string,
+  sid: string,
+  fragment: SceneFragment,
+): Promise<void> {
+  const body = new TextEncoder().encode(sceneFragmentFile(sid, fragment));
+  await storeTree(s, compositionId, [{ path: fragmentPath(sid), body }]);
+}
+
+/** Why one attempt gave no clip, or the clip's path in the composition tree. */
+export type ClipAttempt =
+  | { ok: true }
+  | { ok: false; kind: "contract"; problems: string[] }
+  | { ok: false; kind: "budget" }
+  | { ok: false; kind: "render"; why: string; log: string };
+
+/**
+ * One attempt at a scene clip from `built`: the contract check, the composition tree (with `extra` data
+ * files), the sandbox check and render, and its compute booked on `usage`. `booked()` is the stage context
+ * with what was spent so far; the render runs only while what is left of the budget holds it.
+ */
+export async function attemptSceneClip(
+  booked: () => StageContext,
+  a: {
+    ir: VideoIR;
+    scene: Scene;
+    built: SceneFragment;
+    timing: ClipTiming;
+    compositionId: string;
+    clip: string;
+    extra: Record<string, unknown>;
+    usageItem: string;
+    usage: StageUsage[];
+  },
+): Promise<ClipAttempt> {
+  const s = booked();
+  const compositions = s.services.compositions!;
+  const words = a.timing.scenes[a.scene.id]?.lines.flatMap((l) => l.words.map(([w]) => w)) ?? [];
+  const checked = checkSceneFragment(a.built, { sid: a.scene.id, words });
+  if (checked.problems.length > 0) return { ok: false, kind: "contract", problems: checked.problems };
+  const project = buildDirectorProject({
+    width: a.ir.format.width,
+    height: a.ir.format.height,
+    timing: a.timing,
+    theme: { palette: resolvePalette(a.ir.brand), ...(a.ir.brand ? { fonts: a.ir.brand.fonts } : {}) },
+    scenes: [{ sid: a.scene.id, fragment: checked }],
+  });
+  // An agent repair turn may have spent what the render needed: never overshoot the job budget.
+  const left =
+    s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
+  if (left < sandboxRenderCents(s)) return { ok: false, kind: "budget" };
+  await storeTree(s, a.compositionId, await treeFiles(project, a.scene.id, a.built, a.extra));
+  const run = await compositions.runner.run(booked(), {
+    compositionId: a.compositionId,
+    command: `hyperframes check . && hyperframes render . -o ${a.clip} --quiet`,
+    timeoutSeconds: sceneRenderTimeoutSeconds(a.scene.durationMs),
+    check: {
+      path: a.clip,
+      width: a.ir.format.width,
+      height: a.ir.format.height,
+      durationMs: a.scene.durationMs,
+      durationToleranceMs: 250,
+    },
+  });
+  a.usage.push({
+    item: a.usageItem.slice(0, 64),
+    kind: "compute",
+    quantity: Math.round(run.durationMs) / 1000,
+    unit: "second",
+    // Billed minutes never exceed the render timeout the budget reserved.
+    costCents:
+      Math.min(Math.ceil(RENDER_TIMEOUT_SECONDS / 60), Math.max(1, Math.ceil(run.durationMs / 60_000))) *
+      compositions.centsPerMinute,
+    metadata: { exitCode: run.exitCode, compositionId: a.compositionId },
+  });
+  if (run.exitCode === 0 && (!run.check || run.check.passed)) return { ok: true };
+  const why = run.exitCode !== 0 ? `exit ${run.exitCode}` : (run.check?.problems ?? []).join("; ");
+  return { ok: false, kind: "render", why, log: run.log };
+}
+
+/**
+ * The rendered clip copied to an immutable job key (the composition's own file changes when the scene is
+ * edited), as the scene's video asset.
+ */
+export async function storeClipAsset(
+  s: StageContext,
+  a: {
+    ir: VideoIR;
+    scene: Scene;
+    compositionId: string;
+    clip: string;
+    workDir: string;
+    assetId: string;
+    /** File name of the stored copy, unique per clip so an earlier clip's object is never overwritten. */
+    name: string;
+  },
+): Promise<AssetRef> {
+  const storage = s.services.storage!;
+  const local = join(a.workDir, `${a.name}.mp4`);
+  const { sha256 } = await storage.download(s.ctx, compositionFileKey(a.compositionId, a.clip), local);
+  const stored = await storage.put(
+    s.ctx,
+    `generated/${s.job.id}/authored/${a.name}.mp4`,
+    { filePath: local },
+    { contentType: "video/mp4", sha256 },
+  );
+  return {
+    id: a.assetId.slice(0, 64),
+    kind: "video",
+    storageKey: stored.key,
+    sha256: stored.sha256,
+    mime: "video/mp4",
+    bytes: stored.bytes,
+    width: a.ir.format.width,
+    height: a.ir.format.height,
+    durationMs: a.scene.durationMs,
+    assetVersionId: `asv_${stored.sha256.slice(0, 24)}`,
+    provenance: { source: "generated", provider: "studix-director" },
+  };
+}
+
+/** The scene whose picture is now the rendered clip, muted (the film's mix carries the sound). */
+export function authoredScene(scene: Scene, asset: AssetRef): Scene {
+  // The clip owns its whole picture: no template camera move, depth planes or motif drawn over it.
+  const { camera: _camera, depth: _depth, motif: _motif, ...rest } = scene;
+  return {
+    ...rest,
+    shots: [
+      {
+        id: asset.id,
+        type: "video",
+        assetId: asset.id,
+        startMs: 0,
+        durationMs: scene.durationMs,
+        muted: true,
+        fit: "cover",
+        style: { region: "full" },
+        // The clip carries its own motion; the scene transition still cuts it in.
+        animation: { enter: "none", exit: "none" },
+      },
+    ],
+  };
+}
+
+/**
+ * The scenes and assets with one scene's picture swapped for a clip; `replaces` names the clip asset it
+ * showed before, dropped with it.
+ */
+export function withAuthoredClip(ir: VideoIR, sceneId: string, asset: AssetRef, replaces?: string) {
+  const dropped = new Set([asset.id, replaces]);
+  return {
+    scenes: ir.scenes.map((sc) => (sc.id === sceneId ? authoredScene(sc, asset) : sc)),
+    assets: [...ir.assets.filter((a) => !dropped.has(a.id)), asset],
+  };
+}
+
+/** Path of a scene's fragment in the composition tree. */
+export const fragmentPath = (sid: string) => `scenes/${sid}.scene.html`;
+/** Path of the clip rendered for a scene in the composition tree. */
+export const clipPath = (sid: string) => `out/${sid}.mp4`;

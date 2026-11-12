@@ -46,7 +46,9 @@ that each write one HTML/GSAP scene against a shared shell of helpers, with the 
 ## Consequences
 
 - The voice stage keeps heard word timings in `metadata.spokenWords`.
-- The visual review never redesigns an authored scene as a template card.
+- The visual review never redesigns an authored scene as a template card. It scores the scene's still with the
+  cards; a failing scene goes back to its builder once with the review's issues and is rendered again in the
+  sandbox. A failed or unaffordable repair keeps the current clip.
 - The stage needs `STUDIX_SANDBOX`. On the sidecar backend only allowlisted workspaces
   (`STUDIX_SANDBOX_SIDECAR_WORKSPACES`) get it. For other workspaces, and on workers without a sandbox, the
   stage does not start: nothing is paid and the graphic is unchanged. Production runs it only after
