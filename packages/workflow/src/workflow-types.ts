@@ -16,6 +16,7 @@ import type {
 } from "@studix/core";
 import type { AssetRef, CreativeBrief, VideoIR } from "@studix/video-ir";
 import type { z } from "zod";
+import type { CompositionRunner } from "./composition-run-workflow.ts";
 import type { FencedRepositories } from "./worker-job-queue.ts";
 
 /** JSON-safe stage output; stored as the stage checkpoint. */
@@ -114,6 +115,16 @@ export interface StageServices {
     options: { maxBytes: number; truncate?: boolean },
     signal: AbortSignal,
   ) => Promise<{ body: Uint8Array; contentType: string; url: string }>;
+  /**
+   * The skill sandbox over a composition tree (ADR-0024), priced per started minute; unset when the worker has
+   * no sandbox. Stages that author code (the motion-graphic director tier) render it only here.
+   */
+  compositions?: {
+    runner: CompositionRunner;
+    centsPerMinute: number;
+    /** Whether the workspace may use the sandbox (sidecar allowlist); absent means every workspace may. */
+    allows?(ctx: TenantContext): boolean;
+  };
 }
 
 /** A media output an earlier job of the tenant paid for and stored, found by the content key of its request. */

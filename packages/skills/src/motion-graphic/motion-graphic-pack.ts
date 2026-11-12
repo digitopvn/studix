@@ -42,10 +42,11 @@ import {
   MotionBrandOutput,
   motionGraphicBrandStage,
 } from "./motion-graphic-brand.ts";
+import { MG_DIRECTOR_STAGE, motionGraphicDirectorStage } from "./motion-graphic-director.ts";
 import { MG_HEROES_STAGE, motionGraphicHeroesStage } from "./motion-graphic-heroes.ts";
 import { beatsOf, type MusicBeats, musicSections } from "./motion-graphic-music.ts";
 import { cardMinimums, cardsOf, retimeCards, snapCutsToBeats } from "./motion-graphic-retime.ts";
-import { withSpokenReveals } from "./motion-graphic-reveals.ts";
+import { heardWords, withSpokenReveals } from "./motion-graphic-reveals.ts";
 import {
   MG_STORYBOARD_STAGE,
   MotionStoryboardOutput,
@@ -71,6 +72,7 @@ export const MG_STAGES = {
   voice: "motion-graphic.voice",
   music: "motion-graphic.music",
   heroes: MG_HEROES_STAGE,
+  authored: MG_DIRECTOR_STAGE,
   qa: "motion-graphic.qa",
 } as const;
 
@@ -83,6 +85,7 @@ export const motionGraphicSkill: Skill = {
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "in a style profile that locks palette, fonts, entrances, cuts and juice (a brief whose first direction names a profile id in `visualStyle` pins it); " +
     "premium tier with `roles.director`: the director writes the storyboard and 2-3 hero cards as custom HTML/GSAP, each kept only when it passes the HTML-card safety rules and the HyperFrames linter; " +
+    "on a worker with a skill sandbox the director also writes a brief for the film and a builder (`roles.builder`, else the job's agent) authors the hook scene as HTML/GSAP on the Studix director shell, keyed to the spoken words and beats, checked and rendered in the sandbox and stored as a composition tree (`metadata.director.compositionId`); a scene that fails keeps its card with a warning; " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
     "generated voice-over with burned captions, a soft whoosh on each cut and one SFX accent on the CTA card; " +
     "the agent's storyboard has about one card every five seconds (3–12); a music bed is composed to drop where the CTA card starts, " +
@@ -482,6 +485,9 @@ function voiceTooLong(
  * timings where it reported them, else words estimated over the take's measured speech. The metadata says
  * which (`wordSync`) and, with a music bed, how many cuts landed on its beats (`beatSync`).
  */
+/** Most heard words kept in `metadata.spokenWords`: a 60 s graphic speaks about 180. */
+const MAX_SPOKEN_WORDS = 1000;
+
 function withSync(
   ir: VideoIR,
   lines: readonly VoiceLine[],
@@ -502,10 +508,16 @@ function withSync(
   });
   const grid = beatsOf(ir);
   const synced = withSpokenReveals(ir, heard);
+  // Where each word is heard on the graphic's timeline, for stages that key motion to words (director tier).
+  const spokenWords = heard
+    .flatMap((h) => heardWords(h.words, h.track))
+    .slice(0, MAX_SPOKEN_WORDS)
+    .map((w) => [w.text, w.startMs, w.endMs]);
   return {
     ...synced,
     metadata: {
       ...synced.metadata,
+      spokenWords,
       wordSync: reported === 0 ? "estimate" : reported === takes.length ? "alignment" : "mixed",
       ...(grid
         ? {
@@ -844,7 +856,8 @@ export const motionGraphicQaStage: StageDefinition = {
 /**
  * New project: brand (from `brandUrl` / `brandLogo`, when given) -> storyboard (agent, or template fallback)
  * -> compose -> SFX accent -> music bed (when the storyboard asked for one) -> voice-over (cuts on the bed's
- * beats, reveals on the spoken words) -> hero cards (premium tier) -> visual QA (render, review, redesign
+ * beats, reveals on the spoken words) -> hero cards (premium tier) -> authored hook scene (premium tier with
+ * a skill sandbox) -> visual QA (render, review, redesign
  * failed cards, re-render) -> store the version -> render (reuses the reviewed render) -> QA -> upload. The
  * version is stored after the review because the review may redesign cards. Re-render of a version: render ->
  * QA -> upload.
@@ -863,6 +876,7 @@ export const motionGraphicPipeline: PackPipeline = {
           motionGraphicMusicStage,
           motionGraphicVoiceStage,
           motionGraphicHeroesStage,
+          motionGraphicDirectorStage,
           motionGraphicVisualQaStage(e.render),
           e.validateIr,
           motionGraphicRenderStage(e.render),
@@ -893,6 +907,7 @@ export const motionGraphicPack: WorkflowPack = {
     motionGraphicMusicStage,
     motionGraphicVoiceStage,
     motionGraphicHeroesStage,
+    motionGraphicDirectorStage,
     motionGraphicQaStage,
   ],
   pipeline: motionGraphicPipeline,

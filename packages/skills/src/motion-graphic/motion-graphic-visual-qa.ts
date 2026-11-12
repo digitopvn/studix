@@ -18,6 +18,7 @@ import {
 import { z } from "zod";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { brandSourceOf, MG_BRAND_STAGE, MotionBrandOutput } from "./motion-graphic-brand.ts";
+import { authoredScenesOf } from "./motion-graphic-director.ts";
 import {
   MG_STORYBOARD_LIMITS,
   MG_STORYBOARD_STAGE,
@@ -416,7 +417,11 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
     const review = await critique(booked(), ir, rendered.filePath, brief, dir);
     usage.push(...review.usage);
     if ("failure" in review) return stop("skipped", `Visual review failed: ${review.failure}`);
-    const failed = failingCards(review.cards, ir.scenes.length);
+    // An authored scene is a rendered clip, not a template card: redesigning it would throw the clip away.
+    const authored = new Set(authoredScenesOf(ir));
+    const failed = failingCards(review.cards, ir.scenes.length).filter(
+      (c) => !authored.has(ir.scenes[c.card - 1]?.id ?? ""),
+    );
     rounds.push({ round, cards: review.cards });
     if (failed.length === 0) return done({ status: round === 0 ? "passed" : "fixed", rounds });
     if (round >= MG_VISUAL_QA_ROUNDS) {

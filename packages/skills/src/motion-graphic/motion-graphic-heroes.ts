@@ -19,6 +19,7 @@ import {
 } from "@studix/workflow";
 import { z } from "zod";
 import { truncateText } from "../vietnamese-safe-text.ts";
+import { directorTierRuns } from "./motion-graphic-director.ts";
 import {
   MG_STORYBOARD_STAGE,
   type MotionHeroCard,
@@ -58,10 +59,17 @@ export const motionGraphicHeroesStage: StageDefinition = {
   name: MG_HEROES_STAGE,
   knowledge: ["motion-craft", "composition-timing"],
   outputSchema: HeroesOutput,
-  cacheKey: (s) => stageCacheKey(MG_HEROES_STAGE, 1, { ir: irOf(s), heroes: heroesOf(s) }),
+  cacheKey: (s) =>
+    stageCacheKey(MG_HEROES_STAGE, 1, {
+      ir: irOf(s),
+      heroes: heroesOf(s),
+      authoredHook: directorTierRuns(s, irOf(s).scenes.length),
+    }),
   async run(s) {
     const ir = irOf(s);
-    const heroes = heroesOf(s);
+    // The director tier replaces the hook with an authored scene, so a hero card there would be thrown away.
+    const authoredHook = directorTierRuns(s, ir.scenes.length);
+    const heroes = heroesOf(s).filter((h) => !(authoredHook && h.beat === 0));
     if (heroes.length === 0) return { output: { ir } };
     const { lintHtmlCard } = await import("@studix/renderers");
     const storage = requireService(s, "storage");

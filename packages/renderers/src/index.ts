@@ -70,6 +70,7 @@ export {
   type FilmSceneProject,
   type FilmSceneProjectInput,
 } from "./film-engine/film-scene-project.ts";
+export { burnedCaptionBand, frameScale, resolvePalette } from "./hyperframes/brand-tokens.ts";
 export {
   type BuildCompositionOptions,
   buildComposition,
@@ -79,6 +80,28 @@ export {
   VIDEO_EXTENSIONS,
   writeComposition,
 } from "./hyperframes/compile-composition.ts";
+export {
+  buildDirectorProject,
+  DIRECTOR_SHELL_VERSION,
+  type DirectorProject,
+  type DirectorProjectInput,
+  type DirectorTheme,
+  type DirectorTiming,
+  type HandoffRect,
+  timingWord,
+} from "./hyperframes/director/director-shell.ts";
+export {
+  type CheckedSceneFragment,
+  checkSceneFragment,
+  parseSceneFragmentFile,
+  SCENE_FRAGMENT_HELPERS,
+  SCENE_FRAGMENT_LIMITS,
+  SceneFragment,
+  type SceneFragmentCheck,
+  sceneFragmentFile,
+  sceneFragmentProblems,
+  sceneSectionId,
+} from "./hyperframes/director/scene-fragment.ts";
 export {
   HTML_CARD_EASES,
   HTML_CARD_FORMAT,
