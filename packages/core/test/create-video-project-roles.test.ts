@@ -19,13 +19,30 @@ describe("createVideoProject roles", () => {
     expect(stageAgentSelection(payload, "motion-graphic.storyboard")).toEqual(agent);
   });
 
-  it("refuses builder or qa roles on motion-graphic", async () => {
+  it("routes a motion-graphic builder to the scene-build stage", async () => {
+    const env = createInMemoryStudio();
+    const ctx = testTenant();
+    const builder = { runtime: "pi" as const, connectionId: "pc_2", provider: "opencode-go" };
+    const out = await env.studio.createVideoProject(ctx, {
+      brief: { prompt: "Launch film" },
+      workflowTemplate: "motion-graphic",
+      roles: { director: agent, builder },
+    });
+    const payload = (await env.repos.jobs.get(ctx, out.job.id))?.payload ?? {};
+    expect(stageAgentSelection(payload, "motion-graphic.scene-build")).toEqual(builder);
+    expect(stageAgentSelection(payload, "motion-graphic.direction")).toEqual(agent);
+  });
+
+  it.each([
+    [{ director: agent, qa: agent }, /director and roles.builder only/],
+    [{ builder: agent }, /builder needs roles.director/],
+  ])("refuses motion-graphic roles %j", async (roles, message) => {
     const env = createInMemoryStudio();
     const err = await env.studio
       .createVideoProject(testTenant(), {
         brief: { prompt: "Launch film" },
         workflowTemplate: "motion-graphic",
-        roles: { director: agent, qa: agent },
+        roles,
       })
       .then(
         () => undefined,
@@ -33,6 +50,6 @@ describe("createVideoProject roles", () => {
       );
     expect(err).toBeInstanceOf(StudixError);
     expect((err as StudixError).code).toBe("VALIDATION");
-    expect((err as StudixError).message).toMatch(/director only/);
+    expect((err as StudixError).message).toMatch(message);
   });
 });
