@@ -208,7 +208,7 @@ describe("buildComposition layouts", () => {
         { label: "Duyệt", state: "todo" },
       ],
     },
-    { kind: "counter", from: 0, to: 1250, suffix: "credit", label: "còn lại" },
+    { kind: "counter", from: 0, to: 1250, prefix: "+", suffix: "credit", label: "còn lại" },
     { kind: "cards-row", items: ["Hook", "Demo", "CTA"], highlight: 1 },
     { kind: "swatches", items: [{ color: "accent", label: "Cam" }, { color: "#112233" }] },
     { kind: "stat", value: "3×", label: "nhanh hơn" },
@@ -261,13 +261,51 @@ describe("buildComposition layouts", () => {
     expect(scene(0)).toContain('tl.set("#s-l0__shot-l0-layout .lo-caret"');
     expect(scene(1)).toContain('"clipPath":"inset(0% 100% 0% 0%)"');
     expect(scene(1)).toContain('"#s-l1__shot-l1-layout .lo-l1 .lo-hlbar", {"scaleX":0}');
-    // The counter's units roll two turns: from 0 to the 20 + 0th digit of the strip.
-    expect(scene(4)).toContain(
-      'tl.fromTo("#s-l4__shot-l4-layout .lo-d3", {"yPercent":0}, {"yPercent":-66.667,"duration":1.2,"ease":"power2.out"}, 0.3);',
+    // The counter steps through whole numbers: replaying its sets in time order, every state shows a real
+    // number (no leading zero, separators only where that number has them) that never counts down.
+    const sets = [
+      ...scene(4).matchAll(/tl\.set\("#s-l4__shot-l4-layout \.lo-(d|g|p|x)(\d+)", (\{[^}]*\}), ([\d.]+)\);/g),
+    ];
+    const times = [...new Set(sets.map((m) => Number(m[4])))].sort((a, b) => a - b);
+    const digit: number[] = [];
+    const shown: boolean[] = [];
+    const sepShown: boolean[] = [];
+    const prefixAt: boolean[] = [true];
+    const states: string[] = [];
+    for (const t of times) {
+      for (const [, kind, idx, vars, at] of sets) {
+        if (Number(at) !== t) continue;
+        const v = JSON.parse(vars!);
+        if (kind === "d") digit[Number(idx)] = -v.yPercent / 10;
+        if (kind === "g") shown[Number(idx)] = v.opacity !== 0;
+        if (kind === "p") sepShown[Number(idx)] = v.opacity !== 0;
+        if (kind === "x") prefixAt[Number(idx)] = v.opacity !== 0;
+      }
+      states.push(
+        [0, 1, 2, 3]
+          .map((c) => (shown[c] !== false ? `${digit[c]}${c === 0 && sepShown[0] ? "." : ""}` : ""))
+          .join(""),
+      );
+      // Exactly one prefix copy shows, right before the leftmost digit on screen.
+      expect(prefixAt.flatMap((on, c) => (on ? [c] : []))).toEqual([shown.indexOf(true)]);
+    }
+    expect(times[0]).toBe(0);
+    expect(states[0]).toBe("0");
+    expect(states.at(-1)).toBe("1.250");
+    expect(times.at(-1)).toBe(1.5);
+    let last = -1;
+    for (const state of states) {
+      expect(state).toMatch(/^(0|[1-9]\d{0,2}|[1-9]\.\d{3})$/);
+      const value = Number(state.replace(".", ""));
+      expect(value).toBeGreaterThanOrEqual(last);
+      last = value;
+    }
+    // A strip row is 10% of a strip of exactly ten digits, so the digit read above is the one on screen.
+    expect(scene(4).match(/<span class="lo-strip lo-d0">((?:<span>\d<\/span>)+)<\/span>/)![1]).toBe(
+      Array.from("0123456789", (d) => `<span>${d}</span>`).join(""),
     );
-    // Only separators that exist are faded in: 1.250 has one, after its first digit.
-    const targets = [...scene(4).matchAll(/layout \.(lo-p\d+)"/g)].map((m) => m[1]);
-    expect(targets).toEqual(["lo-p0"]);
+    // About one new number per 30 fps frame, so the count reads smooth.
+    expect(states.length).toBeGreaterThan(30);
     for (let i = 0; i < 8; i++) {
       expect(scene(i)).not.toContain('"repeat"');
       expect(scene(i)).not.toContain("onUpdate");

@@ -206,8 +206,10 @@ function groupDigits(n: number, language: string | undefined): string {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, sep);
 }
 
-/** Digit strip of a counter column: three turns of 0-9, so low columns can spin past their target. */
-const STRIP = "012345678901234567890123456789";
+/** Digit strip of a counter column: one row per digit, so row `d` sits at `-10 * d` percent. */
+const STRIP = "0123456789";
+/** How often a counter shows its next whole number: about once per 30 fps frame, so the count reads smooth. */
+const COUNTER_STEP_MS = 34;
 
 /** HTML and CSS for a layout shot; `sel` is the shot's outer element selector. */
 export function renderLayoutMarkup(
@@ -536,18 +538,28 @@ export function renderLayoutMarkup(
       rule(".lo-strip", ["display: flex;", "flex-direction: column;"]);
       rule(".lo-strip span", ["height: 1.15em;", "text-align: center;"]);
       rule(".lo-affix", [`color: ${accentInk(ctx)};`]);
+      // The prefix holds its place in the line but is drawn by a zero-width copy before the leftmost digit the
+      // number has reached, so it hugs the digits while the leading columns are still hidden.
+      rule(".lo-pph", ["visibility: hidden;"]);
+      rule(".lo-pre", ["position: relative;", "width: 0;", "opacity: 0;"]);
+      rule(".lo-pre > span", ["position: absolute;", "right: 0;", "bottom: 0;"]);
+      rule(".lo-x0", ["opacity: 1;"]);
       rule(".lo-clabel", [...fontCss(ctx, body, 1.05, 500), "opacity: 0.75;", `margin-top: ${px(ctx, 8)};`]);
       const strip = Array.from(STRIP, (d) => `<span>${d}</span>`).join("");
       // A separator belongs to the digit before it, so it shows and hides with that digit.
       let col = 0;
+      const lead = (c: number) =>
+        layout.prefix
+          ? `<span class="lo-affix lo-pre lo-x${c}"><span>${escapeHtml(layout.prefix)}</span></span>`
+          : "";
       const digits = Array.from(target)
         .map((c) =>
           /\d/.test(c)
-            ? `<span class="lo-dg lo-g${col}"><span class="lo-strip lo-d${col++}">${strip}</span></span>`
+            ? `${lead(col)}<span class="lo-dg lo-g${col}"><span class="lo-strip lo-d${col++}">${strip}</span></span>`
             : `<span class="lo-p${col - 1}">${escapeHtml(c)}</span>`,
         )
         .join("");
-      const prefix = layout.prefix ? `<span class="lo-affix">${escapeHtml(layout.prefix)}</span>` : "";
+      const prefix = layout.prefix ? `<span class="lo-affix lo-pph">${escapeHtml(layout.prefix)}</span>` : "";
       const suffix = layout.suffix ? `<span class="lo-affix">&#8202;${escapeHtml(layout.suffix)}</span>` : "";
       const label = layout.label ? `<div class="lo-clabel">${escapeHtml(layout.label)}</div>` : "";
       return done(
@@ -1351,32 +1363,45 @@ export function writeLayoutMotion(
       return;
     }
     case "counter": {
-      // The schema keeps `from <= to`, so `to` has at least as many digits.
-      const to = String(layout.to);
-      const from = String(layout.from).padStart(to.length, "0");
-      const lead = to.length - String(layout.from).length;
+      // The count steps through whole numbers on an ease-out curve, and every column shows the matching digit
+      // of the current number, so each frame reads as a real number: no column rests between two digits and no
+      // leading zero shows. The schema keeps `from <= to`, so `to` has at least as many digits.
+      const n = String(layout.to).length;
       const rollMs = Math.max(100, Math.min(1600, span));
-      const roll = seconds(rollMs);
-      // Digits `from` does not have (and their separators) appear as the count grows into them.
-      for (let c = 0; c < lead; c++) {
-        const show = { opacity: 1, duration: seconds(Math.max(100, Math.round(rollMs * 0.3))), ease: EASE };
-        const at = seconds(begin + Math.round(rollMs * 0.1 * (lead - c)));
-        w.fromTo(`${sel} .lo-g${c}`, { opacity: 0 }, show, at);
-        // A thousands separator follows a digit only where three or more digits come after it.
-        const separated = c < to.length - 1 && (to.length - 1 - c) % 3 === 0;
-        if (separated) w.fromTo(`${sel} .lo-p${c}`, { opacity: 0 }, show, at);
-      }
-      for (let c = 0; c < to.length; c++) {
-        const turns = Math.max(0, 2 - (to.length - 1 - c)); // the units spin twice, tens once
-        const startIdx = Number(from[c]);
-        const endIdx = Number(to[c]) + 10 * turns;
-        const pct = (idx: number) => -Math.round((idx / STRIP.length) * 100_000) / 1000;
-        w.fromTo(
-          `${sel} .lo-d${c}`,
-          { yPercent: pct(startIdx) },
-          { yPercent: pct(endIdx), duration: roll, ease: "power2.out" },
-          seconds(begin),
-        );
+      const steps = Math.max(1, Math.round(rollMs / COUNTER_STEP_MS));
+      const shown: (number | undefined)[] = [];
+      const visible: boolean[] = [];
+      let first: number | undefined;
+      for (let i = 0; i <= steps; i++) {
+        const p = i / steps;
+        const value = Math.round(layout.from + (layout.to - layout.from) * (1 - (1 - p) ** 2));
+        // The first state is set when the shot starts, so the right number already shows during the entrance.
+        const at = i === 0 ? seconds(shot.startMs) : seconds(begin + Math.round((rollMs * i) / steps));
+        for (let c = 0; c < n; c++) {
+          const place = 10 ** (n - 1 - c);
+          const digit = Math.floor(value / place) % 10;
+          if (shown[c] !== digit) {
+            w.set(`${sel} .lo-d${c}`, { yPercent: -10 * digit }, at);
+            shown[c] = digit;
+          }
+          // A column (and the separator after it) shows only once the number has grown into it. It keeps its
+          // place while hidden, so no digit or separator moves as the number gains a digit.
+          const on = c === n - 1 || value >= place;
+          if (visible[c] !== on) {
+            const opacity = { opacity: on ? 1 : 0 };
+            w.set(`${sel} .lo-g${c}`, opacity, at);
+            // A thousands separator follows a digit only where three or more digits come after it.
+            if ((n - 1 - c) % 3 === 0 && c < n - 1) w.set(`${sel} .lo-p${c}`, opacity, at);
+            visible[c] = on;
+          }
+        }
+        const leftmost = visible.indexOf(true);
+        if (layout.prefix && leftmost !== first) {
+          if (first !== undefined) w.set(`${sel} .lo-x${first}`, { opacity: 0 }, at);
+          else if (leftmost !== 0) w.set(`${sel} .lo-x0`, { opacity: 0 }, at);
+          w.set(`${sel} .lo-x${leftmost}`, { opacity: 1 }, at);
+          first = leftmost;
+        }
       }
       if (layout.label) upIn(`${sel} .lo-clabel`, seconds(begin + 200));
       return;
