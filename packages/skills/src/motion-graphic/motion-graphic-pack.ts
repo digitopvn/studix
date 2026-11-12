@@ -33,6 +33,12 @@ import {
   measuredVoiceTake,
   VOICE_TAKE_SCOPE,
 } from "../voice-takes.ts";
+import {
+  brandSourceOf,
+  MG_BRAND_STAGE,
+  MotionBrandOutput,
+  motionGraphicBrandStage,
+} from "./motion-graphic-brand.ts";
 import { retimeCards } from "./motion-graphic-retime.ts";
 import {
   MG_STORYBOARD_STAGE,
@@ -48,6 +54,7 @@ import {
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
 export const MG_STAGES = {
+  brand: MG_BRAND_STAGE,
   storyboard: MG_STORYBOARD_STAGE,
   compose: "motion-graphic.compose",
   /**
@@ -72,7 +79,9 @@ export const motionGraphicSkill: Skill = {
     "the agent's storyboard has about one card every five seconds (3–12); the whoosh, accent and music bed " +
     "are skipped with a warning when their provider is not set. After the render a vision review scores each card and the " +
     "failed cards are redesigned and re-rendered (at most 2 rounds, under budget; scores in the job result as `visualQa`). Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
-    "makes a voiceless graphic (on-screen text only). No image-to-video.",
+    "makes a voiceless graphic (on-screen text only). Brand kit: `brief.brandUrl` (the brand's site: name, logo, " +
+    "colours), `brief.brandLogo` (https or base64 image data URL) and `brief.brandColors` (first = primary) put " +
+    "a logo lockup on the hook and CTA cards; an unreadable site or logo only warns. No image-to-video.",
   version: 1,
   get inputSchema() {
     creativeBriefSchema ??= exportJsonSchemas()["creative-brief"];
@@ -86,8 +95,9 @@ const ComposeInput = z.object({
   payload: z.object({ assets: z.array(AssetRef).optional() }),
   outputs: z.object({
     brief: z.object({ brief: CreativeBrief }),
-    // Optional: jobs checkpointed before the storyboard stage existed resume without it.
+    // Optional: jobs checkpointed before the storyboard or brand stage existed resume without it.
     [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
+    [MG_BRAND_STAGE]: MotionBrandOutput.optional(),
   }),
 });
 type ComposeInput = z.infer<typeof ComposeInput>;
@@ -105,6 +115,7 @@ export const motionGraphicComposeStage: StageDefinition = {
       brief: input.outputs.brief.brief,
       assets: input.payload.assets ?? [],
       storyboard: input.outputs[MG_STORYBOARD_STAGE]?.storyboard ?? null,
+      brand: brandSourceOf(input.outputs[MG_BRAND_STAGE]) ?? null,
     });
   },
   async run(s) {
@@ -114,6 +125,7 @@ export const motionGraphicComposeStage: StageDefinition = {
         ir: motionGraphicTemplate(input.outputs.brief.brief, {
           assets: input.payload.assets,
           storyboard: input.outputs[MG_STORYBOARD_STAGE]?.storyboard,
+          brandSource: brandSourceOf(input.outputs[MG_BRAND_STAGE]),
         }),
       },
     };
@@ -370,6 +382,7 @@ const RecutInput = z.object({
   outputs: z.object({
     brief: z.object({ brief: CreativeBrief }),
     [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
+    [MG_BRAND_STAGE]: MotionBrandOutput.optional(),
   }),
 });
 
@@ -387,6 +400,7 @@ function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR
   const cut = motionGraphicTemplate(input.data.outputs.brief.brief, {
     assets: input.data.payload.assets,
     storyboard: input.data.outputs[MG_STORYBOARD_STAGE]?.storyboard,
+    brandSource: brandSourceOf(input.data.outputs[MG_BRAND_STAGE]),
     cardMs,
   });
   const next: VideoIR = {
@@ -681,10 +695,11 @@ export const motionGraphicQaStage: StageDefinition = {
 };
 
 /**
- * New project: storyboard (agent, or template fallback) -> compose -> SFX accent -> voice-over -> music bed
- * (when the storyboard asked for one) -> visual QA (render, review, redesign failed cards, re-render) ->
- * store the version -> render (reuses the reviewed render) -> QA -> upload. The version is stored after the
- * review because the review may redesign cards. Re-render of a version: render -> QA -> upload.
+ * New project: brand (from `brandUrl` / `brandLogo`, when given) -> storyboard (agent, or template fallback) ->
+ * compose -> SFX accent -> voice-over -> music bed (when the storyboard asked for one) -> visual QA (render,
+ * review, redesign failed cards, re-render) -> store the version -> render (reuses the reviewed render) -> QA
+ * -> upload. The version is stored after the review because the review may redesign cards. Re-render of a
+ * version: render -> QA -> upload.
  */
 export const motionGraphicPipeline: PackPipeline = {
   renderer: "hyperframes",
@@ -693,6 +708,7 @@ export const motionGraphicPipeline: PackPipeline = {
       ? [e.plan, e.validateIr, e.render, motionGraphicQaStage, e.upload, e.finalize]
       : [
           e.brief,
+          motionGraphicBrandStage,
           motionGraphicStoryboardStage,
           motionGraphicComposeStage,
           motionGraphicAccentStage,
@@ -721,6 +737,7 @@ export const motionGraphicPack: WorkflowPack = {
   version: 1,
   templates: [motionGraphicSkill],
   stages: [
+    motionGraphicBrandStage,
     motionGraphicStoryboardStage,
     motionGraphicComposeStage,
     motionGraphicAccentStage,

@@ -131,4 +131,27 @@ describe("validateCreativeBrief", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.map((i) => i.path).sort()).toEqual(["/aspectRatio", "/prompt"]);
   });
+
+  it("takes a brand URL, logo and colours, and refuses a logo that is no https or image data URL", () => {
+    const logo = "data:image/png;base64,iVBORw0KGgo=";
+    const ok = validateCreativeBrief({
+      prompt: "x",
+      brandUrl: "https://example.com",
+      brandLogo: logo,
+      brandColors: ["#123456"],
+    });
+    expect(ok).toMatchObject({ ok: true, value: { brandLogo: logo, brandColors: ["#123456"] } });
+    for (const brandLogo of [
+      "http://example.com/logo.png",
+      "data:text/html;base64,PGh0bWw+",
+      "data:image/png;base64,not base64!",
+      // Over the 200,000-character cap that keeps a brief inside the 256 KB REST body.
+      `data:image/png;base64,${"A".repeat(200_000)}`,
+    ]) {
+      const bad = validateCreativeBrief({ prompt: "x", brandLogo });
+      expect(bad.ok).toBe(false);
+      if (!bad.ok) expect(bad.issues.map((i) => i.path)).toEqual(["/brandLogo"]);
+    }
+    expect(validateCreativeBrief({ prompt: "x", brandUrl: "http://example.com" }).ok).toBe(false);
+  });
 });

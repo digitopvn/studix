@@ -31,6 +31,7 @@ import {
   type WorkerPool,
   type WorkerPoolStatus,
 } from "@studix/workflow";
+import { fetchPublic } from "./media-exec-runner.ts";
 
 /** What `/readyz` reports about media: presence only, never a key value, path or provider message. */
 export interface WorkerMediaStatus {
@@ -151,6 +152,7 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
       ...(deps.speech ? { speech: deps.speech } : {}),
       workRoot: settings.workDir,
       executions: repos.usage,
+      fetchPublic,
     },
     clock,
     logger,

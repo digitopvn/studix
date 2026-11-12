@@ -43,8 +43,8 @@ export const MotionStoryboardBeat = z.object({
   visual: z.string().trim().min(1).max(600),
   /**
    * The built-in layout the card draws under its headline, with typed content (a prompt being typed, code,
-   * wired chips, a checklist, a rolling counter, a row of cards, colour swatches, a stat), or null/absent for a
-   * headline alone. Ignored on the last beat, which is always the call to action.
+   * wired chips, a checklist, a rolling counter, a row of cards, colour swatches, a stat, or a product UI: a chat
+   * window, a tool call, a job pipeline, a preview player, a usage meter), or null/absent for a headline alone. Ignored on the last beat, which is always the call to action.
    */
   layout: LayoutSpec.nullable().optional(),
   enter: MotionPreset.exclude(["none"]),
@@ -180,7 +180,12 @@ const agentStageFor = (repair?: Repair) =>
       "wired to the tools or channels it connects), `checklist` (steps that are `done`, `active` or `todo`), " +
       "`counter` (a whole number counting up `from` to `to`, with `prefix`, `suffix`, `label`), `cards-row` (2-5 " +
       "short cards, `highlight` the one that wins), `swatches` (palette roles like `accent` or hex colours) or " +
-      "`stat` (one big `value` and its `label`). A beat's layout, headline and spoken line show and say the " +
+      "`stat` (one big `value` and its `label`). For a product or AI tool, show the product working instead: " +
+      "`chat` (a chat window typing the user's `prompt`, optional assistant `reply`), `tool-call` (a tool `name` " +
+      "with up to 4 `args` key/value pairs, `status` `running` or `done`, optional `result`), `pipeline` (2-6 short " +
+      "job stages, `active` the one still running, absent when all are done), `player` (a preview playing, then " +
+      "an approve button: optional `title` and `action`) or `usage` (a meter at `used` of a `cap`, with " +
+      "`prefix`, `suffix`, `label`). A beat's layout, headline and spoken line show and say the " +
       "same fact (the line over a 5,000 counter speaks of the 5,000, not of the next card). Use the brief's own facts and words in it, vary the layouts " +
       "across the video and put no layout on the last beat (the call to action); every message beat between " +
       "the hook and the call to action shows a layout, never a headline alone on a card. Each beat's voice-over " +
@@ -204,7 +209,9 @@ const agentStageFor = (repair?: Repair) =>
       "from its neighbours; keep their voice-over and weight, and every other beat, exactly as they are. Return " +
       "only JSON matching the output schema.",
     taskInput: ({ outputs: { brief } }) => ({
-      brief: brief.brief,
+      // The logo is drawn, never written about: an uploaded data URL would cost the prompt tens of thousands
+      // of tokens for nothing.
+      brief: (({ brandLogo: _logo, ...rest }) => rest)(brief.brief),
       durationMs: lengthOf(brief.brief),
       voiceover: brief.brief.voiceover !== false,
       wordBudget: voiceoverWordBudget(lengthOf(brief.brief)),

@@ -17,6 +17,7 @@ import {
 } from "@studix/workflow";
 import { z } from "zod";
 import { truncateText } from "../vietnamese-safe-text.ts";
+import { brandSourceOf, MG_BRAND_STAGE, MotionBrandOutput } from "./motion-graphic-brand.ts";
 import {
   MG_STORYBOARD_LIMITS,
   MG_STORYBOARD_STAGE,
@@ -24,7 +25,7 @@ import {
   MotionStoryboardOutput,
   restyleCards,
 } from "./motion-graphic-storyboard.ts";
-import { motionGraphicTemplate } from "./motion-graphic-template.ts";
+import { type MotionGraphicOptions, motionGraphicTemplate } from "./motion-graphic-template.ts";
 
 export const MG_VISUAL_QA_STAGE = "motion-graphic.visual-qa";
 /** Re-render rounds after the first render: each redesigns only the failed cards, then renders again. */
@@ -153,16 +154,17 @@ const problemOf = (failed: readonly VisualCardScore[]) =>
 
 /**
  * The IR with the cards in `cards` (from 1) drawn from `storyboard`, everything else kept: their scene
- * keeps its length, so the voice-over, captions, sound and every other card stay where they are.
+ * keeps its length, so the voice-over, captions, sound and every other card stay where they are. `options`
+ * are the composition's own (assets, brand), so a redesigned hook or CTA card keeps its brand lockup.
  */
 export function withRestyledCards(
   ir: VideoIR,
   brief: CreativeBrief,
   storyboard: MotionStoryboard,
   cards: readonly number[],
-  assets?: AssetRef[],
+  options: Pick<MotionGraphicOptions, "assets" | "brandSource"> = {},
 ): VideoIR {
-  const fresh = motionGraphicTemplate(brief, { storyboard, ...(assets ? { assets } : {}) });
+  const fresh = motionGraphicTemplate(brief, { ...options, storyboard });
   const scenes = ir.scenes.map((scene, i) => {
     const next = fresh.scenes[i];
     if (!cards.includes(i + 1) || !next) return scene;
@@ -265,6 +267,7 @@ const ReviewInput = z.object({
     .object({
       brief: z.object({ brief: CreativeBrief }),
       [MG_STORYBOARD_STAGE]: MotionStoryboardOutput.optional(),
+      [MG_BRAND_STAGE]: MotionBrandOutput.optional(),
     })
     .passthrough(),
 });
@@ -347,7 +350,10 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
     return done({ status: "skipped", reason: "The job has no brief to review against", rounds: [] });
   }
   const { brief } = input.data.outputs.brief;
-  const assets = input.data.payload.assets;
+  const compose = {
+    assets: input.data.payload.assets,
+    brandSource: brandSourceOf(input.data.outputs[MG_BRAND_STAGE]),
+  };
   let storyboard = input.data.outputs[MG_STORYBOARD_STAGE]?.storyboard;
   // Each paid step sees what the earlier ones spent, so it is capped at what is left of the job budget.
   const booked = (): StageContext => ({
@@ -416,7 +422,7 @@ async function reviewLoop(s: StageContext, render: StageDefinition, usage: Stage
     }
     // The IR, storyboard and render move on together, only once the new render exists.
     try {
-      const next = withRestyledCards(ir, brief, restyled.storyboard, cards, assets);
+      const next = withRestyledCards(ir, brief, restyled.storyboard, cards, compose);
       // The newest output carrying an IR is the one the render draws.
       const again = await render.run({
         ...booked(),
