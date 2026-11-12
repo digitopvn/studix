@@ -24,8 +24,9 @@
       .hl, .split { font-family: var(--font-heading); }
       .hl .w, .split .w { display: inline-block; }
       .mask { overflow: hidden; }
-      .sweep { position: absolute; top: 0; bottom: 0; left: 0; width: 120px; opacity: 0; background: linear-gradient(90deg, transparent, var(--ink), transparent); pointer-events: none; }
-      .ripple { position: absolute; left: 50%; top: 50%; width: 96px; height: 96px; border-radius: 50%; border: 2px solid var(--ink); opacity: 0; pointer-events: none; }
+      /* sweep and ripple style only the bars their helpers own, never a fragment element that reuses the class */
+      .sx-sweep-bar { position: absolute; top: 0; bottom: 0; left: 0; width: 120px; opacity: 0; background: linear-gradient(90deg, transparent, var(--ink), transparent); pointer-events: none; }
+      .sx-ripple { position: absolute; left: 50%; top: 50%; width: 96px; height: 96px; border-radius: 50%; border: 2px solid var(--ink); opacity: 0; pointer-events: none; }
       .draw { stroke-dasharray: 1; stroke-dashoffset: 1; }
       .odo { display: inline-flex; font-variant-numeric: tabular-nums; }
       .odo-d { display: inline-block; height: 1em; line-height: 1; overflow: hidden; }
@@ -197,13 +198,19 @@
         // ripple: a hairline circle inside el grows and fades in 0.25 s (the .ripple child is made here, before playback)
         const ripple = (e, t) => {
           const el = typeof e === "string" ? $(e) : e;
-          let r = $(".ripple", el);
-          if (!r) { r = document.createElement("div"); r.className = "ripple"; el.append(r); gsap.set(r, { xPercent: -50, yPercent: -50 }); }
+          let r = $(".sx-ripple", el) || $$(".ripple", el).find((n) => n.childElementCount === 0);
+          if (!r) { r = document.createElement("div"); el.append(r); }
+          if (!r.classList.contains("sx-ripple")) { r.classList.add("sx-ripple"); gsap.set(r, { xPercent: -50, yPercent: -50 }); }
           tl.fromTo(r, { scale: 0, opacity: 0.9 }, { scale: 1, opacity: 0, duration: 0.25, ease: "power2.out", immediateRender: false }, Math.max(0, t));
         };
-        // sweep: a light bar crosses the masked parent of a .sweep child in d s
+        // sweep: a light bar crosses el in d s. The bar is an empty .sweep (el itself or a child) or one made
+        // here; a .sweep that holds content is the fragment's own container, so it gets a bar and stays visible.
         const sweep = (e, t, d = 0.45) => {
-          const el = typeof e === "string" ? $(e) : e, sw = el.classList.contains("sweep") ? el : $(".sweep", el);
+          const el = typeof e === "string" ? $(e) : e;
+          const bare = (n) => n.classList.contains("sweep") && n.childElementCount === 0;
+          let sw = bare(el) ? el : $(".sx-sweep-bar", el) || $$(".sweep", el).find(bare);
+          if (!sw) { sw = document.createElement("i"); el.append(sw); }
+          sw.classList.add("sx-sweep-bar");
           const w = (sw.parentElement && sw.parentElement.offsetWidth) || 600;
           tl.fromTo(sw, { x: -160 }, { x: w + 40, duration: d, ease: "power2.inOut", immediateRender: false }, Math.max(0, t));
           tl.fromTo(sw, { opacity: 0 }, { opacity: 0.22, duration: d * 0.3, ease: "power1.out", immediateRender: false }, Math.max(0, t));
