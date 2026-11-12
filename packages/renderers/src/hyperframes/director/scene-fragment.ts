@@ -237,6 +237,60 @@ const BANNED_JS: ReadonlyArray<[RegExp, string]> = [
   [/__timelines\b/, "the timeline registry (the shell registers `tl`)"],
 ];
 
+/**
+ * Names the shell already has in scope around a fragment's js (the scene block's own names and the page
+ * helpers). Redeclaring one breaks the scene in ways the sandbox reports under bundler-renamed names (`sid2`).
+ */
+export const SCENE_SHELL_NAMES: readonly string[] = [
+  "sid",
+  "S",
+  "t0",
+  "t1",
+  "$s",
+  "$$s",
+  "tl",
+  "$",
+  "$$",
+  "SC",
+  "T",
+  "FR",
+  "B",
+  "isKick",
+  "W",
+  "WE",
+  "handoff",
+  "rng",
+  "pop",
+  "rise",
+  "draw",
+  "slideX",
+  "flipIn",
+  "fadeOut",
+  "bump",
+  "typeIn",
+  "typeWords",
+  "odo",
+  "envKeys",
+  "slam",
+  "smear",
+  "lineIn",
+  "settleCam",
+  "shake",
+  "flash",
+  "press",
+  "ripple",
+  "sweep",
+  "morphRect",
+  "camTo",
+  "drift",
+];
+const SHELL_NAME_ALT = SCENE_SHELL_NAMES.map((n) => n.replace(/\$/g, "\\$")).join("|");
+/** `const sid =`, `function W(`, `class tl`, and simple destructuring such as `const { t0, t1 } =`. */
+const SHELL_REDECLARE = new RegExp(
+  `(?:\\b(?:const|let|var|function|class)\\s+|\\b(?:const|let|var)\\s*[{[][^=;]*?)(?<![\\w$])(${SHELL_NAME_ALT})(?![\\w$])`,
+  "g",
+);
+
 /** Words a `W(sid, "...")` or `WE(...)` call names, so each can be checked against the scene's spoken words. */
 const WORD_CALL = /\bWE?\(\s*sid\s*,\s*(["'`])((?:(?!\1).)*)\1/g;
 
@@ -291,6 +345,11 @@ export function checkSceneFragment(fragment: SceneFragment, check: SceneFragment
       if (pattern.test(code)) problems.push(`js: ${what} is not allowed`);
     if (URL_SCHEME.test(code) || /(["'`])\/\/[^\s/]/.test(code))
       problems.push("js: URLs are not allowed; fragments load nothing");
+    const redeclared = new Set([...code.matchAll(SHELL_REDECLARE)].map((m) => m[1] ?? ""));
+    for (const name of redeclared)
+      problems.push(
+        `js: \`${name}\` is already provided by the Studix shell; do not declare it, use it as is`,
+      );
   }
   if (check.words && check.words.length > 0) {
     const known = new Set(check.words);
