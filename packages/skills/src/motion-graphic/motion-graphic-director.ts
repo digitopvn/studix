@@ -33,6 +33,7 @@ import {
   clipPath,
   sandboxRenderCents,
   storeClipAsset,
+  storeFragment,
   withAuthoredClip,
 } from "./motion-graphic-director-clip.ts";
 import { sceneClipTiming, sceneWindows, sceneWords } from "./motion-graphic-director-timing.ts";
@@ -145,6 +146,35 @@ function directionInput(s: StageContext, ir: VideoIR) {
   };
 }
 
+/** Palette roles that colour the film's accents (text, motif, fills), not its page and ink. */
+const ACCENT_ROLES = ["accent", "primary", "secondary", "muted"] as const;
+type AccentRole = (typeof ACCENT_ROLES)[number];
+
+/**
+ * The palette role the rest of the film paints its accents in (motifs, accent text, logo and fills of every
+ * other scene), so an authored scene wears the same colour as the cards around it rather than another theme
+ * token (a blue `--primary` hook in a gold `--accent` film). A hex colour counts for the role it equals.
+ * `accent` when nothing else wins.
+ */
+export function filmAccentRole(ir: VideoIR, sceneId: string): AccentRole {
+  const palette = resolvePalette(ir.brand);
+  const counts = new Map<AccentRole, number>();
+  const tally = (color: string | undefined) => {
+    if (!color) return;
+    const role = ACCENT_ROLES.find((r) => r === color || palette[r].toLowerCase() === color.toLowerCase());
+    if (role) counts.set(role, (counts.get(role) ?? 0) + 1);
+  };
+  for (const scene of ir.scenes) {
+    if (scene.id === sceneId) continue;
+    tally(scene.motif?.color);
+    tally(scene.background?.color);
+    for (const shot of scene.shots) tally(shot.style?.color);
+  }
+  let best: AccentRole = "accent";
+  for (const role of ACCENT_ROLES) if ((counts.get(role) ?? 0) > (counts.get(best) ?? 0)) best = role;
+  return best;
+}
+
 /** Task input of one scene's builder: the direction, its scene with word and beat times, the frame and theme. */
 function buildInput(
   ir: VideoIR,
@@ -161,6 +191,7 @@ function buildInput(
     beats.push(Math.round((timing.beat0 + n * timing.beatLen) * 1000) / 1000);
   const frame = { width: ir.format.width, height: ir.format.height };
   const palette = resolvePalette(ir.brand);
+  const accent = filmAccentRole(ir, scene.id);
   return {
     direction: { concept: direction.concept, motif: direction.motif, rhythm: direction.rhythm },
     scene: {
@@ -186,6 +217,8 @@ function buildInput(
       headlinePx: Math.round(HEADLINE_AT_1080 * frameScale(frame)),
     },
     theme: {
+      // The colour the cards around this scene use: the builder spends it as the scene's one accent.
+      filmAccent: { token: `--${accent}`, color: palette[accent] },
       tokens: {
         "--bg": palette.background,
         "--ink": palette.foreground,
@@ -333,11 +366,13 @@ export const motionGraphicDirectorStage: StageDefinition = {
       );
       const timing = sceneClipTiming(ir, scene.id, handoff);
       const compositionId = directorCompositionId(s.job.id);
-      const clip = clipPath(scene.id);
+      let clip = clipPath(scene.id);
       const task = buildInput(ir, direction, index, timing);
       // One repair turn in all: a fragment that breaks the contract or fails the sandbox check goes back to the
       // builder with what is wrong once, before the card is kept.
       let repair: { issues: Array<{ path: string; message: string }>; output: BuildOutput } | undefined;
+      // A clip that rendered but cuts text at the frame edge: kept while its repair turn tries a better one.
+      let clipped: { built: BuildOutput; clip: string } | undefined;
       for (;;) {
         const built = (await call(sceneBuildAgent, repair ? { ...task, repair } : task)) as BuildOutput;
         // At most two builder runs in all: none here when the call already used its own schema repair turn.
@@ -355,7 +390,20 @@ export const motionGraphicDirectorStage: StageDefinition = {
           usage,
         });
         if (attempt.ok || attempt.kind === "render") record.compositionId = compositionId;
+        if (attempt.ok && attempt.layout.length > 0 && canRepair) {
+          // The repair renders beside this clip, so a repair that fails still leaves this one to show.
+          clipped = { built, clip };
+          clip = clipPath(`${scene.id}-reframed`);
+          repair = { issues: attempt.layout.map(problemIssue), output: built };
+          continue;
+        }
         if (attempt.ok) break;
+        if (clipped) {
+          // The clipped clip beats the card: put its fragment back in the tree and show it.
+          await storeFragment(booked(), compositionId, scene.id, clipped.built);
+          clip = clipped.clip;
+          break;
+        }
         if (attempt.kind === "budget") {
           return keepCard(
             "the job budget left cannot hold the sandbox render after the agents' repair turns",

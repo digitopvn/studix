@@ -7,6 +7,7 @@ import { type VideoIR, validateVideoIR } from "@studix/video-ir";
 import type { StageContext } from "@studix/workflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  filmAccentRole,
   MG_DIRECTION_AGENT,
   MG_SCENE_BUILD_AGENT,
   MG_VISUAL_QA_STAGE,
@@ -81,6 +82,8 @@ describe("motion-graphic authored hook scene", () => {
       exitCodes?: number[];
       /** Sandbox run (from 1) that throws instead of answering. */
       throwOnRun?: number;
+      /** `hyperframes check --json` report the sandbox leaves per run, in order. */
+      reports?: unknown[];
       /** Replies per agent, in order; the default reply once a queue runs out. */
       replies?: Record<string, unknown[]>;
     } = {},
@@ -89,6 +92,7 @@ describe("motion-graphic authored hook scene", () => {
     const objects = new Map<string, Uint8Array>();
     const tasks: string[] = [];
     const inputs: Array<Record<string, unknown>> = [];
+    const instructions = new Map<string, string>();
     const runs: CompositionRunRequest[] = [];
     const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
     const storage = {
@@ -113,6 +117,14 @@ describe("motion-graphic authored hook scene", () => {
         if (opts.throwOnRun === runs.length) throw new Error("sandbox lost");
         const clip = request.check?.path as string;
         objects.set(`compositions/${request.compositionId}/files/${clip}`, new TextEncoder().encode("mp4"));
+        const report = opts.reports?.[runs.length - 1];
+        if (report !== undefined) {
+          const path = clip.replace(/\.mp4$/, "-check.json").replace("-reframed-check", "-check");
+          objects.set(
+            `compositions/${request.compositionId}/files/${path}`,
+            new TextEncoder().encode(JSON.stringify(report)),
+          );
+        }
         return {
           exitCode: opts.exitCodes?.[runs.length - 1] ?? opts.exitCode ?? 0,
           durationMs: 30_000,
@@ -123,8 +135,12 @@ describe("motion-graphic authored hook scene", () => {
     };
     const runtime = {
       id: "fake",
-      async run(_ctx: unknown, task: { skill: string; input: Record<string, unknown> }) {
+      async run(
+        _ctx: unknown,
+        task: { skill: string; instructions: string; input: Record<string, unknown> },
+      ) {
         tasks.push(task.skill);
+        instructions.set(task.skill, task.instructions);
         inputs.push(task.input);
         const queued = opts.replies?.[task.skill];
         const output = queued?.length
@@ -156,7 +172,7 @@ describe("motion-graphic authored hook scene", () => {
       },
       agents: { runtime, latestOverrun: async () => undefined, grantedOverruns: async () => 0 },
     } as unknown as StageContext;
-    return { s, ir, objects, tasks, inputs, runs };
+    return { s, ir, objects, tasks, inputs, runs, instructions };
   }
 
   it("leaves a standard graphic untouched", async () => {
@@ -189,7 +205,10 @@ describe("motion-graphic authored hook scene", () => {
     const out = (result.output as { ir: VideoIR }).ir;
     const hook = ir.scenes[0]?.id as string;
     expect(tasks).toEqual([MG_DIRECTION_AGENT, MG_SCENE_BUILD_AGENT]);
-    expect(runs[0]?.command).toBe(`hyperframes check . && hyperframes render . -o out/${hook}.mp4 --quiet`);
+    expect(runs[0]?.command).toBe(
+      `mkdir -p out && { hyperframes check . --json > out/${hook}-check.json || { cat out/${hook}-check.json; exit 1; }; } && ` +
+        `hyperframes render . -o out/${hook}.mp4 --quiet`,
+    );
     const tree = `compositions/${runs[0]?.compositionId}`;
     expect(objects.has(`${tree}/files/index.html`)).toBe(true);
     expect(objects.has(`${tree}/files/scenes/${hook}.scene.html`)).toBe(true);
@@ -291,6 +310,67 @@ describe("motion-graphic authored hook scene", () => {
     );
     expect(failing.tasks).toEqual([MG_DIRECTION_AGENT, MG_DIRECTION_AGENT]);
     expect(result.usage?.length).toBe(2);
+  });
+
+  it("tells the builder the film's accent token and to keep text inside the frame during camera moves", async () => {
+    const { s, inputs, instructions } = await setup();
+    await motionGraphicDirectorStage.run(s);
+    const build = inputs[1] as {
+      theme: { filmAccent: { token: string; color: string }; tokens: Record<string, string> };
+    };
+    // The template's cards set their accents in the accent role, so the hook is told to use it too.
+    expect(build.theme.filmAccent.token).toBe("--accent");
+    expect(build.theme.filmAccent.color).toBe(build.theme.tokens["--accent"]);
+    expect(instructions.get(MG_SCENE_BUILD_AGENT)).toMatch(/theme\.filmAccent\.token/);
+    expect(instructions.get(MG_SCENE_BUILD_AGENT)).toMatch(/camera moves included/);
+  });
+
+  it("names the role the other scenes really paint with as the film's accent", () => {
+    const ir = graphic();
+    const palette = { ...ir.brand!.palette, primary: "#1e4bff", accent: "#e8b84a" };
+    const painted = {
+      ...ir,
+      brand: { ...ir.brand!, palette },
+      scenes: ir.scenes.map((sc) => ({
+        ...sc,
+        motif: sc.motif ? { ...sc.motif, color: "#1E4BFF" } : sc.motif,
+        shots: sc.shots.map((sh) => ({ ...sh, style: { ...sh.style, color: "primary" } })),
+      })),
+    } as VideoIR;
+    expect(filmAccentRole(painted, painted.scenes[0]!.id)).toBe("primary");
+    expect(filmAccentRole({ ...ir, brand: { ...ir.brand!, palette } } as VideoIR, ir.scenes[0]!.id)).toBe(
+      "accent",
+    );
+  });
+
+  it("sends text the check finds cut at the frame edge back once, keeping the first clip when the repair fails", async () => {
+    const clipped = {
+      layout: {
+        findings: [
+          {
+            code: "canvas_overflow",
+            severity: "info",
+            time: 0.59,
+            selector: "div.pill > span:nth-of-type(1)",
+            containerSelector: "#root",
+            text: "A 15s film",
+            overflow: { left: 126 },
+          },
+        ],
+      },
+    };
+    const { s, runs, inputs, tasks } = await setup({ reports: [clipped], exitCodes: [0, 1] });
+    const out = (await motionGraphicDirectorStage.run(s)).output as { ir: VideoIR; warning?: string };
+    const hook = out.ir.scenes[0]?.id as string;
+    expect(tasks).toEqual([MG_DIRECTION_AGENT, MG_SCENE_BUILD_AGENT, MG_SCENE_BUILD_AGENT]);
+    expect(inputs[2]?.repair).toMatchObject({
+      issues: [
+        { path: "fragment", message: expect.stringMatching(/"A 15s film" .* cut 126px past the left/) },
+      ],
+    });
+    expect(runs.map((r) => r.check?.path)).toEqual([`out/${hook}.mp4`, `out/${hook}-reframed.mp4`]);
+    expect(out.warning).toBeUndefined();
+    expect(out.ir.metadata?.authoredScenes).toEqual([hook]);
   });
 
   it("falls back to the card when the sandbox check or render fails", async () => {
