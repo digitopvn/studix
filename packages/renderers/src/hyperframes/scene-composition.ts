@@ -10,6 +10,7 @@ import {
 } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
 import { writeLayoutMotion } from "./layout-markup.ts";
+import { compileDepth, type Plane, planeId, writeCamera } from "./scene-depth.ts";
 import {
   type ResolvedTransition,
   TimelineWriter,
@@ -27,6 +28,8 @@ export interface SceneCaptionCue {
 
 export interface SceneCompileInput {
   scene: Scene;
+  /** The scene's place in the video; it fixes where a motif rests at the scene's cuts. */
+  sceneIndex: number;
   palette: Record<ColorRole, string>;
   transitions: { in?: ResolvedTransition; out?: ResolvedTransition };
   captions: { position: "top" | "middle" | "bottom"; cues: SceneCaptionCue[] };
@@ -137,6 +140,18 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
 
   const w = new TimelineWriter();
   writeTransition(w, `#${stageId}`, "in", input.transitions.in, scene.durationMs);
+  const depth = compileDepth(w, {
+    scene,
+    sceneIndex: input.sceneIndex,
+    prefix,
+    stageId,
+    frame: markup.frame,
+  });
+  css.push(...depth.css);
+  const planes = new Set<Plane>(["underlay", "content"]);
+  if (depth.back) planes.add("back");
+  if (depth.front) planes.add("front");
+  writeCamera(w, prefix, scene, markup.frame, planes);
   const html = new Map<string, string>();
   for (const shot of scene.shots) {
     const rendered = renderShotMarkup(ctx, shot);
@@ -176,8 +191,12 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       `<template id="${prefix}template">`,
       `  <div data-composition-id="${scene.id}" data-width="${width}" data-height="${height}" data-duration="${num(seconds(scene.durationMs))}">`,
       `    <div id="${stageId}" data-scene-role="${scene.role}">`,
-      `      <div class="underlay">${underlay.join("")}</div>`,
-      `      <div class="content">${regions.join("")}</div>`,
+      depth.back ? `      ${depth.back}` : "",
+      `      <div id="${planeId(prefix, "underlay")}" class="underlay">${underlay.join("")}</div>`,
+      depth.motif ? `      ${depth.motif}` : "",
+      `      <div id="${planeId(prefix, "content")}" class="content">${regions.join("")}</div>`,
+      depth.front ? `      ${depth.front}` : "",
+      depth.lens ? `      ${depth.lens}` : "",
       captionHtml ? `      ${captionHtml}` : "",
       "    </div>",
       "    <style>",
