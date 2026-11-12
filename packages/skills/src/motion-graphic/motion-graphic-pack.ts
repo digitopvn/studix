@@ -51,6 +51,11 @@ import {
   motionGraphicStoryboardStage,
 } from "./motion-graphic-storyboard.ts";
 import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion-graphic-template.ts";
+import {
+  MG_VISUAL_QA_STAGE,
+  motionGraphicRenderStage,
+  motionGraphicVisualQaStage,
+} from "./motion-graphic-visual-qa.ts";
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
 export const MG_STAGES = {
@@ -79,7 +84,8 @@ export const motionGraphicSkill: Skill = {
     "the agent's storyboard has about one card every five seconds (3–12); a music bed is composed to drop where the CTA card starts, " +
     "dips under the voice and the cuts land on its beats; headlines and layouts enter on their spoken words; " +
     "the whoosh, accent and music bed " +
-    "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
+    "are skipped with a warning when their provider is not set. After the render a vision review scores each card and the " +
+    "failed cards are redesigned and re-rendered (at most 2 rounds, under budget; scores in the job result as `visualQa`). Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). Brand kit: `brief.brandUrl` (the brand's site: name, logo, " +
     "colours), `brief.brandLogo` (https or base64 image data URL) and `brief.brandColors` (first = primary) put " +
     "a logo lockup on the hook and CTA cards; an unreadable site or logo only warns. No image-to-video.",
@@ -826,8 +832,9 @@ export const motionGraphicQaStage: StageDefinition = {
 /**
  * New project: brand (from `brandUrl` / `brandLogo`, when given) -> storyboard (agent, or template fallback)
  * -> compose -> SFX accent -> music bed (when the storyboard asked for one) -> voice-over (cuts on the bed's
- * beats, reveals on the spoken words) -> render -> QA -> upload. Re-render of a version:
- * render -> QA -> upload.
+ * beats, reveals on the spoken words) -> visual QA (render, review, redesign failed cards, re-render) -> store
+ * the version -> render (reuses the reviewed render) -> QA -> upload. The version is stored after the review
+ * because the review may redesign cards. Re-render of a version: render -> QA -> upload.
  */
 export const motionGraphicPipeline: PackPipeline = {
   renderer: "hyperframes",
@@ -842,12 +849,21 @@ export const motionGraphicPipeline: PackPipeline = {
           motionGraphicAccentStage,
           motionGraphicMusicStage,
           motionGraphicVoiceStage,
+          motionGraphicVisualQaStage(e.render),
           e.validateIr,
-          e.render,
+          motionGraphicRenderStage(e.render),
           motionGraphicQaStage,
           e.upload,
           e.finalize,
         ],
+  // The finalize output, with the visual review of the render (card scores per round) when one ran.
+  result: (outputs) => {
+    const visualQa = outputs[MG_VISUAL_QA_STAGE]?.visualQa;
+    return {
+      ...(outputs.finalize ?? outputs.storyboard_ready ?? {}),
+      ...(visualQa ? { visualQa } : {}),
+    };
+  },
 };
 
 export const motionGraphicPack: WorkflowPack = {

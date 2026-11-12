@@ -2,6 +2,7 @@ import { USAGE_KINDS } from "@studix/billing";
 import type {
   AgentCap,
   AgentHandoff,
+  AgentInputImage,
   AgentRunResult,
   AgentRunRoute,
   AgentStageLimits,
@@ -33,6 +34,11 @@ export interface AgentStageSpec<I extends z.ZodType, O extends z.ZodType<StageOu
   limits: Omit<AgentStageLimits, "tools">;
   /** Per-job limits of the first run (for example by the agent's reasoning effort); `limits` otherwise. */
   limitsFor?(job: StageContext["job"]): Omit<AgentStageLimits, "tools">;
+  /**
+   * Images the model looks at with the input (vision), in harness mode; a runtime or model that cannot
+   * read images fails the stage with UNAVAILABLE before it spends anything. Host tasks carry none.
+   */
+  images?(input: z.infer<I>): AgentInputImage[];
   /** Tools the agent may call (the allowlist); none by default. */
   tools?: AgentToolDefinition[];
   /**
@@ -272,6 +278,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
           details: { budgetCents: s.job.budgetCents, spentCents: s.job.spentCents },
         });
       }
+      const images = spec.images?.(s.input as z.infer<I>);
       let result: AgentRunResult;
       try {
         result = await runtime.run(s.ctx, {
@@ -279,6 +286,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
           instructions: spec.instructions,
           input,
           tools: spec.tools,
+          ...(images?.length ? { images } : {}),
           outputSchema: outputJsonSchema(),
           maxTurns: limits.maxTurns,
           maxTokens: limits.maxTokens,

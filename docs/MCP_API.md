@@ -281,7 +281,19 @@ Behavior notes:
   move with them), a line no re-cut can fit is voiced once more, brisker (a line
   that fits its card read up to 1.12x faster is voiced again only when the
   graphic still needs the time), and only speech that cannot fit the whole video fails with `VALIDATION`
-  naming the lines past their cards and by how many milliseconds (`details.lines`).
+  naming the lines past their cards and by how many milliseconds (`details.lines`). The storyboard agent gives every message
+  card a layout device and each spoken line one idea in one sentence. After the
+  render a vision model reviews a contact sheet (one hold frame per card) and
+  scores each card 0 to 10 for `blank`, `too-small`, `illegible`, `repetitive`,
+  `off-brief` or `headline-only`; failed cards (an issue, or a score below 6)
+  go back to the storyboard agent, which redesigns only those cards (their
+  voice-over and timing kept), and the graphic renders again: at most two
+  rounds, only while the job budget holds a review, a redesign and a render.
+  The job result carries the scores as `visualQa` (`status`: `passed`, `fixed`,
+  `failed` or `skipped`, with a `reason`, and `rounds[].cards[]`). The review
+  never fails the job: it is skipped with a reason in host mode, without an
+  agent, when the agent's model cannot read images, or when time before the job
+  deadline runs short; a failed redesign or re-render keeps the last good render.
 - Brand kit for `motion-graphic`: `brief.brandUrl` (the brand's https site),
   `brief.brandLogo` (an https URL or a base64 `data:image/png|jpeg|webp|svg+xml`
   URL, at most 200,000 characters, about 146 KB of image; pass a larger logo as an https URL) and `brief.brandColors` (1 to 4 hex
