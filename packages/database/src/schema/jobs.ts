@@ -115,6 +115,8 @@ export const stages = pgTable(
     mediaJobs: jsonb("media_jobs").$type<MediaJobRecord[]>(),
     startedAt: ts("started_at"),
     finishedAt: ts("finished_at"),
+    /** Last real activity of a running stage (agent heartbeat); null for stages that never report one. */
+    lastActivityAt: ts("last_activity_at"),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("stages_job_name_attempt_uq").on(t.jobId, t.name, t.attempt)],

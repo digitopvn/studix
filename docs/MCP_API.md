@@ -95,6 +95,7 @@ or simpler brief until the fix lands.
 | `studix_inspect`          | Capabilities handshake: server and schema versions, templates, formats, limits, constraints and JSON Schemas for inputs such as the creative spec. Call this first.                                                                                    |
 | `studix_create_video`     | One goal -> async workflow. Accepts a brief (natural language, Vietnamese or English) or a validated spec from the host; an optional idempotency key makes retries safe. Returns `projectId`, `jobId`, `stage` and `next` quickly.                     |
 | `studix_get_job`          | Job stage, progress, recommended next action, and signed preview/final URLs when ready. `waitSeconds` (max 50) holds the call until the status changes, with progress notifications (see [Job notifications](#job-notifications)).                     |
+| `studix_job_trace`        | What each agent stage run did, from its session trace (see [Agent session traces](#agent-session-traces)). `view: summary` (default) gives a per-stage timeline; `view: full` pages one stage's events with `cursor`. Same auth as `studix_get_job`.   |
 | `studix_webhook`          | Get, set or delete the workspace job webhook (see [Job notifications](#job-notifications)). Setting needs owner or admin.                                                                                                                              |
 | `studix_get_project`      | Project, versions, latest job and renders with signed URLs.                                                                                                                                                                                            |
 | `studix_cancel_job`       | Cancel a queued or running job; a running stage is aborted and the job ends `cancelled`.                                                                                                                                                               |
@@ -189,6 +190,7 @@ Behavior notes:
   - A stage books its spend when it ends, so a running stage has no `run` yet. The dashboard shows the cost, tokens and turns the runtime streams (`GET /api/jobs/:jobId/events`) until then.
   - Claude Code reports its cost only when the run ends.
   - A connection is named by its label, never by its id or key.
+- A running agent stage carries `stages[].lastActivityAt`, the time of its agent's last real event; the run's 30-second heartbeat writes it. A running stage with no activity for 10 minutes also shows `stalled: true`, and `next` starts with a warning that points at `studix_job_trace` for that stage. A stage that reports no activity (render, compose) is never marked stalled.
 - Time spent parked is not counted against the deadline. While a job waits at a human gate
   (`waiting_approval`) or for a host agent task (`waiting_host`), the deadline
   is paused: what is left of it is kept and starts counting again when a worker
@@ -540,7 +542,7 @@ MCP Tasks are not offered: the SDK in use (`@modelcontextprotocol/server`
 ### WebMCP in the dashboard
 
 A signed-in dashboard registers `studix_create_video`, `studix_get_job`,
-`studix_get_project`, `studix_feedback`, `studix_render`, `studix_cancel_job`
+`studix_job_trace`, `studix_get_project`, `studix_feedback`, `studix_render`, `studix_cancel_job`
 and `studix_retry_job` with the browser's `modelContext` when the browser
 supports WebMCP. Names, descriptions and input schemas come from
 `GET /api/webmcp/tools`, and calls go to `POST /api/webmcp/tools/:name`. Both
@@ -892,6 +894,26 @@ The dashboard root (`#/`) is a chat: each message creates a `skill-agent` job (`
   - Each agent event has an SSE `id`. Pass `?after=<id>` or `Last-Event-ID` to replay only what came later, so a reload resumes where it stopped.
 
 The worker stores these events with the job as `agent.event` activity rows. They are redacted before they are stored, and large tool arguments keep only a preview, so no secret is streamed. Claude Code and Codex report whole blocks rather than token deltas, so their text arrives a block at a time. Pi streams tokens.
+
+## Agent session traces
+
+Every in-worker agent run (Pi, Claude, Codex, in or out of the skill sandbox) also writes a session trace: one JSONL object per run in object storage at `traces/jobs/<jobId>/<stage>/<attempt>/<run>.jsonl`, where `run` counts the agent runs of that stage attempt from 0. No database pointer is needed; the reader finds the runs from the job's stage rows.
+
+- Each line has `seq`, `ts` and `type`:
+  - `run`: the task, with the skill, instructions and input (first 4,000 characters each), tool names, input files and caps.
+  - `status`: running, succeeded or failed, with the runtime and model.
+  - `message` and `reasoning`: the merged text.
+  - `tool_start`: the tool's arguments, as a preview when they are large.
+  - `tool_end`: `ok`, the head and tail of the result (a failing command prints its error last), `durationMs`, and the shell `exitCode` when the runtime reports one.
+  - `turn`: per-turn `inputTokens`, `outputTokens`, `costCents`, `latencyMs` and model.
+  - `artifact`, and `error` with the code, message and `suggestedAction`.
+  - `heartbeat`: written every 30 seconds with `idleMs` since the last real event.
+  - `truncated`: the run hit its cap (5,000 events or 4 MB) and later events were dropped.
+- Everything is redacted before it is written. The trace is stored on every heartbeat as well as at the end, so a hung run can be read while it hangs.
+- Read it with `studix_job_trace(jobId, stage?, attempt?, view?, cursor?, limit?)`, `GET /api/jobs/:jobId/trace?stage=&attempt=&view=&cursor=&limit=` (same fields and reply), or WebMCP. It needs `project:read` in the job's workspace, and another workspace's job is `NOT_FOUND`.
+  - `summary`: each stage at its latest attempt (or the named one), with `lastActivityAt`, `stalled` and one entry per run. An entry gives the runtime, model, status, turns, tokens, cost, tool calls by name, failures, the five slowest steps, errors, and the last activity and heartbeat times.
+  - `full`: one stage's events across its runs in order, each tagged with `run`, 50 per page by default (`limit` up to 200). Pass `nextCursor` back as `cursor` for the next page.
+- A server without object storage answers `UNAVAILABLE`.
 
 ## Platform settings (dashboard API only)
 

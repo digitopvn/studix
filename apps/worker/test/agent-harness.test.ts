@@ -7,7 +7,15 @@ import {
   type PiResolvedRun,
 } from "@studix/agent-runtime";
 import { USAGE_KINDS } from "@studix/billing";
-import type { ActorRef, Job, ModelPreference, ResolvedModelSnapshot, TenantContext } from "@studix/core";
+import {
+  type ActorRef,
+  agentTraceKey,
+  type Job,
+  type ModelPreference,
+  parseAgentTrace,
+  type ResolvedModelSnapshot,
+  type TenantContext,
+} from "@studix/core";
 import { createInMemoryUsageRepository, testTenant } from "@studix/core/testing";
 import type { ModelSnapshotRepository } from "@studix/database";
 import { createLogger, StudixError, systemClock } from "@studix/shared";
@@ -163,6 +171,8 @@ function createWorld(
   };
   const transport = createFakeClaudeTransport(() => options.transcript ?? []);
   const sandboxRuns: Array<{ model: string; reasoningEffort?: string }> = [];
+  const traces = new Map<string, string>();
+  const activity = { touches: 0, heartbeats: 0 };
   const harness = createWorkerAgentHarness({
     credentials,
     preferences: {
@@ -206,6 +216,12 @@ function createWorld(
           },
         }),
     piWorkspace: () => ({ open: async () => ({}) }) as never,
+    traceStorage: {
+      put: async (_c, key, body) => {
+        traces.set(key, new TextDecoder().decode(body as Uint8Array));
+        return { key, bytes: 0, sha256: "", contentType: "application/x-ndjson" };
+      },
+    },
     logger,
     // The real Pi SDK runtime, pointed at the fake endpoint with a declared price ($1/M in, $2/M out).
     piRuntimeFor: (resolved: PiResolvedRun) =>
@@ -254,6 +270,13 @@ function createWorld(
       signal: new AbortController().signal,
       outputs: {},
       input: { topic: "cà phê" },
+      activity: {
+        stage: STAGE,
+        attempt: 1,
+        touch: () => void activity.touches++,
+        heartbeat: async () => void activity.heartbeats++,
+        nextRun: () => 0,
+      },
     } as unknown as StageContext;
     sctx.agents = {
       runtime: harness.runtimeFor(sctx),
@@ -265,7 +288,18 @@ function createWorld(
     return (options.tools ? toolStage : stage).run(sctx);
   };
   const executions = async () => (await usage.listProviderExecutions(ctx, { jobId: job.id })).items;
-  return { run, executions, transport, pinned, preferences, rejected, harness, sandboxRuns };
+  return {
+    run,
+    executions,
+    transport,
+    pinned,
+    preferences,
+    rejected,
+    harness,
+    sandboxRuns,
+    traces,
+    activity,
+  };
 }
 
 const claudeTurn = (costUsd: number): ClaudeAgentEvent[] => [
@@ -345,6 +379,16 @@ describe("worker agent harness", () => {
     expect(world.pinned.get(`job_harness:pi:${STAGE}`)).toMatchObject({ connectionId: "pcon_openai" });
     expect(line.funding).toBe("workspace");
     expect(execution!.funding).toBe("workspace");
+    // The run's session trace is stored under the stage attempt, and its activity is recorded.
+    const trace = parseAgentTrace(world.traces.get(agentTraceKey("job_harness", STAGE, 1, 0)) ?? "");
+    expect(trace.map((e) => e.type)).toEqual(expect.arrayContaining(["run", "status", "turn"]));
+    expect(trace.find((e) => e.type === "turn")).toMatchObject({
+      inputTokens: 100_000,
+      outputTokens: 50_000,
+    });
+    expect(trace.at(-1)).toMatchObject({ type: "status", status: "succeeded", runtime: "pi" });
+    expect(world.activity.touches).toBeGreaterThan(0);
+    expect(world.activity.heartbeats).toBe(1);
   });
 
   it("tags a run on the requester's personal key as member-funded", async () => {

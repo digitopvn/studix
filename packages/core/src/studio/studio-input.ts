@@ -50,7 +50,7 @@ export async function loadJobView(deps: ResolvedStudioDeps, ctx: TenantContext, 
     job.status === "queued"
       ? toQueueView(job, await deps.jobs.queueLoad(ctx, job), deps.clock.now())
       : undefined;
-  return toJobView(job, stages, approval, await spendDetail(deps, ctx, job.id), queue);
+  return toJobView(job, stages, approval, await spendDetail(deps, ctx, job.id), queue, deps.clock.now());
 }
 
 async function spendDetail(

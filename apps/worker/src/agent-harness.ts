@@ -17,12 +17,14 @@ import {
 import { claudeCredentialKind as credentialKind, type ProviderConnectionService } from "@studix/auth";
 import {
   type ActivityRepository,
+  AGENT_TRACE_HEARTBEAT_MS,
   type AgentRunResult,
   type AgentRunRoute,
   type AgentRuntime,
   type AgentRuntimeName,
   type AgentTask,
   actingUserId,
+  agentTraceKey,
   connectionFunding,
   FUNDING_SOURCES,
   type FundingSource,
@@ -35,16 +37,23 @@ import {
   type ReasoningEffort,
   type ResolvedModelSnapshot,
   resolveModelSelection,
+  type StorageAdapter,
   sameModelRoute,
   stageAgentSelection,
   type TenantContext,
   type UsageRepository,
 } from "@studix/core";
 import type { ModelPreferenceRepository, ModelSnapshotRepository } from "@studix/database";
-import { type Clock, type Logger, StudixError, systemClock, toStudixError } from "@studix/shared";
+import { type Clock, type Logger, redactDeep, StudixError, systemClock, toStudixError } from "@studix/shared";
 import type { StageContext } from "@studix/workflow";
 import { z } from "zod";
 import { type AgentEventSink, createAgentEventSink } from "./agent-event-sink.ts";
+import { type AgentSessionTrace, createAgentSessionTrace } from "./agent-session-trace.ts";
+
+/** Prompt text kept in a trace's `run` line. */
+const PROMPT_PREVIEW_CHARS = 4_000;
+const preview = (text: string) =>
+  text.length > PROMPT_PREVIEW_CHARS ? `${text.slice(0, PROMPT_PREVIEW_CHARS)}…` : text;
 
 /** Provider ids recorded on the provider executions of harness runs (same as the planner and decisions). */
 export const HARNESS_PROVIDER: Readonly<Record<AgentRuntimeName, string>> = {
@@ -94,6 +103,10 @@ export interface WorkerAgentHarnessDeps {
   ) => Promise<{ assetId: string; storageKey: string; url: string; contentType: string } | undefined>;
   /** Host paths of the media a stage run left outside /work/out, stored as preview artifacts. */
   previewFiles?: (stage: StageContext) => Promise<string[]>;
+  /** Where each run's session trace is stored (`agentTraceKey`); omitted, runs are not traced. */
+  traceStorage?: Pick<StorageAdapter, "put">;
+  /** Test seam; production heartbeats every `AGENT_TRACE_HEARTBEAT_MS`. */
+  heartbeatMs?: number;
 }
 
 export interface WorkerAgentHarness {
@@ -419,26 +432,78 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
     }
   }
 
+  /**
+   * The session trace of one run, opened with what the run was asked to do. Needs trace storage and the
+   * stage's activity record (it numbers the runs of the attempt); otherwise the run is not traced.
+   */
+  function sessionTrace(stage: StageContext, task: AgentTask): AgentSessionTrace | undefined {
+    const activity = stage.activity;
+    if (!deps.traceStorage || !activity) return undefined;
+    const trace = createAgentSessionTrace({
+      storage: deps.traceStorage,
+      ctx: stage.ctx,
+      key: agentTraceKey(stage.job.id, activity.stage, activity.attempt, activity.nextRun()),
+      clock,
+      logger: log,
+      onActivity: () => activity.touch(),
+    });
+    trace.append(
+      redactDeep({
+        type: "run",
+        skill: task.skill,
+        instructions: preview(task.instructions),
+        input: preview(JSON.stringify(task.input) ?? ""),
+        ...(task.tools?.length ? { tools: task.tools.map((t) => t.name) } : {}),
+        ...(task.inputFiles?.length ? { inputFiles: task.inputFiles.map((f) => f.path) } : {}),
+        ...(task.images?.length ? { images: task.images.length } : {}),
+        maxTurns: task.maxTurns,
+        maxCostCents: task.maxCostCents,
+        ...(task.maxTokens ? { maxTokens: task.maxTokens } : {}),
+        ...(task.deadlineAt ? { deadlineAt: task.deadlineAt.toISOString() } : {}),
+      }) as Record<string, unknown>,
+    );
+    return trace;
+  }
+
   function runtimeFor(stage: StageContext): AgentRuntime {
     // Reported on the stage's usage line; it names the runtime that actually ran once a run has started.
     let id = "worker-harness";
     const run = async (ctx: TenantContext, task: AgentTask): Promise<AgentRunResult> => {
-      const sink = deps.events
-        ? createAgentEventSink(
-            deps.events,
-            stage.ctx,
-            {
-              jobId: stage.job.id,
-              ...(stage.job.projectId ? { projectId: stage.job.projectId } : {}),
-              stage: task.skill,
-            },
-            log,
-          )
+      const trace = sessionTrace(stage, task);
+      const sink =
+        deps.events || trace
+          ? createAgentEventSink(
+              deps.events,
+              stage.ctx,
+              {
+                jobId: stage.job.id,
+                ...(stage.job.projectId ? { projectId: stage.job.projectId } : {}),
+                stage: task.skill,
+              },
+              log,
+              trace,
+            )
+          : undefined;
+      // Every heartbeat stores the trace so far and the stage's last activity, so a quiet run is visible.
+      const beat = trace
+        ? setInterval(() => {
+            void trace.heartbeat();
+            void stage.activity?.heartbeat();
+          }, deps.heartbeatMs ?? AGENT_TRACE_HEARTBEAT_MS)
         : undefined;
+      beat?.unref();
       try {
         return await runWith(ctx, task, sink);
+      } catch (err) {
+        const { code, message, retryable, suggestedAction } = toStudixError(err);
+        trace?.append(
+          redactDeep({ type: "error", code, message, retryable, suggestedAction }) as Record<string, unknown>,
+        );
+        throw err;
       } finally {
+        clearInterval(beat);
         await sink?.flush();
+        await Promise.all([trace?.close(), stage.activity?.heartbeat()]);
       }
     };
     const runWith = async (

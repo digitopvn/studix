@@ -57,6 +57,7 @@ import {
 } from "@studix/storage";
 import type { Express } from "express";
 import { z } from "zod";
+import { createAgentTraceReader } from "./agent-trace-reader.ts";
 import type { AppDeps } from "./app-deps.ts";
 import { composeIntegrations, storageMediaOrigins } from "./compose-integrations.ts";
 import { createApp } from "./create-app.ts";
@@ -242,6 +243,8 @@ export async function composeApp(
     ...repos,
     // Operators attach Atlas predictions by hand; each is checked with Atlas first, so this needs multix.
     providerJobs: multix,
+    // The same storage router the worker writes traces with, so every storage profile is searched.
+    ...(integrations.storage ? { traces: createAgentTraceReader(integrations.storage) } : {}),
     approvalPolicy,
     clock: systemClock,
     logger,

@@ -2,6 +2,7 @@ import {
   can,
   FeedbackAnnotation,
   type FeedbackInput,
+  JobTraceInput,
   type NextAction,
   PlannerSelection,
   RenderVersionInput,
@@ -374,6 +375,19 @@ export const NATIVE_TOOLS = [
       );
       const data = job.projectId ? { ...view, reviewUrl: reviewUrl(ctx.deps, job.projectId) } : view;
       return { data, next: job.next };
+    },
+  }),
+  tool({
+    name: NATIVE_TOOL_NAMES.jobTrace,
+    title: "Job trace",
+    description:
+      "What each agent stage run of a job did, from its session trace. view=summary (default): per stage, runs with runtime, model, turns, tokens, cost, tool calls, slowest steps, errors and last activity. view=full: one stage's events in order (prompt, model turns, tool calls and results, shell exit codes, artifacts, errors, heartbeats), paged by cursor. Use it when a stage is stalled or failed.",
+    input: JobTraceInput,
+    readOnly: true,
+    async run(ctx, input) {
+      const trace = await ctx.deps.studio.getJobTrace(ctx.tenant, input);
+      const { next, ...data } = trace;
+      return { data, next, scope: { jobId: trace.jobId } };
     },
   }),
   tool({

@@ -174,6 +174,25 @@ export interface StageContext {
   services: StageServices;
   /** Services agent stages run on; undefined when the worker was wired without them. */
   agents?: AgentStageServices;
+  /** This stage attempt's identity and liveness record; set by the stage runner. */
+  activity?: StageActivity;
+}
+
+/**
+ * Liveness of one stage attempt. Agent runs mark real work with `touch`, write it on their heartbeat, and
+ * number their session traces with `nextRun`, so every run of the attempt gets its own trace object.
+ */
+export interface StageActivity {
+  /** The stage's name, as on the job's stage rows. */
+  readonly stage: string;
+  /** The job attempt the stage runs in. */
+  readonly attempt: number;
+  /** Mark real work now (an agent event); cheap, written on the next heartbeat. */
+  touch(): void;
+  /** Store the last activity time when it moved since the previous write; best-effort, never throws. */
+  heartbeat(): Promise<void>;
+  /** The next run number of this attempt, from 0. */
+  nextRun(): number;
 }
 
 /** What an agent stage needs from the engine: the harness runtime and the state of its approvals and host task. */

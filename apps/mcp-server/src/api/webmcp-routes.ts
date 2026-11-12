@@ -14,6 +14,7 @@ import { parseBody, sessionOf } from "./api-context.ts";
 export const WEBMCP_TOOL_NAMES = [
   "studix_create_video",
   "studix_get_job",
+  "studix_job_trace",
   "studix_get_project",
   "studix_feedback",
   "studix_render",

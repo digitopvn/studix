@@ -230,6 +230,7 @@ function agentHarness(
     snapshots: repos.modelSnapshots,
     executions: repos.usage,
     events: repos.activity,
+    traceStorage: storage,
     ...(transport && settings.claudePlanner
       ? { claude: { transport, plannerModel: settings.claudePlanner.model } }
       : {}),
