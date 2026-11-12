@@ -9,7 +9,8 @@ import { escapeHtml } from "./html-utils.ts";
  * The card is data only: markup and CSS checked against allowlists and re-serialized by Studix, plus a list
  * of declarative tweens Studix turns into GSAP calls. No agent-written code ever runs.
  *
- * This module has no browser, filesystem or renderer dependency, so planners can validate cards cheaply.
+ * This module depends only on zod and the HTML and CSS parsers (no browser or renderer), so planners can
+ * validate cards cheaply.
  */
 
 export const HTML_CARD_MIME = "application/vnd.studix.html-card+json";

@@ -42,46 +42,54 @@ narrative packs use it for T0/T1 shots instead of an image-to-video call.
 ### HTML cards
 
 A composition shot can also name a code asset of type `application/vnd.studix.html-card+json`:
-`{ format: "studix.html-card", version: 1, html, css, script }` (`hyperframes/html-card.ts`, up to
-16,000 / 12,000 / 12,000 characters). The card is an agent-authored full-frame layer, compiled into
-the scene composition instead of being captured separately:
+`{ format: "studix.html-card", version: 1, html, css, tweens }` (`hyperframes/html-card.ts`). `html`
+holds up to 16,000 characters, `css` up to 12,000, and `tweens` up to 40 entries. A card is agent-authored
+data only, and **no agent code runs**. Studix checks the markup and CSS against allowlists, re-serializes
+them, and generates every line of the card's script itself.
 
-- `html` goes inside `<div id="…" class="html-card">`, absolutely positioned over the whole frame. The
-  card element fades in and out with the shot like any other shot.
-- `css` is nested under the card id with native CSS nesting, so it cannot style anything else.
-  Palette roles are `var(--c-<role>)`. The bundled brand fonts are `var(--font-heading)` (700 and 800
-  bundled) and `var(--font-body)` (400 and 600 bundled).
-- `script` is the body of `function (tl, root, frame)`. It adds tweens to `tl`, a GSAP sub-timeline that
-  starts at the shot start, with times in seconds from that start. `root` is the card element, so query
-  it with `root.querySelector(…)`. `frame` is `{ width, height, duration }`, where `duration` is the card
-  length in seconds.
+- **`html`** is parsed with htmlparser2, and only the checked tree is serialized into the page, never the
+  original string.
+  - Allowed tags: `div`, `span`, `p`, `h1`–`h3`, `strong`, `em`, `b`, `i`, `br`, `ul`, `ol`, `li` and
+    inline `svg` with its shape, text, gradient, `clipPath` and `mask` elements.
+  - Allowed attributes: `class`, `id`, SVG geometry and paint attributes, `aria-hidden` and `role`. Event
+    handlers and `style` are not allowed.
+  - Attribute values may contain no URL scheme, and `url()` may only point at `#id`.
+  - SVG elements must sit inside `<svg>` and HTML elements outside it, inline elements hold only inline
+    content, and lists hold only `<li>`. The browser therefore builds the same tree Studix checked.
+  - Every `id` becomes `<card element id>-<id>`, and `url(#id)` references and `#id` selectors are
+    rewritten to match, so two cards never share an id.
+- **`css`** is parsed with PostCSS and re-serialized rule by rule.
+  - At-rules, nested rules, `!important`, `url()` other than `url(#id)`, `expression()`, `image-set()`,
+    `element()`, `behavior` and `-moz-binding` are rejected, and so is a parse error.
+  - Every selector is prefixed with the card id as a descendant selector. Selectors that start with `+`
+    or `~`, or that use `*`, `&`, `:root`, `html` or `body`, are rejected, so a rule can only style
+    elements inside the card.
+  - Bare declarations style the card element itself. The renderer's own rule comes after them and always
+    wins on placement, clipping and visibility. `contain: paint` keeps fixed-position children inside the
+    card.
+  - Palette roles are `var(--c-<role>)`. The bundled brand fonts are `var(--font-heading)` (700 and 800
+    bundled) and `var(--font-body)` (400 and 600 bundled).
+- **`tweens`** are validated objects, `{ target, at, duration, from?, to?, ease?, stagger? }`.
+  - `target` is a simple selector (at most four parts) resolved with `querySelectorAll` inside the card.
+  - Properties are limited to transforms, `opacity` and `strokeDashoffset`, eases come from a fixed list,
+    and `at` is in seconds from the card start.
+  - Studix writes each tween as a GSAP `fromTo`, `from` or `to` call with JSON-encoded values, on a
+    sub-timeline placed at the shot start. The card element fades in and out with the shot.
 
-`htmlCardProblems()` enforces a deny-list before anything compiles. Each problem names the field and
-the rule:
+`htmlCardProblems()` returns every broken rule as a short sentence. The renderer reads each card from
+`assetFiles` and parses it. A missing file, bad JSON, a schema failure or any problem stops the render with
+`VALIDATION`, and `details.problems` lists the reasons. Code assets are never copied into the project.
 
-- `html` rejects `<script>`, `<iframe>`, `<object>`, `<embed>`, `<link>`, `<meta>`, `<base>`, `<form>`,
-  `<img>`, `<video>`, `<audio>`, `<source>`, `<template>` and `<style>`. It also rejects inline `on*`
-  handlers, `javascript:`, `http(s)` and `//` URLs, and `href`, `src` or `url()` targets other than `#id`
-  or `data:`. SVG `xmlns` declarations are allowed.
-- `css` rejects `@import`, `@font-face`, `expression()`, `http(s)` URLs and `url()` targets other than
-  `#id` or `data:`.
-- `script` rejects network and storage APIs, `import`, `require`, `eval` and `Function`. It also rejects
-  timers and `requestAnimationFrame`, `Math.random`, `Date`, `performance`, `navigator`, `location`,
-  `postMessage`, `window.parent`, `window.top`, HTML injection (`innerHTML`, `document.write`, …) and
-  `__timelines`.
+As defense in depth, `index.html` of a render with a card carries a CSP
+(`default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self' data: blob:; form-action 'none'`).
+Cards themselves load nothing, because no allowed tag, attribute or CSS value can name an external URL.
 
-The renderer reads each card from `assetFiles` and parses it. A missing file, bad JSON, a schema failure
-or any safety problem stops the render with `VALIDATION`, and `details.problems` lists the reasons.
-Code assets are never copied into the project. When a render has a card, `index.html` carries the same
-CSP as the film engine page (`default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:;
-connect-src 'self' data: blob:; form-action 'none'`), so nothing reaches the network.
-
-Light imports (no browser or filesystem) come from `@studix/renderers/html-card`. The main entry also
-exports `lintHtmlCard(pkg, { width, height, durationMs, palette?, fonts?, workDir })`. It returns the
-safety problems as errors when there are any. Otherwise it builds a one-scene project from the card in a
-temporary directory under `workDir` and runs the HyperFrames linter on it. For example, the linter catches
-script syntax errors and font families that are not bundled. The result is `{ errors, warnings }` as
-agent-readable lines, and the temporary directory is removed afterwards.
+Light imports (parsers only, no browser or renderer) come from `@studix/renderers/html-card`. The main entry also
+exports `lintHtmlCard(pkg, { width, height, durationMs, palette?, fonts?, workDir })`, which never throws.
+It returns schema failures and allowlist problems as errors. Otherwise it builds a one-scene project from
+the card in a temporary directory under `workDir` and runs the HyperFrames linter on it, which catches, for
+example, font families that are not bundled. It reports tweens that run past the card end as warnings and
+internal failures as errors. The result is `{ errors, warnings }` as agent-readable lines.
 
 ## Finish and deliveries (Implemented)
 
