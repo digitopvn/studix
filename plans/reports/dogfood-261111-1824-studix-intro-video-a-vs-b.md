@@ -142,3 +142,31 @@ Kết luận: điểm B đi ngang quanh 5,5–6. Judge nhất quán nói A là p
 - CTA không có logo, vì brand kit không có logo: đây là thiếu đầu vào, không phải lỗi renderer.
 
 Sửa từng điểm judge chê không còn kéo điểm lên. Bước tiếp theo là đổi hướng thiết kế (tham vấn kongming), cùng sửa cách đo: lấy mẫu ở giữa mỗi scene và dùng 2–3 judge.
+
+## Vòng 14–16 (13/11/2026): film mode
+
+Film mode (#500): director viết `system` (một bề mặt UI sản phẩm), 5 builder chạy song song, cả phim check và render một lần trong sandbox, rồi cắt thành từng clip theo scene.
+
+Từ vòng này đổi cách đo: lấy 15 frame mỗi video (cứ 4 giây một frame), chấm bằng 3 judge độc lập và lấy trung vị.
+
+| Vòng | Job | Scene authored | Chi phí | Thời gian | B | A v2 | Ghi chú |
+|---|---|---|---|---|---|---|---|
+| 14 | job_01m78f3w3swb4g6yh8vm7568yj | 6/12 | – | – | – | – | Không chấm. Một builder chạm cap làm cả job phải chờ duyệt (sửa ở #502); lint `gsap_non_transform_motion` loại 6 scene (#504) |
+| 15 | job_01m78hcqwyek2rmfrkpdbatce8 | 7/12 | 248¢ | 53 phút | – | – | Không chấm. 5 builder hết giờ với timeout 5 phút; nâng lên 10 phút ở #506 |
+| 16 | job_01m78n3s76vz1mphgss526xkmw | 12/12 | 314¢ | 52 phút | 5,2 (4,4 / 5,2 / 5,3) | 7,3 (7,1 / 7,6 / 7,3) | Lần đầu cả 12 scene đều authored |
+
+Cả 3 judge chê vòng 16 giống nhau:
+- Phim đọc như một tour dashboard: scene nào cũng là cùng một panel trong khung viền vàng, camera gần như đứng yên.
+- Nhãn mono rất nhỏ ("TRACKING +080", mã hex), không có chênh lệch cỡ chữ. Thông điệp chỉ đến được nhờ caption.
+- Chữ và thanh đè lên nhau ở 0:01, 0:37, 0:49 và 0:53.
+- Hook mở bằng ô prompt trống. CTA chỉ có URL trên một hộp xám, không có logo.
+
+Phía A cũng có lỗi: frame chết ở 0:13, và vài caption mờ.
+
+Kết luận: film mode đã gỡ được bài toán "slide deck có bokeh", nhưng chuyển sang "dashboard nhỏ chữ". Điểm chưa tăng (5,6 → 5,2). Builder v7 (#508) sửa theo đúng các nhận xét trên:
+- mỗi scene có một con số hoặc chữ hero cỡ headline;
+- tối đa 6 nhãn, bỏ chữ spec trang trí;
+- đổi khung hình giữa các scene;
+- cấm chữ và thanh đè nhau;
+- hook mở khi sản phẩm đã chạy;
+- CTA kết bằng lockup có logo.
