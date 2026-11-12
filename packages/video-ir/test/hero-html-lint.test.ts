@@ -55,6 +55,12 @@ describe("lintHeroHtml", () => {
     ["an unclosed rule", "<style>.a{color:red</style><p>a</p>", "must be closed"],
     ["a stray closing brace", "<style>.a{color:red}} body{}</style><p>a</p>", "must be closed"],
     ["an unclosed CSS comment", "<style>.a{color:red /*}</style><p>a</p>", "comment is not closed"],
+    [
+      "a string cut by a newline",
+      '<style>.a{content:"x\n} body *{display:none}</style><p>a</p>',
+      "must close on its line",
+    ],
+    ["an unclosed string", "<style>.a{content:'x}</style><p>a</p>", "must close on its line"],
     ["a CSS escape", "<style>a\\{x, body *{display:none}</style><p>a</p>", "backslash"],
     [
       "-webkit-image-set",
