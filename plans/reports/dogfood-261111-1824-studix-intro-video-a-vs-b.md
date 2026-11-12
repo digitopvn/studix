@@ -79,3 +79,14 @@ Kết luận: A vẫn hơn rõ về độ "film" (UI thật, chiều sâu, khớ
 | #420 | #422 | merged, deploy |
 | #431 | #432 | merged, deploy |
 | #397 (cue mồ côi), #426 (CI apt), #351 (agent.runtime "none") | — | còn mở |
+
+## Vòng 6 (sau release [#467](https://github.com/digitopvn/studix/pull/467): beat sync, camera và chiều sâu, QA hình ảnh, UI kit, brand kit, style preset)
+
+- Job `job_01m773xng2jpdttp2vgep82fs8`: thành công ngay lần đầu, 11 phút 27 giây, 105¢. File `video-b-r6/b-r6.mp4`: 1920×1080, 60,0 s, −14,6 LUFS.
+- Tiến bộ: màu thương hiệu lấy từ site (tím), nền có glow và chiều sâu, nhiều device UI mới (prompt box có nút Send, pipeline Script→Publish, preview player có Approve, code `edit_scene`, sơ đồ /mcp). Nhạc chia section và cắt theo beat.
+- Hồi quy hoặc lỗi mới:
+  - device xuất hiện quá muộn, nửa thời gian card chỉ có tiêu đề ([#468](https://github.com/digitopvn/studix/issues/468));
+  - chấm motif trôi ngẫu nhiên, đè chữ ([#469](https://github.com/digitopvn/studix/issues/469));
+  - bộ đếm lăn hiện số lỗi "4,0'5" ([#470](https://github.com/digitopvn/studix/issues/470));
+  - QA hình ảnh chấm điểm nhưng không kịp sửa và có thể không nhìn thấy ảnh ([#471](https://github.com/digitopvn/studix/issues/471)).
+- So với A v2: vẫn kém, chủ yếu vì các card trống quá lâu và motif lộn xộn. Khi sửa xong #468 và #469, khoảng cách sẽ hẹp đáng kể.
