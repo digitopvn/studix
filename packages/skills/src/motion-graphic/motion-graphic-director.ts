@@ -296,6 +296,21 @@ function authoredScene(scene: Scene, asset: AssetRef): Scene {
 }
 
 /**
+ * An authored scene has no motif, so a match cut into or out of it would fail the planned-IR camera
+ * check: those transitions become plain cuts (a match cut is a hard cut already, so timing is unchanged).
+ */
+export function withoutMotifCuts(ir: VideoIR, scenes: Scene[], sceneId: string): Scene[] {
+  const order = ir.timeline.entries.map((e) => e.sceneId);
+  const at = order.indexOf(sceneId);
+  const touched = new Set([sceneId, at > 0 ? order[at - 1] : undefined]);
+  return scenes.map((sc) =>
+    touched.has(sc.id) && sc.transitionOut?.kind === "match-cut"
+      ? { ...sc, transitionOut: { ...sc.transitionOut, kind: "cut" } }
+      : sc,
+  );
+}
+
+/**
  * Director tier (premium, `roles.director`): the director (strongest configured model) writes a brief for
  * the film, a builder authors the hook scene as an HTML/GSAP fragment on the Studix director shell with the
  * real word timings and beat grid, and the shell, fragment and timing are stored as a composition tree
@@ -480,7 +495,11 @@ export const motionGraphicDirectorStage: StageDefinition = {
       record.scenes = [{ sceneId: scene.id, status: "authored" }];
       const next = VideoIR.parse({
         ...ir,
-        scenes: ir.scenes.map((sc, i) => (i === index ? authoredScene(sc, asset) : sc)),
+        scenes: withoutMotifCuts(
+          ir,
+          ir.scenes.map((sc, i) => (i === index ? authoredScene(sc, asset) : sc)),
+          scene.id,
+        ),
         assets: [...ir.assets.filter((a) => a.id !== asset.id), asset],
         metadata: { ...ir.metadata, authoredScenes: [scene.id] },
       });
