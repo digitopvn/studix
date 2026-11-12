@@ -1,20 +1,13 @@
 // Ported from motion-mcp packages/hyperframes-adapter/src/util.ts @ 408ceccd (MIT, Copyright (c) 2026 Digitop).
 
-/**
- * HTML-escape text and attribute values; every piece of user text passes through here. `(` and `:` become
- * character references too: the HyperFrames compiler scans the raw page string for `url(...)` (and fetches
- * or copies what it finds), and it does not decode entities, so user text can never read as a URL to it.
- * The browser decodes both, so the rendered text is unchanged.
- */
+/** HTML-escape text and attribute values; every piece of user text passes through here. */
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
-    .replace(/\(/g, "&#40;")
-    .replace(/:/g, "&#58;");
+    .replace(/'/g, "&#39;");
 }
 
 /** Deterministic number formatting for HTML/JS output (max 3 decimals, no `-0`). */

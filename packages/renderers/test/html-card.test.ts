@@ -107,7 +107,7 @@ describe("htmlCardProblems", () => {
     );
     expect(card.problems).toEqual([]);
     expect(card.html).toBe(
-      '<p class="a">x &lt;b&gt;</p><svg viewBox="0 0 1 1"><linearGradient id="s-x__shot-c-g"></linearGradient><rect fill="url&#40;#s-x__shot-c-g)"></rect></svg>',
+      '<p class="a">x &lt;b&gt;</p><svg viewBox="0 0 1 1"><linearGradient id="s-x__shot-c-g"></linearGradient><rect fill="url(#s-x__shot-c-g)"></rect></svg>',
     );
     expect(card.css).toBe(
       "#s-x__shot-c {\n  fill: url(#s-x__shot-c-g);\n}\n#s-x__shot-c .a,\n#s-x__shot-c #s-x__shot-c-g > .b {\n  color: red;\n}",
@@ -151,7 +151,7 @@ describe("HTML card composition shots", () => {
     expect(hero).toContain('--font-heading: "Be Vietnam Pro", sans-serif;');
     expect(hero).toMatch(/#s-hero__shot-card \{\n\s*background: radial-gradient/);
     expect(hero).toContain('<circle id="s-hero__shot-card-arc"');
-    expect(hero).toContain('stroke="url&#40;#s-hero__shot-card-g)"');
+    expect(hero).toContain('stroke="url(#s-hero__shot-card-g)"');
     // The script is generated: the only card-derived strings in it are JSON-encoded selectors.
     const script = hero.slice(hero.indexOf("<script>"), hero.indexOf("</script>"));
     expect(script).toContain('var root = document.getElementById("s-hero__shot-card");');

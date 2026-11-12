@@ -158,8 +158,24 @@ to the exact same version in `packages/renderers/package.json` (currently
   beacon, image, WebSocket, popup, iframe, WebRTC and runtime `<video>` sources
   (`..%2f`, `..%5c`, double encoding, `file:`, `http:`). A canary server must see
   nothing and the frame must stay black, while a project clip still renders
-  ([#451](https://github.com/digitopvn/studix/issues/451)). Both patches are
-  keyed to the exact version, like the SIGTERM one below.
+  ([#451](https://github.com/digitopvn/studix/issues/451)).
+- **Compile isolation patches.** The producer's compile step re-serializes the
+  page and then scans it as a string for `url(https://…)`, remote `<img>`,
+  media, font and stylesheet URLs, so character references in user text do
+  not stop it. The engine patch makes `downloadToTemp` and
+  `fetchPublicHttpsText` throw, so every remote download fails and the
+  producer keeps the original URL, which the capture browser cannot load.
+  The producer patch makes `inlineExternalScripts` leave external scripts
+  unfetched, and makes `collectExternalAssets` skip every path outside the
+  project instead of copying it to `compiled/hf-ext/`.
+  `compile-egress.integration.test.ts` renders hostile composition text and a
+  hostile page while trapping DNS, HTTP(S), `fetch`, TCP connects and file
+  copies in the render process. Without the patches it sees a raw `fetch`,
+  DNS lookups and a copy of the host file; with them it sees none
+  ([#457](https://github.com/digitopvn/studix/issues/457)).
+  `engine-launch-options.test.ts` also fails if a bump drops the engine part.
+  All of these patches are keyed to the exact version, like the SIGTERM one
+  below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through
   `ownedLaunchOptions()`, which leaves Puppeteer's `handleSIGTERM` at `true`,
   so a worker SIGTERM closed Chrome mid-render and lost the grace period.

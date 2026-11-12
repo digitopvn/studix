@@ -37,3 +37,37 @@ index e63332ce62774085282c0565b30d140b9e2a4d2f..6bab5e040c9f138ffca873ae9a163ae1
      ];
      if (browserGpuMode !== "software" || options.requiresWebGpu) {
          chromeArgs.push(WEBGPU_FLAG);
+diff --git a/dist/utils/urlDownloader.js b/dist/utils/urlDownloader.js
+index b188946d8e573bdbe84f6d6116adf9268de5392c..84d8daf5f3475652008d373204d1c97c11b3e2e9 100644
+--- a/dist/utils/urlDownloader.js
++++ b/dist/utils/urlDownloader.js
+@@ -409,9 +409,20 @@ async function fetchWithValidatedRedirects(initialUrl, controller) {
+         currentUrl = resolveRedirectUrl(response, currentUrl, redirects);
+     }
+ }
++// Studix: the host part of a URL for error messages, never the path or query.
++function safeHostForLog(url) {
++    try {
++        return new URL(String(url)).host || "invalid url";
++    }
++    catch {
++        return "invalid url";
++    }
++}
+ /** Fetch bounded UTF-8 text while applying the downloader's redirect and SSRF policy to every hop. */
+ // fallow-ignore-next-line complexity
+ export async function fetchPublicHttpsText(url, options) {
++    // Studix: a render never fetches from the network on the host; compositions ship every asset and font.
++    throw new Error(`[Security] Remote fetch is disabled in Studix renders (${safeHostForLog(url)})`);
+     const timeoutMs = options.timeoutMs ?? 15_000;
+     if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0) {
+         throw new RangeError("maxBytes must be a positive safe integer");
+@@ -996,6 +1007,8 @@ async function reuseOrInvalidateCachedFile(url, localPath, timeoutMs, signal, op
+     }
+ }
+ export async function downloadToTemp(url, destDir, timeoutMs = 300000, signal, onTransientRetry, options = {}) {
++    // Studix: a render never downloads on the host; compositions copy every asset into the project.
++    throw new Error(`[Security] Remote download is disabled in Studix renders (${safeHostForLog(url)})`);
+     // Reject non-HTTPS URLs and private/reserved address ranges before
+     // touching the cache or filesystem — customer-supplied compositions must
+     // not be able to trigger outbound fetches to internal infrastructure.

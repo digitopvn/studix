@@ -8,12 +8,19 @@ interface BrowserManager {
   buildChromeArgs: (options: { width: number; height: number }) => string[];
 }
 
-/** The engine the producer actually loads; it is not a direct dependency of this package. */
-async function loadBrowserManager(): Promise<BrowserManager> {
+interface UrlDownloader {
+  downloadToTemp: (url: string, destDir: string) => Promise<string>;
+  fetchPublicHttpsText: (url: string, options: { maxBytes: number }) => Promise<string>;
+}
+
+/** A module of the engine the producer actually loads; it is not a direct dependency of this package. */
+async function loadEngineModule<T>(...path: string[]): Promise<T> {
   const producer = import.meta.resolve("@hyperframes/producer");
   const enginePackage = createRequire(producer).resolve("@hyperframes/engine/package.json");
-  return import(pathToFileURL(join(dirname(enginePackage), "dist", "services", "browserManager.js")).href);
+  return import(pathToFileURL(join(dirname(enginePackage), "dist", ...path)).href);
 }
+
+const loadBrowserManager = () => loadEngineModule<BrowserManager>("services", "browserManager.js");
 
 /**
  * The worker owns SIGTERM: Chrome must survive it so the render keeps going through the drain grace period.
@@ -36,5 +43,17 @@ describe("@hyperframes/engine launch options", () => {
         "--webrtc-ip-handling-policy=disable_non_proxied_udp",
       ]),
     );
+  });
+
+  // The engine patch also stops the compile step from downloading URLs it finds in a page;
+  // compile-egress.integration.test.ts proves the whole compile end to end.
+  it("refuse every remote download and text fetch on the host", async () => {
+    const downloader = await loadEngineModule<UrlDownloader>("utils", "urlDownloader.js");
+    await expect(downloader.downloadToTemp("https://example.com/a.png", "/nonexistent")).rejects.toThrow(
+      "Remote download is disabled in Studix renders (example.com)",
+    );
+    await expect(
+      downloader.fetchPublicHttpsText("https://example.com/a.css", { maxBytes: 1024 }),
+    ).rejects.toThrow("Remote fetch is disabled in Studix renders (example.com)");
   });
 });

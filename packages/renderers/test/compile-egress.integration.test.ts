@@ -1,14 +1,19 @@
 import dns from "node:dns";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import fs from "node:fs";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
-import { syncBuiltinESMExports } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import net from "node:net";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
+import { createLogger } from "@studix/shared";
 import { resolveRenderSpec } from "@studix/video-ir";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { renderWithProducer } from "../src/hyperframes/producer-render.ts";
 import { HyperFramesRenderer } from "../src/index.ts";
-import { loadIrFixture, renderToolchain, tempDir } from "./render-test-helpers.ts";
+import { loadIrFixture, PNG_1X1, renderToolchain, tempDir } from "./render-test-helpers.ts";
+
+const require = createRequire(import.meta.url);
 
 const toolchain = renderToolchain();
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -36,16 +41,23 @@ function hostOf(target: unknown): string {
 
 /**
  * Every outbound DNS lookup, HTTP(S) request, fetch and TCP connect the render process makes to a host that
- * is not loopback is recorded and refused, so nothing really leaves the machine while the test runs.
+ * is not loopback is recorded and refused, so nothing really leaves the machine while the test runs. Every
+ * file copy is recorded too, so a host file that reaches the render shows up by its source path.
  */
-function trapEgress(): { attempts: string[]; restore: () => void } {
+function trapEgress(): { attempts: string[]; copies: string[]; restore: () => void } {
   const attempts: string[] = [];
+  const copies: string[] = [];
   const restores: (() => void)[] = [];
   const refuse = (kind: string, host: string) => {
     attempts.push(`${kind} ${host}`);
     return new Error(`test blocked ${kind} to ${host}`);
   };
-  const wrap = <T extends object>(obj: T, key: keyof T, kind: string, hostArg: (args: unknown[]) => unknown) => {
+  const wrap = <T extends object>(
+    obj: T,
+    key: keyof T,
+    kind: string,
+    hostArg: (args: unknown[]) => unknown,
+  ) => {
     const original = obj[key] as (...args: unknown[]) => unknown;
     (obj as Record<keyof T, unknown>)[key] = function (this: unknown, ...args: unknown[]) {
       const host = hostOf(hostArg(args));
@@ -69,9 +81,26 @@ function trapEgress(): { attempts: string[]; restore: () => void } {
   wrap(dns.promises, "lookup", "dns.promises", (a) => a[0]);
   wrap(net, "connect", "net", (a) => (typeof a[0] === "object" ? a[0] : a[1]));
   wrap(net, "createConnection", "net", (a) => (typeof a[0] === "object" ? a[0] : a[1]));
+  for (const [obj, key] of [
+    [fs, "copyFileSync"],
+    [fs, "copyFile"],
+    [fs, "cpSync"],
+    [fs.promises, "copyFile"],
+    [fs.promises, "cp"],
+  ] as const) {
+    const original = (obj as Record<string, unknown>)[key] as (...args: unknown[]) => unknown;
+    (obj as Record<string, unknown>)[key] = function (this: unknown, ...args: unknown[]) {
+      copies.push(resolve(String(args[0])));
+      return original.apply(this, args);
+    };
+    restores.push(() => {
+      (obj as Record<string, unknown>)[key] = original;
+    });
+  }
   syncBuiltinESMExports();
   return {
     attempts,
+    copies,
     restore: () => {
       for (const r of restores.reverse()) r();
       syncBuiltinESMExports();
@@ -135,6 +164,63 @@ describe.skipIf(!toolchain.ok)(
         if ((await readFile(file)).includes(marker)) leaked.push(relative(work.dir, file));
       }
       expect(leaked).toEqual([]);
+    });
+
+    it("fetches no script, stylesheet or image and copies no ../ host file from a compiled page", async () => {
+      const { dir, cleanup } = await tempDir("egress-page");
+      cleanups.push(cleanup);
+      const secret = join(dir, "secret.png");
+      await writeFile(secret, PNG_1X1);
+      const projectDir = join(dir, "a", "b", "project");
+      await mkdir(join(projectDir, "assets", "vendor"), { recursive: true });
+      await copyFile(
+        require.resolve("gsap/dist/gsap.min.js"),
+        join(projectDir, "assets", "vendor", "gsap.min.js"),
+      );
+      const up = "../../../secret.png";
+      await writeFile(
+        join(projectDir, "index.html"),
+        `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <script src="https://canary.example/lib.js"></script>
+    <link rel="stylesheet" href="https://canary.example/fonts.css" />
+    <style>
+      html, body, #root { margin: 0; width: 160px; height: 90px; overflow: hidden; background: #000; }
+      .remote { background-image: url(https://canary.example/bg.png); }
+      .host { background-image: url(${up}); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90">
+      <img src="${up}" alt="" style="width: 10px" />
+      <img src="https://canary.example/img.png" alt="" style="width: 10px" />
+      <div class="remote host" style="background: url(${up}); width: 10px; height: 10px"></div>
+    </div>
+    <script>
+      var tl = gsap.timeline({ paused: true });
+      tl.set({}, {}, 1);
+      window.__timelines = { main: tl };
+    </script>
+  </body>
+</html>
+`,
+      );
+      await renderWithProducer({
+        projectDir,
+        outputPath: join(dir, "out.mp4"),
+        fps: 12,
+        quality: "draft",
+        crf: 30,
+        workers: 1,
+        logger: createLogger({ component: "compile-egress-test" }, { level: "error" }),
+        onProgress: () => {},
+      });
+
+      const hostCopies = trap.copies.filter((source) => source === secret);
+      expect({ attempts: trap.attempts, hostCopies }).toEqual({ attempts: [], hostCopies: [] });
     });
   },
 );
