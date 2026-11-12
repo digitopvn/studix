@@ -19,6 +19,8 @@ describe("motion-graphic camera grammar", () => {
     expect(picks[3]).toBe("static");
     expect(picks[5]).toBe("pan-left");
     for (let i = 1; i < picks.length; i++) expect(picks[i]).not.toBe(picks[i - 1]);
+    // An open card yields to its neighbour's explicit pick, even when the style's cycle starts there.
+    expect(planCameras([null, "push-in"], kinetic)).toEqual(["pan-left", "push-in"]);
     for (const s of MOTION_STYLE_PROFILES) {
       const moves = planCameras(Array(12).fill(undefined), s);
       for (let i = 1; i < moves.length; i++) expect(moves[i]).not.toBe(moves[i - 1]);
@@ -37,8 +39,8 @@ describe("motion-graphic camera grammar", () => {
 
   it("opens on a match cut, signs into the call to action and varies the cuts between", () => {
     const cuts = planTransitions(6, style("saas-bento"));
-    expect(cuts.map((t) => t.kind)).toEqual(["match-cut", "wipe", "iris", "slide", "slide"]);
-    expect(planTransitions(2, style("saas-bento")).map((t) => t.kind)).toEqual(["match-cut"]);
+    expect(cuts.map((t) => t.kind)).toEqual(["match-cut", "wipe", "iris", "wipe", "slide"]);
+    expect(planTransitions(2, style("saas-bento")).map((t) => t.kind)).toEqual(["slide"]);
   });
 
   it("puts the grammar on every card of the template's graphic", () => {

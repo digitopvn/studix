@@ -29,20 +29,20 @@ export function planCameras(
   wanted.forEach((pick, i) => {
     const prev = out[i - 1];
     const next = wanted[i + 1] ?? undefined;
-    let move = pick ?? (cycle[i % cycle.length] as CameraMove);
-    if (move === prev) {
-      move =
-        [...cycle.slice(i % cycle.length), ...cycle].find((m) => m !== prev && m !== next) ??
-        (cycle.find((m) => m !== prev) as CameraMove);
-    }
-    out.push(move);
+    // A card the storyboard left open avoids its neighbours' moves, so an explicit pick is kept.
+    const free = (m: CameraMove) => m !== prev && m !== next;
+    const fromCycle = () =>
+      [...cycle.slice(i % cycle.length), ...cycle].find(free) ??
+      (cycle.find((m) => m !== prev) as CameraMove);
+    out.push(!pick ? fromCycle() : pick === prev ? fromCycle() : pick);
   });
   return out;
 }
 
 const DARK = 0.12;
 
-function luminance(hex: string): number {
+/** WCAG relative luminance of a `#rrggbb[aa]` colour (alpha ignored). */
+export function luminance(hex: string): number {
   const channel = (i: number) => {
     const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
@@ -93,15 +93,17 @@ const TRANSITIONS: Record<"calm" | "steady" | "lively", { kinds: readonly Transi
 };
 
 /**
- * The transition out of each card but the last: the hook hard-cuts on a match cut (the motif carries the eye
- * into the first message), the cut into the call to action is the style's signature transition, and the
- * cuts between messages vary through the style's vocabulary.
+ * The transition out of each card but the last: the cut into the call to action is the style's signature
+ * transition (its first), the hook hard-cuts into the first message on a match cut (the motif carries the
+ * eye across), and the cuts between messages take turns through the rest of the style's vocabulary, so no
+ * two adjacent cuts repeat.
  */
 export function planTransitions(cards: number, style: MotionStyleProfile): SceneTransition[] {
   const { kinds, ms } = TRANSITIONS[tempo(style.energy)];
+  const between = kinds.slice(1);
   return Array.from({ length: Math.max(0, cards - 1) }, (_, i): SceneTransition => {
-    if (i === 0) return { kind: "match-cut", durationMs: 0 };
     if (i === cards - 2) return { kind: kinds[0] as TransitionKind, durationMs: ms };
-    return { kind: kinds[i % kinds.length] as TransitionKind, durationMs: ms };
+    if (i === 0) return { kind: "match-cut", durationMs: 0 };
+    return { kind: between[(i - 1) % between.length] as TransitionKind, durationMs: ms };
   });
 }

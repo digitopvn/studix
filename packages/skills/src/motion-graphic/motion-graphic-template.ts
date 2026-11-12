@@ -28,7 +28,7 @@ import {
   voiceoverWordBudget,
 } from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
-import { motionDepthFor, planCameras, planTransitions } from "./motion-graphic-camera.ts";
+import { luminance, motionDepthFor, planCameras, planTransitions } from "./motion-graphic-camera.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
@@ -159,15 +159,6 @@ function linesOf(brief: CreativeBrief, cta: string, totalMs: number, language: s
     ...(voiced ? { voiceover: text } : {}),
   }));
   return fitDerived(lines, totalMs, voiced, language);
-}
-
-/** WCAG relative luminance of a `#rrggbb[aa]` colour (alpha ignored). */
-function luminance(hex: string): number {
-  const channel = (i: number) => {
-    const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
 }
 
 function contrast(a: string, b: string): number {

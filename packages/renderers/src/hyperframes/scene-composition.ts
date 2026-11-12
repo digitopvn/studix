@@ -10,7 +10,7 @@ import {
 } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
 import { writeLayoutMotion } from "./layout-markup.ts";
-import { compileDepth, type Plane, planeId, writeCamera } from "./scene-depth.ts";
+import { cameraScales, compileDepth, type Plane, PUSH, planeId, writeCamera } from "./scene-depth.ts";
 import {
   type ResolvedTransition,
   TimelineWriter,
@@ -79,7 +79,9 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     input.captions.position === "bottom" &&
     input.captions.cues.length > 0 &&
     scene.shots.some((s) => s.type === "layout" && (s.style?.region ?? "middle") === "middle")
-      ? Math.max(0, burnedCaptionBand(markup.frame) + gap - safe)
+      ? Math.max(0, burnedCaptionBand(markup.frame) + gap - safe) +
+        // A push grows the shots about the centre, so the layout's bottom edge would sink into the captions.
+        (cameraScales(scene.camera) ? Math.ceil((PUSH / 2) * (height - 2 * safe)) : 0)
       : 0;
 
   const css: string[] = [

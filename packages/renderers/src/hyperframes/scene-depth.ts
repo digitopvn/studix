@@ -10,8 +10,8 @@ import type { TimelineWriter } from "./scene-timeline.ts";
  * opacity only), so every frame is deterministic.
  *
  * Plane order, back to front: `back` (grid, glow), the underlay (background media, full-bleed shots), the
- * motif, the content regions, `front` (corners, bokeh), then the `lens` (grain, vignette), which sits over
- * the picture and never moves, like the glass it stands for. Captions stay above all of it and never move.
+ * motif, the content regions, `front` (bokeh), then the `lens` (corner brackets, grain, vignette), which sits
+ * over the picture and never moves, like the viewfinder and glass it stands for. Captions stay above all of it and never move.
  */
 
 export type Plane = "back" | "underlay" | "content" | "front";
@@ -23,7 +23,7 @@ const DEPTH: Record<"normal" | "parallax", Record<Plane, number>> = {
 };
 
 /** Scale gained over a push or a pull at depth 1, and the pan travel as a fraction of the frame width. */
-const PUSH = 0.06;
+export const PUSH = 0.06;
 const PAN = 0.025;
 
 /** Element ids of the camera-moved planes of a scene. */
@@ -53,6 +53,10 @@ function cameraKeys(move: CameraMove, depth: number, width: number): [Vars, Vars
   }
 }
 
+/** Whether a camera move scales the shots (and so how far it can push them toward the frame edge). */
+export const cameraScales = (move: CameraMove | undefined) =>
+  move === "push-in" || move === "pull-back" || move === "parallax";
+
 /** The camera move over the whole scene: every plane from its start to its end pose, eased in and out. */
 export function writeCamera(
   w: TimelineWriter,
@@ -68,6 +72,12 @@ export function writeCamera(
     if (!planes.has(plane)) continue;
     const keys = cameraKeys(move, depth[plane], frame.width);
     if (!keys) continue;
+    // The underlay (background media, full-bleed shots) does not overhang the frame like the decorative
+    // planes, so a sideways move also scales it just enough to keep its edges out of the picture.
+    if (plane === "underlay" && "x" in keys[0]) {
+      const cover = 1 + (2 * Math.abs(Number(keys[0].x))) / frame.width;
+      for (const k of keys) k.scale = Number(num(Number(k.scale ?? 1) * cover));
+    }
     w.fromTo(`#${planeId(prefix, plane)}`, keys[0], { ...keys[1], duration: d, ease: "sine.inOut" }, 0);
   }
 }
@@ -155,37 +165,6 @@ export function compileDepth(
   }
 
   const front: string[] = [];
-  if (foreground.has("corners")) {
-    const arm = Math.round(0.06 * short);
-    const line = Math.max(2, Math.round(0.004 * short));
-    // Inside the overhang: the brackets sit just inside the visible frame's safe edge.
-    const inset = bleed + Math.round(0.035 * short);
-    const sides = [
-      ["top", "left"],
-      ["top", "right"],
-      ["bottom", "left"],
-      ["bottom", "right"],
-    ] as const;
-    front.push(
-      `<div class="corners">${sides.map(([v, h]) => `<i class="corner ${v} ${h}"></i>`).join("")}</div>`,
-    );
-    css.push(
-      cssRule(`#${stageId} .corner`, [
-        "position: absolute;",
-        `width: ${arm}px;`,
-        `height: ${arm}px;`,
-        `border: 0 solid ${tint("accent", 80)};`,
-      ]),
-      ...sides.map(([v, h]) =>
-        cssRule(`#${stageId} .corner.${v}.${h}`, [
-          `${v}: ${inset}px;`,
-          `${h}: ${inset}px;`,
-          `border-${v}-width: ${line}px;`,
-          `border-${h}-width: ${line}px;`,
-        ]),
-      ),
-    );
-  }
   if (foreground.has("bokeh")) {
     const next = random(`${scene.id}:bokeh`);
     const dots: string[] = [];
@@ -206,6 +185,38 @@ export function compileDepth(
   }
 
   const lens: string[] = [];
+  if (foreground.has("corners")) {
+    const arm = Math.round(0.06 * short);
+    const line = Math.max(2, Math.round(0.004 * short));
+    // Corner brackets frame the picture like a viewfinder: they sit on the fixed lens, so no camera move
+    // ever pushes them out of the frame.
+    const inset = Math.round(0.035 * short);
+    const sides = [
+      ["top", "left"],
+      ["top", "right"],
+      ["bottom", "left"],
+      ["bottom", "right"],
+    ] as const;
+    lens.push(
+      `<div class="corners">${sides.map(([v, h]) => `<i class="corner ${v} ${h}"></i>`).join("")}</div>`,
+    );
+    css.push(
+      cssRule(`#${stageId} .corner`, [
+        "position: absolute;",
+        `width: ${arm}px;`,
+        `height: ${arm}px;`,
+        `border: 0 solid ${tint("accent", 80)};`,
+      ]),
+      ...sides.map(([v, h]) =>
+        cssRule(`#${stageId} .corner.${v}.${h}`, [
+          `${v}: ${inset}px;`,
+          `${h}: ${inset}px;`,
+          `border-${v}-width: ${line}px;`,
+          `border-${h}-width: ${line}px;`,
+        ]),
+      ),
+    );
+  }
   if (background.has("vignette")) {
     lens.push('<div class="vignette"></div>');
     css.push(

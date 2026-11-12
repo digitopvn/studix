@@ -347,6 +347,8 @@ describe("buildComposition camera, depth and match cuts", () => {
   it("draws the depth planes back to front, with captions and the lens unmoved by the camera", () => {
     const html = scene(0);
     const order = ["plane-back", "plane-underlay", "__motif", "plane-content", "plane-front", 'class="lens"'];
+    // Corner brackets sit on the fixed lens, so no camera move pushes them out of the frame.
+    expect(html.indexOf('class="corners"')).toBeGreaterThan(html.indexOf('class="lens"'));
     const at = order.map((id) => html.indexOf(id));
     expect(at.every((n) => n > 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
@@ -366,6 +368,8 @@ describe("buildComposition camera, depth and match cuts", () => {
     expect(travel("front")).toBeGreaterThan(travel("content"));
     expect(travel("content")).toBeGreaterThan(travel("back"));
     expect(scene(2)).toMatch(/"#s-c2__plane-content", \{"x":\d+\}, \{"x":-\d+/);
+    // A sideways move scales the underlay just enough that its edges never show.
+    expect(scene(2)).toMatch(/"#s-c2__plane-underlay", \{"x":\d+,"scale":1\.0\d+\}/);
   });
 
   it("hands the motif over at every cut and plays no stage tween on a match cut", () => {
