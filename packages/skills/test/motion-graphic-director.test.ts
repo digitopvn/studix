@@ -115,6 +115,12 @@ describe("sandbox check gate", () => {
     expect((await gate(report)).code).toBe(0);
   });
 
+  it("lets advisory lint errors (non-transform motion) through", async () => {
+    expect(
+      (await gate({ lint: section([error("gsap_non_transform_motion")]), runtime: section() })).code,
+    ).toBe(0);
+  });
+
   it("blocks a missing, unreadable or failed report and lint or runtime errors, with a summary", async () => {
     expect((await gate(undefined)).code).toBe(1);
     expect((await gate("{not json")).code).toBe(1);
