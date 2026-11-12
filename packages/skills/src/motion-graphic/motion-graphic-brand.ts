@@ -11,6 +11,8 @@ export const BRAND_LOGO_ASSET_ID = "brand-logo";
 
 const MAX_PAGE_BYTES = 2_000_000;
 const MAX_LOGO_BYTES = 1_500_000;
+/** Longest edge of a raster logo: a 4096 px square decodes to 64 MB, which every render frame holds. */
+const MAX_LOGO_EDGE = 4096;
 /** Logo candidates of a page tried before giving up on a logo. */
 const MAX_LOGO_TRIES = 3;
 
@@ -47,13 +49,57 @@ function decodeEntities(text: string): string {
   });
 }
 
-/** Attributes of every `<tag ...>` in the page, names lower-cased, values entity-decoded. */
-function tags(html: string, name: string): Array<Record<string, string>> {
+/** The longest tag whose attributes are read; a longer one is no brand markup. */
+const MAX_TAG_CHARS = 8192;
+
+/**
+ * Every `<name ...>` tag of the page, with its attribute text and where the tag ends. A linear scan with
+ * `indexOf`, not a backtracking regex: the page is untrusted and a crafted one must not hold the worker.
+ * Tags never nest, so the next search starts past the `>` that closed the last one. `lower` is `html`
+ * lower-cased, so tag names match case-insensitively.
+ */
+function* openTags(
+  html: string,
+  lower: string,
+  name: string,
+  from = 0,
+): Generator<{ attrs: string; end: number }> {
+  const needle = `<${name}`;
+  let at = lower.indexOf(needle, from);
+  while (at !== -1) {
+    const close = lower.indexOf(">", at + needle.length);
+    if (close === -1) return;
+    const next = lower[at + needle.length] ?? "";
+    if (!/[\w-]/.test(next) && close - at <= MAX_TAG_CHARS)
+      yield { attrs: html.slice(at + needle.length, close), end: close + 1 };
+    at = lower.indexOf(needle, close + 1);
+  }
+}
+
+/** The text inside every `<name ...>...</name>` element, with its open tag's attribute text. Linear. */
+function* elements(html: string, lower: string, name: string): Generator<{ attrs: string; text: string }> {
+  const closer = `</${name}`;
+  let from = 0;
+  while (from < lower.length) {
+    const open = openTags(html, lower, name, from).next();
+    if (open.done) return;
+    const start = open.value.end;
+    const end = lower.indexOf(closer, start);
+    if (end === -1) return;
+    yield { attrs: open.value.attrs, text: html.slice(start, end) };
+    from = end + closer.length;
+  }
+}
+
+/** Attributes of every `<name ...>` tag in the page, names lower-cased, values entity-decoded. */
+function tags(html: string, lower: string, name: string): Array<Record<string, string>> {
   const out: Array<Record<string, string>> = [];
-  const open = new RegExp(`<${name}\\b([^>]*)>`, "gi");
-  for (const m of html.matchAll(open)) {
+  for (const tag of openTags(html, lower, name)) {
     const attrs: Record<string, string> = {};
-    for (const a of (m[1] ?? "").matchAll(/([a-zA-Z_:][-\w:.]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))/g)) {
+    // Bounded name: a long run of name characters with no `=` must not backtrack quadratically.
+    for (const a of tag.attrs.matchAll(
+      /([a-zA-Z_:][-\w:.]{0,63})\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))/g,
+    )) {
       attrs[(a[1] as string).toLowerCase()] = decodeEntities(a[3] ?? a[4] ?? a[5] ?? "").trim();
     }
     out.push(attrs);
@@ -126,10 +172,11 @@ function declaredSize(sizes: string | undefined): number {
  */
 export function parseBrandPage(html: string, pageUrl: string): BrandPage {
   const head = html.slice(0, 600_000);
-  const metas = tags(head, "meta");
+  const lower = head.toLowerCase();
+  const metas = tags(head, lower, "meta");
   const meta = (key: string) =>
     metas.find((m) => (m.property ?? m.name ?? "").toLowerCase() === key)?.content?.trim() || undefined;
-  const title = /<title[^>]*>([^<]*)<\/title>/i.exec(head)?.[1];
+  const title = elements(head, lower, "title").next().value?.text.slice(0, 400);
   const rawName =
     meta("og:site_name") ??
     meta("application-name") ??
@@ -137,7 +184,7 @@ export function parseBrandPage(html: string, pageUrl: string): BrandPage {
     (title ? nameFromTitle(decodeEntities(title).replace(/\s+/g, " ").trim()) : undefined);
   const name = rawName ? truncateText(rawName.replace(/\s+/g, " ").trim(), 120) : undefined;
 
-  const links = tags(head, "link");
+  const links = tags(head, lower, "link");
   const colors: string[] = [];
   const addColor = (value: string | undefined) => {
     const hex = hexColor(value);
@@ -149,11 +196,9 @@ export function parseBrandPage(html: string, pageUrl: string): BrandPage {
       addColor(m.content);
   }
   for (const l of links) if ((l.rel ?? "").toLowerCase().includes("mask-icon")) addColor(l.color);
-  for (const style of head.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)) {
-    for (const m of (style[1] ?? "").matchAll(
-      /--[\w-]*(?:brand|primary|accent)[\w-]*\s*:\s*(#[0-9a-f]{3,6})\b/gi,
-    ))
-      addColor(m[1]);
+  for (const style of elements(head, lower, "style")) {
+    for (const m of style.text.matchAll(/(--[\w-]{1,64})\s*:\s*(#[0-9a-f]{3,6})\b/gi))
+      if (/brand|primary|accent/i.test(m[1] as string)) addColor(m[2]);
   }
 
   const resolve = (href: string | undefined) => {
@@ -180,16 +225,17 @@ export function parseBrandPage(html: string, pageUrl: string): BrandPage {
     .filter((l) => l.href);
   const touch = icons.filter((l) => l.rel.includes("apple-touch-icon")).sort((a, b) => b.size - a.size);
   for (const t of touch) addLogo(t.href);
-  for (const script of head.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+  for (const script of elements(head, lower, "script")) {
+    if (!script.attrs.toLowerCase().includes("application/ld+json")) continue;
     try {
       const found: string[] = [];
-      jsonLdLogos(JSON.parse(script[1] ?? ""), found);
+      jsonLdLogos(JSON.parse(script.text), found);
       for (const f of found) addLogo(f);
     } catch {
       // A malformed JSON-LD block says nothing about the logo.
     }
   }
-  const img = tags(head, "img").find((i) =>
+  const img = tags(head, lower, "img").find((i) =>
     [i.class, i.id, i.alt, i.src].some((v) => v !== undefined && /logo/i.test(v)),
   );
   addLogo(img?.src ?? img?.["data-src"]);
@@ -259,10 +305,13 @@ function u24le(bytes: Uint8Array, i: number): number {
   return (bytes[i] ?? 0) | ((bytes[i + 1] ?? 0) << 8) | ((bytes[i + 2] ?? 0) << 16);
 }
 
-/** An SVG that carries script or event handlers, or loads anything from outside, is refused as a logo. */
+/**
+ * An SVG that carries script (also namespaced, `<x:script>`) or event handlers, or loads anything from outside
+ * (an href, a CSS `@import` or `url(...)`), is refused as a logo.
+ */
 function unsafeSvg(bytes: Uint8Array): boolean {
   const text = new TextDecoder().decode(bytes);
-  return /<script\b|<foreignObject\b|\son[a-z]+\s*=|javascript:|(?:xlink:)?href\s*=\s*["']\s*(?!#|data:image\/)/i.test(
+  return /<(?:[\w-]+:)?(?:script|foreignObject)\b|\son[a-z]+\s*=|javascript:|@import|url\(\s*["']?\s*(?!#|data:image\/)|(?:xlink:)?href\s*=\s*["']\s*(?!#|data:image\/)/i.test(
     text,
   );
 }
@@ -296,6 +345,17 @@ async function storeLogo(s: StageContext, logo: LogoBytes): Promise<AssetRef> {
   if (!info) throw new StudixError("VALIDATION", "the logo is not a PNG, JPEG, WebP, GIF or SVG image");
   if (logo.bytes.byteLength > MAX_LOGO_BYTES)
     throw new StudixError("VALIDATION", `the logo is larger than ${MAX_LOGO_BYTES} bytes`);
+  // A small compressed image can declare a huge canvas that the renderer would decode on every frame.
+  if (
+    info.width &&
+    info.height &&
+    info.mime !== "image/svg+xml" &&
+    Math.max(info.width, info.height) > MAX_LOGO_EDGE
+  )
+    throw new StudixError(
+      "VALIDATION",
+      `the logo is ${info.width}x${info.height}; its longest edge may be ${MAX_LOGO_EDGE}px`,
+    );
   if (info.mime === "image/svg+xml" && unsafeSvg(logo.bytes))
     throw new StudixError("VALIDATION", "the SVG logo carries scripts or external references");
   const storage = s.services.storage;

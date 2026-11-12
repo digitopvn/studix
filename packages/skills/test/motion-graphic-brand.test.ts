@@ -30,6 +30,19 @@ describe("brand page", () => {
     );
   });
 
+  it("reads a hostile page in linear time", () => {
+    // Unclosed and endless tags made the regex reader backtrack for minutes on half a megabyte.
+    const pages = [
+      `<meta ${"a".repeat(600_000)}`,
+      "<meta ".repeat(80_000),
+      "<style>".repeat(80_000),
+      `<style>${"-".repeat(590_000)}</style>`,
+    ];
+    const started = performance.now();
+    for (const page of pages) expect(parseBrandPage(page, "https://x.example/").logos).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
   it("sniffs a logo's type and size from its bytes, and refuses what is no image", () => {
     const png = Uint8Array.from([
       137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 1, 0, 0, 0, 0, 64,

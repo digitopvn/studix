@@ -336,13 +336,15 @@ image-to-video, audio, render, QA và publish.
 ### motion-graphic
 
 Brand kit: brief có `brandUrl` (site https của brand), `brandLogo` (URL https của ảnh logo, hoặc ảnh tải lên dạng
-data URL PNG/JPEG/WebP/SVG tới khoảng 500 KB) hoặc `brandColors` (1-4 mã hex, màu chính đứng đầu) thì stage
+data URL PNG/JPEG/WebP/SVG tới khoảng 500 KB, cạnh dài nhất tối đa 4096 px) hoặc `brandColors` (1-4 mã `#rrggbb`,
+màu chính đứng đầu) thì stage
 `motion-graphic.brand` (trước storyboard, miễn phí) đọc trang để lấy tên (`og:site_name`, `application-name`, phần
 đầu `<title>`), màu (`theme-color`, `mask-icon`, biến CSS `--brand`/`--primary`/`--accent`; bỏ màu xám, gần trắng,
 gần đen) và logo (ưu tiên apple-touch-icon lớn nhất, rồi `logo` của JSON-LD, `<img>` tên logo, icon SVG hay lớn).
 Logo và màu của brief thắng những gì trang nói; `brand` của brief thắng cả ba. Logo được lưu vào storage của
 workspace thành asset IR `brand-logo` (SVG có script hay tham chiếu ngoài bị từ chối). Card hook và CTA hiện lockup
-(logo cạnh tên brand; logo chữ ngang rộng hơn 2,2 lần chiều cao thì đứng một mình), màu chính thành accent và nền
+(logo cạnh tên brand; logo chữ ngang rộng hơn 2,2 lần chiều cao thì đứng một mình; hook có layout nhường lockup cho
+CTA), màu chính thành accent và nền
 card CTA. Worker đọc trang qua `createPublicWebFetcher` của `@studix/mcp-gateway`: chỉ https công khai, kiểm tra
 lại mọi lần redirect theo chính sách SSRF, giới hạn byte và thời gian. Trang hay logo không đọc được thì stage ghi
 `warning` và job vẫn chạy tiếp.

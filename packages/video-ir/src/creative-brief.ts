@@ -78,7 +78,11 @@ export const CreativeBrief = z.object({
    * Brand colours, the main one first: it becomes the accent (and the CTA fill) of the graphic, a second one
    * its secondary colour. Wins over colours found at `brandUrl`. Honoured by `motion-graphic`.
    */
-  brandColors: z.array(HexColor).min(1).max(4).optional(),
+  brandColors: z
+    .array(z.string().regex(/^#[0-9a-fA-F]{6}$/, "expected #rrggbb"))
+    .min(1)
+    .max(4)
+    .optional(),
   /** Storage keys or URLs of reference material supplied by the user. */
   references: z.array(z.string().min(1).max(2048)).max(20).optional(),
   constraints: z.array(z.string().min(1).max(300)).max(20).optional(),
@@ -93,3 +97,13 @@ export const CreativeBrief = z.object({
     .optional(),
 });
 export type CreativeBrief = z.infer<typeof CreativeBrief>;
+
+/**
+ * The brief as an agent reads it: an uploaded logo (a data URL) is pixels, not words, and would only cost the
+ * agent tokens, so it is left out.
+ */
+export function briefForAgent(brief: CreativeBrief): CreativeBrief {
+  if (!brief.brandLogo?.startsWith("data:")) return brief;
+  const { brandLogo: _logo, ...rest } = brief;
+  return rest;
+}

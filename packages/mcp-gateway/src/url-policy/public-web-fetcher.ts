@@ -18,6 +18,17 @@ export interface PublicWebGetOptions {
   signal?: AbortSignal;
 }
 
+/** The connector policy speaks of MCP connectors; a stage reading a page sees its own words instead. */
+function asPageError(err: unknown): unknown {
+  if (!(err instanceof StudixError)) return err;
+  const message = err.message.replace(/^Connector (URL|address|host)/, (_, what: string) => `The ${what}`);
+  return new StudixError(err.code, message, {
+    retryable: err.retryable,
+    ...(err.code === "FORBIDDEN" ? { suggestedAction: "Use a public https:// address." } : {}),
+    ...(err.details ? { details: err.details } : {}),
+  });
+}
+
 /** Reads public https resources for stages. Every host is checked by the SSRF policy before it is reached. */
 export interface PublicWebFetcher {
   get(url: string, options: PublicWebGetOptions): Promise<PublicWebResponse>;
@@ -54,7 +65,9 @@ export function createPublicWebFetcher(options: PublicWebFetcherOptions = {}): P
       try {
         let url = new URL(raw);
         for (let hop = 0; ; hop++) {
-          const pinned = await policy.resolve(url);
+          const pinned = await policy.resolve(url).catch((err: unknown) => {
+            throw asPageError(err);
+          });
           const agent = new Agent({ connect: { lookup: createPinnedLookup(pinned) } });
           agents.push(agent);
           const response = await undiciFetch(pinned.url, {
@@ -67,9 +80,8 @@ export function createPublicWebFetcher(options: PublicWebFetcherOptions = {}): P
             await response.body?.cancel().catch(() => undefined);
             const location = response.headers.get("location");
             if (!location || hop >= maxRedirects) {
-              throw new StudixError("PROVIDER_ERROR", `${url.host} redirected too many times`, {
-                retryable: false,
-              });
+              const why = location ? "redirected too many times" : "redirected without a Location";
+              throw new StudixError("PROVIDER_ERROR", `${url.host} ${why}`, { retryable: false });
             }
             url = new URL(location, url);
             continue;

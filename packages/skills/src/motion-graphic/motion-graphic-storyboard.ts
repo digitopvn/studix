@@ -1,6 +1,6 @@
 import { stageAgentSelection } from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
-import { CreativeBrief, LayoutSpec, MotionPreset } from "@studix/video-ir";
+import { briefForAgent, CreativeBrief, LayoutSpec, MotionPreset } from "@studix/video-ir";
 import {
   createAgentStage,
   type StageContext,
@@ -151,13 +151,6 @@ interface Repair {
   storyboard: MotionStoryboard;
 }
 
-/** The brief with an uploaded logo (a data URL) left out. */
-function withoutLogoData(brief: CreativeBrief): CreativeBrief {
-  if (!brief.brandLogo?.startsWith("data:")) return brief;
-  const { brandLogo: _logo, ...rest } = brief;
-  return rest;
-}
-
 const agentStageFor = (repair?: Repair) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
@@ -199,8 +192,7 @@ const agentStageFor = (repair?: Repair) =>
       "storyboard again, changed only as `repair.problem` says (fewer words in the named beats, or the " +
       "number of beats it asks for), and nothing else. Return only JSON matching the output schema.",
     taskInput: ({ outputs: { brief } }) => ({
-      // The logo is pixels, not words: an uploaded image would only cost the agent tokens.
-      brief: withoutLogoData(brief.brief),
+      brief: briefForAgent(brief.brief),
       durationMs: lengthOf(brief.brief),
       voiceover: brief.brief.voiceover !== false,
       wordBudget: voiceoverWordBudget(lengthOf(brief.brief)),

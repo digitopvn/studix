@@ -1,4 +1,4 @@
-import { CreativeBrief } from "@studix/video-ir";
+import { briefForAgent, CreativeBrief } from "@studix/video-ir";
 import { createAgentStage } from "@studix/workflow";
 import { z } from "zod";
 
@@ -35,6 +35,6 @@ export const brandIntroScriptStage = createAgentStage({
     "Write the narrated script of a 6-15 second brand introduction from the creative brief. Keep the " +
     "brief's language (Vietnamese copy keeps its diacritics), use two to six short beats whose durations " +
     "add up to the brief's duration, and end with the call to action. Return only JSON matching the output schema.",
-  taskInput: (input) => ({ brief: input.payload.brief }),
+  taskInput: (input) => ({ brief: briefForAgent(input.payload.brief) }),
   limits: { maxTurns: 4, maxTokens: 20_000, maxCostCents: 25, timeoutMs: 120_000 },
 });

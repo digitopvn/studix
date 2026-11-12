@@ -161,8 +161,13 @@ function uiWords(language: string | undefined) {
 /** A meter amount: whole numbers grouped by thousands, decimals with the language's decimal mark. */
 function amount(n: number, language: string | undefined): string {
   if (Number.isInteger(n)) return groupDigits(n, language);
-  const [whole, frac] = n.toFixed(2).replace(/0+$/, "").split(".");
-  return `${groupDigits(Number(whole), language)}${vietnamese(language) ? "," : "."}${frac}`;
+  // 4.999 rounds to "5.00": trim the zeros and the point with them, so it reads "5", never "5.".
+  const [whole, frac] = n
+    .toFixed(2)
+    .replace(/\.?0+$/, "")
+    .split(".");
+  const head = groupDigits(Number(whole), language);
+  return frac ? `${head}${vietnamese(language) ? "," : "."}${frac}` : head;
 }
 
 const PLAY_SVG =

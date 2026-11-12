@@ -1,4 +1,5 @@
 import { createDb, type StudixDb } from "@studix/database";
+import { createPublicWebFetcher } from "@studix/mcp-gateway";
 import { createLogger, type Logger, registerSecret, registerSecretsFromEnv } from "@studix/shared";
 import {
   createStorageWriteCheck,
@@ -210,7 +211,12 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       );
     }
     refreshMediaStatus();
-    runtime = createWorkerRuntime({ ...ports, db: handle.db, settings, logger });
+    // Pages a stage reads (a brand's site) never loop back into Studix's own public origins.
+    const selfOrigins = [settings.config.STUDIX_PUBLIC_URL, settings.config.STUDIX_APP_URL].filter(
+      (u): u is string => Boolean(u),
+    );
+    const web = ports.web ?? createPublicWebFetcher({ selfOrigins });
+    runtime = createWorkerRuntime({ ...ports, web, db: handle.db, settings, logger });
     runtime.start();
     const sweep = () =>
       sweepStaleJobDirs(settings.workDir, settings.workDirRetentionMs).then(

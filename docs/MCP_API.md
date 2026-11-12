@@ -256,11 +256,12 @@ Behavior notes:
   `visual` field stays a description. Brand kit: `brief.brandUrl` (the
   brand's https site) has the worker read the page's name, theme colours and
   logo; `brief.brandLogo` (an https image URL, or an uploaded PNG, JPEG, WebP or
-  SVG as a data URL up to about 500 KB) and `brief.brandColors` (1-4 hex
-  colours, the main one first) win over what the page says, and `brief.brand`
+  SVG as a data URL up to about 500 KB, at most 4096 px on its longest edge)
+  and `brief.brandColors` (1-4 `#rrggbb` colours, the main one first) win over what the page says, and `brief.brand`
   wins over all three. The logo is stored in the workspace's storage, the hook
   and CTA cards show its lockup (the mark with the brand name beside it, or a
-  wide wordmark alone), and the main colour becomes the accent and the CTA
+  wide wordmark alone; a hook that draws a layout leaves the lockup to the
+  CTA), and the main colour becomes the accent and the CTA
   fill. The page is read only over public https, every redirect re-checked
   against the SSRF policy; a page or logo that cannot be read leaves
   `stages[].warning` on `motion-graphic.brand` and the job goes on. On a 16:9 frame headlines are set at

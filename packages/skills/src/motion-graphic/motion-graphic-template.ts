@@ -419,8 +419,9 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     const fill = i === last && style.energy >= 4 ? "primary" : "background";
     const enter = line.enter ?? motion.enter;
     const shots: Shot[] = [];
-    if (logo && i === 0) {
-      // The hook opens on the brand's lockup above its headline.
+    if (logo && i === 0 && !line.layout) {
+      // The hook opens on the brand's lockup above its headline. A hook that draws a layout keeps all its
+      // room for it (the layout's height leaves no lane for a lockup); the CTA still closes on the logo.
       shots.push({
         id: "hook-logo",
         type: "logo",
