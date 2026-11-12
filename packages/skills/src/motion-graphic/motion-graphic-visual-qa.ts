@@ -20,6 +20,7 @@ import { z } from "zod";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { brandSourceOf, MG_BRAND_STAGE, MotionBrandOutput } from "./motion-graphic-brand.ts";
 import { authoredScenesOf } from "./motion-graphic-director.ts";
+import { HEADLINE_LATEST_MS, LAYOUT_AFTER_HEADLINE_MS, LAYOUT_LATEST_MS } from "./motion-graphic-reveals.ts";
 import {
   MG_STORYBOARD_LIMITS,
   MG_STORYBOARD_STAGE,
@@ -183,9 +184,6 @@ const problemOf = (failed: readonly VisualCardScore[]) =>
 const headlineOf = (shots: readonly Shot[]) =>
   shots.find((sh) => sh.type === "title" || sh.type === "text" || sh.type === "cta");
 const layoutOf = (shots: readonly Shot[]) => shots.find((sh) => sh.type === "layout");
-/** As the voice stage reveals a layout: after its headline, and on screen this long before the card ends. */
-const LAYOUT_AFTER_HEADLINE_MS = 300;
-const LAYOUT_MIN_SHOWN_MS = 1500;
 
 /**
  * The IR with the cards in `cards` (from 1) drawn from `storyboard`, everything else kept: their scene
@@ -204,17 +202,18 @@ export function withRestyledCards(
     const next = fresh.scenes[i];
     if (!cards.includes(i + 1) || !next) return scene;
     const cardMs = scene.durationMs;
-    // The voice line is kept, so the headline and layout enter where the voice stage put them on its words;
-    // a layout the card did not have enters halfway through, after the headline and in time to be seen.
+    // The voice line is kept, so the headline and layout enter where the voice stage put them; a layout the
+    // card did not have enters as the voice stage would place it: just after the headline, by LAYOUT_LATEST_MS.
     const before = { headline: headlineOf(scene.shots), layout: layoutOf(scene.shots) };
     const after = { headline: headlineOf(next.shots), layout: layoutOf(next.shots) };
-    const headlineAt = before.headline?.startMs ?? after.headline?.startMs ?? 0;
-    const layoutAt = Math.max(
-      headlineAt,
-      Math.min(
-        before.layout?.startMs ?? Math.max(headlineAt + LAYOUT_AFTER_HEADLINE_MS, cardMs / 2),
-        cardMs - LAYOUT_MIN_SHOWN_MS,
-      ),
+    const headlineAt = Math.min(
+      before.headline?.startMs ?? after.headline?.startMs ?? 0,
+      HEADLINE_LATEST_MS,
+      cardMs - 1,
+    );
+    const layoutAt = Math.min(
+      before.layout?.startMs ?? Math.min(headlineAt + LAYOUT_AFTER_HEADLINE_MS, LAYOUT_LATEST_MS),
+      cardMs - 1,
     );
     return {
       ...scene,
