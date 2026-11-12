@@ -158,7 +158,19 @@ to the exact same version in `packages/renderers/package.json` (currently
   beacon, image, WebSocket, popup, iframe, WebRTC and runtime `<video>` sources
   (`..%2f`, `..%5c`, double encoding, `file:`, `http:`). A canary server must see
   nothing and the frame must stay black, while a project clip still renders
-  ([#451](https://github.com/digitopvn/studix/issues/451)). Both patches are
+  ([#451](https://github.com/digitopvn/studix/issues/451)). The compile step
+  runs in Node, where those flags do not apply, and matches URLs over the whole
+  compiled HTML, user text included. The engine patch makes `downloadToTemp` and
+  `fetchPublicHttpsText` throw `RemoteFetchDisabledError` before any request,
+  which covers remote media, images, `background:url(…)`, font faces, external
+  stylesheets, media probing and the audio/video extractors. The producer patch
+  stops `inlineExternalScripts` from fetching and `collectExternalAssets` from
+  copying any path outside the project. Compositions must reference project
+  files only, which `compileComposition` already guarantees. The same test file
+  renders a composition whose title, text shot and caption carry
+  `background:url(https://…)` and `url('../../…')` and checks that no request
+  leaves and no host file reaches the frame
+  ([#457](https://github.com/digitopvn/studix/issues/457)). Both patches are
   keyed to the exact version, like the SIGTERM one below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through
   `ownedLaunchOptions()`, which leaves Puppeteer's `handleSIGTERM` at `true`,

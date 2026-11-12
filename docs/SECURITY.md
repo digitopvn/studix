@@ -439,6 +439,13 @@ or a path guard as a security boundary:
   responses there. Media that a page script adds at runtime is ignored unless its source is a
   project-relative path that stays inside the project (or an inline `data:image`), so the producer never reads
   a host file or downloads a URL on its behalf.
+- The producer's compile step runs in Node, outside the browser flags, and scans the compiled HTML (user text
+  included) for URLs in `background:url(…)`, media and image tags, font faces, stylesheets and scripts. The
+  patched engine refuses every remote download (`downloadToTemp`, `fetchPublicHttpsText`), and the patched
+  producer neither fetches external scripts nor copies a file outside the project into the render. Studix
+  needs none of this: `compileComposition` copies every asset into the project and fonts are bundled. A URL or
+  `../` path in a title or caption therefore stays inert text
+  ([#457](https://github.com/digitopvn/studix/issues/457)).
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its
@@ -512,5 +519,5 @@ Each item maps to a negative test in the owning package.
 | Zip slip or zip bomb in a skill upload                   | Path checks reject the archive, symlinks skipped, entry/size/ratio caps, capped inflation                  |
 | Expired artifact URL still valid                         | Presign expiry tests                                                                                       |
 | Host header / origin spoofing                            | Host allow-list derived from `STUDIX_*_URL`                                                                |
-| Render page script reaching the network or host files    | Dead-proxy and resolver flags on the capture browser, project-only runtime media                           |
+| Render page script reaching the network or host files    | Dead-proxy/resolver flags, project-only runtime media, no compile-step fetch or host-file copy             |
 | Argument injection or file/network access through ffmpeg | Shell-free argv, path and protocol checks, forced `-protocol_whitelist`, offline per-job sandbox           |

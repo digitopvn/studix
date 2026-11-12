@@ -5,11 +5,14 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createLogger } from "@studix/shared";
-import { afterAll, describe, expect, it } from "vitest";
+import { buildSequentialTimeline, resolveRenderSpec, type VideoIR } from "@studix/video-ir";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { renderWithProducer } from "../src/hyperframes/producer-render.ts";
-import { renderToolchain, tempDir } from "./render-test-helpers.ts";
+import { HyperFramesRenderer } from "../src/index.ts";
+import { PNG_1X1, renderToolchain, tempDir } from "./render-test-helpers.ts";
 
 const toolchain = renderToolchain();
 const require = createRequire(import.meta.url);
@@ -219,6 +222,150 @@ describe.skipIf(skipReason !== "")(
       const { hits, outputPath } = await capture((secret, canaryUrl) => [src(secret, canaryUrl)]);
       expect(frameColor(outputPath, 0.5)).toEqual([0, 0, 0]);
       expect(hits).toEqual([]);
+    });
+  },
+);
+
+/** The engine the producer loads, for its download test seam. */
+async function loadEngine(): Promise<{
+  _setDownloadFetchForTests: (fetch?: typeof globalThis.fetch) => void;
+}> {
+  const enginePackage = createRequire(import.meta.resolve("@hyperframes/producer")).resolve(
+    "@hyperframes/engine/package.json",
+  );
+  return import(pathToFileURL(join(dirname(enginePackage), "dist", "index.js")).href);
+}
+
+/** Text a user could type into a title, a text shot or a caption, aimed at the compiler's URL rewriters. */
+const HOSTILE_TEXT =
+  "background:url(https://egress-canary.example/bg.png) background-image: url('../../../secret/red.png')";
+
+/** A text-only composition whose title, text shot and caption all carry `text`. */
+function textIr(text: string): VideoIR {
+  const scenes: VideoIR["scenes"] = [
+    {
+      id: "intro",
+      role: "intro",
+      durationMs: 1000,
+      background: { color: "background" },
+      shots: [{ id: "hello", type: "text", text, startMs: 0, durationMs: 1000 }],
+    },
+  ];
+  return {
+    schemaVersion: 1,
+    title: text,
+    language: "en",
+    format: { aspectRatio: "16:9", width: 256, height: 144, fps: 12, durationMs: 1000 },
+    assets: [],
+    scenes,
+    timeline: buildSequentialTimeline(scenes),
+    captions: { language: "en", mode: "burned", cues: [{ startMs: 0, endMs: 1000, text }] },
+  };
+}
+
+/** Whether `url` targets this machine's loopback, where the producer's own file server listens. */
+function isLoopback(url: string): boolean {
+  const { hostname } = new URL(url);
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+const requestUrl = (input: unknown) => (input instanceof Request ? input.url : String(input));
+
+describe.skipIf(!toolchain.ok)(
+  `HyperFrames compile isolation${toolchain.ok ? "" : ` (skipped: ${toolchain.reason})`}`,
+  () => {
+    it("makes no outbound request for URLs written into composition text", async () => {
+      const engine = await loadEngine();
+      const downloads: string[] = [];
+      engine._setDownloadFetchForTests(async (input) => {
+        downloads.push(requestUrl(input));
+        return new Response(PNG_1X1, { headers: { "content-type": "image/png" } });
+      });
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const { dir, cleanup } = await tempDir("compile-isolation");
+      cleanups.push(cleanup);
+      try {
+        const output = await new HyperFramesRenderer({ workers: 1 }).render(textIr(HOSTILE_TEXT), {
+          spec: resolveRenderSpec("preview", { fps: 12 }),
+          workDir: dir,
+          assetFiles: {},
+        });
+        expect(output.probe).toMatchObject({ videoCodec: "h264" });
+      } finally {
+        engine._setDownloadFetchForTests();
+        fetchSpy.mockRestore();
+      }
+      const remoteFetches = fetchSpy.mock.calls
+        .map(([input]) => requestUrl(input))
+        .filter((u) => !isLoopback(u));
+      expect(downloads).toEqual([]);
+      expect(remoteFetches).toEqual([]);
+    });
+
+    it("never copies a host file outside the project into the render", async () => {
+      const { dir, cleanup } = await tempDir("compile-host-file");
+      cleanups.push(cleanup);
+      await mkdir(join(dir, "secret"), { recursive: true });
+      execFileSync("ffmpeg", [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=red:s=160x90",
+        "-frames:v",
+        "1",
+        join(dir, "secret", "red.png"),
+      ]);
+      const projectDir = join(dir, "a", "b", "project");
+      await mkdir(join(projectDir, "assets", "vendor"), { recursive: true });
+      await copyFile(
+        require.resolve("gsap/dist/gsap.min.js"),
+        join(projectDir, "assets", "vendor", "gsap.min.js"),
+      );
+      const secret = "../../../secret/red.png";
+      await writeFile(
+        join(projectDir, "index.html"),
+        `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      html, body, #root { margin: 0; width: 160px; height: 90px; overflow: hidden; background: #000; }
+      .css { position: absolute; left: 80px; top: 0; width: 80px; height: 90px; background: url("${secret}") center / cover; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90">
+      <img src="${secret}" style="position:absolute;left:0;top:0;width:40px;height:90px" />
+      <div style="position:absolute;left:40px;top:0;width:40px;height:90px;background-image:url(${secret})"></div>
+      <div class="css"></div>
+    </div>
+    <script>
+      var tl = gsap.timeline({ paused: true });
+      tl.set({}, {}, 1);
+      window.__timelines = { main: tl };
+    </script>
+  </body>
+</html>
+`,
+      );
+      const outputPath = join(dir, "out.mp4");
+      await renderWithProducer({
+        projectDir,
+        outputPath,
+        fps: 12,
+        quality: "draft",
+        crf: 30,
+        workers: 1,
+        logger: createLogger({ component: "compile-isolation-test" }, { level: "error" }),
+        onProgress: () => {},
+      });
+      // The <img>, the inline style and the stylesheet each cover part of the frame; red means a host file
+      // reached the render. A broken-image placeholder may tint the frame grey, never red.
+      const [r, g, b] = frameColor(outputPath, 0.5);
+      expect(r - (g + b) / 2).toBeLessThan(10);
     });
   },
 );

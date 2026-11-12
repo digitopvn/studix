@@ -1,8 +1,27 @@
 diff --git a/dist/index.js b/dist/index.js
-index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..8866120c10b95aa308d15f391343db52ee102445 100644
+index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..a5dcef3e3d55af1fac93599649100be2e9ddf8ad 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -8065,6 +8065,31 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+@@ -7448,6 +7448,9 @@ async function inlineExternalScripts(html) {
+     }
+   }
+   if (externalScripts.length === 0) return html;
++  // Studix: the compiler never fetches scripts; the capture browser cannot reach them either.
++  defaultLogger.warn(`[Compiler] Not inlining ${externalScripts.length} remote script(s): remote fetches are disabled`);
++  return html;
+   const downloads = await Promise.allSettled(
+     externalScripts.map(async ({ el, src }) => {
+       const response = await fetch(src, {
+@@ -7496,6 +7499,8 @@ function collectExternalAssets(html, projectDir) {
+     if (isPathInside2(absPath, absProjectDir)) {
+       return null;
+     }
++    // Studix: a path outside the project may come from user-written text; never copy host files.
++    return null;
+     if (!existsSync10(absPath)) return null;
+     const safeKey = toExternalAssetKey(absPath);
+     externalAssets.set(safeKey, absPath);
+@@ -8065,6 +8070,31 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
      hasAncestorBackgroundImage
    };
  }
@@ -34,7 +53,7 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..8866120c10b95aa308d15f391343db52
  async function discoverMediaFromBrowser(page) {
    const elements = await page.evaluate(() => {
      const results = [];
-@@ -8944,6 +8969,10 @@ async function runProbeStage(input) {
+@@ -8944,6 +8974,10 @@ async function runProbeStage(input) {
            if (fileServer && src.startsWith(fileServer.url)) {
              src = src.slice(fileServer.url.length).replace(/^\//, "");
            }
