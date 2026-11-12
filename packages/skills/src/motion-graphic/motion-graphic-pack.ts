@@ -42,6 +42,7 @@ import {
   MotionBrandOutput,
   motionGraphicBrandStage,
 } from "./motion-graphic-brand.ts";
+import { MG_HEROES_STAGE, motionGraphicHeroesStage } from "./motion-graphic-heroes.ts";
 import { beatsOf, type MusicBeats, musicSections } from "./motion-graphic-music.ts";
 import { cardMinimums, cardsOf, retimeCards, snapCutsToBeats } from "./motion-graphic-retime.ts";
 import { withSpokenReveals } from "./motion-graphic-reveals.ts";
@@ -69,6 +70,7 @@ export const MG_STAGES = {
   accent: "motion-graphic.voiceover",
   voice: "motion-graphic.voice",
   music: "motion-graphic.music",
+  heroes: MG_HEROES_STAGE,
   qa: "motion-graphic.qa",
 } as const;
 
@@ -79,6 +81,8 @@ export const motionGraphicSkill: Skill = {
   description:
     "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16; a length or aspect ratio stated in the prompt is used when the brief sets none): the workspace's agent writes the script and " +
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
+    "in a style profile that locks palette, fonts, entrances, cuts and juice (a brief whose first direction names a profile id in `visualStyle` pins it); " +
+    "premium tier with `roles.director`: the director writes the storyboard and 2-3 hero cards as custom HTML/GSAP, each kept only when it passes the HTML-card safety rules and the HyperFrames linter; " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
     "generated voice-over with burned captions, a soft whoosh on each cut and one SFX accent on the CTA card; " +
     "the agent's storyboard has about one card every five seconds (3–12); a music bed is composed to drop where the CTA card starts, " +
@@ -200,8 +204,16 @@ const WHOOSH_LEAD_MS = 250;
 const WHOOSH_VOLUME = 0.35;
 const WHOOSH_TRACK = "sfx-whoosh-";
 
-/** Every cut between two cards but the one into the CTA card, which the accent already marks. */
+/** Whether the graphic's style profile wants a whoosh on its cuts (`metadata.juice`); yes when unset. */
+const wantsWhoosh = (ir: VideoIR) =>
+  (ir.metadata?.juice as { whoosh?: unknown } | undefined)?.whoosh !== false;
+
+/**
+ * Every cut between two cards but the one into the CTA card, which the accent already marks; none when the
+ * style profile's juice has no whoosh.
+ */
 function cutsOf(ir: VideoIR): number[] {
+  if (!wantsWhoosh(ir)) return [];
   const cta = ctaStart(ir);
   const cuts: number[] = [];
   let at = 0;
@@ -832,9 +844,10 @@ export const motionGraphicQaStage: StageDefinition = {
 /**
  * New project: brand (from `brandUrl` / `brandLogo`, when given) -> storyboard (agent, or template fallback)
  * -> compose -> SFX accent -> music bed (when the storyboard asked for one) -> voice-over (cuts on the bed's
- * beats, reveals on the spoken words) -> visual QA (render, review, redesign failed cards, re-render) -> store
- * the version -> render (reuses the reviewed render) -> QA -> upload. The version is stored after the review
- * because the review may redesign cards. Re-render of a version: render -> QA -> upload.
+ * beats, reveals on the spoken words) -> hero cards (premium tier) -> visual QA (render, review, redesign
+ * failed cards, re-render) -> store the version -> render (reuses the reviewed render) -> QA -> upload. The
+ * version is stored after the review because the review may redesign cards. Re-render of a version: render ->
+ * QA -> upload.
  */
 export const motionGraphicPipeline: PackPipeline = {
   renderer: "hyperframes",
@@ -849,6 +862,7 @@ export const motionGraphicPipeline: PackPipeline = {
           motionGraphicAccentStage,
           motionGraphicMusicStage,
           motionGraphicVoiceStage,
+          motionGraphicHeroesStage,
           motionGraphicVisualQaStage(e.render),
           e.validateIr,
           motionGraphicRenderStage(e.render),
@@ -878,6 +892,7 @@ export const motionGraphicPack: WorkflowPack = {
     motionGraphicAccentStage,
     motionGraphicMusicStage,
     motionGraphicVoiceStage,
+    motionGraphicHeroesStage,
     motionGraphicQaStage,
   ],
   pipeline: motionGraphicPipeline,

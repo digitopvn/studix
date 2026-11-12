@@ -184,7 +184,7 @@ export function assertReportedModel(model: string | undefined, effort: Reasoning
   assertEffort(model, entry.reasoning, effort);
 }
 
-/** Optional role agents of a skill-agent job; each is checked like `agent`. */
+/** Optional role agents: director/builder/qa for skill-agent, director only (premium tier) for motion-graphic; each is checked like `agent`. */
 export const AgentRolesInput = z
   .object({ director: AgentInput.optional(), builder: AgentInput.optional(), qa: AgentInput.optional() })
   .strict();

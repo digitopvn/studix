@@ -81,11 +81,19 @@ export async function createVideoProject(
   // the first claim so time spent queued behind other jobs does not eat it.
   const agentAuthored = workflowTemplate === "skill-agent" && input.deadlineAt === undefined;
   const roles = input.roles && Object.keys(input.roles).length > 0 ? input.roles : undefined;
-  if (roles && workflowTemplate !== "skill-agent") {
-    throw new StudixError("VALIDATION", "roles need workflowTemplate skill-agent", {
-      retryable: false,
-      suggestedAction: "Set workflowTemplate to skill-agent, or drop roles.",
-    });
+  // skill-agent takes every role; motion-graphic takes a director only (its premium tier).
+  const premiumMotion =
+    workflowTemplate === "motion-graphic" && roles && Object.keys(roles).every((r) => r === "director");
+  if (roles && workflowTemplate !== "skill-agent" && !premiumMotion) {
+    throw new StudixError(
+      "VALIDATION",
+      "roles need workflowTemplate skill-agent (motion-graphic takes roles.director only)",
+      {
+        retryable: false,
+        suggestedAction:
+          "Set workflowTemplate to skill-agent, use only roles.director with motion-graphic, or drop roles.",
+      },
+    );
   }
   const deadlineAt =
     input.deadlineAt ??

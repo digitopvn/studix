@@ -1034,7 +1034,8 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(input.craft.length).toBeLessThanOrEqual(12_000);
     const ir = h.renderer.rendered[0] as VideoIR;
     expect(ir.metadata).toMatchObject({ styleProfile: "swiss-kinetic-editorial", storyboard: "agent" });
-    expect(ir.scenes.map((sc) => sc.shots[0]?.animation?.enter)).toEqual(["slide-left", "pop", "scale"]);
+    // The profile locks entrances: "pop" is not a swiss-kinetic-editorial entrance, so its default stands in.
+    expect(ir.scenes.map((sc) => sc.shots[0]?.animation?.enter)).toEqual(["slide-left", "slide-up", "scale"]);
     expect(ir.scenes.map((sc) => sc.durationMs)).toEqual([3300, 3500, 3200]);
     expect(ir.format).toMatchObject({ aspectRatio: "16:9", durationMs: 10_000 });
     expect(h.generate.mock.calls.map(([, r]) => r.kind).sort()).toEqual([

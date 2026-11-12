@@ -19,6 +19,7 @@ records the contract and the measurements behind it.
 | Scene camera, depth, motif         | `camera` moves every plane over the whole scene by its depth (back 0.5, underlay 0.75, shots 1, front 1.4; `parallax` spreads them to 0.2 / 0.5 / 1 / 2.4). `depth.background` draws a grid and a glow behind the shots and grain and a vignette as a fixed lens over them; `depth.foreground` draws bokeh in front and corner brackets on the fixed lens. A `motif` shape travels one frame edge per scene and rests at the same pose on both sides of a cut, so a `match-cut` (a hard cut, no stage tween) reads as one object (`hyperframes/scene-depth.ts`). Captions never move |
 | Scene transitions                  | `transitionOut` plays half at the end of the scene and half at the start of the next: `fade`, `slide`, `wipe`, `zoom`, `iris` (circle clip), `whip` (fast lateral throw); `cut` and `match-cut` play nothing (`hyperframes/scene-timeline.ts`). Neighbours follow the timeline order, not the order of the scenes array. IR validation (issue code `camera`) rejects two adjacent scenes with the same camera move other than `static`, and a `match-cut` without a motif of the same shape on both scenes                                                                           |
 | Composition shot (film scene)      | Captured first by the ported film engine (`film-engine/film-composition-render.ts`), each scene as its own HyperFrames root composition, then spliced back as a muted video shot                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Composition shot (HTML card)       | Compiled inline as a full-frame card layer above the scene shots, under the front depth plane, the lens and the captions (`hyperframes/html-card-compile.ts`); see [HTML cards](#html-cards)                                                                                                                                                                                                                                                                                                                                                                                         |
 
 Media types: images `png/jpeg/webp/gif/avif/svg`, video `mp4/webm/mov`, audio any
 `audio/*` FFmpeg decodes. `hyperframesSupport()` reports anything else instead of
@@ -40,6 +41,58 @@ Packs author scenes through `@studix/renderers/film-scene`, which has no browser
 `filmPlateScene` builds a one-shot scene that moves a still: a camera push towards a focus point
 and, optionally, particle weather (`petal`, `sakura`, `snow`, `ember`, `leaf`, `ash`). The
 narrative packs use it for T0/T1 shots instead of an image-to-video call.
+
+### HTML cards
+
+A composition shot can also name a code asset of type `application/vnd.studix.html-card+json`:
+`{ format: "studix.html-card", version: 1, html, css, tweens }` (`hyperframes/html-card.ts`). `html`
+holds up to 16,000 characters, `css` up to 12,000, and `tweens` up to 40 entries. A card is agent-authored
+data only, and **no agent code runs**. Studix checks the markup and CSS against allowlists, re-serializes
+them, and generates every line of the card's script itself.
+
+- **`html`** is parsed with htmlparser2, and only the checked tree is serialized into the page, never the
+  original string.
+  - Allowed tags: `div`, `span`, `p`, `h1`–`h3`, `strong`, `em`, `b`, `i`, `br`, `ul`, `ol`, `li` and
+    inline `svg` with its shape, text, gradient, `clipPath` and `mask` elements.
+  - Allowed attributes: `class`, `id`, SVG geometry and paint attributes, `aria-hidden` and `role`. Event
+    handlers and `style` are not allowed.
+  - Attribute values may contain no URL scheme, and `url()` may only point at `#id`.
+  - SVG elements must sit inside `<svg>` and HTML elements outside it, inline elements hold only inline
+    content, and lists hold only `<li>`. The browser therefore builds the same tree Studix checked.
+  - Every `id` becomes `<card element id>-<id>`, and `url(#id)` references and `#id` selectors are
+    rewritten to match, so two cards never share an id.
+- **`css`** is parsed with PostCSS and re-serialized rule by rule.
+  - At-rules, nested rules, `!important`, `url()` other than `url(#id)`, `expression()`, `image-set()`,
+    `element()`, `behavior` and `-moz-binding` are rejected, and so is a parse error.
+  - Every selector is prefixed with the card id as a descendant selector. Selectors that start with `+`
+    or `~`, or that use `*`, `&`, `:root`, `html` or `body`, are rejected, so a rule can only style
+    elements inside the card.
+  - Bare declarations style the card element itself. The renderer's own rule comes after them and always
+    wins on placement, clipping and visibility. `contain: paint` keeps fixed-position children inside the
+    card.
+  - Palette roles are `var(--c-<role>)`. The bundled brand fonts are `var(--font-heading)` (700 and 800
+    bundled) and `var(--font-body)` (400 and 600 bundled).
+- **`tweens`** are validated objects, `{ target, at, duration, from?, to?, ease?, stagger? }`.
+  - `target` is a simple selector (at most four parts) resolved with `querySelectorAll` inside the card.
+  - Properties are limited to transforms, `opacity` and `strokeDashoffset`, eases come from a fixed list,
+    and `at` is in seconds from the card start.
+  - Studix writes each tween as a GSAP `fromTo`, `from` or `to` call with JSON-encoded values, on a
+    sub-timeline placed at the shot start. The card element fades in and out with the shot.
+
+`htmlCardProblems()` returns every broken rule as a short sentence. The renderer reads each card from
+`assetFiles` and parses it. A missing file, bad JSON, a schema failure or any problem stops the render with
+`VALIDATION`, and `details.problems` lists the reasons. Code assets are never copied into the project.
+
+As defense in depth, `index.html` of a render with a card carries a CSP
+(`default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self' data: blob:; form-action 'none'`).
+Cards themselves load nothing, because no allowed tag, attribute or CSS value can name an external URL.
+
+Light imports (parsers only, no browser or renderer) come from `@studix/renderers/html-card`. The main entry also
+exports `lintHtmlCard(pkg, { width, height, durationMs, palette?, fonts?, workDir })`, which never throws.
+It returns schema failures and allowlist problems as errors. Otherwise it builds a one-scene project from
+the card in a temporary directory under `workDir` and runs the HyperFrames linter on it, which catches, for
+example, font families that are not bundled. It reports tweens that run past the card end as warnings and
+internal failures as errors. The result is `{ errors, warnings }` as agent-readable lines.
 
 ## Finish and deliveries (Implemented)
 

@@ -43,6 +43,18 @@ describe("motion-graphic camera grammar", () => {
     expect(planTransitions(2, style("saas-bento")).map((t) => t.kind)).toEqual(["slide"]);
   });
 
+  it("takes the signature cut and its length from the style preset, and a hard-cut preset only cuts", () => {
+    const cinematic = planTransitions(5, style("cinematic-product-launch"));
+    expect(cinematic.at(-1)).toEqual({ kind: "fade", durationMs: 600 });
+    expect(cinematic.slice(1, -1).every((t) => t.kind !== "fade" && t.durationMs === 600)).toBe(true);
+    expect(planTransitions(5, style("athletic-impact")).map((t) => t.kind)).toEqual([
+      "match-cut",
+      "cut",
+      "cut",
+      "cut",
+    ]);
+  });
+
   it("puts the grammar on every card of the template's graphic", () => {
     const ir = motionGraphicTemplate({
       prompt: "A launch video introducing Studix",

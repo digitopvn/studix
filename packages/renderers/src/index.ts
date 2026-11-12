@@ -80,6 +80,21 @@ export {
   writeComposition,
 } from "./hyperframes/compile-composition.ts";
 export {
+  HTML_CARD_EASES,
+  HTML_CARD_FORMAT,
+  HTML_CARD_LIMITS,
+  HTML_CARD_MIME,
+  HtmlCardPackage,
+  HtmlCardTween,
+  htmlCardProblems,
+  TweenProps,
+} from "./hyperframes/html-card.ts";
+export {
+  type HtmlCardLintResult,
+  type LintHtmlCardOptions,
+  lintHtmlCard,
+} from "./hyperframes/html-card-lint.ts";
+export {
   type FinishSpec,
   HyperFramesRenderer,
   type HyperFramesRendererOptions,
