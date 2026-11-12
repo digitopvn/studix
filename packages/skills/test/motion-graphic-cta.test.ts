@@ -26,3 +26,9 @@ describe("splitCtaLine", () => {
     expect(splitCtaLine("studix.ai")).toEqual({ text: "studix.ai" });
   });
 });
+
+describe("splitCtaLine email", () => {
+  it("leaves an email address in the text", () => {
+    expect(splitCtaLine("Email hi@studix.ai")).toEqual({ text: "Email hi@studix.ai" });
+  });
+});

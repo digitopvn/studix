@@ -5,7 +5,7 @@
  */
 
 /** A web address: an optional scheme, a dotted host whose last label is letters, and an optional path. */
-const URL_RE = /(?:https?:\/\/)?(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:\/[^\s]*)?/giu;
+const URL_RE = /(?<![@\p{L}\p{N}._-])(?:https?:\/\/)?(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:\/[^\s]*)?/giu;
 
 const TLD_RE =
   /\.(?:com|net|org|io|ai|app|dev|co|vn|me|so|gg|tv|xyz|link|site|online|store|shop|studio|design|tech|cloud|digital|info|biz|us|uk|eu|de|fr|jp|sg|asia)(?:\/|[.,;:!?)]*$)/iu;
