@@ -306,8 +306,36 @@ async function critique(
   }
 }
 
-/** What a card redesign may cost (its cap and a turn of overshoot) and take. */
-const cardRedesignWork = { cents: MG_STORYBOARD_LIMITS.maxCostCents * 2, ms: MG_STORYBOARD_LIMITS.timeoutMs };
+/**
+ * Time a card redesign gets: at least the floor (a shorter turn rarely returns a whole storyboard, so the
+ * round is skipped instead), at most the cap, else whatever the deadline leaves after the re-capture, the
+ * final render and the safety margin.
+ */
+export const MG_CARD_REDESIGN_MS = { floor: 120_000, cap: 360_000 };
+/** Slack kept before the job deadline on top of the final render's estimate, so a slow render still lands. */
+export const MG_DEADLINE_MARGIN_MS = 90_000;
+
+/** What a card redesign may cost (its cap and a turn of overshoot) and, at the least, take. */
+const cardRedesignWork = { cents: MG_STORYBOARD_LIMITS.maxCostCents * 2, ms: MG_CARD_REDESIGN_MS.floor };
+
+/** A re-capture of a redesigned card can take longer than the first: half again, at least the capture cap. */
+const recaptureMsOf = (captureMs: number) =>
+  Math.max(Math.ceil(1.5 * captureMs), MG_STILLS_CAPTURE_BUDGET_MS);
+
+/**
+ * The time cap of a card redesign that also leaves `otherMs` (other repairs of the round) and the re-capture
+ * and final render (`renderMs`, margin included) before the deadline; never below the floor (repairFits
+ * already skipped a round that cannot hold it).
+ */
+export function cardRedesignTimeoutMs(input: {
+  timeLeftMs: number;
+  captureMs: number;
+  renderMs: number;
+  otherMs?: number;
+}): number {
+  const spare = input.timeLeftMs - recaptureMsOf(input.captureMs) - input.renderMs - (input.otherMs ?? 0);
+  return Math.max(MG_CARD_REDESIGN_MS.floor, Math.min(MG_CARD_REDESIGN_MS.cap, Math.floor(spare)));
+}
 
 /**
  * Whether a repair round still fits in the time and budget left: redesign the failed cards, capture their
@@ -327,8 +355,7 @@ export function repairFits(input: {
   // A redesign may overshoot its cap by a turn: keep a second cap in hand so the job never ends over budget.
   const work = input.work ?? cardRedesignWork;
   if (input.centsLeft < work.cents + input.renderCents) return "no-budget";
-  // A re-capture of a redesigned card can take longer than the first: reserve half again, at least the cap.
-  const recaptureMs = Math.max(Math.ceil(1.5 * input.captureMs), MG_STILLS_CAPTURE_BUDGET_MS);
+  const recaptureMs = recaptureMsOf(input.captureMs);
   if (input.timeLeftMs < work.ms + recaptureMs + input.renderMs) return "no-time";
   return "fits";
 }
@@ -487,8 +514,8 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
   if (left() < renderCents + reviewCents) {
     return done({ status: "skipped", reason: "Not enough job budget left for a visual review", rounds: [] });
   }
-  // The final render runs after the review, whatever it finds: its time is never spent here.
-  const renderMs = finalRenderMsEstimate(ir);
+  // The final render runs after the review, whatever it finds: its time (and a margin) is never spent here.
+  const renderMs = finalRenderMsEstimate(ir) + MG_DEADLINE_MARGIN_MS;
   if (timeLeft() < MG_STILLS_CAPTURE_BUDGET_MS + MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
     return done({
       status: "skipped",
@@ -585,6 +612,8 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
         work,
       });
     };
+    const sceneMsOf = (scenesToFix: readonly VisualCardScore[]) =>
+      scenesToFix.reduce((sum, c) => sum + authoredRepairMs(ir.scenes[c.card - 1]?.durationMs ?? 0), 0);
     let fits = fitsFor(cardPlan, scenePlan);
     // When both do not fit, the card redesign (cheaper, quicker) goes first.
     if (fits !== "fits" && cardPlan.length > 0 && scenePlan.length > 0) {
@@ -606,7 +635,14 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
     const problems: string[] = [];
     if (cardPlan.length > 0 && storyboard) {
       const cards = cardPlan.map((c) => c.card);
-      const restyled = await restyleCards(booked(), brief, storyboard, cards, problemOf(cardPlan));
+      // The redesign gets what the deadline leaves after this round's scene repairs, the re-capture and render.
+      const timeoutMs = cardRedesignTimeoutMs({
+        timeLeftMs: timeLeft(),
+        captureMs,
+        renderMs,
+        otherMs: sceneMsOf(scenePlan),
+      });
+      const restyled = await restyleCards(booked(), brief, storyboard, cards, problemOf(cardPlan), timeoutMs);
       usage.push(...restyled.usage);
       if ("failure" in restyled) {
         problems.push(`Card redesign failed: ${restyled.failure}`);

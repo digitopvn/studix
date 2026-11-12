@@ -195,7 +195,7 @@ const HELPERS = Object.entries(SCENE_FRAGMENT_HELPERS)
 
 export const sceneBuildAgent = createAgentStage({
   name: MG_SCENE_BUILD_AGENT,
-  version: 4,
+  version: 5,
   inputSchema: TaskInput,
   outputSchema: BuildOutput,
   cacheable: false,
@@ -215,7 +215,11 @@ export const sceneBuildAgent = createAgentStage({
     "scene. Colours and fonts only from the theme tokens in `theme.tokens` (var(--bg), var(--ink), " +
     "var(--accent), var(--primary), var(--mute), var(--hair), var(--surface), var(--font-heading), ...). The " +
     "film's accent is `theme.filmAccent.token` (the colour every other scene uses): spend it on this scene's " +
-    "highlights and never accent with another colour token, so the scene matches the film. Text " +
+    "highlights and never accent with another colour token, so the scene matches the film. The headline " +
+    "(`scene.onScreen`) is set once, fully opaque, in var(--ink) on the scene's background: never a giant " +
+    "ghosted, low-opacity, dimmed (var(--mute), var(--faint), var(--hair)) or blurred-looking copy of it behind " +
+    "other elements, and never at opacity below 0.6 once it has entered; its accent words use the film's " +
+    "accent token at AA contrast on the background. Text " +
     "is at least `frame.minTextPx` px (a floor for small labels, not a size to aim for). Scale: the main " +
     "visual fills most of the frame (at least 60% of its width or height), the headline is at least " +
     "`frame.headlinePx` px, and nothing important sits in a small box or corner. Keep everything above the caption band (`frame.captionBandPx` from the " +

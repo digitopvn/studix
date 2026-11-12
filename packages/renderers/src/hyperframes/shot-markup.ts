@@ -179,7 +179,8 @@ function ctaEndCard(
     ]),
   ];
   return {
-    html: `${open}<div class="cta-line">${escapeHtml(shot.text)}</div><div class="cta-rule"></div><div class="cta-url">${escapeHtml(shot.url ?? "")}</div></div>`,
+    // A line that only repeats the URL is not set twice: the rule and the URL stand alone.
+    html: `${open}${shot.text === shot.url ? "" : `<div class="cta-line">${escapeHtml(shot.text)}</div>`}<div class="cta-rule"></div><div class="cta-url">${escapeHtml(shot.url ?? "")}</div></div>`,
     css,
   };
 }

@@ -29,7 +29,7 @@ import {
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
 import type { BrandSource } from "./motion-graphic-brand.ts";
 import { luminance, motionDepthFor, planCameras, planTransitions } from "./motion-graphic-camera.ts";
-import { splitCtaLine } from "./motion-graphic-cta.ts";
+import { ctaCopy } from "./motion-graphic-cta.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionEnter, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
@@ -485,7 +485,12 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           },
           animation: { enter, durationMs: 400 },
         });
-      const said = splitCtaLine(line.onScreen, named ? (logo ? ctaName : brand.name) : undefined);
+      // A URL-only line still closes on words: the closing voice-over, else the brief's call to action or title.
+      const said = ctaCopy(
+        line.onScreen,
+        [line.voiceover, brief.callToAction, brief.title],
+        named ? (logo ? ctaName : brand.name) : undefined,
+      );
       shots.push({
         id: "cta-text",
         type: "cta",

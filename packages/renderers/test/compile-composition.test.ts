@@ -555,6 +555,12 @@ describe("buildComposition product UI layouts", () => {
     expect(scene(2)).toContain('<div class="lo-pnode lo-n3"><span class="lo-pmark"></span>');
     // Player: the default approve label in the IR language.
     expect(scene(3)).toContain("<span>Duyệt</span>");
+    // Its title is a row of its own after the screen and before the scrubber, never drawn over either.
+    expect(scene(3)).toMatch(
+      /<\/div><\/div><div class="lo-ptitle">Bản xem trước<\/div><div class="lo-pctl">/,
+    );
+    // The device art glows in the film's accent only, never a second hue.
+    expect(scene(3)).not.toMatch(/\.lo-o\d \{[^}]*(?:primary|secondary)/);
     // Usage: Vietnamese decimal comma, one label per counting step, the cap marked.
     expect(scene(4)).toContain('<span class="lo-u12">$8,5</span>');
     expect(scene(4)).toContain("Giới hạn &#183; $10");

@@ -31,6 +31,7 @@ import {
 import {
   attemptSceneClip,
   clipPath,
+  HEADLINE_AT_1080,
   sandboxRenderCents,
   storeClipAsset,
   storeFragment,
@@ -46,8 +47,6 @@ export { sceneRenderTimeoutSeconds } from "./motion-graphic-director-clip.ts";
 
 /** Smallest text a fragment may set, at a 1080 px short frame edge. */
 const MIN_TEXT_AT_1080 = 20;
-/** Smallest headline of an authored scene, at a 1080 px short frame edge: the hook reads in a feed. */
-const HEADLINE_AT_1080 = 72;
 
 const Output = z.object({ ir: VideoIR, warning: z.string().max(500).optional() });
 const BriefOutput = z.object({ brief: CreativeBrief });

@@ -14,6 +14,7 @@ import {
   checkSceneFragment,
   type DirectorProject,
   frameClippingProblems,
+  frameScale,
   resolvePalette,
   type SceneFragment,
   sceneFragmentFile,
@@ -21,6 +22,9 @@ import {
 import type { AssetRef, Scene, VideoIR } from "@studix/video-ir";
 import type { StageContext, StageUsage } from "@studix/workflow";
 import type { sceneClipTiming } from "./motion-graphic-director-timing.ts";
+
+/** Smallest headline of an authored scene, at a 1080 px short frame edge: the hook reads in a feed. */
+export const HEADLINE_AT_1080 = 72;
 
 /**
  * One authored scene clip, shared by the director stage (first build) and the visual review (a repair):
@@ -122,7 +126,10 @@ export async function attemptSceneClip(
   const s = booked();
   const compositions = s.services.compositions!;
   const words = a.timing.scenes[a.scene.id]?.lines.flatMap((l) => l.words.map(([w]) => w)) ?? [];
-  const checked = checkSceneFragment(a.built, { sid: a.scene.id, words });
+  const headlinePx = Math.round(
+    HEADLINE_AT_1080 * frameScale({ width: a.ir.format.width, height: a.ir.format.height }),
+  );
+  const checked = checkSceneFragment(a.built, { sid: a.scene.id, words, headlinePx });
   if (checked.problems.length > 0) return { ok: false, kind: "contract", problems: checked.problems };
   const project = buildDirectorProject({
     width: a.ir.format.width,
