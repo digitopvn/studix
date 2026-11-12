@@ -105,3 +105,13 @@ export const CreativeBrief = z.object({
     .optional(),
 });
 export type CreativeBrief = z.infer<typeof CreativeBrief>;
+
+/**
+ * The brief as an agent reads it: an uploaded logo (a base64 data URL) is pixels, not words, and would only
+ * cost the agent tokens, so it is left out.
+ */
+export function briefForAgent(brief: CreativeBrief): CreativeBrief {
+  if (!brief.brandLogo?.startsWith("data:")) return brief;
+  const { brandLogo: _logo, ...rest } = brief;
+  return rest;
+}

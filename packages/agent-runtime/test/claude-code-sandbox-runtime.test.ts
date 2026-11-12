@@ -199,4 +199,22 @@ describe("claude code sandbox runtime", () => {
     expect(ws.commands.find((c) => c.includes("claude --print"))).toContain("CLAUDE_CODE_OAUTH_TOKEN=");
     expect(ws.state.closed).toBe(true);
   });
+
+  it("refuses images with a non-retryable UNAVAILABLE before opening the sandbox", async () => {
+    const ws = fakeWorkspace([result()]);
+    let resolved = false;
+    const runtime = createClaudeCodeSandboxRuntime({
+      workspace: ws.provider,
+      model: "claude-opus-5-5",
+      credential: async () => {
+        resolved = true;
+        return { secret: "sk-ant-api03-test-key-not-real-0003", kind: "api_key" };
+      },
+    });
+    const images = [{ mimeType: "image/png" as const, data: "iVBORw0KGgo=" }];
+    const error = await runtime.run(testTenant(), task({ images })).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: "UNAVAILABLE", retryable: false });
+    expect(resolved).toBe(false);
+    expect(ws.commands).toEqual([]);
+  });
 });

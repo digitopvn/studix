@@ -19,7 +19,6 @@ import {
   validateCreativeBrief,
   validateVideoIR,
 } from "@studix/video-ir";
-import { DEFAULT_BRAND_FONTS } from "../brand-intro/brief-draft.ts";
 import { captionCues, spokenLength } from "../caption-chunks.ts";
 import {
   spokenMs,
@@ -31,9 +30,9 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { BrandSource } from "./motion-graphic-brand.ts";
 import { luminance, motionDepthFor, planCameras, planTransitions } from "./motion-graphic-camera.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
-import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
+import { MOTION_STYLE_PROFILES, type MotionEnter, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 10;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 11;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -56,9 +55,9 @@ const words = (text: string) =>
  * typography (words as the visuals, the natural fit for a voice-over-led graphic). Deterministic.
  */
 export function resolveMotionStyle(brief: CreativeBrief): MotionStyleProfile {
-  const named = brief.directions?.[0]?.visualStyle?.trim().toLowerCase();
-  const exact = MOTION_STYLE_PROFILES.find((p) => p.id === named);
+  const exact = namedMotionStyle(brief);
   if (exact) return exact;
+  const named = brief.directions?.[0]?.visualStyle?.trim().toLowerCase();
   const wanted = new Set(
     words([...(brief.tone ?? []), brief.objective ?? "", named ?? "", brief.prompt].join(" ")),
   );
@@ -74,11 +73,19 @@ export function resolveMotionStyle(brief: CreativeBrief): MotionStyleProfile {
   return best ?? (MOTION_STYLE_PROFILES.find((p) => p.id === DEFAULT_STYLE) as MotionStyleProfile);
 }
 
-/** GSAP presets an energy level calls for (calm fades .. hard pops). */
-function motionFor(energy: number): { enter: MotionPreset; exit: MotionPreset } {
-  if (energy <= 2) return { enter: "fade", exit: "fade" };
-  if (energy === 3) return { enter: "slide-up", exit: "fade" };
-  return { enter: "pop", exit: "scale" };
+/**
+ * The profile a brief pins by naming its id in the first direction's `visualStyle`, or undefined. A pinned
+ * profile is locked: the storyboard agent cannot swap it.
+ */
+export function namedMotionStyle(brief: CreativeBrief): MotionStyleProfile | undefined {
+  const named = brief.directions?.[0]?.visualStyle?.trim().toLowerCase();
+  return MOTION_STYLE_PROFILES.find((p) => p.id === named);
+}
+
+/** `wanted` when the style allows that entrance, else the style's default entrance. */
+export function lockedEnter(style: MotionStyleProfile, wanted: MotionPreset | undefined): MotionEnter {
+  const allowed: readonly MotionPreset[] = style.pacing.enters;
+  return wanted && allowed.includes(wanted) ? (wanted as MotionEnter) : style.pacing.enters[0];
 }
 
 interface Line {
@@ -310,9 +317,13 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     brief.callToAction ??
     (language.startsWith("vi") ? "Tìm hiểu ngay" : "Learn more");
   const storyboard = options.storyboard;
+  // A profile the brief pins wins over the storyboard's pick; the profile then locks entrances, the cut, the
+  // CTA fill and (without a brand kit) the palette and fonts.
   const style =
-    MOTION_STYLE_PROFILES.find((p) => p.id === storyboard?.styleProfile) ?? resolveMotionStyle(brief);
-  const motion = motionFor(style.energy);
+    namedMotionStyle(brief) ??
+    MOTION_STYLE_PROFILES.find((p) => p.id === storyboard?.styleProfile) ??
+    resolveMotionStyle(brief);
+  const motion = style.pacing;
   const lines: Line[] = storyboard
     ? storyboard.beats.map((b) => ({
         onScreen: b.onScreen,
@@ -357,7 +368,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       background: style.palette.background,
       foreground: style.palette.foreground,
     },
-    fonts: DEFAULT_BRAND_FONTS,
+    fonts: style.fonts,
   };
   // The user's own colours win over a brand palette; the site's never override one the brief sets.
   const [first, second] = brief.brandColors ?? (brief.brand ? [] : (source?.colors ?? []));
@@ -413,8 +424,8 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     const id = i === 0 ? "hook" : i === last ? "cta" : `message-${i}`;
     // One surface for the whole graphic, as the style profile paints it; a high-energy profile spends its
     // accent on the closing card only, so colour marks the call to action instead of every other card.
-    const fill = i === last && style.energy >= 4 ? "primary" : "background";
-    const enter = line.enter ?? motion.enter;
+    const fill = i === last && style.juice.ctaFill ? "primary" : "background";
+    const enter = lockedEnter(style, line.enter);
     const shots: Shot[] = [];
     // The hook names the brand from its first frame: a small lockup above the headline. A wordmark alone is
     // left out when the hook line already says the name.
@@ -441,7 +452,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           region: "top",
         },
         animation: {
-          enter: line.enter ?? (line.layout ? motion.enter : "scale"),
+          enter: lockedEnter(style, line.enter ?? (line.layout ? undefined : "scale")),
           exit: motion.exit,
           durationMs: 400,
         },
@@ -504,7 +515,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
             region: "top",
             emphasis: "low",
           },
-          animation: { enter: line.enter ?? motion.enter, exit: motion.exit, durationMs: 400 },
+          animation: { enter, exit: motion.exit, durationMs: 400 },
         },
         {
           id: `${id}-layout`,
@@ -531,7 +542,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           region: "middle",
         },
         animation: {
-          enter: line.enter ?? (i === 0 ? "scale" : motion.enter),
+          enter: lockedEnter(style, line.enter ?? (i === 0 ? "scale" : undefined)),
           exit: motion.exit,
           durationMs: 400,
         },
@@ -564,6 +575,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       templateVersion: MOTION_GRAPHIC_TEMPLATE_VERSION,
       styleProfile: style.id,
       bpm: style.bpm,
+      juice: style.juice,
       ...(voiceover ? { voiceover } : {}),
       storyboard: storyboard ? "agent" : "template",
       ...(storyboard?.music ? { music: storyboard.music } : {}),

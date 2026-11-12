@@ -6,6 +6,7 @@ import { StudixError, toStudixError } from "@studix/shared";
 import {
   type AssetRef,
   type AudioTrack,
+  briefForAgent,
   type Captions,
   CreativeBrief,
   type FilmProduction,
@@ -618,7 +619,7 @@ export function createFilmPack(config: FilmPackConfig): WorkflowPack {
     outputSchema: scopeOutput,
     instructions: `${SCOPE_CONTRACT}\n\n${config.scopeInstructions}`,
     taskInput: (input) => ({
-      brief: input.outputs.brief.brief,
+      brief: briefForAgent(input.outputs.brief.brief),
       durationMs: input.outputs.brief.brief.durationMs ?? config.defaultDurationMs,
     }),
     limits: { maxTurns: 6, maxTokens: 80_000, maxCostCents: 80, timeoutMs: 300_000 },

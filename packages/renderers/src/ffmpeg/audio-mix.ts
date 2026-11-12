@@ -7,6 +7,25 @@ import { type RunFfmpegOptions, runFfmpeg } from "./run-process.ts";
 /** Mix sample rate; every delivery carries 48 kHz stereo AAC. */
 export const MIX_SAMPLE_RATE = 48_000;
 
+/** Music under speech reaches its ducked level over this long, ending as the speech starts. */
+export const DUCK_ATTACK_MS = 150;
+/** Music returns to its full level over this long, starting as the speech ends. */
+export const DUCK_RELEASE_MS = 350;
+
+/** Samples per frame of a ducked clip (5 ms at 48 kHz): its gain steps at most this often. */
+const DUCK_FRAME_SAMPLES = 240;
+
+/** Lowers a clip under speech: `gain` (linear, below 1) applies inside each span, with ramps around it. */
+export interface AudioDuck {
+  gain: number;
+  /**
+   * Speech in clip-local time (0 = the clip's first sample on the timeline), ascending and apart by at
+   * least attack + release, so the ramps of two spans never overlap. A span may start before 0 or end
+   * after the clip.
+   */
+  spans: Array<{ startMs: number; endMs: number }>;
+}
+
 /** One placed piece of sound on the absolute timeline, already clamped to its source. */
 export interface AudioClip {
   /** IR audio track id, or the video shot id for clip sound. */
@@ -24,6 +43,8 @@ export interface AudioClip {
   fadeOutMs: number;
   /** Source speed-up (pitch kept); the clip reads `durationMs × rate` of its source. Absent plays as is. */
   rate?: number;
+  /** Music lowered while voiceover or dialogue plays; absent plays at `volume` throughout. */
+  duck?: AudioDuck;
 }
 
 /** What the planner needs to know about a source file. */
@@ -37,7 +58,8 @@ export interface AudioSourceInfo {
  * Turns IR audio tracks and the sound of unmuted video shots into placed clips. A clip never runs past
  * the video or past the end of its source (after the trim), and its fades are shortened to fit inside
  * it. Video shots whose source has no audio stream contribute nothing; scene video backgrounds are
- * always silent.
+ * always silent. A music track with `duckDb` is lowered by that much while any placed voiceover or
+ * dialogue clip plays; speech stretches closer than attack + release merge into one dip.
  */
 export function planAudioClips(
   ir: VideoIR,
@@ -60,7 +82,9 @@ export function planAudioClips(
     clips.push({ ...clip, file, durationMs, fadeInMs, fadeOutMs });
   };
 
+  const ducked: Array<{ clip: AudioClip; duckDb: number }> = [];
   for (const track of ir.audio ?? []) {
+    const before = clips.length;
     place(
       {
         id: track.id,
@@ -75,6 +99,19 @@ export function planAudioClips(
       track.assetId,
       track.durationMs ?? total - track.startMs,
     );
+    const placed = clips[before];
+    if (placed && track.kind === "music" && track.duckDb !== undefined && track.duckDb < 0) {
+      ducked.push({ clip: placed, duckDb: track.duckDb });
+    }
+  }
+  if (ducked.length > 0) {
+    const speech = speechSpans(clips);
+    for (const { clip, duckDb } of ducked) {
+      const spans = speech
+        .map((s) => ({ startMs: s.startMs - clip.startMs, endMs: s.endMs - clip.startMs }))
+        .filter((s) => s.endMs + DUCK_RELEASE_MS > 0 && s.startMs - DUCK_ATTACK_MS < clip.durationMs);
+      if (spans.length > 0) clip.duck = { gain: 10 ** (duckDb / 20), spans };
+    }
   }
 
   const scenes = new Map(ir.scenes.map((s) => [s.id, s]));
@@ -100,7 +137,43 @@ export function planAudioClips(
   return clips;
 }
 
+/** Absolute stretches where voiceover or dialogue plays, merged when the music could not recover between. */
+function speechSpans(clips: readonly AudioClip[]): Array<{ startMs: number; endMs: number }> {
+  const spans = clips
+    .filter((c) => c.kind === "voiceover" || c.kind === "dialogue")
+    .map((c) => ({ startMs: c.startMs, endMs: c.startMs + c.durationMs }))
+    .sort((a, b) => a.startMs - b.startMs);
+  const merged: Array<{ startMs: number; endMs: number }> = [];
+  for (const span of spans) {
+    const last = merged.at(-1);
+    if (last && span.startMs - last.endMs < DUCK_ATTACK_MS + DUCK_RELEASE_MS) {
+      last.endMs = Math.max(last.endMs, span.endMs);
+    } else {
+      merged.push({ ...span });
+    }
+  }
+  return merged;
+}
+
 const sec = (ms: number) => (ms / 1000).toFixed(3);
+
+/**
+ * FFmpeg `volume` filter that follows a duck envelope over clip-local time `t`: full level outside the
+ * spans, `gain` inside, linear ramps of attack before and release after each span. Spans are far enough
+ * apart that their ramps never overlap, so the per-span depths add up to at most 1. The expression is
+ * quoted so its commas stay inside the filter.
+ */
+function duckFilter(duck: AudioDuck): string {
+  const att = sec(DUCK_ATTACK_MS);
+  const rel = sec(DUCK_RELEASE_MS);
+  const depth = duck.spans
+    .map(
+      (s) =>
+        `clip(min((t-${sec(s.startMs - DUCK_ATTACK_MS)})/${att},(${sec(s.endMs + DUCK_RELEASE_MS)}-t)/${rel}),0,1)`,
+    )
+    .join("+");
+  return `volume=volume='1-${(1 - duck.gain).toFixed(4)}*(${depth})':eval=frame`;
+}
 
 /**
  * filter_complex that places every clip (input i = clips[i]) and sums them without normalisation, so a
@@ -117,6 +190,9 @@ export function audioMixGraph(clips: readonly AudioClip[], totalMs: number): str
       ...(rate !== 1 ? [`atempo=${rate.toFixed(4)}`] : []),
       `aformat=sample_fmts=fltp:sample_rates=${MIX_SAMPLE_RATE}:channel_layouts=stereo`,
       `volume=${clip.volume.toFixed(4)}`,
+      // After atrim/asetpts (and atempo) the frame time is clip-local timeline time, as the spans are. The
+      // gain is set once per frame, so short frames keep the ramps smooth instead of stepping audibly.
+      ...(clip.duck ? [`asetnsamples=n=${DUCK_FRAME_SAMPLES}:p=0`, duckFilter(clip.duck)] : []),
     ];
     if (clip.fadeInMs > 0) filters.push(`afade=t=in:st=0:d=${sec(clip.fadeInMs)}`);
     if (clip.fadeOutMs > 0)

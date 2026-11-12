@@ -13,6 +13,7 @@ import {
   type ClaudeQueryOptions,
   type ClaudeSessionRequest,
   type ClaudeSpawnedProcess,
+  type ClaudeUserMessage,
   classifyClaudeFailure,
   createClaudeAgentRuntime,
   createClaudeSdkTransport,
@@ -49,6 +50,8 @@ class FakeChild extends EventEmitter {
 interface Harness {
   options: ClaudeQueryOptions[];
   prompts: string[];
+  /** Streamed user messages, when the prompt carried images. */
+  messages: ClaudeUserMessage[];
   children: FakeChild[];
 }
 
@@ -60,7 +63,7 @@ function harness(
   messages: ClaudeMessage[] | ((h: Harness) => AsyncGenerator<ClaudeMessage>),
   opts: { ignoreKill?: boolean; spawnFails?: boolean; exitOnAbort?: boolean } = {},
 ) {
-  const h: Harness = { options: [], prompts: [], children: [] };
+  const h: Harness = { options: [], prompts: [], messages: [], children: [] };
   const transport = createClaudeSdkTransport({
     sandboxRoot,
     spawnProcess: () => {
@@ -75,7 +78,11 @@ function harness(
     },
     query: ({ prompt, options }) => {
       h.options.push(options);
-      h.prompts.push(prompt);
+      if (typeof prompt === "string") h.prompts.push(prompt);
+      else
+        void (async () => {
+          for await (const m of prompt) h.messages.push(m);
+        })();
       options.spawnClaudeCodeProcess({
         command: "claude",
         args: [],
@@ -446,6 +453,21 @@ describe("claude SDK transport", () => {
     expect(err.message).not.toContain(sandboxRoot);
     expect(JSON.stringify(err.details)).not.toContain(KEY);
     await session.closed;
+  });
+
+  it("sends images as base64 blocks after the text prompt in one user message", async () => {
+    const { h, transport } = harness([result()]);
+    const session = transport.start(request({ images: [{ mimeType: "image/png", data: "iVBORw0KGgo=" }] }));
+    await collect(session.events);
+    await session.closed;
+    expect(h.prompts).toEqual([]);
+    expect(h.messages).toHaveLength(1);
+    const [text, image] = h.messages[0]!.message.content;
+    expect(text).toMatchObject({ type: "text", text: expect.stringContaining('{"brief":"coffee"}') });
+    expect(image).toEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+    });
   });
 
   it("keeps user input inside the untrusted block", async () => {

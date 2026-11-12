@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentInputImage } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { agentCapError } from "./bounded-agent-runtime.ts";
 import type {
@@ -87,8 +88,21 @@ interface ClaudeUsage {
   cache_read_input_tokens?: number;
 }
 
+/** A streamed user turn, the SDK's `SDKUserMessage`: how a prompt carries image blocks. */
+export interface ClaudeUserMessage {
+  type: "user";
+  message: { role: "user"; content: ClaudeUserContent[] };
+  parent_tool_use_id: null;
+  session_id: string;
+}
+
+export type ClaudeUserContent =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: AgentInputImage["mimeType"]; data: string } };
+
 export type ClaudeQueryFn = (params: {
-  prompt: string;
+  /** Plain text, or one streamed user message when the prompt carries images. */
+  prompt: string | AsyncIterable<ClaudeUserMessage>;
   options: ClaudeQueryOptions;
 }) => AsyncIterable<ClaudeMessage> | Promise<AsyncIterable<ClaudeMessage>>;
 
@@ -124,7 +138,7 @@ export function loadClaudeSdkQuery(): ClaudeQueryFn {
   return async ({ prompt, options }) => {
     const sdk = await import("@anthropic-ai/claude-agent-sdk");
     const query = sdk.query as unknown as (params: {
-      prompt: string;
+      prompt: string | AsyncIterable<ClaudeUserMessage>;
       options: unknown;
     }) => AsyncIterable<ClaudeMessage>;
     return query({ prompt, options });
@@ -148,6 +162,30 @@ function buildPrompt(request: ClaudeSessionRequest): string {
     JSON.stringify(request.input).replace(/</g, "\\u003c"),
     "</input>",
   ].join("\n");
+}
+
+/** The prompt as the SDK takes it: the text alone, or the text followed by the images in one user turn. */
+function claudePromptOf(request: ClaudeSessionRequest): string | AsyncIterable<ClaudeUserMessage> {
+  const text = buildPrompt(request);
+  if (!request.images?.length) return text;
+  const message: ClaudeUserMessage = {
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        { type: "text", text },
+        ...request.images.map((image) => ({
+          type: "image" as const,
+          source: { type: "base64" as const, media_type: image.mimeType, data: image.data },
+        })),
+      ],
+    },
+    parent_tool_use_id: null,
+    session_id: "",
+  };
+  return (async function* () {
+    yield message;
+  })();
 }
 
 const CHECK_SETTINGS = "Replace or re-test the Anthropic API key in Settings → AI & Providers.";
@@ -346,7 +384,7 @@ export function createClaudeSdkTransport(options: ClaudeSdkTransportOptions = {}
 
       async function* events(): AsyncGenerator<ClaudeAgentEvent> {
         try {
-          const stream = await query({ prompt: buildPrompt(request), options: queryOptions });
+          const stream = await query({ prompt: claudePromptOf(request), options: queryOptions });
           // The SDK counts the structured-output round as an extra turn; the cap is on model calls.
           const calls = new Map<string, ClaudeUsage | undefined>();
           let anonymous = 0;

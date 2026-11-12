@@ -85,25 +85,28 @@ export function motionDepthFor(
   };
 }
 
-/** Transition vocabulary per tempo, with the length of each transition. */
-const TRANSITIONS: Record<"calm" | "steady" | "lively", { kinds: readonly TransitionKind[]; ms: number }> = {
-  calm: { kinds: ["fade", "iris", "wipe"], ms: 500 },
-  steady: { kinds: ["slide", "wipe", "iris"], ms: 350 },
-  lively: { kinds: ["zoom", "whip", "wipe"], ms: 250 },
+/** Transition vocabulary per tempo, for the cuts between messages; the style preset's cut sets their length. */
+const TRANSITIONS: Record<"calm" | "steady" | "lively", { kinds: readonly TransitionKind[] }> = {
+  calm: { kinds: ["fade", "iris", "wipe"] },
+  steady: { kinds: ["slide", "wipe", "iris"] },
+  lively: { kinds: ["zoom", "whip", "wipe"] },
 };
 
 /**
- * The transition out of each card but the last: the cut into the call to action is the style's signature
- * transition (its first), the hook hard-cuts into the first message on a match cut (the motif carries the
- * eye across), and the cuts between messages take turns through the rest of the style's vocabulary, so no
- * two adjacent cuts repeat.
+ * The transition out of each card but the last: the cut into the call to action is the style preset's
+ * signature transition (`pacing.transition`), the hook hard-cuts into the first message on a match cut (the
+ * motif carries the eye across), and the cuts between messages take turns through the rest of the tempo's
+ * vocabulary at the preset's length, so no two adjacent cuts repeat. A preset that hard-cuts cuts everywhere.
  */
 export function planTransitions(cards: number, style: MotionStyleProfile): SceneTransition[] {
-  const { kinds, ms } = TRANSITIONS[tempo(style.energy)];
-  const between = kinds.slice(1);
+  // The style preset's own cut is the signature and sets the length; a preset that hard-cuts never dissolves.
+  const signature = style.pacing.transition;
+  const ms = signature.durationMs;
+  const between = TRANSITIONS[tempo(style.energy)].kinds.filter((k) => k !== signature.kind);
   return Array.from({ length: Math.max(0, cards - 1) }, (_, i): SceneTransition => {
-    if (i === cards - 2) return { kind: kinds[0] as TransitionKind, durationMs: ms };
+    if (i === cards - 2) return signature;
     if (i === 0) return { kind: "match-cut", durationMs: 0 };
+    if (signature.kind === "cut") return signature;
     return { kind: between[(i - 1) % between.length] as TransitionKind, durationMs: ms };
   });
 }

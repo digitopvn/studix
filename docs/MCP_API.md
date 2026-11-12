@@ -166,7 +166,12 @@ Behavior notes:
   brief's aspect ratio, duration within 0.5 s of the brief, audible voice-over, -16 LUFS +/-2 with
   true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
   each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
-- `roles: {director?, builder?, qa?}` (`skill-agent` only, each an `agent` object from any catalogue
+- `motion-graphic` takes `roles.director` only: it turns on the premium tier (the director writes the
+  storyboard under larger caps and may author 2-3 hero cards as allowlisted HTML/CSS plus declarative tweens, no agent code; each kept only when it
+  passes the HTML-card safety rules and the HyperFrames linter, else the built-in card stays and the
+  `motion-graphic.heroes` stage records a `warning`). Other roles with `motion-graphic` are refused with
+  `VALIDATION`.
+- `roles: {director?, builder?, qa?}` (`skill-agent`, each an `agent` object from any catalogue
   runtime and model, e.g. `pi` + `deepseek-v4.1-flash` as builder): the director writes the script and
   direction first; the builder makes the video (default: the job's `agent`); QA watches each render,
   scores taste, motion, brief and audio 0-10 and sends it back with notes below 7, at most 3 rounds.
@@ -247,13 +252,23 @@ Behavior notes:
   when the agent writes the storyboard, one soft whoosh (generated once) on every cut except the one into the CTA card, one SFX accent where
   the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
-  for one. Each storyboard beat may name a typed `layout` (a prompt being typed,
+  for one. The bed is composed as intro, build and a drop on the CTA card, dips
+  under the voice, and its beats are found locally: cuts move onto a near
+  downbeat (or beat) wherever every card keeps room for its line. Each card's
+  headline and layout enter on the words the voice says them with (ElevenLabs
+  word timestamps, else estimated); `metadata.beatSync` and `metadata.wordSync`
+  report what was synced. Each storyboard beat may name a typed `layout` (a prompt being typed,
   code lines, chips wired to a hub, a checklist, a rolling counter, a row of
   cards, colour swatches, a stat, or a product UI device: a chat window typing a
   prompt and its reply, a tool-call card spinning on "running" then done, a job
   pipeline lit up to its running stage, a preview player pressed to Approve, a
   usage meter filling to its cap) that the card draws under its headline; the
-  `visual` field stays a description. On a 16:9 frame headlines are set at
+  `visual` field stays a description. The style profile is a preset: it locks
+  the palette and fonts (unless the brief has a `brand`), the entrances a card
+  may use, the signature cut and its length, whether the CTA card is filled with
+  the accent and whether cuts get a whoosh. `directions[0].visualStyle` set to a
+  profile id (for example `cinematic-product-launch` or `glass-keynote`) pins
+  that profile. On a 16:9 frame headlines are set at
   display size and layouts drawn larger, so a card fills the frame. Burned
   captions are 44 px at a 1080 px short edge, and a layout is centred above
   them. Every card moves a camera (`push-in`, `pull-back`, `pan-left`,
@@ -263,7 +278,7 @@ Behavior notes:
   shape along the frame edge from card to card: the hook hard-cuts into the
   first message on a match cut, the other cuts vary through the style's
   transitions (`fade`, `slide`, `wipe`, `zoom`, `iris`, `whip`). Cards share the style profile's
-  background; a high-energy profile fills the call-to-action card with its
+  background; a profile whose juice says so fills the call-to-action card with its
   accent. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
   longest spoken lines are shortened. The hook and call-to-action cards and the
@@ -276,7 +291,19 @@ Behavior notes:
   move with them), a line no re-cut can fit is voiced once more, brisker (a line
   that fits its card read up to 1.12x faster is voiced again only when the
   graphic still needs the time), and only speech that cannot fit the whole video fails with `VALIDATION`
-  naming the lines past their cards and by how many milliseconds (`details.lines`).
+  naming the lines past their cards and by how many milliseconds (`details.lines`). The storyboard agent gives every message
+  card a layout device and each spoken line one idea in one sentence. After the
+  render a vision model reviews a contact sheet (one hold frame per card) and
+  scores each card 0 to 10 for `blank`, `too-small`, `illegible`, `repetitive`,
+  `off-brief` or `headline-only`; failed cards (an issue, or a score below 6)
+  go back to the storyboard agent, which redesigns only those cards (their
+  voice-over and timing kept), and the graphic renders again: at most two
+  rounds, only while the job budget holds a review, a redesign and a render.
+  The job result carries the scores as `visualQa` (`status`: `passed`, `fixed`,
+  `failed` or `skipped`, with a `reason`, and `rounds[].cards[]`). The review
+  never fails the job: it is skipped with a reason in host mode, without an
+  agent, when the agent's model cannot read images, or when time before the job
+  deadline runs short; a failed redesign or re-render keeps the last good render.
 - Brand kit for `motion-graphic`: `brief.brandUrl` (the brand's https site),
   `brief.brandLogo` (an https URL or a base64 `data:image/png|jpeg|webp|svg+xml`
   URL, at most 200,000 characters, about 146 KB of image; pass a larger logo as an https URL) and `brief.brandColors` (1 to 4 hex
@@ -285,7 +312,11 @@ Behavior notes:
   (`theme-color`, tile and mask-icon colours; greys dropped) and logo (SVG icon,
   apple-touch-icon, `og:logo`, JSON-LD `logo`, other icons) through the
   SSRF-guarded fetch, and stores the logo (the uploaded one wins; PNG, JPEG,
-  WebP, GIF or SVG checked by its bytes). The brand's name, else the site's,
+  WebP, GIF or SVG checked by its bytes; an SVG with script, event handlers or
+  outside loads, or a raster over 4096 px on an edge or of unreadable size, is
+  refused). The page is
+  read with a linear tag scan, so a hostile page cannot hold the worker, and a
+  base64 logo never reaches any agent's input. The brand's name, else the site's,
   and its logo are drawn as a lockup on the hook and CTA cards. The first
   colour becomes primary and accent, the second secondary; `brandColors` wins
   over `brand.palette`, and site colours are used only when the brief sets
