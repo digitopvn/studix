@@ -40,16 +40,27 @@ const assertPath = (path: string) => {
   return path;
 };
 
+/** Clips one ffmpeg process encodes at once: each x264 encoder holds frames, and sidecars have 1.5 cores. */
+export const SPLIT_BATCH = 3;
+
 /**
- * One ffmpeg run that decodes the film once and writes each scene's frames to its own silent clip. Frames are
- * trimmed by index and re-encoded (a stream copy would cut on keyframes); the intermediate is near-lossless
- * because the final render encodes these frames again.
+ * ffmpeg runs, one after another, that each decode the film once and write up to SPLIT_BATCH scenes' frames to
+ * their own silent clips (2 encoder threads each, so a small sidecar never runs a dozen encoders at once).
+ * Frames are trimmed by index and re-encoded (a stream copy would cut on keyframes); the intermediate is
+ * near-lossless because the final render encodes these frames again.
  */
 export function filmSplitCommand(
   film: string,
   clips: ReadonlyArray<FilmFrameRange & { path: string }>,
 ): string {
   if (clips.length === 0) throw new Error("nothing to split");
+  const runs: string[] = [];
+  for (let i = 0; i < clips.length; i += SPLIT_BATCH)
+    runs.push(splitRun(film, clips.slice(i, i + SPLIT_BATCH)));
+  return runs.join(" && ");
+}
+
+function splitRun(film: string, clips: ReadonlyArray<FilmFrameRange & { path: string }>): string {
   const labels = clips.map((_, i) => `[v${i}]`);
   const graph = [
     `[0:v]split=${clips.length}${labels.join("")}`,
@@ -60,10 +71,10 @@ export function filmSplitCommand(
   const outputs = clips
     .map(
       (c, i) =>
-        `-map "[o${i}]" -an -c:v libx264 -preset veryfast -crf 12 -pix_fmt yuv420p -movflags +faststart ${assertPath(c.path)}`,
+        `-map "[o${i}]" -an -c:v libx264 -threads 2 -preset veryfast -crf 12 -pix_fmt yuv420p -movflags +faststart ${assertPath(c.path)}`,
     )
     .join(" ");
-  return `ffmpeg -v error -y -i ${assertPath(film)} -filter_complex "${graph}" ${outputs}`;
+  return `ffmpeg -v error -y -filter_complex_threads 1 -i ${assertPath(film)} -filter_complex "${graph}" ${outputs}`;
 }
 
 /** Frames measured around each cut: this many before and after it. */
@@ -195,6 +206,8 @@ const Finding = z
     message: z.string().optional(),
     text: z.string().optional(),
     time: z.number().optional(),
+    snippet: z.string().optional(),
+    line: z.number().optional(),
   })
   .passthrough();
 const Section = z
@@ -215,59 +228,137 @@ export interface FilmCheckVerdict {
   errors: Map<string, string[]>;
   /** Advisory layout problems per scene id (text cut at the frame edge), as `frameClippingProblems` words them. */
   layout: Map<string, string[]>;
-  /** Blocking errors no scene could be named for: the whole film falls back. */
+  /** Blocking errors no scene could be named for and no per-scene lint can place: the whole film falls back. */
   film: string[];
+  /** Lint errors no scene could be named for: the caller lints each scene on its own before giving up. */
+  unplacedLint: string[];
   /** Whether the report could be read at all. */
   readable: boolean;
 }
 
+/** A scene as the attribution sees it: its window (s) and, when known, the fragment it was built from. */
+export interface FilmCheckScene {
+  sid: string;
+  start: number;
+  end: number;
+  fragment?: { html: string; css: string; js: string };
+}
+
 /**
- * Attributes the findings of `hyperframes check --json` on the film composition to scenes: by a selector
- * inside a scene's section (`#sc-<sid>`), then by the `[studix-scene <sid>]` tag the v2 shell logs when a
- * scene throws, then by the time of the finding inside a scene's window. Only lint and runtime errors block.
+ * One-based line ranges of each scene's parts (section, css, js block) in the assembled page, from the markers
+ * the shell writes: `<section id="sc-<sid>"`, `/* <sid> *\/` and `/* scene <sid> *\/`.
+ */
+export function sceneLineRanges(page: string, sids: readonly string[]): Map<string, Array<[number, number]>> {
+  const lines = page.split("\n");
+  const ranges = new Map<string, Array<[number, number]>>();
+  const starts: Array<{ sid: string; at: number }> = [];
+  lines.forEach((l, i) => {
+    for (const sid of sids) {
+      if (
+        l.includes(`<section id="${sceneSectionId(sid)}"`) ||
+        l.trim() === `/* ${sid} */` ||
+        l.startsWith(`/* scene ${sid} */`)
+      )
+        starts.push({ sid, at: i + 1 });
+    }
+  });
+  const ends = (at: number) => {
+    // A part runs until the next part starts or its own closing marker.
+    const next = starts.filter((s) => s.at > at).map((s) => s.at)[0] ?? lines.length + 1;
+    const close = lines.findIndex((l, i) => i + 1 > at && /<\/section>|\/\*SCENE-(?:CSS|JS):END\*\//.test(l));
+    return Math.min(next - 1, close >= 0 ? close + 1 : lines.length);
+  };
+  for (const s of starts) ranges.set(s.sid, [...(ranges.get(s.sid) ?? []), [s.at, ends(s.at)]]);
+  return ranges;
+}
+
+/**
+ * Attributes the findings of `hyperframes check --json` on the film composition to scenes, in order:
+ * - a selector inside a scene's section (`#sc-<sid>`);
+ * - the `[studix-scene <sid>]` tag the v2 shell logs when a scene throws;
+ * - the finding's snippet or selector found in exactly one scene's fragment;
+ * - its line inside one scene's part of the assembled `page`;
+ * - for runtime findings only, a time after load (> 0) inside a scene's window (the last one includes its end).
+ * Only lint and runtime errors block. Lint errors still unplaced go to `unplacedLint`; runtime ones are film-level.
  */
 export function attributeFilmCheck(
   report: unknown,
-  scenes: ReadonlyArray<{ sid: string; start: number; end: number }>,
+  scenes: ReadonlyArray<FilmCheckScene>,
+  page?: string,
 ): FilmCheckVerdict {
-  const verdict: FilmCheckVerdict = { errors: new Map(), layout: new Map(), film: [], readable: false };
+  const verdict: FilmCheckVerdict = {
+    errors: new Map(),
+    layout: new Map(),
+    film: [],
+    unplacedLint: [],
+    readable: false,
+  };
   const parsed = Report.safeParse(report);
   if (!parsed.success || !parsed.data.lint) return verdict;
   verdict.readable = true;
-  const owner = (f: z.infer<typeof Finding>): string | undefined => {
+  const lineRanges = page
+    ? sceneLineRanges(
+        page,
+        scenes.map((s) => s.sid),
+      )
+    : new Map<string, Array<[number, number]>>();
+  const scope = /^#sc-[\w-]+\s*/;
+  const byText = (needle: string | undefined): string | undefined => {
+    const n = needle?.replace(scope, "").trim();
+    if (!n || n.length < 3) return undefined;
+    const hits = scenes.filter(
+      (s) => s.fragment && `${s.fragment.html}\n${s.fragment.css}\n${s.fragment.js}`.includes(n),
+    );
+    return hits.length === 1 ? hits[0]?.sid : undefined;
+  };
+  const owner = (f: z.infer<typeof Finding>, runtime: boolean): string | undefined => {
     const where = `${f.selector ?? ""} ${f.containerSelector ?? ""}`;
     for (const s of scenes) if (where.includes(`#${sceneSectionId(s.sid)}`)) return s.sid;
     const said = `${f.message ?? ""} ${f.text ?? ""}`;
     for (const s of scenes) if (said.includes(`[studix-scene ${s.sid}]`)) return s.sid;
-    if (f.time !== undefined) return scenes.find((s) => f.time! >= s.start && f.time! < s.end)?.sid;
+    const text = byText(f.snippet) ?? byText(f.selector);
+    if (text) return text;
+    if (f.line !== undefined) {
+      const line = f.line;
+      const hit = [...lineRanges.entries()].filter(([, rs]) => rs.some(([a, b]) => line >= a && line <= b));
+      if (hit.length === 1) return hit[0]?.[0];
+    }
+    // A load-time finding (time 0) is the page's, not the first scene's.
+    if (runtime && f.time !== undefined && f.time > 0) {
+      const t = f.time;
+      return scenes.find((s, i) => t >= s.start && (t < s.end || (i === scenes.length - 1 && t <= s.end)))
+        ?.sid;
+    }
     return undefined;
   };
   const push = (map: Map<string, string[]>, sid: string, line: string) =>
     map.set(sid, [...(map.get(sid) ?? []), line]);
+  const total = () =>
+    verdict.film.length + verdict.unplacedLint.length + [...verdict.errors.values()].flat().length;
   for (const [name, section] of [
     ["lint", parsed.data.lint],
     ["runtime", parsed.data.runtime],
   ] as const) {
-    const before = verdict.film.length + [...verdict.errors.values()].flat().length;
+    const before = total();
     for (const raw of section?.findings ?? []) {
       const f = Finding.safeParse(raw);
       if (!f.success || f.data.severity !== "error") continue;
       const line = [f.data.code, f.data.selector, f.data.message].filter(Boolean).join(" ").slice(0, 300);
-      const sid = owner(f.data);
+      const sid = owner(f.data, name === "runtime");
       if (sid) push(verdict.errors, sid, line);
+      else if (name === "lint") verdict.unplacedLint.push(line);
       else verdict.film.push(line);
     }
     // Errors counted but not listed cannot be put on a scene: the whole film falls back, as the scene gate would.
     const counted = section?.errorCount ?? 0;
-    const listed = verdict.film.length + [...verdict.errors.values()].flat().length - before;
-    if (counted > 0 && listed === 0) verdict.film.push(`${name}: ${counted} error(s) without findings`);
+    if (counted > 0 && total() === before) verdict.film.push(`${name}: ${counted} error(s) without findings`);
   }
   // Layout problems per scene: the clipping reader runs on each scene's own findings.
   const layoutFindings = parsed.data.layout?.findings ?? [];
   for (const s of scenes) {
     const own = layoutFindings.filter((raw) => {
       const f = Finding.safeParse(raw);
-      return f.success && owner(f.data) === s.sid;
+      return f.success && owner(f.data, true) === s.sid;
     });
     const problems = frameClippingProblems({ layout: { findings: own } });
     if (problems.length > 0) verdict.layout.set(s.sid, problems);

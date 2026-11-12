@@ -191,7 +191,7 @@ function sceneBlock(sid: string, sectionId: string, js: string, version: number)
       "const B = ((k) => (n) => T.beat0 + T.beatLen * (k + n))(Math.max(0, Math.ceil((t0 - T.beat0) / T.beatLen - 1e-6)));",
       "try {",
       js,
-      '} catch (e) { console.error("[studix-scene " + sid + "] " + String((e && e.message) || e)); if (!T.options.isolate) throw e; }',
+      '} catch (e) { console.error("[studix-scene " + sid + "] " + String((e && e.message) || e)); if (!T.options.isolate) throw e; const own = $(S); if (own) own.remove(); }',
       "} }",
     ].join("\n");
   }

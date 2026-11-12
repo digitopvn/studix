@@ -8,11 +8,13 @@ import {
   cutFrames,
   cutLumaCommand,
   type DirectorMark,
+  type DirectorProject,
   type DirectorTiming,
   type FilmCheckVerdict,
   type FilmFrameRange,
   filmFrameRanges,
   filmSplitCommand,
+  lintDirectorPage,
   parseCutLuma,
   resolvePalette,
   scenesThrownInLog,
@@ -35,22 +37,51 @@ import { sceneWindows } from "./motion-graphic-director-timing.ts";
 export const EXPECTED_SCENE_CENTS = 15;
 /** Builders authoring at once. */
 export const BUILD_CONCURRENCY = 5;
-/** Most wall time of the film check (run 1) and the film render with its split (run 2). */
-export const FILM_CHECK_TIMEOUT_SECONDS = 600;
-export const FILM_RENDER_TIMEOUT_SECONDS = 1200;
 /**
- * Expected wall time of both sandbox runs: two start-ups plus about 12 s per film second for the check and the
- * render (the final render runs at about 9 s per film second on prod hardware; sidecars run on 1.5 cores).
+ * Sandbox wall time of the two film runs, per second of film at 1080p 30 fps (scaled by frame size and rate):
+ * the timeouts are conservative bounds (sidecars run on 1.5 cores), the expected times are what admission and
+ * the re-gate before the render plan with. Each run also pays one start-up.
  */
-export const filmSandboxMsEstimate = (filmMs: number) => 2 * 60_000 + 12 * filmMs;
+export const FILM_RUN_STARTUP_SECONDS = 60;
+export const FILM_CHECK_SECONDS_PER_FILM_SECOND = { bound: 10, expected: 5 };
+export const FILM_RENDER_SECONDS_PER_FILM_SECOND = { bound: 40, expected: 15 };
+/** The sandbox never runs longer than this (the composition runner's cap). */
+export const FILM_MAX_RUN_SECONDS = 3600;
+
+/** Length, frame size and rate of a film: all its sandbox estimates scale from these. */
+export type FilmFormat = Pick<VideoIR["format"], "durationMs" | "width" | "height" | "fps">;
+
+/** Film seconds weighted by frame size and rate against 1080p 30 fps. */
+function filmLoad(f: FilmFormat): number {
+  const pixels = (f.width * f.height) / (1920 * 1080);
+  return (f.durationMs / 1000) * pixels * (f.fps / 30);
+}
+const runSeconds = (f: FilmFormat, perFilmSecond: number) =>
+  Math.ceil(FILM_RUN_STARTUP_SECONDS + perFilmSecond * filmLoad(f));
+
+/** Timeout of the film check (run 1) and of the film render with its split (run 2). */
+export const filmCheckTimeoutSeconds = (f: FilmFormat) =>
+  runSeconds(f, FILM_CHECK_SECONDS_PER_FILM_SECOND.bound);
+export const filmRenderTimeoutSeconds = (f: FilmFormat) =>
+  runSeconds(f, FILM_RENDER_SECONDS_PER_FILM_SECOND.bound);
+/** Expected wall time of the film render alone and of both sandbox runs. */
+export const filmRenderMsEstimate = (f: FilmFormat) =>
+  runSeconds(f, FILM_RENDER_SECONDS_PER_FILM_SECOND.expected) * 1000;
+export const filmSandboxMsEstimate = (f: FilmFormat) =>
+  runSeconds(f, FILM_CHECK_SECONDS_PER_FILM_SECOND.expected) * 1000 + filmRenderMsEstimate(f);
+/** Whether the render's bound fits under the sandbox cap; a longer film never enters film mode. */
+export const filmFitsSandbox = (f: FilmFormat) => filmRenderTimeoutSeconds(f) <= FILM_MAX_RUN_SECONDS;
 
 const cpm = (s: StageContext) => s.services.compositions?.centsPerMinute ?? 0;
 /** The most the film check may cost. */
-export const filmCheckCents = (s: StageContext) => Math.ceil(FILM_CHECK_TIMEOUT_SECONDS / 60) * cpm(s);
+export const filmCheckCents = (s: StageContext, f: FilmFormat) =>
+  Math.ceil(filmCheckTimeoutSeconds(f) / 60) * cpm(s);
 /** The most the film render may cost. */
-export const filmRenderCents = (s: StageContext) => Math.ceil(FILM_RENDER_TIMEOUT_SECONDS / 60) * cpm(s);
+export const filmRenderCents = (s: StageContext, f: FilmFormat) =>
+  Math.ceil(filmRenderTimeoutSeconds(f) / 60) * cpm(s);
 /** Both sandbox runs: what the fan-out never spends. */
-export const filmSandboxCents = (s: StageContext) => filmCheckCents(s) + filmRenderCents(s);
+export const filmSandboxCents = (s: StageContext, f: FilmFormat) =>
+  filmCheckCents(s, f) + filmRenderCents(s, f);
 
 /** Runs `fn` over `items` with at most `limit` in flight, keeping the order of the results. */
 export async function mapLimit<T, R>(
@@ -60,14 +91,26 @@ export async function mapLimit<T, R>(
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
+  let failed = false;
   const worker = async () => {
-    for (;;) {
+    // After a failure no new item starts; the ones in flight settle before the first error is rethrown, so
+    // nothing they spend goes unbooked.
+    while (!failed) {
       const i = next++;
       if (i >= items.length) return;
-      out[i] = await fn(items[i] as T, i);
+      try {
+        out[i] = await fn(items[i] as T, i);
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  const settled = await Promise.allSettled(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker),
+  );
+  const rejected = settled.find((r) => r.status === "rejected");
+  if (rejected) throw rejected.reason;
   return out;
 }
 
@@ -166,36 +209,34 @@ export interface FilmJob {
   data: Record<string, unknown>;
   /** Fragment files stored with the tree (`scenes/<sid>.scene.html`), path -> text. */
   fragments: Map<string, string>;
-  /** Seconds the sandbox may still use before the job deadline; caps each run's timeout. */
+  /** Seconds the sandbox may still use before the job deadline (the final render and margin kept); caps each run. */
   secondsLeft: () => number;
 }
 
 const encoder = new TextEncoder();
 
 /**
- * The film composition of `scenes` as composition tree files. The check run isolates scenes (one that throws is
- * logged and skipped, so every broken scene is named) and stores everything; the render run does not isolate, so
- * a scene that still throws fails the render instead of shipping half built, and stores only the page.
+ * The film composition of `scenes` as composition tree files. Both runs isolate scenes: one that throws is logged
+ * (`[studix-scene <sid>]`) and its section removed, so it is named and dropped alone instead of costing the
+ * film. The check run stores everything; the render run stores only the page.
  */
-async function filmFiles(
-  job: FilmJob,
-  scenes: ReadonlyArray<{ sid: string; checked: CheckedSceneFragment }>,
-  run: "check" | "render",
-) {
-  const withData = run === "check";
-  const project = buildDirectorProject({
+function filmPage(job: FilmJob, scenes: ReadonlyArray<{ sid: string; checked: CheckedSceneFragment }>) {
+  return buildDirectorProject({
     width: job.ir.format.width,
     height: job.ir.format.height,
-    timing: { ...job.timing, options: { ...job.timing.options, isolate: withData } },
+    timing: { ...job.timing, options: { ...job.timing.options, isolate: true } },
     theme: directorTheme(job.ir, job.shell.filmAccent),
     scenes: scenes.map((s) => ({ sid: s.sid, fragment: s.checked })),
     shellVersion: job.shell.shellVersion,
     mark: job.mark,
     ...(job.shell.markName ? { markName: job.shell.markName } : {}),
   });
+}
+
+async function filmFiles(job: FilmJob, project: DirectorProject, run: "check" | "render") {
   const files: Array<{ path: string; body: Uint8Array }> = [];
   for (const [path, text] of project.files) files.push({ path, body: encoder.encode(text) });
-  if (!withData) return files;
+  if (run === "render") return files;
   for (const [path, source] of project.copies)
     files.push({ path, body: new Uint8Array(await readFile(source)) });
   for (const [path, text] of job.fragments) files.push({ path, body: encoder.encode(text) });
@@ -224,8 +265,8 @@ function bookRun(
   });
 }
 
-const timeoutWithin = (cap: number, secondsLeft: number) =>
-  Math.max(60, Math.min(cap, Math.floor(secondsLeft)));
+/** A run's timeout: its bound, never past the deadline. */
+const timeoutWithin = (cap: number, secondsLeft: number) => Math.min(cap, Math.floor(secondsLeft));
 
 async function readTree(s: StageContext, compositionId: string, path: string): Promise<string | undefined> {
   try {
@@ -234,6 +275,34 @@ async function readTree(s: StageContext, compositionId: string, path: string): P
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Lint errors the film's report could not tie to a scene: each scene is linted alone on its own page (in the
+ * worker, no sandbox), and a scene with an error of its own falls back to its card. Only when no scene errs alone
+ * is the error the film's (the shell's), and the film keeps its cards.
+ */
+async function placeUnplacedLint(
+  job: FilmJob,
+  scenes: ReadonlyArray<{ sid: string; checked: CheckedSceneFragment }>,
+  verdict: FilmCheckVerdict,
+) {
+  if (verdict.unplacedLint.length === 0) return;
+  let placed = false;
+  for (const sc of scenes) {
+    const page = filmPage(job, [sc]).files.get("index.html") ?? "";
+    let errors: string[];
+    try {
+      errors = await lintDirectorPage(page);
+    } catch (err) {
+      errors = [`lint failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300)];
+    }
+    if (errors.length === 0) continue;
+    placed = true;
+    verdict.errors.set(sc.sid, [...(verdict.errors.get(sc.sid) ?? []), ...errors]);
+  }
+  if (!placed) verdict.film.push(...verdict.unplacedLint);
+  verdict.unplacedLint = [];
 }
 
 /**
@@ -246,8 +315,9 @@ export async function checkFilm(
   scenes: ReadonlyArray<{ sid: string; checked: CheckedSceneFragment }>,
 ): Promise<{ verdict: FilmCheckVerdict; seconds: number }> {
   const s = booked();
-  await storeTree(s, job.compositionId, await filmFiles(job, scenes, "check"));
-  const timeoutSeconds = timeoutWithin(FILM_CHECK_TIMEOUT_SECONDS, job.secondsLeft());
+  const project = filmPage(job, scenes);
+  await storeTree(s, job.compositionId, await filmFiles(job, project, "check"));
+  const timeoutSeconds = timeoutWithin(filmCheckTimeoutSeconds(job.ir.format), job.secondsLeft());
   const run = await s.services.compositions!.runner.run(booked(), {
     compositionId: job.compositionId,
     // The check exits 1 on any error finding; the report is read back and attributed, never the exit code.
@@ -267,9 +337,17 @@ export async function checkFilm(
     report,
     scenes.map((sc) => {
       const w = windows.find((x) => x.id === sc.sid);
-      return { sid: sc.sid, start: (w?.startMs ?? 0) / 1000, end: (w?.endMs ?? 0) / 1000 };
+      const { section: html, css, js } = sc.checked;
+      return {
+        sid: sc.sid,
+        start: (w?.startMs ?? 0) / 1000,
+        end: (w?.endMs ?? 0) / 1000,
+        fragment: { html, css, js },
+      };
     }),
+    project.files.get("index.html"),
   );
+  await placeUnplacedLint(job, scenes, verdict);
   for (const sid of scenesThrownInLog(
     run.log,
     scenes.map((sc) => sc.sid),
@@ -303,18 +381,18 @@ export async function renderFilm(
   scenes: ReadonlyArray<{ sid: string; checked: CheckedSceneFragment }>,
 ): Promise<FilmRender> {
   const s = booked();
-  await storeTree(s, job.compositionId, await filmFiles(job, scenes, "render"));
+  await storeTree(s, job.compositionId, await filmFiles(job, filmPage(job, scenes), "render"));
   const filmMs = sceneWindows(job.ir).at(-1)?.endMs ?? job.ir.format.durationMs;
   const ranges = filmFrameRanges(sceneWindows(job.ir), job.ir.format.fps);
   const wanted = new Set(scenes.map((sc) => sc.sid));
   const clips = ranges
     .filter((r) => wanted.has(r.sid))
     .map((r): FilmFrameRange & { path: string } => ({ ...r, path: clipPath(r.sid) }));
-  const timeoutSeconds = timeoutWithin(FILM_RENDER_TIMEOUT_SECONDS, job.secondsLeft());
+  const timeoutSeconds = timeoutWithin(filmRenderTimeoutSeconds(job.ir.format), job.secondsLeft());
   const run = await s.services.compositions!.runner.run(booked(), {
     compositionId: job.compositionId,
     command:
-      `mkdir -p out && hyperframes render . -o ${FILM_RENDER} --quiet && ${filmSplitCommand(FILM_RENDER, clips)}` +
+      `mkdir -p out && hyperframes render . -o ${FILM_RENDER} && ${filmSplitCommand(FILM_RENDER, clips)}` +
       ` && { ${cutLumaCommand(FILM_RENDER, cutFrames(ranges), FILM_LUMA)} || true; }`,
     timeoutSeconds,
     check: {

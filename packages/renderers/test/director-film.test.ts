@@ -45,12 +45,18 @@ describe("film split", () => {
       [ranges[0], ranges[2]].map((r) => ({ ...r!, path: `out/${r!.sid}.mp4` })),
     );
     expect(cmd).toBe(
-      'ffmpeg -v error -y -i out/film.mp4 -filter_complex "[0:v]split=2[v0][v1];' +
+      'ffmpeg -v error -y -filter_complex_threads 1 -i out/film.mp4 -filter_complex "[0:v]split=2[v0][v1];' +
         "[v0]trim=start_frame=0:end_frame=61,setpts=PTS-STARTPTS[o0];" +
         '[v1]trim=start_frame=150:end_frame=240,setpts=PTS-STARTPTS[o1]" ' +
-        '-map "[o0]" -an -c:v libx264 -preset veryfast -crf 12 -pix_fmt yuv420p -movflags +faststart out/s01.mp4 ' +
-        '-map "[o1]" -an -c:v libx264 -preset veryfast -crf 12 -pix_fmt yuv420p -movflags +faststart out/s03.mp4',
+        '-map "[o0]" -an -c:v libx264 -threads 2 -preset veryfast -crf 12 -pix_fmt yuv420p -movflags +faststart out/s01.mp4 ' +
+        '-map "[o1]" -an -c:v libx264 -threads 2 -preset veryfast -crf 12 -pix_fmt yuv420p -movflags +faststart out/s03.mp4',
     );
+    // More clips than one batch encodes run as sequential ffmpeg calls, a few encoders at a time.
+    const many = filmSplitCommand(
+      "out/film.mp4",
+      ranges.concat(ranges).map((r, i) => ({ ...r, path: `out/c${i}.mp4` })),
+    );
+    expect(many.split(" && ffmpeg ").length).toBe(Math.ceil((ranges.length * 2) / 3));
     expect(cmd).not.toContain("-c copy");
     expect(() => filmSplitCommand("out/a b.mp4", [{ ...ranges[0]!, path: "out/x.mp4" }])).toThrow();
   });
@@ -152,6 +158,45 @@ describe("film check attribution", () => {
     expect(verdict.film).toEqual(["page_error shell broke"]);
     expect(verdict.layout.get("s02")?.[0]).toContain('"Your film"');
     expect(verdict.layout.has("s01")).toBe(false);
+  });
+
+  it("places unscoped findings by snippet or page line, never blames scene 1 for load time", () => {
+    const withFragments = [
+      {
+        ...scenes[0]!,
+        fragment: { html: '<div class="a"></div>', css: "", js: "tl.to('.a', { x: 1 }, B);" },
+      },
+      {
+        ...scenes[1]!,
+        fragment: { html: '<div class="b"></div>', css: "", js: "tl.to('.zzz', { y: 2 }, B);" },
+      },
+    ];
+    const page = [
+      "<body>",
+      '<section id="sc-s01" class="scene">',
+      '<div class="a"></div>',
+      "</section>",
+      '<section id="sc-s02" class="scene">',
+      '<div class="b"></div>',
+      "</section>",
+      "</body>",
+    ].join("\n");
+    const verdict = attributeFilmCheck(
+      {
+        lint: section([
+          { code: "missing_target", severity: "error", message: "m", snippet: "tl.to('.zzz', { y: 2 }, B);" },
+          { code: "bad_markup", severity: "error", message: "n", line: 3 },
+          { code: "shell_rule", severity: "error", message: "o" },
+        ]),
+        runtime: section([{ code: "console_error", severity: "error", time: 0, message: "early" }]),
+      },
+      withFragments,
+      page,
+    );
+    expect(verdict.errors.get("s02")).toEqual(["missing_target m"]);
+    expect(verdict.errors.get("s01")).toEqual(["bad_markup n"]);
+    expect(verdict.unplacedLint).toEqual(["shell_rule o"]);
+    expect(verdict.film).toEqual(["console_error early"]);
   });
 
   it("fails the whole film on errors the report counts but does not list", () => {

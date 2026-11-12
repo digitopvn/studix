@@ -89,6 +89,7 @@ export {
   CUT_FRAMES,
   cutFrames,
   cutLumaCommand,
+  type FilmCheckScene,
   type FilmCheckVerdict,
   type FilmFrameRange,
   type FilmWindow,
@@ -98,8 +99,10 @@ export {
   hexLuma,
   isBlankFrame,
   parseCutLuma,
+  sceneLineRanges,
   scenesThrownInLog,
 } from "./hyperframes/director/director-film.ts";
+export { lintDirectorPage } from "./hyperframes/director/director-lint.ts";
 export {
   type DirectorMark,
   logoSymbol,

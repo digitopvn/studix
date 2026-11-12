@@ -23,7 +23,16 @@ import {
 } from "../src/index.ts";
 import { CHECK_GATE_JS, checkFailureSummary } from "../src/motion-graphic/motion-graphic-director-clip.ts";
 import { FILM_EXEMPLARS } from "../src/motion-graphic/motion-graphic-director-exemplars.ts";
-import { authorScenes, createBuildGrants } from "../src/motion-graphic/motion-graphic-director-film.ts";
+import {
+  authorScenes,
+  createBuildGrants,
+  filmCheckTimeoutSeconds,
+  filmFitsSandbox,
+  filmRenderTimeoutSeconds,
+  filmSandboxCents,
+  filmSandboxMsEstimate,
+  mapLimit,
+} from "../src/motion-graphic/motion-graphic-director-film.ts";
 
 // The contact sheet is drawn with ffmpeg; here it is any file the reviewer is sent.
 vi.mock("@studix/renderers", async (importOriginal) => ({
@@ -359,14 +368,15 @@ describe("motion-graphic film mode", () => {
     expect(runs[0]?.command).toBe(
       "mkdir -p out && { hyperframes check . --json > out/film-check.json || true; }",
     );
-    expect(runs[1]?.timeoutSeconds).toBe(1200);
+    expect(runs[1]?.timeoutSeconds).toBe(filmRenderTimeoutSeconds(ir.format));
+    expect(runs[1]?.command).not.toContain("--quiet");
     expect(runs[1]?.check).toMatchObject({ path: "out/film.mp4", durationMs: ir.format.durationMs });
     for (const id of ids) expect(runs[1]?.command).toContain(`faststart out/${id}.mp4`);
     const tree = `compositions/${runs[0]?.compositionId}/files/`;
     const page = new TextDecoder().decode(objects.get(`${tree}index.html`));
     expect(page).toContain('<div id="chrome" class="layer">');
-    // The page left in the tree is the render's: a scene that throws there fails the render, not ships.
-    expect(page).toContain('"isolate":false');
+    // The render isolates scenes too: one that throws is logged and dropped alone, not the film.
+    expect(page).toContain('"isolate":true');
     for (const id of ids) {
       expect(page).toContain(`<section id="sc-${id}"`);
       expect(objects.has(`${tree}scenes/${id}.scene.html`)).toBe(true);
@@ -503,15 +513,69 @@ describe("motion-graphic film mode", () => {
     expect(out.warning).toMatch(/mid-1 shows a blank frame at a cut/);
   });
 
+  it("skips the tier before the director is paid when the deadline cannot hold it, and says so", async () => {
+    const { s, ir, tasks, runs } = await setup();
+    const near = { ...s, job: { ...s.job, deadlineAt: new Date(Date.now() + 10 * 60_000) } } as StageContext;
+    expect(await motionGraphicDirectorStage.estimateCostCents?.(near)).toBe(0);
+    const out = (await motionGraphicDirectorStage.run(near)).output as Out;
+    expect(out.ir).toEqual(ir);
+    expect(out.warning).toMatch(/Director tier skipped: .*deadlineSeconds/);
+    expect(tasks).toEqual([]);
+    expect(runs).toEqual([]);
+  });
+
+  it("keeps the card of a scene whose clip cannot be stored, and the record matches the IR", async () => {
+    const { s } = await setup();
+    const storage = s.services.storage as { put: (...a: never[]) => Promise<unknown> };
+    const put = storage.put;
+    storage.put = async (...a: never[]) => {
+      if (String(a[1]).includes("/authored/mid-1.mp4")) throw new Error("bucket full");
+      return put(...a);
+    };
+    const out = (await motionGraphicDirectorStage.run(s)).output as Out;
+    const record = out.ir.metadata?.director as {
+      scenes: Array<{ sceneId: string; status: string; reason?: string }>;
+    };
+    const mid = record.scenes.find((r) => r.sceneId === "mid-1");
+    expect(mid?.status).toBe("card");
+    expect(mid?.reason).toMatch(/could not be stored/);
+    expect(out.ir.metadata?.authoredScenes).not.toContain("mid-1");
+    expect(out.ir.metadata?.authoredScenes).toContain("mid-2");
+  });
+
   it("admits the tier on the director, one scene and both sandbox runs, and estimates every scene", async () => {
-    // 30¢ director + 15¢ scene + (20 + 10 sandbox minutes at 2¢) = 105¢.
-    const tight = await setup({ budgetCents: 104 });
-    expect(directorTierRuns(tight.s, tight.ir.scenes.length)).toBe(false);
-    const enough = await setup({ budgetCents: 105 });
-    expect(directorTierRuns(enough.s, enough.ir.scenes.length)).toBe(true);
-    expect(await motionGraphicDirectorStage.estimateCostCents?.(enough.s)).toBe(105);
-    const roomy = await setup();
-    expect(await motionGraphicDirectorStage.estimateCostCents?.(roomy.s)).toBe(30 + 6 * 15 + 60);
+    // 30¢ director + 15¢ scene + both sandbox runs at their bounds.
+    const probe = await setup();
+    const sandbox = filmSandboxCents(probe.s, probe.ir.format);
+    expect(sandbox).toBeGreaterThan(0);
+    const tight = await setup({ budgetCents: 44 + sandbox });
+    expect(directorTierRuns(tight.s, tight.ir.scenes.length, tight.ir.format)).toBe(false);
+    const enough = await setup({ budgetCents: 45 + sandbox });
+    expect(directorTierRuns(enough.s, enough.ir.scenes.length, enough.ir.format)).toBe(true);
+    expect(await motionGraphicDirectorStage.estimateCostCents?.(enough.s)).toBe(45 + sandbox);
+    expect(await motionGraphicDirectorStage.estimateCostCents?.(probe.s)).toBe(30 + 6 * 15 + sandbox);
+  });
+
+  it("scales the sandbox bounds with film length, frame size and rate, and refuses films past the cap", () => {
+    const f = { durationMs: 60_000, width: 1920, height: 1080, fps: 30 };
+    expect(filmCheckTimeoutSeconds(f)).toBe(660);
+    expect(filmRenderTimeoutSeconds(f)).toBe(2460);
+    expect(filmSandboxMsEstimate(f)).toBe((360 + 960) * 1000);
+    expect(filmRenderTimeoutSeconds({ ...f, durationMs: 15_000, width: 1080, height: 1920 })).toBe(660);
+    expect(filmFitsSandbox(f)).toBe(true);
+    expect(filmFitsSandbox({ ...f, fps: 60 })).toBe(false);
+  });
+
+  it("lets builders in flight settle before rethrowing the first failure", async () => {
+    const settled: number[] = [];
+    const run = mapLimit([0, 1, 2, 3], 2, async (i) => {
+      if (i === 0) throw new Error("boom");
+      await new Promise((r) => setTimeout(r, 5));
+      settled.push(i);
+      return i;
+    });
+    await expect(run).rejects.toThrow("boom");
+    expect(settled).toEqual([1]);
   });
 
   it("names the role the other scenes really paint with as the film's accent", () => {

@@ -45,8 +45,11 @@ import {
   checkFilm,
   createBuildGrants,
   EXPECTED_SCENE_CENTS,
+  type FilmFormat,
   type FilmJob,
+  filmFitsSandbox,
   filmRenderCents,
+  filmRenderMsEstimate,
   filmSandboxCents,
   filmSandboxMsEstimate,
   renderFilm,
@@ -145,31 +148,70 @@ const unfocused = (direction: DirectionBrief) =>
 
 /**
  * What the tier needs before it starts: the director's call, one scene at its expected cost and both sandbox
- * runs. Every further builder call is admitted on its own against what is left (`createBuildGrants`), so a
- * tight budget authors fewer scenes instead of rejecting the tier.
+ * runs at their bounds. Every further builder call is admitted on its own against what is left
+ * (`createBuildGrants`), so a tight budget authors fewer scenes instead of rejecting the tier.
  */
-export function tierAdmissionCents(s: StageContext): number {
-  return MG_DIRECTION_LIMITS.maxCostCents + EXPECTED_SCENE_CENTS + filmSandboxCents(s);
+export function tierAdmissionCents(s: StageContext, format: FilmFormat): number {
+  return MG_DIRECTION_LIMITS.maxCostCents + EXPECTED_SCENE_CENTS + filmSandboxCents(s, format);
 }
 
 /** What the tier expects to spend on a film of `sceneCount` scenes: the reservation the stage asks for. */
-export function tierExpectedCents(s: StageContext, sceneCount: number): number {
-  return MG_DIRECTION_LIMITS.maxCostCents + sceneCount * EXPECTED_SCENE_CENTS + filmSandboxCents(s);
+export function tierExpectedCents(s: StageContext, sceneCount: number, format: FilmFormat): number {
+  return MG_DIRECTION_LIMITS.maxCostCents + sceneCount * EXPECTED_SCENE_CENTS + filmSandboxCents(s, format);
 }
 
 /**
- * Whether the director tier authors this job's scenes: a premium job on a worker with a sandbox this workspace
- * may use (the sidecar allowlist), storage and an agent harness, not in host mode, with budget left for the
- * tier's admission. Decided before anything is paid for; when it is false the graphic is left as it is.
+ * The longest film the storyboard can ask for, at its largest frame: what the tier is admitted against before
+ * the film's own format is known.
  */
-export function directorTierRuns(s: StageContext, sceneCount: number): boolean {
+export const DIRECTOR_NOMINAL_FORMAT: FilmFormat = { durationMs: 60_000, width: 1920, height: 1080, fps: 30 };
+
+/**
+ * Whether the director tier authors this job's scenes: a premium job on a worker with a sandbox this workspace
+ * may use (the sidecar allowlist), storage and an agent harness, not in host mode, a film short enough for the
+ * sandbox, with budget left for the tier's admission. Decided before anything is paid for; when it is false
+ * the graphic is left as it is. The deadline is judged separately (`directorTierTimeShort`).
+ */
+export function directorTierRuns(s: StageContext, sceneCount: number, format: FilmFormat): boolean {
   const compositions = s.services.compositions;
   if (!premiumDirector(s.job.payload) || !compositions || !s.services.storage || !s.agents?.runtime)
     return false;
   if (compositions.allows && !compositions.allows(s.ctx)) return false;
   if ((s.job.payload as { agentMode?: unknown } | undefined)?.agentMode === "host") return false;
-  if (sceneCount < 2) return false;
-  return budgetLeft(s) >= tierAdmissionCents(s);
+  if (sceneCount < 2 || !filmFitsSandbox(format)) return false;
+  return budgetLeft(s) >= tierAdmissionCents(s, format);
+}
+
+/** Expected wall time of the director's call and of one wave of builders (a repair wave counts as one). */
+export const DIRECTOR_CALL_MS_ESTIMATE = 3 * 60_000;
+export const BUILD_WAVE_MS_ESTIMATE = 150_000;
+
+/**
+ * Wall time the tier needs from its start to a delivered film: the director, the builder waves (plus one for
+ * repairs), both sandbox runs, the final render and the margin for the review and upload.
+ */
+export function directorTierMsEstimate(ir: VideoIR): number {
+  const waves = Math.ceil(ir.scenes.length / BUILD_CONCURRENCY) + 1;
+  return (
+    DIRECTOR_CALL_MS_ESTIMATE +
+    waves * BUILD_WAVE_MS_ESTIMATE +
+    filmSandboxMsEstimate(ir.format) +
+    finalRenderMsEstimate(ir) +
+    FILM_MARGIN_MS
+  );
+}
+
+/** Why the deadline leaves no room for the tier (checked before the director is paid), or undefined. */
+export function directorTierTimeShort(s: StageContext, ir: VideoIR): string | undefined {
+  if (!s.job.deadlineAt) return undefined;
+  const leftMs = s.job.deadlineAt.getTime() - Date.now();
+  const needMs = directorTierMsEstimate(ir);
+  if (leftMs >= needMs) return undefined;
+  return (
+    `Director tier skipped: the film needs about ${Math.ceil(needMs / 60_000)} min to author, check and render ` +
+    `but the job deadline is ${Math.max(0, Math.floor(leftMs / 60_000))} min away; the template cards are kept. ` +
+    "Raise deadlineSeconds to author the scenes"
+  );
 }
 
 /** Task input of the director: the brief, the frame and every scene with its line and spoken words. */
@@ -393,12 +435,18 @@ export const motionGraphicDirectorStage: StageDefinition = {
   // Never more than the job has left: the tier does not run at all when the budget cannot admit it.
   estimateCostCents: (s) => {
     const count = irOf(s).scenes.length;
-    return directorTierRuns(s, count) ? Math.min(budgetLeft(s), tierExpectedCents(s, count)) : 0;
+    const ir = irOf(s);
+    return directorTierRuns(s, count, ir.format) && !directorTierTimeShort(s, ir)
+      ? Math.min(budgetLeft(s), tierExpectedCents(s, count, ir.format))
+      : 0;
   },
   async run(s) {
     const ir = irOf(s);
     // Infrastructure, mode or budget: the tier never starts, the graphic is left exactly as it is.
-    if (!directorTierRuns(s, ir.scenes.length)) return { output: { ir } };
+    if (!directorTierRuns(s, ir.scenes.length, ir.format)) return { output: { ir } };
+    // The deadline: the tier is skipped before anything is paid for, and says so.
+    const short = directorTierTimeShort(s, ir);
+    if (short) return { output: { ir, warning: short } };
     const usage: StageUsage[] = [];
     const warnings: string[] = [];
     const record: DirectorRecord = {
@@ -462,7 +510,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
       if (
         missing.length > 0 &&
         first.runs < 2 &&
-        budgetLeft(booked()) >= MG_DIRECTION_LIMITS.maxCostCents + tierAdmissionCents(s)
+        budgetLeft(booked()) >= MG_DIRECTION_LIMITS.maxCostCents + tierAdmissionCents(s, ir.format)
       ) {
         const issues = missing.slice(0, 10).map((n) => ({
           path: `direction.scenes.${direction.scenes.findIndex((d) => d.scene === n)}.focalWords`,
@@ -505,7 +553,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
       const words = (sid: string) => sceneWords(ir, sid).map(([w]) => w);
 
       // Fan-out: every scene's builder at once, each call capped at the budget grant it was admitted with.
-      const grants = createBuildGrants(() => budgetLeft(booked()), filmSandboxCents(s));
+      const grants = createBuildGrants(() => budgetLeft(booked()), filmSandboxCents(s, ir.format));
       const build = async (
         index: number,
         repair?: { issues: Array<{ path: string; message: string }>; output: BuildOutput },
@@ -527,7 +575,8 @@ export const motionGraphicDirectorStage: StageDefinition = {
             ? { built: parsed.data, runs }
             : { failure: "the builder's answer is not a fragment", runs };
         } catch (err) {
-          if (s.signal.aborted) throw err;
+          // A stopped or parked job ends the fan-out; any other failure costs this scene alone.
+          if (s.signal.aborted || err instanceof StageSuspended) throw err;
           return { failure: reasonOf(err), runs: 2 };
         } finally {
           grants.release(grant);
@@ -558,13 +607,12 @@ export const motionGraphicDirectorStage: StageDefinition = {
       });
       if (built.length === 0) return keepCards("no scene was authored");
 
-      // Both sandbox runs must fit before the deadline (with time left for the review and the final render).
-      const filmMs = sceneWindows(ir).at(-1)?.endMs ?? ir.format.durationMs;
+      // Both sandbox runs must still fit before the deadline (with time left for the review and the final render).
       const secondsLeft = () =>
         s.job.deadlineAt
           ? (s.job.deadlineAt.getTime() - Date.now() - FILM_MARGIN_MS - finalRenderMsEstimate(ir)) / 1000
           : Number.POSITIVE_INFINITY;
-      if (secondsLeft() * 1000 < filmSandboxMsEstimate(filmMs)) {
+      if (secondsLeft() * 1000 < filmSandboxMsEstimate(ir.format)) {
         return keepCards("not enough time left before the job deadline for the film check and render");
       }
       const compositionId = directorCompositionId(s.job.id);
@@ -600,8 +648,10 @@ export const motionGraphicDirectorStage: StageDefinition = {
         return !errors;
       });
       if (passed.length === 0) return keepCards("every authored scene failed the film check");
-      if (budgetLeft(booked()) < filmRenderCents(s))
+      if (budgetLeft(booked()) < filmRenderCents(s, ir.format))
         return keepCards("the job budget left cannot hold the film render");
+      if (secondsLeft() * 1000 < filmRenderMsEstimate(ir.format))
+        return keepCards("not enough time left before the job deadline for the film render");
 
       // Run 2: render the film once and cut it into a clip per scene.
       const film = await renderFilm(booked, job, passed);
@@ -623,17 +673,24 @@ export const motionGraphicDirectorStage: StageDefinition = {
           continue;
         }
         const scene = next.scenes.find((sc) => sc.id === b.sid) as Scene;
-        const asset = await storeClipAsset(s, {
-          ir: next,
-          scene,
-          compositionId,
-          clip,
-          workDir,
-          assetId: `${b.sid}-authored`,
-          name: b.sid,
-        });
-        const out = withAuthoredClip(next, b.sid, asset);
-        next = VideoIR.parse({ ...next, scenes: out.scenes, assets: out.assets });
+        try {
+          const asset = await storeClipAsset(s, {
+            ir: next,
+            scene,
+            compositionId,
+            clip,
+            workDir,
+            assetId: `${b.sid}-authored`,
+            name: b.sid,
+          });
+          const out = withAuthoredClip(next, b.sid, asset);
+          next = VideoIR.parse({ ...next, scenes: out.scenes, assets: out.assets });
+        } catch (err) {
+          // One clip that cannot be stored keeps its card; the IR is untouched for it, so the record matches.
+          if (s.signal.aborted || err instanceof StageSuspended) throw err;
+          note(b.sid, { reason: `the clip could not be stored: ${reasonOf(err)}` });
+          continue;
+        }
         note(b.sid, { status: "authored", ...(blank.has(b.sid) ? { blankCut: true } : {}) });
         swapped.push(b.sid);
       }
@@ -662,6 +719,8 @@ export const motionGraphicDirectorStage: StageDefinition = {
       });
       return { output: { ir: withRecord(result), ...warning(), film: metrics() }, usage };
     } catch (err) {
+      // A parked job resumes later: the stage parks with everything spent so far booked.
+      if (err instanceof StageSuspended && !s.signal.aborted) throw new StageSuspended(err.suspension, usage);
       if (s.signal.aborted) {
         throw new StageFailedAfterSpend(
           err instanceof StageFailedAfterSpend ? err.error : toStudixError(err),
