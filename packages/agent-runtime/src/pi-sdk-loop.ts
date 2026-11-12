@@ -20,7 +20,8 @@ import {
   agentCapError,
   type BoundedAgentTask,
   emitAgentEvent,
-  eventText,
+  shellExitCode,
+  toolResultText,
 } from "./bounded-agent-runtime.ts";
 import { parseModelJson } from "./model-json-repair.ts";
 import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
@@ -507,14 +508,21 @@ async function runAttempt(
       if (event.type === "tool_execution_end") {
         const content = (event.result as { content?: Array<{ type: string; text?: string }> } | undefined)
           ?.content;
+        const text = Array.isArray(content)
+          ? content.map((c) => c.text ?? `[${c.type}]`).join("\n")
+          : JSON.stringify(event.result ?? "");
+        const exitCode = event.toolName === "bash" ? shellExitCode(text) : undefined;
         emitAgentEvent(task, {
           type: "tool_end",
           id: event.toolCallId,
           name: event.toolName,
           ok: !event.isError,
-          result: eventText(
-            Array.isArray(content) ? content.map((c) => c.text ?? `[${c.type}]`).join("\n") : event.result,
-          ),
+          result: toolResultText(text),
+          ...(exitCode !== undefined
+            ? { exitCode }
+            : event.toolName === "bash" && !event.isError
+              ? { exitCode: 0 }
+              : {}),
         });
       }
       if (event.type === "message_end" && event.message.role === "assistant") {

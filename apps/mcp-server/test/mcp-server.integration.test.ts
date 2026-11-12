@@ -86,6 +86,7 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
       "studix_get_job",
       "studix_get_project",
       "studix_inspect",
+      "studix_job_trace",
       "studix_list_agent_runtimes",
       "studix_list_agent_tasks",
       "studix_media_exec",
@@ -149,6 +150,8 @@ describe("MCP endpoint over Streamable HTTP (TS SDK client, Postgres)", () => {
     const read = await call(clientA, "studix_get_job", { jobId });
     expect(read.isError).toBe(true);
     expect(read.envelope).toMatchObject({ status: "error", data: null, error: { code: "NOT_FOUND" } });
+    const trace = await call(clientA, "studix_job_trace", { jobId });
+    expect(trace.envelope.error?.code).toBe("NOT_FOUND");
 
     const cancel = await call(clientA, "studix_cancel_job", { jobId });
     expect(cancel.envelope.error?.code).toBe("NOT_FOUND");

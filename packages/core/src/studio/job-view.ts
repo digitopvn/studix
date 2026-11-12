@@ -1,3 +1,4 @@
+import { STAGE_STALL_MS, stageIdleMs } from "../entities/agent-trace.ts";
 import { JOB_KINDS, type Job, type Stage } from "../entities/job.ts";
 import { jobAgent } from "../entities/job-agent.ts";
 import type { Approval } from "../entities/review.ts";
@@ -28,12 +29,26 @@ export function toApprovalView(approval: Approval): ApprovalView {
   };
 }
 
-/** Next-action hints derived from job state. */
-export function nextActionsForJob(job: Job, approval?: Approval): NextAction[] {
+/** A hint to read the trace of a running stage that went quiet, ahead of the usual polling hint. */
+function stallHints(job: Job, stalled: readonly { name: string; idleMs: number }[]): NextAction[] {
+  return stalled.map((s) => ({
+    tool: STUDIX_TOOLS.jobTrace,
+    arguments: { jobId: job.id, stage: s.name },
+    reason: `Warning: stage ${s.name} has shown no activity for ${Math.round(s.idleMs / 60_000)} min and may be stalled (hung, or one long tool call). Read its trace for the last steps before cancelling or retrying.`,
+  }));
+}
+
+/** Next-action hints derived from job state; `stalled` lists running stages that went quiet. */
+export function nextActionsForJob(
+  job: Job,
+  approval?: Approval,
+  stalled: readonly { name: string; idleMs: number }[] = [],
+): NextAction[] {
   switch (job.status) {
     case "queued":
     case "running":
       return [
+        ...(job.status === "running" ? stallHints(job, stalled) : []),
         {
           tool: STUDIX_TOOLS.getJob,
           arguments: { jobId: job.id },
@@ -162,7 +177,13 @@ export function toJobView(
   approval?: Approval,
   spend?: JobSpendDetail,
   queue?: JobQueueView,
+  now: Date = new Date(),
 ): JobView {
+  // Only a running job's stages can stall; a parked or finished job's leftover running row is not live.
+  const stalled = (job.status === "running" ? stages : []).flatMap((s) => {
+    const idleMs = stageIdleMs(s, now);
+    return idleMs !== undefined && idleMs >= STAGE_STALL_MS ? [{ name: s.name, idleMs }] : [];
+  });
   return {
     id: job.id,
     kind: job.kind,
@@ -193,10 +214,12 @@ export function toJobView(
       ...warningOf(s),
       ...reviewOf(s),
       ...stageRun(s, spend),
+      ...(s.lastActivityAt ? { lastActivityAt: s.lastActivityAt } : {}),
+      ...(stalled.some((x) => x.name === s.name) && s.status === "running" ? { stalled: true } : {}),
     })),
     approval: approval ? toApprovalView(approval) : undefined,
     agent: jobAgent(job),
     ...(queue ? { queue } : {}),
-    next: nextActionsForJob(job, approval),
+    next: nextActionsForJob(job, approval, stalled),
   };
 }

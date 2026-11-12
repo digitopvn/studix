@@ -93,6 +93,11 @@ export interface Stage extends TenantOwned {
   mediaJobs?: MediaJobRecord[];
   startedAt?: Date;
   finishedAt?: Date;
+  /**
+   * Last real work of a running stage (an agent event), written by the run's heartbeat. Omitted on a write,
+   * the stored time is kept. Stages that never report activity leave it unset and are never shown stalled.
+   */
+  lastActivityAt?: Date;
 }
 
 export const WORKFLOW_RUN_STATUSES = [

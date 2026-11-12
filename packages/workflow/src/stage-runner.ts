@@ -24,6 +24,7 @@ import type { WorkerJobQueue } from "./worker-job-queue.ts";
 import type {
   AgentStageServices,
   MediaOutputCache,
+  StageActivity,
   StageContext,
   StageDefinition,
   StageOutput,
@@ -319,6 +320,36 @@ async function gateHistory(
 }
 
 /** The agent services of one stage run, reading approvals and host tasks on every call (they survive restarts). */
+/** The liveness record of one stage attempt; heartbeats write only a time that moved, and only while running. */
+function stageActivity(
+  deps: StageRunnerDeps,
+  queue: WorkerJobQueue,
+  job: Job,
+  workerId: string,
+  stage: string,
+): StageActivity {
+  let last: Date | undefined;
+  let written: Date | undefined;
+  let runs = 0;
+  return {
+    stage,
+    attempt: job.attempts,
+    touch() {
+      last = deps.clock.now();
+    },
+    async heartbeat() {
+      const at = last;
+      if (!at || at === written || !queue.touchStage) return;
+      try {
+        if (await queue.touchStage(job, workerId, stage, at)) written = at;
+      } catch (err) {
+        deps.logger.warn("stage activity not stored", { jobId: job.id, stage, error: String(err) });
+      }
+    },
+    nextRun: () => runs++,
+  };
+}
+
 function agentStageServices(
   deps: StageRunnerDeps,
   wiring: AgentStageWiring,
@@ -402,6 +433,7 @@ export async function runStages(
           queue.writeStage(job, workerId, { name: stage.name, status: "running", startedAt, mediaJobs }),
         ),
     );
+    const activity = stageActivity(deps, queue, job, workerId, stage.name);
     const sctx: StageContext = {
       ctx,
       // Earlier stages of this run have spent since the claim; estimates and caps read what is left now.
@@ -433,6 +465,7 @@ export async function runStages(
       mediaJournal,
       ...(deps.stageCache ? { mediaOutputs: mediaOutputCache(deps.stageCache, ctx, job.id) } : {}),
       services,
+      activity,
     };
 
     if (stage.requiresApprovedStoryboard) await assertStoryboardApproved(deps, ctx, job, stage);

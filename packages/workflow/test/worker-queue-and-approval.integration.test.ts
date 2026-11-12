@@ -239,6 +239,16 @@ describe("fenced attempt writes", () => {
     // The current owner writes normally.
     expect(await queue.writeStage(fresh!, "fresh", { name: "plan", status: "succeeded" })).toBe(true);
     expect(await queue.recordUsage(fresh!, "fresh", usage("current"))).toBe(true);
+
+    // Activity lands only on a running stage, and later status writes keep it.
+    const at = new Date("2026-11-12T06:05:00Z");
+    expect(await queue.writeStage(fresh!, "fresh", { name: "scan", status: "running" })).toBe(true);
+    expect(await queue.touchStage?.(fresh!, "fresh", "scan", at)).toBe(true);
+    await queue.touchStage?.(fresh!, "fresh", "plan", at);
+    expect(await queue.writeStage(fresh!, "fresh", { name: "scan", status: "succeeded" })).toBe(true);
+    const latest = (await repos.jobs.listStages(ctx, job.id)).filter((s) => s.attempt === fresh!.attempts);
+    expect(latest.find((s) => s.name === "scan")?.lastActivityAt).toEqual(at);
+    expect(latest.find((s) => s.name === "plan")?.lastActivityAt).toBeUndefined();
     await repos.queue.cancel(ctx, job.id);
   });
 

@@ -1,5 +1,6 @@
 import type { ActivityRepository, AgentStreamEvent, TenantContext } from "@studix/core";
 import { type Logger, redactDeep } from "@studix/shared";
+import type { AgentSessionTrace } from "./agent-session-trace.ts";
 
 /** Activity name of the live agent events the dashboard chat streams (`GET /api/jobs/:id/events`). */
 export const AGENT_EVENT_ACTIVITY = "agent.event";
@@ -50,19 +51,24 @@ const MAX_DELTA_CHARS = 4_000;
 /**
  * Stores one stage run's events with its job, in order. Text and reasoning deltas are merged for a moment so a
  * token stream becomes a few rows; any other event flushes them first. Everything is redacted before it is stored.
+ * The same rows go to the run's session trace when there is one, so the chat and the trace never disagree.
  */
 export function createAgentEventSink(
-  activity: Pick<ActivityRepository, "append">,
+  activity: Pick<ActivityRepository, "append"> | undefined,
   ctx: TenantContext,
   scope: { jobId: string; projectId?: string; stage: string },
   logger: Logger,
+  trace?: Pick<AgentSessionTrace, "append">,
 ): AgentEventSink {
   let chain: Promise<void> = Promise.resolve();
   let buffered: { type: "message" | "reasoning"; delta: string } | undefined;
   let timer: NodeJS.Timeout | undefined;
 
   const write = (event: HarnessAgentEvent) => {
-    const attributes = redactDeep(compact(event)) as Record<string, unknown>;
+    // Redacted before the preview cut, so a secret is still caught by its key and never half-kept.
+    const attributes = compact(redactDeep(event) as HarnessAgentEvent);
+    trace?.append(attributes);
+    if (!activity) return;
     chain = chain.then(() =>
       activity
         .append(ctx, {

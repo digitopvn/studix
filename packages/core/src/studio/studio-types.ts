@@ -8,6 +8,7 @@ import {
   VideoIRPatch,
 } from "@studix/video-ir";
 import { z } from "zod";
+import type { AgentTraceReader } from "../entities/agent-trace.ts";
 import type { Job, JobStatus, StageStatus } from "../entities/job.ts";
 import type { JobAgentView } from "../entities/job-agent.ts";
 import { AGENT_RUNTIMES, REASONING_EFFORTS } from "../entities/model-preference.ts";
@@ -34,6 +35,7 @@ export const STUDIX_TOOLS = {
   inspect: "studix_inspect",
   createVideo: "studix_create_video",
   getJob: "studix_get_job",
+  jobTrace: "studix_job_trace",
   retryJob: "studix_retry_job",
   getProject: "studix_get_project",
   approve: "studix_approve",
@@ -75,6 +77,8 @@ export interface StudioServiceDeps {
   providerConnections?: { get(ctx: TenantContext, id: string): Promise<{ label: string } | undefined> };
   /** Checks an upstream job before `attachMediaJob` records it; without one, attaching is refused. */
   providerJobs?: ProviderJobInspector;
+  /** Stored agent session traces (`readJobTrace`); without it the trace tool answers UNAVAILABLE. */
+  traces?: AgentTraceReader;
   approvalPolicy: ApprovalPolicy;
   clock: Clock;
   logger?: Logger;
@@ -364,6 +368,10 @@ export interface StageView {
   review?: StageReviewView;
   /** What the attempt ran on and spent; absent while a stage runs and has booked nothing yet. */
   run?: StageRunView;
+  /** Last real work of a running agent stage (its heartbeat writes it); absent for stages that report none. */
+  lastActivityAt?: Date;
+  /** Set on a running stage with no activity for `STAGE_STALL_MS`: it may be hung. Read its trace. */
+  stalled?: boolean;
 }
 
 export interface ApprovalView {
