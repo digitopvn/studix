@@ -333,6 +333,15 @@ lần với chỉ dẫn đọc gọn hơn (tính tiền cả hai lần đọc, b
 quá dài mới fail `VALIDATION`. Ước tính chi phí vẫn tính một lần đọc mỗi dòng. File không đo được (không có
 FFmpeg) thì cả file được tính, dư tới 250 ms (hơi thở cuối) thì cắt kèm fade.
 
+Khi có giọng đọc, voice stage ghi thời điểm từng từ (`metadata.spokenWords`): lấy từ alignment của ElevenLabs
+(`multix elevenlabs tts --timestamps`), các provider khác thì ước lượng theo độ dài đọc của từng từ trong phần
+lời đã đo. Headline vào ngay trước từ đầu tiên của câu (trễ tối đa 700 ms), layout device bắt đầu choreography
+khi câu nhắc tới nội dung của nó (`layoutAtMs`), caption chạy theo từ. Music bed (khi storyboard xin) được
+ElevenLabs soạn theo composition plan intro/build/drop, drop rơi vào đầu card CTA, tempo giữa dải BPM của style.
+Music stage dò beat bằng FFmpeg (miễn phí), dời mỗi cut tới downbeat gần nhất trong 400 ms (hoặc beat trong 150 ms)
+nếu câu của hai card kề vẫn vừa, rồi kéo voice-over, caption, whoosh và accent theo. Nhạc nằm ở `volume` 0.3 và
+duck `-9 dB` dưới giọng đọc (`duckDb`).
+
 ```json
 {
   "workflowTemplate": "motion-graphic",

@@ -1,5 +1,11 @@
 import { StudixError, toStudixError } from "@studix/shared";
-import { type AssetRef, type CreativeBrief, resolveSceneSpans, VideoIR } from "@studix/video-ir";
+import {
+  type AssetRef,
+  type AudioTrack,
+  type CreativeBrief,
+  resolveSceneSpans,
+  VideoIR,
+} from "@studix/video-ir";
 import { mapBounded, type StageContext, StageFailedAfterSpend, type StageUsage } from "@studix/workflow";
 import { hasStoredOutput, type StoredMediaRequest } from "../stored-media.ts";
 import {
@@ -13,6 +19,7 @@ import {
 } from "../voice-lines.ts";
 import { briskerTake, type MeasuredVoiceTake, measuredVoiceTake } from "../voice-takes.ts";
 import { replaceSfxTracks } from "./motion-graphic-sfx-timing.ts";
+import { type CardWords, estimateWords, placeWords, withSpokenWords } from "./motion-graphic-spoken-words.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { cardNeeds, motionGraphicTemplate } from "./motion-graphic-template.ts";
 
@@ -148,6 +155,39 @@ function tooLongError(
   );
 }
 
+/**
+ * `ir` with each line's words placed where its track plays them (the provider's word timings, else an
+ * estimate over the take's measured speech) and the cards' reveals and captions put on those words.
+ */
+function spokenOn(
+  ir: VideoIR,
+  lines: readonly VoiceLine[],
+  takes: readonly MeasuredVoiceTake[],
+  tracks: readonly AudioTrack[],
+): VideoIR {
+  const cards = cardsOf(ir, lines);
+  const spoken: CardWords[] = [];
+  const texts = new Map<string, string>();
+  lines.forEach((line, i) => {
+    const scene = ir.scenes[cards[i] as number];
+    const take = takes[i] as MeasuredVoiceTake;
+    const track = tracks[i] as AudioTrack;
+    if (!scene) return;
+    const inFile =
+      take.words ??
+      estimateWords(
+        line.text,
+        take.measured ?? { startMs: 0, endMs: take.lengthMs ?? track.durationMs ?? line.roomMs },
+        ir.language,
+      );
+    const words = placeWords(inFile, track);
+    if (words.length === 0) return;
+    spoken.push({ card: scene.id, words });
+    texts.set(scene.id, line.text);
+  });
+  return spoken.length > 0 ? withSpokenWords(ir, spoken, texts) : ir;
+}
+
 /** Runs `work`, billing `spent` (and whatever `work` spent) when it fails. */
 async function spending<T>(spent: readonly StageUsage[], work: () => Promise<T>): Promise<T> {
   try {
@@ -219,12 +259,11 @@ export async function voiceGraphic(
         t.measured,
       ),
     );
-    return VideoIR.parse(
-      withVoiceover(
-        plan.ir,
-        tracks,
-        takes.map((t) => t.asset),
-      ),
+    const voiced = withVoiceover(
+      plan.ir,
+      tracks,
+      takes.map((t) => t.asset),
     );
+    return VideoIR.parse(spokenOn(voiced, plan.lines, takes, tracks));
   }).then((next) => ({ ir: next, usage: spent }));
 }

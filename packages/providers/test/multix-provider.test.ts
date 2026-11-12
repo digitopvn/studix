@@ -15,6 +15,7 @@ import {
   parseCheckKeys,
   parseMultixEnvelope,
 } from "../src/index.ts";
+import { wordsFromAlignment } from "../src/multix-provider.ts";
 
 /** One scripted CLI reply. `files` are written before the envelope is returned, as multix would. */
 interface Reply {
@@ -1326,6 +1327,30 @@ describe("MultixProvider synchronous audio", () => {
     workDir,
   });
 
+  const alignment = (text: string, step = 0.1) => ({
+    characters: [...text],
+    character_start_times_seconds: [...text].map((_, i) => i * step),
+    character_end_times_seconds: [...text].map((_, i) => (i + 1) * step),
+  });
+  const timings = { alignment: alignment("Xin chào"), normalized_alignment: null };
+
+  it("groups ElevenLabs character timings into words, preferring the alignment of the written text", () => {
+    expect(
+      wordsFromAlignment({ alignment: alignment("Chào, bạn! — ok"), normalized_alignment: alignment("x") }),
+    ).toEqual([
+      { text: "Chào,", startMs: 0, endMs: 500 },
+      { text: "bạn!", startMs: 600, endMs: 1000 },
+      { text: "ok", startMs: 1300, endMs: 1500 },
+    ]);
+    // A malformed alignment falls back to the normalized one; nothing usable gives no words.
+    const bad = { ...alignment("ab"), character_end_times_seconds: [0.1] };
+    expect(wordsFromAlignment({ alignment: bad, normalized_alignment: alignment("hi") })).toEqual([
+      { text: "hi", startMs: 0, endMs: 200 },
+    ]);
+    expect(wordsFromAlignment({ alignment: null, normalized_alignment: bad })).toBeUndefined();
+    expect(wordsFromAlignment("not json")).toBeUndefined();
+  });
+
   it("reports the estimate as the charge when TTS succeeds but wrote no usable output", async () => {
     const cli = scriptedCli((argv) => {
       if (argv.includes("--estimate"))
@@ -1345,7 +1370,7 @@ describe("MultixProvider synchronous audio", () => {
       const out = flagValue(argv, "output")!;
       const copy = join(options.env.MULTIX_OUTPUT_DIR!, "tts.mp3");
       return {
-        files: { [out]: "mp3", [copy]: "mp3" },
+        files: { [out]: "mp3", [copy]: "mp3", [`${out}.timestamps.json`]: JSON.stringify(timings) },
         envelope: { outputs: [{ path: out }, { path: copy }], history_id: "h_1" },
       };
     });
@@ -1360,13 +1385,17 @@ describe("MultixProvider synchronous audio", () => {
       "--model=eleven_multilingual_v2",
     ]);
     expect(tts).toContain("--max-cost=0.10");
+    expect(tts).toContain("--timestamps");
     expect(result).toMatchObject({
       model: "elevenlabs:eleven_multilingual_v2",
       costCents: 1,
       costSource: "estimate",
     });
     expect(result.outputs).toHaveLength(1);
-    expect(result.outputs[0]).toMatchObject({ mime: "audio/mpeg" });
+    expect(result.outputs[0]).toMatchObject({
+      mime: "audio/mpeg",
+      words: [{ text: "Xin" }, { text: "chào" }],
+    });
     expect(await readFile(result.outputs[0]!.filePath, "utf8")).toBe("mp3");
     // multix's duplicate copy is not kept.
     await expect(stat(cli.calls[1]!.options.env.MULTIX_OUTPUT_DIR!)).rejects.toMatchObject({

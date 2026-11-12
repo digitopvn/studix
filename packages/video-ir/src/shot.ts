@@ -52,6 +52,11 @@ export const TitleShot = ShotBase.extend({
   subtitle: z.string().min(1).max(240).optional(),
   /** Motion-design device drawn under the title; `text` stays the complete headline. */
   layout: ShotLayout.optional(),
+  /**
+   * When the layout device starts its choreography, in ms from the shot's start (e.g. when the voice-over
+   * names it); the renderer's default lead when absent.
+   */
+  layoutAtMs: Milliseconds.optional(),
 });
 
 export const TextShot = ShotBase.extend({
@@ -59,6 +64,11 @@ export const TextShot = ShotBase.extend({
   text: z.string().min(1).max(500),
   /** Motion-design device drawn under the text; `text` stays the complete headline. */
   layout: ShotLayout.optional(),
+  /**
+   * When the layout device starts its choreography, in ms from the shot's start (e.g. when the voice-over
+   * names it); the renderer's default lead when absent.
+   */
+  layoutAtMs: Milliseconds.optional(),
 });
 
 export const ImageShot = ShotBase.extend({

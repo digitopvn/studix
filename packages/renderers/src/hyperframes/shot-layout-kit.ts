@@ -126,17 +126,31 @@ export function layoutKit(ctx: ShotMarkupContext, sel: string): LayoutKit {
   };
 }
 
+/** Shortest choreography a device gets, so it always lands before the hold ends. */
+const MIN_BUDGET_S = 0.5;
+
 /**
- * The device's window inside a shot: it starts shortly after the headline (overlapping its entrance), its
- * choreography takes about half the shot (clamped so a 2 s card still lands and a 9 s card does not crawl),
- * and the rest is the hold, which ends where the shot's exit begins.
+ * The device's window inside a shot: it starts shortly after the headline (overlapping its entrance), or at
+ * `atMs` from the shot start when given (e.g. when the voice-over names it; moved earlier so the shortest
+ * choreography still lands before the exit, and never before the shot), its choreography takes about half
+ * the shot (clamped so a 2 s card still lands and a 9 s card does not crawl), and the rest is the hold,
+ * which ends where the shot's exit begins.
  */
-export function layoutTiming(startMs: number, durationMs: number, exitMs: number): LayoutTiming {
+export function layoutTiming(
+  startMs: number,
+  durationMs: number,
+  exitMs: number,
+  atMs?: number,
+): LayoutTiming {
   const start = startMs / 1000;
   const dur = durationMs / 1000;
-  const t0 = sec(start + clamp(dur * 0.1, 0.15, 0.35));
   const holdEnd = sec(start + dur - exitMs / 1000);
-  const budget = sec(clamp(Math.min(dur * 0.5, holdEnd - t0), 0.5, 2.6));
+  const lead =
+    atMs === undefined
+      ? clamp(dur * 0.1, 0.15, 0.35)
+      : Math.max(0, Math.min(atMs / 1000, holdEnd - start - MIN_BUDGET_S));
+  const t0 = sec(start + lead);
+  const budget = sec(clamp(Math.min(dur * 0.5, holdEnd - t0), MIN_BUDGET_S, 2.6));
   return { start: sec(start), t0, budget, holdStart: sec(t0 + budget), holdEnd };
 }
 

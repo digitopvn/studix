@@ -294,7 +294,7 @@ function layoutShotMarkup(
     (shot.animation?.exit ?? "none") === "none"
       ? 0
       : Math.min(shot.animation?.durationMs ?? 400, Math.floor(shot.durationMs / 2));
-  const timing = layoutTiming(shot.startMs, shot.durationMs, exitMs);
+  const timing = layoutTiming(shot.startMs, shot.durationMs, exitMs, shot.layoutAtMs);
   return {
     html: `${open}<div class="lay-inner"><div class="t-main">${escapeHtml(shot.text)}</div>${sub}${device.html}</div></div>`,
     css,

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -982,7 +982,12 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
       // Records written before the id was derived hold the literal "sync".
       const journaled = existing.job?.id === "sync" ? undefined : existing.job?.id;
       return result(
-        [{ filePath: file, mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream" }],
+        [
+          await withWords(plan, {
+            filePath: file,
+            mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream",
+          }),
+        ],
         existing.receiptCents ?? existing.estimatedCostCents,
         existing.receiptCents !== undefined ? "receipt" : "estimate",
         execution(journaled, existing.attempt),
@@ -1013,7 +1018,11 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     } catch (err) {
       throw err instanceof StudixError ? failed(err) : err;
     }
-    const outputs = (await this.outputsIn(envelope, outDir, outDir)).filter((o) => o.filePath === file);
+    const outputs = await Promise.all(
+      (await this.outputsIn(envelope, outDir, outDir))
+        .filter((o) => o.filePath === file)
+        .map((o) => withWords(plan, o)),
+    );
     if (outputs.length === 0) {
       throw failed(
         new StudixError("PROVIDER_ERROR", `multix ${plan.argv.slice(0, 2).join(" ")} wrote no output`, {
@@ -1243,6 +1252,82 @@ function paramsOfRole(role: MultixRole): Record<string, unknown> {
   if (role === "imageUpscale") return { image: "x" };
   if (role === "videoUpscale") return { video: "x" };
   return {};
+}
+
+const MAX_WORDS = 2000;
+
+type SpokenWord = NonNullable<GeneratedMedia["words"]>[number];
+
+/**
+ * Word timings from an ElevenLabs `<audio>.timestamps.json` (character timings). `alignment` follows the
+ * text as written, so it wins over `normalized_alignment`. Words are runs of non-space characters, with
+ * their punctuation; a run with no letter or digit is no spoken word. Undefined when neither alignment is
+ * usable.
+ */
+export function wordsFromAlignment(json: unknown): SpokenWord[] | undefined {
+  if (!isObject(json)) return undefined;
+  return alignmentWords(json.alignment) ?? alignmentWords(json.normalized_alignment);
+}
+
+function alignmentWords(alignment: unknown): SpokenWord[] | undefined {
+  if (!isObject(alignment)) return undefined;
+  const chars = alignment.characters;
+  const starts = alignment.character_start_times_seconds;
+  const ends = alignment.character_end_times_seconds;
+  if (
+    !Array.isArray(chars) ||
+    !Array.isArray(starts) ||
+    !Array.isArray(ends) ||
+    starts.length !== chars.length ||
+    ends.length !== chars.length
+  ) {
+    return undefined;
+  }
+  const words: SpokenWord[] = [];
+  let text = "";
+  let startS = 0;
+  let endS = 0;
+  const close = () => {
+    if (/[\p{L}\p{N}]/u.test(text) && words.length < MAX_WORDS) {
+      words.push({ text, startMs: Math.round(startS * 1000), endMs: Math.round(endS * 1000) });
+    }
+    text = "";
+  };
+  for (let i = 0; i < chars.length; i++) {
+    const char = chars[i];
+    const start = starts[i];
+    const end = ends[i];
+    if (typeof char !== "string" || !isTime(start) || !isTime(end)) return undefined;
+    if (/^\s*$/u.test(char)) {
+      close();
+      continue;
+    }
+    if (text === "") {
+      startS = start;
+      endS = end;
+    }
+    text += char;
+    endS = Math.max(endS, end);
+  }
+  close();
+  return words.length > 0 ? words : undefined;
+}
+
+const isTime = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+
+/**
+ * A speech output with the word timings multix saved next to it (`--timestamps`). A missing or unreadable
+ * file leaves the output without words; it never fails the call.
+ */
+async function withWords(plan: MultixPlan, output: GeneratedMedia): Promise<GeneratedMedia> {
+  if (plan.role !== "voice") return output;
+  let words: SpokenWord[] | undefined;
+  try {
+    words = wordsFromAlignment(JSON.parse(await readFile(`${output.filePath}.timestamps.json`, "utf8")));
+  } catch {
+    return output;
+  }
+  return words ? { ...output, words } : output;
 }
 
 async function fileSize(path: string): Promise<number> {

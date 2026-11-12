@@ -198,6 +198,28 @@ describe("audioMixGraph", () => {
       "[c0][c1]amix=inputs=2:duration=longest:normalize=0,apad=whole_dur=4.000,atrim=duration=4.000[mix]",
     ]);
   });
+
+  it("ducks a music bed under speech with ramps, bridging near phrases and shifting to clip time", () => {
+    const base = { trimStartMs: 0, volume: 1, fadeInMs: 0, fadeOutMs: 0 };
+    const line = (id: string, startMs: number, durationMs: number) =>
+      ({ ...base, id, kind: "voiceover", file: id, startMs, durationMs }) as const;
+    const graph = audioMixGraph(
+      [
+        { ...base, id: "bed", kind: "music", file: "bed", startMs: 1000, durationMs: 9000, duckDb: -12 },
+        // 300ms apart: one window, so the bed does not pump between phrases.
+        line("vo1", 2000, 1000),
+        line("vo2", 3300, 700),
+        { ...line("dlg", 7000, 1000), kind: "dialogue" },
+      ],
+      10_000,
+    );
+    expect(graph.split(";")[0]).toContain(
+      "volume=1.0000,volume=eval=frame:volume='pow(10,-0.6000*min(1," +
+        "clip((t-0.850)/0.150,0,1)*clip((3.300-t)/0.300,0,1)+" +
+        "clip((t-5.850)/0.150,0,1)*clip((7.300-t)/0.300,0,1)))',adelay=delays=1000:all=1",
+    );
+    expect(graph.split(";")[1]).not.toContain("eval=frame");
+  });
 });
 
 describe("loudness helpers", () => {

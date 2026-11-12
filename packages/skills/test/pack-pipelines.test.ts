@@ -873,7 +873,12 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
       "voice",
       "voice",
     ]);
-    expect(ir.audio?.find((t) => t.kind === "music")).toMatchObject({ startMs: 0, volume: 0.18 });
+    expect(ir.audio?.find((t) => t.kind === "music")).toMatchObject({ startMs: 0, volume: 0.3, duckDb: -9 });
+    // The bed is composed to the cards: its sections add up to the graphic and it drops into the CTA.
+    const music = h.generate.mock.calls.find(([, r]) => r.kind === "music")?.[1];
+    const plan = music?.params?.compositionPlan as { sections: Array<{ name: string; durationMs: number }> };
+    expect(plan.sections.reduce((n, sec) => n + sec.durationMs, 0)).toBe(10_000);
+    expect(plan.sections.at(-1)?.name).toBe("Drop");
     expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3]);
   });
 

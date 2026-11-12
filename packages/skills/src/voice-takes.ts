@@ -178,6 +178,8 @@ export interface MeasuredVoiceTake {
   /** Its length: as stored, else as measured; undefined when neither is known. */
   lengthMs: number | undefined;
   measured: MeasuredTake | undefined;
+  /** The words of the take and when they are heard in its file, when the speech provider reported them. */
+  words?: Array<{ text: string; startMs: number; endMs: number }>;
   usage: StageUsage;
 }
 
@@ -193,10 +195,13 @@ export async function measuredVoiceTake(
   workDir: string,
   measure: VoiceTakeMeasure = measureVoiceTake,
 ): Promise<MeasuredVoiceTake> {
-  const probe: { checked: boolean; measured?: MeasuredTake } = { checked: false };
-  const made = await generateStoredMedia(s, stage, request, async (filePath) => {
+  const probe: { checked: boolean; measured?: MeasuredTake; words?: GeneratedMedia["words"] } = {
+    checked: false,
+  };
+  const made = await generateStoredMedia(s, stage, request, async (filePath, output) => {
     probe.checked = true;
     probe.measured = await measure(filePath, s.signal);
+    probe.words = output.words;
     return true;
   });
   // Never turned down: the check above accepts every take.
@@ -212,6 +217,7 @@ export async function measuredVoiceTake(
       asset: made.asset,
       lengthMs: made.asset.durationMs ?? measured?.durationMs,
       measured,
+      ...(probe.words?.length ? { words: probe.words } : {}),
       usage: made.usage,
     };
   } catch (err) {

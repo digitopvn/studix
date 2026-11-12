@@ -51,6 +51,8 @@ export interface GeneratedMedia {
   width?: number;
   height?: number;
   durationMs?: number;
+  /** Spoken words with their times in the file (ms from its start), when the speech provider reports an alignment. */
+  words?: Array<{ text: string; startMs: number; endMs: number }>;
 }
 
 /** A job the upstream provider runs asynchronously; its id is enough to resume it without paying again. */
