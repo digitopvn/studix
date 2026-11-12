@@ -47,8 +47,32 @@ export const sandboxRenderCents = (s: StageContext) =>
 
 export type ClipTiming = ReturnType<typeof sceneClipTiming>;
 
+/**
+ * The film system a composition was assembled with, stored as `data/film.json` so a later repair of one scene
+ * renders it on the same shell, mark and accent as the film.
+ */
+export interface FilmShell {
+  shellVersion: number;
+  /** The `<symbol id="sx-mark">` markup; for a logo it points at a file already in the tree. */
+  markSymbol?: string;
+  markName?: string;
+  /** The film's one accent hue (hex). */
+  filmAccent?: string;
+}
+
+/** Headline floor of the frame, in px. */
+export const headlinePxOf = (ir: VideoIR) =>
+  Math.round(HEADLINE_AT_1080 * frameScale({ width: ir.format.width, height: ir.format.height }));
+
+/** The shell theme of a graphic: its palette and fonts, and the film's one accent when it has one. */
+export const directorTheme = (ir: VideoIR, filmAccent?: string) => ({
+  palette: resolvePalette(ir.brand),
+  ...(ir.brand ? { fonts: ir.brand.fonts } : {}),
+  ...(filmAccent ? { filmAccent } : {}),
+});
+
 /** Writes files into the composition tree (created on first use) and saves its manifest. */
-async function storeTree(
+export async function storeTree(
   s: StageContext,
   id: string,
   files: ReadonlyArray<{ path: string; body: Uint8Array }>,
@@ -121,22 +145,32 @@ export async function attemptSceneClip(
     extra: Record<string, unknown>;
     usageItem: string;
     usage: StageUsage[];
+    /** The film system the scene was built on; a composition from before film mode (shell v1) has none. */
+    shell?: FilmShell;
+    /** Whether the scene sets a headline (the hook, the call to action); every scene of a v1 composition does. */
+    headline?: boolean;
   },
 ): Promise<ClipAttempt> {
   const s = booked();
   const compositions = s.services.compositions!;
   const words = a.timing.scenes[a.scene.id]?.lines.flatMap((l) => l.words.map(([w]) => w)) ?? [];
-  const headlinePx = Math.round(
-    HEADLINE_AT_1080 * frameScale({ width: a.ir.format.width, height: a.ir.format.height }),
-  );
-  const checked = checkSceneFragment(a.built, { sid: a.scene.id, words, headlinePx });
+  const shellVersion = a.shell?.shellVersion ?? 1;
+  const checked = checkSceneFragment(a.built, {
+    sid: a.scene.id,
+    words,
+    shellVersion,
+    ...(a.headline !== false ? { headlinePx: headlinePxOf(a.ir) } : {}),
+  });
   if (checked.problems.length > 0) return { ok: false, kind: "contract", problems: checked.problems };
   const project = buildDirectorProject({
     width: a.ir.format.width,
     height: a.ir.format.height,
     timing: a.timing,
-    theme: { palette: resolvePalette(a.ir.brand), ...(a.ir.brand ? { fonts: a.ir.brand.fonts } : {}) },
+    theme: directorTheme(a.ir, a.shell?.filmAccent),
     scenes: [{ sid: a.scene.id, fragment: checked }],
+    shellVersion,
+    ...(a.shell?.markSymbol ? { mark: { symbol: a.shell.markSymbol } } : {}),
+    ...(a.shell?.markName ? { markName: a.shell.markName } : {}),
   });
   // An agent repair turn may have spent what the render needed: never overshoot the job budget.
   const left =

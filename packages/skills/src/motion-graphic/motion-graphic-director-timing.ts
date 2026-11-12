@@ -52,11 +52,34 @@ export function sceneClipTiming(
   sceneId: string,
   handoff: Record<string, { exit?: HandoffRect; enter?: HandoffRect }> = {},
 ): DirectorTiming {
-  const windows = sceneWindows(ir);
-  const win = windows.find((w) => w.id === sceneId);
+  const win = sceneWindows(ir).find((w) => w.id === sceneId);
   if (!win) throw new Error(`scene ${sceneId} is not in the graphic`);
-  const origin = win.startMs;
-  const duration = sec(win.endMs - origin);
+  return windowTiming(ir, win.startMs, win.endMs, handoff, false);
+}
+
+/**
+ * `window.TIMING` of the whole film in one composition (film mode): every scene at its film time, the beat grid
+ * from the film's start, no captions or fades (the final render burns and fades them), and `isolate` so a scene
+ * that throws is skipped and named instead of failing the page.
+ */
+export function directorFilmTiming(
+  ir: VideoIR,
+  handoff: Record<string, { exit?: HandoffRect; enter?: HandoffRect }> = {},
+): DirectorTiming {
+  const windows = sceneWindows(ir);
+  return windowTiming(ir, 0, windows.at(-1)?.endMs ?? 0, handoff, true);
+}
+
+function windowTiming(
+  ir: VideoIR,
+  origin: number,
+  endMs: number,
+  handoff: Record<string, { exit?: HandoffRect; enter?: HandoffRect }>,
+  isolate: boolean,
+): DirectorTiming {
+  const windows = sceneWindows(ir);
+  const filmMs = windows.at(-1)?.endMs ?? endMs;
+  const duration = sec(endMs - origin);
   const scenes: DirectorTiming["scenes"] = {};
   for (const w of windows) {
     const words = sceneWords(ir, w.id, origin);
@@ -85,6 +108,7 @@ export function sceneClipTiming(
     captions: [],
     env: [],
     handoff,
-    options: { fadeIn: false, fadeOut: false },
+    options: { fadeIn: false, fadeOut: false, ...(isolate ? { isolate: true } : {}) },
+    film: { offset: sec(origin), duration: sec(filmMs) },
   };
 }

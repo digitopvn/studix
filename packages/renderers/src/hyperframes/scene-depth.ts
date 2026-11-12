@@ -160,12 +160,18 @@ export function compileDepth(
     prefix: string;
     stageId: string;
     frame: { width: number; height: number };
+    /**
+     * The film has authored (director) scenes: its template cards draw no bokeh, so a fallback card between
+     * two authored scenes keeps the film's clean product look instead of a decorative layer they never show.
+     */
+    filmMode?: boolean;
   },
 ): DepthMarkup {
   const { scene, prefix, stageId, frame } = input;
   const short = Math.min(frame.width, frame.height);
   const background = new Set(scene.depth?.background ?? []);
   const foreground = new Set(scene.depth?.foreground ?? []);
+  if (input.filmMode) foreground.delete("bokeh");
   const css: string[] = [];
   // Moving planes overhang the frame so a pan or a pull never shows their edge.
   const bleed = Math.round(0.08 * Math.max(frame.width, frame.height));

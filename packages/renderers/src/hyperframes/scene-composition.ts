@@ -49,6 +49,8 @@ export interface SceneCompileInput {
   palette: Record<ColorRole, string>;
   transitions: { in?: ResolvedTransition; out?: ResolvedTransition };
   captions: { position: "top" | "middle" | "bottom"; cues: SceneCaptionCue[] };
+  /** The film has authored (director) scenes: template depth drops its bokeh (`compileDepth`). */
+  filmMode?: boolean;
   markup: Omit<ShotMarkupContext, "prefix"> & {
     /** Asset ids copied as video files; a background with one of these plays as a clip. */
     videoAssetIds: ReadonlySet<string>;
@@ -169,6 +171,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     prefix,
     stageId,
     frame: markup.frame,
+    ...(input.filmMode ? { filmMode: true } : {}),
   });
   css.push(...depth.css);
   const planes = new Set<Plane>(["underlay", "content"]);

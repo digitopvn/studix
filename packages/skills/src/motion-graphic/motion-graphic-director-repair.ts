@@ -5,12 +5,7 @@ import { VideoIR } from "@studix/video-ir";
 import { type StageContext, StageFailedAfterSpend, StageSuspended, type StageUsage } from "@studix/workflow";
 import { z } from "zod";
 import { truncateText } from "../vietnamese-safe-text.ts";
-import {
-  BuildOutput,
-  DirectionBrief,
-  MG_SCENE_BUILD_LIMITS,
-  sceneBuildAgent,
-} from "./motion-graphic-director-agents.ts";
+import { BuildOutput, MG_SCENE_BUILD_LIMITS, sceneBuildAgent } from "./motion-graphic-director-agents.ts";
 import {
   attemptSceneClip,
   clipPath,
@@ -37,6 +32,32 @@ export const authoredRepairMs = (durationMs: number) =>
   MG_SCENE_BUILD_LIMITS.timeoutMs + sceneRenderTimeoutSeconds(durationMs) * 1000;
 
 const DirectorMeta = z.object({ director: z.object({ compositionId: z.string().min(1) }) });
+
+/** Path of one scene's builder task in a film-mode composition tree. */
+export const taskPath = (sid: string) => `data/task-${sid}.json`;
+/** Path of the film system (`FilmShell`) in a film-mode composition tree. */
+export const FILM_SHELL_PATH = "data/film.json";
+/** The hand-off rects of a stored direction (`data/direction.json`). */
+const StoredHandoff = z.object({
+  scenes: z.array(
+    z.object({
+      scene: z.number().int(),
+      exitRect: z
+        .object({ x: z.number(), y: z.number(), w: z.number(), h: z.number(), r: z.number().optional() })
+        .nullable()
+        .optional(),
+    }),
+  ),
+});
+const FilmShellFile = z.object({
+  shellVersion: z.number().int().min(1),
+  markSymbol: z.string().max(20_000).optional(),
+  markName: z.string().max(200).optional(),
+  filmAccent: z
+    .string()
+    .regex(/^#[0-9a-f]{3,8}$/i)
+    .optional(),
+});
 
 const spentBy = (err: unknown) =>
   err instanceof StageSuspended || err instanceof StageFailedAfterSpend ? err.usage : [];
@@ -69,12 +90,19 @@ export async function repairAuthoredScene(
   let previous: SceneFragment | undefined;
   try {
     const stored = parseSceneFragmentFile(await readText(s, compositionId, fragmentPath(sceneId)));
-    const task = z
-      .record(z.string(), z.unknown())
-      .parse(JSON.parse(await readText(s, compositionId, "data/task.json")));
-    const direction = DirectionBrief.parse(
-      JSON.parse(await readText(s, compositionId, "data/direction.json")),
+    // Film mode keeps one task per scene and the film system; a hook-only composition has one task and no system.
+    const taskText = await readText(s, compositionId, taskPath(sceneId)).catch(() =>
+      readText(s, compositionId, "data/task.json"),
     );
+    const task = z.record(z.string(), z.unknown()).parse(JSON.parse(taskText));
+    const shell = FilmShellFile.safeParse(
+      JSON.parse(await readText(s, compositionId, FILM_SHELL_PATH).catch(() => "null")),
+    ).data;
+    const role = z.object({ scene: z.object({ role: z.string() }) }).safeParse(task).data?.scene.role;
+    // Only the hand-off rects are read back: the stored direction keeps scenes whose focal words were all
+    // unspoken (empty), which the director's own schema would reject.
+    const directionJson: unknown = JSON.parse(await readText(s, compositionId, "data/direction.json"));
+    const direction = StoredHandoff.parse(directionJson);
     if (!stored) return { failure: "the stored fragment could not be read" };
     previous = stored.fragment;
     // The same timing the scene was built on: word timings, beats and the motif hand-off are unchanged.
@@ -101,9 +129,10 @@ export async function repairAuthoredScene(
       timing,
       compositionId,
       clip,
-      extra: { timing, direction, task },
+      extra: shell ? { [`task-${sceneId}`]: task } : { timing, direction: directionJson, task },
       usageItem: `render-${sceneId}-review`,
       usage,
+      ...(shell ? { shell, headline: role !== "scene" } : {}),
     });
     s.activity?.touch();
     if (!attempt.ok) {
