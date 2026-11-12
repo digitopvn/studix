@@ -174,18 +174,17 @@ const slowCssDecl = (prop: string, value: string) =>
 
 /** Below this opacity a headline reads as a ghost behind the scene, not as its message. */
 const GHOST_OPACITY = 0.6;
-/** Ink tokens dimmed to a fraction of the ink: a headline in one of them is a ghost too. */
-const DIM_INK = /var\(\s*--(?:mute|faint|hair)\s*\)/i;
+/** At or under this opacity large text is decor (a faint backdrop numeral), not a ghosted headline. */
+const DECOR_OPACITY = 0.2;
 
 /**
  * Headline-sized rules (a px font-size of at least `headlinePx`) that set the text ghosted: an opacity between
- * 0 (an entry state, which the timeline lifts) and GHOST_OPACITY, or a dimmed ink token as its colour.
+ * DECOR_OPACITY (decor, or an entry state at 0) and GHOST_OPACITY.
  */
 function ghostedHeadlineProblems(root: Root, headlinePx: number, problems: string[]): void {
   root.walkRules((rule) => {
     let size = 0;
     let opacity: number | undefined;
-    let dim = false;
     rule.walkDecls((decl) => {
       const prop = decl.prop.toLowerCase();
       if (prop === "font-size") {
@@ -194,12 +193,12 @@ function ghostedHeadlineProblems(root: Root, headlinePx: number, problems: strin
       } else if (prop === "opacity") {
         const v = /^\s*(\d*\.?\d+)(%?)\s*$/.exec(decl.value);
         if (v) opacity = Number(v[1]) / (v[2] ? 100 : 1);
-      } else if (prop === "color" && DIM_INK.test(decl.value)) dim = true;
+      }
     });
     if (size < headlinePx) return;
-    if ((opacity !== undefined && opacity > 0 && opacity < GHOST_OPACITY) || dim)
+    if (opacity !== undefined && opacity > DECOR_OPACITY && opacity < GHOST_OPACITY)
       problems.push(
-        `css: "${rule.selector}" sets headline-sized text (${size}px) ghosted (opacity under ${GHOST_OPACITY} or a dimmed ink); set the headline once, fully opaque, in var(--ink)`,
+        `css: "${rule.selector}" sets headline-sized text (${size}px) ghosted (opacity between ${DECOR_OPACITY} and ${GHOST_OPACITY}); set the headline once, fully opaque, in var(--ink)`,
       );
   });
 }
@@ -354,7 +353,7 @@ export interface SceneFragmentCheck {
   words?: readonly string[];
   /**
    * The headline floor of the frame (px): a CSS rule setting text at least this large must not ghost it
-   * (low opacity or a dimmed ink). Omitted: not checked.
+   * (opacity between 0.2 and 0.6). Omitted: not checked.
    */
   headlinePx?: number;
 }

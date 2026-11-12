@@ -64,3 +64,11 @@ export function ctaCopy(
   }
   return said;
 }
+
+/** `text` cut to at most `max` characters at a word boundary, never mid-word (a single overlong word is cut). */
+export function cutOnWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max + 1);
+  const end = head.search(/\s\S*$/);
+  return (end > 0 ? head.slice(0, end) : text.slice(0, max)).replace(/[\s,;:–—-]+$/u, "");
+}

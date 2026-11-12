@@ -1,6 +1,6 @@
 import { buildComposition } from "@studix/renderers";
 import { describe, expect, it } from "vitest";
-import { ctaCopy, splitCtaLine } from "../src/motion-graphic/motion-graphic-cta.ts";
+import { ctaCopy, cutOnWord, splitCtaLine } from "../src/motion-graphic/motion-graphic-cta.ts";
 import { motionGraphicTemplate } from "../src/motion-graphic/motion-graphic-template.ts";
 
 describe("splitCtaLine", () => {
@@ -78,5 +78,12 @@ describe("URL-only end card", () => {
     expect(html).toContain('class="cta-url">studix.ai<');
     expect(html).toContain('class="cta-line">Make your next');
     expect(html).not.toContain("cta-pill");
+  });
+});
+
+describe("cutOnWord", () => {
+  it("never cuts mid-word", () => {
+    expect(cutOnWord("Make your next launch film", 14)).toBe("Make your next");
+    expect(cutOnWord("short", 14)).toBe("short");
   });
 });

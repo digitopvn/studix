@@ -140,6 +140,10 @@ export function videoClipTag(clip: {
   return `<video ${attrs.filter(Boolean).join(" ")}></video>`;
 }
 
+/** Whether two lines say the same once wrapping and spacing are ignored (a URL broken over lines). */
+const sameWords = (a: string, b: string | undefined) =>
+  b !== undefined && a.replace(/\s+/g, "") === b.replace(/\s+/g, "");
+
 /**
  * A call to action with a URL, set as an end-card lockup rather than a button: the line, one accent rule and
  * the URL large and clear under it. The rule is the accent when it reads (3:1) on both fills a closing card
@@ -180,7 +184,7 @@ function ctaEndCard(
   ];
   return {
     // A line that only repeats the URL is not set twice: the rule and the URL stand alone.
-    html: `${open}${shot.text === shot.url ? "" : `<div class="cta-line">${escapeHtml(shot.text)}</div>`}<div class="cta-rule"></div><div class="cta-url">${escapeHtml(shot.url ?? "")}</div></div>`,
+    html: `${open}${sameWords(shot.text, shot.url) ? "" : `<div class="cta-line">${escapeHtml(shot.text)}</div>`}<div class="cta-rule"></div><div class="cta-url">${escapeHtml(shot.url ?? "")}</div></div>`,
     css,
   };
 }
