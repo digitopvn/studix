@@ -349,11 +349,15 @@ profile sản phẩm/công nghệ như `cinematic-product-launch` (không whoosh
 `keynote-stage`, `premium-ui-demo`, `precision-dark-product`, `athletic-impact` (cut cứng, CTA tô accent).
 
 **Premium tier.** Job đặt `roles.director` (một agent, thường là model mạnh hơn) thì director viết storyboard
-với cap lớn hơn và có thể viết 2-3 hero card bằng HTML/GSAP tuỳ biến theo định dạng HTML card của HyperFrames
-(`html`, `css` lồng dưới gốc card, `script` thêm tween vào `tl`). Stage `motion-graphic.heroes` (sau music,
+với cap lớn hơn và có thể viết 2-3 hero card bằng HTML tuỳ biến theo định dạng HTML card của HyperFrames:
+`html` (chỉ các thẻ và thuộc tính trong allowlist, gồm SVG nội tuyến), `css` (mọi selector bị lồng dưới gốc card,
+không at-rule, không `url()` trừ `url(#id)`) và `tweens` (dữ liệu khai báo `{ target, at, duration, from, to,
+ease, stagger }`). Card không chạy code của agent: renderer tự sinh timeline GSAP từ `tweens` đã kiểm, parse rồi
+serialize lại HTML/CSS và gắn namespace cho id. Mỗi card ghi `onScreen` của beat, nên khi bước sửa storyboard đổi
+beat thì card lệch bị bỏ. Stage `motion-graphic.heroes` (sau music,
 trước render) kiểm từng card bằng luật an toàn của HTML card và HyperFrames linter; card đạt được lưu thành code
 asset `application/vnd.studix.html-card+json` và thay card dựng sẵn của beat đó, card không đạt (hoặc trỏ vào
-card CTA) giữ card dựng sẵn và ghi `warning`, nên premium không làm hỏng job mà bản thường render được. Render
+card CTA, hoặc linter không chạy được) giữ card dựng sẵn và ghi `warning`, nên premium không làm hỏng job mà bản thường render được. Render
 sau đó qua cổng QA như mọi frame khác. Không có `roles.director` thì `heroes` bị bỏ.
 
 Voice-over

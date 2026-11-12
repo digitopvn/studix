@@ -167,7 +167,7 @@ Behavior notes:
   true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
   each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
 - `motion-graphic` takes `roles.director` only: it turns on the premium tier (the director writes the
-  storyboard under larger caps and may author 2-3 hero cards as custom HTML/GSAP, each kept only when it
+  storyboard under larger caps and may author 2-3 hero cards as allowlisted HTML/CSS plus declarative tweens, no agent code; each kept only when it
   passes the HTML-card safety rules and the HyperFrames linter, else the built-in card stays and the
   `motion-graphic.heroes` stage records a `warning`). Other roles with `motion-graphic` are refused with
   `VALIDATION`.
