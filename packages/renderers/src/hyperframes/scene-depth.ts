@@ -1,5 +1,5 @@
 import type { CameraMove, Scene } from "@studix/video-ir";
-import { cssColor, tint } from "./brand-tokens.ts";
+import { burnedCaptionBand, cssColor, tint } from "./brand-tokens.ts";
 import { cssRule, num, seconds } from "./html-utils.ts";
 import type { TimelineWriter } from "./scene-timeline.ts";
 
@@ -124,6 +124,9 @@ const MOTIF_CORNERS: ReadonlyArray<readonly [0 | 1, 0 | 1]> = [
   [0, 1],
   [0, 0],
 ];
+/** Smallest gap between a bokeh dot and the visible frame edge, as a fraction of that edge's length. */
+const BOKEH_INSET = 0.08;
+
 /** The content inset, as a fraction of the frame's short edge (the `.content` safe area of a scene). */
 export const SAFE_INSET = 0.07;
 
@@ -182,17 +185,27 @@ export function compileDepth(
   if (foreground.has("bokeh")) {
     const next = random(`${scene.id}:bokeh`);
     const dots: string[] = [];
+    // Bokeh keeps to a ring just inside the visible frame: at least `BOKEH_INSET` from every edge (a dot on
+    // the edge reads as a mistake), clear of the burned-caption band at the bottom, and away from the centre
+    // where the headline sits. Positions are frame pixels, offset by the plane's overhang (`bleed`).
+    const top = BOKEH_INSET * frame.height;
+    const bottom = frame.height - Math.max(top, burnedCaptionBand(frame) + 0.02 * short);
+    const side = BOKEH_INSET * frame.width;
     for (let i = 0; i < 5; i++) {
       const size = Math.round((0.06 + 0.08 * next()) * short);
-      // Bokeh keeps to the outer band of the visible frame (the plane overhangs it by about 7% a side), so it
-      // never sits on the headline.
-      const band = () => (next() < 0.5 ? 10 + 7 * next() : 83 + 7 * next());
+      const span = (lo: number, hi: number) =>
+        [lo + size / 2, Math.max(lo + size / 2, hi - size / 2)] as const;
+      const [x0, x1] = span(side, frame.width - side);
+      const [y0, y1] = span(top, bottom);
+      const band = (lo: number, hi: number) =>
+        next() < 0.5 ? lo + 0.15 * (hi - lo) * next() : hi - 0.15 * (hi - lo) * next();
+      const along = (lo: number, hi: number) => lo + (hi - lo) * (0.15 + 0.7 * next());
       const edge = i % 2 === 0;
-      const x = edge ? band() : 15 + 70 * next();
-      const y = edge ? 15 + 70 * next() : band();
+      const x = edge ? band(x0, x1) : along(x0, x1);
+      const y = edge ? along(y0, y1) : band(y0, y1);
       const role = i % 2 === 0 ? "accent" : "foreground";
       dots.push(
-        `<i style="position:absolute;left:calc(${num(x)}% - ${size / 2}px);top:calc(${num(y)}% - ${size / 2}px);width:${size}px;height:${size}px;border-radius:50%;background:radial-gradient(circle, ${tint(role, 26)} 0%, transparent 70%);"></i>`,
+        `<i style="position:absolute;left:${Math.round(bleed + x - size / 2)}px;top:${Math.round(bleed + y - size / 2)}px;width:${size}px;height:${size}px;border-radius:50%;background:radial-gradient(circle, ${tint(role, 26)} 0%, transparent 70%);"></i>`,
       );
     }
     front.push(`<div class="bokeh">${dots.join("")}</div>`);

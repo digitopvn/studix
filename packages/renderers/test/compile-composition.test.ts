@@ -12,6 +12,7 @@ import {
   validateVideoIR,
 } from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
+import { burnedCaptionBand } from "../src/hyperframes/brand-tokens.ts";
 import { assignLanes } from "../src/hyperframes/scene-composition.ts";
 import { buildComposition, GSAP_ASSET, hyperframesSupport, writeComposition } from "../src/index.ts";
 import { loadIrFixture, tempDir, writePng } from "./render-test-helpers.ts";
@@ -405,6 +406,26 @@ describe("buildComposition camera, depth and match cuts", () => {
     // The motif travels the gutter corners, so a scene with one draws no corner brackets over it.
     expect(html).not.toContain('class="corners"');
     expect(html).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
+  });
+
+  it("keeps bokeh dots inside the frame, off its edges and above the caption band", () => {
+    const { width, height } = previewSize;
+    const bleed = Math.round(0.08 * Math.max(width, height));
+    for (const i of [0, 1, 2]) {
+      const bokeh = /<div class="bokeh">(.*?)<\/div>/.exec(scene(i))?.[1] ?? "";
+      const dots = [...bokeh.matchAll(/left:(-?\d+)px;top:(-?\d+)px;width:(\d+)px/g)].map((m) =>
+        m.slice(1).map(Number),
+      );
+      expect(dots).toHaveLength(5);
+      for (const [left = 0, top = 0, size = 0] of dots) {
+        const x = left - bleed;
+        const y = top - bleed;
+        expect(x).toBeGreaterThanOrEqual(Math.floor(0.08 * width) - 1);
+        expect(x + size).toBeLessThanOrEqual(Math.ceil(0.92 * width) + 1);
+        expect(y).toBeGreaterThanOrEqual(Math.floor(0.08 * height) - 1);
+        expect(y + size).toBeLessThanOrEqual(height - burnedCaptionBand(previewSize) + 1);
+      }
+    }
   });
 
   it("moves each plane by its depth over the whole scene", () => {

@@ -21,13 +21,15 @@ const Finding = z.object({
   selector: z.string().optional(),
   containerSelector: z.string().optional(),
   text: z.string().optional(),
+  severity: z.string().optional(),
+  message: z.string().optional(),
+  suggestedColor: z.string().optional(),
   overflow: z.record(z.string(), z.number()).optional(),
   rect: Rect.optional(),
   containerRect: Rect.optional(),
 });
-const Report = z.object({
-  layout: z.object({ findings: z.array(z.unknown()) }).optional(),
-});
+const Section = z.object({ findings: z.array(z.unknown()) });
+const Report = z.object({ layout: Section.optional(), contrast: Section.optional() });
 
 /** The frame root the shell renders every scene in. */
 const FRAME_ROOT = "#root";
@@ -41,14 +43,49 @@ const offFrame = (rect: z.infer<typeof Rect>, frame: z.infer<typeof Rect>) =>
 
 /**
  * Problems for every element with text that the check found cut by the frame edge, one per element (the
- * widest overflow it reached), at most `MAX_PROBLEMS`. A report that is not a check report gives none: the
- * findings are advisory, never a reason to lose a rendered clip.
+ * widest overflow it reached), then the other layout and contrast findings the check rates `error` (the
+ * render still runs on those, see the sandbox gate), at most `MAX_PROBLEMS`. A report that is not a check
+ * report gives none: the findings are advisory, never a reason to lose a rendered clip.
  */
 export function frameClippingProblems(report: unknown): string[] {
   const parsed = Report.safeParse(report);
   if (!parsed.success) return [];
+  const frame = frameEdgeProblems(parsed.data.layout?.findings ?? []);
+  const errors = [
+    ...severeProblems("layout", parsed.data.layout?.findings ?? []),
+    ...severeProblems("contrast", parsed.data.contrast?.findings ?? []),
+  ];
+  return [...frame, ...errors].slice(0, MAX_PROBLEMS);
+}
+
+/**
+ * One problem per element for each `error` finding of a section the frame-edge read does not already cover,
+ * so the builder gets the overlap, motion glitch or unreadable text the check would otherwise have failed on.
+ */
+function severeProblems(kind: "layout" | "contrast", findings: unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of findings) {
+    const f = Finding.safeParse(raw);
+    if (!f.success || f.data.severity !== "error" || FRAME_CODES.has(f.data.code)) continue;
+    const selector = f.data.selector ?? "?";
+    const key = `${f.data.code}|${selector}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const text = f.data.text?.trim() ? ` "${f.data.text.trim().slice(0, 40)}"` : "";
+    const at = f.data.time === undefined ? "" : ` at ${f.data.time.toFixed(2)}s`;
+    const fix = f.data.suggestedColor ? `; use ${f.data.suggestedColor} or a stronger backdrop` : "";
+    out.push(
+      `${kind}: ${f.data.code}${text} (${selector})${at}: ${(f.data.message ?? "").slice(0, 120)}${fix}`,
+    );
+  }
+  return out;
+}
+
+/** Frame-edge clipping problems, one per element, widest first. */
+function frameEdgeProblems(findings: unknown[]): string[] {
   const worst = new Map<string, { px: number; side: string; time: number; text: string }>();
-  for (const raw of parsed.data.layout?.findings ?? []) {
+  for (const raw of findings) {
     const f = Finding.safeParse(raw);
     if (!f.success || !FRAME_CODES.has(f.data.code)) continue;
     const { selector, containerSelector, text, overflow, time } = f.data;

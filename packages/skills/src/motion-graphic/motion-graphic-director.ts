@@ -30,6 +30,7 @@ import {
 } from "./motion-graphic-director-agents.ts";
 import {
   attemptSceneClip,
+  checkFailureSummary,
   clipPath,
   HEADLINE_AT_1080,
   sandboxRenderCents,
@@ -450,7 +451,9 @@ export const motionGraphicDirectorStage: StageDefinition = {
           repair = { issues: [{ path: "fragment", message }], output: built };
           continue;
         }
-        return keepCard(`the sandbox check or render failed (${attempt.why}): ${attempt.log.slice(-240)}`);
+        return keepCard(
+          `the sandbox check or render failed (${attempt.why}): ${checkFailureSummary(attempt.log)}`,
+        );
       }
 
       const asset = await storeClipAsset(s, {
