@@ -475,6 +475,9 @@ importers:
       '@fontsource/inter':
         specifier: 5.3.0
         version: 5.3.0
+      '@fontsource/jetbrains-mono':
+        specifier: 5.3.0
+        version: 5.3.0
       '@fontsource/share-tech-mono':
         specifier: 5.2.7
         version: 5.2.7

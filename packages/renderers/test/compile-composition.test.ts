@@ -2,7 +2,15 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { lintProject } from "@hyperframes/lint";
 import { StudixError } from "@studix/shared";
-import { RENDER_PRESETS, renderDimensions, type Shot, type VideoIR } from "@studix/video-ir";
+import {
+  buildSequentialTimeline,
+  type LayoutSpec,
+  RENDER_PRESETS,
+  renderDimensions,
+  type Shot,
+  type VideoIR,
+  validateVideoIR,
+} from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
 import { assignLanes } from "../src/hyperframes/scene-composition.ts";
 import { buildComposition, GSAP_ASSET, hyperframesSupport, writeComposition } from "../src/index.ts";
@@ -168,6 +176,217 @@ describe("buildComposition escaping and assets", () => {
     ir.brand!.fonts = { heading: "Comic Neue", body: "Be Vietnam Pro" };
     const build = buildComposition(ir, previewSize);
     expect(build.warnings[0]).toMatch(/Comic Neue.*substituted "Be Vietnam Pro"/);
+  });
+});
+
+describe("buildComposition layouts", () => {
+  const layouts: LayoutSpec[] = [
+    { kind: "prompt-box", text: "Một phim 60 giây giới thiệu <Studix>", action: "Tạo" },
+    {
+      kind: "code",
+      title: "mcp.json",
+      lines: ['{ "studix": {', '  "url": "https://x" // MCP', "}}"],
+      highlight: [1],
+    },
+    { kind: "chips", hub: "Studix MCP", items: ["Claude", "ChatGPT", "Cursor", "Gemini"] },
+    {
+      kind: "checklist",
+      items: [
+        { label: "Job", state: "done" },
+        { label: "Preview", state: "active" },
+        { label: "Duyệt", state: "todo" },
+      ],
+    },
+    { kind: "counter", from: 0, to: 1250, suffix: "credit", label: "còn lại" },
+    { kind: "cards-row", items: ["Hook", "Demo", "CTA"], highlight: 1 },
+    { kind: "swatches", items: [{ color: "accent", label: "Cam" }, { color: "#112233" }] },
+    { kind: "stat", value: "3×", label: "nhanh hơn" },
+  ];
+  const ir = structuredClone(brandIntro);
+  ir.scenes = layouts.map((layout, i) => ({
+    id: `l${i}`,
+    role: "feature",
+    durationMs: 3000,
+    background: { color: "background" },
+    shots: [{ id: `l${i}-layout`, type: "layout", startMs: 0, durationMs: 3000, layout }],
+  }));
+  ir.timeline = buildSequentialTimeline(ir.scenes);
+  ir.format.durationMs = 3000 * layouts.length;
+  delete ir.captions;
+  ir.audio = [];
+  const build = buildComposition(ir, previewSize);
+  const scene = (i: number) => build.files.get(`compositions/l${i}.html`)!;
+
+  it("draws every built-in layout from its typed content, escaped", () => {
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const down = structuredClone(ir);
+    down.scenes[4]!.shots[0] = {
+      ...down.scenes[4]!.shots[0]!,
+      layout: { kind: "counter", from: 900, to: 50 },
+    } as Shot;
+    expect(validateVideoIR(down).ok).toBe(false);
+    expect(hyperframesSupport(ir, RENDER_PRESETS.preview).reasons).toEqual([]);
+    expect(scene(0)).toContain("&lt;");
+    expect(scene(0)).not.toContain("<Studix>");
+    expect(scene(0)).toContain('<div class="lo-send">Tạo</div>');
+    expect(scene(1)).toContain('<span class="lo-str">&quot;studix&quot;</span>');
+    expect(scene(1)).toContain('<span class="lo-cmt">// MCP</span>');
+    expect(scene(2)).toContain('<div class="lo-hub">Studix MCP</div>');
+    // Four chips do not fit side by side on a portrait frame: they hang off a spine.
+    expect(scene(2)).toContain("grid-auto-rows: 1fr;");
+    expect(scene(3)).toContain("lo-step lo-s0 lo-done");
+    expect(scene(4).match(/class="lo-strip/g)).toHaveLength(4);
+    // Vietnamese groups thousands with a dot: 1.250.
+    expect(scene(4)).toContain('<span class="lo-p0">.</span>');
+    expect(scene(5)).toContain("lo-card lo-k1 lo-hot");
+    expect(scene(6)).toContain("background: var(--c-accent);");
+    expect(scene(6)).toContain("background: #112233;");
+    expect(scene(7)).toContain('<div class="lo-value">3×</div>');
+  });
+
+  it("builds each layout in with seek-safe tweens after the shot enters", () => {
+    // Typing: each run of letters is shown at an absolute time, the caret blinks after.
+    expect(scene(0)).toMatch(/tl\.set\("#s-l0__shot-l0-layout \.lo-c0", \{"opacity":1\}, 0\.3\);/);
+    expect(scene(0)).toContain('tl.set("#s-l0__shot-l0-layout .lo-caret"');
+    expect(scene(1)).toContain('"clipPath":"inset(0% 100% 0% 0%)"');
+    expect(scene(1)).toContain('"#s-l1__shot-l1-layout .lo-l1 .lo-hlbar", {"scaleX":0}');
+    // The counter's units roll two turns: from 0 to the 20 + 0th digit of the strip.
+    expect(scene(4)).toContain(
+      'tl.fromTo("#s-l4__shot-l4-layout .lo-d3", {"yPercent":0}, {"yPercent":-66.667,"duration":1.2,"ease":"power2.out"}, 0.3);',
+    );
+    // Only separators that exist are faded in: 1.250 has one, after its first digit.
+    const targets = [...scene(4).matchAll(/layout \.(lo-p\d+)"/g)].map((m) => m[1]);
+    expect(targets).toEqual(["lo-p0"]);
+    for (let i = 0; i < 8; i++) {
+      expect(scene(i)).not.toContain('"repeat"');
+      expect(scene(i)).not.toContain("onUpdate");
+    }
+  });
+
+  it("bundles the monospace family only when a code layout uses it", () => {
+    expect([...build.copies.keys()]).toContain("assets/fonts/jetbrains-mono-vietnamese-500-normal.woff2");
+    expect(scene(1)).toContain('font-family: "JetBrains Mono", monospace;');
+    expect(build.warnings).toEqual([]);
+    const plain = buildComposition(brandIntro, previewSize);
+    expect([...plain.copies.keys()].some((k) => k.includes("jetbrains"))).toBe(false);
+  });
+
+  it("fills a landscape card and keeps the layout above burned captions", () => {
+    const wide = structuredClone(ir);
+    wide.captions = {
+      language: "vi",
+      mode: "burned",
+      position: "bottom",
+      cues: [{ startMs: 0, endMs: 3000, text: "Gõ một câu lệnh." }],
+    };
+    const landscape = buildComposition(wide, { width: 1920, height: 1080 });
+    const first = landscape.files.get("compositions/l0.html")!;
+    // Subtitles are 44 px at a 1080 px short edge, readable on a phone.
+    expect(first).toMatch(/\.cue \{[^}]*font-size: 44px;/);
+    // The middle region keeps clear of the caption band: edge 97 + a 79 px cue (one line and its padding) + gap 32 - safe 76.
+    expect(first).toMatch(/\.region-middle \{[^}]*padding-bottom: 132px;/);
+    expect(landscape.files.get("compositions/l1.html")).not.toContain("padding-bottom");
+    // Landscape draws a layout larger than its short edge alone would: the prompt is 1.25x its portrait size (44 px body x 1.1 x 1.25, rounded once).
+    const promptPx = (html: string) => Number(/\.lo-field \{[^}]*font-size: (\d+)px;/.exec(html)?.[1]);
+    const tall = buildComposition(wide, { width: 1080, height: 1920 }).files.get("compositions/l0.html")!;
+    expect(promptPx(first)).toBe(61);
+    expect(promptPx(tall)).toBe(48);
+    // A square frame is not landscape: no boost, and chip labels never drop below the 26 px floor.
+    const square = buildComposition(wide, { width: 1080, height: 1080 });
+    expect(promptPx(square.files.get("compositions/l0.html")!)).toBe(48);
+    for (const html of [
+      square.files.get("compositions/l2.html")!,
+      landscape.files.get("compositions/l2.html")!,
+    ]) {
+      expect(Number(/\.lo-chip \{[^}]*font-size: (\d+)px;/.exec(html)?.[1])).toBeGreaterThanOrEqual(26);
+    }
+  });
+
+  it("passes the HyperFrames linter with no errors", async () => {
+    const { dir, cleanup } = await tempDir("compile-layouts");
+    cleanups.push(cleanup);
+    await writeComposition(build, dir);
+    const result = await lintProject(dir);
+    const errors = result.results.flatMap((r) => r.result.findings.filter((f) => f.severity === "error"));
+    expect(errors).toEqual([]);
+  });
+});
+
+describe("buildComposition camera, depth and match cuts", () => {
+  const ir = structuredClone(brandIntro);
+  const moves = ["push-in", "parallax", "pan-left"] as const;
+  ir.scenes = moves.map((camera, i) => ({
+    id: `c${i}`,
+    role: "feature",
+    durationMs: 3000,
+    background: { color: "background" },
+    shots: [{ id: `c${i}-text`, type: "text", startMs: 0, durationMs: 3000, text: `Card ${i}` }],
+    camera,
+    depth: { background: ["glow", "grid", "grain", "vignette"], foreground: ["corners", "bokeh"] },
+    motif: { shape: "ring", color: "accent" },
+    ...(i === 0 ? { transitionOut: { kind: "match-cut", durationMs: 0 } } : {}),
+    ...(i === 1 ? { transitionOut: { kind: "iris", durationMs: 400 } } : {}),
+  }));
+  ir.timeline = buildSequentialTimeline(ir.scenes);
+  ir.format.durationMs = 9000;
+  delete ir.captions;
+  ir.audio = [];
+  const build = buildComposition(ir, previewSize);
+  const scene = (i: number) => build.files.get(`compositions/c${i}.html`)!;
+
+  it("accepts the camera, depth and motif fields as valid IR", () => {
+    expect(validateVideoIR(ir).ok).toBe(true);
+  });
+  const motifTween = (html: string) => {
+    const m = /tl\.fromTo\("#s-c\d__motif", (\{[^}]*\}), (\{[^}]*\}), 0\);/.exec(html);
+    if (!m) throw new Error("no motif tween");
+    const { duration: _d, ease: _e, ...to } = JSON.parse(m[2]!) as Record<string, number>;
+    return { from: JSON.parse(m[1]!) as Record<string, number>, to };
+  };
+
+  it("draws the depth planes back to front, with captions and the lens unmoved by the camera", () => {
+    const html = scene(0);
+    const order = ["plane-back", "plane-underlay", "__motif", "plane-content", "plane-front", 'class="lens"'];
+    // Corner brackets sit on the fixed lens, so no camera move pushes them out of the frame.
+    expect(html.indexOf('class="corners"')).toBeGreaterThan(html.indexOf('class="lens"'));
+    const at = order.map((id) => html.indexOf(id));
+    expect(at.every((n) => n > 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    for (const layer of ["glow", "grid", "corners", "bokeh", "vignette", "grain"])
+      expect(html).toContain(`class="${layer}"`);
+    expect(html).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
+  });
+
+  it("moves each plane by its depth over the whole scene", () => {
+    const push = scene(0);
+    expect(push).toContain('tl.fromTo("#s-c0__plane-content", {"scale":1}, {"scale":1.06,"duration":3');
+    expect(push).toContain('tl.fromTo("#s-c0__plane-back", {"scale":1}, {"scale":1.03,"duration":3');
+    expect(push).toContain('tl.fromTo("#s-c0__plane-front", {"scale":1}, {"scale":1.084,"duration":3');
+    // Parallax spreads the planes: the front plane travels further than the content, the back less.
+    const travel = (plane: string) =>
+      Number(new RegExp(`"#s-c1__plane-${plane}", \\{"x":(\\d+)`).exec(scene(1))?.[1]);
+    expect(travel("front")).toBeGreaterThan(travel("content"));
+    expect(travel("content")).toBeGreaterThan(travel("back"));
+    expect(scene(2)).toMatch(/"#s-c2__plane-content", \{"x":\d+\}, \{"x":-\d+/);
+    // A sideways move scales the underlay just enough that its edges never show.
+    expect(scene(2)).toMatch(/"#s-c2__plane-underlay", \{"x":\d+,"scale":1\.0\d+\}/);
+  });
+
+  it("hands the motif over at every cut and plays no stage tween on a match cut", () => {
+    for (let i = 0; i < 2; i++) expect(motifTween(scene(i + 1)).from).toEqual(motifTween(scene(i)).to);
+    expect(scene(0)).not.toMatch(/tl\.fromTo\("#s-c0__stage"/);
+    expect(scene(1)).not.toMatch(/tl\.fromTo\("#s-c1__stage", [^\n]*, 0\);/);
+    expect(scene(1)).toContain('{"clipPath":"circle(0% at 50% 50%)"');
+    expect(scene(2)).toContain('{"clipPath":"circle(0% at 50% 50%)"');
+  });
+
+  it("passes the HyperFrames linter with no errors", async () => {
+    const { dir, cleanup } = await tempDir("compile-depth");
+    cleanups.push(cleanup);
+    await writeComposition(build, dir);
+    const result = await lintProject(dir);
+    const errors = result.results.flatMap((r) => r.result.findings.filter((f) => f.severity === "error"));
+    expect(errors).toEqual([]);
   });
 });
 

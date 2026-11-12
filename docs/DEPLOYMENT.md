@@ -255,6 +255,15 @@ role come from `MULTIX_<ROLE>_MODEL` as `<vendor>:<model>`, and voice per langua
 `MULTIX_WAIT_TIMEOUT_SECONDS` (default 900) bounds the wait for one upstream
 job. Every paid call is estimated first and refused above the request's cap.
 
+Speech, music and SFX vendors cap concurrent requests per account (ElevenLabs Creator allows 5 and answers
+429 `concurrent_limit_exceeded` past it). `MULTIX_AUDIO_CONCURRENCY` (default 3) is the most such requests
+one account runs at once per worker process, shared by every job, stage and workspace on that worker; a
+workspace's own key counts as its own account. Keep it below the plan's limit divided by the number of worker
+processes. Skills in the sandbox that call a vendor with its key directly are not counted. An ElevenLabs,
+Fish or OpenRouter request the vendor still answers with a rate-limit 429 (refused, so never charged) is
+retried in place up to four times, honouring the vendor's retry-after up to a minute, instead of failing the
+stage.
+
 These env values are the server defaults. A workspace admin (`member:manage`) can override them on the
 dashboard's Providers page, or through `GET|PUT|DELETE /api/providers/multix`: turn Multix off for the
 workspace, change the wait timeout (30–7200 s), the model of each role and the voice routes. Saved values

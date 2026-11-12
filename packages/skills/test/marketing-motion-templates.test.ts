@@ -1,5 +1,5 @@
 import { StudixError } from "@studix/shared";
-import { validateVideoIR } from "@studix/video-ir";
+import { type VideoIR, validateVideoIR, withPromptFormat } from "@studix/video-ir";
 import { describe, expect, it } from "vitest";
 import {
   captionCues,
@@ -8,8 +8,10 @@ import {
   HOOK_MAX_MS,
   irVariants,
   MAX_CAPTION_WORDS,
+  MotionStoryboard,
   marketingScript,
   marketingVideoTemplate,
+  motionGraphicStoryboardStage,
   motionGraphicTemplate,
   packPipelines,
   packRegistry,
@@ -72,6 +74,38 @@ describe("caption chunks", () => {
       { startMs: 2000, endMs: 3000, text: "sáu bảy tám chín mười" },
     ]);
     expect(captionCues("", 0, 1000)).toEqual([]);
+  });
+
+  it("keeps a phone number in one cue", () => {
+    const line = "Đặt hàng ngay hôm nay qua hotline 0901 234 567 để nhận quà tặng";
+    for (const durationMs of [1500, 2500, 3650]) {
+      expect(captionCues(line, 0, durationMs).map((c) => c.text)).toEqual([
+        "Đặt hàng ngay hôm nay qua hotline",
+        "0901 234 567 để nhận quà tặng",
+      ]);
+    }
+    expect(chunkCaption("Gọi ngay 0901 234 567 hôm nay nhé bạn", 4)).toEqual([
+      "Gọi ngay",
+      "0901 234 567 hôm",
+      "nay nhé bạn",
+    ]);
+  });
+
+  it("never leaves a one-word or sub-600 ms cue: the remainder joins the cue before it", () => {
+    const line = "Here is the one thing every founder should know about.";
+    expect(chunkCaption(line)).toEqual([line]);
+    const cues = captionCues(line, 32_000, 4500);
+    expect(cues).toEqual([{ startMs: 32_000, endMs: 36_500, text: line }]);
+    // A short clause folds into its neighbour while the two fit one cue; past that, they share the time.
+    expect(captionCues("Xin chào, hôm nay", 0, 2000)).toEqual([
+      { startMs: 0, endMs: 2000, text: "Xin chào, hôm nay" },
+    ]);
+    const busy = captionCues("Xin chào, hôm nay mình kể bạn nghe một chuyện nhỏ thôi.", 0, 3572);
+    expect(busy.map((c) => c.text)).toEqual(["Xin chào,", "hôm nay mình kể bạn nghe một chuyện nhỏ thôi."]);
+    expect(busy.map((c) => [c.startMs, c.endMs])).toEqual([
+      [0, 600],
+      [600, 3572],
+    ]);
   });
 });
 
@@ -372,6 +406,19 @@ describe("motion graphic", () => {
     expect(style.id).toEqual(expect.any(String));
   });
 
+  it("renders the length and frame shape the prompt states", () => {
+    const prompt =
+      "A 60-second 16:9 (1920x1080) English motion-graphic video about Lá Mây. Exactly 60 seconds.";
+    const ir = motionGraphicTemplate(withPromptFormat({ prompt }));
+    expect(ir.format).toMatchObject({ aspectRatio: "16:9", width: 1920, height: 1080, durationMs: 60_000 });
+    // Landscape has room: every plain headline card is set at display size, not only the hook.
+    const wide = motionGraphicTemplate({ prompt, aspectRatio: "16:9", keyMessages: ["Tea picked by hand"] });
+    const message = wide.scenes
+      .find((s) => s.id === "message-1")
+      ?.shots.find((s) => s.id === "message-1-text");
+    expect(message?.style?.textStyle).toBe("display");
+  });
+
   it("keeps the style profile's name off screen when the brief has no brand or title", () => {
     const ir = motionGraphicTemplate({
       prompt: "Video giới thiệu Lá Mây",
@@ -395,14 +442,15 @@ describe("motion graphic", () => {
       keyMessages: ["Trà hái tay mỗi sớm", "Hộp trà giao tận nơi"],
       callToAction: "Ghé Lá Mây hôm nay",
       brand: { ...brief.brand, palette: { ...brief.brand.palette, accent: "#d98e3f" } },
+      directions: [{ id: "a", name: "A", concept: "Trà", visualStyle: "kinetic-typography" }],
     });
     expect(validateVideoIR(ir).ok).toBe(true);
     const ink = (sceneId: string, shotId: string) =>
       ir.scenes.find((s) => s.id === sceneId)?.shots.find((s) => s.id === shotId)?.style?.color;
-    // One base for every card; the dark green primary is kept for the call to action, where its ink is
-    // the cream background colour, not the near-black foreground or the orange accent.
+    // One surface for the message cards; the high-energy profile spends the primary on the CTA alone.
     expect(ir.scenes.find((s) => s.id === "message-1")?.background?.color).toBe("background");
     expect(ink("message-1", "message-1-text")).toBe("foreground");
+    // Dark green primary: the cream background colour, not the near-black foreground or the orange accent.
     expect(ir.scenes.find((s) => s.id === "cta")?.background?.color).toBe("primary");
     expect(ink("cta", "cta-text")).toBe("background");
     expect(ink("cta", "cta-logo")).toBe("background");
@@ -600,6 +648,137 @@ describe("spoken length", () => {
     expect(err?.details).toMatchObject({ words: 28, neededMs: 10_100, totalMs: 10_000 });
   });
 
+  it("draws a storyboard beat's layout under its headline and keeps the call to action a CTA", () => {
+    const beat = (onScreen: string, layout?: unknown) => ({
+      onScreen,
+      voiceover: `${onScreen}.`,
+      visual: "A dark card.",
+      enter: "fade",
+      weight: 1,
+      ...(layout ? { layout } : {}),
+    });
+    const ir = motionGraphicTemplate(
+      {
+        prompt: "A launch video introducing Studix",
+        language: "en",
+        durationMs: 15_000,
+        aspectRatio: "16:9",
+      },
+      {
+        storyboard: {
+          styleProfile: "kinetic-typography",
+          beats: [
+            beat("Type a prompt", {
+              kind: "prompt-box",
+              text: "A 60s launch film for Studix",
+              action: "Create",
+            }),
+            beat("Plug in any agent", { kind: "chips", hub: "Studix MCP", items: ["Claude", "ChatGPT"] }),
+            beat("Watch it build"),
+            beat("Start free", { kind: "stat", value: "100", label: "credits" }),
+          ],
+          music: null,
+        } as never,
+      },
+    );
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const hook = ir.scenes[0]!;
+    expect(hook.shots.map((s) => [s.type, s.style?.region])).toEqual([
+      ["title", "top"],
+      ["layout", "middle"],
+    ]);
+    const layout = hook.shots[1];
+    expect(layout?.type === "layout" && layout.layout.kind).toBe("prompt-box");
+    expect(ir.scenes[2]!.shots.map((s) => s.type)).toEqual(["text"]);
+    // The last beat stays the call to action, whatever layout it names.
+    expect(ir.scenes[3]!.shots.some((s) => s.type === "layout")).toBe(false);
+    // No mechanical alternation: every message card shares the scene background.
+    expect(ir.scenes.slice(0, 3).map((s) => s.background?.color)).toEqual([
+      "background",
+      "background",
+      "background",
+    ]);
+    expect(ir.metadata?.templateVersion).toBe(9);
+    // Landscape has the room: a short headline over a layout is set at display size too.
+    expect(hook.shots[0]?.style?.textStyle).toBe("display");
+  });
+
+  it("rejects a storyboard layout outside its typed shape", () => {
+    const parsed = MotionStoryboard.safeParse({
+      styleProfile: "kinetic-typography",
+      beats: [1, 2, 3].map((i) => ({
+        onScreen: `C${i}`,
+        voiceover: "Hi.",
+        visual: "Card.",
+        enter: "fade",
+        weight: 1,
+        layout: { kind: "chips", hub: "Hub", items: ["only one"] },
+      })),
+      music: null,
+      rationale: "r",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("writes again a stored storyboard whose beats name a layout instead of typing it", () => {
+    const stored = (layout: unknown) => ({
+      source: "agent",
+      storyboard: {
+        styleProfile: "kinetic-typography",
+        beats: [1, 2, 3].map((i) => ({
+          onScreen: `C${i}`,
+          voiceover: "Hi.",
+          visual: "Card.",
+          enter: "fade",
+          weight: 1,
+          layout,
+        })),
+        music: null,
+        rationale: "r",
+      },
+    });
+    const valid = (output: unknown) => motionGraphicStoryboardStage.isCheckpointValid?.(output as never, {});
+    expect(valid(stored(null))).toBe(true);
+    expect(valid({ ...stored("chips"), items: ["MCP", "API"] })).toBe(false);
+  });
+
+  it("names the brand the storyboard found in the brief, not the hook line, on the kit, title and CTA", () => {
+    const named = (brandName: string | null) =>
+      motionGraphicTemplate(
+        { prompt: "A 10s launch motion graphic introducing Studix", language: "en", durationMs: 10_000 },
+        {
+          storyboard: {
+            styleProfile: "apple-clean",
+            beats: [
+              {
+                onScreen: "Describe a video. Get a film.",
+                voiceover: "Describe a video.",
+                enter: "fade",
+                weight: 1,
+              },
+              { onScreen: "Agents do the rest", voiceover: "Agents do the rest.", enter: "fade", weight: 1 },
+              { onScreen: "Try it now", voiceover: "Try it now.", enter: "fade", weight: 1 },
+            ],
+            music: null,
+            brandName,
+          } as never,
+        },
+      );
+    const ctaLogo = (ir: VideoIR) => ir.scenes.at(-1)?.shots.find((s) => s.id === "cta-logo");
+    const ir = named("Studix");
+    expect(ir.brand?.name).toBe("Studix");
+    expect(ir.title).toBe("Studix");
+    expect(ctaLogo(ir)).toMatchObject({ type: "logo", text: "Studix" });
+    // The brief's spelling wins over the agent's casing.
+    expect(named("STUDIX").brand?.name).toBe("Studix");
+    // A name the brief never writes as a whole word, or the hook line itself, is dropped, and the CTA
+    // shows no hook line in its place.
+    for (const ir of [named("Acme"), named("Stud"), named("Describe a video. Get a film."), named(null)]) {
+      expect(ir.brand?.name).toBe("Describe a video. Get a film.");
+      expect(ctaLogo(ir)).toBeUndefined();
+    }
+  });
+
   it("gives a motion-graphic card the time a mixed-language line takes to say", () => {
     const line = "Studix là studio video AI-native.";
     const ir = motionGraphicTemplate(
@@ -643,14 +822,5 @@ describe("pack pipelines", () => {
     const mg =
       packPipelines(packRegistry)("motion-graphic")?.stages({ fromVersion: false }, engine as never) ?? [];
     expect(mg.some((s) => s.name.includes("i2v"))).toBe(false);
-  });
-});
-
-describe("motion graphic prompt format", () => {
-  it("keeps the length and aspect ratio the prompt states", async () => {
-    const { motionGraphicTemplate } = await import("../src/motion-graphic/motion-graphic-template.ts");
-    const ir = motionGraphicTemplate({ prompt: "A 30-second 16:9 intro for Studix. Try it today." });
-    expect(ir.format.aspectRatio).toBe("16:9");
-    expect(ir.format.durationMs).toBe(30_000);
   });
 });

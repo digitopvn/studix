@@ -168,6 +168,8 @@ export function withRestyledCards(
     if (!cards.includes(i + 1) || !next) return scene;
     return {
       ...scene,
+      // The redesigned card's camera move (planned against its unchanged neighbours) goes with its shots.
+      ...(next.camera ? { camera: next.camera } : {}),
       shots: next.shots.map((shot) => ({
         ...shot,
         durationMs: Math.max(1, scene.durationMs - shot.startMs),

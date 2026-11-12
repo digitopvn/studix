@@ -1,7 +1,16 @@
 // Adapted from motion-mcp packages/hyperframes-adapter/src/compile.ts @ 408ceccd (MIT, Copyright (c) 2026 Digitop).
 import type { ColorRole, Scene, Shot } from "@studix/video-ir";
-import { COLOR_ROLES, cssColor, TEXT_STYLES } from "./brand-tokens.ts";
+import {
+  BURNED_CAPTION,
+  BURNED_CAPTION_PAD,
+  burnedCaptionBand,
+  burnedCaptionEdge,
+  COLOR_ROLES,
+  cssColor,
+} from "./brand-tokens.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
+import { writeLayoutMotion } from "./layout-markup.ts";
+import { cameraScales, compileDepth, type Plane, PUSH, planeId, writeCamera } from "./scene-depth.ts";
 import {
   type ResolvedTransition,
   TimelineWriter,
@@ -19,6 +28,8 @@ export interface SceneCaptionCue {
 
 export interface SceneCompileInput {
   scene: Scene;
+  /** The scene's place in the video; it fixes where a motif rests at the scene's cuts. */
+  sceneIndex: number;
   palette: Record<ColorRole, string>;
   transitions: { in?: ResolvedTransition; out?: ResolvedTransition };
   captions: { position: "top" | "middle" | "bottom"; cues: SceneCaptionCue[] };
@@ -64,6 +75,14 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   const stageId = `${prefix}stage`;
   const safe = Math.round(0.07 * Math.min(width, height));
   const gap = Math.round(0.03 * Math.min(width, height));
+  const captionClearance =
+    input.captions.position === "bottom" &&
+    input.captions.cues.length > 0 &&
+    scene.shots.some((s) => s.type === "layout" && (s.style?.region ?? "middle") === "middle")
+      ? Math.max(0, burnedCaptionBand(markup.frame) + gap - safe) +
+        // A push grows the shots about the centre, so the layout's bottom edge would sink into the captions.
+        (cameraScales(scene.camera) ? Math.ceil((PUSH / 2) * (height - 2 * safe)) : 0)
+      : 0;
 
   const css: string[] = [
     cssRule(`#${stageId}`, [
@@ -92,7 +111,12 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       `gap: ${gap}px;`,
       "min-height: 0;",
     ]),
-    cssRule(`#${stageId} .region-middle`, ["flex: 1 1 auto;", "justify-content: center;"]),
+    cssRule(`#${stageId} .region-middle`, [
+      "flex: 1 1 auto;",
+      "justify-content: center;",
+      // A layout fills the middle of its card, so it is centred above the burned captions, never under them.
+      ...(captionClearance > 0 ? [`padding-bottom: ${captionClearance}px;`] : []),
+    ]),
     cssRule(`#${stageId} .lane`, ["display: grid;", "align-items: center;"]),
     cssRule(`#${stageId} .lane > .shot`, ["grid-area: 1 / 1;"]),
   ];
@@ -118,6 +142,18 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
 
   const w = new TimelineWriter();
   writeTransition(w, `#${stageId}`, "in", input.transitions.in, scene.durationMs);
+  const depth = compileDepth(w, {
+    scene,
+    sceneIndex: input.sceneIndex,
+    prefix,
+    stageId,
+    frame: markup.frame,
+  });
+  css.push(...depth.css);
+  const planes = new Set<Plane>(["underlay", "content"]);
+  if (depth.back) planes.add("back");
+  if (depth.front) planes.add("front");
+  writeCamera(w, prefix, scene, markup.frame, planes);
   const html = new Map<string, string>();
   for (const shot of scene.shots) {
     const rendered = renderShotMarkup(ctx, shot);
@@ -128,7 +164,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
     // Full-bleed shots sit in the underlay behind the flowing regions.
     if (shot.style?.region === "full") underlay.push(rendered.html);
     writeShotMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, scene.durationMs, markup.frame);
-    rendered.motion?.(w);
+    if (shot.type === "layout") writeLayoutMotion(w, `#${shotDomId(prefix, shot.id)}`, shot, markup.frame);
   }
 
   const regions = REGIONS.map((region) => {
@@ -157,8 +193,12 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       `<template id="${prefix}template">`,
       `  <div data-composition-id="${scene.id}" data-width="${width}" data-height="${height}" data-duration="${num(seconds(scene.durationMs))}">`,
       `    <div id="${stageId}" data-scene-role="${scene.role}">`,
-      `      <div class="underlay">${underlay.join("")}</div>`,
-      `      <div class="content">${regions.join("")}</div>`,
+      depth.back ? `      ${depth.back}` : "",
+      `      <div id="${planeId(prefix, "underlay")}" class="underlay">${underlay.join("")}</div>`,
+      depth.motif ? `      ${depth.motif}` : "",
+      `      <div id="${planeId(prefix, "content")}" class="content">${regions.join("")}</div>`,
+      depth.front ? `      ${depth.front}` : "",
+      depth.lens ? `      ${depth.lens}` : "",
       captionHtml ? `      ${captionHtml}` : "",
       "    </div>",
       "    <style>",
@@ -189,9 +229,9 @@ function captionsMarkup(
   const { cues, position } = input.captions;
   if (cues.length === 0) return "";
   const { frame, fontStacks, fontWeights, scale } = input.markup;
-  const token = TEXT_STYLES.caption;
+  const token = BURNED_CAPTION;
   fontWeights[token.font].add(token.weight);
-  const edge = Math.round(0.09 * Math.min(frame.width, frame.height));
+  const edge = burnedCaptionEdge(frame);
   const placement =
     position === "top" ? [`top: ${edge}px;`] : position === "middle" ? ["top: 50%;"] : [`bottom: ${edge}px;`];
   css.push(
@@ -211,9 +251,9 @@ function captionsMarkup(
       `font-weight: ${token.weight};`,
       `line-height: ${token.lineHeight};`,
       "color: #ffffff;",
-      "background: rgba(0, 0, 0, 0.6);",
-      `padding: ${Math.round(8 * scale)}px ${Math.round(18 * scale)}px;`,
-      `border-radius: ${Math.round(10 * scale)}px;`,
+      "background: rgba(0, 0, 0, 0.66);",
+      `padding: ${Math.round(BURNED_CAPTION_PAD.y * scale)}px ${Math.round(BURNED_CAPTION_PAD.x * scale)}px;`,
+      `border-radius: ${Math.round(12 * scale)}px;`,
       "text-align: center;",
       "white-space: pre-line;",
       "hyphens: manual;",

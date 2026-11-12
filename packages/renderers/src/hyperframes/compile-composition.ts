@@ -8,6 +8,7 @@ import {
   DEFAULT_FONT_FAMILY,
   type FontSlot,
   frameScale,
+  MONO_FONT_FAMILY,
   resolvePalette,
   TEXT_STYLES,
 } from "./brand-tokens.ts";
@@ -126,17 +127,20 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
   const families: Record<FontSlot, string> = {
     heading: ir.brand?.fonts.heading ?? DEFAULT_FONT_FAMILY,
     body: ir.brand?.fonts.body ?? DEFAULT_FONT_FAMILY,
+    mono: MONO_FONT_FAMILY,
   };
   // Stacks are needed while rendering shots; files are planned after shots report the weights they use.
   const namePlan = planFonts([
     { family: families.heading, weights: new Set() },
     { family: families.body, weights: new Set() },
+    { family: families.mono, weights: new Set() },
   ]);
   const fontStacks: Record<FontSlot, string> = {
     heading: namePlan.stacks.get(families.heading)!,
     body: namePlan.stacks.get(families.body)!,
+    mono: namePlan.stacks.get(families.mono)!,
   };
-  const fontWeights: Record<FontSlot, Set<number>> = { heading: new Set(), body: new Set() };
+  const fontWeights: Record<FontSlot, Set<number>> = { heading: new Set(), body: new Set(), mono: new Set() };
 
   const copies = new Map<string, string>();
   const assetPaths = new Map<string, string>();
@@ -168,10 +172,12 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
     fontWeights,
     assetPaths,
     brand: ir.brand,
+    language: ir.language,
   };
   const scenes = ir.scenes.map((scene, index) =>
     compileScene({
       scene,
+      sceneIndex: index,
       palette,
       transitions: sceneTransitions(ir.scenes, index),
       captions: { position, cues: cues.get(scene.id) ?? [] },
@@ -185,6 +191,8 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
   const fonts = planFonts([
     { family: families.heading, weights: fontWeights.heading },
     { family: families.body, weights: fontWeights.body },
+    // Only a code layout draws monospace, so the family is bundled only when one asks for it.
+    ...(fontWeights.mono.size > 0 ? [{ family: families.mono, weights: fontWeights.mono }] : []),
   ]);
   warnings.push(...fonts.warnings);
   for (const f of fonts.files) copies.set(f.dest, f.source);

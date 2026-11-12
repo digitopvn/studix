@@ -110,14 +110,14 @@ function direction(ir: VideoIR, part: VoicePart, index: number, count: number, r
  * The voice-over spoken in [fromMs, toMs) as one line per beat, from the burned captions: each line holds
  * the captions of its beat and starts where they start, with direction for its part (the first line is the
  * hook) and the brand's tone of voice. Throws VALIDATION, before anything is paid, when a line has more
- * words than its room holds at `VO_WORDS_PER_SECOND`. Pure: the same IR gives the same lines.
+ * words than its room holds at `VO_WORDS_PER_SECOND`; `estimate: false` skips that check, for cards already
+ * cut to the measured takes. Pure: the same IR gives the same lines.
  */
 export function voiceLines(
   ir: VideoIR,
   fromMs = 0,
   toMs = ir.format.durationMs,
-  /** False once the takes are measured: their real length, not the estimate, then sets the rooms. */
-  checkEstimate = true,
+  { estimate = true }: { estimate?: boolean } = {},
 ): VoiceLine[] {
   const cues = (ir.captions?.cues ?? [])
     .filter((c) => c.startMs >= fromMs && c.endMs <= toMs)
@@ -143,7 +143,7 @@ export function voiceLines(
     // Compared in whole milliseconds against what the voice stage can still lay (a take sped up to
     // `MAX_VOICE_SPEEDUP`), so a line that just fills its room is never refused by float rounding.
     const mostMs = Math.floor(roomMs * MAX_VOICE_SPEEDUP);
-    if (checkEstimate && spokenMs(text, ir.language) > mostMs) {
+    if (estimate && spokenMs(text, ir.language) > mostMs) {
       // The spoken length that still passes, in tenths of a word like `spokenLength`.
       const most = Math.floor((mostMs * VO_WORDS_PER_SECOND) / 100) / 10;
       throw new StudixError("VALIDATION", `Voice-over line "${text.slice(0, 60)}" does not fit its beat`, {
@@ -181,26 +181,15 @@ interface TakeFit {
   rate: number;
 }
 
-const trimStartOf = (span?: SpokenSpan) => (span ? Math.max(0, span.startMs - VOICE_LEAD_PAD_MS) : 0);
-
-/**
- * How long a take of `lengthMs` (its speech in `span`, when measured) needs to be heard at its own pace:
- * from its lead pad to its last word, or (unmeasured) its whole length. What a room is judged against.
- */
-export function takeSpeechMs(lengthMs: number | undefined, span?: SpokenSpan): number | undefined {
-  if (span) return span.endMs - trimStartOf(span);
-  return lengthMs;
-}
-
 /**
  * Fit a take of `lengthMs` into `line`'s room. With a measured `span`, the leading silence is skipped (but
  * `VOICE_LEAD_PAD_MS`) and only the speech must fit; without one the whole file counts, less a breath of
  * trailing silence (`VOICE_OVERRUN_TOLERANCE_MS`). Undefined when it needs more than `MAX_VOICE_SPEEDUP`.
  */
 function fitTake(line: VoiceLine, lengthMs: number | undefined, span?: SpokenSpan): TakeFit | undefined {
-  const trimStartMs = trimStartOf(span);
+  const trimStartMs = span ? Math.max(0, span.startMs - VOICE_LEAD_PAD_MS) : 0;
   const restMs = lengthMs === undefined ? undefined : Math.max(0, lengthMs - trimStartMs);
-  const spokenMs = takeSpeechMs(lengthMs, span);
+  const spokenMs = span ? span.endMs - trimStartMs : restMs;
   const tolerance = span ? 0 : VOICE_OVERRUN_TOLERANCE_MS;
   if (spokenMs === undefined || spokenMs <= line.roomMs + tolerance) {
     return { trimStartMs, restMs, spokenMs, rate: 1 };
@@ -212,6 +201,24 @@ function fitTake(line: VoiceLine, lengthMs: number | undefined, span?: SpokenSpa
 /** Whether a take of `lengthMs` (its speech in `span`, when measured) can be laid in `line`'s room. */
 export function voiceTakeFits(line: VoiceLine, lengthMs: number | undefined, span?: SpokenSpan): boolean {
   return fitTake(line, lengthMs, span) !== undefined;
+}
+
+/**
+ * The least room a take of `lengthMs` (its speech in `span`, when measured) can be laid in when read up to
+ * `rate` times as fast (1 = as voiced, at most `MAX_VOICE_SPEEDUP`); undefined when its length is unknown,
+ * so any room holds it. The inverse of `voiceTakeFits`: a line given this room fits the take.
+ */
+export function takeRoomMs(
+  lengthMs: number | undefined,
+  span: SpokenSpan | undefined,
+  rate = 1,
+): number | undefined {
+  const fit = fitTake({ roomMs: Number.MAX_SAFE_INTEGER } as VoiceLine, lengthMs, span);
+  if (fit?.spokenMs === undefined) return undefined;
+  // Unmeasured, a take fits when it runs past its room by at most the tolerance, whatever the rate.
+  const asVoiced = fit.spokenMs - (span ? 0 : VOICE_OVERRUN_TOLERANCE_MS);
+  const faster = rate <= 1 ? asVoiced : Math.ceil(fit.spokenMs / Math.min(rate, MAX_VOICE_SPEEDUP));
+  return Math.max(1, Math.min(asVoiced, faster));
 }
 
 /** The VALIDATION failure of a line whose take is too long to speed up into its beat. */

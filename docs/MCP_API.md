@@ -78,6 +78,16 @@ Rules:
 The union is `ErrorCode` in `packages/shared`; the `retryable` column is a
 guide, the per-error value is authoritative.
 
+When a schema check fails inside Studix (for example a stage builds a Video IR
+that breaks a limit), the error is `INTERNAL` with a one-line message naming the
+first failing path and constraint, such as
+`Schema check failed at /audio: Too big: expected array to have <=64 items`.
+`details` carries `{ kind: "schema", issueCount, issues: [{ path, code, constraint?, message }] }`
+with at most five issues (`path` is a JSON pointer, `constraint` the failed
+zod check such as `too_big`), and `suggestedAction` says it is a Studix defect to
+report with the job id. When a size limit tripped, it also suggests a shorter
+or simpler brief until the fix lands.
+
 ## P0 native tools
 
 | Tool                      | Purpose                                                                                                                                                                                                                                                |
@@ -201,6 +211,14 @@ Behavior notes:
   `agent`) combines with any pack: the pack's pipeline runs and its agent stages
   (for example the motion-graphic storyboard) run on that Claude connection and
   model; with the default pack the Claude planner writes the IR.
+- A length or aspect ratio stated only in `brief.prompt` for the whole video
+  ("a 60-second 16:9 video", "1920x1080", "video dọc, tổng 1p30") fills
+  `brief.durationMs` / `brief.aspectRatio` when they are unset; the explicit
+  field always wins. A part's length ("each 5 seconds"), a timecode, a decade
+  or an asset's pixel size is not read. `motion-graphic` and `marketing-video`
+  clamp the length to their own range; `anime`, `long-form-film` and
+  `skill-agent` make the stated length. `brand-intro` reads the prompt in its
+  own brief draft and clamps to 6–15 s.
 - `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
   entry (1 to 6); a brief without directions makes one ad whose hook is its
   first key message (else the brand name), and a brief with neither is refused
@@ -224,25 +242,38 @@ Behavior notes:
 - `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
   (6 to 60 s, default 15 s 9:16; a length or aspect ratio written in the prompt,
   such as "a 60-second 16:9 intro", is used when the brief omits it) in the
-  style profile that best matches the brief, with about one card per five
-  seconds, a generated voice-over, a whoosh on every cut, one SFX accent where
+  style profile that best matches the brief,
+  with a generated voice-over, about one card every five seconds (3 to 12)
+  when the agent writes the storyboard, one soft whoosh (generated once) on every cut except the one into the CTA card, one SFX accent where
   the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
-  for one. Each storyboard beat may pick a `layout` with short `items` (a typed
-  prompt, code lines, wired chips, a ticking checklist, a rolling counter, a
-  row of cards, brand swatches or a big stat) drawn under its headline; items
-  that do not fit drop that beat back to a headline card. Cards share the
-  style's background, and the brand colour is kept for the call to action. A script derived from the brief (hook, messages, call to action) is
+  for one. Each storyboard beat may name a typed `layout` (a prompt being typed,
+  code lines, chips wired to a hub, a checklist, a rolling counter, a row of
+  cards, colour swatches or a stat) that the card draws under its headline; the
+  `visual` field stays a description. On a 16:9 frame headlines are set at
+  display size and layouts drawn larger, so a card fills the frame. Burned
+  captions are 44 px at a 1080 px short edge, and a layout is centred above
+  them. Every card moves a camera (`push-in`, `pull-back`, `pan-left`,
+  `pan-right`, `parallax` or `static`; a beat may pick its own `camera`, and two
+  adjacent cards never share one), draws the style's depth planes (grid, glow,
+  grain, vignette behind; corner brackets or bokeh in front) and carries one motif
+  shape along the frame edge from card to card: the hook hard-cuts into the
+  first message on a match cut, the other cuts vary through the style's
+  transitions (`fade`, `slide`, `wipe`, `zoom`, `iris`, `whip`). Cards share the style profile's
+  background; a high-energy profile fills the call-to-action card with its
+  accent. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
   longest spoken lines are shortened. The hook and call-to-action cards and the
   on-screen text are kept, but their spoken text may be shortened, the call to
   action last. With `brief.voiceover: false` it needs no speech
   provider and makes on-screen text only. A missing SFX model or key skips the
   accent with a warning; a voice-over that cannot be generated still fails the
-  job. Every voice take is measured first: a line longer than its card re-times
-  the cards (same total length, captions and SFX moved with them), and only
-  speech that cannot fit the whole video fails with `VALIDATION` naming the
-  lines and by how many milliseconds. The storyboard agent gives every message
+  job. Every voice take is measured before it is laid: a line longer than its
+  card re-cuts the cards (same total length; captions, whooshes and the accent
+  move with them), a line no re-cut can fit is voiced once more, brisker (a line
+  that fits its card read up to 1.12x faster is voiced again only when the
+  graphic still needs the time), and only speech that cannot fit the whole video fails with `VALIDATION`
+  naming the lines past their cards and by how many milliseconds (`details.lines`). The storyboard agent gives every message
   card a layout device and each spoken line one idea in one sentence. After the
   render a vision model reviews a contact sheet (one hold frame per card) and
   scores each card 0 to 10 for `blank`, `too-small`, `illegible`, `repetitive`,
@@ -502,8 +533,10 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   `tools`, the allowlist of tool names the agent may call. Only the time limit
   is enforced in host mode: the task expires at `expiresAt`. The other limits
   are the budget the harness would have; respect them.
-- `output` is checked against the stage's output schema, the same schema the
-  worker applies. A mismatch fails with `VALIDATION`, `details.reason:
+- `output` is checked against the task's `outputSchema`, the same schema the
+  worker applies when the job resumes. A stage that wraps its agent (such as
+  `motion-graphic.storyboard`) adds its own fields itself; the host sends only
+  what `outputSchema` lists. A mismatch fails with `VALIDATION`, `details.reason:
   "invalid_output"` and `details.issues`, and nothing is stored, so fix the
   output and submit again. Secrets in the output are redacted before it is
   stored.

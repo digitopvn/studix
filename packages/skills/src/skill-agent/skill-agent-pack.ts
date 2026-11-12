@@ -8,6 +8,7 @@ import {
   buildSequentialTimeline,
   CreativeBrief,
   exportJsonSchemas,
+  promptFormatOf,
   VIDEO_IR_SCHEMA_VERSION,
   type VideoIR,
 } from "@studix/video-ir";
@@ -163,15 +164,9 @@ export function deliveryOf(brief: CreativeBrief): { width: number; height: numbe
   };
 }
 
-const PROMPT_DURATION = /(\d+(?:[.,]\d+)?)\s*-?\s*(seconds?|secs?|s|giây|minutes?|mins?|phút)(?![\p{L}\d])/iu;
-
 /** The first video length a prompt states, in ms, when it is within what a brief allows (1 s to 10 min). */
 export function promptDurationMs(prompt: string): number | undefined {
-  const m = PROMPT_DURATION.exec(prompt);
-  if (!m?.[1] || !m[2]) return undefined;
-  const minutes = /^(m|phút)/iu.test(m[2]);
-  const ms = Math.round(Number(m[1].replace(",", ".")) * (minutes ? 60_000 : 1000));
-  return ms >= 1000 && ms <= 600_000 ? ms : undefined;
+  return promptFormatOf(prompt).durationMs;
 }
 
 export const DELIVERY_LOUDNESS = { integratedLufs: -16, toleranceLu: 2, truePeakDbtp: -1 } as const;

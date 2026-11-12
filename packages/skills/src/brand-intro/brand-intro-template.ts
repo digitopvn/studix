@@ -1,4 +1,4 @@
-import { StudixError } from "@studix/shared";
+import { schemaFailure } from "@studix/shared";
 import {
   ASPECT_RATIO_SIZES,
   type AspectRatio,
@@ -185,9 +185,7 @@ export function brandIntroTemplate(input: unknown, options: BrandIntroOptions = 
   };
   const result = validateVideoIR(ir);
   if (!result.ok) {
-    throw new StudixError("INTERNAL", "The brand-intro template produced an invalid IR", {
-      details: { issues: result.issues },
-    });
+    throw schemaFailure("INTERNAL", "The brand-intro template produced an invalid IR", result.issues);
   }
   return result.value;
 }
