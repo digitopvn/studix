@@ -85,6 +85,8 @@ export interface AgentTask {
    * failing output as a trace `error`, so the run's summary says why its stage rejected it.
    */
   outputIssues?: (output: unknown) => Array<{ path: string; message: string }>;
+  /** A failing output earns a repair turn: the harness records it as a `warning` (`willRepair`), not an error. */
+  willRepair?: boolean;
 }
 
 export interface AgentRunResult {

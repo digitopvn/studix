@@ -511,7 +511,9 @@ export function createWorkerAgentHarness(deps: WorkerAgentHarnessDeps): WorkerAg
             .join("; ");
           trace?.append(
             redactDeep({
-              type: "error",
+              // A repair turn follows: the summary lists only failures the stage did not recover from.
+              type: task.willRepair ? "warning" : "error",
+              ...(task.willRepair ? { willRepair: true } : {}),
               code: "VALIDATION",
               stage: task.skill,
               message: `Agent output of stage ${task.skill} fails its schema (${where})`,

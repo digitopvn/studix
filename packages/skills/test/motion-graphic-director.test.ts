@@ -226,12 +226,17 @@ describe("motion-graphic authored hook scene", () => {
         ],
       },
     });
-    const { s, inputs } = await setup({
-      replies: { [MG_DIRECTION_AGENT]: [`\`\`\`json\n${drifted}\n\`\`\``] },
-    });
+    const fenced = `\`\`\`json\n${drifted}\n\`\`\``;
+    // Scene 2 speaks no "sign-up": it goes back to the director once, and the same answer earns a warning.
+    const { s, inputs, tasks } = await setup({ replies: { [MG_DIRECTION_AGENT]: [fenced, fenced] } });
     const out = (await motionGraphicDirectorStage.run(s)).output as { ir: VideoIR; warning?: string };
-    expect(out.warning).toBeUndefined();
-    const build = inputs[1] as {
+    expect(tasks).toEqual([MG_DIRECTION_AGENT, MG_DIRECTION_AGENT, MG_SCENE_BUILD_AGENT]);
+    expect(inputs[1]?.repair).toMatchObject({
+      issues: [expect.objectContaining({ path: "direction.scenes.1.focalWords" })],
+    });
+    expect(out.warning).toMatch(/Scene 2 of the direction has no spoken focal word/);
+    expect(out.ir.metadata?.authoredScenes).toHaveLength(1);
+    const build = inputs[2] as {
       direction: { rhythm: string };
       scene: { focalWords: string[]; exitRect: unknown };
     };

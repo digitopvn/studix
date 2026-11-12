@@ -1,5 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { USAGE_KINDS } from "@studix/billing";
 import {
   type CompositionManifest,
   compositionContentType,
@@ -94,9 +95,13 @@ const budgetLeft = (s: StageContext) =>
  * each; a repair turn (a schema repair inside an agent call, or a builder repair here) is paid from what is left,
  * so a repair the budget cannot hold is skipped and the card stays.
  */
-function repairAffordable(s: StageContext): boolean {
-  return budgetLeft(s) >= MG_SCENE_BUILD_LIMITS.maxCostCents + renderCents(s);
+function repairAffordable(s: StageContext, extraCents = 0): boolean {
+  return budgetLeft(s) >= extraCents + MG_SCENE_BUILD_LIMITS.maxCostCents + renderCents(s);
 }
+
+/** Scene numbers whose direction has no focal word left once unspoken words are dropped. */
+const unfocused = (direction: DirectionBrief) =>
+  direction.scenes.filter((d) => d.focalWords.length === 0).map((d) => d.scene);
 
 /**
  * What the tier needs before it starts: both agent calls and the sandbox minutes of one render. Repair turns
@@ -329,10 +334,13 @@ export const motionGraphicDirectorStage: StageDefinition = {
       ...s,
       job: { ...s.job, spentCents: s.job.spentCents + costOf(usage) },
     });
+    /** Agent runs the last call made: 2 when it already used its own schema repair turn. */
+    let lastRuns = 0;
     const call = async (agent: StageDefinition, input: Record<string, unknown>): Promise<unknown> => {
       try {
         const result = await agent.run({ ...booked(), input });
         usage.push(...(result.usage ?? []));
+        lastRuns = (result.usage ?? []).filter((u) => u.kind === USAGE_KINDS.agentRun).length;
         return result.output;
       } catch (err) {
         usage.push(...spentBy(err));
@@ -341,10 +349,36 @@ export const motionGraphicDirectorStage: StageDefinition = {
     };
     const workDir = await stageWorkDir(s, MG_DIRECTOR_STAGE);
     try {
-      const { direction: authored } = z
-        .object({ direction: DirectionBrief })
-        .parse(await call(directionAgent, directionInput(s, ir)));
-      const direction = spokenFocalWords(ir, authored);
+      const Direction = z.object({ direction: DirectionBrief });
+      const { direction: authored } = Direction.parse(await call(directionAgent, directionInput(s, ir)));
+      let direction = spokenFocalWords(ir, authored);
+      let missing = unfocused(direction);
+      // A scene left without a spoken focal word goes back to the director once, unless its call already
+      // used its repair turn or the budget cannot hold the repair and the rest of the tier.
+      if (
+        missing.length > 0 &&
+        lastRuns < 2 &&
+        repairAffordable(booked(), MG_DIRECTION_LIMITS.maxCostCents)
+      ) {
+        const issues = missing.slice(0, 10).map((n) => ({
+          path: `direction.scenes.${direction.scenes.findIndex((d) => d.scene === n)}.focalWords`,
+          message: `none of these words is spoken in scene ${n}; pick one to three from that scene's words`,
+        }));
+        try {
+          const repair = { issues, output: { direction: authored } };
+          const again = Direction.parse(await call(directionAgent, { ...directionInput(s, ir), repair }));
+          const next = spokenFocalWords(ir, again.direction);
+          if (unfocused(next).length < missing.length) direction = next;
+        } catch (err) {
+          // The first direction is still sound: a failed repair keeps it, unless the job stops or parks.
+          if (s.signal.aborted || err instanceof StageSuspended) throw err;
+        }
+        missing = unfocused(direction);
+      }
+      const focalWarning =
+        missing.length > 0
+          ? `Scene ${missing.join(", ")} of the direction has no spoken focal word; its moves key to beats only`
+          : undefined;
       const handoff = Object.fromEntries(
         direction.scenes.flatMap((d) => {
           const id = ir.scenes[d.scene - 1]?.id;
@@ -364,7 +398,8 @@ export const motionGraphicDirectorStage: StageDefinition = {
       let run: Awaited<ReturnType<typeof compositions.runner.run>>;
       for (;;) {
         built = (await call(sceneBuildAgent, repair ? { ...task, repair } : task)) as BuildOutput;
-        const canRepair = !repair && repairAffordable(booked());
+        // At most two builder runs in all: none here when the call already used its own schema repair turn.
+        const canRepair = !repair && lastRuns < 2 && repairAffordable(booked());
         const checked = checkSceneFragment(built, { sid: scene.id, words });
         if (checked.problems.length > 0) {
           if (canRepair) {
@@ -411,7 +446,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
         });
         if (run.exitCode === 0 && (!run.check || run.check.passed)) break;
         const why = run.exitCode !== 0 ? `exit ${run.exitCode}` : (run.check?.problems ?? []).join("; ");
-        if (!repair && repairAffordable(booked())) {
+        if (!repair && lastRuns < 2 && repairAffordable(booked())) {
           const message = `the sandbox check or render failed (${why}): ${run.log.slice(-600)}`;
           repair = { issues: [{ path: "fragment", message }], output: built };
           continue;
@@ -449,7 +484,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
         assets: [...ir.assets.filter((a) => a.id !== asset.id), asset],
         metadata: { ...ir.metadata, authoredScenes: [scene.id] },
       });
-      return { output: { ir: withRecord(next) }, usage };
+      return { output: { ir: withRecord(next), ...(focalWarning ? { warning: focalWarning } : {}) }, usage };
     } catch (err) {
       if (s.signal.aborted) {
         throw new StageFailedAfterSpend(

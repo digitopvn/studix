@@ -290,8 +290,20 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
       }
       const images = spec.images?.(s.input as z.infer<I>);
       const usage: StageUsage[] = [];
+      /** Caps of one run: the first gets the stage's limits, a repair turn only what the first left of them. */
+      interface RunCaps {
+        maxCostCents: number;
+        maxTurns: number;
+        maxTokens: number;
+        deadlineAt: Date;
+        /** True when the job budget, not the stage limit, set `maxCostCents`. */
+        budgetBound: boolean;
+        /** The trace records a schema failure of this run as a warning: a repair turn follows it. */
+        willRepair: boolean;
+      }
+      let firstRun: AgentRunResult | undefined;
       /** One paid harness run; its spend joins `usage` whether it returns or throws. */
-      const runOnce = async (taskInput: Record<string, unknown>, costCap: number): Promise<unknown> => {
+      const runOnce = async (taskInput: Record<string, unknown>, caps: RunCaps): Promise<unknown> => {
         let result: AgentRunResult;
         try {
           result = await runtime.run(s.ctx, {
@@ -301,11 +313,12 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
             tools: spec.tools,
             ...(images?.length ? { images } : {}),
             outputSchema: outputJsonSchema(),
-            maxTurns: limits.maxTurns,
-            maxTokens: limits.maxTokens,
-            maxCostCents: costCap,
-            deadlineAt: new Date(Date.now() + limits.timeoutMs),
+            maxTurns: caps.maxTurns,
+            maxTokens: caps.maxTokens,
+            maxCostCents: caps.maxCostCents,
+            deadlineAt: caps.deadlineAt,
             signal: s.signal,
+            ...(caps.willRepair ? { willRepair: true } : {}),
             outputIssues: (output) => {
               const checked = spec.outputSchema.safeParse(output);
               return checked.success ? [] : issuesOf(checked.error.issues);
@@ -317,7 +330,7 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
           const cap = capOf(error);
           if (spend) usage.push(usageLine("harness", round, runtime.id, spend, cap));
           if (cap && !s.signal.aborted) {
-            if (cap === "cost" && costCap < limits.maxCostCents) {
+            if (cap === "cost" && caps.budgetBound) {
               throw new StageFailedAfterSpend(
                 new StudixError(
                   "BUDGET_EXCEEDED",
@@ -337,23 +350,49 @@ export function createAgentStage<I extends z.ZodType, O extends z.ZodType<StageO
           throw error;
         }
         usage.push(usageLine("harness", round, runtime.id, result));
+        firstRun ??= result;
         return redactDeep(result.output);
       };
 
-      const first = await runOnce(input, maxCostCents);
+      // A caller that already sends a `repair` is running its own repair turn: it gets no second one here.
+      const repairs = spec.repairTurn === true && input.repair === undefined;
+      const firstDeadline = new Date(Date.now() + limits.timeoutMs);
+      const first = await runOnce(input, {
+        maxCostCents,
+        maxTurns: limits.maxTurns,
+        maxTokens: limits.maxTokens,
+        deadlineAt: firstDeadline,
+        budgetBound: maxCostCents < limits.maxCostCents,
+        willRepair: repairs,
+      });
       const parsed = spec.outputSchema.safeParse(first);
       if (parsed.success) return { output: parsed.data as StageOutput, usage };
-      // One repair turn: the agent gets its own output back with every schema issue, under what is left.
-      const left = Math.min(limits.maxCostCents, remainingBudget(s.job) - costOf(usage));
-      if (!spec.repairTurn || left <= 0 || s.signal.aborted)
-        return { output: validOutput(first, usage), usage };
+      // One repair turn: the agent gets its own output back with every schema issue, under what the first run
+      // left of the stage's limits (cost, turns, tokens and its deadline), never a fresh set.
+      const spent = costOf(usage);
+      const byBudget = remainingBudget(s.job) - spent;
+      const caps: RunCaps = {
+        maxCostCents: Math.min(limits.maxCostCents - spent, byBudget),
+        maxTurns: limits.maxTurns - (firstRun?.turns ?? limits.maxTurns),
+        maxTokens: limits.maxTokens - ((firstRun?.inputTokens ?? 0) + (firstRun?.outputTokens ?? 0)),
+        deadlineAt: firstDeadline,
+        budgetBound: byBudget < limits.maxCostCents - spent,
+        willRepair: false,
+      };
+      const usable =
+        caps.maxCostCents > 0 &&
+        caps.maxTurns >= 1 &&
+        caps.maxTokens >= 1 &&
+        caps.deadlineAt.getTime() > Date.now();
+      if (!repairs || !usable || s.signal.aborted) return { output: validOutput(first, usage), usage };
       const repair = { issues: issuesOf(parsed.error.issues), output: first };
       let second: unknown;
       try {
-        second = await runOnce({ ...input, repair }, left);
+        second = await runOnce({ ...input, repair }, caps);
       } catch (err) {
-        // A repair turn that fails (a cap, a provider error) reports the first output's schema failure.
-        if (s.signal.aborted) throw err;
+        // A cap parks the stage for an overrun approval like any run; another failure (a provider error)
+        // reports the first output's schema failure with both runs' spend.
+        if (s.signal.aborted || err instanceof StageSuspended) throw err;
         return { output: validOutput(first, usage), usage };
       }
       return { output: validOutput(second, usage), usage };
