@@ -472,8 +472,14 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     ],
   });
   // The motif keeps one colour on every card, so it reads as the same object across each cut: the accent,
-  // unless a card is filled with the primary (often the accent itself), then the foreground everywhere.
-  const motifColor = style.energy >= 4 ? "foreground" : "accent";
+  // unless a card is filled with the primary (often the accent itself), then the foreground everywhere, or
+  // the accent after all when the foreground would vanish on the primary.
+  const visibleOnPrimary = (role: "foreground" | "accent") =>
+    contrast(brand.palette[role] ?? brand.palette.foreground, brand.palette.primary) >= 1.5;
+  const motifColor =
+    style.energy < 4 || (!visibleOnPrimary("foreground") && visibleOnPrimary("accent"))
+      ? "accent"
+      : "foreground";
   const cameras = cardCameras(
     lines.map((l) => l.camera),
     motion.cameras,

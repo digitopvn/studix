@@ -116,8 +116,9 @@ export function foregroundAccents(
         css.push(
           cssRule(sel, [
             "position: absolute;",
-            // Inside the frame margin, clear of the content's safe area.
-            `left: ${inset}px;`,
+            // Along the top edge inside the frame margin, clear of the content's safe area and starting past
+            // the top-left corner bracket, so the two never merge into one bar.
+            `left: ${inset + Math.round(0.06 * s) + 2 * stroke}px;`,
             `top: ${inset}px;`,
             `width: ${Math.round(0.14 * s)}px;`,
             `height: ${Math.max(4, Math.round(0.009 * s))}px;`,
