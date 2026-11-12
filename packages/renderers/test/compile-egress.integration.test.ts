@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import dns from "node:dns";
 import fs from "node:fs";
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -21,6 +22,13 @@ const cleanups: (() => Promise<void> | void)[] = [];
 afterAll(async () => {
   for (const cleanup of cleanups.reverse()) await cleanup();
 });
+
+/** An installed font file for a family Studix does not bundle, so the font check has something to catch. */
+const hostFont = (() => {
+  const r = spawnSync("fc-match", ["-f", "%{file}", "Carlito"], { encoding: "utf8" });
+  return r.status === 0 && /carlito/i.test(r.stdout) ? r.stdout : undefined;
+})();
+const FONT_FILE = /\.(ttf|otf|ttc|woff2?)$/i;
 
 const LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|::1|\[::1\]|::ffff:127\.\d+\.\d+\.\d+)$/i;
 
@@ -199,7 +207,6 @@ describe.skipIf(!toolchain.ok)(
     <link rel="stylesheet" href="https://canary.example/fonts.css" />
     <style>
       html, body, #root { margin: 0; width: 160px; height: 90px; overflow: hidden; background: #000; }
-      .font { font-family: Carlito, sans-serif; }
       .remote { background-image: url(https://canary.example/bg.png); }
       .host { background-image: url(${up}); }
     </style>
@@ -208,7 +215,6 @@ describe.skipIf(!toolchain.ok)(
     <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90">
       <img src="${up}" alt="" style="width: 10px" />
       <img src="https://canary.example/img.png" alt="" style="width: 10px" />
-      <p class="font">Studix</p>
       <div class="remote host" style="background: url(${up}); width: 10px; height: 10px"></div>
     </div>
     <script>
@@ -231,14 +237,71 @@ describe.skipIf(!toolchain.ok)(
         onProgress: () => {},
       });
 
-      // Copying the host file would serve it to the page; reading a system font would embed it in the render
-      // (Carlito is not bundled; the font check only bites on hosts that have it installed).
-      // (Probing the header of a ../ image for a type check stays possible: it puts no bytes in the render.)
+      // Copying the host file would serve it to the page. (Probing the header of a ../ image for a type check
+      // stays possible: it puts no bytes in the render.)
       const hostFiles = trap.files.filter(
-        (call) =>
-          (/^(copyFile|cp)/.test(call) && call.endsWith(` ${secret}`)) || call.includes(" /usr/share/fonts/"),
+        (call) => /^(copyFile|cp)/.test(call) && call.endsWith(` ${secret}`),
       );
       expect({ attempts: trap.attempts, hostFiles }).toEqual({ attempts: [], hostFiles: [] });
     });
+
+    it.skipIf(!hostFont)(
+      `embeds no host system font for a family a page names${hostFont ? "" : " (skipped: Carlito is not installed)"}`,
+      async () => {
+        const { dir, cleanup } = await tempDir("egress-font");
+        cleanups.push(cleanup);
+        const projectDir = join(dir, "project");
+        await mkdir(join(projectDir, "assets", "vendor"), { recursive: true });
+        await copyFile(
+          require.resolve("gsap/dist/gsap.min.js"),
+          join(projectDir, "assets", "vendor", "gsap.min.js"),
+        );
+        await writeFile(
+          join(projectDir, "index.html"),
+          `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      html, body, #root { margin: 0; width: 160px; height: 90px; overflow: hidden; background: #000; }
+      p { font-family: Carlito, sans-serif; color: #fff; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90">
+      <p>Studix</p>
+    </div>
+    <script>
+      var tl = gsap.timeline({ paused: true });
+      tl.set({}, {}, 1);
+      window.__timelines = { main: tl };
+    </script>
+  </body>
+</html>
+`,
+        );
+        const before = trap.files.length;
+        await renderWithProducer({
+          projectDir,
+          outputPath: join(dir, "out.mp4"),
+          fps: 12,
+          quality: "draft",
+          crf: 30,
+          workers: 1,
+          logger: createLogger({ component: "compile-egress-test" }, { level: "error" }),
+          onProgress: () => {},
+        });
+
+        // Carlito is installed but not bundled. Any font file read from outside the project and the repo (system
+        // font directories, a per-user font cache) would be the compiler embedding a host font in the render.
+        const repo = resolve(process.cwd());
+        const hostFontReads = trap.files.slice(before).filter((call) => {
+          const path = call.slice(call.indexOf(" ") + 1);
+          return FONT_FILE.test(path) && !path.startsWith(`${projectDir}/`) && !path.startsWith(`${repo}/`);
+        });
+        expect({ attempts: trap.attempts, hostFontReads }).toEqual({ attempts: [], hostFontReads: [] });
+      },
+    );
   },
 );

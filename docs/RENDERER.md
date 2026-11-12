@@ -169,8 +169,9 @@ to the exact same version in `packages/renderers/package.json` (currently
   fetch that always fails, because its Google Fonts request carries the page's
   characters. It turns system font capture off, so a family that is not
   bundled but is installed on the worker (an HTML card may name any
-  `font-family`) is never read from the host font directories and embedded;
-  the browser falls back to the generic family. It also never copies a file
+  `font-family`) is never read from the host font directories and embedded
+  as a data URL. The capture browser may still draw an installed family
+  through the worker's fontconfig. It also never copies a file
   from outside the project, and it never converts one as an animated GIF or
   HEIC image.
   `engine-launch-options.test.ts` checks that no request reaches the download
@@ -178,10 +179,13 @@ to the exact same version in `packages/renderers/package.json` (currently
   frame black and makes no request
   ([#457](https://github.com/digitopvn/studix/issues/457)).
   `compile-egress.integration.test.ts` renders hostile IR text and a hostile
-  page while trapping DNS, HTTP(S), `fetch`, TCP and TLS connects, copies and
-  reads of host font files in the render process
-  ([#464](https://github.com/digitopvn/studix/issues/464)). Its font check
-  needs Carlito installed (Debian `fonts-crosextra-carlito`). All of these
+  page. In the test process, which runs the compiler, it refuses DNS lookups,
+  HTTP(S) requests, `fetch` and TCP and TLS connects to any host that is not
+  loopback. It also fails on a copy of a host file and on a read of a font file
+  from outside the project and the repo
+  ([#464](https://github.com/digitopvn/studix/issues/464)). The font check
+  needs Carlito installed (Debian `fonts-crosextra-carlito`) and is skipped,
+  with the reason in its title, without it. All of these
   patches are keyed to the exact version, like the SIGTERM one below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through
   `ownedLaunchOptions()`, which leaves Puppeteer's `handleSIGTERM` at `true`,
