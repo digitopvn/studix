@@ -95,7 +95,11 @@ describe.skipIf(!toolchain.ok)(
       ]);
     });
 
-    async function capture(name: string, script: string): Promise<{ output: string; logs: string }> {
+    async function capture(
+      name: string,
+      script: string,
+      markup = "",
+    ): Promise<{ output: string; logs: string }> {
       const ir = loadIrFixture("brand-intro-9x16");
       const projectDir = join(dir, name);
       const build = buildComposition(ir, { width: 540, height: 960, assetFiles: {} });
@@ -112,7 +116,7 @@ describe.skipIf(!toolchain.ok)(
       ]);
       const index = join(projectDir, "index.html");
       const html = await readFile(index, "utf8");
-      await writeFile(index, html.replace("</body>", `<script>${script}</script></body>`));
+      await writeFile(index, html.replace("</body>", `${markup}<script>${script}</script></body>`));
       const output = join(dir, `${name}.mp4`);
       const lines: string[] = [];
       await renderWithProducer({
@@ -138,6 +142,19 @@ describe.skipIf(!toolchain.ok)(
           ? `Object.defineProperty(a,"currentSrc",{get:()=>${JSON.stringify(src)}});a.src="inside.wav";`
           : `a.src=${JSON.stringify(src)};`
       }document.body.appendChild(a);}`;
+
+    it("refuses authored media ids that are paths", async () => {
+      const markup = `<audio id="../escape" data-start="0" data-duration="3" src="inside.wav"></audio>`;
+      await expect(capture("authored-id", "", markup)).rejects.toThrow(/Media id .* is not allowed/);
+    });
+
+    it("still drops authored audio that a page script mutes, whatever its src", async () => {
+      // The script points the element somewhere the filter rejects, then mutes it: pruning must still see it.
+      const markup = `<audio id="bed" data-start="0" data-duration="3" src="inside.wav"></audio>`;
+      const script = `{const a=document.getElementById("bed");a.src="music%20bed.wav?x=1";a.muted=true;}`;
+      const { output } = await capture("muted-authored", script, markup);
+      expect(maxVolumeDb(output)).toBe(Number.NEGATIVE_INFINITY);
+    });
 
     it("keeps runtime media that lives inside the project", async () => {
       const { output } = await capture("control", runtimeAudio("inside", "inside.wav"));

@@ -163,7 +163,9 @@ to the exact same version in `packages/renderers/package.json` (currently
   a file-server URL whose path is plain segments of `[A-Za-z0-9._~-]` and whose
   file resolves (symlinks included) inside the compiled or project directory.
   The element id may hold no `/`, `\` or bare `..`, because the engine builds
-  work-directory paths from it that it writes and later removes. As a result,
+  work-directory paths from it that it writes and later removes. An authored
+  media id that is a path fails the render. Muting from a page script still
+  removes authored audio even when the filter drops that element. As a result,
   the engine never reads a host path, writes outside its work directory or
   downloads a URL for runtime media.
   `capture-isolation.integration.test.ts` renders a page that tries fetch,

@@ -56,8 +56,9 @@ describe("@hyperframes/engine launch options", () => {
 
   it("drop runtime media and ids outside the project", () => {
     const source = readFileSync(fileURLToPath(import.meta.resolve("@hyperframes/producer")), "utf8");
-    expect(source).toMatch(/keepProjectMedia\(\s*await discoverMediaFromBrowser\(session\.page\)/);
+    expect(source).toMatch(/const browserMedia = keepProjectMedia\(\s*discoveredMedia,/);
     expect(source).toContain("isSafeMediaId(el.id) && isProjectMediaSrc(el.src, fileServer, roots)");
+    expect(source.match(/assertSafeMediaIds\(compiled\);/g)).toHaveLength(2);
   });
 });
 

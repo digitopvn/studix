@@ -1,5 +1,5 @@
 diff --git a/dist/index.js b/dist/index.js
-index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..95008279c8a93b7e5e41a3de788dff8c1929ad42 100644
+index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..248a2ab0876ed0a19194504e000334047a371f23 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1,4 +1,6 @@
@@ -64,7 +64,7 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..95008279c8a93b7e5e41a3de788dff8c
      failClosedFontFetch: options.failClosedFontFetch === true,
      allowSystemFontCapture: options.allowSystemFontCapture,
      abortSignal: options.abortSignal
-@@ -8065,6 +8084,47 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+@@ -8065,6 +8084,54 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
      hasAncestorBackgroundImage
    };
  }
@@ -99,6 +99,13 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..95008279c8a93b7e5e41a3de788dff8c
 +  }
 +  return true;
 +}
++function assertSafeMediaIds(compiled) {
++  for (const media of [...compiled.videos ?? [], ...compiled.audios ?? [], ...compiled.images ?? []]) {
++    if (!isSafeMediaId(media.id)) {
++      throw new Error(`[Security] Media id ${JSON.stringify(String(media.id).slice(0, 200))} is not allowed: ids may not contain "/" or "\\" or be "." or ".."`);
++    }
++  }
++}
 +function keepProjectMedia(browserMedia, fileServer, roots, log) {
 +  return browserMedia.filter((el) => {
 +    if (isSafeMediaId(el.id) && isProjectMediaSrc(el.src, fileServer, roots)) return true;
@@ -112,17 +119,44 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..95008279c8a93b7e5e41a3de788dff8c
  async function discoverMediaFromBrowser(page) {
    const elements = await page.evaluate(() => {
      const results = [];
-@@ -8929,7 +8989,12 @@ async function runProbeStage(input) {
+@@ -8501,6 +8568,7 @@ async function runCompileStage(input) {
+     audioCount: compiled.audios.length,
+     renderModeHints: compiled.renderModeHints
+   });
++  assertSafeMediaIds(compiled);
+   const composition = {
+     duration: compiled.staticDuration,
+     videos: compiled.videos,
+@@ -8922,6 +8990,7 @@ async function runProbeStage(input) {
+             join17(workDir, "downloads")
+           );
+           assertNotAborted();
++          assertSafeMediaIds(compiled);
+           composition.videos = compiled.videos;
+           composition.audios = compiled.audios;
+           composition.images = compiled.images;
+@@ -8929,14 +8998,21 @@ async function runProbeStage(input) {
          }
        }
        log.info("Discovering media assets from browser DOM...");
 -      const browserMedia = await discoverMediaFromBrowser(session.page);
++      const discoveredMedia = await discoverMediaFromBrowser(session.page);
 +      const browserMedia = keepProjectMedia(
-+        await discoverMediaFromBrowser(session.page),
++        discoveredMedia,
 +        fileServer,
 +        [join17(workDir, "compiled"), projectDir],
 +        log
 +      );
        assertNotAborted();
-       if (browserMedia.length > 0) {
+-      if (browserMedia.length > 0) {
++      if (discoveredMedia.length > 0) {
          const existingVideoIds = new Set(composition.videos.map((v) => v.id));
+         const existingAudioIds = new Set(composition.audios.map((a) => a.id));
+         const existingImageIds = new Set(composition.images.map((image) => image.id));
+         const authoredStarts = authoredMediaStarts(compiled.html);
+-        pruneMutedBrowserMedia(composition, browserMedia, existingAudioIds);
++        // Pruning only mutes or removes authored audio, so it may see media the filter dropped.
++        pruneMutedBrowserMedia(composition, discoveredMedia, existingAudioIds);
+         for (const el of browserMedia) {
+           if (!el.src || el.src === "about:blank") continue;
+           if (el.muted && el.tagName === "audio") continue;
