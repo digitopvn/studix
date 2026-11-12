@@ -15,6 +15,29 @@ describe("validateVideoIR semantic checks", () => {
     expect(validateVideoIR("ir").ok).toBe(false);
   });
 
+  it("enforces the camera rule in timeline order: no repeated move, match cuts carry a motif", () => {
+    const ir = base();
+    ir.scenes[0]!.camera = "push-in";
+    ir.scenes[1]!.camera = "push-in";
+    ir.scenes[0]!.transitionOut = { kind: "match-cut", durationMs: 0 };
+    const result = validateVideoIR(ir);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ code: "camera", path: "/scenes/1/camera" }),
+    );
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ code: "camera", path: "/scenes/0/transitionOut/kind" }),
+    );
+    ir.scenes[1]!.camera = "parallax";
+    ir.scenes[0]!.motif = { shape: "circle" };
+    ir.scenes[1]!.motif = { shape: "circle" };
+    // `static` is no move, so two still scenes may follow each other.
+    ir.scenes[2]!.camera = "static";
+    ir.scenes[3]!.camera = "static";
+    expect(validateVideoIR(ir).ok).toBe(true);
+  });
+
   it("detects duplicate scene and shot ids", () => {
     const ir = base();
     ir.scenes[1]!.shots[1]!.id = "intro-logo";

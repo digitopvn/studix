@@ -174,12 +174,16 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
     brand: ir.brand,
     language: ir.language,
   };
-  const scenes = ir.scenes.map((scene, index) =>
+  // Neighbours (the transition into a scene, the motif pose it picks up) follow the timeline, which need not
+  // share the order of the scenes array.
+  const byId = new Map(ir.scenes.map((s) => [s.id, s]));
+  const ordered = ir.timeline.entries.map((e) => byId.get(e.sceneId)).filter((s) => s !== undefined);
+  const scenes = ordered.map((scene, index) =>
     compileScene({
       scene,
       sceneIndex: index,
       palette,
-      transitions: sceneTransitions(ir.scenes, index),
+      transitions: sceneTransitions(ordered, index),
       captions: { position, cues: cues.get(scene.id) ?? [] },
       markup: { ...markup, videoAssetIds },
     }),
