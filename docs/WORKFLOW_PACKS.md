@@ -363,7 +363,7 @@ CTA). Agent của host (`agentMode: "host"`) cũng là director nên cũng đư�
 viết theo pixel của khung tham chiếu có cạnh ngắn 1080 (1920x1080, 1080x1920, 1080x1080) và renderer zoom nó theo
 kích thước render, nên bản preview dàn trang y hệt bản final. Mỗi hero
 qua ba cổng: lint (`lintHeroHtml` trong `@studix/video-ir`: chỉ thẻ và thuộc tính trong allowlist, không script,
-ảnh, link, `@` rule, `url()` ngoài `url(#id)`, comment HTML, CSS lồng nhau, `<`/`>` trong giá trị attribute hay CSS), check (hero phải hiện đúng dòng `onScreen` của beat, tối đa 3 hero)
+ảnh, link, `@` rule, `url()` ngoài `url(#id)`, comment HTML, CSS lồng nhau, `<`/`>` trong giá trị attribute hay CSS, escape `\`, ngoặc nhọn trong chuỗi CSS hay ngoặc không cân bằng), check (hero phải hiện đúng dòng `onScreen` của beat, tối đa 3 hero)
 và visual QA trước mọi chi phí (stage compose gọi `RendererAdapter.inspect`: HyperFrames lint composition rồi chụp
 hero ở lúc nó đứng yên để đo phần tử ra ngoài khung hay lề an toàn 3%, đè lên dải caption, chữ bị cắt, hoặc không vẽ
 gì). Hero lỗi lint hay check được trả lại agent trong lượt sửa; hero vẫn lỗi, hero ngoài premium tier, hero bị

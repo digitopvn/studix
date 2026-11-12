@@ -183,6 +183,30 @@ function valueProblems(raw: string, where: string, css: boolean): string[] {
   return problems;
 }
 
+/**
+ * Structure of the style block, checked on the raw CSS the renderer scopes: the scoper finds rules by their
+ * braces, so the block must read the same to it as to a CSS parser.
+ */
+function styleBlockProblems(raw: string): string[] {
+  const where = "<style>";
+  const problems: string[] = [];
+  if (raw.includes("\\")) problems.push(`${where}: backslash escapes are not allowed`);
+  const comments = raw.match(/\/\*/g)?.length ?? 0;
+  const css = raw.replace(/\/\*[\s\S]*?\*\//g, " ");
+  if (css.includes("/*") || (raw.match(/\*\//g)?.length ?? 0) < comments)
+    problems.push(`${where}: a CSS comment is not closed with */`);
+  const strings = css.match(/"[^"]*"|'[^']*'/g) ?? [];
+  if (strings.some((str) => /[{}]/.test(str)))
+    problems.push(`${where}: "{" and "}" are not allowed in strings`);
+  let depth = 0;
+  for (const c of css.replace(/"[^"]*"|'[^']*'/g, '""')) {
+    if (c === "{") depth++;
+    else if (c === "}" && --depth < 0) break;
+  }
+  if (depth !== 0) problems.push(`${where}: every "{" must be closed by one "}"`);
+  return problems;
+}
+
 function seconds(value: string): number | undefined {
   if (!/^\d+(\.\d+)?$/.test(value.trim())) return undefined;
   const n = Number(value);
@@ -319,7 +343,11 @@ export function lintHeroHtml(html: string): string[] {
         add("<style> is not closed with </style>");
         break;
       }
-      for (const p of valueProblems(html.slice(i, end), "<style>", true)) add(p);
+      for (const p of [
+        ...styleBlockProblems(html.slice(i, end)),
+        ...valueProblems(html.slice(i, end), "<style>", true),
+      ])
+        add(p);
       const closeTag = /^<\/style\s*>/i.exec(html.slice(end, end + 20));
       if (!closeTag) {
         add("</style is malformed");

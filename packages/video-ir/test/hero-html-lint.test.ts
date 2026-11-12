@@ -48,6 +48,15 @@ describe("lintHeroHtml", () => {
     ["CSS nesting with &", "<style>.a{ :not(&){display:none} }</style><p>a</p>", "nested rule blocks"],
     ["a bare &", "<style>& .a{color:red}</style><p>a</p>", "CSS nesting"],
     [
+      "a brace inside a selector string",
+      '<style>a[class="{"], body *{display:none}</style><p>a</p>',
+      "not allowed in strings",
+    ],
+    ["an unclosed rule", "<style>.a{color:red</style><p>a</p>", "must be closed"],
+    ["a stray closing brace", "<style>.a{color:red}} body{}</style><p>a</p>", "must be closed"],
+    ["an unclosed CSS comment", "<style>.a{color:red /*}</style><p>a</p>", "comment is not closed"],
+    ["a CSS escape", "<style>a\\{x, body *{display:none}</style><p>a</p>", "backslash"],
+    [
       "-webkit-image-set",
       "<div style='background: -webkit-image-set(\"https://x.test/a.png\" 1x)'>a</div>",
       "image-set()",
