@@ -204,6 +204,8 @@ const PREMIUM_INSTRUCTIONS =
   "strong, em, b, i, br, ul, ol, li and inline svg (g, path, circle, rect, line, polyline, polygon, ellipse, " +
   "text, tspan, defs, linearGradient, radialGradient, stop, clipPath, mask) with class, id and svg geometry " +
   "and paint attributes only (no style attribute, no href, no URL), and it shows the beat's on-screen line. " +
+  "Colour SVG through classes in `css` (`.ring { stroke: var(--c-primary) }`); a fill or stroke attribute holds " +
+  "a plain colour, url(#id) or a bare var(--token), never another function. " +
   "`css` is plain rules scoped to the card (every selector is prefixed with the card root, so write " +
   "`.title { ... }`), using var(--c-background), var(--c-foreground), var(--c-primary), var(--c-accent) and " +
   "only var(--font-heading) or var(--font-body) as font-family, sizes in % or vmin (never px: the card renders " +
@@ -231,7 +233,7 @@ interface Repair {
 const agentStageFor = (repair?: Repair, premium = false) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
-    version: 8,
+    version: 9,
     inputSchema: StoryboardInput,
     outputSchema: AgentOutput,
     instructions:
