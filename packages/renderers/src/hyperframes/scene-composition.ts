@@ -8,6 +8,7 @@ import {
   COLOR_ROLES,
   cssColor,
 } from "./brand-tokens.ts";
+import { htmlCardScript } from "./html-card-compile.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
 import { writeLayoutMotion } from "./layout-markup.ts";
 import { cameraScales, compileDepth, type Plane, PUSH, planeId, writeCamera } from "./scene-depth.ts";
@@ -166,10 +167,20 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   if (depth.front) planes.add("front");
   writeCamera(w, prefix, scene, markup.frame, planes);
   const html = new Map<string, string>();
+  // HTML cards are full-frame layers above the underlay and the regions, below the captions.
+  const cards: string[] = [];
+  const isCard = (shot: Shot) => shot.type === "composition" && markup.htmlCards?.has(shot.assetId) === true;
   for (const shot of scene.shots) {
     const rendered = renderShotMarkup(ctx, shot);
-    html.set(shot.id, rendered.html);
     css.push(...rendered.css);
+    if (shot.type === "composition" && isCard(shot)) {
+      const id = shotDomId(prefix, shot.id);
+      cards.push(rendered.html);
+      writeShotMotion(w, `#${id}`, shot, scene.durationMs, markup.frame);
+      w.lines.push(...htmlCardScript(id, shot, markup.htmlCards!.get(shot.assetId)!));
+      continue;
+    }
+    html.set(shot.id, rendered.html);
     const align = shot.style?.align ?? "center";
     css.push(cssRule(`#${shotDomId(prefix, shot.id)}`, [`justify-self: ${JUSTIFY[align]};`]));
     // Full-bleed shots sit in the underlay behind the flowing regions.
@@ -179,7 +190,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   }
 
   const regions = REGIONS.map((region) => {
-    const shots = scene.shots.filter((s) => (s.style?.region ?? "middle") === region);
+    const shots = scene.shots.filter((s) => !isCard(s) && (s.style?.region ?? "middle") === region);
     const lanes = assignLanes(shots).map(
       (lane) => `<div class="lane">${lane.map((s) => html.get(s.id)).join("")}</div>`,
     );
@@ -208,6 +219,8 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       `      <div id="${planeId(prefix, "underlay")}" class="underlay">${underlay.join("")}</div>`,
       depth.motif ? `      ${depth.motif}` : "",
       `      <div id="${planeId(prefix, "content")}" class="content">${regions.join("")}</div>`,
+      // A hero card covers the shots; the front plane and the lens still sit over it, so it shares the look.
+      ...cards.map((card) => `      ${card}`),
       depth.front ? `      ${depth.front}` : "",
       depth.lens ? `      ${depth.lens}` : "",
       captionHtml ? `      ${captionHtml}` : "",

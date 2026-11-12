@@ -1,195 +1,289 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createSocket } from "node:dgram";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createLogger } from "@studix/shared";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildComposition, writeComposition } from "../src/hyperframes/compile-composition.ts";
+import { afterAll, describe, expect, it } from "vitest";
 import { renderWithProducer } from "../src/hyperframes/producer-render.ts";
-import { loadIrFixture, renderToolchain, tempDir } from "./render-test-helpers.ts";
+import { renderToolchain, tempDir } from "./render-test-helpers.ts";
 
 const toolchain = renderToolchain();
-const cleanups: (() => Promise<void>)[] = [];
+const require = createRequire(import.meta.url);
+const cleanups: (() => Promise<void> | void)[] = [];
 afterAll(async () => {
-  await Promise.all(cleanups.map((c) => c()));
+  for (const cleanup of cleanups.reverse()) await cleanup();
 });
 
-/** A non-loopback address of this host: what a capture page would use to reach the worker's network. */
-function lanAddress(): string | undefined {
+/** An address of this host that is not loopback: a request to it would leave the browser's own machine. */
+function externalAddress(): string | undefined {
   for (const list of Object.values(networkInterfaces())) {
-    for (const nic of list ?? []) if (nic.family === "IPv4" && !nic.internal) return nic.address;
+    const found = list?.find((a) => a.family === "IPv4" && !a.internal);
+    if (found) return found.address;
   }
   return undefined;
 }
 
-/** Loudest sample of the capture's audio in dBFS, or -Infinity when it has no audio stream. */
-function maxVolumeDb(file: string): number {
-  const streams = execFileSync(
-    "ffprobe",
-    ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", file],
-    {
-      encoding: "utf8",
-    },
+const host = externalAddress();
+
+/** The engine instance the producer imports; its download transport can be replaced in tests. */
+async function loadEngine(): Promise<{
+  _setDownloadFetchForTests: (replacement: typeof fetch | undefined) => void;
+}> {
+  const enginePackage = createRequire(import.meta.resolve("@hyperframes/producer")).resolve(
+    "@hyperframes/engine/package.json",
   );
-  if (!streams.trim()) return Number.NEGATIVE_INFINITY;
-  const { stderr } = spawnSync(
-    "ffmpeg",
-    ["-hide_banner", "-i", file, "-af", "volumedetect", "-f", "null", "-"],
-    {
-      encoding: "utf8",
-    },
-  );
-  const match = /max_volume: (-?[\d.]+|-inf) dB/.exec(stderr);
-  return !match?.[1] || match[1] === "-inf" ? Number.NEGATIVE_INFINITY : Number(match[1]);
+  return import(pathToFileURL(join(dirname(enginePackage), "dist", "index.js")).href);
 }
 
-/**
- * Every capture runs in a browser that reaches only the producer's file server, and the producer reads only
- * media inside the project, whatever a page script tries (patches/@hyperframes__engine and __producer).
- */
-describe.skipIf(!toolchain.ok)(
-  `HyperFrames capture isolation${toolchain.ok ? "" : ` (skipped: ${toolchain.reason})`}`,
-  () => {
-    const hits: string[] = [];
-    let udpPackets = 0;
-    const server = createServer((req, res) => {
-      hits.push(`${req.method} ${req.url}`);
-      res.end("canary");
-    });
-    server.on("upgrade", (req, socket) => {
-      hits.push(`UPGRADE ${req.url}`);
-      socket.destroy();
-    });
-    const udp = createSocket("udp4");
-    udp.on("message", () => {
-      udpPackets++;
-    });
-    let dir = "";
-    let secret = "";
-    // Without a non-loopback address the LAN probes fall back to loopback, which the browser must block too.
-    const host = lanAddress() ?? "127.0.0.1";
+/** Mean RGB of one frame at `seconds`, as 0..255 integers. */
+function frameColor(file: string, seconds: number): [number, number, number] {
+  const raw = execFileSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-ss",
+      String(seconds),
+      "-i",
+      file,
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale=1:1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "-",
+    ],
+    { maxBuffer: 1024 },
+  );
+  return [raw[0]!, raw[1]!, raw[2]!];
+}
 
-    beforeAll(async () => {
-      await new Promise<void>((resolve) => server.listen(0, "0.0.0.0", resolve));
-      await new Promise<void>((resolve) => udp.bind(0, "0.0.0.0", resolve));
-      const tmp = await tempDir("capture-isolation");
-      cleanups.push(tmp.cleanup, async () => {
-        server.close();
-        udp.close();
-      });
-      dir = tmp.dir;
-      // A loud host file outside every project directory.
-      secret = join(dir, "secret.wav");
+// The page script stands for any JavaScript that reaches a capture: it tries every route out of the render.
+function videoTag(id: string, src: string): string {
+  return `    <video id="${id}" data-start="0" data-duration="1" data-track-index="2" src="${src}" muted playsinline style="position:absolute;inset:0;width:160px;height:90px"></video>`;
+}
+
+function hostileIndexHtml(
+  canary: string,
+  stunPort: number,
+  secretSrcs: string[],
+  projectSrcs: string[],
+  staticMarkup: string,
+): string {
+  const media = secretSrcs.map((src, i) => videoTag(`leak-${i}`, src)).join("\n");
+  const staticMedia = projectSrcs.map((src, i) => videoTag(`clip-${i}`, src)).join("\n");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>html, body, #root { margin: 0; width: 160px; height: 90px; overflow: hidden; background: #000; }</style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="160" data-height="90">
+${staticMedia}
+${staticMarkup}
+    </div>
+    <script>
+      (function () {
+        var canary = ${JSON.stringify(canary)};
+        try { fetch(canary + "/fetch", { mode: "no-cors" }).catch(function () {}); } catch (e) {}
+        try { navigator.sendBeacon(canary + "/beacon", "x"); } catch (e) {}
+        try { new Image().src = canary + "/image"; } catch (e) {}
+        try { new WebSocket(canary.replace("http", "ws") + "/ws"); } catch (e) {}
+        try { window.open(canary + "/popup"); } catch (e) {}
+        try {
+          var frame = document.createElement("iframe");
+          frame.src = canary + "/iframe";
+          document.body.appendChild(frame);
+        } catch (e) {}
+        try {
+          var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:${host}:${stunPort}" }] });
+          pc.createDataChannel("x");
+          pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).catch(function () {});
+        } catch (e) {}
+        var root = document.getElementById("root");
+        root.insertAdjacentHTML("beforeend", ${JSON.stringify(media)});
+        var tl = gsap.timeline({ paused: true });
+        tl.set({}, {}, 1);
+        window.__timelines = window.__timelines || {};
+        window.__timelines.main = tl;
+      })();
+    </script>
+  </body>
+</html>
+`;
+}
+
+/** A started canary: an HTTP/WebSocket server and a UDP (STUN) socket on a non-loopback address. */
+async function startCanary(address: string) {
+  const hits: string[] = [];
+  const http = createServer((req, res) => {
+    hits.push(`http ${req.url}`);
+    res.end("leak");
+  });
+  http.on("upgrade", (req, socket) => {
+    hits.push(`ws ${req.url}`);
+    socket.destroy();
+  });
+  await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", resolve));
+  cleanups.push(() => new Promise<void>((resolve) => http.close(() => resolve())));
+  const udp = createSocket("udp4");
+  udp.on("message", () => hits.push("udp stun"));
+  await new Promise<void>((resolve) => udp.bind(0, "0.0.0.0", resolve));
+  cleanups.push(() => {
+    udp.close();
+  });
+  return {
+    hits,
+    url: `http://${address}:${(http.address() as AddressInfo).port}`,
+    stunPort: (udp.address() as AddressInfo).port,
+  };
+}
+
+const skipReason = !toolchain.ok ? toolchain.reason : host ? "" : "no non-loopback IPv4 address";
+
+describe.skipIf(skipReason !== "")(
+  `HyperFrames capture isolation${skipReason ? ` (skipped: ${skipReason})` : ""}`,
+  () => {
+    async function capture(
+      secretSrcs: (secret: string, canaryUrl: string) => string[],
+      projectSrcs: string[] = [],
+      staticMarkup = "",
+    ) {
+      const canary = await startCanary(host!);
+      const { dir, cleanup } = await tempDir("capture-isolation");
+      cleanups.push(cleanup);
+      // A red clip outside the project: the render must not show it.
+      const secret = join(dir, "secret", "secret.mp4");
+      await mkdir(join(dir, "secret"), { recursive: true });
       execFileSync("ffmpeg", [
         "-v",
         "error",
         "-f",
         "lavfi",
         "-i",
-        "sine=frequency=440:duration=3",
-        "-y",
+        "color=c=red:s=160x90:d=1:r=12",
+        "-pix_fmt",
+        "yuv420p",
         secret,
       ]);
-    });
-
-    async function capture(name: string, script: string): Promise<{ output: string; logs: string }> {
-      const ir = loadIrFixture("brand-intro-9x16");
-      const projectDir = join(dir, name);
-      const build = buildComposition(ir, { width: 540, height: 960, assetFiles: {} });
-      await writeComposition(build, projectDir);
-      execFileSync("ffmpeg", [
-        "-v",
-        "error",
-        "-f",
-        "lavfi",
-        "-i",
-        "sine=frequency=440:duration=3",
-        "-y",
-        join(projectDir, "inside.wav"),
-      ]);
-      const index = join(projectDir, "index.html");
-      const html = await readFile(index, "utf8");
-      await writeFile(index, html.replace("</body>", `<script>${script}</script></body>`));
-      const output = join(dir, `${name}.mp4`);
-      const lines: string[] = [];
+      execFileSync("ffmpeg", ["-v", "error", "-i", secret, "-frames:v", "1", join(dir, "secret", "red.png")]);
+      execFileSync("ffmpeg", ["-v", "error", "-i", secret, "-frames:v", "3", join(dir, "secret", "red.gif")]);
+      const projectDir = join(dir, "a", "b", "project");
+      await mkdir(join(projectDir, "assets", "vendor"), { recursive: true });
+      await copyFile(
+        require.resolve("gsap/dist/gsap.min.js"),
+        join(projectDir, "assets", "vendor", "gsap.min.js"),
+      );
+      await mkdir(join(projectDir, "assets", "media"), { recursive: true });
+      await copyFile(secret, join(projectDir, "assets", "media", "red.mp4"));
+      await writeFile(
+        join(projectDir, "index.html"),
+        hostileIndexHtml(
+          canary.url,
+          canary.stunPort,
+          secretSrcs(secret, canary.url),
+          projectSrcs,
+          staticMarkup,
+        ),
+      );
+      const outputPath = join(dir, "out.mp4");
       await renderWithProducer({
         projectDir,
-        outputPath: output,
-        fps: 6,
+        outputPath,
+        fps: 12,
         quality: "draft",
-        crf: 35,
+        crf: 30,
         workers: 1,
-        logger: createLogger({}, { level: "warn", write: (line) => lines.push(line) }),
+        logger: createLogger({ component: "capture-isolation-test" }, { level: "error" }),
         onProgress: () => {},
       });
-      return { output, logs: lines.join("\n") };
+      // Give late browser requests (beacons, ICE gathering) a moment to arrive.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { hits: canary.hits, outputPath };
     }
 
-    /**
-     * Creates a runtime audio element the producer would mix, as page scripts could. With `spoof`, the element
-     * reports that src through an overridden `currentSrc`, which is what the producer reads.
-     */
-    const runtimeAudio = (id: string, src: string, spoof = false) =>
-      `{const a=document.createElement("audio");a.id=${JSON.stringify(id)};a.setAttribute("data-start","0");a.setAttribute("data-duration","3");a.setAttribute("data-has-audio","true");${
-        spoof
-          ? `Object.defineProperty(a,"currentSrc",{get:()=>${JSON.stringify(src)}});a.src="inside.wav";`
-          : `a.src=${JSON.stringify(src)};`
-      }document.body.appendChild(a);}`;
-
-    it("keeps runtime media that lives inside the project", async () => {
-      const { output } = await capture("control", runtimeAudio("inside", "inside.wav"));
-      expect(maxVolumeDb(output)).toBeGreaterThan(-20);
+    it("sends no request from page scripts off the machine", async () => {
+      const { hits, outputPath } = await capture(() => []);
+      expect(hits).toEqual([]);
+      expect(frameColor(outputPath, 0.5)).toEqual([0, 0, 0]);
     });
 
-    it("blocks requests, popups, WebSockets and WebRTC to the LAN and other loopback ports, and never reads media outside the project", async () => {
-      const port = (server.address() as AddressInfo).port;
-      const udpPort = (udp.address() as AddressInfo).port;
-      const lan = `http://${host}:${port}`;
-      const victim = join(dir, "victim");
-      await mkdir(victim);
-      // Other loopback ports, as the producer's file server is on localhost too.
-      const local = `http://localhost:${port}`;
-      const script = [
-        `fetch("${lan}/fetch").catch(()=>{});`,
-        `fetch("${local}/fetch-localhost").catch(()=>{});`,
-        `fetch("http://127.0.0.1:${port}/fetch-loopback-ip").catch(()=>{});`,
-        `new Image().src="${lan}/image";`,
-        `navigator.sendBeacon("${lan}/beacon");`,
-        `try{new WebSocket("ws://${host}:${port}/socket")}catch{}`,
-        `try{new WebSocket("ws://localhost:${port}/socket-localhost")}catch{}`,
-        `try{new Worker(URL.createObjectURL(new Blob(['fetch("${local}/worker").catch(()=>{})'])))}catch{}`,
-        `{const f=document.createElement("iframe");f.src="${local}/iframe";document.body.appendChild(f);}`,
-        `window.open("${lan}/popup");`,
-        `window.open("${local}/popup-localhost","_blank","noopener");`,
-        `{const l=document.createElement("a");l.href="${local}/link-localhost";l.target="_blank";document.body.appendChild(l);l.click();}`,
-        `{const pc=new RTCPeerConnection({iceServers:[{urls:"stun:${host}:${udpPort}"}]});pc.createDataChannel("x");pc.createOffer().then((o)=>pc.setLocalDescription(o)).catch(()=>{});}`,
-        `setTimeout(()=>{location.href="${lan}/navigate"},20);`,
-        runtimeAudio("by-url", `${lan}/secret.wav`),
-        runtimeAudio("by-file-url", `file://${secret}`),
-        runtimeAudio("by-encoded-dots", "..%2fsecret.wav"),
-        runtimeAudio("by-spaced-path", ` ${secret}`, true),
-        runtimeAudio("by-spaced-dots", " ../secret.wav", true),
-        // The engine joins media ids into work-directory paths; this one points back at `victim`.
-        runtimeAudio(`${"../".repeat(16)}${victim.slice(1)}/pwned`, "inside.wav"),
-      ].join("\n");
-
-      const { output, logs } = await capture("hostile", script);
-
-      // Give late requests (beacon, popup, ICE) time to land before checking that none did.
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Positive control: the same clip inside the project reaches the frame. The producer re-discovers it from
+    // the DOM, so it passes the same guard; a black frame below means the guard dropped a source.
+    it("still renders project media that the guard checks", async () => {
+      const { hits, outputPath } = await capture(() => [], ["assets/media/red.mp4"]);
+      const [r, g, b] = frameColor(outputPath, 0.5);
+      expect(r).toBeGreaterThan(200);
+      expect(g + b).toBeLessThan(40);
       expect(hits).toEqual([]);
-      expect(udpPackets).toBe(0);
-      // The host file was never mixed in.
-      expect(maxVolumeDb(output)).toBe(Number.NEGATIVE_INFINITY);
-      // The page script ran: the producer saw and dropped each element it created.
-      for (const id of ["by-url", "by-file-url", "by-encoded-dots", "by-spaced-path", "by-spaced-dots"]) {
-        expect(logs).toContain(`"id":"${id}"`);
+    });
+
+    it.each([
+      ["an encoded ../ path", () => "..%2f..%2f..%2fsecret%2fsecret.mp4"],
+      ["an encoded ..\\ path", () => "..%5c..%5c..%5csecret%5csecret.mp4"],
+      [
+        "a double-encoded ../ path",
+        () => "%252e%252e%252f%252e%252e%252f%252e%252e%252fsecret%252fsecret.mp4",
+      ],
+      ["a file: URL", (secret: string) => `file://${secret}`],
+      ["an http: URL", (_: string, canaryUrl: string) => `${canaryUrl}/media.mp4`],
+    ])("keeps runtime media with %s out of the render", async (_name, src) => {
+      const { hits, outputPath } = await capture((secret, canaryUrl) => [src(secret, canaryUrl)]);
+      expect(frameColor(outputPath, 0.5)).toEqual([0, 0, 0]);
+      expect(hits).toEqual([]);
+    });
+
+    // The compiler reads the page as a string before any browser starts: user text that looks like CSS
+    // (`background:url(https://…)` in a caption) must not make the worker download it, a font family must not
+    // make it ask Google Fonts (the request carries the page's characters), and markup that points outside the
+    // project must not copy or convert a host file (PNG, animated GIF) into the render.
+    it("keeps the compiler off the network and the host filesystem", async () => {
+      const engine = await loadEngine();
+      const requests: string[] = [];
+      const recordingFetch = (async (input: string | URL | Request) => {
+        requests.push(String(input instanceof Request ? input.url : input));
+        return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
+      }) as typeof fetch;
+      // The engine downloader has its own transport; font embedding uses the global fetch.
+      engine._setDownloadFetchForTests(recordingFetch);
+      const globalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.startsWith("http://localhost:")) return globalFetch(input, init);
+        return recordingFetch(input, init);
+      }) as typeof fetch;
+      try {
+        const box = "position:absolute;inset:0;width:160px;height:90px";
+        const { hits, outputPath } = await capture(
+          () => [],
+          [],
+          [
+            `    <img src="../../../secret/red.png" alt="" style="${box}" />`,
+            `    <img src="../../../secret/red.gif" alt="" style="${box}" />`,
+            `    <div style="${box};background-image:url(../../../secret/red.png);background-size:cover"></div>`,
+            `    <p style="color:#000;font-family:Roboto">background:url(https://example.com/bg.png) background-image: url(https://example.com/x.png)</p>`,
+          ].join("\n"),
+        );
+        // The host file is red; a missing image may leave a faint grey placeholder.
+        const [r, g, b] = frameColor(outputPath, 0.5);
+        expect(r).toBeLessThan(20);
+        expect(Math.abs(r - g) + Math.abs(r - b)).toBeLessThan(6);
+        expect(hits).toEqual([]);
+      } finally {
+        engine._setDownloadFetchForTests(undefined);
+        globalThis.fetch = globalFetch;
       }
-      expect(logs).toContain("/pwned");
-      expect(await readdir(victim)).toEqual([]);
+      expect(requests).toEqual([]);
     });
   },
 );

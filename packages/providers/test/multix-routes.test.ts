@@ -237,3 +237,95 @@ describe("multix cost policy for Sume jobs", () => {
     expect((await plan("sume:seedance-2-mini", { durationMs: 5000 })).costPolicy).toBeUndefined();
   });
 });
+
+describe("speech timings", () => {
+  const speech = (model: string, params: Record<string, unknown>) =>
+    planMultixRequest({ kind: "voice", model, params, prompt: "Hello there" }, undefined, context);
+
+  it("asks ElevenLabs for timings and lets the other speech routes ignore the request", async () => {
+    expect((await speech("elevenlabs:eleven_v3", { timestamps: true })).argv).toContain("--timestamps");
+    expect((await speech("elevenlabs:eleven_v3", { timestamps: false })).argv).not.toContain("--timestamps");
+    for (const model of ["fish:s1", "minimax:speech-02-hd", "openrouter:openai/gpt-4o-mini-tts"]) {
+      expect((await speech(model, { timestamps: true })).argv).not.toContain("--timestamps");
+    }
+  });
+
+  it("refuses a timings flag that is not a boolean", async () => {
+    await expect(speech("fish:s1", { timestamps: "yes" })).rejects.toThrow(/params.timestamps/);
+  });
+});
+
+describe("composed ElevenLabs music", () => {
+  const music = (params: Record<string, unknown>, model = "elevenlabs:music_v1") =>
+    planMultixRequest({ kind: "music", model, params, prompt: "  warm synth bed  " }, undefined, context);
+  const sections = [
+    { name: "intro", durationMs: 4000, styles: ["soft pads"] },
+    { name: "drop", durationMs: 8000 },
+  ];
+
+  it("sends a composition plan file instead of a prompt and a length, billed for its sections", async () => {
+    const plan = await music({ sections, negativeStyles: ["drums"] });
+    expect(plan.argv).toEqual(["elevenlabs", "music", "--plan=composition-plan.json", "--model=music_v1"]);
+    expect(plan.files).toHaveLength(1);
+    expect(plan.files![0]!.name).toBe("composition-plan.json");
+    expect(JSON.parse(plan.files![0]!.content)).toEqual({
+      positive_global_styles: ["warm synth bed"],
+      negative_global_styles: ["drums"],
+      sections: [
+        {
+          section_name: "intro",
+          positive_local_styles: ["soft pads"],
+          negative_local_styles: [],
+          duration_ms: 4000,
+          lines: [],
+        },
+        {
+          section_name: "drop",
+          positive_local_styles: [],
+          negative_local_styles: [],
+          duration_ms: 8000,
+          lines: [],
+        },
+      ],
+    });
+    expect(plan.assumed).toMatchObject({ unit: "second", defaultQuantity: 12 });
+  });
+
+  it("keeps the bed instrumental by default and accepts a matching stated length", async () => {
+    const plan = await music({ sections, durationMs: 12_000 });
+    expect(JSON.parse(plan.files![0]!.content).negative_global_styles).toEqual(["vocals"]);
+  });
+
+  it("keeps the prompt call without sections, and on MiniMax", async () => {
+    const plain = await music({ durationMs: 5000 });
+    expect(plain.argv).toContain("--music-length-ms=5000");
+    expect(plain.files).toBeUndefined();
+    const minimax = await music({ sections }, "minimax:music-2.0");
+    expect(minimax.argv.slice(0, 3)).toEqual(["minimax", "generate-music", "--prompt=  warm synth bed  "]);
+    expect(minimax.files).toBeUndefined();
+  });
+
+  it("refuses malformed sections before anything is paid", async () => {
+    const bad: unknown[] = [
+      [],
+      "intro",
+      Array.from({ length: 9 }, () => ({ name: "a", durationMs: 3000 })),
+      [{ name: "", durationMs: 3000 }],
+      [{ name: "x".repeat(41), durationMs: 3000 }],
+      [{ name: "intro", durationMs: 2999 }],
+      [{ name: "intro", durationMs: 3000.5 }],
+      [{ name: "intro" }],
+      [{ name: "intro", durationMs: 3000, styles: ["y".repeat(81)] }],
+      [{ name: "intro", durationMs: 3000, styles: Array.from({ length: 9 }, () => "pads") }],
+      Array.from({ length: 3 }, () => ({ name: "long", durationMs: 120_000 })),
+    ];
+    for (const value of bad) {
+      await expect(music({ sections: value })).rejects.toMatchObject({ code: "VALIDATION" });
+    }
+    await expect(music({ sections, negativeStyles: [3] })).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
+  it("refuses sections that do not add up to the stated length", async () => {
+    await expect(music({ sections, durationMs: 15_000 })).rejects.toThrow(/add up to params.durationMs/);
+  });
+});

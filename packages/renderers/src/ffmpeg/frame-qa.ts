@@ -216,15 +216,27 @@ export async function checkFrames(
   return { samples: seen.samples, problems: [...missing, ...seen.problems] };
 }
 
-/** Tile the sample frames (about 320 px wide each, three per row) into one JPEG. Returns its byte size. */
+/**
+ * Tile the sample frames (about 320 px wide each, three per row) into one JPEG. Returns its byte size.
+ * `times` picks the frames instead of `samples` evenly spaced ones (for example one hold frame per card),
+ * `columns` and `width` set the grid and the width of each frame.
+ */
 export async function writeContactSheet(
   file: string,
   durationMs: number,
   samples: number,
   out: string,
-  options: { ffmpegPath?: string; signal?: AbortSignal; workDir: string },
+  options: {
+    ffmpegPath?: string;
+    signal?: AbortSignal;
+    workDir: string;
+    times?: readonly number[];
+    columns?: number;
+    width?: number;
+  },
 ): Promise<number> {
-  const times = sampleTimesMs(durationMs, samples);
+  const times = options.times ? [...options.times] : sampleTimesMs(durationMs, samples);
+  const count = times.length;
   const dir = join(options.workDir, "contact");
   await mkdir(dir, { recursive: true });
   await mkdir(dirname(out), { recursive: true });
@@ -240,14 +252,14 @@ export async function writeContactSheet(
           "-frames:v",
           "1",
           "-vf",
-          "scale=320:-2",
+          `scale=${options.width ?? 320}:-2`,
           "-y",
           join(dir, `f${i + 1}.png`),
         ],
         { ...options, timeoutMs: 60_000 },
       );
     }
-    const cols = Math.min(3, samples);
+    const cols = Math.max(1, Math.min(options.columns ?? 3, count));
     await runFfmpeg(
       "contact sheet tile",
       [
@@ -256,7 +268,7 @@ export async function writeContactSheet(
         "-i",
         join(dir, "f%d.png"),
         "-vf",
-        `tile=${cols}x${Math.ceil(samples / cols)}:padding=4:color=0x202020`,
+        `tile=${cols}x${Math.ceil(count / cols)}:padding=4:color=0x202020`,
         "-frames:v",
         "1",
         "-q:v",

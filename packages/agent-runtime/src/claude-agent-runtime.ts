@@ -1,4 +1,11 @@
-import type { AgentRunResult, AgentRuntime, AgentTask, ReasoningEffort, TenantContext } from "@studix/core";
+import type {
+  AgentInputImage,
+  AgentRunResult,
+  AgentRuntime,
+  AgentTask,
+  ReasoningEffort,
+  TenantContext,
+} from "@studix/core";
 import { type Clock, redactDeep, StudixError, systemClock } from "@studix/shared";
 import {
   type AgentSpend,
@@ -16,6 +23,8 @@ export interface ClaudeSessionRequest {
   model: string;
   instructions: string;
   input: Record<string, unknown>;
+  /** Images sent with the prompt; a transport that cannot send them refuses the session in `start`. */
+  images?: readonly AgentInputImage[];
   /** Tool names the agent may call; everything else is denied. */
   allowedTools: readonly string[];
   outputSchema?: Record<string, unknown>;
@@ -232,6 +241,7 @@ export function createClaudeAgentRuntime(options: ClaudeAgentRuntimeOptions): Ag
           model: options.model,
           instructions: task.instructions,
           input: task.input,
+          ...(task.images?.length ? { images: task.images } : {}),
           allowedTools: [...allowed],
           outputSchema: claudeOutputSchema(task.outputSchema),
           maxTurns: task.maxTurns,

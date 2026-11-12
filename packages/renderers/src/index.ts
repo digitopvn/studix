@@ -7,6 +7,7 @@ export {
   mixAudio,
   planAudioClips,
 } from "./ffmpeg/audio-mix.ts";
+export { analyzeBeats, type BeatGrid, beatGridOf } from "./ffmpeg/beat-grid.ts";
 export {
   type DeliveryKind,
   type ExtraDelivery,
@@ -78,6 +79,21 @@ export {
   VIDEO_EXTENSIONS,
   writeComposition,
 } from "./hyperframes/compile-composition.ts";
+export {
+  HTML_CARD_EASES,
+  HTML_CARD_FORMAT,
+  HTML_CARD_LIMITS,
+  HTML_CARD_MIME,
+  HtmlCardPackage,
+  HtmlCardTween,
+  htmlCardProblems,
+  TweenProps,
+} from "./hyperframes/html-card.ts";
+export {
+  type HtmlCardLintResult,
+  type LintHtmlCardOptions,
+  lintHtmlCard,
+} from "./hyperframes/html-card-lint.ts";
 export {
   type FinishSpec,
   HyperFramesRenderer,

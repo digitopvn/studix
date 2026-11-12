@@ -13,6 +13,7 @@ import {
   TEXT_STYLES,
 } from "./brand-tokens.ts";
 import { planFonts } from "./bundled-fonts.ts";
+import { loadHtmlCards } from "./html-card-compile.ts";
 import { cmp, escapeHtml, num, scriptJson, seconds } from "./html-utils.ts";
 import { compileScene, type SceneCaptionCue } from "./scene-composition.ts";
 import { sceneTransitions } from "./scene-timeline.ts";
@@ -76,7 +77,14 @@ function captionsByScene(ir: VideoIR): Map<string, SceneCaptionCue[]> {
   return result;
 }
 
-function indexHtml(ir: VideoIR, width: number, height: number, background: string): string {
+/**
+ * Defense in depth for pages with HTML cards (cards run no agent code): the film engine page policy without
+ * 'unsafe-eval', so the page loads nothing from outside the project.
+ */
+export const HTML_CARD_CSP =
+  "default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self' data: blob:; form-action 'none'";
+
+function indexHtml(ir: VideoIR, width: number, height: number, background: string, csp: boolean): string {
   const spans = new Map(resolveSceneSpans(ir.timeline, ir.scenes).map((s) => [s.sceneId, s]));
   const duration = num(seconds(ir.format.durationMs));
   const hosts = ir.timeline.entries.map((entry) => {
@@ -92,6 +100,7 @@ function indexHtml(ir: VideoIR, width: number, height: number, background: strin
     `<html lang="${escapeHtml(ir.language)}">`,
     "  <head>",
     '    <meta charset="UTF-8" />',
+    ...(csp ? [`    <meta http-equiv="Content-Security-Policy" content="${HTML_CARD_CSP}" />`] : []),
     `    <meta name="viewport" content="width=${width}, height=${height}" />`,
     `    <title>${escapeHtml(ir.title)}</title>`,
     `    <script src="${GSAP_ASSET}"></script>`,
@@ -141,6 +150,13 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
     mono: namePlan.stacks.get(families.mono)!,
   };
   const fontWeights: Record<FontSlot, Set<number>> = { heading: new Set(), body: new Set(), mono: new Set() };
+  // HTML cards are read and safety-checked up front; their code assets are never copied as media.
+  const htmlCards = loadHtmlCards(ir, options.assetFiles);
+  if (htmlCards.size > 0) {
+    // Cards style text with var(--font-heading) / var(--font-body) at weights the compiler cannot see.
+    for (const w of [700, 800]) fontWeights.heading.add(w);
+    for (const w of [400, 600]) fontWeights.body.add(w);
+  }
 
   const copies = new Map<string, string>();
   const assetPaths = new Map<string, string>();
@@ -173,13 +189,18 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
     assetPaths,
     brand: ir.brand,
     language: ir.language,
+    htmlCards,
   };
-  const scenes = ir.scenes.map((scene, index) =>
+  // Neighbours (the transition into a scene, the motif pose it picks up) follow the timeline, which need not
+  // share the order of the scenes array.
+  const byId = new Map(ir.scenes.map((s) => [s.id, s]));
+  const ordered = ir.timeline.entries.map((e) => byId.get(e.sceneId)).filter((s) => s !== undefined);
+  const scenes = ordered.map((scene, index) =>
     compileScene({
       scene,
       sceneIndex: index,
       palette,
-      transitions: sceneTransitions(ir.scenes, index),
+      transitions: sceneTransitions(ordered, index),
       captions: { position, cues: cues.get(scene.id) ?? [] },
       markup: { ...markup, videoAssetIds },
     }),
@@ -208,6 +229,7 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
       width,
       height,
       rootBackground.startsWith("#") ? rootBackground : palette[rootBackground as keyof typeof palette],
+      htmlCards.size > 0,
     ),
   );
   for (const scene of scenes) files.set(scene.path, scene.body(fonts.css));

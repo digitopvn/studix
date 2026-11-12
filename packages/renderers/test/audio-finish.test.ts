@@ -161,6 +161,44 @@ describe("sped-up tracks", () => {
   });
 });
 
+describe("music ducked under speech", () => {
+  const sources = new Map<string, AudioSourceInfo>([
+    ["/m/music.mp3", { hasAudio: true, durationMs: 30_000 }],
+  ]);
+  const bed = { id: "bed", kind: "music", assetId: "music", startMs: 1000, volume: 1, duckDb: -12 } as const;
+  const line = (id: string, startMs: number, durationMs: number) =>
+    ({ id, kind: "voiceover", assetId: "music", startMs, durationMs, volume: 1 }) as const;
+
+  it("dips a music track with duckDb over each stretch of speech, in clip time, and nothing else", () => {
+    const ir = promoWithClip();
+    ir.audio = [
+      bed,
+      { ...bed, id: "plain", duckDb: undefined },
+      { ...bed, id: "hit", kind: "sfx" },
+      line("a", 2000, 1000),
+      { ...line("b", 4000, 1000), kind: "dialogue" },
+    ];
+    const clips = planAudioClips(ir, files, sources);
+    expect(clips[0]?.duck).toEqual({
+      gain: expect.closeTo(0.2512, 4),
+      spans: [
+        { startMs: 1000, endMs: 2000 },
+        { startMs: 3000, endMs: 4000 },
+      ],
+    });
+    expect(clips.slice(1).every((c) => c.duck === undefined)).toBe(true);
+    expect(audioMixGraph([clips[0]!], 8000).split(";")[0]).toContain(
+      "volume=1.0000,asetnsamples=n=240:p=0,volume=volume='1-0.7488*(clip(min((t-0.850)/0.150,(2.350-t)/0.350),0,1)+clip(min((t-2.850)/0.150,(4.350-t)/0.350),0,1))':eval=frame,adelay=delays=1000:all=1[c0]",
+    );
+  });
+
+  it("leaves the bed alone when no speech plays", () => {
+    const ir = promoWithClip();
+    ir.audio = [bed];
+    expect(planAudioClips(ir, files, sources)[0]?.duck).toBeUndefined();
+  });
+});
+
 describe("audioMixGraph", () => {
   it("trims, levels, fades and delays every clip, then sums without normalisation to the exact length", () => {
     const graph = audioMixGraph(

@@ -541,15 +541,17 @@ function audioRequests(s: StageContext) {
  * A music bed and one SFX accent per ad, generated and mixed into the IR: music ducked under the voice,
  * the accent on the end card. The voice-over stage that follows adds the voice.
  *
- * The cache key is the one this stage had when it also voiced the ads, so a re-render keeps the paid music
- * and SFX. Such a cached output still holds that older voice-over; the voice-over stage replaces it.
+ * Both sounds are reusable requests, so a new cache key reuses the stored music and SFX instead of paying for
+ * them again. A cached output from when this stage also voiced the ads still holds that older voice-over; the
+ * voice-over stage replaces it.
  */
 export const marketingAudioStage: StageDefinition = {
   name: MV_STAGES.audio,
   requiresApprovedStoryboard: true,
   knowledge: ["sound"],
   outputSchema: IrOutput,
-  cacheKey: (s) => stageCacheKey(MV_STAGES.audio, 1, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  // Version 2 ducks the bed under the voice; music and SFX are reusable requests, so they are not paid again.
+  cacheKey: (s) => stageCacheKey(MV_STAGES.audio, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) =>
     estimateMediaCents(
       s,
@@ -588,7 +590,7 @@ export const marketingAudioStage: StageDefinition = {
         startMs: g.at,
         durationMs: Math.max(1, length),
         volume: g.role === "music" ? 0.35 : 0.6,
-        ...(g.role === "music" ? { fadeInMs: 300, fadeOutMs: 800 } : {}),
+        ...(g.role === "music" ? { fadeInMs: 300, fadeOutMs: 800, duckDb: -8 } : {}),
       };
     });
     const assets: AssetRef[] = generated.map((g) => g.asset);

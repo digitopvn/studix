@@ -6,6 +6,7 @@ import type { Logger } from "@studix/shared";
 import { StudixError } from "@studix/shared";
 import type { AssetRef, Shot, VideoIR } from "@studix/video-ir";
 import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, writeComposition } from "../hyperframes/compile-composition.ts";
+import { isHtmlCardShot } from "../hyperframes/html-card-compile.ts";
 import { renderWithProducer } from "../hyperframes/producer-render.ts";
 import { FILM_SCENE_MIME, parseFilmScenePackage } from "./film-scene-package.ts";
 import { buildFilmSceneProject, type FilmSceneMedia } from "./film-scene-project.ts";
@@ -33,9 +34,17 @@ export interface FilmCompositionRenderResult {
   assetFiles: Record<string, string>;
 }
 
-/** Whether `ir` has composition shots (the renderer then captures them before the main composition). */
+/**
+ * Composition shots the film engine captures: every one except HTML cards, which stay in the IR and compile
+ * inline. Any other code type still reaches renderFilmCompositions, which rejects it.
+ */
+function isFilmCaptureShot(ir: VideoIR, shot: Shot): boolean {
+  return shot.type === "composition" && !isHtmlCardShot(ir, shot);
+}
+
+/** Whether `ir` has film-scene composition shots (the renderer captures them before the main composition). */
 export function hasCompositionShots(ir: VideoIR): boolean {
-  return ir.scenes.some((scene) => scene.shots.some((shot) => shot.type === "composition"));
+  return ir.scenes.some((scene) => scene.shots.some((shot) => isFilmCaptureShot(ir, shot)));
 }
 
 function sha256(data: string | Buffer): string {
@@ -64,7 +73,7 @@ function sceneMedia(ir: VideoIR, assetFiles: Readonly<Record<string, string>>): 
 }
 
 /**
- * Capture every composition shot that names a film scene with the ported film engine (each scene is its own
+ * Capture every composition shot that names a film scene (HTML cards are left in place) with the ported film engine (each scene is its own
  * HyperFrames root composition, as the engine expects), then splice each capture into the IR as a muted video
  * shot. The rest of the render runs unchanged on the result. Captures are keyed by the content of the scene,
  * its media, params, duration, frame rate and quality, so a retry in the same work directory reuses them.
@@ -76,7 +85,9 @@ export async function renderFilmCompositions(
   const assets = new Map(ir.assets.map((a) => [a.id, a]));
   const media = sceneMedia(ir, assetFiles);
   const jobs = ir.scenes.flatMap((scene) =>
-    scene.shots.flatMap((shot) => (shot.type === "composition" ? [{ scene, shot }] : [])),
+    scene.shots.flatMap((shot) =>
+      shot.type === "composition" && isFilmCaptureShot(ir, shot) ? [{ scene, shot }] : [],
+    ),
   );
   const extraAssets: AssetRef[] = [];
   const files: Record<string, string> = { ...assetFiles };
