@@ -33,7 +33,11 @@ const PAGE = `<!doctype html><html><head>
 <script type="application/ld+json">{"@type":"Organization","logo":{"url":"/ld-logo.png"}}</script>
 </head><body></body></html>`;
 
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+// A PNG signature and IHDR header of a 180x180 image: the stage reads the size before it stores a logo.
+const PNG = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 180, 0, 0, 0,
+  180,
+]);
 
 describe("readBrandPage", () => {
   it("reads the name, the vivid colours and the logo candidates in order", () => {
@@ -68,13 +72,28 @@ describe("readBrandPage", () => {
     for (const page of pages) expect(readBrandPage(page, "https://x.example/").logoUrls).toEqual([]);
     expect(performance.now() - started).toBeLessThan(2_000);
   });
+
+  it("keeps its place after a character that lower-cases to two", () => {
+    const page = `<title>Đ İstanbul İ Acme</title><meta name="theme-color" content="#ff0000"><link rel="icon" type="image/svg+xml" href="/logo.svg">`;
+    expect(readBrandPage(page, "https://acme.example/")).toEqual({
+      name: "Đ İstanbul İ Acme",
+      colors: ["#ff0000"],
+      logoUrls: ["https://acme.example/logo.svg"],
+    });
+  });
 });
 
 describe("logoProblem", () => {
   const svg = (body: string) =>
     new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg">${body}</svg>`);
   it("refuses SVG script, handlers and outside loads, and keeps a plain mark", () => {
-    expect(logoProblem(svg('<path d="M0 0h10v10z"/>'), "image/svg+xml")).toBeUndefined();
+    for (const body of [
+      '<path d="M0 0h10v10z"/>',
+      "<rect fill=\"url('#g')\"/>",
+      '<rect fill="url( #g)"/>',
+      '<use href="#a"/>',
+    ])
+      expect(logoProblem(svg(body), "image/svg+xml"), body).toBeUndefined();
     for (const body of [
       "<script>alert(1)</script>",
       '<x:script xmlns:x="http://www.w3.org/2000/svg"/>',
@@ -95,6 +114,12 @@ describe("logoProblem", () => {
     };
     expect(logoProblem(png(512, 512), "image/png")).toBeUndefined();
     expect(logoProblem(png(30_000, 30_000), "image/png")).toMatch(/30000x30000/);
+    // A fill byte before the start-of-frame marker must not hide a JPEG's size.
+    const jpeg = Uint8Array.from([
+      0xff, 0xd8, 0xff, 0xff, 0xc0, 0, 17, 8, 0x75, 0x30, 0x75, 0x30, 3, 0, 0, 0, 0, 0,
+    ]);
+    expect(logoProblem(jpeg, "image/jpeg")).toMatch(/30000x30000/);
+    expect(logoProblem(Uint8Array.from([0x89, 0x50, 0x4e, 0x47]), "image/png")).toMatch(/cannot be read/);
   });
 });
 

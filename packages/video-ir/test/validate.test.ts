@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  briefForAgent,
   buildSequentialTimeline,
   type VideoIR,
   validateCreativeBrief,
@@ -111,6 +112,15 @@ describe("validateVideoIR semantic checks", () => {
         { sceneId: "b", startMs: 100 },
       ],
     });
+  });
+});
+
+describe("briefForAgent", () => {
+  it("leaves an uploaded logo out and keeps a logo URL", () => {
+    const data = { prompt: "Logo", brandLogo: "data:image/png;base64,AAAA" };
+    expect(briefForAgent(data)).toEqual({ prompt: "Logo" });
+    const url = { prompt: "Logo", brandLogo: "https://acme.example/logo.png" };
+    expect(briefForAgent(url)).toBe(url);
   });
 });
 

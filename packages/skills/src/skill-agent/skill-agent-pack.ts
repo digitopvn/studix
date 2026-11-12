@@ -345,7 +345,13 @@ export const skillAgentReviewedRunStage: StageDefinition = {
         const videoUrl = await storage.signedUrl(s.ctx, key);
         const qa = await qaStage.run({
           ...s,
-          input: { brief, delivery: deliveryOf(brief), ...(direction ? { direction } : {}), videoUrl, round },
+          input: {
+            brief: briefForAgent(brief),
+            delivery: deliveryOf(brief),
+            ...(direction ? { direction } : {}),
+            videoUrl,
+            round,
+          },
         });
         usage.push(...(qa.usage ?? []));
         const verdict = qaVerdictOf(qa.output, round);

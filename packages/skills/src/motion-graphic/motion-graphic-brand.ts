@@ -207,7 +207,9 @@ function titleName(title: string, baseUrl: string): string | undefined {
  * from an SVG icon, the largest apple-touch-icon, `og:logo`, JSON-LD `logo`, then the other icons (no .ico).
  */
 export function readBrandPage(html: string, baseUrl: string): BrandPage {
-  const lower = html.toLowerCase();
+  // ASCII-only lower-casing keeps every index of `lower` on the same character of `html` ("İ" lower-cases
+  // to two UTF-16 units); every tag name searched for is ASCII.
+  const lower = html.replace(/[A-Z]+/g, (s) => s.toLowerCase());
   const tags = tagsOf(html, lower);
   const meta = (key: string) =>
     tags
@@ -319,6 +321,8 @@ export function rasterSize(bytes: Uint8Array, mime: string): { width: number; he
     // Walk the segments to the first start-of-frame marker, which holds the size.
     for (let i = 2; i + 9 < bytes.length; i += 2 + u16be(i + 2)) {
       if (at(i) !== 0xff) return undefined;
+      // Any number of 0xFF fill bytes may precede a marker; decoders skip them, so must the walk.
+      while (at(i + 1) === 0xff && i + 10 < bytes.length) i++;
       const marker = at(i + 1);
       if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker))
         return { width: u16be(i + 7), height: u16be(i + 5) };
@@ -331,17 +335,20 @@ export function rasterSize(bytes: Uint8Array, mime: string): { width: number; he
  * Why logo bytes must not be stored, or undefined when they may. An SVG that carries script (also namespaced,
  * `<x:script>`), `foreignObject`, event handlers or `javascript:`, or loads anything from outside (an href, a
  * CSS `@import` or `url(...)`), is refused: the stored file must be safe wherever it is served. A raster whose
- * header declares an edge over 4096 px is refused: a small compressed file can decode to gigabytes.
+ * header declares an edge over 4096 px, or whose size cannot be read, is refused: a small compressed file can
+ * decode to gigabytes.
  */
 export function logoProblem(bytes: Uint8Array, mime: string): string | undefined {
   if (mime === "image/svg+xml") {
     const text = new TextDecoder().decode(bytes);
     const unsafe =
-      /<(?:[\w-]+:)?(?:script|foreignObject)\b|\son[a-z]+\s*=|javascript:|@import|url\(\s*["']?\s*(?!#|data:image\/)|(?:xlink:)?href\s*=\s*["']\s*(?!#|data:image\/)/i;
+      /<(?:[\w-]+:)?(?:script|foreignObject)\b|\son[a-z]+\s*=|javascript:|@import|url\(\s*(?!["']?\s*(?:#|data:image\/))|(?:xlink:)?href\s*=\s*["'](?!\s*(?:#|data:image\/))/i;
     return unsafe.test(text) ? "the SVG carries scripts or external references" : undefined;
   }
   const size = rasterSize(bytes, mime);
-  if (size && Math.max(size.width, size.height) > MAX_LOGO_EDGE)
+  // The size cap guards the renderer against decompression bombs: a header it cannot read is refused too.
+  if (!size || !size.width || !size.height) return "its pixel size cannot be read from its header";
+  if (Math.max(size.width, size.height) > MAX_LOGO_EDGE)
     return `it is ${size.width}x${size.height} px; its longest edge may be ${MAX_LOGO_EDGE} px`;
   return undefined;
 }
