@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 interface BrowserManager {
@@ -11,14 +11,10 @@ interface BrowserManager {
 }
 
 /** The engine the producer actually loads; it is not a direct dependency of this package. */
-function engineServicesDir(): string {
+async function loadBrowserManager(): Promise<BrowserManager> {
   const producer = import.meta.resolve("@hyperframes/producer");
   const enginePackage = createRequire(producer).resolve("@hyperframes/engine/package.json");
-  return join(dirname(enginePackage), "dist", "services");
-}
-
-async function loadBrowserManager(): Promise<BrowserManager> {
-  return import(pathToFileURL(join(engineServicesDir(), "browserManager.js")).href);
+  return import(pathToFileURL(join(dirname(enginePackage), "dist", "services", "browserManager.js")).href);
 }
 
 /**
@@ -31,12 +27,17 @@ describe("@hyperframes/engine launch options", () => {
     expect((await loadBrowserManager()).ownedLaunchOptions()).toMatchObject({ handleSIGTERM: false });
   });
 
-  // The same patch keeps page scripts off the network; capture-isolation.integration.test.ts proves it end to end.
-  it("keep the capture browser off the network", async () => {
-    const args = (await loadBrowserManager()).buildChromeArgs({ width: 160, height: 90 });
+  // The same patch keeps page scripts off the network; capture-isolation*.integration.test.ts prove it end to end.
+  it("keep the capture browser off the network except for its file server", async () => {
+    const args = (await loadBrowserManager()).buildChromeArgs({
+      width: 160,
+      height: 90,
+      serverUrl: "http://localhost:4123",
+    });
     expect(args).toEqual(
       expect.arrayContaining([
-        "--proxy-server=socks5://127.0.0.1:9",
+        expect.stringMatching(/^--proxy-server=http:\/\/[^ ]+\.invalid:/),
+        "--proxy-bypass-list=<-loopback>;localhost:4123",
         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--webrtc-ip-handling-policy=disable_non_proxied_udp",
@@ -44,21 +45,20 @@ describe("@hyperframes/engine launch options", () => {
     );
   });
 
-  // Chrome never proxies loopback on its own, so without this a page reaches every loopback port of the worker.
-  it("keep a capture page on the producer's file server port", async () => {
-    const args = (await loadBrowserManager()).buildChromeArgs({
-      width: 160,
-      height: 90,
-      serverUrl: "http://localhost:41234",
-    });
-    expect(args).toContain("--proxy-bypass-list=<-loopback>;localhost:41234");
-    // Fail closed: a browser launched without a file server reaches no loopback port at all.
-    expect((await loadBrowserManager()).buildChromeArgs({ width: 160, height: 90 })).toContain(
-      "--proxy-bypass-list=<-loopback>",
-    );
-    // The capture session must hand its file server to the launch args, or every capture breaks.
-    const frameCapture = readFileSync(join(engineServicesDir(), "frameCapture.js"), "utf8");
-    expect(frameCapture).toMatch(/buildChromeArgs\(\{[^}]*\bserverUrl\b[^}]*\}/);
+  it("pass the file server to the launch flags and confine capture pages to it", async () => {
+    const producer = import.meta.resolve("@hyperframes/producer");
+    const engineDir = dirname(createRequire(producer).resolve("@hyperframes/engine/package.json"));
+    const source = readFileSync(join(engineDir, "dist", "services", "frameCapture.js"), "utf8");
+    expect(source).toContain("requiresWebGpu, serverUrl }, gpuConfig)");
+    expect(source).toContain("await confinePageToFileServer(page, serverUrl);");
+    expect(source).toContain("await confinePageToFileServer(page, session.serverUrl);");
+  });
+
+  it("drop runtime media and ids outside the project", () => {
+    const source = readFileSync(fileURLToPath(import.meta.resolve("@hyperframes/producer")), "utf8");
+    expect(source).toMatch(/const browserMedia = keepProjectMedia\(\s*discoveredMedia,/);
+    expect(source).toContain("isSafeMediaId(el.id) && isProjectMediaSrc(el.src, fileServer, roots)");
+    expect(source.match(/assertSafeMediaIds\(compiled\);/g)).toHaveLength(2);
   });
 });
 
