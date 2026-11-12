@@ -141,24 +141,44 @@ to the exact same version in `packages/renderers/package.json` (currently
   ([#6640](https://github.com/heygen-com/hyperframes/pull/6640)). Output bytes
   differ from older renders; the contract above (codec, size, loudness) does not.
 - **Capture isolation patches.** `patches/@hyperframes__engine@0.8.223.patch`
-  also adds `CAPTURE_NETWORK_ISOLATION_ARGS` to the Chrome flags. A proxy that
-  does not exist (`socks5://127.0.0.1:9`) fails every routable request without
-  a DIRECT fallback. Chrome skips proxies for loopback and link-local targets
-  (including the `169.254.169.254` metadata address), so
-  `--host-resolver-rules` fails every host name and IP literal except the name
-  `localhost`, which the producer's file server uses
-  (`http://localhost:<port>`). If upstream switches that URL to `127.0.0.1`,
-  every capture breaks. WebRTC is limited to proxied UDP.
-  `patches/@hyperframes__producer@0.8.223.patch` makes the producer ignore
-  media that the page creates at runtime unless its source stays inside the
-  project. The probe stage's `discoverMediaFromBrowser` is the only place that
-  takes a media source from the browser. As a result, the engine never reads a
-  host path or downloads a URL for it.
+  also adds `captureNetworkIsolationArgs(serverUrl)` to the Chrome flags. Every
+  request goes to a proxy that does not exist
+  (`studix-capture-offline.invalid`, which the resolver refuses) and fails
+  without a DIRECT fallback. Only the producer's file server
+  (`http://localhost:<port>`) bypasses it. `<-loopback>` removes Chrome's
+  implicit loopback bypass, so popups, workers and WebSockets cannot reach other
+  loopback ports either. Chrome skips proxies for link-local targets (including
+  the `169.254.169.254` metadata address), so `--host-resolver-rules` fails
+  every host name and IP literal except the name `localhost`. If upstream
+  switches the file server URL to `127.0.0.1`, every capture breaks. WebRTC is
+  limited to proxied UDP. Because a browser's flags name its file server's
+  port, a pooled browser is never reused for another capture's server.
+  `confinePageToFileServer` turns on request interception for the capture and
+  static-verification pages. It aborts requests to any other origin, so a
+  navigation away cannot replace the composition, and it closes popups.
+  `patches/@hyperframes__producer@0.8.223.patch` filters the media that
+  `discoverMediaFromBrowser`, the only place that takes media from the
+  browser, returns. Page scripts control those values, including an overridden
+  `currentSrc`. A src is kept only when it is an inline `data:image`, or exactly
+  a file-server URL whose path is plain segments of `[A-Za-z0-9._~-]` and whose
+  file resolves (symlinks included) inside the compiled or project directory.
+  The element id may hold no `/`, `\` or bare `..`, because the engine builds
+  work-directory paths from it that it writes and later removes. An authored
+  media id that is a path fails the render. Muting from a page script still
+  removes authored audio even when the filter drops that element. As a result,
+  the engine never reads a host path, writes outside its work directory or
+  downloads a URL for runtime media.
   `capture-isolation.integration.test.ts` renders a page that tries fetch,
   beacon, image, WebSocket, popup, iframe, WebRTC and runtime `<video>` sources
   (`..%2f`, `..%5c`, double encoding, `file:`, `http:`). A canary server must see
   nothing and the frame must stay black, while a project clip still renders
   ([#451](https://github.com/digitopvn/studix/issues/451)).
+  `capture-isolation-hostile.integration.test.ts` adds probes to other
+  `localhost` ports (fetch, WebSocket, worker, iframe, popup and link), a
+  navigation, spoofed `currentSrc` values with leading whitespace, and a media
+  id that points outside the work directory. No request may arrive, no host
+  audio may reach the mix, no file may appear outside the work directory, and
+  the render must still finish.
   The producer's compiler also scans the page as a string before any browser
   starts. It downloads every `https:` URL that its regexes find (for example
   `background:url(https://…)`, even inside caption text), inlines external

@@ -434,11 +434,13 @@ or a path guard as a security boundary:
   network and the host filesystem. The capture browser sends routable requests to a proxy that does not
   exist. It resolves no host name or IP literal except the name `localhost`, which also covers the link-local
   and metadata addresses that Chrome never proxies. WebRTC may use only that proxy. Fetches, navigations,
-  popups, WebSockets and STUN/UDP therefore never leave the worker. Through `localhost`, a page can still
-  reach the producer's file server and other loopback ports of its own pod, but it cannot read cross-origin
-  responses there. Media that a page script adds at runtime is ignored unless its source is a
-  project-relative path that stays inside the project (or an inline `data:image`), so the producer never reads
-  a host file or downloads a URL on its behalf. The compile step before the capture downloads nothing (no
+  popups, WebSockets and STUN/UDP therefore never leave the worker. Only the producer's own file server
+  (`localhost:<port>`) bypasses the proxy, so other loopback ports of the pod are unreachable too, and
+  request interception aborts every other origin, so a navigation cannot replace the composition. Media
+  that a page script adds or changes at runtime is ignored unless its source is a file-server URL with a plain
+  path whose file lies inside the project (or an inline `data:image`) and its id is not a path. Overriding
+  `currentSrc`, leading whitespace or percent-encoding cannot change that, so the producer never reads a host
+  file, writes outside its work directory or downloads a URL on its behalf. The compile step before the capture downloads nothing (no
   media, stylesheet, script or Google Fonts request) and reads or copies no file from outside the project,
   even when composition text looks like `background:url(https://…)` or markup points to `../` paths.
 - A host agent's output is untrusted input: it is validated against the stage's
@@ -514,5 +516,5 @@ Each item maps to a negative test in the owning package.
 | Zip slip or zip bomb in a skill upload                   | Path checks reject the archive, symlinks skipped, entry/size/ratio caps, capped inflation                  |
 | Expired artifact URL still valid                         | Presign expiry tests                                                                                       |
 | Host header / origin spoofing                            | Host allow-list derived from `STUDIX_*_URL`                                                                |
-| Render page script reaching the network or host files    | Dead-proxy and resolver flags on the capture browser, project-only runtime media                           |
+| Render page script reaching the network or host files    | Dead-proxy, loopback and resolver flags, file-server-only interception, project-only runtime media and ids |
 | Argument injection or file/network access through ffmpeg | Shell-free argv, path and protocol checks, forced `-protocol_whitelist`, offline per-job sandbox           |

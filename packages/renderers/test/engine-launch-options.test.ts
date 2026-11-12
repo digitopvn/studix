@@ -1,13 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 interface BrowserManager {
   ownedLaunchOptions: () => Record<string, unknown>;
-  buildChromeArgs: (options: { width: number; height: number }) => string[];
+  buildChromeArgs: (options: { width: number; height: number; serverUrl?: string }) => string[];
 }
 
 /** The engine the producer actually loads; it is not a direct dependency of this package. */
@@ -27,17 +27,38 @@ describe("@hyperframes/engine launch options", () => {
     expect((await loadBrowserManager()).ownedLaunchOptions()).toMatchObject({ handleSIGTERM: false });
   });
 
-  // The same patch keeps page scripts off the network; capture-isolation.integration.test.ts proves it end to end.
-  it("keep the capture browser off the network", async () => {
-    const args = (await loadBrowserManager()).buildChromeArgs({ width: 160, height: 90 });
+  // The same patch keeps page scripts off the network; capture-isolation*.integration.test.ts prove it end to end.
+  it("keep the capture browser off the network except for its file server", async () => {
+    const args = (await loadBrowserManager()).buildChromeArgs({
+      width: 160,
+      height: 90,
+      serverUrl: "http://localhost:4123",
+    });
     expect(args).toEqual(
       expect.arrayContaining([
-        "--proxy-server=socks5://127.0.0.1:9",
+        expect.stringMatching(/^--proxy-server=http:\/\/[^ ]+\.invalid:/),
+        "--proxy-bypass-list=<-loopback>;localhost:4123",
         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--webrtc-ip-handling-policy=disable_non_proxied_udp",
       ]),
     );
+  });
+
+  it("pass the file server to the launch flags and confine capture pages to it", async () => {
+    const producer = import.meta.resolve("@hyperframes/producer");
+    const engineDir = dirname(createRequire(producer).resolve("@hyperframes/engine/package.json"));
+    const source = readFileSync(join(engineDir, "dist", "services", "frameCapture.js"), "utf8");
+    expect(source).toContain("requiresWebGpu, serverUrl }, gpuConfig)");
+    expect(source).toContain("await confinePageToFileServer(page, serverUrl);");
+    expect(source).toContain("await confinePageToFileServer(page, session.serverUrl);");
+  });
+
+  it("drop runtime media and ids outside the project", () => {
+    const source = readFileSync(fileURLToPath(import.meta.resolve("@hyperframes/producer")), "utf8");
+    expect(source).toMatch(/const browserMedia = keepProjectMedia\(\s*discoveredMedia,/);
+    expect(source).toContain("isSafeMediaId(el.id) && isProjectMediaSrc(el.src, fileServer, roots)");
+    expect(source.match(/assertSafeMediaIds\(compiled\);/g)).toHaveLength(2);
   });
 });
 
