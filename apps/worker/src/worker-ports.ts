@@ -480,6 +480,7 @@ export async function loadWorkerPorts(
     ? {
         runner: createCompositionRunner({ sandbox, storage, workDir: settings.workDir, logger }),
         centsPerMinute: loadMediaExecSettings(runtime.env).centsPerMinute,
+        allows: sandbox.allows,
       }
     : undefined;
   return {

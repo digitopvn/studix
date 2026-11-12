@@ -19,6 +19,7 @@ import { motionDesignPack } from "../knowledge/packs/motion-design-pack.ts";
 import { voiceoverWordBudget } from "../marketing-video/marketing-script.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { voiceLines } from "../voice-lines.ts";
+import { directorTierRuns } from "./motion-graphic-director.ts";
 import { motionGraphicTemplate, namedMotionStyle } from "./motion-graphic-template.ts";
 import { MOTION_STYLE_PROFILES } from "./motion-style-profiles.ts";
 
@@ -132,7 +133,11 @@ export const MotionStoryboardOutput = z.object({
 });
 export type MotionStoryboardOutput = z.infer<typeof MotionStoryboardOutput>;
 
-const StoryboardInput = z.object({ outputs: z.object({ brief: z.object({ brief: CreativeBrief }) }) });
+const StoryboardInput = z.object({
+  outputs: z.object({ brief: z.object({ brief: CreativeBrief }) }),
+  /** Set by the stage when the director tier will author the hook, so no hero card is written for beat 0. */
+  authoredHook: z.boolean().optional(),
+});
 type StoryboardInput = z.infer<typeof StoryboardInput>;
 
 const briefQuery = (brief: CreativeBrief) =>
@@ -192,7 +197,7 @@ export function premiumDirector(payload: unknown): boolean {
 }
 
 const PREMIUM_INSTRUCTIONS =
-  " Premium tier: you are the director. Also write `heroes`: two or three hero cards (never the last beat) " +
+  " Premium tier: you are the director. Also write `heroes`: two or three hero cards (never the last beat, nor a beat in `premium.notBeats`) " +
   "that replace the built-in card of beat `beat` (0-based) with a bespoke full-frame card of `premium.frame` " +
   "size. Pick the beats where a custom visual beats a headline (the hook, a key number, the product moment). " +
   "Set `onScreen` to that beat's on-screen line, exactly. `html` is markup only from div, span, p, h1-h3, " +
@@ -226,7 +231,7 @@ interface Repair {
 const agentStageFor = (repair?: Repair, premium = false) =>
   createAgentStage({
     name: MG_STORYBOARD_STAGE,
-    version: 7,
+    version: 8,
     inputSchema: StoryboardInput,
     outputSchema: AgentOutput,
     instructions:
@@ -272,7 +277,7 @@ const agentStageFor = (repair?: Repair, premium = false) =>
       "from its neighbours; keep their voice-over and weight, and every other beat, exactly as they are. Return " +
       "only JSON matching the output schema." +
       (premium ? PREMIUM_INSTRUCTIONS : ""),
-    taskInput: ({ outputs: { brief } }) => ({
+    taskInput: ({ outputs: { brief }, authoredHook }) => ({
       // The logo is drawn, never written about: an uploaded data URL would cost the prompt tens of thousands
       // of tokens for nothing.
       brief: (({ brandLogo: _logo, ...rest }) => rest)(brief.brief),
@@ -286,6 +291,8 @@ const agentStageFor = (repair?: Repair, premium = false) =>
         ? {
             premium: {
               heroes: { min: 2, max: MG_MAX_HEROES },
+              // The hook is authored as a scene of its own; a hero card for it would be paid for and dropped.
+              ...(authoredHook ? { notBeats: [0] } : {}),
               frame: ASPECT_RATIO_SIZES[brief.brief.aspectRatio ?? "9:16"],
             },
           }
@@ -458,7 +465,10 @@ export const motionGraphicStoryboardStage: StageDefinition = {
     }
     let result: Awaited<ReturnType<StageDefinition["run"]>>;
     try {
-      result = await (premium ? premiumStage : agentStage).run(s);
+      const hook = premium && directorTierRuns(s, MG_MAX_BEATS);
+      result = await (premium ? premiumStage : agentStage).run(
+        hook ? { ...s, input: { ...(s.input as StoryboardInput), authoredHook: true } } : s,
+      );
     } catch (err) {
       if (unavailable(err) && !chosen) return fallback(toStudixError(err).message);
       throw err;

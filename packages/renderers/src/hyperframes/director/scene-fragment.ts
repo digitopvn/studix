@@ -14,6 +14,10 @@ import { z } from "zod";
  * wall clock, no randomness, no timelines of its own) and reject what would break the shell.
  */
 
+/** The director shell's splice markers; a fragment may not spell any of them. */
+const SHELL_MARKER =
+  /\/\*\s*[A-Z-]+:(?:BEGIN|END)\s*\*\/|<!--\s*[A-Z-]+:(?:BEGIN|END)\s*-->|__STUDIX_[A-Z]+__/;
+
 export const SCENE_FRAGMENT_LIMITS = { htmlChars: 24_000, cssChars: 12_000, jsChars: 16_000 } as const;
 
 export const SceneFragment = z
@@ -186,6 +190,10 @@ function scopedCss(css: string, sectionId: string, problems: string[]): string {
         problems.push(`css: selector "${sel}" leaves the scene; style only the scene's own elements`);
         return sel;
       }
+      if (/^(?::scope|#[\w-]+)\s*[~+]/.test(sel) || /^[~+]/.test(sel)) {
+        problems.push(`css: selector "${sel}" reaches sibling scenes; style only the scene's own elements`);
+        return sel;
+      }
       if (sel === ":scope" || sel === scope) return scope;
       if (sel.startsWith(":scope")) return `${scope}${sel.slice(":scope".length)}`;
       if (sel.startsWith(`${scope} `) || sel.startsWith(`${scope}.`) || sel.startsWith(`${scope}:`))
@@ -262,6 +270,8 @@ export function checkSceneFragment(fragment: SceneFragment, check: SceneFragment
   }
   const { html, css, js } = parsed.data;
   const sectionId = sceneSectionId(check.sid);
+  if ([html, css, js].some((part) => SHELL_MARKER.test(part)))
+    problems.push("fragment: shell markers such as /*TIMING:BEGIN*/ or <!--SCENES:END--> are not allowed");
   htmlProblems(html, problems);
   const scoped = scopedCss(css, sectionId, problems);
 

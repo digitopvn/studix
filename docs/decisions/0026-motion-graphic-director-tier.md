@@ -48,6 +48,7 @@ that each write one HTML/GSAP scene against a shared shell of helpers, with the 
 - The voice stage keeps heard word timings in `metadata.spokenWords`.
 - The visual review never redesigns an authored scene as a template card.
 - The stage needs `STUDIX_SANDBOX`. On the sidecar backend only allowlisted workspaces
-  (`STUDIX_SANDBOX_SIDECAR_WORKSPACES`) get it; other workspaces keep their cards. Production runs it only after
+  (`STUDIX_SANDBOX_SIDECAR_WORKSPACES`) get it. For other workspaces, and on workers without a sandbox, the
+  stage does not start: nothing is paid and the graphic is unchanged. Production runs it only after
   it opts in ([ADR-0025](0025-sidecar-skill-runner.md)).
 - Re-rendering a stored version reuses the clip.

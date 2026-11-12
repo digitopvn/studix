@@ -82,15 +82,30 @@ export const directorCompositionId = (jobId: string) =>
     .slice(-56)
     .padStart(6, "0")}`;
 
-/** Why the director tier cannot run for this job, or undefined when it can. */
-function skipReason(s: StageContext, ir: VideoIR): string | undefined {
-  if (!s.services.compositions) return "this worker has no skill sandbox to render authored scenes in";
-  if (!s.services.storage) return "this worker has no storage for the composition tree";
-  if (!s.agents?.runtime) return "this worker runs no agent harness";
-  if ((s.job.payload as { agentMode?: unknown } | undefined)?.agentMode === "host")
-    return "a host agent runs this job's stages";
-  if (ir.scenes.length < 2) return "the graphic has no scene before its call to action";
-  return undefined;
+/** What the director tier may spend at most: both agent calls and the sandbox minutes of one render. */
+function tierCents(s: StageContext): number {
+  return (
+    MG_DIRECTION_LIMITS.maxCostCents +
+    MG_SCENE_BUILD_LIMITS.maxCostCents +
+    Math.ceil(RENDER_TIMEOUT_SECONDS / 60) * (s.services.compositions?.centsPerMinute ?? 0)
+  );
+}
+
+/**
+ * Whether the director tier authors the hook of this job: a premium job on a worker with a sandbox this
+ * workspace may use (the sidecar allowlist), storage and an agent harness, not in host mode, with budget left
+ * for the whole tier. Decided before anything is paid for; when it is false the graphic is left as it is.
+ */
+export function directorTierRuns(s: StageContext, sceneCount: number): boolean {
+  const compositions = s.services.compositions;
+  if (!premiumDirector(s.job.payload) || !compositions || !s.services.storage || !s.agents?.runtime)
+    return false;
+  if (compositions.allows && !compositions.allows(s.ctx)) return false;
+  if ((s.job.payload as { agentMode?: unknown } | undefined)?.agentMode === "host") return false;
+  if (sceneCount < 2) return false;
+  const left =
+    s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
+  return left >= tierCents(s);
 }
 
 /** Writes files into the composition tree (created on first use) and saves its manifest. */
@@ -252,18 +267,12 @@ export const motionGraphicDirectorStage: StageDefinition = {
   name: MG_DIRECTOR_STAGE,
   outputSchema: Output,
   retry: "never",
-  estimateCostCents: (s) => {
-    if (!premiumDirector(s.job.payload) || skipReason(s, irOf(s))) return 0;
-    const minutes = Math.ceil(RENDER_TIMEOUT_SECONDS / 60);
-    return (
-      MG_DIRECTION_LIMITS.maxCostCents +
-      MG_SCENE_BUILD_LIMITS.maxCostCents +
-      minutes * (s.services.compositions?.centsPerMinute ?? 0)
-    );
-  },
+  // Never more than the job has left: the tier does not run at all when the budget cannot hold it.
+  estimateCostCents: (s) => (directorTierRuns(s, irOf(s).scenes.length) ? tierCents(s) : 0),
   async run(s) {
     const ir = irOf(s);
-    if (!premiumDirector(s.job.payload)) return { output: { ir } };
+    // Infrastructure, mode or budget: the tier never starts, the graphic is left exactly as it is.
+    if (!directorTierRuns(s, ir.scenes.length)) return { output: { ir } };
     const usage: StageUsage[] = [];
     const index = 0;
     const scene = ir.scenes[index] as Scene;
@@ -277,8 +286,6 @@ export const motionGraphicDirectorStage: StageDefinition = {
         usage,
       };
     };
-    const skip = skipReason(s, ir);
-    if (skip) return keepCard(skip);
 
     const booked = (): StageContext => ({
       ...s,

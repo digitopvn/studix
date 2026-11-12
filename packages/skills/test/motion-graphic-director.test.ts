@@ -57,7 +57,13 @@ describe("motion-graphic authored hook scene", () => {
   });
 
   async function setup(
-    opts: { premium?: boolean; sandbox?: boolean; build?: unknown; exitCode?: number } = {},
+    opts: {
+      premium?: boolean;
+      sandbox?: boolean;
+      allowed?: boolean;
+      build?: unknown;
+      exitCode?: number;
+    } = {},
   ) {
     dir = await mkdtemp(join(tmpdir(), "mg-director-"));
     const objects = new Map<string, Uint8Array>();
@@ -111,7 +117,9 @@ describe("motion-graphic authored hook scene", () => {
       services: {
         storage,
         workRoot: dir,
-        ...(opts.sandbox === false ? {} : { compositions: { runner, centsPerMinute: 2 } }),
+        ...(opts.sandbox === false
+          ? {}
+          : { compositions: { runner, centsPerMinute: 2, allows: () => opts.allowed !== false } }),
       },
       agents: { runtime, latestOverrun: async () => undefined, grantedOverruns: async () => 0 },
     } as unknown as StageContext;
@@ -125,11 +133,21 @@ describe("motion-graphic authored hook scene", () => {
     expect(tasks).toEqual([]);
   });
 
-  it("keeps the card with a warning when the worker has no sandbox", async () => {
-    const { s, tasks } = await setup({ sandbox: false });
-    const { output } = await motionGraphicDirectorStage.run(s);
-    expect((output as { warning: string }).warning).toMatch(/kept its card: .*no skill sandbox/);
+  it("leaves the graphic exactly as it is, unpaid, when the worker has no sandbox", async () => {
+    const { s, ir, tasks } = await setup({ sandbox: false });
+    expect(await motionGraphicDirectorStage.estimateCostCents?.(s)).toBe(0);
+    expect((await motionGraphicDirectorStage.run(s)).output).toEqual({ ir });
     expect(tasks).toEqual([]);
+  });
+
+  it("spends nothing for a workspace outside the sandbox allowlist", async () => {
+    const { s, ir, tasks, runs } = await setup({ allowed: false });
+    expect(await motionGraphicDirectorStage.estimateCostCents?.(s)).toBe(0);
+    const result = await motionGraphicDirectorStage.run(s);
+    expect(result.output).toEqual({ ir });
+    expect(result.usage ?? []).toEqual([]);
+    expect(tasks).toEqual([]);
+    expect(runs).toEqual([]);
   });
 
   it("authors, stores and renders the hook, then swaps it in as a muted full-frame clip", async () => {

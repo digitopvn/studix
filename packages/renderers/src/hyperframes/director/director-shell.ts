@@ -159,12 +159,29 @@ function sceneBlock(sid: string, sectionId: string, js: string): string {
   ].join("\n");
 }
 
-/** Replace the text between two markers (exclusive); a function replacer, so `$` in agent text stays literal. */
-function fill(page: string, begin: string, end: string, content: string): string {
-  const a = page.indexOf(begin);
-  const b = page.indexOf(end, a + begin.length);
-  if (a < 0 || b < 0) throw new StudixError("INTERNAL", `Director shell lacks the ${begin} marker`);
-  return `${page.slice(0, a + begin.length)}\n${content}\n${page.slice(b)}`;
+/**
+ * Fill every marker pair of the pristine shell in one pass: each pair is located in the shell before any content
+ * is inserted, so text inside a fragment can never be taken for a marker.
+ */
+function fillAll(
+  shellPage: string,
+  fills: ReadonlyArray<[begin: string, end: string, content: string]>,
+): string {
+  const spans = fills
+    .map(([begin, end, content]) => {
+      const a = shellPage.indexOf(begin);
+      const b = a < 0 ? -1 : shellPage.indexOf(end, a + begin.length);
+      if (a < 0 || b < 0) throw new StudixError("INTERNAL", `Director shell lacks the ${begin} marker`);
+      return { from: a + begin.length, to: b, content };
+    })
+    .sort((x, y) => x.from - y.from);
+  let out = "";
+  let at = 0;
+  for (const span of spans) {
+    out += `${shellPage.slice(at, span.from)}\n${span.content}\n`;
+    at = span.to;
+  }
+  return out + shellPage.slice(at);
 }
 
 /**
@@ -212,19 +229,21 @@ export function buildDirectorProject(input: DirectorProjectInput): DirectorProje
   const css = input.scenes.map((s) => `/* ${s.sid} */\n${s.fragment.css}`).join("\n");
   const js = input.scenes.map((s) => sceneBlock(s.sid, sceneSectionId(s.sid), s.fragment.js)).join("\n");
 
-  let page = shell()
+  const pristine = shell()
     .replaceAll("__STUDIX_W__", String(width))
     .replaceAll("__STUDIX_H__", String(height))
     .replaceAll("__STUDIX_RATIO__", RATIO(width, height))
     .replaceAll("__STUDIX_FPS__", String(timing.fps))
     .replaceAll("__STUDIX_DURATION__", String(timing.duration));
-  page = fill(page, "/*FONTS:BEGIN*/", "/*FONTS:END*/", fonts.css);
-  page = fill(page, "/*THEME:BEGIN*/", "/*THEME:END*/", themeCss(theme, stacks, width, height));
-  // The CSS sits inside <style>: a `</style` in a value would end it early.
-  page = fill(page, "/*SCENE-CSS:BEGIN*/", "/*SCENE-CSS:END*/", css.replace(/<\/style/gi, "<\\/style"));
-  page = fill(page, "<!--SCENES:BEGIN-->", "<!--SCENES:END-->", sections);
-  page = fill(page, "/*TIMING:BEGIN*/", "/*TIMING:END*/", `window.TIMING=${scriptJson(timing)};`);
-  page = fill(page, "/*SCENE-JS:BEGIN*/", "/*SCENE-JS:END*/", js.replace(/<\/script/gi, "<\\/script"));
+  const page = fillAll(pristine, [
+    ["/*FONTS:BEGIN*/", "/*FONTS:END*/", fonts.css],
+    ["/*THEME:BEGIN*/", "/*THEME:END*/", themeCss(theme, stacks, width, height)],
+    // The CSS sits inside <style>: a `</style` in a value would end it early.
+    ["/*SCENE-CSS:BEGIN*/", "/*SCENE-CSS:END*/", css.replace(/<\/style/gi, "<\\/style")],
+    ["<!--SCENES:BEGIN-->", "<!--SCENES:END-->", sections],
+    ["/*TIMING:BEGIN*/", "/*TIMING:END*/", `window.TIMING=${scriptJson(timing)};`],
+    ["/*SCENE-JS:BEGIN*/", "/*SCENE-JS:END*/", js.replace(/<\/script/gi, "<\\/script")],
+  ]);
 
   const copies = new Map<string, string>(fonts.files.map((f) => [f.dest, f.source]));
   copies.set(GSAP_ASSET, require.resolve("gsap/dist/gsap.min.js"));

@@ -44,6 +44,13 @@ describe("scene fragment contract", () => {
     expect(problemsOf({ js: "tl.to(" }).join()).toContain("syntax error");
   });
 
+  it("rejects shell markers and selectors that reach sibling scenes", () => {
+    expect(problemsOf({ css: "/*TIMING:BEGIN*/ .a { color: red; }" }).join()).toContain("shell markers");
+    expect(problemsOf({ html: "<div><!--SCENES:END--></div>" }).join()).toContain("shell markers");
+    expect(problemsOf({ css: ":scope ~ * { opacity: 0; }" }).join()).toContain("sibling scenes");
+    expect(problemsOf({ css: "#sc-s01-hook + section { opacity: 0; }" }).join()).toContain("sibling scenes");
+  });
+
   it("names W() words the scene does not speak, and passes when the job has no word timings", () => {
     const js = 'pop(".a", W(sid, "sunrise"));';
     expect(problemsOf({ js }).join()).toContain('"sunrise"');
@@ -95,6 +102,20 @@ describe("director shell assembly", () => {
       js: `${HOOK_FRAGMENT.js}\nconst cost = "$& </script>";`,
     }).files.get("index.html") as string;
     expect(page).toContain('const cost = "$& <\\/script>";');
+  });
+
+  it("fills the pristine shell's markers, so marker text inside a scene cannot hijack the splice", () => {
+    const checked = checkSceneFragment(HOOK_FRAGMENT, check);
+    const page = buildDirectorProject({
+      width: 1080,
+      height: 1920,
+      timing: HOOK_TIMING,
+      theme: { palette: {} },
+      // A fragment that slipped a marker past the check still lands only in its own slot.
+      scenes: [{ sid: "s01-hook", fragment: { ...checked, css: "/*TIMING:BEGIN*/ .x{}" } }],
+    }).files.get("index.html") as string;
+    expect(page.indexOf("window.TIMING={")).toBeGreaterThan(page.indexOf("/*TIMING:BEGIN*/ .x{}"));
+    expect(page).not.toContain("window.TIMING=null");
   });
 
   it("refuses a fragment that breaks the contract", () => {

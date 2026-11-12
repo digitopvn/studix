@@ -119,7 +119,12 @@ export interface StageServices {
    * The skill sandbox over a composition tree (ADR-0024), priced per started minute; unset when the worker has
    * no sandbox. Stages that author code (the motion-graphic director tier) render it only here.
    */
-  compositions?: { runner: CompositionRunner; centsPerMinute: number };
+  compositions?: {
+    runner: CompositionRunner;
+    centsPerMinute: number;
+    /** Whether the workspace may use the sandbox (sidecar allowlist); absent means every workspace may. */
+    allows?(ctx: TenantContext): boolean;
+  };
 }
 
 /** A media output an earlier job of the tenant paid for and stored, found by the content key of its request. */
