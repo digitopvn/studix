@@ -1,4 +1,4 @@
-import { StudixError } from "@studix/shared";
+import { schemaFailure } from "@studix/shared";
 import {
   ASPECT_RATIO_SIZES,
   type AssetRef,
@@ -209,9 +209,7 @@ export function marketingVideoIr(
   };
   const result = validateVideoIR(ir);
   if (!result.ok) {
-    throw new StudixError("INTERNAL", "The marketing-video template produced an invalid IR", {
-      details: { issues: result.issues.slice(0, 10) },
-    });
+    throw schemaFailure("INTERNAL", "The marketing-video template produced an invalid IR", result.issues);
   }
   return result.value;
 }

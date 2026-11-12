@@ -33,10 +33,11 @@ export const AudioTrack = z.object({
    */
   playbackRate: z.number().min(0.5).max(2).optional(),
   /**
-   * Lowered by this many dB (ramped) wherever a voice-over or dialogue track plays: a music bed ducks
-   * under speech.
+   * Music only: lowers the track by this many dB while any voiceover or dialogue track plays, ramped down
+   * shortly before the speech and back up after it, so the words sit clearly over the bed (e.g. -12).
+   * Other kinds ignore it.
    */
-  duckDb: z.number().min(-30).max(0).optional(),
+  duckDb: z.number().min(-40).max(0).optional(),
 });
 export type AudioTrack = z.infer<typeof AudioTrack>;
 

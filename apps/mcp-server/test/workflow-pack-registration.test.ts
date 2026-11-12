@@ -2,7 +2,7 @@ import { testTenant } from "@studix/core/testing";
 import { getSkill, registerPack, type WorkflowPack } from "@studix/skills";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AppLimits } from "../src/app-deps.ts";
-import { skillSummaries } from "../src/compose-integrations.ts";
+import { packStageOutputValidator, skillSummaries } from "../src/compose-integrations.ts";
 import { inspectCapabilities } from "../src/mcp/inspect-capabilities.ts";
 
 /** A pack the server has never heard of: it reuses the brand-intro template under a new id. */
@@ -60,5 +60,31 @@ describe("workflow packs on the MCP server", () => {
   it("drops the pack again once it is unregistered", () => {
     registerPack(samplePack)();
     expect(skillSummaries().map((s) => s.id)).toEqual(BUILT_IN);
+  });
+});
+
+describe("host agent output validation", () => {
+  it("accepts a motion-graphic storyboard in the shape the host agent is given", () => {
+    const storyboard = {
+      styleProfile: "saas-bento",
+      beats: ["Hook", "Message", "Try it"].map((onScreen) => ({
+        onScreen,
+        voiceover: `${onScreen}.`,
+        visual: "Big type",
+        enter: "fade",
+        weight: 1,
+      })),
+      music: null,
+      brandName: "Studix",
+      rationale: "Clean type for a product launch.",
+    };
+    const check = packStageOutputValidator()("motion-graphic.storyboard", { storyboard });
+    // The host submits only the storyboard; the stage records `source` itself.
+    expect(check).toMatchObject({ ok: true, output: { storyboard: { brandName: "Studix" } } });
+    expect(check.ok && "source" in check.output).toBe(false);
+    // The stage's own template-fallback record is not something a host can hand in.
+    expect(
+      packStageOutputValidator()("motion-graphic.storyboard", { source: "template", fallbackReason: "x" }),
+    ).toMatchObject({ ok: false });
   });
 });

@@ -1,10 +1,10 @@
 import { StudixError } from "@studix/shared";
-import type { BrandKit, ColorRole, Shot, ShotLayout, ShotStyle, TextStyleRole } from "@studix/video-ir";
+import type { BrandKit, ColorRole, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
 import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
+import type { HtmlCardPackage } from "./html-card.ts";
+import { htmlCardMarkup } from "./html-card-compile.ts";
 import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
-import type { TimelineWriter } from "./scene-timeline.ts";
-import { layoutKit, layoutTiming } from "./shot-layout-kit.ts";
-import { layoutDevice, writeLayoutHold } from "./shot-layouts.ts";
+import { renderLayoutMarkup } from "./layout-markup.ts";
 
 /** What a shot renderer needs to know about the scene being compiled. */
 export interface ShotMarkupContext {
@@ -20,15 +20,27 @@ export interface ShotMarkupContext {
   /** IR asset id -> project-relative path of the copied file. */
   assetPaths: ReadonlyMap<string, string>;
   brand?: BrandKit;
-  /** Resolved scene palette, so layout devices keep accent ink readable on the background. */
+  /** Resolved scene palette; layouts pick the ink that reads on an accent fill from it. */
   palette?: Record<ColorRole, string>;
+  /** IR language (BCP 47), for number formatting in layouts. */
+  language?: string;
+  /** HTML card packages (checked by loadHtmlCards) by code asset id; composition shots naming one render it. */
+  htmlCards?: ReadonlyMap<string, HtmlCardPackage>;
+  /** Height (px) a logo lockup takes above the content of this scene; layouts leave it free. */
+  reserveTop?: number;
+}
+
+/** Height of a lockup's logo mark as a factor of its text role's size. */
+const LOCKUP_MARK = 1.5;
+
+/** Height (px) of a logo lockup set in `role` at `scale`: its mark, which is taller than its name. */
+export function lockupHeight(role: TextStyleRole, scale: number): number {
+  return Math.round(TEXT_STYLES[role].sizeAt1080 * scale * LOCKUP_MARK);
 }
 
 export interface ShotMarkup {
   html: string;
   css: string[];
-  /** Inner choreography of a layout device, written after the shot's own enter/exit. */
-  motion?: (w: TimelineWriter) => void;
 }
 
 export const shotDomId = (prefix: string, shotId: string): string => `${prefix}shot-${shotId}`;
@@ -135,10 +147,6 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
   const base = ["opacity: 0;", "min-width: 0;", "box-sizing: border-box;", ...boxCss(ctx, shot.style)];
   const open = `<div id="${id}" class="shot shot-${shot.type}">`;
 
-  if ((shot.type === "title" || shot.type === "text") && shot.layout) {
-    return layoutShotMarkup(ctx, shot, shot.layout, base, open);
-  }
-
   switch (shot.type) {
     case "title": {
       const css = [
@@ -176,6 +184,41 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
     case "logo": {
       // IR rule: explicit asset, else the brand logo, else `text` (or the brand name) as a wordmark.
       const assetId = shot.assetId ?? ctx.brand?.logoAssetId;
+      if (shot.lockup) {
+        // The mark and the name side by side, both sized by the text role, so a lockup reads as one unit.
+        const role = shot.style?.textStyle ?? "heading";
+        // A mark without `text` stands alone; a wordmark lockup falls back to the brand name.
+        const name = shot.text ?? (assetId ? "" : (ctx.brand?.name ?? ""));
+        const mark = assetId
+          ? `<img class="lk-mark" src="${escapeHtml(assetPath(ctx, shot, assetId))}" alt="${escapeHtml(ctx.brand?.name ?? (name || "logo"))}" />`
+          : "";
+        const label = name ? `<span class="lk-name">${escapeHtml(name)}</span>` : "";
+        return {
+          html: `${open}${mark}${label}</div>`,
+          css: [
+            cssRule(sel, [
+              ...base,
+              "display: flex;",
+              "align-items: center;",
+              "justify-content: center;",
+              `gap: ${Math.round(TEXT_STYLES[role].sizeAt1080 * ctx.scale * 0.45)}px;`,
+            ]),
+            cssRule(`${sel} .lk-mark`, [
+              "display: block;",
+              `height: ${lockupHeight(role, ctx.scale)}px;`,
+              "width: auto;",
+              `max-width: ${Math.round(ctx.frame.width * 0.4)}px;`,
+              "object-fit: contain;",
+              "flex: 0 0 auto;",
+            ]),
+            cssRule(`${sel} .lk-name`, [
+              ...textCss(ctx, role, { ...shot.style, emphasis: "none" }),
+              "text-align: left;",
+              "min-width: 0;",
+            ]),
+          ],
+        };
+      }
       if (assetId) {
         const src = assetPath(ctx, shot, assetId);
         const alt = ctx.brand?.name ?? "logo";
@@ -229,13 +272,25 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       }
       return { html: `${open}<div class="cta-pill">${escapeHtml(shot.text)}</div>${url}</div>`, css };
     }
-    case "composition":
+    case "composition": {
+      const card = ctx.htmlCards?.get(shot.assetId);
+      if (card) return htmlCardMarkup(id, card, ctx.fontStacks);
       throw new StudixError(
         "VALIDATION",
         `Composition shot "${shot.id}" is not supported by the HyperFrames renderer`,
         {
           suggestedAction: "Check RendererAdapter.supports() before rendering.",
         },
+      );
+    }
+    case "layout":
+      return renderLayoutMarkup(
+        ctx,
+        sel,
+        open,
+        base,
+        shot.layout,
+        cssColor(shot.style?.color ?? "foreground"),
       );
     case "video": {
       const src = assetPath(ctx, shot, shot.assetId);
@@ -256,51 +311,4 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       };
     }
   }
-}
-
-/**
- * A title or text shot with a layout device: the headline (and a title's subtitle) above the device, both in
- * an inner wrapper the hold drift moves, so the root stays owned by the shot's enter and exit presets.
- */
-function layoutShotMarkup(
-  ctx: ShotMarkupContext,
-  shot: Extract<Shot, { type: "title" | "text" }>,
-  layout: ShotLayout,
-  base: string[],
-  open: string,
-): ShotMarkup {
-  const sel = `#${shotDomId(ctx.prefix, shot.id)}`;
-  const kit = layoutKit(ctx, sel);
-  const device = layoutDevice(kit, layout);
-  const role = shot.style?.textStyle ?? "heading";
-  const css = [
-    cssRule(sel, [...base, "display: flex;", "justify-content: center;", "max-width: 100%;"]),
-    cssRule(`${sel} > .lay-inner`, [
-      "display: flex;",
-      "flex-direction: column;",
-      "align-items: center;",
-      `gap: ${Math.round(48 * ctx.scale)}px;`,
-      "max-width: 100%;",
-    ]),
-    cssRule(`${sel} .t-main`, textCss(ctx, role, shot.style)),
-    ...device.css,
-  ];
-  let sub = "";
-  if (shot.type === "title" && shot.subtitle) {
-    css.push(cssRule(`${sel} .t-sub`, textCss(ctx, "body", { ...shot.style, emphasis: "none" })));
-    sub = `<div class="t-sub">${escapeHtml(shot.subtitle)}</div>`;
-  }
-  const exitMs =
-    (shot.animation?.exit ?? "none") === "none"
-      ? 0
-      : Math.min(shot.animation?.durationMs ?? 400, Math.floor(shot.durationMs / 2));
-  const timing = layoutTiming(shot.startMs, shot.durationMs, exitMs, shot.layoutAtMs);
-  return {
-    html: `${open}<div class="lay-inner"><div class="t-main">${escapeHtml(shot.text)}</div>${sub}${device.html}</div></div>`,
-    css,
-    motion: (w) => {
-      device.motion(w, timing);
-      writeLayoutHold(w, kit, timing);
-    },
-  };
 }

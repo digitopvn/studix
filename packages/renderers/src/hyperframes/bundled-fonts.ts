@@ -104,7 +104,13 @@ export function planFonts(requests: readonly FontRequest[]): FontPlan {
       );
     }
     const family = pkg.meta.family;
-    stacks.set(request.family, `"${family}", ${pkg.meta.category === "serif" ? "serif" : "sans-serif"}`);
+    const generic =
+      pkg.meta.category === "serif"
+        ? "serif"
+        : pkg.meta.category === "monospace"
+          ? "monospace"
+          : "sans-serif";
+    stacks.set(request.family, `"${family}", ${generic}`);
     const entry = faces.get(family) ?? { pkg, weights: new Set<number>() };
     for (const w of request.weights) entry.weights.add(w);
     faces.set(family, entry);

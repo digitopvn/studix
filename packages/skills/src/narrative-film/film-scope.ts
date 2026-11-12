@@ -35,7 +35,7 @@ export const SPOKEN_WORDS_PER_SECOND = 3;
 /** Shortest and longest shot a scope may plan; i2v models take 4-10 s clips and the edit trims them. */
 export const SHOT_MIN_MS = 1_000;
 export const SHOT_MAX_MS = 10_000;
-/** Audio tracks one VideoIR carries: every line, every SFX cue and each scene's score cue take one. */
+/** Audio tracks a film carries (below the VideoIR cap): every line, every SFX cue and each scene's score cue take one. */
 export const MAX_AUDIO_TRACKS = 16;
 
 /** A cast voice: `<voice>`, `<vendor>:<model>` or `<vendor>:<model>@<voice>` (see film-voices.ts). */

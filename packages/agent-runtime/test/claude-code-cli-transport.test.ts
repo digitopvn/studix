@@ -106,6 +106,10 @@ describe("Claude Code CLI transport (subscriptions)", () => {
   it("refuses an API key, and the SDK transport refuses a subscription", () => {
     const cli = createClaudeCodeCliTransport({ executable: "/bin/false", sandboxRoot });
     expect(() => cli.start(request({ credentialKind: "api_key" }))).toThrow(StudixError);
+    const images = [{ mimeType: "image/png" as const, data: "iVBORw0KGgo=" }];
+    expect(() => cli.start(request({ credentialKind: "subscription", images }))).toThrow(
+      /cannot send images/,
+    );
     const sdk = createClaudeSdkTransport({ sandboxRoot, query: () => [] as never });
     expect(() => sdk.start(request())).toThrow(/never passed to the Claude Agent SDK/);
   });

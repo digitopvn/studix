@@ -228,10 +228,18 @@ Lý do của các ràng buộc:
   (`stageMediaDir`, `<workRoot>/<jobId>/media/<stage>`), không phải work dir của attempt, nên stage được
   retry tìm lại file đã trả tiền thay vì sinh lại. Thư mục bị xóa ở `finalize`; job fail giữ nó cho lần
   retry. Retry chạy trên worker khác (không thấy thư mục đó) thì vẫn sinh và trả tiền lại.
-- Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent, bỏ qua kèm `warning` khi
-  lời gọi trả `UNAVAILABLE`; lời gọi dùng cả key của workspace), `motion-graphic.voice` (voice), `motion-graphic.music` (music, bỏ qua kèm `warning` khi thiếu
-  provider/key),
+- Pack dùng: `marketing-video.audio` (voice, music, sfx), `motion-graphic.voiceover` (một SFX accent ở card CTA và một
+  whoosh ngắn sinh một lần, đặt ở mọi lần cắt còn lại; bỏ qua kèm `warning` khi lời gọi trả `UNAVAILABLE`; lời
+  gọi dùng cả key của workspace), `motion-graphic.voice` (voice, xin word timestamps), `motion-graphic.music` (music theo composition plan,
+  bỏ qua kèm `warning` khi thiếu provider/key),
   `<film-pack>.dialogue` (voice) và `<film-pack>.score` (music, sfx).
+- Speech: `params.timestamps: true` xin thời điểm từng từ. Route ElevenLabs gọi `multix elevenlabs tts
+  --timestamps` và trả `GeneratedMedia.words`; route khác bỏ qua param. Timing được lưu cạnh take trong storage
+  (`<storageKey>.words.json`), nên take tái dùng vẫn có timing.
+- Music: `params.sections` (1–8 section `{ name, durationMs 3000–120000, styles? }`, cộng lại bằng
+  `params.durationMs`) và `params.negativeStyles` (mặc định `["vocals"]`). Route ElevenLabs ghi composition
+  plan rồi gọi `multix elevenlabs music --plan`; MiniMax chỉ dùng prompt.
+- Music track có `duckDb` thì renderer hạ nó khi có lời đọc. `marketing-video` dùng `-8`, `motion-graphic` `-9`.
 - Trộn, loudness và delivery do renderer làm bằng FFmpeg: [RENDERER.md](RENDERER.md).
 
 ### Atlas
@@ -272,13 +280,37 @@ mỗi giây, `voiceoverWordBudget` trong
 `spokenLength` ([`caption-chunks.ts`](../packages/skills/src/caption-chunks.ts)): mỗi âm tiết tiếng Việt là
 một từ, còn từ tiếng Anh hay tên thương hiệu tính theo số âm tiết, mỗi âm tiết khoảng hai phần ba từ
 ("AI-native" khoảng ba từ; số đọc theo hàng, "99.000đ" khoảng năm từ; ngày "12.12" là hai số; số điện
-thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này;
+thoại như "0901 234 567" hay "0901.234.567" đọc từng chữ số; "2024-2025" là hai năm). `motion-graphic` chia thời lượng card theo độ dài này.
+Caption burned chia mỗi lời đọc thành cue tối đa chín từ, ngắt ở dấu câu khi có, và định thời theo độ dài
+đọc; không cue nào chỉ một từ: từ dư cuối dòng gộp vào cue liền trước. Số điện thoại không bị cắt ngang
+hai cue: cue mới bắt đầu từ số điện thoại, trừ khi cách đó để lại cue một từ. Cue ngắn hơn 600 ms gộp vào cue
+bên cạnh khi tổng không quá mười từ, nếu không thì hai cue chia lại thời gian để mỗi cue hiện ít nhất 600 ms
+(`captionCues`).
+Mỗi beat của storyboard agent có thể kèm `layout` có kiểu (`prompt-box`, `code`, `chips`, `checklist`, `counter`,
+`cards-row`, `swatches`, `stat`, và bộ UI sản phẩm `chat`, `tool-call`, `pipeline`, `player`, `usage`; schema
+`LayoutSpec` của `@studix/video-ir`): card đặt headline ở trên và layout
+dựng dần bên dưới (shot `layout`, renderer tự vẽ). `visual` chỉ là mô tả. Beat cuối luôn là card CTA, bỏ qua
+layout. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
+màu `primary`, thay vì xen kẽ nền từng card.
+Mỗi card có một chuyển động camera (`push-in`, `pull-back`, `pan-left`, `pan-right`, `parallax`, `static`):
+beat của storyboard có thể chọn `camera`, còn lại lấy theo vòng camera của style; hai card kề nhau không bao giờ
+trùng camera (template đổi card lặp sang camera kế tiếp, `planCameras`). Mọi card dùng chung depth layer của style
+(`motionDepthFor`: glow và vignette trên nền tối, grid cho style kỹ thuật, grain cho style in ấn/film, corner
+brackets cho style năng lượng ≥ 4, bokeh cho style tối và êm) và một motif (ring, bar, square hoặc circle) chạy dọc
+mép khung qua mọi lần cắt. Card hook cắt sang card đầu tiên bằng `match-cut`; card vào CTA dùng transition đặc
+trưng của style; các lần cắt giữa thay đổi theo bộ transition của style (`planTransitions`).
+Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
+(60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì
+giữ mỗi card lâu hơn. Storyboard sai số beat được một lượt sửa như dưới (cùng mọi lỗi khác trong một thông
+điệp); sau lượt sửa, hay ở `agentMode: "host"`, số beat chỉ là khuyến nghị: storyboard có lời đọc vừa vẫn
+được giữ, vì template (không agent) tối đa sáu card;
 storyboard của agent mà tổng thời lượng các card cần (làm tròn lên 100 ms) dài hơn video thì được gửi lại
 cho agent đúng một lượt sửa (kèm lỗi cụ thể: dòng nào, phòng bao nhiêu ms, nên cắt còn bao nhiêu từ; chạy trong
 `MG_STORYBOARD_LIMITS` và ngân sách job, cả hai lượt đều ghi usage `agent.run`; agent chạy ở `agentMode: "host"`
 không có lượt sửa). Chỉ khi lượt sửa vẫn không vừa mới quay về template và ghi lý do ở `fallbackReason`. Còn beat do `directions[0].beats` đưa vào thì fail `VALIDATION`.
-`marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat của nó chứa được, kể cả khi đọc nhanh tới 1.12×. Bản đọc dài hơn beat được xử lý như ở
-`motion-graphic`: cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn, quá mức đó mới fail.
+`marketing-video` từ chối ngay ở stage script (trước clip trả phí) câu nào dài hơn beat của nó chứa được, kể cả khi đọc nhanh tới 1.12×. Bản đọc dài hơn beat
+thì cắt kèm fade nếu dư tới 250 ms, đọc nhanh lên tới 1.12× nếu dài hơn; quá mức đó dòng được đọc lại một lần, gọn hơn, và
+bản đọc lại vẫn quá dài mới fail (beat của quảng cáo gắn với clip nên không chia lại được như card của `motion-graphic`).
 
 ```json
 {
@@ -317,30 +349,94 @@ image-to-video, audio, render, QA và publish.
 
 ### motion-graphic
 
-Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prompt. Style profile được chọn theo
+Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prompt. Brief không có `brand` thì agent
+storyboard trả `brandName` đúng như brief viết (ví dụ "Studix" trong "introducing Studix"); tên đó làm tên
+brand kit, `title` của IR (khi brief không có `title`) và chữ logo ở card CTA. Tên không xuất hiện trong brief
+bị bỏ qua; không có tên nào thì card CTA không hiện tên brand thay vì lặp lại câu hook. Style profile được chọn theo
 `tone`, `objective` và prompt, hoặc theo `directions[0].visualStyle` nếu trùng id một profile trong
-[`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
+[`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts); id do brief
+chỉ định được khoá, agent storyboard không đổi được. Mỗi profile là một preset khoá palette, font (cặp font
+bundle có subset tiếng Việt: Be Vietnam Pro, Inter, Playfair Display, Oswald, Space Grotesk, Plus Jakarta Sans,
+JetBrains Mono), pacing (các kiểu vào card được phép, kiểu ra, transition đặc trưng vào card CTA và độ dài mọi transition;
+hook vẫn match-cut sang message đầu, các cut giữa message xoay vòng theo nhịp của style) và juice (card CTA tô màu
+accent hay không, whoosh ở mỗi cut hay không). Entrance agent chọn ngoài tập của profile bị thay bằng entrance
+mặc định của profile. `brand` của brief vẫn thắng palette và font. Ngoài họ "aesthetic", thư viện có các
+profile sản phẩm/công nghệ như `cinematic-product-launch` (không whoosh, fade 600 ms), `glass-keynote`,
+`keynote-stage`, `premium-ui-demo`, `precision-dark-product`, `athletic-impact` (cut cứng, CTA tô accent).
+
+**Premium tier.** Job đặt `roles.director` (một agent, thường là model mạnh hơn) thì director viết storyboard
+với cap lớn hơn và có thể viết 2-3 hero card bằng HTML tuỳ biến theo định dạng HTML card của HyperFrames:
+`html` (chỉ các thẻ và thuộc tính trong allowlist, gồm SVG nội tuyến), `css` (mọi selector bị lồng dưới gốc card,
+không at-rule, không `url()` trừ `url(#id)`) và `tweens` (dữ liệu khai báo `{ target, at, duration, from, to,
+ease, stagger }`). Card không chạy code của agent: renderer tự sinh timeline GSAP từ `tweens` đã kiểm, parse rồi
+serialize lại HTML/CSS và gắn namespace cho id. Mỗi card ghi `onScreen` của beat, nên khi bước sửa storyboard đổi
+beat thì card lệch bị bỏ. Stage `motion-graphic.heroes` (sau voice-over,
+trước visual QA) kiểm từng card bằng luật an toàn của HTML card và HyperFrames linter; card đạt được lưu thành code
+asset `application/vnd.studix.html-card+json` và thay card dựng sẵn của beat đó, card không đạt (hoặc trỏ vào
+card CTA, hoặc linter không chạy được) giữ card dựng sẵn và ghi `warning`, nên premium không làm hỏng job mà bản thường render được. Visual
+QA sau đó chấm cả hero card như mọi card khác; card bị chấm hỏng được thiết kế lại thành card dựng sẵn, rồi bản
+render qua cổng QA. Không có `roles.director` thì `heroes` bị bỏ.
+
+Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
 từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất, tới khi mọi card đủ thời gian đọc câu của nó. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
 nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do
 `directions[0].beats` đưa vào mà quá dài thì vẫn fail `VALIDATION`. `"voiceover": false` cho video không
 lời (chỉ chữ trên màn hình, không caption, không SFX accent, không cần provider giọng); `marketing-video`
 cũng tôn trọng field này. Thiếu model hay key SFX/nhạc thì SFX accent và music bed bị bỏ qua, stage ghi `warning`, job vẫn
-chạy tiếp. Bản đọc được đo bằng FFmpeg `silencedetect`: khoảng lặng đầu bị bỏ qua (`trimStartMs`, giữ
-60 ms trước tiếng đầu), khoảng lặng cuối không tính, chỉ phần lời phải vừa beat. Lời dài hơn beat thì được
-đọc nhanh lên (giữ cao độ, `playbackRate` của audio track) tới 1.12×; quá mức đó thì dòng được đọc lại một
-lần với chỉ dẫn đọc gọn hơn (tính tiền cả hai lần đọc, bản dài không được lưu hay tái dùng); bản đọc lại vẫn
-quá dài mới fail `VALIDATION`. Ước tính chi phí vẫn tính một lần đọc mỗi dòng. File không đo được (không có
-FFmpeg) thì cả file được tính, dư tới 250 ms (hơi thở cuối) thì cắt kèm fade.
+chạy tiếp. Stage `motion-graphic.voice` đọc mọi dòng trước rồi mới đặt track. Bản đọc được đo bằng FFmpeg
+`silencedetect`: khoảng lặng đầu bị bỏ qua (`trimStartMs`, giữ 60 ms trước tiếng đầu), khoảng lặng cuối không
+tính, chỉ phần lời phải vừa card. Bản đọc đầu cần quá 3 lần chỗ của card mình (đọc lặp lời, ngừng dài) bị coi
+là hỏng: không lưu, không tái dùng, và dòng đó được đọc lại ngay với chỉ dẫn đọc gọn hơn (tính tiền cả hai lần
+đọc). Có bản đọc dài hơn card của nó thì card được chia lại theo bản đọc thật
+(`retimeCards` trong [`motion-graphic-retime.ts`](../packages/skills/src/motion-graphic/motion-graphic-retime.ts)):
+tổng độ dài giữ nguyên, card có câu ngắn nhường thời gian cho card có câu dài, rồi scene, timeline, caption,
+SFX accent và whoosh được dựng lại theo nhịp cắt mới, mọi câu đọc đúng tốc độ gốc. Khi tổng lời đọc dài hơn
+video thì mọi câu được đọc nhanh lên như nhau (giữ cao độ, `playbackRate` của audio track) tới 1.12×. Chỉ khi
+vẫn không vừa, các dòng dài hơn card mới được đọc lại một lần với chỉ dẫn đọc gọn hơn (tính tiền cả hai lần
+đọc, giữ bản ngắn hơn); vẫn không vừa cả video mới fail `VALIDATION` "The voice-over runs longer than the ...s
+graphic". Mọi bản đọc được giữ đều được lưu, nên retry job không trả tiền giọng lần nữa. Ước tính chi phí vẫn tính một
+lần đọc mỗi dòng. File không đo được (không có FFmpeg) thì cả file được tính, dư tới 250 ms (hơi thở cuối) thì
+cắt kèm fade.
 
-Khi có giọng đọc, voice stage ghi thời điểm từng từ (`metadata.spokenWords`): lấy từ alignment của ElevenLabs
-(`multix elevenlabs tts --timestamps`), các provider khác thì ước lượng theo độ dài đọc của từng từ trong phần
-lời đã đo. Headline vào ngay trước từ đầu tiên của câu (trễ tối đa 700 ms), layout device bắt đầu choreography
-khi câu nhắc tới nội dung của nó (`layoutAtMs`), caption chạy theo từ. Music bed (khi storyboard xin) được
-ElevenLabs soạn theo composition plan intro/build/drop, drop rơi vào đầu card CTA, tempo giữa dải BPM của style.
-Music stage dò beat bằng FFmpeg (miễn phí), dời mỗi cut tới downbeat gần nhất trong 400 ms (hoặc beat trong 150 ms)
-nếu câu của hai card kề vẫn vừa, rồi kéo voice-over, caption, whoosh và accent theo. Nhạc nằm ở `volume` 0.3 và
-duck `-9 dB` dưới giọng đọc (`duckDb`).
+Music bed (khi storyboard xin) chạy trước voice-over. Nó được soạn theo ba section (`musicSections` trong
+[`motion-graphic-music.ts`](../packages/skills/src/motion-graphic/motion-graphic-music.ts)): intro dưới card hook,
+build dưới các card message và drop ở chỗ card CTA bắt đầu theo storyboard. Mỗi section dài ít nhất 3 giây; video quá ngắn
+thì còn build và drop, hoặc một section. Prompt nêu BPM của style profile. Beat của bed được tìm cục bộ bằng FFmpeg
+(`analyzeBeats`, không gọi API trả phí) và lưu ở `metadata.beats`. Bed ở mức 0.3 và hạ 9 dB khi có lời đọc
+(`duckDb`). Sau khi chia card theo bản đọc, stage voice dời từng lần cắt tới downbeat gần nhất trong 400 ms
+(lần cắt vào card CTA, chỗ nhạc drop: 800 ms), không có thì tới beat gần nhất trong 250 ms
+(`snapCutsToBeats`). Một lần cắt chỉ được dời khi cả hai card hai bên vẫn đủ chỗ cho bản đọc của mình, và
+tổng độ dài giữ nguyên. `metadata.beatSync` ghi BPM, số lần cắt và số lần cắt rơi đúng beat. Không có bed,
+hoặc bed không có nhịp rõ, thì nhịp cắt giữ nguyên. Drop được soạn cho lần cắt vào card CTA đã lên kế hoạch:
+khi bản đọc chia lại card, lần cắt đó có thể lệch khỏi drop (nó vẫn được dời tới downbeat gần nhất). Vì nhạc
+được tạo trước, một job thất bại ở voice (lời đọc dài hơn cả video) vẫn đã trả phí nhạc;
+checkpoint của stage nhạc được giữ nên chạy tiếp job đó không phải trả tiền nhạc lần nữa.
+
+Headline và layout của mỗi card có lời đọc (trừ headline của card mở đầu, luôn hiện ngay từ đầu) xuất hiện theo lời
+([`motion-graphic-reveals.ts`](../packages/skills/src/motion-graphic/motion-graphic-reveals.ts)). Headline (hay câu
+CTA) vào ở từ đầu tiên nó có chung với lời đọc, nếu từ đó nằm trong 40% đầu card, không thì ở từ đầu tiên được
+đọc. Layout vào ở từ ngay sau từ cuối cùng trùng với headline (lời đọc chuyển sang chi tiết layout minh họa),
+không thì ở giữa câu. Layout luôn vào sau headline ít nhất 300 ms và còn ít nhất 1.5 giây trên màn hình. Mỗi
+lần reveal bắt đầu sớm 120 ms để chuyển động đang chạy khi nghe thấy từ. Timing lấy từ word timestamps của
+ElevenLabs. Route khác, hoặc take cũ không có timing, thì từ được ước lượng trong khoảng lời đã đo.
+`metadata.wordSync` là `alignment`, `estimate` hoặc `mixed`.
+
+Visual QA sau render ([`motion-graphic-visual-qa.ts`](../packages/skills/src/motion-graphic/motion-graphic-visual-qa.ts)):
+stage `motion-graphic.visual-qa` chạy sau voice-over và trước `validate_ir`. Stage render graphic, dựng contact
+sheet (một frame giữ của mỗi card, lấy sau phần vào của card) và gửi cho agent của job (ảnh đi qua
+`AgentTask.images`) chấm từng card 0–10 với các lỗi `blank`, `too-small`, `illegible`, `repetitive`,
+`off-brief`, `headline-only` (card đầu và cuối được là card chỉ có tiêu đề). Card có lỗi hoặc điểm dưới 6 quay
+về storyboard agent để thiết kế lại riêng các card đó; lời đọc và weight được giữ nên voice, caption, SFX và
+thời lượng card không đổi, không tốn tiền voice lại; headline và layout của card mới vẫn vào đúng lúc stage voice đặt theo lời đọc (layout mới chưa có thì vào giữa card). Sau đó graphic render lại, tối đa 2 vòng và chỉ khi ngân
+sách và deadline của job còn đủ cho một lượt chấm, một lượt sửa và một lần render. Checkpoint của stage giữ IR
+đã duyệt, điểm và file render tốt cuối cùng (trong thư mục của job, ngoài thư mục attempt); `validate_ir` lưu
+đúng IR đó, stage `render` dùng lại file đó (không tính tiền render lần nữa) hoặc render lại đúng IR đó khi
+file không còn (job chạy tiếp trên worker khác). Kết quả nằm trong job result ở `visualQa`. Bước này không bao
+giờ làm job fail: không có agent harness, chạy `agentMode: "host"`, model không đọc được ảnh, agent chấm lỗi,
+sửa card lỗi hay render lại lỗi thì dừng kèm `reason` và giữ render tốt cuối cùng; render đầu tiên lỗi thì bỏ
+qua review, stage `render` render sau khi version đã được lưu và báo lỗi thật. Storyboard agent cũng bị cấm
+card chỉ có tiêu đề (mọi card message phải có layout) và câu đọc gộp hai ý.
 
 ```json
 {
@@ -412,33 +508,34 @@ của nó ở [QA.md](QA.md#sandbox-và-giới-hạn).
 Mã lỗi và thông điệp dưới đây lấy từ code; `error.details` và `error.suggestedAction` của job mang phần
 còn lại. Bảng chung cho client: [MCP_API.md](MCP_API.md#troubleshooting).
 
-| Triệu chứng                                                                                                       | Nguyên nhân                                                                                                                   | Xử lý                                                                                                                                |
-| ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `VALIDATION` "Unknown workflowTemplate ..." khi gọi `studix_create_video`                                         | Id không có trong registry; `details.available` liệt kê id đã đăng ký                                                         | Dùng một id trong danh sách; pack mới phải được đăng ký ở `skill-registry.ts`                                                        |
-| Job `failed` với `VALIDATION` "Unknown workflowTemplate ..."                                                      | Project được tạo với pack mà registry của worker không có (`packPipelines`), ví dụ app và worker chạy hai phiên bản khác nhau | Deploy cùng phiên bản cho app và worker                                                                                              |
-| `VALIDATION` "Invalid input for stage ..."                                                                        | `inputSchema` không parse được `{ payload, outputs }`; `details.issues` chỉ field                                             | Sửa payload, hoặc stage trước không tạo output stage này cần (thứ tự pipeline sai)                                                   |
-| `VALIDATION` "A marketing-video brief needs creative directions or key messages"                                  | Gửi prompt trơn cho `marketing-video`                                                                                         | Gửi `brief.keyMessages` hoặc `brief.directions` như [mẫu](#marketing-video)                                                          |
-| `VALIDATION` "Voice-over is longer than a ...s ad can hold" (hoặc "graphic")                                      | Voice-over vượt ngân sách từ; `details.wordBudget`                                                                            | Rút gọn hook, message, CTA hoặc tăng `durationMs`                                                                                    |
-| `APPROVAL_REQUIRED` "Stage ... needs an approved storyboard"                                                      | Stage có `requiresApprovedStoryboard` chạy khi storyboard chưa `approved`; `details.storyboardStatus`                         | Thành viên workspace duyệt storyboard trên trang review, rồi gọi `studix_render`                                                     |
-| `APPROVAL_REQUIRED` "G<n> needs a person's approval"                                                              | Approval policy miễn `creative.gate`, cấu hình sai                                                                            | Giữ `creative.gate` trong nhóm luôn cần duyệt của policy                                                                             |
-| `FORBIDDEN` "... was rejected by a reviewer"                                                                      | Người duyệt từ chối gate; `details.comment`                                                                                   | Xử lý góp ý, tạo job mới                                                                                                             |
-| `UNAVAILABLE` "Stage needs the ... service, which this worker lacks"                                              | `requireService`: worker không nối service đó                                                                                 | Nối service trong worker ([DEPLOYMENT.md](DEPLOYMENT.md#configuration))                                                              |
-| `UNAVAILABLE` "The Multix provider is not configured"                                                             | Stage trả tiền chạy trên worker chưa bật multix                                                                               | Bật multix cho worker theo [DEPLOYMENT.md](DEPLOYMENT.md#configuration)                                                              |
-| `UNAVAILABLE` "This worker runs no agent harness"                                                                 | Agent stage chạy mode `harness` trên worker không có `STUDIX_SECRETS_KEY` (không có harness)                                  | Tạo job với `agentMode: "host"` và hoàn tất task từ MCP client                                                                       |
-| `UNAVAILABLE` "No model is configured for agent stage ..."                                                        | Workspace và người tạo job chưa chọn model mặc định cho runtime `pi` hay `claude`                                             | Chọn model mặc định trong Settings → AI & Providers, hoặc dùng `agentMode: "host"`                                                   |
-| `UNAVAILABLE` "Agent stage ... resolved to Claude, which this worker does not run"                                | Lựa chọn của job là Claude nhưng worker không bật `STUDIX_CLAUDE_PLANNER`                                                     | Chọn model Pi, hoặc bật Claude runtime trên worker                                                                                   |
-| `UNAVAILABLE` "Workflow ... renders with ...; this worker has ..."                                                | `PackPipeline.renderer` khác renderer của worker                                                                              | Chạy pack trên worker có đúng renderer                                                                                               |
-| `VALIDATION` "Renderer ... cannot render this video"                                                              | `supports()` của renderer từ chối IR; `details.reasons`                                                                       | Sửa IR theo lý do, xem [RENDERER.md](RENDERER.md)                                                                                    |
-| `VALIDATION` "Stage ... returned an output that fails its schema"                                                 | Output của `run` không khớp `outputSchema`                                                                                    | Lỗi code của stage; sửa stage                                                                                                        |
-| `VALIDATION` "Agent output of stage ... fails its schema"                                                         | Agent (harness hoặc host) trả output sai schema; usage của lần chạy vẫn được ghi                                              | Tạo job mới; ở host mode, kiểm output với `outputSchema` của task trước khi nộp                                                      |
-| Stage có `cacheKey` chạy lại dù input không đổi                                                                   | Entry cache không còn khớp `outputSchema` (schema đổi) nên bị bỏ qua; đây là hành vi đúng                                     | Tăng version trong `cacheKey` khi đổi schema để key cũ không bị tra                                                                  |
-| `BUDGET_EXCEEDED` "... would bring job spend to ...¢, over the ...¢ budget"                                       | Ước tính của stage cộng phần đã tiêu vượt `budgetCents`                                                                       | Tăng `budgetCents` hoặc giảm phạm vi, tạo job mới                                                                                    |
-| `BUDGET_EXCEEDED` "job spent ...¢, over its ...¢ budget, after ..."                                               | Chi thật của stage vượt ước tính và vượt budget                                                                               | Như trên; kiểm `estimateCostCents` của stage có sát giá thật không                                                                   |
-| `BUDGET_EXCEEDED` "... estimates ... cents, above the ... cent cap"                                               | Provider ước tính một call vượt `maxCostCents` của request                                                                    | Chọn model rẻ hơn hoặc nâng trần của stage                                                                                           |
-| Log worker "a stage write was refused, job lease lost" hoặc "lease could not be renewed in time"                  | Worker mất lease (heartbeat chậm, DB gián đoạn); worker khác nhận job, attempt cũ không ghi gì thêm                           | Không cần làm gì nếu job tiếp tục; lặp lại thì xem log worker theo [runbook](DEPLOYMENT.md#runbook)                                  |
-| `INTERNAL` "Worker lease expired on the last allowed attempt ..."                                                 | Lease hết hạn ở attempt cuối, worker có thể đã crash                                                                          | Xem log worker của job, rồi `studix_retry_job` hoặc tạo job mới                                                                      |
-| `PROVIDER_ERROR` "A previous submission of this request may already have been charged and cannot be deduplicated" | Journal có bản ghi `submitting` không có job id (upstream không dedupe được, ví dụ Atlas)                                     | Tìm prediction trong `multix history` hoặc console Atlas, gắn bằng `studix_attach_media_job`, rồi `studix_retry_job`; không retry mù |
-| `CONFLICT` "This idempotency key already ran a different media request"                                           | Cùng idempotency key (`assetId` trong một stage) đi với kind hoặc model khác, kể cả khi model mặc định đổi giữa hai attempt   | Giữ `assetId` duy nhất cho mỗi asset trong stage                                                                                     |
-| Retry tính tiền audio lần nữa                                                                                     | Voice, music, SFX chạy đồng bộ; file chỉ được dùng lại khi retry chạy trên cùng worker và cùng `workRoot` ([Audio](#audio))   | Giữ `workRoot` bền qua restart; chấp nhận chi lại khi job chuyển worker                                                              |
-| `TIMEOUT` "Job deadline reached"                                                                                  | Hết deadline của job (thời gian park không tính)                                                                              | Tạo job với `deadlineSeconds` dài hơn hoặc video ngắn hơn                                                                            |
-| QA stage fail `VALIDATION` "QA hard gate failed: ..."                                                             | File render trượt hard check; `details.failures`                                                                              | Xem [QA.md](QA.md)                                                                                                                   |
+| Triệu chứng                                                                                                       | Nguyên nhân                                                                                                                                   | Xử lý                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `VALIDATION` "Unknown workflowTemplate ..." khi gọi `studix_create_video`                                         | Id không có trong registry; `details.available` liệt kê id đã đăng ký                                                                         | Dùng một id trong danh sách; pack mới phải được đăng ký ở `skill-registry.ts`                                                        |
+| Job `failed` với `VALIDATION` "Unknown workflowTemplate ..."                                                      | Project được tạo với pack mà registry của worker không có (`packPipelines`), ví dụ app và worker chạy hai phiên bản khác nhau                 | Deploy cùng phiên bản cho app và worker                                                                                              |
+| `VALIDATION` "Invalid input for stage ..."                                                                        | `inputSchema` không parse được `{ payload, outputs }`; `details.issues` chỉ field                                                             | Sửa payload, hoặc stage trước không tạo output stage này cần (thứ tự pipeline sai)                                                   |
+| `VALIDATION` "A marketing-video brief needs creative directions or key messages"                                  | Gửi prompt trơn cho `marketing-video`                                                                                                         | Gửi `brief.keyMessages` hoặc `brief.directions` như [mẫu](#marketing-video)                                                          |
+| `VALIDATION` "Voice-over is longer than a ...s ad can hold" (hoặc "graphic")                                      | Voice-over vượt ngân sách từ; `details.wordBudget`                                                                                            | Rút gọn hook, message, CTA hoặc tăng `durationMs`                                                                                    |
+| `VALIDATION` "The voice-over runs longer than the ...s graphic"                                                   | Bản đọc thật của `motion-graphic` (kể cả bản đọc lại gọn hơn) dài hơn cả video khi đọc nhanh tới 1.12×; `details.speechMs`, `details.totalMs` | Rút gọn lời đọc hoặc tăng `durationMs` rồi tạo job mới                                                                               |
+| `APPROVAL_REQUIRED` "Stage ... needs an approved storyboard"                                                      | Stage có `requiresApprovedStoryboard` chạy khi storyboard chưa `approved`; `details.storyboardStatus`                                         | Thành viên workspace duyệt storyboard trên trang review, rồi gọi `studix_render`                                                     |
+| `APPROVAL_REQUIRED` "G<n> needs a person's approval"                                                              | Approval policy miễn `creative.gate`, cấu hình sai                                                                                            | Giữ `creative.gate` trong nhóm luôn cần duyệt của policy                                                                             |
+| `FORBIDDEN` "... was rejected by a reviewer"                                                                      | Người duyệt từ chối gate; `details.comment`                                                                                                   | Xử lý góp ý, tạo job mới                                                                                                             |
+| `UNAVAILABLE` "Stage needs the ... service, which this worker lacks"                                              | `requireService`: worker không nối service đó                                                                                                 | Nối service trong worker ([DEPLOYMENT.md](DEPLOYMENT.md#configuration))                                                              |
+| `UNAVAILABLE` "The Multix provider is not configured"                                                             | Stage trả tiền chạy trên worker chưa bật multix                                                                                               | Bật multix cho worker theo [DEPLOYMENT.md](DEPLOYMENT.md#configuration)                                                              |
+| `UNAVAILABLE` "This worker runs no agent harness"                                                                 | Agent stage chạy mode `harness` trên worker không có `STUDIX_SECRETS_KEY` (không có harness)                                                  | Tạo job với `agentMode: "host"` và hoàn tất task từ MCP client                                                                       |
+| `UNAVAILABLE` "No model is configured for agent stage ..."                                                        | Workspace và người tạo job chưa chọn model mặc định cho runtime `pi` hay `claude`                                                             | Chọn model mặc định trong Settings → AI & Providers, hoặc dùng `agentMode: "host"`                                                   |
+| `UNAVAILABLE` "Agent stage ... resolved to Claude, which this worker does not run"                                | Lựa chọn của job là Claude nhưng worker không bật `STUDIX_CLAUDE_PLANNER`                                                                     | Chọn model Pi, hoặc bật Claude runtime trên worker                                                                                   |
+| `UNAVAILABLE` "Workflow ... renders with ...; this worker has ..."                                                | `PackPipeline.renderer` khác renderer của worker                                                                                              | Chạy pack trên worker có đúng renderer                                                                                               |
+| `VALIDATION` "Renderer ... cannot render this video"                                                              | `supports()` của renderer từ chối IR; `details.reasons`                                                                                       | Sửa IR theo lý do, xem [RENDERER.md](RENDERER.md)                                                                                    |
+| `VALIDATION` "Stage ... returned an output that fails its schema"                                                 | Output của `run` không khớp `outputSchema`                                                                                                    | Lỗi code của stage; sửa stage                                                                                                        |
+| `VALIDATION` "Agent output of stage ... fails its schema"                                                         | Agent (harness hoặc host) trả output sai schema; usage của lần chạy vẫn được ghi                                                              | Tạo job mới; ở host mode, kiểm output với `outputSchema` của task trước khi nộp                                                      |
+| Stage có `cacheKey` chạy lại dù input không đổi                                                                   | Entry cache không còn khớp `outputSchema` (schema đổi) nên bị bỏ qua; đây là hành vi đúng                                                     | Tăng version trong `cacheKey` khi đổi schema để key cũ không bị tra                                                                  |
+| `BUDGET_EXCEEDED` "... would bring job spend to ...¢, over the ...¢ budget"                                       | Ước tính của stage cộng phần đã tiêu vượt `budgetCents`                                                                                       | Tăng `budgetCents` hoặc giảm phạm vi, tạo job mới                                                                                    |
+| `BUDGET_EXCEEDED` "job spent ...¢, over its ...¢ budget, after ..."                                               | Chi thật của stage vượt ước tính và vượt budget                                                                                               | Như trên; kiểm `estimateCostCents` của stage có sát giá thật không                                                                   |
+| `BUDGET_EXCEEDED` "... estimates ... cents, above the ... cent cap"                                               | Provider ước tính một call vượt `maxCostCents` của request                                                                                    | Chọn model rẻ hơn hoặc nâng trần của stage                                                                                           |
+| Log worker "a stage write was refused, job lease lost" hoặc "lease could not be renewed in time"                  | Worker mất lease (heartbeat chậm, DB gián đoạn); worker khác nhận job, attempt cũ không ghi gì thêm                                           | Không cần làm gì nếu job tiếp tục; lặp lại thì xem log worker theo [runbook](DEPLOYMENT.md#runbook)                                  |
+| `INTERNAL` "Worker lease expired on the last allowed attempt ..."                                                 | Lease hết hạn ở attempt cuối, worker có thể đã crash                                                                                          | Xem log worker của job, rồi `studix_retry_job` hoặc tạo job mới                                                                      |
+| `PROVIDER_ERROR` "A previous submission of this request may already have been charged and cannot be deduplicated" | Journal có bản ghi `submitting` không có job id (upstream không dedupe được, ví dụ Atlas)                                                     | Tìm prediction trong `multix history` hoặc console Atlas, gắn bằng `studix_attach_media_job`, rồi `studix_retry_job`; không retry mù |
+| `CONFLICT` "This idempotency key already ran a different media request"                                           | Cùng idempotency key (`assetId` trong một stage) đi với kind hoặc model khác, kể cả khi model mặc định đổi giữa hai attempt                   | Giữ `assetId` duy nhất cho mỗi asset trong stage                                                                                     |
+| Retry tính tiền audio lần nữa                                                                                     | Voice, music, SFX chạy đồng bộ; file chỉ được dùng lại khi retry chạy trên cùng worker và cùng `workRoot` ([Audio](#audio))                   | Giữ `workRoot` bền qua restart; chấp nhận chi lại khi job chuyển worker                                                              |
+| `TIMEOUT` "Job deadline reached"                                                                                  | Hết deadline của job (thời gian park không tính)                                                                                              | Tạo job với `deadlineSeconds` dài hơn hoặc video ngắn hơn                                                                            |
+| QA stage fail `VALIDATION` "QA hard gate failed: ..."                                                             | File render trượt hard check; `details.failures`                                                                                              | Xem [QA.md](QA.md)                                                                                                                   |

@@ -1,0 +1,166 @@
+diff --git a/dist/index.js b/dist/index.js
+index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..0623d9bb0ec385b8ff6076b6742a263c54695688 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,4 +1,6 @@
+ // src/services/renderOrchestrator.ts
++import { existsSync as studixExistsSync, realpathSync as studixRealpathSync } from "node:fs";
++import { isAbsolute as studixIsAbsolute, relative as studixRelative, resolve as studixResolve, sep as studixSep } from "node:path";
+ import { audioFailureDiagnostics as audioFailureDiagnostics2 } from "@hyperframes/engine";
+ import {
+   existsSync as existsSync16,
+@@ -6034,14 +6036,16 @@ function resolveLocalImageSourcePath(src, options) {
+   const { basePath } = splitUrlSuffix(trimmed);
+   const normalizedBase = normalizeRelPath(basePath);
+   const mapped = options.sourceAssets?.get(trimmed) ?? options.sourceAssets?.get(basePath) ?? options.sourceAssets?.get(normalizedBase);
+-  if (mapped && existsSync8(mapped)) return mapped;
++  // Studix: read GIF/HEIC sources only from the project or the download directory, never elsewhere on the host.
++  const allowed = (candidate) => [options.projectDir, options.downloadDir].some((dir) => dir && isPathInside2(candidate, dir));
++  if (mapped && existsSync8(mapped) && allowed(mapped)) return mapped;
+   if (isHttpUrl(trimmed)) return null;
+   const projectRelative = basePath.startsWith("/") ? basePath.slice(1) : basePath;
+   const candidates = [
+     isAbsolute2(basePath) ? basePath : resolve5(options.projectDir, projectRelative),
+     resolve5(options.downloadDir, normalizedBase)
+   ];
+-  return candidates.find((candidate) => existsSync8(candidate)) ?? null;
++  return candidates.find((candidate) => allowed(candidate) && existsSync8(candidate)) ?? null;
+ }
+ function isUsableFile(path) {
+   try {
+@@ -7447,6 +7451,11 @@ async function inlineExternalScripts(html) {
+       externalScripts.push({ el, src });
+     }
+   }
++  // Studix: never fetch a script on the worker; compositions load their runtime from the project.
++  if (externalScripts.length > 0) {
++    defaultLogger.warn("[Security] Not inlining external scripts", { count: externalScripts.length });
++  }
++  return html;
+   if (externalScripts.length === 0) return html;
+   const downloads = await Promise.allSettled(
+     externalScripts.map(async ({ el, src }) => {
+@@ -7496,6 +7505,11 @@ function collectExternalAssets(html, projectDir) {
+     if (isPathInside2(absPath, absProjectDir)) {
+       return null;
+     }
++    // Studix: never copy a host file from outside the project into the render.
++    if (existsSync10(absPath)) {
++      defaultLogger.warn("[Security] Ignoring an asset outside the project");
++    }
++    return null;
+     if (!existsSync10(absPath)) return null;
+     const safeKey = toExternalAssetKey(absPath);
+     externalAssets.set(safeKey, absPath);
+@@ -7937,8 +7951,14 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+   );
+   const coalescedHtml = await injectDeterministicFontFaces(normalizedFontHtml, {
+     logger: defaultLogger,
++    // Studix: no font download on the worker (the request would carry the page's characters). Studix embeds
++    // its fonts; anything else falls back to the font cache or the browser's own fonts.
++    fetchImpl: async () => {
++      throw new Error("[Security] Font downloads are disabled in Studix renders");
++    },
+     failClosedFontFetch: options.failClosedFontFetch === true,
+-    allowSystemFontCapture: options.allowSystemFontCapture,
++    // Studix: never embed a host system font for a family a page names; Studix bundles its fonts.
++    allowSystemFontCapture: false,
+     abortSignal: options.abortSignal
+   });
+   const assembledHtml = await inlineExternalScripts(coalescedHtml);
+@@ -8065,6 +8085,54 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+     hasAncestorBackgroundImage
+   };
+ }
++// Studix: page scripts control the media found in the live DOM (they can even override `currentSrc`), and the
++// engine reads it on the host: it downloads URLs, trims and percent-decodes paths, accepts absolute ones, and
++// joins the element id into work-directory paths that it writes and later removes recursively. So a src is
++// kept only when it is an inline data: image, or exactly a file-server URL whose path is plain segments of
++// [A-Za-z0-9._~-] and whose file, where it exists in the compiled or project directory, really lies inside
++// that directory. A file in neither stays a plain project path and fails later as a missing source. The id
++// may not be a path either.
++const STUDIX_SAFE_MEDIA_PATH = /^(?!\.{1,2}(?:\/|$))[A-Za-z0-9._~-]+(?:\/(?!\.{1,2}(?:\/|$))[A-Za-z0-9._~-]+)*$/;
++function studixInsideDir(child, dir) {
++  const rel = studixRelative(dir, child);
++  return rel !== "" && rel !== ".." && !rel.startsWith(`..${studixSep}`) && !studixIsAbsolute(rel);
++}
++function isSafeMediaId(id) {
++  return typeof id === "string" && id.length > 0 && id.length <= 200 && id !== "." && id !== ".." && !/[\\/\0]/.test(id);
++}
++function isProjectMediaSrc(src, fileServer, roots) {
++  if (!src || src === "about:blank" || /^data:image\//i.test(src)) return true;
++  if (!fileServer || !src.startsWith(`${fileServer.url}/`)) return false;
++  const path = src.slice(fileServer.url.length + 1);
++  if (!STUDIX_SAFE_MEDIA_PATH.test(path)) return false;
++  for (const root of roots) {
++    const candidate = studixResolve(root, path);
++    if (!studixExistsSync(candidate)) continue;
++    try {
++      if (!studixInsideDir(studixRealpathSync(candidate), studixRealpathSync(root))) return false;
++    } catch {
++      return false;
++    }
++  }
++  return true;
++}
++function assertSafeMediaIds(compiled) {
++  for (const media of [...compiled.videos ?? [], ...compiled.audios ?? [], ...compiled.images ?? []]) {
++    if (!isSafeMediaId(media.id)) {
++      throw new Error(`[Security] Media id ${JSON.stringify(String(media.id).slice(0, 200))} is not allowed: ids may not contain "/" or "\\" or be "." or ".."`);
++    }
++  }
++}
++function keepProjectMedia(browserMedia, fileServer, roots, log) {
++  return browserMedia.filter((el) => {
++    if (isSafeMediaId(el.id) && isProjectMediaSrc(el.src, fileServer, roots)) return true;
++    log.warn("[Security] Ignoring browser media outside the project", {
++      id: String(el.id).slice(0, 200),
++      tagName: el.tagName
++    });
++    return false;
++  });
++}
+ async function discoverMediaFromBrowser(page) {
+   const elements = await page.evaluate(() => {
+     const results = [];
+@@ -8501,6 +8569,7 @@ async function runCompileStage(input) {
+     audioCount: compiled.audios.length,
+     renderModeHints: compiled.renderModeHints
+   });
++  assertSafeMediaIds(compiled);
+   const composition = {
+     duration: compiled.staticDuration,
+     videos: compiled.videos,
+@@ -8922,6 +8991,7 @@ async function runProbeStage(input) {
+             join17(workDir, "downloads")
+           );
+           assertNotAborted();
++          assertSafeMediaIds(compiled);
+           composition.videos = compiled.videos;
+           composition.audios = compiled.audios;
+           composition.images = compiled.images;
+@@ -8929,14 +8999,21 @@ async function runProbeStage(input) {
+         }
+       }
+       log.info("Discovering media assets from browser DOM...");
+-      const browserMedia = await discoverMediaFromBrowser(session.page);
++      const discoveredMedia = await discoverMediaFromBrowser(session.page);
++      const browserMedia = keepProjectMedia(
++        discoveredMedia,
++        fileServer,
++        [join17(workDir, "compiled"), projectDir],
++        log
++      );
+       assertNotAborted();
+-      if (browserMedia.length > 0) {
++      if (discoveredMedia.length > 0) {
+         const existingVideoIds = new Set(composition.videos.map((v) => v.id));
+         const existingAudioIds = new Set(composition.audios.map((a) => a.id));
+         const existingImageIds = new Set(composition.images.map((image) => image.id));
+         const authoredStarts = authoredMediaStarts(compiled.html);
+-        pruneMutedBrowserMedia(composition, browserMedia, existingAudioIds);
++        // Pruning only mutes or removes authored audio, so it may see media the filter dropped.
++        pruneMutedBrowserMedia(composition, discoveredMedia, existingAudioIds);
+         for (const el of browserMedia) {
+           if (!el.src || el.src === "about:blank") continue;
+           if (el.muted && el.tagName === "audio") continue;

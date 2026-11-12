@@ -21,7 +21,8 @@ export type AgentOutputCheck =
   | { ok: false; issues: Array<{ path: string; message: string }> };
 
 /**
- * Checks a host output against the output schema of the named stage (the same schema the worker applies).
+ * Checks a host output against the schema the named stage hands a host agent (the same schema the worker applies
+ * to the submission when the stage resumes).
  * Throws UNAVAILABLE when this server does not know the stage.
  */
 export type AgentOutputValidator = (stage: string, output: unknown) => AgentOutputCheck;

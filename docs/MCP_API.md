@@ -78,6 +78,16 @@ Rules:
 The union is `ErrorCode` in `packages/shared`; the `retryable` column is a
 guide, the per-error value is authoritative.
 
+When a schema check fails inside Studix (for example a stage builds a Video IR
+that breaks a limit), the error is `INTERNAL` with a one-line message naming the
+first failing path and constraint, such as
+`Schema check failed at /audio: Too big: expected array to have <=64 items`.
+`details` carries `{ kind: "schema", issueCount, issues: [{ path, code, constraint?, message }] }`
+with at most five issues (`path` is a JSON pointer, `constraint` the failed
+zod check such as `too_big`), and `suggestedAction` says it is a Studix defect to
+report with the job id. When a size limit tripped, it also suggests a shorter
+or simpler brief until the fix lands.
+
 ## P0 native tools
 
 | Tool                      | Purpose                                                                                                                                                                                                                                                |
@@ -156,7 +166,12 @@ Behavior notes:
   brief's aspect ratio, duration within 0.5 s of the brief, audible voice-over, -16 LUFS +/-2 with
   true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
   each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
-- `roles: {director?, builder?, qa?}` (`skill-agent` only, each an `agent` object from any catalogue
+- `motion-graphic` takes `roles.director` only: it turns on the premium tier (the director writes the
+  storyboard under larger caps and may author 2-3 hero cards as allowlisted HTML/CSS plus declarative tweens, no agent code; each kept only when it
+  passes the HTML-card safety rules and the HyperFrames linter, else the built-in card stays and the
+  `motion-graphic.heroes` stage records a `warning`). Other roles with `motion-graphic` are refused with
+  `VALIDATION`.
+- `roles: {director?, builder?, qa?}` (`skill-agent`, each an `agent` object from any catalogue
   runtime and model, e.g. `pi` + `deepseek-v4.1-flash` as builder): the director writes the script and
   direction first; the builder makes the video (default: the job's `agent`); QA watches each render,
   scores taste, motion, brief and audio 0-10 and sends it back with notes below 7, at most 3 rounds.
@@ -201,6 +216,14 @@ Behavior notes:
   `agent`) combines with any pack: the pack's pipeline runs and its agent stages
   (for example the motion-graphic storyboard) run on that Claude connection and
   model; with the default pack the Claude planner writes the IR.
+- A length or aspect ratio stated only in `brief.prompt` for the whole video
+  ("a 60-second 16:9 video", "1920x1080", "video dọc, tổng 1p30") fills
+  `brief.durationMs` / `brief.aspectRatio` when they are unset; the explicit
+  field always wins. A part's length ("each 5 seconds"), a timecode, a decade
+  or an asset's pixel size is not read. `motion-graphic` and `marketing-video`
+  clamp the length to their own range; `anime`, `long-form-film` and
+  `skill-agent` make the stated length. `brand-intro` reads the prompt in its
+  own brief draft and clamps to 6–15 s.
 - `workflowTemplate: "marketing-video"` makes one ad per `brief.directions[]`
   entry (1 to 6); a brief without directions makes one ad whose hook is its
   first key message (else the brand name), and a brief with neither is refused
@@ -224,31 +247,81 @@ Behavior notes:
 - `workflowTemplate: "motion-graphic"` builds a kinetic HTML/GSAP graphic
   (6 to 60 s, default 15 s 9:16; a length or aspect ratio written in the prompt,
   such as "a 60-second 16:9 intro", is used when the brief omits it) in the
-  style profile that best matches the brief, with about one card per five
-  seconds, a generated voice-over, a whoosh on every cut, one SFX accent where
+  style profile that best matches the brief,
+  with a generated voice-over, about one card every five seconds (3 to 12)
+  when the agent writes the storyboard, one soft whoosh (generated once) on every cut except the one into the CTA card, one SFX accent where
   the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
-  for one. The bed is composed to the cards (intro, build, and a drop where the
-  call to action starts), its beats are found with FFmpeg (no paid call), each
-  cut moves to the nearest downbeat when every line still fits its card, and
-  the bed ducks under the voice-over. Headlines enter on their first spoken
-  word, layout devices start when the line names what they show, and captions
-  follow the words (ElevenLabs word timings, else an estimate over the measured
-  speech). Each storyboard beat may pick a `layout` with short `items` (a typed
-  prompt, code lines, wired chips, a ticking checklist, a rolling counter, a
-  row of cards, brand swatches or a big stat) drawn under its headline; items
-  that do not fit drop that beat back to a headline card. Cards share the
-  style's background, and the brand colour is kept for the call to action. A script derived from the brief (hook, messages, call to action) is
+  for one. The bed is composed as intro, build and a drop on the CTA card, dips
+  under the voice, and its beats are found locally: cuts move onto a near
+  downbeat (or beat) wherever every card keeps room for its line. Each card's
+  headline and layout enter on the words the voice says them with (ElevenLabs
+  word timestamps, else estimated); `metadata.beatSync` and `metadata.wordSync`
+  report what was synced. Each storyboard beat may name a typed `layout` (a prompt being typed,
+  code lines, chips wired to a hub, a checklist, a rolling counter, a row of
+  cards, colour swatches, a stat, or a product UI device: a chat window typing a
+  prompt and its reply, a tool-call card spinning on "running" then done, a job
+  pipeline lit up to its running stage, a preview player pressed to Approve, a
+  usage meter filling to its cap) that the card draws under its headline; the
+  `visual` field stays a description. The style profile is a preset: it locks
+  the palette and fonts (unless the brief has a `brand`), the entrances a card
+  may use, the signature cut and its length, whether the CTA card is filled with
+  the accent and whether cuts get a whoosh. `directions[0].visualStyle` set to a
+  profile id (for example `cinematic-product-launch` or `glass-keynote`) pins
+  that profile. On a 16:9 frame headlines are set at
+  display size and layouts drawn larger, so a card fills the frame. Burned
+  captions are 44 px at a 1080 px short edge, and a layout is centred above
+  them. Every card moves a camera (`push-in`, `pull-back`, `pan-left`,
+  `pan-right`, `parallax` or `static`; a beat may pick its own `camera`, and two
+  adjacent cards never share one), draws the style's depth planes (grid, glow,
+  grain, vignette behind; corner brackets or bokeh in front) and carries one motif
+  shape along the frame edge from card to card: the hook hard-cuts into the
+  first message on a match cut, the other cuts vary through the style's
+  transitions (`fade`, `slide`, `wipe`, `zoom`, `iris`, `whip`). Cards share the style profile's
+  background; a profile whose juice says so fills the call-to-action card with its
+  accent. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
   longest spoken lines are shortened. The hook and call-to-action cards and the
   on-screen text are kept, but their spoken text may be shortened, the call to
   action last. With `brief.voiceover: false` it needs no speech
   provider and makes on-screen text only. A missing SFX model or key skips the
   accent with a warning; a voice-over that cannot be generated still fails the
-  job. Every voice take is measured first: a line longer than its card re-times
-  the cards (same total length, captions and SFX moved with them), and only
-  speech that cannot fit the whole video fails with `VALIDATION` naming the
-  lines and by how many milliseconds.
+  job. Every voice take is measured before it is laid: a line longer than its
+  card re-cuts the cards (same total length; captions, whooshes and the accent
+  move with them), a line no re-cut can fit is voiced once more, brisker (a line
+  that fits its card read up to 1.12x faster is voiced again only when the
+  graphic still needs the time), and only speech that cannot fit the whole video fails with `VALIDATION`
+  naming the lines past their cards and by how many milliseconds (`details.lines`). The storyboard agent gives every message
+  card a layout device and each spoken line one idea in one sentence. After the
+  render a vision model reviews a contact sheet (one hold frame per card) and
+  scores each card 0 to 10 for `blank`, `too-small`, `illegible`, `repetitive`,
+  `off-brief` or `headline-only`; failed cards (an issue, or a score below 6)
+  go back to the storyboard agent, which redesigns only those cards (their
+  voice-over and timing kept), and the graphic renders again: at most two
+  rounds, only while the job budget holds a review, a redesign and a render.
+  The job result carries the scores as `visualQa` (`status`: `passed`, `fixed`,
+  `failed` or `skipped`, with a `reason`, and `rounds[].cards[]`). The review
+  never fails the job: it is skipped with a reason in host mode, without an
+  agent, when the agent's model cannot read images, or when time before the job
+  deadline runs short; a failed redesign or re-render keeps the last good render.
+- Brand kit for `motion-graphic`: `brief.brandUrl` (the brand's https site),
+  `brief.brandLogo` (an https URL or a base64 `data:image/png|jpeg|webp|svg+xml`
+  URL, at most 200,000 characters, about 146 KB of image; pass a larger logo as an https URL) and `brief.brandColors` (1 to 4 hex
+  colours, most important first). The `motion-graphic.brand` stage reads the
+  site's name (`og:site_name`, `application-name`, else the title), colours
+  (`theme-color`, tile and mask-icon colours; greys dropped) and logo (SVG icon,
+  apple-touch-icon, `og:logo`, JSON-LD `logo`, other icons) through the
+  SSRF-guarded fetch, and stores the logo (the uploaded one wins; PNG, JPEG,
+  WebP, GIF or SVG checked by its bytes; an SVG with script, event handlers or
+  outside loads, or a raster over 4096 px on an edge or of unreadable size, is
+  refused). The page is
+  read with a linear tag scan, so a hostile page cannot hold the worker, and a
+  base64 logo never reaches any agent's input. The brand's name, else the site's,
+  and its logo are drawn as a lockup on the hook and CTA cards. The first
+  colour becomes primary and accent, the second secondary; `brandColors` wins
+  over `brand.palette`, and site colours are used only when the brief sets
+  neither. A site or logo that cannot be read never fails the job: the stage
+  reports a `warning` and the graphic goes on without it.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action
@@ -496,8 +569,10 @@ returns `next[]` pointing at `studix_list_agent_tasks`.
   `tools`, the allowlist of tool names the agent may call. Only the time limit
   is enforced in host mode: the task expires at `expiresAt`. The other limits
   are the budget the harness would have; respect them.
-- `output` is checked against the stage's output schema, the same schema the
-  worker applies. A mismatch fails with `VALIDATION`, `details.reason:
+- `output` is checked against the task's `outputSchema`, the same schema the
+  worker applies when the job resumes. A stage that wraps its agent (such as
+  `motion-graphic.storyboard`) adds its own fields itself; the host sends only
+  what `outputSchema` lists. A mismatch fails with `VALIDATION`, `details.reason:
   "invalid_output"` and `details.issues`, and nothing is stored, so fix the
   output and submit again. Secrets in the output are redacted before it is
   stored.

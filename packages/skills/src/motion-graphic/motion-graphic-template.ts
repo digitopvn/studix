@@ -1,4 +1,4 @@
-import { StudixError } from "@studix/shared";
+import { StudixError, schemaFailure } from "@studix/shared";
 import {
   ASPECT_RATIO_SIZES,
   type AspectRatio,
@@ -6,21 +6,19 @@ import {
   type BrandKit,
   type BrandPalette,
   buildSequentialTimeline,
+  type CameraMove,
   type CaptionCue,
   type ColorRole,
   type CreativeBrief,
+  type LayoutSpec,
   type MotionPreset,
   type Scene,
-  type SceneTransition,
   type Shot,
-  type ShotLayout,
   unwrapValidation,
   type VideoIR,
   validateCreativeBrief,
   validateVideoIR,
 } from "@studix/video-ir";
-import { DEFAULT_BRAND_FONTS } from "../brand-intro/brief-draft.ts";
-import { promptFormatHints } from "../brand-intro/brief-draft-from-prompt.ts";
 import { captionCues, spokenLength } from "../caption-chunks.ts";
 import {
   spokenMs,
@@ -29,19 +27,20 @@ import {
   voiceoverWordBudget,
 } from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
-import { beatLayout } from "./motion-graphic-layouts.ts";
+import type { BrandSource } from "./motion-graphic-brand.ts";
+import { luminance, motionDepthFor, planCameras, planTransitions } from "./motion-graphic-camera.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
-import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
+import { MOTION_STYLE_PROFILES, type MotionEnter, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 6;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 11;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
 const DEFAULT_STYLE = "kinetic-typography";
 const FPS = 30;
 const LINE_CHARS: Record<AspectRatio, number> = { "9:16": 20, "1:1": 22, "16:9": 28 };
-/** A headline over a layout device is set smaller, so its lines hold more. */
-const LAYOUT_LINE_CHARS: Record<AspectRatio, number> = { "9:16": 26, "1:1": 30, "16:9": 40 };
+/** A heading-size headline over a layout holds more per line than a display-size headline card. */
+const LAYOUT_LINE_CHARS: Record<AspectRatio, number> = { "9:16": 24, "1:1": 26, "16:9": 38 };
 
 const words = (text: string) =>
   text
@@ -56,9 +55,9 @@ const words = (text: string) =>
  * typography (words as the visuals, the natural fit for a voice-over-led graphic). Deterministic.
  */
 export function resolveMotionStyle(brief: CreativeBrief): MotionStyleProfile {
-  const named = brief.directions?.[0]?.visualStyle?.trim().toLowerCase();
-  const exact = MOTION_STYLE_PROFILES.find((p) => p.id === named);
+  const exact = namedMotionStyle(brief);
   if (exact) return exact;
+  const named = brief.directions?.[0]?.visualStyle?.trim().toLowerCase();
   const wanted = new Set(
     words([...(brief.tone ?? []), brief.objective ?? "", named ?? "", brief.prompt].join(" ")),
   );
@@ -74,12 +73,19 @@ export function resolveMotionStyle(brief: CreativeBrief): MotionStyleProfile {
   return best ?? (MOTION_STYLE_PROFILES.find((p) => p.id === DEFAULT_STYLE) as MotionStyleProfile);
 }
 
-/** GSAP presets and the scene transition an energy level calls for (calm fades .. hard pops). */
-function motionFor(energy: number): { enter: MotionPreset; exit: MotionPreset; transition: SceneTransition } {
-  if (energy <= 2) return { enter: "fade", exit: "fade", transition: { kind: "fade", durationMs: 500 } };
-  if (energy === 3)
-    return { enter: "slide-up", exit: "fade", transition: { kind: "slide", durationMs: 350 } };
-  return { enter: "pop", exit: "scale", transition: { kind: "zoom", durationMs: 250 } };
+/**
+ * The profile a brief pins by naming its id in the first direction's `visualStyle`, or undefined. A pinned
+ * profile is locked: the storyboard agent cannot swap it.
+ */
+export function namedMotionStyle(brief: CreativeBrief): MotionStyleProfile | undefined {
+  const named = brief.directions?.[0]?.visualStyle?.trim().toLowerCase();
+  return MOTION_STYLE_PROFILES.find((p) => p.id === named);
+}
+
+/** `wanted` when the style allows that entrance, else the style's default entrance. */
+export function lockedEnter(style: MotionStyleProfile, wanted: MotionPreset | undefined): MotionEnter {
+  const allowed: readonly MotionPreset[] = style.pacing.enters;
+  return wanted && allowed.includes(wanted) ? (wanted as MotionEnter) : style.pacing.enters[0];
 }
 
 interface Line {
@@ -89,12 +95,14 @@ interface Line {
   enter?: MotionPreset;
   /** Relative length of the card (storyboard weight); even split when absent. */
   weight?: number;
-  /** Device the storyboard drew under the headline; absent for a plain headline card. */
-  layout?: ShotLayout;
+  /** Built-in layout the storyboard chose to draw under the headline. */
+  layout?: LayoutSpec;
+  /** Camera move the storyboard chose for this card. */
+  camera?: CameraMove | null;
 }
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
-const MIN_SILENT_CARD_MS = 1500;
+export const MIN_SILENT_CARD_MS = 1500;
 
 const spokenWords = (line: Line) => (line.voiceover ?? "").trim().split(/\s+/).filter(Boolean);
 
@@ -161,15 +169,6 @@ function linesOf(brief: CreativeBrief, cta: string, totalMs: number, language: s
   return fitDerived(lines, totalMs, voiced, language);
 }
 
-/** WCAG relative luminance of a `#rrggbb[aa]` colour (alpha ignored). */
-function luminance(hex: string): number {
-  const channel = (i: number) => {
-    const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
-}
-
 function contrast(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
   return (hi + 0.05) / (lo + 0.05);
@@ -222,16 +221,14 @@ function inkOn(
  * closing pad on the last), rounded up to the 100ms step the cards are cut in. While these sum to at most
  * the length, every card gets at least its need (`durations`).
  */
-export function cardNeeds(
-  voiceovers: ReadonlyArray<string | undefined>,
-  language: string,
-  speechMs?: ReadonlyArray<number | undefined>,
-): number[] {
+function cardNeeds(voiceovers: ReadonlyArray<string | undefined>, language: string): number[] {
   const last = voiceovers.length - 1;
-  return voiceovers.map((v, i) => {
-    const said = speechMs?.[i] ?? (v ? spokenMs(v, language) : 0);
-    return Math.ceil((said + (i === 0 ? VO_PAD_MS : 0) + (i === last ? VO_PAD_MS : 0)) / 100) * 100;
-  });
+  return voiceovers.map(
+    (v, i) =>
+      Math.ceil(
+        ((v ? spokenMs(v, language) : 0) + (i === 0 ? VO_PAD_MS : 0) + (i === last ? VO_PAD_MS : 0)) / 100,
+      ) * 100,
+  );
 }
 
 /**
@@ -239,17 +236,11 @@ export function cardNeeds(
  * closing pads), and the rest of the length is shared in proportion to the lines' weights (even when
  * unweighted), so a long hook never outruns its card.
  */
-function durations(
-  totalMs: number,
-  lines: readonly Line[],
-  language: string,
-  speechMs?: ReadonlyArray<number | undefined>,
-): number[] {
+function durations(totalMs: number, lines: readonly Line[], language: string): number[] {
   const last = lines.length - 1;
   const need = cardNeeds(
     lines.map((l) => l.voiceover),
     language,
-    speechMs,
   );
   const weights = lines.map((l) => l.weight ?? 1);
   const sum = weights.reduce((a, b) => a + b, 0);
@@ -257,6 +248,33 @@ function durations(
   const out = need.map((n, i) => Math.floor((n + (slack * (weights[i] ?? 1)) / sum) / 100) * 100);
   out[last] = totalMs - out.slice(0, last).reduce((a, b) => a + b, 0);
   return out;
+}
+
+/** Brief text a brand name may be taken from. */
+const briefText = (brief: CreativeBrief) =>
+  [
+    brief.prompt,
+    brief.title ?? "",
+    brief.callToAction ?? "",
+    ...(brief.keyMessages ?? []),
+    ...(brief.directions ?? []).flatMap((d) => [d.name, d.concept, d.hook ?? "", ...(d.keyMessages ?? [])]),
+  ].join("\n");
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * `name` as the brief spells it, when the brief writes it as whole words (ignoring case), so the card never
+ * shows a name the agent made up or re-cased. A name that is the hook line itself is no brand.
+ */
+function namedInBrief(
+  brief: CreativeBrief,
+  name: string | null | undefined,
+  hook: string,
+): string | undefined {
+  const wanted = name?.normalize("NFC").trim();
+  if (!wanted || wanted.toLowerCase() === hook.trim().toLowerCase()) return undefined;
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(wanted)}(?![\\p{L}\\p{N}])`, "iu");
+  return pattern.exec(briefText(brief).normalize("NFC"))?.[0];
 }
 
 export interface MotionGraphicOptions {
@@ -268,23 +286,16 @@ export interface MotionGraphicOptions {
    */
   storyboard?: MotionStoryboard;
   /**
-   * Measured speech of each card's voice-over take (ms; undefined where not measured), in place of the
-   * reading-pace estimate when the cards are cut: the voice stage re-times the cards to its takes.
+   * Card lengths to cut instead of the ones the script's estimate gives: one per card, summing to the
+   * graphic's length. The voice stage passes them after cutting the cards to the measured takes.
    */
-  speechMs?: ReadonlyArray<number | undefined>;
-}
-
-/**
- * The brief with the aspect ratio and length its prompt states filled in where the brief leaves them out,
- * so "a 60-second 16:9 video" is not rendered at the 15 s 9:16 default. Explicit brief fields win.
- */
-export function withPromptFormat(brief: CreativeBrief): CreativeBrief {
-  if (brief.aspectRatio && brief.durationMs) return brief;
-  const hints = promptFormatHints(brief.prompt, {
-    minMs: MOTION_GRAPHIC_MIN_MS,
-    maxMs: MOTION_GRAPHIC_MAX_MS,
-  });
-  return { ...hints, ...brief };
+  cardMs?: readonly number[];
+  /**
+   * The brand read from `brief.brandUrl` and `brief.brandLogo` (the pack's brand stage). Its name is used when
+   * the brief has no `brand`; its colours when the brief has neither `brandColors` nor `brand`; its logo when
+   * the brief's brand names none.
+   */
+  brandSource?: BrandSource;
 }
 
 /**
@@ -294,7 +305,7 @@ export function withPromptFormat(brief: CreativeBrief): CreativeBrief {
  * Pure. Throws VALIDATION when a direction's beats or a storyboard bring a voice-over that does not fit.
  */
 export function motionGraphicTemplate(input: unknown, options: MotionGraphicOptions = {}): VideoIR {
-  const brief = withPromptFormat(unwrapValidation(validateCreativeBrief(input), "creative brief"));
+  const brief = unwrapValidation(validateCreativeBrief(input), "creative brief");
   const aspectRatio = brief.aspectRatio ?? "9:16";
   const totalMs = Math.min(
     MOTION_GRAPHIC_MAX_MS,
@@ -306,24 +317,21 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     brief.callToAction ??
     (language.startsWith("vi") ? "Tìm hiểu ngay" : "Learn more");
   const storyboard = options.storyboard;
+  // A profile the brief pins wins over the storyboard's pick; the profile then locks entrances, the cut, the
+  // CTA fill and (without a brand kit) the palette and fonts.
   const style =
-    MOTION_STYLE_PROFILES.find((p) => p.id === storyboard?.styleProfile) ?? resolveMotionStyle(brief);
-  const motion = motionFor(style.energy);
+    namedMotionStyle(brief) ??
+    MOTION_STYLE_PROFILES.find((p) => p.id === storyboard?.styleProfile) ??
+    resolveMotionStyle(brief);
+  const motion = style.pacing;
   const lines: Line[] = storyboard
-    ? storyboard.beats.map((b, i) => ({
+    ? storyboard.beats.map((b) => ({
         onScreen: b.onScreen,
         ...(brief.voiceover === false ? {} : { voiceover: b.voiceover }),
         enter: b.enter,
         weight: b.weight,
-        ...(i === storyboard.beats.length - 1
-          ? {}
-          : {
-              layout: beatLayout(
-                b.layout,
-                b.items,
-                brief.brand?.palette ?? { primary: style.palette.accent, ...style.palette },
-              ),
-            }),
+        ...(b.layout ? { layout: b.layout } : {}),
+        ...(b.camera ? { camera: b.camera } : {}),
       }))
     : linesOf(brief, cta, totalMs, language).slice(0, 8);
   const voiceover = lines
@@ -344,34 +352,64 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       suggestedAction: `Cut the voice-over to at most ${budget} words (about ${VO_WORDS_PER_SECOND} words a second; an English word or brand name counts by its syllables), or lengthen the video.`,
     });
   }
+  const source = options.brandSource;
+  // The brand as the brief writes it (the storyboard's name, kept only when the brief really writes it), else
+  // the name its site gives (a page title can name a page rather than the brand, so it comes second).
+  const brandName = brief.brand
+    ? undefined
+    : (namedInBrief(brief, storyboard?.brandName, lines[0]?.onScreen ?? "") ?? source?.name);
   // What the graphic is called without a brand: its title, else its hook. Never the style profile's name.
-  const namedBrand = storyboard?.brandName ?? undefined;
-  const unbrandedName = namedBrand ?? brief.title ?? (lines[0]?.onScreen || "Motion graphic");
+  const unbrandedName = brief.title ?? (lines[0]?.onScreen || "Motion graphic");
   const baseBrand: BrandKit = brief.brand ?? {
-    name: truncateText(unbrandedName, 120),
+    name: truncateText(brandName ?? unbrandedName, 120),
     palette: {
       primary: style.palette.accent,
       accent: style.palette.accent,
       background: style.palette.background,
       foreground: style.palette.foreground,
     },
-    fonts: DEFAULT_BRAND_FONTS,
+    fonts: style.fonts,
+  };
+  // The user's own colours win over a brand palette; the site's never override one the brief sets.
+  const [first, second] = brief.brandColors ?? (brief.brand ? [] : (source?.colors ?? []));
+  const palette: BrandPalette = {
+    ...baseBrand.palette,
+    ...(first ? { primary: first, accent: first } : {}),
+    ...(second ? { secondary: second } : {}),
   };
   const brand: BrandKit = {
     ...baseBrand,
-    palette: {
-      ...baseBrand.palette,
-      primary: offBlack(baseBrand.palette.primary),
-      background: offBlack(baseBrand.palette.background),
-    },
+    palette: { ...palette, primary: offBlack(palette.primary), background: offBlack(palette.background) },
   };
-  const logo = brand.logoAssetId
-    ? options.assets?.find((a) => a.id === brand.logoAssetId && a.kind === "image")
-    : undefined;
+  const logo =
+    (brand.logoAssetId
+      ? options.assets?.find((a) => a.id === brand.logoAssetId && a.kind === "image")
+      : undefined) ?? (source?.logo?.kind === "image" ? source.logo : undefined);
   const { logoAssetId: _unused, ...brandNoLogo } = brand;
+  // A name that is the brand's own, never the title or hook line a brandless graphic is called by.
+  const realName = brief.brand?.name ?? brandName;
   const chars = LINE_CHARS[aspectRatio];
-  const spans = durations(totalMs, lines, language, options.speechMs);
+  const spans = options.cardMs ? [...options.cardMs] : durations(totalMs, lines, language);
+  if (
+    options.cardMs &&
+    (spans.length !== lines.length ||
+      spans.some((ms) => !Number.isInteger(ms) || ms <= 0) ||
+      spans.reduce((a, b) => a + b, 0) !== totalMs)
+  ) {
+    throw new StudixError("INTERNAL", "Motion-graphic card lengths do not add up to the graphic", {
+      retryable: false,
+      details: { cards: lines.length, cardMs: spans, totalMs },
+    });
+  }
   const last = lines.length - 1;
+  // Camera, depth and cuts: adjacent cards never share a camera move, every card shares the style's depth
+  // planes, and the motif carries across the cuts.
+  const cameras = planCameras(
+    lines.map((l) => l.camera),
+    style,
+  );
+  const transitions = planTransitions(lines.length, style);
+  const { depth, motif } = motionDepthFor(style, brand.palette.background);
   let cursor = 0;
   const cues: CaptionCue[] = [];
   const scenes: Scene[] = lines.map((line, i): Scene => {
@@ -384,21 +422,56 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       cues.push(...captionCues(line.voiceover, startAt + pad, durationMs - pad - tail));
     }
     const id = i === 0 ? "hook" : i === last ? "cta" : `message-${i}`;
-    // One base for the whole graphic (the style's background); the brand colour is kept for the call to
-    // action, where the emphasis belongs, instead of alternating mechanically card by card.
-    const fill = i === last ? "primary" : "background";
-    const enter = line.enter ?? motion.enter;
+    // One surface for the whole graphic, as the style profile paints it; a high-energy profile spends its
+    // accent on the closing card only, so colour marks the call to action instead of every other card.
+    const fill = i === last && style.juice.ctaFill ? "primary" : "background";
+    const enter = lockedEnter(style, line.enter);
     const shots: Shot[] = [];
+    // The hook names the brand from its first frame: a small lockup above the headline. A wordmark alone is
+    // left out when the hook line already says the name.
+    if (
+      i === 0 &&
+      i !== last &&
+      (logo ||
+        (realName &&
+          !line.onScreen.normalize("NFC").toLowerCase().includes(realName.normalize("NFC").toLowerCase())))
+    ) {
+      shots.push({
+        id: "hook-logo",
+        type: "logo",
+        startMs: 0,
+        durationMs,
+        // Always a lockup, so its height is reserved above the hook's layout; with no real name it is the mark alone.
+        lockup: true,
+        ...(logo ? { assetId: logo.id } : {}),
+        ...(realName ? { text: truncateText(realName, 60) } : {}),
+        style: {
+          textStyle: "body",
+          color: inkOn(brand.palette, fill, "accent"),
+          align: "center",
+          region: "top",
+        },
+        animation: {
+          enter: lockedEnter(style, line.enter ?? (line.layout ? undefined : "scale")),
+          exit: motion.exit,
+          durationMs: 400,
+        },
+      });
+    }
     if (i === last) {
-      // The CTA names the brand only with a logo or a real name: without a brand or title, the brand kit's
-      // name is the hook line, which the hook card already shows.
-      if (logo || brief.brand || brief.title || namedBrand)
+      // The CTA names the brand only with a logo or a real name: without a brand, a named brand or a title,
+      // the brand kit's name is the hook line, which the hook card already shows.
+      // With a logo and a name, the lockup draws both; a logo without a brand name stands alone.
+      const ctaName = realName ?? brief.title;
+      if (logo || brief.brand || brandName || brief.title)
         shots.push({
           id: "cta-logo",
           type: "logo",
           startMs: 0,
           durationMs,
-          ...(logo ? { assetId: logo.id } : { text: truncateText(brand.name, 60) }),
+          ...(logo
+            ? { assetId: logo.id, ...(ctaName ? { text: truncateText(ctaName, 60), lockup: true } : {}) }
+            : { text: truncateText(brand.name, 60) }),
           style: {
             textStyle: "heading",
             color: inkOn(brand.palette, fill, "accent"),
@@ -423,23 +496,37 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         animation: { enter, durationMs: 400 },
       });
     } else if (line.layout) {
-      // The device's own choreography is the entrance, so the card itself only fades in.
-      shots.push({
-        id: `${id}-text`,
-        type: i === 0 ? "title" : "text",
-        startMs: 0,
-        durationMs,
-        text: breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio]).slice(0, i === 0 ? 160 : 500),
-        layout: line.layout,
-        style: {
-          textStyle: "heading",
-          color: inkOn(brand.palette, fill, "foreground"),
-          align: "center",
-          region: "middle",
-          ...(aspectRatio === "16:9" ? { emphasis: "high" as const } : {}),
+      // A layout card: the headline sits on top and the layout builds under it. In landscape a headline that
+      // holds on two display lines is set at display size, like every other landscape headline; a longer one
+      // keeps the heading size and its own width, so the layout keeps its room.
+      const display = aspectRatio === "16:9" ? breakLines(line.onScreen, chars) : "";
+      const big = display !== "" && display.split("\n").length <= 2;
+      shots.push(
+        {
+          id: `${id}-text`,
+          type: i === 0 ? "title" : "text",
+          startMs: 0,
+          durationMs,
+          text: (big ? display : breakLines(line.onScreen, LAYOUT_LINE_CHARS[aspectRatio])).slice(0, 160),
+          style: {
+            textStyle: big ? "display" : "heading",
+            color: inkOn(brand.palette, fill, "foreground"),
+            align: "center",
+            region: "top",
+            emphasis: "low",
+          },
+          animation: { enter, exit: motion.exit, durationMs: 400 },
         },
-        animation: { enter: "fade", exit: motion.exit, durationMs: 300 },
-      });
+        {
+          id: `${id}-layout`,
+          type: "layout",
+          startMs: 0,
+          durationMs,
+          layout: line.layout,
+          style: { color: inkOn(brand.palette, fill, "foreground"), align: "center", region: "middle" },
+          animation: { enter: "fade", exit: motion.exit, durationMs: 300 },
+        },
+      );
     } else {
       shots.push({
         id: `${id}-text`,
@@ -455,7 +542,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           region: "middle",
         },
         animation: {
-          enter: line.enter ?? (i === 0 ? "scale" : motion.enter),
+          enter: lockedEnter(style, line.enter ?? (i === 0 ? "scale" : undefined)),
           exit: motion.exit,
           durationMs: 400,
         },
@@ -467,15 +554,18 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       durationMs,
       background: { color: fill },
       shots,
-      ...(i === last ? {} : { transitionOut: motion.transition }),
+      ...(transitions[i] ? { transitionOut: transitions[i] } : {}),
+      camera: cameras[i] as CameraMove,
+      depth,
+      motif: { ...motif, color: inkOn(brand.palette, fill, "accent") },
     };
   });
   const ir: VideoIR = {
     schemaVersion: 1,
-    title: truncateText(brief.title ?? brief.brand?.name ?? unbrandedName, 200),
+    title: truncateText(brief.title ?? brief.brand?.name ?? brandName ?? unbrandedName, 200),
     language,
     format: { aspectRatio, ...ASPECT_RATIO_SIZES[aspectRatio], fps: FPS, durationMs: totalMs },
-    brand: logo ? brand : brandNoLogo,
+    brand: logo ? { ...brand, logoAssetId: logo.id } : brandNoLogo,
     assets: logo ? [logo] : [],
     scenes,
     timeline: buildSequentialTimeline(scenes),
@@ -485,6 +575,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       templateVersion: MOTION_GRAPHIC_TEMPLATE_VERSION,
       styleProfile: style.id,
       bpm: style.bpm,
+      juice: style.juice,
       ...(voiceover ? { voiceover } : {}),
       storyboard: storyboard ? "agent" : "template",
       ...(storyboard?.music ? { music: storyboard.music } : {}),
@@ -492,9 +583,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
   };
   const result = validateVideoIR(ir);
   if (!result.ok) {
-    throw new StudixError("INTERNAL", "The motion-graphic template produced an invalid IR", {
-      details: { issues: result.issues.slice(0, 10) },
-    });
+    throw schemaFailure("INTERNAL", "The motion-graphic template produced an invalid IR", result.issues);
   }
   return result.value;
 }

@@ -7,6 +7,25 @@ import { type RunFfmpegOptions, runFfmpeg } from "./run-process.ts";
 /** Mix sample rate; every delivery carries 48 kHz stereo AAC. */
 export const MIX_SAMPLE_RATE = 48_000;
 
+/** Music under speech reaches its ducked level over this long, ending as the speech starts. */
+export const DUCK_ATTACK_MS = 150;
+/** Music returns to its full level over this long, starting as the speech ends. */
+export const DUCK_RELEASE_MS = 350;
+
+/** Samples per frame of a ducked clip (5 ms at 48 kHz): its gain steps at most this often. */
+const DUCK_FRAME_SAMPLES = 240;
+
+/** Lowers a clip under speech: `gain` (linear, below 1) applies inside each span, with ramps around it. */
+export interface AudioDuck {
+  gain: number;
+  /**
+   * Speech in clip-local time (0 = the clip's first sample on the timeline), ascending and apart by at
+   * least attack + release, so the ramps of two spans never overlap. A span may start before 0 or end
+   * after the clip.
+   */
+  spans: Array<{ startMs: number; endMs: number }>;
+}
+
 /** One placed piece of sound on the absolute timeline, already clamped to its source. */
 export interface AudioClip {
   /** IR audio track id, or the video shot id for clip sound. */
@@ -24,8 +43,8 @@ export interface AudioClip {
   fadeOutMs: number;
   /** Source speed-up (pitch kept); the clip reads `durationMs × rate` of its source. Absent plays as is. */
   rate?: number;
-  /** Lowered by this many dB (ramped) wherever a voice-over or dialogue clip plays. */
-  duckDb?: number;
+  /** Music lowered while voiceover or dialogue plays; absent plays at `volume` throughout. */
+  duck?: AudioDuck;
 }
 
 /** What the planner needs to know about a source file. */
@@ -39,7 +58,8 @@ export interface AudioSourceInfo {
  * Turns IR audio tracks and the sound of unmuted video shots into placed clips. A clip never runs past
  * the video or past the end of its source (after the trim), and its fades are shortened to fit inside
  * it. Video shots whose source has no audio stream contribute nothing; scene video backgrounds are
- * always silent.
+ * always silent. A music track with `duckDb` is lowered by that much while any placed voiceover or
+ * dialogue clip plays; speech stretches closer than attack + release merge into one dip.
  */
 export function planAudioClips(
   ir: VideoIR,
@@ -62,7 +82,9 @@ export function planAudioClips(
     clips.push({ ...clip, file, durationMs, fadeInMs, fadeOutMs });
   };
 
+  const ducked: Array<{ clip: AudioClip; duckDb: number }> = [];
   for (const track of ir.audio ?? []) {
+    const before = clips.length;
     place(
       {
         id: track.id,
@@ -73,11 +95,23 @@ export function planAudioClips(
         fadeInMs: track.fadeInMs ?? 0,
         fadeOutMs: track.fadeOutMs ?? 0,
         rate: track.playbackRate ?? 1,
-        ...(track.duckDb !== undefined && track.duckDb < 0 ? { duckDb: track.duckDb } : {}),
       },
       track.assetId,
       track.durationMs ?? total - track.startMs,
     );
+    const placed = clips[before];
+    if (placed && track.kind === "music" && track.duckDb !== undefined && track.duckDb < 0) {
+      ducked.push({ clip: placed, duckDb: track.duckDb });
+    }
+  }
+  if (ducked.length > 0) {
+    const speech = speechSpans(clips);
+    for (const { clip, duckDb } of ducked) {
+      const spans = speech
+        .map((s) => ({ startMs: s.startMs - clip.startMs, endMs: s.endMs - clip.startMs }))
+        .filter((s) => s.endMs + DUCK_RELEASE_MS > 0 && s.startMs - DUCK_ATTACK_MS < clip.durationMs);
+      if (spans.length > 0) clip.duck = { gain: 10 ** (duckDb / 20), spans };
+    }
   }
 
   const scenes = new Map(ir.scenes.map((s) => [s.id, s]));
@@ -103,72 +137,52 @@ export function planAudioClips(
   return clips;
 }
 
-const sec = (ms: number) => (ms / 1000).toFixed(3);
-
-/** Ducking ramps: the bed starts dipping just before speech and recovers a little after it. */
-const DUCK_ATTACK_MS = 150;
-const DUCK_RELEASE_MS = 300;
-/** Speech windows closer than this stay ducked across the gap, so the bed does not pump between phrases. */
-const DUCK_BRIDGE_MS = 400;
-/** Most windows one ducking envelope carries; beyond that the closest are bridged to bound the expression. */
-const DUCK_MAX_WINDOWS = 64;
-
-type Window = [startMs: number, endMs: number];
-
-/** Absolute spans of every speech clip except `self`, merged where they overlap or nearly touch. */
-function speechWindows(clips: readonly AudioClip[], self: number): Window[] {
+/** Absolute stretches where voiceover or dialogue plays, merged when the music could not recover between. */
+function speechSpans(clips: readonly AudioClip[]): Array<{ startMs: number; endMs: number }> {
   const spans = clips
-    .filter((c, i) => i !== self && (c.kind === "voiceover" || c.kind === "dialogue"))
-    .map((c): Window => [c.startMs, c.startMs + c.durationMs])
-    .sort((a, b) => a[0] - b[0]);
-  const merged: Window[] = [];
+    .filter((c) => c.kind === "voiceover" || c.kind === "dialogue")
+    .map((c) => ({ startMs: c.startMs, endMs: c.startMs + c.durationMs }))
+    .sort((a, b) => a.startMs - b.startMs);
+  const merged: Array<{ startMs: number; endMs: number }> = [];
   for (const span of spans) {
     const last = merged.at(-1);
-    if (last && span[0] - last[1] < DUCK_BRIDGE_MS) last[1] = Math.max(last[1], span[1]);
-    else merged.push([...span]);
-  }
-  while (merged.length > DUCK_MAX_WINDOWS) {
-    let best = 0;
-    for (let i = 1; i < merged.length - 1; i++) {
-      if (merged[i + 1]![0] - merged[i]![1] < merged[best + 1]![0] - merged[best]![1]) best = i;
+    if (last && span.startMs - last.endMs < DUCK_ATTACK_MS + DUCK_RELEASE_MS) {
+      last.endMs = Math.max(last.endMs, span.endMs);
+    } else {
+      merged.push({ ...span });
     }
-    merged[best]![1] = Math.max(merged[best]![1], merged[best + 1]![1]);
-    merged.splice(best + 1, 1);
   }
   return merged;
 }
 
+const sec = (ms: number) => (ms / 1000).toFixed(3);
+
 /**
- * `volume` filter that lowers a clip by `duckDb` inside the speech windows, ramping down over the attack
- * before each window and back up over the release after it. Its `t` is clip-local timeline time (the
- * chain resets timestamps and any tempo change comes before it), so the windows are shifted by the clip
- * start. Undefined when no window touches the clip.
+ * FFmpeg `volume` filter that follows a duck envelope over clip-local time `t`: full level outside the
+ * spans, `gain` inside, linear ramps of attack before and release after each span. Spans are far enough
+ * apart that their ramps never overlap, so the per-span depths add up to at most 1. The expression is
+ * quoted so its commas stay inside the filter.
  */
-function duckFilter(clip: AudioClip, windows: readonly Window[]): string | undefined {
-  if (!clip.duckDb) return undefined;
-  const offset = (ms: number) => (ms < 0 ? `+${sec(-ms)}` : `-${sec(ms)}`);
-  const terms = windows
-    .map(([a, b]): Window => [a - clip.startMs, b - clip.startMs])
-    .filter(([a, b]) => b + DUCK_RELEASE_MS > 0 && a - DUCK_ATTACK_MS < clip.durationMs)
+function duckFilter(duck: AudioDuck): string {
+  const att = sec(DUCK_ATTACK_MS);
+  const rel = sec(DUCK_RELEASE_MS);
+  const depth = duck.spans
     .map(
-      ([a, b]) =>
-        `clip((t${offset(a - DUCK_ATTACK_MS)})/${sec(DUCK_ATTACK_MS)},0,1)*clip((${sec(b + DUCK_RELEASE_MS)}-t)/${sec(DUCK_RELEASE_MS)},0,1)`,
-    );
-  if (terms.length === 0) return undefined;
-  // Bridged windows never overlap by more than their ramps, so the clamped sum is the deepest dip.
-  return `volume=eval=frame:volume='pow(10,${(clip.duckDb / 20).toFixed(4)}*min(1,${terms.join("+")}))'`;
+      (s) =>
+        `clip(min((t-${sec(s.startMs - DUCK_ATTACK_MS)})/${att},(${sec(s.endMs + DUCK_RELEASE_MS)}-t)/${rel}),0,1)`,
+    )
+    .join("+");
+  return `volume=volume='1-${(1 - duck.gain).toFixed(4)}*(${depth})':eval=frame`;
 }
 
 /**
  * filter_complex that places every clip (input i = clips[i]) and sums them without normalisation, so a
  * track's volume is its real gain; the sum is padded or cut to exactly `totalMs`. Loudness is set later.
- * A clip with `duckDb` dips under every voice-over and dialogue clip it overlaps.
  */
 export function audioMixGraph(clips: readonly AudioClip[], totalMs: number): string {
   if (clips.length === 0) throw new StudixError("INTERNAL", "audio mix needs at least one clip");
   const chains = clips.map((clip, i) => {
     const rate = clip.rate ?? 1;
-    const duck = duckFilter(clip, speechWindows(clips, i));
     const filters = [
       `atrim=start=${sec(clip.trimStartMs)}:duration=${sec(clip.durationMs * rate)}`,
       "asetpts=PTS-STARTPTS",
@@ -176,7 +190,9 @@ export function audioMixGraph(clips: readonly AudioClip[], totalMs: number): str
       ...(rate !== 1 ? [`atempo=${rate.toFixed(4)}`] : []),
       `aformat=sample_fmts=fltp:sample_rates=${MIX_SAMPLE_RATE}:channel_layouts=stereo`,
       `volume=${clip.volume.toFixed(4)}`,
-      ...(duck ? [duck] : []),
+      // After atrim/asetpts (and atempo) the frame time is clip-local timeline time, as the spans are. The
+      // gain is set once per frame, so short frames keep the ramps smooth instead of stepping audibly.
+      ...(clip.duck ? [`asetnsamples=n=${DUCK_FRAME_SAMPLES}:p=0`, duckFilter(clip.duck)] : []),
     ];
     if (clip.fadeInMs > 0) filters.push(`afade=t=in:st=0:d=${sec(clip.fadeInMs)}`);
     if (clip.fadeOutMs > 0)

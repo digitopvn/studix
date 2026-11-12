@@ -161,6 +161,44 @@ describe("sped-up tracks", () => {
   });
 });
 
+describe("music ducked under speech", () => {
+  const sources = new Map<string, AudioSourceInfo>([
+    ["/m/music.mp3", { hasAudio: true, durationMs: 30_000 }],
+  ]);
+  const bed = { id: "bed", kind: "music", assetId: "music", startMs: 1000, volume: 1, duckDb: -12 } as const;
+  const line = (id: string, startMs: number, durationMs: number) =>
+    ({ id, kind: "voiceover", assetId: "music", startMs, durationMs, volume: 1 }) as const;
+
+  it("dips a music track with duckDb over each stretch of speech, in clip time, and nothing else", () => {
+    const ir = promoWithClip();
+    ir.audio = [
+      bed,
+      { ...bed, id: "plain", duckDb: undefined },
+      { ...bed, id: "hit", kind: "sfx" },
+      line("a", 2000, 1000),
+      { ...line("b", 4000, 1000), kind: "dialogue" },
+    ];
+    const clips = planAudioClips(ir, files, sources);
+    expect(clips[0]?.duck).toEqual({
+      gain: expect.closeTo(0.2512, 4),
+      spans: [
+        { startMs: 1000, endMs: 2000 },
+        { startMs: 3000, endMs: 4000 },
+      ],
+    });
+    expect(clips.slice(1).every((c) => c.duck === undefined)).toBe(true);
+    expect(audioMixGraph([clips[0]!], 8000).split(";")[0]).toContain(
+      "volume=1.0000,asetnsamples=n=240:p=0,volume=volume='1-0.7488*(clip(min((t-0.850)/0.150,(2.350-t)/0.350),0,1)+clip(min((t-2.850)/0.150,(4.350-t)/0.350),0,1))':eval=frame,adelay=delays=1000:all=1[c0]",
+    );
+  });
+
+  it("leaves the bed alone when no speech plays", () => {
+    const ir = promoWithClip();
+    ir.audio = [bed];
+    expect(planAudioClips(ir, files, sources)[0]?.duck).toBeUndefined();
+  });
+});
+
 describe("audioMixGraph", () => {
   it("trims, levels, fades and delays every clip, then sums without normalisation to the exact length", () => {
     const graph = audioMixGraph(
@@ -197,28 +235,6 @@ describe("audioMixGraph", () => {
       "[1:a:0]atrim=start=0.120:duration=0.300,asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=1.0000,adelay=delays=2500:all=1[c1]",
       "[c0][c1]amix=inputs=2:duration=longest:normalize=0,apad=whole_dur=4.000,atrim=duration=4.000[mix]",
     ]);
-  });
-
-  it("ducks a music bed under speech with ramps, bridging near phrases and shifting to clip time", () => {
-    const base = { trimStartMs: 0, volume: 1, fadeInMs: 0, fadeOutMs: 0 };
-    const line = (id: string, startMs: number, durationMs: number) =>
-      ({ ...base, id, kind: "voiceover", file: id, startMs, durationMs }) as const;
-    const graph = audioMixGraph(
-      [
-        { ...base, id: "bed", kind: "music", file: "bed", startMs: 1000, durationMs: 9000, duckDb: -12 },
-        // 300ms apart: one window, so the bed does not pump between phrases.
-        line("vo1", 2000, 1000),
-        line("vo2", 3300, 700),
-        { ...line("dlg", 7000, 1000), kind: "dialogue" },
-      ],
-      10_000,
-    );
-    expect(graph.split(";")[0]).toContain(
-      "volume=1.0000,volume=eval=frame:volume='pow(10,-0.6000*min(1," +
-        "clip((t-0.850)/0.150,0,1)*clip((3.300-t)/0.300,0,1)+" +
-        "clip((t-5.850)/0.150,0,1)*clip((7.300-t)/0.300,0,1)))',adelay=delays=1000:all=1",
-    );
-    expect(graph.split(";")[1]).not.toContain("eval=frame");
   });
 });
 

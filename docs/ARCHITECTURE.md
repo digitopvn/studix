@@ -264,6 +264,9 @@ the prompt, format, duration and language, it lets you pick:
 
 The body's `agent` has the same shape and checks as the MCP `agent` field
 ([MCP_API.md](MCP_API.md)). A Claude agent works with every pack.
+The body also takes the brief's brand kit fields `brandUrl`, `brandLogo` and
+`brandColors` (same checks as the brief); the API's 256 KB body limit caps an
+uploaded data-URL logo, so a larger logo goes in as an https URL.
 
 ## MCP-in-MCP gateway placement
 

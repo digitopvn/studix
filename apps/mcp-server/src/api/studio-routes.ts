@@ -11,7 +11,7 @@ import {
 } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import { packRegistry } from "@studix/skills";
-import { AspectRatio, LanguageTag, RenderPreset } from "@studix/video-ir";
+import { AspectRatio, CreativeBrief, LanguageTag, RenderPreset } from "@studix/video-ir";
 import { Router } from "express";
 import { z } from "zod";
 import {
@@ -46,6 +46,9 @@ const CreateVideoBody = z
     language: LanguageTag.optional(),
     keyMessages: z.array(z.string().trim().min(1).max(300)).max(10).optional(),
     callToAction: z.string().trim().min(1).max(200).optional(),
+    brandUrl: CreativeBrief.shape.brandUrl,
+    brandLogo: CreativeBrief.shape.brandLogo,
+    brandColors: CreativeBrief.shape.brandColors,
     budgetCents: z.number().int().min(0).max(10_000_000).optional(),
     idempotencyKey: z
       .string()
@@ -140,6 +143,9 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       ...(body.language ? { language: body.language } : {}),
       ...(body.keyMessages?.length ? { keyMessages: body.keyMessages } : {}),
       ...(body.callToAction ? { callToAction: body.callToAction } : {}),
+      ...(body.brandUrl ? { brandUrl: body.brandUrl } : {}),
+      ...(body.brandLogo ? { brandLogo: body.brandLogo } : {}),
+      ...(body.brandColors ? { brandColors: body.brandColors } : {}),
     };
     pack.checkBrief?.(brief);
     const result = await deps.studio.createVideoProject(ctx, {

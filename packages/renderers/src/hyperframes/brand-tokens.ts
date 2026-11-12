@@ -10,7 +10,7 @@ export const COLOR_ROLES: readonly ColorRole[] = [
 ];
 
 /** Neutral palette for IRs without a brand kit. */
-const DEFAULT_PALETTE: Record<ColorRole, string> = {
+export const DEFAULT_PALETTE: Record<ColorRole, string> = {
   primary: "#3b82f6",
   secondary: "#a78bfa",
   accent: "#f59e0b",
@@ -40,7 +40,14 @@ export function cssColor(value: ColorValue): string {
   return value.startsWith("#") ? value : `var(--c-${value})`;
 }
 
-export type FontSlot = "heading" | "body";
+/** A tint of a palette role over the scene fill. */
+export const tint = (role: ColorRole, pct: number) =>
+  `color-mix(in srgb, var(--c-${role}) ${pct}%, transparent)`;
+
+export type FontSlot = "heading" | "body" | "mono";
+
+/** Monospace family for code layouts; bundled like the brand fonts (see bundled-fonts.ts). */
+export const MONO_FONT_FAMILY = "JetBrains Mono";
 
 export interface TextStyleToken {
   /** Font size in px at a 1080 px short frame edge. */
@@ -58,8 +65,31 @@ export const TEXT_STYLES: Record<TextStyleRole, TextStyleToken> = {
   display: { sizeAt1080: 104, weight: 800, lineHeight: 1.2, font: "heading" },
   heading: { sizeAt1080: 68, weight: 700, lineHeight: 1.25, font: "heading" },
   body: { sizeAt1080: 44, weight: 400, lineHeight: 1.4, font: "body" },
-  caption: { sizeAt1080: 40, weight: 500, lineHeight: 1.35, font: "body" },
+  caption: { sizeAt1080: 34, weight: 500, lineHeight: 1.35, font: "body" },
 };
+
+/**
+ * Burned subtitles are read on a phone, often from a landscape frame shown a third of its size, so they are
+ * set larger and bolder than the `caption` text style (small labels inside a card): 44 px at a 1080 px short
+ * edge, about 15 px when a 16:9 frame fills a phone's width.
+ */
+export const BURNED_CAPTION: TextStyleToken = { ...TEXT_STYLES.caption, sizeAt1080: 44, weight: 600 };
+
+/** Burned caption chip: its padding (vertical, horizontal) and the frame edge it keeps off, at 1080. */
+export const BURNED_CAPTION_PAD = { y: 10, x: 22 } as const;
+export const burnedCaptionEdge = (frame: { width: number; height: number }) =>
+  Math.round(0.09 * Math.min(frame.width, frame.height));
+
+/**
+ * Height of the band burned captions take at the bottom of the frame, from its edge: the edge gap and one cue
+ * line on a landscape frame (a cue fits one line there), two on a square or portrait one.
+ */
+export function burnedCaptionBand(frame: { width: number; height: number }): number {
+  const scale = frameScale(frame);
+  const lines = frame.width > frame.height ? 1 : 2;
+  const line = BURNED_CAPTION.sizeAt1080 * BURNED_CAPTION.lineHeight * lines + 2 * BURNED_CAPTION_PAD.y;
+  return burnedCaptionEdge(frame) + Math.round(line * scale);
+}
 
 /** Type scales with the short frame edge so portrait and landscape share one scale. */
 export function frameScale(size: { width: number; height: number }): number {

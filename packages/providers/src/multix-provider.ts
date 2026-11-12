@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -19,9 +19,11 @@ import {
   type ProviderJobInfo,
   type ProviderJobInspector,
   type ProviderJobRef,
+  type SpokenWord,
   type TenantContext,
 } from "@studix/core";
 import { type Clock, type StudixConfig, StudixError, systemClock, toStudixError } from "@studix/shared";
+import { type KeyedLimiter, processAccountLimiter } from "./account-limiter.ts";
 import { InMemoryMediaJobJournal } from "./media-job-journal.ts";
 import { mediaBillingQuantity } from "./media-price-book.ts";
 import {
@@ -99,6 +101,61 @@ export interface MultixProviderOptions {
   clock?: Clock;
   /** How long capability probes (`multix check`, model catalogs) are reused. */
   capabilityTtlMs?: number;
+  /**
+   * Most speech, music and SFX requests one vendor account runs at once in this process
+   * (config.MULTIX_AUDIO_CONCURRENCY). Every job and workspace on the worker shares the account's limit.
+   */
+  audioConcurrency?: number;
+  /** Shared by every provider of the process by default; tests pass their own. */
+  accountLimiter?: KeyedLimiter;
+  /** How a rate-limited request waits before its retry; tests replace it. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
+/** Roles that run synchronously on a speech or audio vendor whose account caps concurrent requests. */
+const AUDIO_ROLES: ReadonlySet<MultixRole> = new Set(["voice", "music", "sfx"]);
+export const DEFAULT_AUDIO_CONCURRENCY = 3;
+/**
+ * Vendors whose speech and audio calls are one POST answered with the audio, so a rate-limit 429 proves
+ * the request was refused before any work. MiniMax music answers with a URL fetched afterwards, where a
+ * 429 could follow a charge, so it is not retried in place.
+ */
+const RATE_LIMIT_RETRY_VENDORS: ReadonlySet<string> = new Set(["elevenlabs", "fish", "openrouter"]);
+/** Retries of one rate-limited audio request before the error goes back to the stage. */
+const RATE_LIMIT_RETRIES = 4;
+const RATE_LIMIT_MAX_WAIT_MS = 60_000;
+
+const abortableSleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new StudixError("CANCELLED", "The request was cancelled"));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new StudixError("CANCELLED", "The request was cancelled"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+/**
+ * A run multix classified as rate limited (HTTP 429 that is not a quota error, exit code 4). The vendor
+ * refused the request before doing any work, so nothing was charged and the same request may run again.
+ */
+function rateLimitWaitMs(err: unknown, retry: number): number | undefined {
+  if (!(err instanceof StudixError) || err.code !== "PROVIDER_ERROR") return undefined;
+  const details = (err.details ?? {}) as {
+    exitCode?: unknown;
+    upstreamCode?: unknown;
+    retryAfterS?: unknown;
+  };
+  if (details.exitCode !== 4 || details.upstreamCode !== "RATE_LIMITED") return undefined;
+  const after = typeof details.retryAfterS === "number" && details.retryAfterS > 0 ? details.retryAfterS : 0;
+  // A vendor asking for a longer wait than a take should hold its stage is left to the stage's own retry.
+  if (after * 1000 > RATE_LIMIT_MAX_WAIT_MS) return undefined;
+  const backoff = 1000 * 2 ** retry + Math.floor(Math.random() * 250);
+  return Math.min(RATE_LIMIT_MAX_WAIT_MS, Math.max(after * 1000, backoff));
 }
 
 export type MultixReadiness = Readonly<Record<string, boolean>>;
@@ -250,6 +307,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
   private readonly workspaceCredentialSource: MultixProviderOptions["workspaceCredentials"];
   /** The workspace keys of the generate or resume call in progress; empty outside one. */
   private readonly workspaceKeys = new AsyncLocalStorage<Readonly<Record<string, string>>>();
+  private readonly audioConcurrency: number;
+  private readonly accountLimiter: KeyedLimiter;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 
   constructor(options: MultixProviderOptions = {}) {
     const bin = options.bin?.trim();
@@ -271,6 +331,9 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     this.journal = options.journal ?? new InMemoryMediaJobJournal();
     this.clock = options.clock ?? systemClock;
     this.capabilityTtlMs = options.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS;
+    this.audioConcurrency = options.audioConcurrency ?? DEFAULT_AUDIO_CONCURRENCY;
+    this.accountLimiter = options.accountLimiter ?? processAccountLimiter;
+    this.sleep = options.sleep ?? abortableSleep;
   }
 
   get enabled(): boolean {
@@ -978,16 +1041,17 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
       job,
       latencyMs: Math.max(0, this.clock.now().getTime() - started),
     });
+    // Speech timings multix saved next to the audio, when the route reports them.
+    const withWords = async (output: GeneratedMedia): Promise<GeneratedMedia> => {
+      if (plan.role !== "voice") return output;
+      const words = await readSpokenWords(`${output.filePath}.timestamps.json`);
+      return words.length > 0 ? { ...output, words } : output;
+    };
     if (existing?.state === "completed" && (await fileSize(file)) > 0) {
       // Records written before the id was derived hold the literal "sync".
       const journaled = existing.job?.id === "sync" ? undefined : existing.job?.id;
       return result(
-        [
-          await withWords(plan, {
-            filePath: file,
-            mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream",
-          }),
-        ],
+        [await withWords({ filePath: file, mime: MIME_BY_EXT[extname(file)] ?? "application/octet-stream" })],
         existing.receiptCents ?? existing.estimatedCostCents,
         existing.receiptCents !== undefined ? "receipt" : "estimate",
         execution(journaled, existing.attempt),
@@ -997,12 +1061,15 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
     assertWithinBudget(estimate, request.maxCostCents, this.id);
     throwIfAborted(request.signal);
     await mkdir(outDir, { recursive: true });
-    const envelope = await this.exec(
-      plan.argv.slice(0, 2).join(" "),
-      this.compose(plan, [...this.maxCostFlags(plan, request), `--output=${file}`]),
-      outDir,
-      plan.waitTimeoutMs + RUN_MARGIN_MS,
-      request.signal,
+    for (const input of plan.files ?? []) await writeFile(join(outDir, input.name), input.content);
+    const envelope = await this.runAudioLimited(plan, request.signal, () =>
+      this.exec(
+        plan.argv.slice(0, 2).join(" "),
+        this.compose(plan, [...this.maxCostFlags(plan, request), `--output=${file}`]),
+        outDir,
+        plan.waitTimeoutMs + RUN_MARGIN_MS,
+        request.signal,
+      ),
     );
     // The run succeeded, so the upstream has charged even if its output turns out unusable.
     const [spentCents, spentSource] = this.settleCost(envelope, undefined, estimate);
@@ -1019,9 +1086,7 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
       throw err instanceof StudixError ? failed(err) : err;
     }
     const outputs = await Promise.all(
-      (await this.outputsIn(envelope, outDir, outDir))
-        .filter((o) => o.filePath === file)
-        .map((o) => withWords(plan, o)),
+      (await this.outputsIn(envelope, outDir, outDir)).filter((o) => o.filePath === file).map(withWords),
     );
     if (outputs.length === 0) {
       throw failed(
@@ -1050,6 +1115,32 @@ export class MultixProvider implements MediaProvider, ProviderJobInspector {
         throw charge ? new MediaChargedError(toStudixError(putErr), charge) : putErr;
       });
     return result(outputs, receipt ?? estimate, receipt !== undefined ? "receipt" : "estimate", ran);
+  }
+
+  /**
+   * Run a speech, music or SFX request within its vendor account's concurrency limit, and retry it in place
+   * when the vendor still answers 429: a refused request was not charged, so failing the stage would only
+   * cost a paid attempt. The slot is released while waiting, so the wait does not hold up other requests.
+   * Other roles run as they are.
+   */
+  private async runAudioLimited<T>(plan: MultixPlan, signal: AbortSignal | undefined, run: () => Promise<T>) {
+    if (!AUDIO_ROLES.has(plan.role)) return run();
+    const vendor = plan.model.vendor;
+    const own = this.workspaceKeys.getStore()?.[MULTIX_VENDOR_KEYS[vendor]];
+    // A workspace's own key is its own account; the platform key is shared by everyone else.
+    const account = `${vendor}:${own ? `workspace-${sha(own)}` : "platform"}`;
+    for (let retry = 0; ; retry += 1) {
+      try {
+        return await this.accountLimiter.run(account, this.audioConcurrency, run, signal);
+      } catch (err) {
+        const wait =
+          retry < RATE_LIMIT_RETRIES && RATE_LIMIT_RETRY_VENDORS.has(vendor)
+            ? rateLimitWaitMs(err, retry)
+            : undefined;
+        if (wait === undefined || signal?.aborted) throw err;
+        await this.sleep(wait, signal);
+      }
+    }
   }
 
   private assertTrustedOutputs(envelope: MultixEnvelope, job?: ProviderJobRef): void {
@@ -1254,80 +1345,81 @@ function paramsOfRole(role: MultixRole): Record<string, unknown> {
   return {};
 }
 
-const MAX_WORDS = 2000;
+const MAX_SPOKEN_WORDS = 2000;
+const MAX_WORD_LENGTH = 200;
+/** Far above the timings of the longest line a speech call takes. */
+const MAX_TIMESTAMPS_BYTES = 16 * 1024 * 1024;
 
-type SpokenWord = NonNullable<GeneratedMedia["words"]>[number];
-
-/**
- * Word timings from an ElevenLabs `<audio>.timestamps.json` (character timings). `alignment` follows the
- * text as written, so it wins over `normalized_alignment`. Words are runs of non-space characters, with
- * their punctuation; a run with no letter or digit is no spoken word. Undefined when neither alignment is
- * usable.
- */
-export function wordsFromAlignment(json: unknown): SpokenWord[] | undefined {
-  if (!isObject(json)) return undefined;
-  return alignmentWords(json.alignment) ?? alignmentWords(json.normalized_alignment);
+interface CharacterAlignment {
+  characters: unknown[];
+  starts: unknown[];
+  ends: unknown[];
 }
 
-function alignmentWords(alignment: unknown): SpokenWord[] | undefined {
-  if (!isObject(alignment)) return undefined;
-  const chars = alignment.characters;
-  const starts = alignment.character_start_times_seconds;
-  const ends = alignment.character_end_times_seconds;
-  if (
-    !Array.isArray(chars) ||
-    !Array.isArray(starts) ||
-    !Array.isArray(ends) ||
-    starts.length !== chars.length ||
-    ends.length !== chars.length
-  ) {
+function characterAlignment(value: unknown): CharacterAlignment | undefined {
+  if (!isObject(value)) return undefined;
+  const { characters, character_start_times_seconds: starts, character_end_times_seconds: ends } = value;
+  if (!Array.isArray(characters) || !Array.isArray(starts) || !Array.isArray(ends)) return undefined;
+  if (characters.length === 0 || starts.length !== characters.length || ends.length !== characters.length) {
     return undefined;
   }
+  return { characters, starts, ends };
+}
+
+const seconds = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+/**
+ * Words from the character timings ElevenLabs reports for speech (`<audio>.timestamps.json` as multix
+ * saves it: `alignment`, else `normalized_alignment`). A word is a run of non-space characters; it starts
+ * when its first character starts and ends when its last one ends, in whole milliseconds. Anything
+ * malformed yields no words rather than an error: the speech itself is fine and already paid for.
+ */
+export function spokenWordsFromTimestamps(json: unknown): SpokenWord[] {
+  if (!isObject(json)) return [];
+  const alignment = characterAlignment(json.alignment) ?? characterAlignment(json.normalized_alignment);
+  if (!alignment) return [];
   const words: SpokenWord[] = [];
   let text = "";
   let startS = 0;
   let endS = 0;
-  const close = () => {
-    if (/[\p{L}\p{N}]/u.test(text) && words.length < MAX_WORDS) {
-      words.push({ text, startMs: Math.round(startS * 1000), endMs: Math.round(endS * 1000) });
+  const flush = () => {
+    if (text !== "" && words.length < MAX_SPOKEN_WORDS) {
+      const startMs = Math.round(startS * 1000);
+      words.push({
+        text: text.slice(0, MAX_WORD_LENGTH),
+        startMs,
+        endMs: Math.max(startMs, Math.round(endS * 1000)),
+      });
     }
     text = "";
   };
-  for (let i = 0; i < chars.length; i++) {
-    const char = chars[i];
-    const start = starts[i];
-    const end = ends[i];
-    if (typeof char !== "string" || !isTime(start) || !isTime(end)) return undefined;
-    if (/^\s*$/u.test(char)) {
-      close();
+  for (let i = 0; i < alignment.characters.length; i += 1) {
+    const char = alignment.characters[i];
+    const start = seconds(alignment.starts[i]);
+    const end = seconds(alignment.ends[i]);
+    if (typeof char !== "string" || start === undefined || end === undefined) return [];
+    if (char.trim() === "") {
+      flush();
       continue;
     }
-    if (text === "") {
-      startS = start;
-      endS = end;
-    }
+    if (text === "") startS = start;
     text += char;
-    endS = Math.max(endS, end);
+    endS = end;
   }
-  close();
-  return words.length > 0 ? words : undefined;
+  flush();
+  return words;
 }
 
-const isTime = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
-
-/**
- * A speech output with the word timings multix saved next to it (`--timestamps`). A missing or unreadable
- * file leaves the output without words; it never fails the call.
- */
-async function withWords(plan: MultixPlan, output: GeneratedMedia): Promise<GeneratedMedia> {
-  if (plan.role !== "voice") return output;
-  let words: SpokenWord[] | undefined;
+/** The words of a timestamps file, or none when it is missing or unreadable. */
+async function readSpokenWords(path: string): Promise<SpokenWord[]> {
+  const size = await fileSize(path);
+  if (size === 0 || size > MAX_TIMESTAMPS_BYTES) return [];
   try {
-    words = wordsFromAlignment(JSON.parse(await readFile(`${output.filePath}.timestamps.json`, "utf8")));
+    return spokenWordsFromTimestamps(JSON.parse(await readFile(path, "utf8")));
   } catch {
-    return output;
+    return [];
   }
-  return words ? { ...output, words } : output;
 }
 
 async function fileSize(path: string): Promise<number> {
@@ -1373,10 +1465,11 @@ export function createMultixProviderFromConfig(
     | "MULTIX_VIDEO_UPSCALE_MODEL"
     | "MULTIX_ALLOW_HOME_ENV"
     | "MULTIX_WAIT_TIMEOUT_SECONDS"
-  >,
+  > &
+    Partial<Pick<StudixConfig, "MULTIX_AUDIO_CONCURRENCY">>,
   options: Omit<
     MultixProviderOptions,
-    "bin" | "models" | "voiceLanguageModels" | "allowHomeEnv" | "waitTimeoutMs"
+    "bin" | "models" | "voiceLanguageModels" | "allowHomeEnv" | "waitTimeoutMs" | "audioConcurrency"
   > = {},
 ): MultixProvider {
   const models: Partial<Record<MultixRole, string>> = {};
@@ -1400,5 +1493,6 @@ export function createMultixProviderFromConfig(
       : {}),
     allowHomeEnv: config.MULTIX_ALLOW_HOME_ENV,
     waitTimeoutMs: config.MULTIX_WAIT_TIMEOUT_SECONDS * 1000,
+    ...(config.MULTIX_AUDIO_CONCURRENCY ? { audioConcurrency: config.MULTIX_AUDIO_CONCURRENCY } : {}),
   });
 }

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createMultixProviderFromConfig,
   InMemoryMediaJobJournal,
+  KeyedLimiter,
   MultixProvider,
   type MultixRunner,
   type MultixRunOptions,
@@ -15,7 +16,7 @@ import {
   parseCheckKeys,
   parseMultixEnvelope,
 } from "../src/index.ts";
-import { wordsFromAlignment } from "../src/multix-provider.ts";
+import { spokenWordsFromTimestamps } from "../src/multix-provider.ts";
 
 /** One scripted CLI reply. `files` are written before the envelope is returned, as multix would. */
 interface Reply {
@@ -1327,30 +1328,6 @@ describe("MultixProvider synchronous audio", () => {
     workDir,
   });
 
-  const alignment = (text: string, step = 0.1) => ({
-    characters: [...text],
-    character_start_times_seconds: [...text].map((_, i) => i * step),
-    character_end_times_seconds: [...text].map((_, i) => (i + 1) * step),
-  });
-  const timings = { alignment: alignment("Xin chào"), normalized_alignment: null };
-
-  it("groups ElevenLabs character timings into words, preferring the alignment of the written text", () => {
-    expect(
-      wordsFromAlignment({ alignment: alignment("Chào, bạn! — ok"), normalized_alignment: alignment("x") }),
-    ).toEqual([
-      { text: "Chào,", startMs: 0, endMs: 500 },
-      { text: "bạn!", startMs: 600, endMs: 1000 },
-      { text: "ok", startMs: 1300, endMs: 1500 },
-    ]);
-    // A malformed alignment falls back to the normalized one; nothing usable gives no words.
-    const bad = { ...alignment("ab"), character_end_times_seconds: [0.1] };
-    expect(wordsFromAlignment({ alignment: bad, normalized_alignment: alignment("hi") })).toEqual([
-      { text: "hi", startMs: 0, endMs: 200 },
-    ]);
-    expect(wordsFromAlignment({ alignment: null, normalized_alignment: bad })).toBeUndefined();
-    expect(wordsFromAlignment("not json")).toBeUndefined();
-  });
-
   it("reports the estimate as the charge when TTS succeeds but wrote no usable output", async () => {
     const cli = scriptedCli((argv) => {
       if (argv.includes("--estimate"))
@@ -1370,7 +1347,7 @@ describe("MultixProvider synchronous audio", () => {
       const out = flagValue(argv, "output")!;
       const copy = join(options.env.MULTIX_OUTPUT_DIR!, "tts.mp3");
       return {
-        files: { [out]: "mp3", [copy]: "mp3", [`${out}.timestamps.json`]: JSON.stringify(timings) },
+        files: { [out]: "mp3", [copy]: "mp3" },
         envelope: { outputs: [{ path: out }, { path: copy }], history_id: "h_1" },
       };
     });
@@ -1385,17 +1362,13 @@ describe("MultixProvider synchronous audio", () => {
       "--model=eleven_multilingual_v2",
     ]);
     expect(tts).toContain("--max-cost=0.10");
-    expect(tts).toContain("--timestamps");
     expect(result).toMatchObject({
       model: "elevenlabs:eleven_multilingual_v2",
       costCents: 1,
       costSource: "estimate",
     });
     expect(result.outputs).toHaveLength(1);
-    expect(result.outputs[0]).toMatchObject({
-      mime: "audio/mpeg",
-      words: [{ text: "Xin" }, { text: "chào" }],
-    });
+    expect(result.outputs[0]).toMatchObject({ mime: "audio/mpeg" });
     expect(await readFile(result.outputs[0]!.filePath, "utf8")).toBe("mp3");
     // multix's duplicate copy is not kept.
     await expect(stat(cli.calls[1]!.options.env.MULTIX_OUTPUT_DIR!)).rejects.toMatchObject({
@@ -1405,6 +1378,215 @@ describe("MultixProvider synchronous audio", () => {
     const again = await multix.generate(ctx, voiceRequest());
     expect(again.outputs).toEqual(result.outputs);
     expect(cli.calls).toHaveLength(2);
+  });
+
+  /** A TTS reply that writes the requested file. */
+  const spoken = (argv: readonly string[]): Reply => {
+    const out = flagValue(argv, "output")!;
+    return { files: { [out]: "mp3" }, envelope: { outputs: [{ path: out }] } };
+  };
+  const estimated: Reply = { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+  const rateLimited = (retryAfterS?: number): Reply => ({
+    exitCode: 4,
+    envelope: {
+      exit_code: 4,
+      error: {
+        code: "RATE_LIMITED",
+        message: "HTTP 429: concurrent_limit_exceeded",
+        retryable: true,
+        ...(retryAfterS !== undefined ? { retry_after_s: retryAfterS } : {}),
+      },
+    },
+  });
+
+  it("retries a rate-limited take in place, honouring retry-after, without failing the request", async () => {
+    let tts = 0;
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate")) return estimated;
+      tts += 1;
+      return tts === 1 ? rateLimited(7) : tts === 2 ? rateLimited() : spoken(argv);
+    });
+    const waits: number[] = [];
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      accountLimiter: new KeyedLimiter(),
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    const result = await multix.generate(ctx, voiceRequest());
+    expect(result.outputs).toHaveLength(1);
+    expect(tts).toBe(3);
+    expect(waits[0]).toBe(7000);
+    expect(waits[1]).toBeGreaterThanOrEqual(2000);
+    expect(waits[1]).toBeLessThan(3000);
+  });
+
+  it("gives a rate limit back after four retries, and never retries other provider failures", async () => {
+    const limited = scriptedCli((argv) => (argv.includes("--estimate") ? estimated : rateLimited()));
+    const sleep = async () => undefined;
+    const first = new MultixProvider({
+      bin: "multix",
+      runner: limited.runner,
+      sleep,
+      accountLimiter: new KeyedLimiter(),
+    });
+    await expect(first.generate(ctx, voiceRequest())).rejects.toMatchObject({
+      code: "PROVIDER_ERROR",
+      retryable: true,
+      details: { upstreamCode: "RATE_LIMITED" },
+    });
+    expect(limited.calls.filter((c) => !c.argv.includes("--estimate"))).toHaveLength(5);
+
+    const unavailable = scriptedCli((argv) =>
+      argv.includes("--estimate")
+        ? estimated
+        : {
+            exitCode: 4,
+            envelope: { exit_code: 4, error: { code: "PROVIDER_UNAVAILABLE", message: "HTTP 503" } },
+          },
+    );
+    const second = new MultixProvider({
+      bin: "multix",
+      runner: unavailable.runner,
+      sleep,
+      accountLimiter: new KeyedLimiter(),
+    });
+    await expect(second.generate(ctx, voiceRequest())).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(unavailable.calls.filter((c) => !c.argv.includes("--estimate"))).toHaveLength(1);
+  });
+
+  it("caps concurrent takes per vendor account across jobs and provider instances", async () => {
+    let running = 0;
+    let peak = 0;
+    const gate: Array<() => void> = [];
+    const runner: MultixRunner = async (argv, options) => {
+      if (argv.includes("--estimate"))
+        return {
+          exitCode: 0,
+          stdout: `${JSON.stringify({ schema: "multix.result/v1", ok: true, estimate: { status: "estimated", high_usd: 0.002 } })}\n`,
+        };
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise<void>((resolve) => gate.push(resolve));
+      running -= 1;
+      const out = flagValue(argv, "output")!;
+      await mkdir(dirname(out), { recursive: true });
+      await writeFile(out, "mp3");
+      return {
+        exitCode: 0,
+        stdout: `${JSON.stringify({ schema: "multix.result/v1", ok: true, outputs: [{ path: out }] })}\n`,
+      };
+    };
+    const limiter = new KeyedLimiter();
+    // Two provider instances, as two workspaces with their own settings on one worker would have.
+    const a = new MultixProvider({ bin: "multix", runner, accountLimiter: limiter, audioConcurrency: 2 });
+    const b = new MultixProvider({ bin: "multix", runner, accountLimiter: limiter, audioConcurrency: 2 });
+    const takes = [a, b, a, b, a].map((p, i) =>
+      p.generate(ctx, { ...voiceRequest(), idempotencyKey: `job-${i}:voice`, prompt: `Line ${i}` }),
+    );
+    for (let released = 0, ticks = 0; released < 5; ticks += 1) {
+      expect(ticks).toBeLessThan(200);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const next = gate.shift();
+      if (next) {
+        expect(running).toBeLessThanOrEqual(2);
+        next();
+        released += 1;
+      }
+    }
+    expect((await Promise.all(takes)).every((r) => r.outputs.length === 1)).toBe(true);
+    expect(peak).toBe(2);
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 0, waiting: 0 });
+  });
+
+  it("frees the account's slot while a take waits to retry", async () => {
+    const limiter = new KeyedLimiter();
+    const held: number[] = [];
+    let tts = 0;
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate")) return estimated;
+      tts += 1;
+      held.push(limiter.load("elevenlabs:platform").active);
+      return tts === 1 ? rateLimited(2) : spoken(argv);
+    });
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      accountLimiter: limiter,
+      sleep: async () => {
+        held.push(limiter.load("elevenlabs:platform").active);
+      },
+    });
+    await multix.generate(ctx, voiceRequest());
+    // Running, waiting (no slot held), running again.
+    expect(held).toEqual([1, 0, 1]);
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 0, waiting: 0 });
+  });
+
+  it("counts a workspace's own key as its own account", async () => {
+    const limiter = new KeyedLimiter();
+    const platform: number[] = [];
+    const cli = scriptedCli((argv) => {
+      if (argv.includes("--estimate")) return estimated;
+      platform.push(limiter.load("elevenlabs:platform").active);
+      return spoken(argv);
+    });
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: cli.runner,
+      accountLimiter: limiter,
+      workspaceCredentials: async () => ({ ELEVENLABS_API_KEY: "own-key" }),
+    });
+    const result = await multix.generate(ctx, voiceRequest());
+    expect(result.funding).toBe("workspace");
+    expect(platform).toEqual([0]);
+  });
+
+  it("leaves a rate limit asking for more than a minute, and MiniMax's, to the stage's own retry", async () => {
+    const long = scriptedCli((argv) => (argv.includes("--estimate") ? estimated : rateLimited(120)));
+    const sleep = async () => undefined;
+    const multix = new MultixProvider({
+      bin: "multix",
+      runner: long.runner,
+      sleep,
+      accountLimiter: new KeyedLimiter(),
+    });
+    await expect(multix.generate(ctx, voiceRequest())).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(long.calls.filter((c) => !c.argv.includes("--estimate"))).toHaveLength(1);
+
+    const minimax = scriptedCli(() => rateLimited());
+    const music = new MultixProvider({
+      bin: "multix",
+      runner: minimax.runner,
+      sleep,
+      accountLimiter: new KeyedLimiter(),
+    });
+    await expect(
+      music.generate(ctx, {
+        ...voiceRequest(),
+        kind: "music",
+        model: "minimax:music-2.0",
+        maxCostCents: 100,
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(minimax.calls.filter((c) => !c.argv.includes("--estimate"))).toHaveLength(1);
+  });
+
+  it("stops waiting for a slot when the request is cancelled", async () => {
+    const limiter = new KeyedLimiter();
+    let release!: () => void;
+    const busy = limiter.run("elevenlabs:platform", 1, () => new Promise<void>((r) => (release = r)));
+    const controller = new AbortController();
+    const waiting = limiter.run("elevenlabs:platform", 1, async () => "ran", controller.signal);
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 1, waiting: 1 });
+    controller.abort();
+    await expect(waiting).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 1, waiting: 0 });
+    release();
+    await busy;
+    expect(limiter.load("elevenlabs:platform")).toEqual({ active: 0, waiting: 0 });
   });
 
   it("speaks a routed language on OpenRouter with its direction, capped by the estimate's high end", async () => {
@@ -1552,6 +1734,116 @@ describe("MultixProvider synchronous audio", () => {
     await expect(
       multix.estimateCostCents({ kind: "sfx", prompt: "door slam", maxCostCents: 50 }),
     ).resolves.toBe(30);
+  });
+
+  describe("speech word timings", () => {
+    const timings = {
+      alignment: {
+        characters: [..."Hi  there"],
+        character_start_times_seconds: [0, 0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7],
+        character_end_times_seconds: [0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8234],
+      },
+      normalized_alignment: null,
+    };
+    const timedRequest = (): MediaGenerationRequest => ({
+      kind: "voice",
+      prompt: "Hi  there",
+      params: { timestamps: true },
+      idempotencyKey: "stage-3:timed",
+      maxCostCents: 10,
+      workDir,
+    });
+    const timedCli = (timestamps: string) =>
+      scriptedCli((argv) => {
+        if (argv.includes("--estimate"))
+          return { envelope: { estimate: { status: "estimated", high_usd: 0.002 } } };
+        const out = flagValue(argv, "output")!;
+        return {
+          files: { [out]: "mp3", [`${out}.timestamps.json`]: timestamps },
+          envelope: { outputs: [{ path: out }] },
+        };
+      });
+
+    it("reads the words of an ElevenLabs take, also when the completed take is reused", async () => {
+      const cli = timedCli(JSON.stringify(timings));
+      const multix = new MultixProvider({ bin: "multix", runner: cli.runner });
+      const result = await multix.generate(ctx, timedRequest());
+      expect(cli.calls[1]!.argv).toContain("--timestamps");
+      const words = [
+        { text: "Hi", startMs: 0, endMs: 200 },
+        { text: "there", startMs: 300, endMs: 823 },
+      ];
+      expect(result.outputs[0]!.words).toEqual(words);
+      const again = await multix.generate(ctx, timedRequest());
+      expect(cli.calls).toHaveLength(2);
+      expect(again.outputs[0]!.words).toEqual(words);
+    });
+
+    it("keeps the paid take without words when its timings are malformed", async () => {
+      const multix = new MultixProvider({ bin: "multix", runner: timedCli("{not json").runner });
+      const result = await multix.generate(ctx, timedRequest());
+      expect(result.outputs).toHaveLength(1);
+      expect(result.outputs[0]!.words).toBeUndefined();
+    });
+
+    it("turns character timings into words, falling back to the normalized alignment", () => {
+      const normalized = { alignment: null, normalized_alignment: timings.alignment };
+      expect(spokenWordsFromTimestamps(normalized).map((w) => w.text)).toEqual(["Hi", "there"]);
+      const short = { alignment: { ...timings.alignment, character_end_times_seconds: [0.1] } };
+      expect(spokenWordsFromTimestamps(short)).toEqual([]);
+      const negative = {
+        alignment: { ...timings.alignment, character_start_times_seconds: Array(9).fill(-1) },
+      };
+      expect(spokenWordsFromTimestamps(negative)).toEqual([]);
+      expect(spokenWordsFromTimestamps(null)).toEqual([]);
+      expect(spokenWordsFromTimestamps({ alignment: "x" })).toEqual([]);
+    });
+  });
+
+  it("writes the composition plan into the run directory before a sectioned ElevenLabs music run", async () => {
+    let written: unknown;
+    const cli = scriptedCli((argv) => {
+      const out = flagValue(argv, "output")!;
+      return {
+        files: { [out]: "mp3" },
+        envelope: { outputs: [{ path: out }] },
+      };
+    });
+    const runner: MultixRunner = async (argv, options) => {
+      const plan = flagValue(argv, "plan");
+      if (plan) written = JSON.parse(await readFile(join(options.cwd, plan), "utf8"));
+      return cli.runner(argv, options);
+    };
+    const multix = new MultixProvider({ bin: "multix", runner });
+    const request: MediaGenerationRequest = {
+      kind: "music",
+      prompt: "warm synth bed",
+      params: {
+        sections: [
+          { name: "intro", durationMs: 10_000 },
+          { name: "drop", durationMs: 20_000, styles: ["big drums"] },
+        ],
+      },
+      idempotencyKey: "stage-2:music",
+      maxCostCents: 50,
+      workDir,
+    };
+    // Billed for the 30 s the sections add up to.
+    await expect(multix.estimateCostCents(request)).resolves.toBe(45);
+    const result = await multix.generate(ctx, request);
+    const argv = cli.calls[0]!.argv;
+    expect(argv).toContain("--plan=composition-plan.json");
+    expect(argv.some((a) => a.startsWith("--prompt=") || a.startsWith("--music-length-ms="))).toBe(false);
+    expect(written).toMatchObject({
+      positive_global_styles: ["warm synth bed"],
+      negative_global_styles: ["vocals"],
+      sections: [
+        { section_name: "intro", duration_ms: 10_000 },
+        { section_name: "drop", duration_ms: 20_000, positive_local_styles: ["big drums"] },
+      ],
+    });
+    expect(result).toMatchObject({ costCents: 45, costSource: "estimate" });
+    expect(result.outputs).toHaveLength(1);
   });
 });
 

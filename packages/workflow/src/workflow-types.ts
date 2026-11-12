@@ -103,6 +103,17 @@ export interface StageServices {
   workRoot?: string;
   /** Where media calls are recorded as `provider_executions` rows; calls go unrecorded when not wired. */
   executions?: ProviderExecutionRecorder;
+  /**
+   * SSRF-guarded GET of a public https URL: every redirect is re-checked, private and metadata addresses are
+   * refused at connect time and the body is capped at `maxBytes`. `url` is the final URL after redirects.
+   * Rejects with a StudixError when the URL is refused or cannot be fetched. Stages without it skip the fetch.
+   */
+  fetchPublic?: (
+    url: string,
+    /** `truncate` keeps the first `maxBytes` of a larger body instead of refusing it. */
+    options: { maxBytes: number; truncate?: boolean },
+    signal: AbortSignal,
+  ) => Promise<{ body: Uint8Array; contentType: string; url: string }>;
 }
 
 /** A media output an earlier job of the tenant paid for and stored, found by the content key of its request. */
@@ -197,6 +208,12 @@ export interface StageDefinition {
    * longer matches is ignored and the stage runs again.
    */
   outputSchema?: z.ZodType;
+  /**
+   * The output an agent hands in for this stage in host mode: the schema `studix_get_agent_task` advertises and
+   * the MCP server checks a submission against. Set by `createAgentStage`; a stage that wraps an agent stage
+   * under another output shape forwards the agent stage's.
+   */
+  hostOutputSchema?: z.ZodType;
   /**
    * Ids of the knowledge packs (`@studix/skills`) this stage works from. The knowledge loader hands a stage
    * exactly these packs and nothing else; a stage without the field loads none.
