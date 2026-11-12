@@ -220,7 +220,18 @@ export interface MultixPlan {
   atlas?: { modelId: string; fields: Record<string, unknown>; uploads: { field: string; path: string }[] };
   /** Sync runs: extension of the file multix writes. */
   outputExt?: string;
+  /**
+   * Sync runs: files the provider writes into the run's directory (the child's working directory) before
+   * the run. argv names them by their bare `name`, which multix resolves against that directory.
+   */
+  files?: MultixPlanFile[];
   waitTimeoutMs: number;
+}
+
+/** A file a run reads, e.g. an ElevenLabs composition plan. `name` is a bare file name. */
+export interface MultixPlanFile {
+  name: string;
+  content: string;
 }
 
 const ASPECT = /^(\d{1,2}:\d{1,2}|auto|adaptive)$/;
@@ -539,15 +550,22 @@ export async function planMultixRequest(
         argv: voiceArgv(model, request.prompt, params, routeVoice),
       };
     }
-    case "music":
+    case "music": {
+      const music = musicPlan(model, request.prompt, params);
       return {
         ...base,
+        // A composition plan is billed for the length of its sections, stated or not.
+        ...(music.totalMs !== undefined && base.assumed
+          ? { assumed: { ...base.assumed, defaultQuantity: Math.ceil(music.totalMs / 1000) } }
+          : {}),
         mode: "sync",
         priced: false,
         outputExt: ".mp3",
         waitTimeoutMs: wait(600_000),
-        argv: musicArgv(model, request.prompt, params),
+        argv: music.argv,
+        ...(music.files ? { files: music.files } : {}),
       };
+    }
     case "sfx": {
       const ms = numberParam(params, "durationMs", 500, 30_000);
       return {
@@ -611,6 +629,9 @@ function voiceArgv(
   const voice = stringParam(params, "voice", TOKEN) ?? routeVoice;
   const language = stringParam(params, "language", LANGUAGE);
   const instructions = instructionsParam(params);
+  // Every route accepts the flag, so a caller can ask for timings without knowing the route; only
+  // ElevenLabs reports them.
+  const timestamps = boolParam(params, "timestamps") === true;
   switch (model.vendor) {
     case "openrouter":
       // The model reads the language from the text; OpenRouter has no language field for speech.
@@ -636,6 +657,8 @@ function voiceArgv(
           ELEVENLABS_SPEECH[model.model]?.languageCode === false ? undefined : language,
         ),
         ...flag("seed", numberParam(params, "seed", 0, 4_294_967_295, true)),
+        // Saves the character timings next to the audio as `<audio>.timestamps.json`.
+        ...(timestamps ? ["--timestamps"] : []),
       ];
     case "fish":
       return [
@@ -660,25 +683,175 @@ function voiceArgv(
 }
 
 const DEFAULT_MUSIC_MS = 30_000;
+const MAX_MUSIC_MS = 300_000;
+const MAX_SECTIONS = 8;
+const MAX_STYLES = 8;
+const MAX_STYLE_LENGTH = 80;
+const MAX_SECTION_NAME = 40;
+const MAX_GLOBAL_STYLE_LENGTH = 400;
+/** The name argv gives the composition plan file the provider writes into the run's directory. */
+export const COMPOSITION_PLAN_FILE = "composition-plan.json";
 
-function musicArgv(model: QualifiedModel, prompt: string, params: Record<string, unknown>): string[] {
+/** One section of a composed music bed, as a request states it. */
+export interface MusicSection {
+  name: string;
+  durationMs: number;
+  styles?: string[];
+}
+
+/**
+ * The ElevenLabs composition plan (`composition_plan` of the music API) for a request with
+ * `params.sections`: the prompt is the global style, each section keeps its own length and styles.
+ */
+export interface ElevenLabsCompositionPlan {
+  positive_global_styles: string[];
+  negative_global_styles: string[];
+  sections: {
+    section_name: string;
+    positive_local_styles: string[];
+    negative_local_styles: string[];
+    duration_ms: number;
+    lines: string[];
+  }[];
+}
+
+const isPlainText = (value: unknown, max: number): value is string =>
+  typeof value === "string" &&
+  value.trim() !== "" &&
+  value.length <= max &&
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is refused.
+  !/[\u0000-\u001f\u007f]/.test(value);
+
+/** An optional list of at most MAX_STYLES short plain-text styles. */
+function stylesParam(value: unknown, name: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_STYLES ||
+    !value.every((style) => isPlainText(style, MAX_STYLE_LENGTH))
+  ) {
+    throw new StudixError(
+      "VALIDATION",
+      `${name} must be at most ${MAX_STYLES} styles of 1..${MAX_STYLE_LENGTH} characters`,
+    );
+  }
+  return value.map((style: string) => style.trim());
+}
+
+/**
+ * `params.sections`: 1..8 sections, each a name of 1..40 characters, an integer `durationMs` in
+ * 3000..120000 and optional `styles`. Their lengths add up to at most five minutes, and to
+ * `params.durationMs` when the request states one.
+ */
+function sectionsParam(params: Record<string, unknown>): MusicSection[] | undefined {
+  const value = params.sections;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_SECTIONS) {
+    throw new StudixError("VALIDATION", `params.sections must be a list of 1..${MAX_SECTIONS} sections`);
+  }
+  const sections = value.map((raw: unknown, i): MusicSection => {
+    const at = `params.sections[${i}]`;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new StudixError("VALIDATION", `${at} must be an object`);
+    }
+    const section = raw as Record<string, unknown>;
+    if (!isPlainText(section.name, MAX_SECTION_NAME)) {
+      throw new StudixError(
+        "VALIDATION",
+        `${at}.name must be plain text of 1..${MAX_SECTION_NAME} characters`,
+      );
+    }
+    const durationMs = numberParam(section, "durationMs", 3_000, 120_000, true);
+    if (durationMs === undefined) {
+      throw new StudixError("VALIDATION", `${at}.durationMs must be an integer in 3000..120000`);
+    }
+    const styles = stylesParam(section.styles, `${at}.styles`);
+    return { name: section.name.trim(), durationMs, ...(styles ? { styles } : {}) };
+  });
+  const total = sections.reduce((sum, s) => sum + s.durationMs, 0);
+  if (total > MAX_MUSIC_MS) {
+    throw new StudixError("VALIDATION", `params.sections must add up to at most ${MAX_MUSIC_MS} ms`, {
+      details: { totalMs: total },
+    });
+  }
+  const stated = params.durationMs;
+  if (stated !== undefined && stated !== total) {
+    throw new StudixError("VALIDATION", "params.sections must add up to params.durationMs", {
+      details: { totalMs: total, durationMs: stated },
+    });
+  }
+  return sections;
+}
+
+/** The composition plan for a sectioned ElevenLabs music request. */
+export function compositionPlan(
+  prompt: string,
+  sections: readonly MusicSection[],
+  negativeStyles: readonly string[] | undefined,
+): ElevenLabsCompositionPlan {
+  const global = prompt.trim().slice(0, MAX_GLOBAL_STYLE_LENGTH);
+  return {
+    positive_global_styles: global === "" ? [] : [global],
+    // A bed sits under a voice-over: keep it instrumental unless the request says otherwise.
+    negative_global_styles: [...(negativeStyles ?? ["vocals"])],
+    sections: sections.map((s) => ({
+      section_name: s.name,
+      positive_local_styles: [...(s.styles ?? [])],
+      negative_local_styles: [],
+      duration_ms: s.durationMs,
+      lines: [],
+    })),
+  };
+}
+
+/**
+ * The music call. MiniMax takes the prompt (and lyrics) only. ElevenLabs takes the prompt and a stated
+ * length, or, with `params.sections`, a composition plan file in place of both; `totalMs` is then the
+ * length the plan bills for.
+ */
+function musicPlan(
+  model: QualifiedModel,
+  prompt: string,
+  params: Record<string, unknown>,
+): { argv: string[]; files?: MultixPlanFile[]; totalMs?: number } {
   if (model.vendor === "minimax") {
     const lyrics = params.lyrics;
     if (lyrics !== undefined && (typeof lyrics !== "string" || lyrics.length > 4000)) {
       throw new StudixError("VALIDATION", "params.lyrics must be a string of at most 4000 characters");
     }
-    return [
-      "minimax",
-      "generate-music",
-      `--prompt=${prompt}`,
-      `--model=${model.model}`,
-      "--output-format=mp3",
-      ...flag("lyrics", lyrics as string | undefined),
-    ];
+    return {
+      argv: [
+        "minimax",
+        "generate-music",
+        `--prompt=${prompt}`,
+        `--model=${model.model}`,
+        "--output-format=mp3",
+        ...flag("lyrics", lyrics as string | undefined),
+      ],
+    };
   }
   // A stated length keeps the price bounded; the model would otherwise choose one.
-  const ms = numberParam(params, "durationMs", 3_000, 300_000, true) ?? DEFAULT_MUSIC_MS;
-  return ["elevenlabs", "music", `--prompt=${prompt}`, `--model=${model.model}`, `--music-length-ms=${ms}`];
+  const ms = numberParam(params, "durationMs", 3_000, MAX_MUSIC_MS, true) ?? DEFAULT_MUSIC_MS;
+  const sections = sectionsParam(params);
+  const negativeStyles = stylesParam(params.negativeStyles, "params.negativeStyles");
+  if (!sections) {
+    return {
+      argv: [
+        "elevenlabs",
+        "music",
+        `--prompt=${prompt}`,
+        `--model=${model.model}`,
+        `--music-length-ms=${ms}`,
+      ],
+    };
+  }
+  const plan = compositionPlan(prompt, sections, negativeStyles);
+  return {
+    // multix sends the plan instead of a prompt and a length; the sections carry the length.
+    argv: ["elevenlabs", "music", `--plan=${COMPOSITION_PLAN_FILE}`, `--model=${model.model}`],
+    files: [{ name: COMPOSITION_PLAN_FILE, content: `${JSON.stringify(plan, null, 2)}\n` }],
+    totalMs: sections.reduce((sum, s) => sum + s.durationMs, 0),
+  };
 }
 
 /** For estimates no file is read: local inputs are checked for shape only and stand in as their path. */
