@@ -136,6 +136,8 @@ export async function repairAuthoredScene(
     );
     return { ir: VideoIR.parse({ ...ir, ...swapped }) };
   } catch (err) {
+    // A render or upload that threw may have left the rejected fix in the tree: put back what the film shows.
+    if (previous) await storeFragment(booked(), compositionId, sceneId, previous).catch(() => undefined);
     if (s.signal.aborted) throw err;
     usage.push(...spentBy(err));
     return {

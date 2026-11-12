@@ -79,6 +79,8 @@ describe("motion-graphic authored hook scene", () => {
       exitCode?: number;
       /** Exit code per sandbox run, in order; `exitCode` once the list runs out. */
       exitCodes?: number[];
+      /** Sandbox run (from 1) that throws instead of answering. */
+      throwOnRun?: number;
       /** Replies per agent, in order; the default reply once a queue runs out. */
       replies?: Record<string, unknown[]>;
     } = {},
@@ -108,6 +110,7 @@ describe("motion-graphic authored hook scene", () => {
     const runner = {
       async run(_s: StageContext, request: CompositionRunRequest) {
         runs.push(request);
+        if (opts.throwOnRun === runs.length) throw new Error("sandbox lost");
         const clip = request.check?.path as string;
         objects.set(`compositions/${request.compositionId}/files/${clip}`, new TextEncoder().encode("mp4"));
         return {
@@ -312,7 +315,7 @@ describe("motion-graphic authored hook scene", () => {
     };
 
     /** Runs the director, then the review over its IR with a stills capture that records what it drew. */
-    async function review(opts: Parameters<typeof setup>[0]) {
+    async function review(opts: Parameters<typeof setup>[0], failCapture?: number) {
       const env = await setup(opts);
       const authored = ((await motionGraphicDirectorStage.run(env.s)).output as { ir: VideoIR }).ir;
       const captured: VideoIR[] = [];
@@ -320,6 +323,7 @@ describe("motion-graphic authored hook scene", () => {
         render: { name: "render", estimateCostCents: () => 5, run: async () => ({ output: {} }) },
         stills: async (_s: StageContext, ir: VideoIR) => {
           captured.push(ir);
+          if (failCapture === captured.length) throw new Error("capture lost");
           return { filePath: join(dir as string, "stills.mp4"), seekMs: ir.scenes.map(() => 0), frames: 1 };
         },
       };
@@ -355,6 +359,29 @@ describe("motion-graphic authored hook scene", () => {
       expect(out.ir.assets.some((a) => a.id === `${hook}-authored`)).toBe(false);
       expect(captured).toHaveLength(2);
       expect(out.visualQa.status).toBe("fixed");
+    });
+
+    it("keeps the repaired clip, not reviewed again, when the capture after the repair fails", async () => {
+      const { out, authored } = await review(
+        { replies: { [MG_VISUAL_QA_STAGE]: [tooSmall], [MG_SCENE_BUILD_AGENT]: [fragment, bigger] } },
+        2,
+      );
+      const hook = authored.scenes[0]?.id as string;
+      expect((out.ir.scenes[0]?.shots[0] as { assetId: string }).assetId).toBe(`${hook}-authored-fix`);
+      expect(out.visualQa.status).toBe("failed");
+      expect(out.visualQa.reason).toMatch(/repaired but not reviewed again: the review capture failed/);
+    });
+
+    it("keeps the current clip and its fragment when the sandbox throws during the repair", async () => {
+      const { out, authored, objects, runs } = await review({
+        throwOnRun: 2,
+        replies: { [MG_VISUAL_QA_STAGE]: [tooSmall], [MG_SCENE_BUILD_AGENT]: [fragment, bigger] },
+      });
+      expect(out.ir).toEqual(authored);
+      expect(out.visualQa.reason).toMatch(/kept its clip: sandbox lost/);
+      const hook = authored.scenes[0]?.id as string;
+      const stored = objects.get(`compositions/${runs[0]?.compositionId}/files/scenes/${hook}.scene.html`);
+      expect(new TextDecoder().decode(stored)).toContain("font-size: 96px");
     });
 
     it("keeps the current clip when the repaired scene fails its render", async () => {

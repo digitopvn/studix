@@ -151,7 +151,10 @@ export async function attemptSceneClip(
     kind: "compute",
     quantity: Math.round(run.durationMs) / 1000,
     unit: "second",
-    costCents: Math.max(1, Math.ceil(run.durationMs / 60_000)) * compositions.centsPerMinute,
+    // Billed minutes never exceed the render timeout the budget reserved.
+    costCents:
+      Math.min(Math.ceil(RENDER_TIMEOUT_SECONDS / 60), Math.max(1, Math.ceil(run.durationMs / 60_000))) *
+      compositions.centsPerMinute,
     metadata: { exitCode: run.exitCode, compositionId: a.compositionId },
   });
   if (run.exitCode === 0 && (!run.check || run.check.passed)) return { ok: true };

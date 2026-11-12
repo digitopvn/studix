@@ -442,8 +442,18 @@ export function motionGraphicRenderStage(render: StageDefinition): StageDefiniti
 
 async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsage[]) {
   let ir = irOf(s);
+  // What a round that still repaired something could not do (a card redesign that failed), for the report.
+  const notes: string[] = [];
   const done = (report: VisualQaReport) => ({
-    output: { ir, visualQa: VisualQaReport.parse(report) },
+    output: {
+      ir,
+      visualQa: VisualQaReport.parse({
+        ...report,
+        ...(notes.length > 0
+          ? { reason: truncateText([report.reason, ...notes].filter(Boolean).join("; "), 500) }
+          : {}),
+      }),
+    },
     usage,
   });
   const skip = skipReason(s, engine);
@@ -624,13 +634,25 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
     if (fixedCards.length === 0) {
       return done({ status: "failed", reason: truncateText(problems.join("; "), 500), rounds });
     }
-    // The IR, storyboard and stills move on together, only once the new stills exist.
+    notes.push(...problems);
+    // The IR, storyboard and stills move on together, only once the new stills exist. A repaired authored
+    // scene is already in the composition tree: its IR is kept even when it cannot be reviewed again.
     try {
       stills = await capture(next);
       ir = next;
       storyboard = nextStoryboard;
     } catch (err) {
       if (s.signal.aborted) throw err;
+      if (fixedScenes.length > 0) {
+        ir = next;
+        storyboard = nextStoryboard;
+        (rounds[rounds.length - 1] as VisualQaReport["rounds"][number]).repaired = fixedCards;
+        return done({
+          status: "failed",
+          reason: `Cards ${fixedCards.join(", ")} were repaired but not reviewed again: the review capture failed: ${messageOf(err)}`,
+          rounds,
+        });
+      }
       return done({ status: "failed", reason: `The review capture failed: ${messageOf(err)}`, rounds });
     }
     (rounds[rounds.length - 1] as VisualQaReport["rounds"][number]).repaired = fixedCards;
