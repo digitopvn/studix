@@ -9,10 +9,12 @@ import { openApproval } from "./approval-operations.ts";
 import { toJobView } from "./job-view.ts";
 import { loadJobView, parseInput, type ResolvedStudioDeps, titleFromPrompt } from "./studio-input.ts";
 import {
+  type AgentRole,
   CreateVideoProjectInput,
   DEFAULT_WORKFLOW_TEMPLATE,
   type JobView,
   type NextAction,
+  TEMPLATE_ROLES,
 } from "./studio-types.ts";
 
 /** Default window for a skill-agent job, counted from its first claim. */
@@ -81,10 +83,14 @@ export async function createVideoProject(
   // the first claim so time spent queued behind other jobs does not eat it.
   const agentAuthored = workflowTemplate === "skill-agent" && input.deadlineAt === undefined;
   const roles = input.roles && Object.keys(input.roles).length > 0 ? input.roles : undefined;
-  if (roles && workflowTemplate !== "skill-agent") {
-    throw new StudixError("VALIDATION", "roles need workflowTemplate skill-agent", {
+  const allowed = TEMPLATE_ROLES[workflowTemplate] ?? [];
+  const extra = roles ? Object.keys(roles).filter((r) => !allowed.includes(r as AgentRole)) : [];
+  if (extra.length > 0) {
+    throw new StudixError("VALIDATION", `roles ${extra.join(", ")} are not taken by ${workflowTemplate}`, {
       retryable: false,
-      suggestedAction: "Set workflowTemplate to skill-agent, or drop roles.",
+      details: { workflowTemplate, roles: extra, allowed },
+      suggestedAction:
+        "skill-agent takes director, builder and qa; motion-graphic takes director (the premium director tier). Drop the others.",
     });
   }
   const deadlineAt =

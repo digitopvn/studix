@@ -137,17 +137,26 @@ export const JobAgentRoles = z
   .strict();
 export type JobAgentRoles = z.infer<typeof JobAgentRoles>;
 
-/** The agent stage names of each role in the skill-agent pack. */
-export const ROLE_STAGES: Readonly<Record<AgentRole, string>> = {
-  director: "skill-agent.director",
-  builder: "skill-agent.run",
-  qa: "skill-agent.qa",
+/**
+ * The agent stage names each role runs: the skill-agent pack's three, and the motion-graphic storyboard, which
+ * a `director` turns into the premium director tier (a stronger model that may hand-write hero cards).
+ */
+export const ROLE_STAGES: Readonly<Record<AgentRole, readonly string[]>> = {
+  director: ["skill-agent.director", "motion-graphic.storyboard"],
+  builder: ["skill-agent.run"],
+  qa: ["skill-agent.qa"],
+};
+
+/** The roles each workflow template accepts; any other template takes none. */
+export const TEMPLATE_ROLES: Readonly<Record<string, readonly AgentRole[]>> = {
+  "skill-agent": AGENT_ROLES,
+  "motion-graphic": ["director"],
 };
 
 /** The agent one stage runs on: its role's agent when the job names one, else the job's `agent`. */
 export function stageAgentSelection(payload: unknown, stage: string): JobAgentSelection | undefined {
   const p = (payload ?? {}) as { agent?: unknown; roles?: unknown };
-  const role = AGENT_ROLES.find((r) => ROLE_STAGES[r] === stage);
+  const role = AGENT_ROLES.find((r) => ROLE_STAGES[r].includes(stage));
   const roles = JobAgentRoles.safeParse(p.roles ?? {});
   const own = role && roles.success ? roles.data[role] : undefined;
   if (own) return own;

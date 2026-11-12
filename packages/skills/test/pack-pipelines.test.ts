@@ -30,8 +30,10 @@ import {
 } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  MG_PREMIUM_LIMITS,
   MG_STAGES,
   MG_STORYBOARD_LIMITS,
+  type MotionStoryboardOutput,
   MV_STAGES,
   motionBeatRange,
   packPipelines,
@@ -1267,6 +1269,97 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     const stages = await h.jobs.listStages(ctx, job.id);
     const out = stages.find((st) => st.name === MG_STAGES.storyboard)?.output;
     expect(out?.fallbackReason).toMatch(/still does not fit after one repair turn/);
+  });
+
+  const director = { runtime: "claude", connectionId: "conn_1", provider: "anthropic" };
+  /** The storyboard with hand-written heroes on the hook (clean) and the middle beat (with a script). */
+  const withHeroes = {
+    ...storyboard,
+    beats: storyboard.beats.map((b, i) => ({
+      ...b,
+      ...(i === 0
+        ? {
+            hero: {
+              html: `<style>.big{color:var(--color-accent)}</style><div class="big"><h1 data-enter="slide-up">${b.onScreen}</h1></div>`,
+            },
+            layout: null,
+          }
+        : i === 1
+          ? { hero: { html: `<h1>${b.onScreen}</h1><script>alert(1)</script>` } }
+          : {}),
+    })),
+  };
+
+  it("runs the premium director tier: bigger caps, hero cards gated by lint, checks and visual QA", async () => {
+    const agent = sequenceAgent([{ storyboard: withHeroes }]);
+    const h = harness({ agent: agent.runtime });
+    const inspected: VideoIR[] = [];
+    h.renderer.inspect = async (ir) => {
+      inspected.push(ir);
+      return { issues: [], snapshots: [] };
+    };
+    const { job, outcome } = await h.run(
+      { workflowTemplate: "motion-graphic", roles: { director } },
+      await newProject(h, "motion-graphic", graphic),
+    );
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // The scripted middle hero earns the repair turn, then is drawn as a built-in card.
+    expect(agent.tasks).toHaveLength(2);
+    expect(agent.tasks[0]?.maxCostCents).toBe(MG_PREMIUM_LIMITS.maxCostCents);
+    expect(agent.tasks[0]?.instructions).toContain("Premium tier");
+    expect((agent.tasks[1]?.input as { repair: { problem: string } }).repair.problem).toMatch(
+      /Beat 2 hero: lint/,
+    );
+    const stages = await h.jobs.listStages(ctx, job.id);
+    const out = stages.find((st) => st.name === MG_STAGES.storyboard)?.output as MotionStoryboardOutput;
+    expect(out.warnings?.[0]).toMatch(/Beat 2 is drawn as a built-in card: lint/);
+    expect(inspected).toHaveLength(1);
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(ir.scenes.map((sc) => sc.shots.map((shot) => shot.type))).toEqual([
+      ["html"],
+      ["text"],
+      ["logo", "cta"],
+    ]);
+  });
+
+  it("draws a hero the visual QA flags, or any hero outside the premium tier, as a built-in card", async () => {
+    const clean = {
+      ...withHeroes,
+      beats: withHeroes.beats.map((b, i) => (i === 1 ? storyboard.beats[1] : b)),
+    };
+    const premium = harness({ agent: mockAgent({ storyboard: clean }).runtime });
+    premium.renderer.inspect = async (ir) => ({
+      issues: [
+        {
+          sceneId: ir.scenes[0]?.id ?? "",
+          shotId: "hook-hero",
+          code: "overflow",
+          message: "h1 leaves the frame",
+        },
+      ],
+      snapshots: [],
+    });
+    const run = await premium.run(
+      { workflowTemplate: "motion-graphic", roles: { director } },
+      await newProject(premium, "motion-graphic", graphic),
+    );
+    expect(premium.failureOf(run.outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    expect(premium.renderer.rendered[0]?.scenes[0]?.shots.map((shot) => shot.type)).toEqual(["title"]);
+    const compose = (await premium.jobs.listStages(ctx, run.job.id)).find(
+      (st) => st.name === MG_STAGES.compose,
+    );
+    expect(compose?.output).toMatchObject({ heroQa: { inspected: 1, dropped: [{ beat: 0 }] } });
+
+    const plain = harness({ agent: mockAgent({ storyboard: clean }).runtime });
+    const base = await plain.run(
+      { workflowTemplate: "motion-graphic" },
+      await newProject(plain, "motion-graphic", graphic),
+    );
+    expect(plain.renderer.rendered[0]?.scenes[0]?.shots.map((shot) => shot.type)).toEqual(["title"]);
+    const board = (await plain.jobs.listStages(ctx, base.job.id)).find(
+      (st) => st.name === MG_STAGES.storyboard,
+    );
+    expect((board?.output as MotionStoryboardOutput).warnings?.[0]).toMatch(/premium director tier/);
   });
 
   it("falls back to the template when the agent's cards cannot each hold their line", async () => {

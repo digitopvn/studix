@@ -166,12 +166,14 @@ Behavior notes:
   brief's aspect ratio, duration within 0.5 s of the brief, audible voice-over, -16 LUFS +/-2 with
   true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
   each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
-- `roles: {director?, builder?, qa?}` (`skill-agent` only, each an `agent` object from any catalogue
+- `roles: {director?, builder?, qa?}` (`skill-agent`; `motion-graphic` takes `director`; each an `agent` object from any catalogue
   runtime and model, e.g. `pi` + `deepseek-v4.1-flash` as builder): the director writes the script and
   direction first; the builder makes the video (default: the job's `agent`); QA watches each render,
   scores taste, motion, brief and audio 0-10 and sends it back with notes below 7, at most 3 rounds.
   Scores land in the version metadata as `review` and on the job page
-  ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)).
+  ([ADR-0024](decisions/0024-client-authoring-and-agent-roles.md)). `motion-graphic` takes `director`
+  only: the premium director tier (see the `motion-graphic` entry below). Any other role, or roles on
+  another template, fail with `VALIDATION`.
 - A stage that finished on its template instead of its agent shows `stages[].fallback` with the
   reason on `studix_get_job`; it is never silent. A job that names its `agent` (or `planner`) never
   falls back: an agent that cannot run fails the job with `UNAVAILABLE`.
@@ -255,7 +257,22 @@ Behavior notes:
   captions are 44 px at a 1080 px short edge, and a layout is centred above
   them. Cards share the style profile's
   background; a high-energy profile fills the call-to-action card with its
-  accent. A script derived from the brief (hook, messages, call to action) is
+  accent. A style profile (70 presets) locks the palette (without a brand kit),
+  the type (bundled fonts; a brand kit's fonts win), the pacing (entrances one
+  beat of its tempo) and the juice (the entrances a card may use, its exit and
+  cut transition). `directions[0].visualStyle` naming a profile id or name (such
+  as `glass-keynote` or `cinematic-product-launch`) locks that profile over the
+  agent's pick. Premium director tier: `roles: {director}` runs the storyboard on
+  that stronger agent with larger caps, and it may hand-write HTML for up to 3
+  hero cards (never the call to action); a host agent may too, inline or as a
+  file written with `studix_composition_write` and named as
+  `hero: {compositionId, path}`. Every hero passes a lint (no scripts, images,
+  links, `@` rules or external `url()`), a check (it shows the beat's on-screen
+  line) and a visual QA before any paid stage (the renderer lints the composition
+  and captures each hero to find content outside the frame or its 3% margin,
+  over the captions, clipped text or a blank card). A hero that fails is drawn as
+  a built-in card, listed in the storyboard stage's `warnings` or the compose
+  stage's `heroQa`. A script derived from the brief (hook, messages, call to action) is
   fitted to the length: message cards go from the last one back, then the
   longest spoken lines are shortened. The hook and call-to-action cards and the
   on-screen text are kept, but their spoken text may be shortened, the call to

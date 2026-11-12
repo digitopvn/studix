@@ -10,6 +10,7 @@ import {
   type ColorRole,
   type CreativeBrief,
   type LayoutSpec,
+  lintHeroHtml,
   type MotionPreset,
   type Scene,
   type Shot,
@@ -157,6 +158,8 @@ interface Line {
   weight?: number;
   /** Built-in layout the storyboard chose to draw under the headline. */
   layout?: LayoutSpec;
+  /** Hand-written hero card markup (premium tier) that replaces the headline and layout. */
+  hero?: string;
 }
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
@@ -344,6 +347,17 @@ function namedInBrief(
   return pattern.exec(briefText(brief).normalize("NFC"))?.[0];
 }
 
+/** A beat's hero markup when it may be drawn: allowed by `heroBeats` and clean under `lintHeroHtml`. */
+function heroOf(
+  beat: MotionStoryboard["beats"][number],
+  i: number,
+  heroBeats: readonly number[] | undefined,
+): string | undefined {
+  const hero = beat.hero;
+  if (!hero || !("html" in hero) || (heroBeats && !heroBeats.includes(i))) return undefined;
+  return lintHeroHtml(hero.html).length === 0 ? hero.html : undefined;
+}
+
 export interface MotionGraphicOptions {
   /** IR assets the brief may reference; only an image matching `brand.logoAssetId` is used. */
   assets?: readonly AssetRef[];
@@ -357,6 +371,11 @@ export interface MotionGraphicOptions {
    * graphic's length. The voice stage passes them after cutting the cards to the measured takes.
    */
   cardMs?: readonly number[];
+  /**
+   * The beats (0-based) whose hero cards may be drawn; the others become built-in cards. Absent, every hero
+   * that passes `lintHeroHtml` is drawn. The compose stage narrows it to the heroes that pass visual QA.
+   */
+  heroBeats?: readonly number[];
 }
 
 /**
@@ -381,12 +400,13 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
   const style = motionStyleOf(brief, storyboard);
   const motion = motionFor(style);
   const lines: Line[] = storyboard
-    ? storyboard.beats.map((b) => ({
+    ? storyboard.beats.map((b, i) => ({
         onScreen: b.onScreen,
         ...(brief.voiceover === false ? {} : { voiceover: b.voiceover }),
         enter: b.enter,
         weight: b.weight,
         ...(b.layout ? { layout: b.layout } : {}),
+        ...(heroOf(b, i, options.heroBeats) ? { hero: heroOf(b, i, options.heroBeats) } : {}),
       }))
     : linesOf(brief, cta, totalMs, language).slice(0, 8);
   const voiceover = lines
@@ -498,6 +518,16 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
           emphasis: "high",
         },
         animation: { enter, durationMs: motion.beatMs },
+      });
+    } else if (line.hero) {
+      // A hero card: the director's own markup fills the card; its elements move in on their data-enter.
+      shots.push({
+        id: `${id}-hero`,
+        type: "html",
+        startMs: 0,
+        durationMs,
+        html: line.hero,
+        animation: { enter, exit: motion.exit, durationMs: motion.beatMs },
       });
     } else if (line.layout) {
       // A layout card: the headline sits on top and the layout builds under it. In landscape a headline that

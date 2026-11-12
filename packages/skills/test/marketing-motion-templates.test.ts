@@ -415,7 +415,7 @@ describe("motion graphic", () => {
       directions: [{ id: "a", name: "a", concept: "a", visualStyle: "Glass Keynote" }],
     };
     expect(motionStyleChoices(brief).map((p) => p.id)).toEqual(["glass-keynote"]);
-    const storyboard = {
+    const storyboard: MotionStoryboard = {
       styleProfile: "manga-ink",
       beats: [
         { onScreen: "Studix", voiceover: "Studix.", visual: "title", enter: "pop", weight: 1 },
@@ -424,7 +424,7 @@ describe("motion graphic", () => {
       ],
       music: null,
       rationale: "x",
-    } as const;
+    };
     const ir = motionGraphicTemplate(brief, { storyboard });
     const glass = MOTION_STYLE_PROFILES.find((p) => p.id === "glass-keynote");
     expect(ir.metadata).toMatchObject({ styleProfile: "glass-keynote" });

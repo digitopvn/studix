@@ -29,5 +29,6 @@ supersedes the old one; accepted ADRs are not rewritten.
 | [0023](0023-workspace-storage-profiles.md)                          | Workspace storage profiles override the platform choice                                     | Accepted |
 | [0024](0024-client-authoring-and-agent-roles.md)                    | Client-authored compositions and director/builder/QA agent roles                            | Accepted |
 | [0025](0025-sidecar-skill-runner.md)                                | Sidecar skill runner for the TOSE worker (extends 0018)                                     | Accepted |
+| [0026](0026-style-profiles-and-premium-hero-cards.md)               | Locked motion style profiles and premium hand-written hero cards with visual QA             | Accepted |
 
 Template: Context, Decision, Consequences, Alternatives considered.

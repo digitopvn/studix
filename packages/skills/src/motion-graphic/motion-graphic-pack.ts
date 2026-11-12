@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import { StudixError, toStudixError } from "@studix/shared";
-import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
+import { AssetRef, CreativeBrief, exportJsonSchemas, RENDER_PRESETS, VideoIR } from "@studix/video-ir";
 import {
   irOf,
   mapBounded,
@@ -66,7 +66,10 @@ export const motionGraphicSkill: Skill = {
     "generated voice-over with burned captions, a soft whoosh on each cut and one SFX accent on the CTA card; " +
     "the agent's storyboard has about one card every five seconds (3–12); the whoosh, accent and music bed " +
     "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
-    "makes a voiceless graphic (on-screen text only). No image-to-video.",
+    "makes a voiceless graphic (on-screen text only). A style profile (70; name one in `directions[0].visualStyle` " +
+    "to lock it) fixes palette, type, pacing and entrances. Premium director tier: `roles.director` (or a host " +
+    "agent) writes the storyboard with a stronger model and may hand-write HTML for up to 3 hero cards, each " +
+    "gated by lint, checks and visual QA. No image-to-video.",
   version: 1,
   get inputSchema() {
     creativeBriefSchema ??= exportJsonSchemas()["creative-brief"];
@@ -85,9 +88,68 @@ const ComposeInput = z.object({
   }),
 });
 type ComposeInput = z.infer<typeof ComposeInput>;
-const IrOutput = z.object({ ir: VideoIR });
+const IrOutput = z.object({
+  ir: VideoIR,
+  /** Visual QA of the hero cards: the issues found and the beats drawn as built-in cards instead. */
+  heroQa: z
+    .object({
+      inspected: z.number().int().min(0),
+      dropped: z.array(
+        z.object({ beat: z.number().int().min(0), issues: z.array(z.string().max(300)).max(10) }),
+      ),
+    })
+    .optional(),
+});
 
-/** Brief, and the agent's storyboard when there is one -> kinetic IR with its voice-over and captions. Free. */
+/** The storyboard beats (0-based) an IR draws as hero cards: scenes are cut one per beat. */
+const heroBeatsOf = (ir: VideoIR) =>
+  ir.scenes.flatMap((scene, i) => (scene.shots.some((shot) => shot.type === "html") ? [i] : []));
+
+/**
+ * The visual QA of the hero cards, before anything is paid for: the renderer lints the composition and
+ * captures each hero card where it settles, and a card with any issue (lint, outside the frame or its safe
+ * margin, over the caption band, clipped text, nothing painted) is drawn as a built-in card. A renderer
+ * that cannot inspect draws every card built-in, so no hero ships unchecked.
+ */
+async function heroVisualQa(s: StageContext, ir: VideoIR, recompose: (heroBeats: number[]) => VideoIR) {
+  const beats = heroBeatsOf(ir);
+  if (beats.length === 0) return { ir };
+  const renderer = s.services.renderer;
+  if (!renderer?.inspect) {
+    const issue = "this worker's renderer cannot run the visual QA";
+    return {
+      ir: recompose([]),
+      heroQa: { inspected: 0, dropped: beats.map((beat) => ({ beat, issues: [issue] })) },
+    };
+  }
+  const workDir = await stageWorkDir(s, MG_STAGES.compose);
+  try {
+    const { issues } = await renderer.inspect(ir, {
+      spec: RENDER_PRESETS.final,
+      workDir,
+      signal: s.signal,
+    });
+    const dropped = beats.flatMap((beat) => {
+      const scene = ir.scenes[beat];
+      const own = issues.filter((issue) => issue.sceneId === scene?.id);
+      return own.length > 0
+        ? [{ beat, issues: own.slice(0, 10).map((x) => truncateText(`${x.code}: ${x.message}`, 300)) }]
+        : [];
+    });
+    const keep = beats.filter((beat) => !dropped.some((d) => d.beat === beat));
+    return {
+      ir: dropped.length > 0 ? recompose(keep) : ir,
+      heroQa: { inspected: beats.length, dropped },
+    };
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * Brief, and the agent's storyboard when there is one -> kinetic IR with its voice-over and captions. Free.
+ * Hero cards of a premium storyboard pass the visual QA (`heroVisualQa`) first.
+ */
 export const motionGraphicComposeStage: StageDefinition = {
   name: MG_STAGES.compose,
   knowledge: ["motion-design", "motion-craft", "composition-timing"],
@@ -103,14 +165,13 @@ export const motionGraphicComposeStage: StageDefinition = {
   },
   async run(s) {
     const input = s.input as ComposeInput;
-    return {
-      output: {
-        ir: motionGraphicTemplate(input.outputs.brief.brief, {
-          assets: input.payload.assets,
-          storyboard: input.outputs[MG_STORYBOARD_STAGE]?.storyboard,
-        }),
-      },
-    };
+    const compose = (heroBeats?: number[]) =>
+      motionGraphicTemplate(input.outputs.brief.brief, {
+        assets: input.payload.assets,
+        storyboard: input.outputs[MG_STORYBOARD_STAGE]?.storyboard,
+        ...(heroBeats ? { heroBeats } : {}),
+      });
+    return { output: await heroVisualQa(s, compose(), compose) };
   },
 };
 
@@ -382,6 +443,8 @@ function recut(s: StageContext, ir: VideoIR, cardMs: readonly number[]): VideoIR
     assets: input.data.payload.assets,
     storyboard: input.data.outputs[MG_STORYBOARD_STAGE]?.storyboard,
     cardMs,
+    // Only the hero cards that passed the visual QA come back.
+    heroBeats: heroBeatsOf(ir),
   });
   const next: VideoIR = {
     ...cut,

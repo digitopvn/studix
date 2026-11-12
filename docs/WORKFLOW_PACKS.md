@@ -337,9 +337,28 @@ image-to-video, audio, render, QA và publish.
 Prompt trơn cũng chạy được: template lấy hook từ `title` hoặc prompt. Brief không có `brand` thì agent
 storyboard trả `brandName` đúng như brief viết (ví dụ "Studix" trong "introducing Studix"); tên đó làm tên
 brand kit, `title` của IR (khi brief không có `title`) và chữ logo ở card CTA. Tên không xuất hiện trong brief
-bị bỏ qua; không có tên nào thì card CTA không hiện tên brand thay vì lặp lại câu hook. Style profile được chọn theo
-`tone`, `objective` và prompt, hoặc theo `directions[0].visualStyle` nếu trùng id một profile trong
-[`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
+bị bỏ qua; không có tên nào thì card CTA không hiện tên brand thay vì lặp lại câu hook. Style profile (70 preset
+port từ thư viện style của ak-motion-video: họ aesthetic, house và brand-inspired, bỏ alias mang tên thương hiệu)
+nằm trong [`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Mỗi profile
+khoá palette (khi brief không có `brand`), type (font heading và body trong bộ font renderer đóng gói, có subset
+tiếng Việt; font của brand kit vẫn thắng), pacing (entrance dài đúng một beat ở giữa dải bpm, 250-700 ms) và juice
+(các entrance được dùng, entrance đầu là mặc định; exit; transition giữa các card). Beat chọn entrance ngoài bộ của
+profile thì nhận entrance mặc định. `directions[0].visualStyle` trùng id hoặc tên một profile (không phân biệt hoa
+thường, ví dụ `glass-keynote` hay "Glass Keynote") là preset bị khoá: nó thắng profile mà agent storyboard chọn.
+Không nêu tên thì agent chọn trong 12 profile hợp brief nhất (cộng kinetic typography), template tự chọn theo
+`tone`, `objective` và prompt.
+
+Premium director tier: job `motion-graphic` có `roles.director` (một agent mạnh hơn) chạy storyboard trên agent
+đó với cap lớn hơn (`MG_PREMIUM_LIMITS`), và agent được viết tay HTML cho tối đa 3 hero card (không bao giờ là card
+CTA). Agent của host (`agentMode: "host"`) cũng là director nên cũng được viết hero; host có thể ghi file HTML bằng
+`studix_composition_write` rồi trỏ `hero: {compositionId, path}`, stage storyboard đọc file vào `hero.html`. Mỗi hero
+qua ba cổng: lint (`lintHeroHtml` trong `@studix/video-ir`: chỉ thẻ và thuộc tính trong allowlist, không script,
+ảnh, link, `@` rule, `url()` ngoài `url(#id)`), check (hero phải hiện đúng dòng `onScreen` của beat, tối đa 3 hero)
+và visual QA trước mọi chi phí (stage compose gọi `RendererAdapter.inspect`: HyperFrames lint composition rồi chụp
+hero ở lúc nó đứng yên để đo phần tử ra ngoài khung hay lề an toàn 3%, đè lên dải caption, chữ bị cắt, hoặc không vẽ
+gì). Hero lỗi lint hay check được trả lại agent trong lượt sửa; hero vẫn lỗi, hero ngoài premium tier và hero bị
+visual QA gắn cờ được vẽ thành card dựng sẵn, kèm `warnings` ở output stage storyboard hoặc `heroQa` ở output stage
+compose. Renderer không có `inspect` thì mọi hero thành card dựng sẵn. Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
 từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất, tới khi mọi card đủ thời gian đọc câu của nó. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
 nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do
