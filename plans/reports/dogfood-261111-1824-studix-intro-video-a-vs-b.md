@@ -116,3 +116,29 @@ Kết luận: A vẫn hơn rõ về độ "film" (UI thật, chiều sâu, khớ
   - visual QA không chấm scene authored.
 - Đang làm: visual QA chấm cả scene authored và có một lượt repair builder; prompt builder có ngưỡng tỉ lệ khung hình.
 - So với A v2: B đã gần về cấu trúc và độ rõ thông tin. A vẫn hơn ở hook điện ảnh và chuyển động của hero. Chưa đạt mức ngang A.
+
+## Vòng 9–13 (12/11/2026): chấm mù B với A v2
+
+Cùng prompt và role (director, builder: kimi-k3.1-pro, high). Judge chỉ xem 9 frame ở các giây cố định, nhãn ngẫu nhiên. Cùng một file A, điểm của A dao động khoảng ±0,3 giữa các lần chấm.
+
+| Vòng | Job | Chi phí | Thời gian | B | A v2 | Thay đổi trước vòng |
+|---|---|---|---|---|---|---|
+| 9 | job_01m77sg2ps8jv0f6jt282napyj | 155¢ | 23 phút | 5,0 | 7,5 | #489: visual QA chấm và sửa scene authored |
+| 10 | job_01m77xa9ywq5h7fz109sycyay6 | 144¢ | 28,5 phút | 5,5 | 7,0 | #491 caption theo cụm, URL dạng viết, safe area; #492 card lấp khung, chip đạt AA, CTA lockup |
+| 11 | job_01m7812qg180gewyfjnva6j5f8 | 156¢ | 25 phút | 6,0 | 7,3 | #494 CTA chỉ có URL, cấm headline mờ, deadline cho redesign QA, màu accent |
+| 12 | job_01m783rwgga2k8r9sqsnrbanxy | 163¢ | 30 phút | 5,6 | 7,3 | #496 cổng check chỉ chặn lỗi lint/runtime, caption không lặp headline, bokeh inset |
+| 13 | job_01m786yk44fa5scc864b5mprzq | 156¢ | 27 phút | 5,6 | 7,4 | #498 kẹp camera của shell, repair layout không bị chặn, card không chỉ có headline |
+
+Lỗi gốc tìm được:
+- Vòng 11: `hyperframes check` 0.8.77 trả exit 1 khi có bất kỳ finding mức error nào, nên hook authored rơi về card. Cổng này có từ trước #491, và log cắt đuôi che mất lỗi.
+- Vòng 12: builder gọi `settleCam(.cam, t0, t1, 4)` nên camera zoom 1→5x và cắt cả hai mép. Lượt repair cắt mép bị bỏ qua vì `lastRuns === 2`, và mọi lời khuyên repair đều nhắm vào cỡ chữ.
+- Vòng 13: hook không còn bị cắt (visual QA 9/10).
+
+Kết luận: điểm B đi ngang quanh 5,5–6. Judge nhất quán nói A là product film (UI sản phẩm liền mạch, một tông màu, CTA có logo khép vòng với hook), còn B là slide deck có bokeh. Contact sheet 1 fps của vòng 13 cho thấy:
+- mỗi card mở đầu khoảng 1 giây gần trống trước khi device hiện;
+- có frame trống ở các điểm cắt (0:04, 0:14, 0:24);
+- headline nhỏ ở trên, device nhỏ ở giữa;
+- có chấm vàng sắc nét ở mép;
+- CTA không có logo, vì brand kit không có logo: đây là thiếu đầu vào, không phải lỗi renderer.
+
+Sửa từng điểm judge chê không còn kéo điểm lên. Bước tiếp theo là đổi hướng thiết kế (tham vấn kongming), cùng sửa cách đo: lấy mẫu ở giữa mỗi scene và dùng 2–3 judge.
