@@ -439,8 +439,8 @@ or a path guard as a security boundary:
   responses there. Media that a page script adds at runtime is ignored unless its source is a
   project-relative path that stays inside the project (or an inline `data:image`), so the producer never reads
   a host file or downloads a URL on its behalf. The compile step before the capture downloads nothing (no
-  media, stylesheet, script or Google Fonts request) and reads or copies no file from outside the project, even when composition text looks like `background:url(https://…)`
-  or markup points to `../` paths.
+  media, stylesheet, script or Google Fonts request) and reads or copies no file from outside the project,
+  even when composition text looks like `background:url(https://…)` or markup points to `../` paths.
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its

@@ -168,9 +168,10 @@ to the exact same version in `packages/renderers/package.json` (currently
   every URL. The producer patch skips script inlining and gives font embedding a
   fetch that always fails, because its Google Fonts request carries the page's
   characters. It also never copies a file from outside the project, and it
-  never converts one as an animated GIF or HEIC image. `engine-launch-options.test.ts` checks that no
-  request reaches the download transport, and the same integration test checks
-  that such markup leaves the frame black
+  never converts one as an animated GIF or HEIC image.
+  `engine-launch-options.test.ts` checks that no request reaches the download
+  transport, and the same integration test checks that such markup leaves the
+  frame black and makes no request
   ([#457](https://github.com/digitopvn/studix/issues/457)). All of these
   patches are keyed to the exact version, like the SIGTERM one below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through
