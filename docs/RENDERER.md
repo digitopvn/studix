@@ -70,7 +70,9 @@ them, and generates every line of the card's script itself.
   - Bare declarations style the card element itself. The renderer's own rule comes after them and always
     wins on placement, clipping and visibility. `contain: paint` keeps fixed-position children inside the
     card.
-  - Palette roles are `var(--c-<role>)`. The bundled brand fonts are `var(--font-heading)` (700 and 800
+  - Palette roles are `var(--c-<role>)`. A `secondary` or `accent` that is missing or the same colour as
+    `primary` is derived from it by an OKLCH hue shift (accent complementary, secondary analogous;
+    `hyperframes/palette-oklch-contrast.ts`), so emphasis never collapses into one colour. A `swatches` layout shows only roles the brand kit really gives and drops derived ones. The bundled brand fonts are `var(--font-heading)` (700 and 800
     bundled) and `var(--font-body)` (400 and 600 bundled).
 - **`tweens`** are validated objects, `{ target, at, duration, from?, to?, ease?, stagger? }`.
   - `target` is a simple selector (at most four parts) resolved with `querySelectorAll` inside the card.
