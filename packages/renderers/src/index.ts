@@ -102,7 +102,11 @@ export {
   sceneLineRanges,
   scenesThrownInLog,
 } from "./hyperframes/director/director-film.ts";
-export { lintDirectorPage } from "./hyperframes/director/director-lint.ts";
+export {
+  ADVISORY_LINT_CODES,
+  isBlockingFinding,
+  lintDirectorPage,
+} from "./hyperframes/director/director-lint.ts";
 export {
   type DirectorMark,
   logoSymbol,

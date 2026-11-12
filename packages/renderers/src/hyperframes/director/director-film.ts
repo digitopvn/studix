@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { frameClippingProblems } from "./check-frame-clipping.ts";
+import { isBlockingFinding } from "./director-lint.ts";
 import { sceneSectionId } from "./scene-fragment.ts";
 
 /**
@@ -340,9 +341,14 @@ export function attributeFilmCheck(
     ["runtime", parsed.data.runtime],
   ] as const) {
     const before = total();
+    let advisory = 0;
     for (const raw of section?.findings ?? []) {
       const f = Finding.safeParse(raw);
       if (!f.success || f.data.severity !== "error") continue;
+      if (!isBlockingFinding(f.data)) {
+        advisory++;
+        continue;
+      }
       const line = [f.data.code, f.data.selector, f.data.message].filter(Boolean).join(" ").slice(0, 300);
       const sid = owner(f.data, name === "runtime");
       if (sid) push(verdict.errors, sid, line);
@@ -350,7 +356,7 @@ export function attributeFilmCheck(
       else verdict.film.push(line);
     }
     // Errors counted but not listed cannot be put on a scene: the whole film falls back, as the scene gate would.
-    const counted = section?.errorCount ?? 0;
+    const counted = (section?.errorCount ?? 0) - advisory;
     if (counted > 0 && total() === before) verdict.film.push(`${name}: ${counted} error(s) without findings`);
   }
   // Layout problems per scene: the clipping reader runs on each scene's own findings.
