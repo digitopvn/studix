@@ -189,7 +189,55 @@ const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const ID = /^[A-Za-z][\w-]*$/;
 const FRAGMENT_URL = /url\(\s*(["']?)#([A-Za-z][\w-]*)\1\s*\)/gi;
 const ANY_URL = /url\(/gi;
-const SCHEME = /(?:^|[\s(,'"])[a-z][a-z0-9+.-]*:/i;
+/**
+ * Attribute values (geometry, paint, transforms) may hold only these characters: no `\\` (a CSS escape),
+ * no `:`, `/` or quotes, so no URL or string can be spelled. Chrome parses paint attributes as CSS.
+ */
+const ATTRIBUTE_VALUE = /^[A-Za-z0-9\s.,%#()+-]*$/;
+/** Functions an attribute value may call: paint colours, SVG transforms and `url(#id)`. */
+const ATTRIBUTE_FUNCTIONS = new Set([
+  "url",
+  "rgb",
+  "rgba",
+  "hsl",
+  "hsla",
+  "translate",
+  "rotate",
+  "scale",
+  "matrix",
+  "skewx",
+  "skewy",
+]);
+const CLASS_VALUE = /^[\w\s-]*$/;
+
+/** Why an attribute value is unsafe, or undefined. */
+function attributeValueProblem(attr: string, value: string): string | undefined {
+  if (attr === "class")
+    return CLASS_VALUE.test(value) ? undefined : "html: class names use letters, digits, - and _ only";
+  if (!ATTRIBUTE_VALUE.test(value))
+    return `html: attribute "${attr}" may hold only numbers, names, colours, transforms and url(#id)`;
+  for (const [, fn] of value.matchAll(/([A-Za-z-]*)\s*\(/g)) {
+    if (!ATTRIBUTE_FUNCTIONS.has((fn ?? "").toLowerCase()))
+      return `html: attribute "${attr}" calls ${fn || "("}(), which is not allowed`;
+  }
+  return balanced(value) ? undefined : `html: attribute "${attr}" has unbalanced brackets`;
+}
+
+/** True when every ( and [ in `value` closes in order. */
+function balanced(value: string): boolean {
+  const open: string[] = [];
+  for (const ch of value) {
+    if (ch === "(" || ch === "[") open.push(ch === "(" ? ")" : "]");
+    else if ((ch === ")" || ch === "]") && open.pop() !== ch) return false;
+  }
+  return open.length === 0;
+}
+
+/**
+ * Text as markup: HTML-escaped, with `(` and `:` as character references too, so no string regex over the
+ * compiled page (the producer localizes `url(https://...)` it finds anywhere) can read a URL in it.
+ */
+const escapeText = (text: string) => escapeHtml(text).replace(/\(/g, "&#40;").replace(/:/g, "&#58;");
 
 /** Rewrite `url(#id)` to the card's namespaced id; true when every `url(` in `value` was a fragment. */
 function namespaceUrls(value: string, cardId: string): { value: string; ok: boolean } {
@@ -216,7 +264,7 @@ function sanitizeHtml(html: string, cardId: string, problems: Set<string>): stri
   const walk = (nodes: readonly ChildNode[], parent: string | undefined, inSvg: boolean): string =>
     nodes
       .map((node) => {
-        if (node.type === "text") return escapeHtml(node.data);
+        if (node.type === "text") return escapeText(node.data);
         if (node.type === "comment") return "";
         if (node.type === "cdata" || node.type === "root" || node.type === "directive") {
           problems.add("html: doctype, CDATA and processing instructions are not allowed");
@@ -255,11 +303,14 @@ function sanitizeHtml(html: string, cardId: string, problems: Set<string>): stri
               continue;
             }
             value = `${cardId}-${value}`;
-          } else if (attr !== "class") {
+          } else {
+            const problem = attributeValueProblem(attr, value);
+            if (problem) {
+              problems.add(problem);
+              continue;
+            }
             const urls = namespaceUrls(value, cardId);
             if (!urls.ok) problems.add("html: url(...) may only point at #ids inside the card");
-            else if (SCHEME.test(value))
-              problems.add(`html: attribute "${attr}" must not contain a URL scheme`);
             value = urls.value;
           }
           attrs.push(` ${attr}="${escapeHtml(value)}"`);
@@ -291,16 +342,23 @@ function sanitizeDeclaration(decl: Declaration, cardId: string, problems: Set<st
   }
   if (decl.important) problems.add("css: !important is not allowed");
   if (/[<{}\\]/.test(decl.value)) problems.add(`css: the value of ${prop} contains < { } or \\`);
+  // The browser ends a string at a raw newline and then reads the rest of the sheet as one open block.
+  if (/[\r\n\f]/.test(decl.value) && /["']/.test(decl.value))
+    problems.add(`css: the value of ${prop} breaks a quoted string across lines`);
+  if (!balanced(decl.value)) problems.add(`css: the value of ${prop} has unbalanced brackets`);
   if (BANNED_FUNCTIONS.test(decl.value))
     problems.add("css: expression(), image-set() and element() are not allowed");
   const urls = namespaceUrls(decl.value, cardId);
   if (!urls.ok) problems.add("css: url(...) may only point at #ids inside the card");
-  return `${prop}: ${urls.value};`;
+  return `${prop}: ${urls.value.replace(/\s+/g, " ")};`;
 }
 
 function selectorProblem(selector: string): string | undefined {
   if (!selector) return "css: empty selector";
   if (UNSAFE_SELECTOR_CHARS.test(selector)) return `css: selector "${selector}" contains < { } \\ ; @ or /`;
+  if (/[\r\n\f]/.test(selector) && /["']/.test(selector))
+    return `css: selector "${selector}" breaks a quoted string across lines`;
+  if (!balanced(selector)) return `css: selector "${selector}" has unbalanced brackets`;
   if (/^[+~]/.test(selector))
     return `css: selector "${selector}" must not start with + or ~ (it would leave the card)`;
   if (selector.includes("*") || selector.includes("&"))

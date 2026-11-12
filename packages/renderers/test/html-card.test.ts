@@ -47,9 +47,22 @@ describe("htmlCardProblems", () => {
       "html: <img> is not allowed (cards use text elements and inline SVG only)",
       "html: <style> is not allowed (cards use text elements and inline SVG only)",
     ]);
-    expect(html('<svg><rect fill="url(https://x.test/a.svg#p)" /></svg>')).toEqual([
-      "html: url(...) may only point at #ids inside the card",
-    ]);
+    // Chrome parses paint attributes as CSS, so escapes and image-set() could spell a URL there.
+    for (const value of [
+      "url(https://x.test/a.svg#p)",
+      "\\75 rl(http\\3a //127.0.0.1/x)",
+      "image-set('//127.0.0.1/x' 1x)",
+      "-webkit-image-set(x 1x)",
+      "url(/x.svg#a)",
+    ])
+      expect(html(`<svg><rect mask="${value}" fill="${value}" /></svg>`).length).toBeGreaterThan(0);
+    expect(html('<svg><rect fill="url(#g)" transform="rotate(-90 50 50)" /></svg>')).toEqual([]);
+    // Card text never reads as a URL to a string regex over the page.
+    const text = sanitizeHtmlCard(
+      { ...CLEAN_CARD, html: "<p>background:url(https://x.test/a.png)</p>" },
+      "c",
+    );
+    expect(text.html).not.toMatch(/url\(|https:/);
     expect(html("<svg><div>x</div></svg><span><div>y</div></span>")).toEqual([
       "html: <div> is not allowed inside <svg>",
       "html: <div> is not allowed inside <span> (inline content only)",
@@ -62,6 +75,11 @@ describe("htmlCardProblems", () => {
     expect(css(".a { background: url(https://x.test/a.png) }")).toEqual([
       "css: url(...) may only point at #ids inside the card",
     ]);
+    // A raw newline ends a CSS string in the browser and would swallow the rest of the sheet.
+    expect(css('.a { content: "x\n("; }')).toContain(
+      "css: the value of content breaks a quoted string across lines",
+    );
+    expect(css(".a { width: calc((1px) }").length).toBeGreaterThan(0);
     expect(css("+ .x { color: red } .a { b: c !important; d: expression(1) }")).toEqual([
       'css: selector "+ .x" must not start with + or ~ (it would leave the card)',
       "css: !important is not allowed",
