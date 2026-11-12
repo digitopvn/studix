@@ -10,6 +10,7 @@ import type {
   MediaGenerationRequest,
   MediaGenerationResult,
   RendererAdapter,
+  StillsOptions,
   StorageAdapter,
   TenantContext,
   UsageEvent,
@@ -40,6 +41,7 @@ import {
   motionBeatRange,
   packPipelines,
   packRegistry,
+  stillWindowsMs,
 } from "../src/index.ts";
 
 const clock = { now: () => new Date() };
@@ -123,25 +125,31 @@ function memoryStorage(): StorageAdapter & { keys(): string[] } {
   };
 }
 
-function fakeRenderer(realVideo = false, failOn?: number): RendererAdapter & { rendered: VideoIR[] } {
+/** A tiny still video, so frames can be read from it. */
+const writeVideo = (filePath: string, durationMs: number) =>
+  execFileSync("ffmpeg", [
+    ...["-nostdin", "-loglevel", "error", "-f", "lavfi"],
+    ...["-i", `color=c=0x336699:s=160x90:r=5:d=${durationMs / 1000}`],
+    ...["-pix_fmt", "yuv420p", "-y", filePath],
+  ]);
+
+function fakeRenderer(
+  realVideo = false,
+  failStillsOn?: number,
+): RendererAdapter & { rendered: VideoIR[]; stilled: { ir: VideoIR; windows: StillsOptions["windows"] }[] } {
   const rendered: VideoIR[] = [];
+  const stilled: { ir: VideoIR; windows: StillsOptions["windows"] }[] = [];
   return {
     id: "hyperframes",
     rendered,
+    stilled,
     supports: () => ({ supported: true, reasons: [] }),
     async render(ir, opts) {
       rendered.push(ir);
-      if (rendered.length === failOn) throw new StudixError("INTERNAL", "renderer crashed");
       for (const asset of ir.assets) expect(opts.assetFiles[asset.id]).toBeDefined();
       const filePath = join(opts.workDir, "out.mp4");
-      if (realVideo) {
-        // A real (tiny, still) video, so frames can be read from it.
-        execFileSync("ffmpeg", [
-          ...["-nostdin", "-loglevel", "error", "-f", "lavfi"],
-          ...["-i", `color=c=0x336699:s=160x90:r=5:d=${ir.format.durationMs / 1000}`],
-          ...["-pix_fmt", "yuv420p", "-y", filePath],
-        ]);
-      } else await writeFile(filePath, `mp4:${ir.title}`);
+      if (realVideo) writeVideo(filePath, ir.format.durationMs);
+      else await writeFile(filePath, `mp4:${ir.title}`);
       return {
         filePath,
         mime: "video/mp4",
@@ -154,6 +162,15 @@ function fakeRenderer(realVideo = false, failOn?: number): RendererAdapter & { r
           bytes: 0,
         },
       };
+    },
+    async stills(ir, opts) {
+      stilled.push({ ir, windows: opts.windows });
+      if (stilled.length === failStillsOn) throw new StudixError("INTERNAL", "capture crashed");
+      for (const asset of ir.assets) expect(opts.assetFiles[asset.id]).toBeDefined();
+      const filePath = join(opts.workDir, "stills.mp4");
+      if (realVideo) writeVideo(filePath, ir.format.durationMs);
+      else await writeFile(filePath, `mp4:${ir.title}`);
+      return { filePath, seekMs: opts.windows.map((w) => w.fromMs), frames: opts.windows.length };
     },
   };
 }
@@ -174,8 +191,8 @@ function harness(
     voiceMs?: (text: string, instructions?: string) => number | undefined;
     /** The fake renderer writes a real video (the visual review reads its frames). */
     realVideo?: boolean;
-    /** The fake renderer throws on this render (1-based). */
-    failRender?: number;
+    /** The fake renderer's stills capture throws on this capture (1-based). */
+    failStills?: number;
     /** Rewrites what the fake made, as a real provider's file and word timings would differ. */
     outputs?: (
       request: MediaGenerationRequest,
@@ -187,7 +204,7 @@ function harness(
   const projects = createInMemoryProjectRepository(clock);
   const renders = createInMemoryRenderRepository(clock);
   const storage = memoryStorage();
-  const renderer = fakeRenderer(options.realVideo, options.failRender);
+  const renderer = fakeRenderer(options.realVideo, options.failStills);
   const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
   const real = media.generate.bind(media);
   const listed = media.capabilities.bind(media);
@@ -1097,7 +1114,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     return { runtime, tasks };
   };
 
-  it("reviews the render, redesigns only the failed card and renders it again, keeping voice and timing", async () => {
+  it("reviews a still per card, redesigns only the failed card and captures it again, then renders once", async () => {
     const { runtime, tasks } = reviewedAgent();
     const h = harness({ agent: runtime, realVideo: true });
     const projectId = await newProject(h, "motion-graphic", graphic);
@@ -1116,8 +1133,11 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(repair.repair.problem).toMatch(/card 2.*too-small/);
 
     // Only card 2 changed: a layout device, its voice line and every card's length kept.
-    const [before, after] = h.renderer.rendered as [VideoIR, VideoIR];
-    expect(h.renderer.rendered).toHaveLength(2);
+    // The review captures stills (one window per card), never a full render; the film renders once, after it.
+    expect(h.renderer.stilled).toHaveLength(2);
+    const [before, after] = h.renderer.stilled.map((c) => c.ir) as [VideoIR, VideoIR];
+    expect(h.renderer.stilled[0]?.windows).toEqual(stillWindowsMs(before));
+    expect(h.renderer.rendered).toEqual([after]);
     expect(after.scenes.map((sc) => sc.durationMs)).toEqual(before.scenes.map((sc) => sc.durationMs));
     expect(after.scenes[0]).toEqual(before.scenes[0]);
     expect(after.scenes[2]).toEqual(before.scenes[2]);
@@ -1137,23 +1157,24 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
       status: "fixed",
       rounds: [{ round: 0, repaired: [2] }, { round: 1 }],
     });
-    expect(h.usage.filter((u) => u.kind === "render.seconds")).toHaveLength(2);
+    expect(h.usage.filter((u) => u.kind === "render.seconds")).toHaveLength(1);
   });
 
-  it("keeps the reviewed render and its IR when the re-render fails, and still ships the job", async () => {
-    const h = harness({ agent: reviewedAgent().runtime, realVideo: true, failRender: 2 });
+  it("keeps the reviewed IR when the second capture fails, and still ships the job", async () => {
+    const h = harness({ agent: reviewedAgent().runtime, realVideo: true, failStills: 2 });
     const projectId = await newProject(h, "motion-graphic", graphic);
     const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
     expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
-    // No third render: the render stage reuses the first one, and the version holds what it drew.
-    expect(h.renderer.rendered).toHaveLength(2);
+    // The version and the one render hold the IR that was reviewed, not the redesign that was never seen.
+    expect(h.renderer.stilled).toHaveLength(2);
+    expect(h.renderer.rendered).toEqual([h.renderer.stilled[0]?.ir]);
     const project = await h.projects.get(ctx, projectId);
     const version = await h.projects.getVersion(ctx, project?.currentVersionId as string);
-    expect(version?.ir).toEqual(h.renderer.rendered[0]);
+    expect(version?.ir).toEqual(h.renderer.stilled[0]?.ir);
     const result = h.queue.complete.mock.calls.at(-1)?.[2] as { visualQa: Record<string, unknown> };
     expect(result.visualQa).toMatchObject({
       status: "failed",
-      reason: expect.stringMatching(/re-render failed/),
+      reason: expect.stringMatching(/capture failed/),
     });
   });
 

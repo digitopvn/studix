@@ -43,4 +43,15 @@ describe("motion-graphic render stage after the visual review", () => {
     await stage.run(s);
     expect(engine.run).toHaveBeenCalledWith(s);
   });
+
+  it("does the full render, billed, when the stills review kept no draft render", async () => {
+    const { engine } = await setup();
+    const stage = motionGraphicRenderStage(engine);
+    const s = {
+      outputs: { [MG_VISUAL_QA_STAGE]: { ir: {}, visualQa: { status: "passed", rounds: [] } } },
+    } as unknown as StageContext;
+    expect(await stage.estimateCostCents?.(s)).toBe(7);
+    expect((await stage.run(s)).output).toMatchObject({ mime: "video/mp4" });
+    expect(engine.run).toHaveBeenCalledWith(s);
+  });
 });
