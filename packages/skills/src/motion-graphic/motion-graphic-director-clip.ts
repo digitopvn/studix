@@ -13,6 +13,7 @@ import {
   buildDirectorProject,
   checkSceneFragment,
   type DirectorProject,
+  frameClippingProblems,
   resolvePalette,
   type SceneFragment,
   sceneFragmentFile,
@@ -93,7 +94,8 @@ export async function storeFragment(
 
 /** Why one attempt gave no clip, or the clip's path in the composition tree. */
 export type ClipAttempt =
-  | { ok: true }
+  /** `layout`: text or UI the check found cut by the frame edge (advisory: the clip rendered). */
+  | { ok: true; layout: string[] }
   | { ok: false; kind: "contract"; problems: string[] }
   | { ok: false; kind: "budget" }
   | { ok: false; kind: "render"; why: string; log: string };
@@ -134,9 +136,14 @@ export async function attemptSceneClip(
     s.job.budgetCents === undefined ? Number.POSITIVE_INFINITY : s.job.budgetCents - s.job.spentCents;
   if (left < sandboxRenderCents(s)) return { ok: false, kind: "budget" };
   await storeTree(s, a.compositionId, await treeFiles(project, a.scene.id, a.built, a.extra));
+  const report = checkReportPath(a.scene.id);
   const run = await compositions.runner.run(booked(), {
     compositionId: a.compositionId,
-    command: `hyperframes check . && hyperframes render . -o ${a.clip} --quiet`,
+    // The check's JSON report is kept so its frame-edge findings (info only, exit 0) can be read back; a
+    // failing check prints it, so the log still says what failed.
+    command:
+      `mkdir -p out && { hyperframes check . --json > ${report} || { cat ${report}; exit 1; }; } && ` +
+      `hyperframes render . -o ${a.clip} --quiet`,
     timeoutSeconds: sceneRenderTimeoutSeconds(a.scene.durationMs),
     check: {
       path: a.clip,
@@ -157,7 +164,9 @@ export async function attemptSceneClip(
       compositions.centsPerMinute,
     metadata: { exitCode: run.exitCode, compositionId: a.compositionId },
   });
-  if (run.exitCode === 0 && (!run.check || run.check.passed)) return { ok: true };
+  if (run.exitCode === 0 && (!run.check || run.check.passed)) {
+    return { ok: true, layout: await frameClipping(s, a.compositionId, report) };
+  }
   const why = run.exitCode !== 0 ? `exit ${run.exitCode}` : (run.check?.problems ?? []).join("; ");
   return { ok: false, kind: "render", why, log: run.log };
 }
@@ -240,5 +249,21 @@ export function withAuthoredClip(ir: VideoIR, sceneId: string, asset: AssetRef, 
 
 /** Path of a scene's fragment in the composition tree. */
 export const fragmentPath = (sid: string) => `scenes/${sid}.scene.html`;
+/** Path of the `hyperframes check --json` report of a scene's last attempt in the composition tree. */
+export const checkReportPath = (sid: string) => `out/${sid}-check.json`;
+
+/**
+ * Frame-edge clipping the check reported for the attempt (`frameClippingProblems`). A report that is
+ * missing or unreadable gives none: the findings only ever add a repair turn, never cost the clip.
+ */
+async function frameClipping(s: StageContext, compositionId: string, path: string): Promise<string[]> {
+  try {
+    const { body } = await s.services.storage!.get(s.ctx, compositionFileKey(compositionId, path));
+    return frameClippingProblems(JSON.parse(await new Response(body).text()));
+  } catch {
+    return [];
+  }
+}
+
 /** Path of the clip rendered for a scene in the composition tree. */
 export const clipPath = (sid: string) => `out/${sid}.mp4`;

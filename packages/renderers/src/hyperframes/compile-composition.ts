@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { StudixError } from "@studix/shared";
 import { resolveSceneSpans, type VideoIR } from "@studix/video-ir";
+import { writtenCaptionText } from "../caption-written-form.ts";
 import {
   DEFAULT_FONT_FAMILY,
   type FontSlot,
@@ -70,7 +71,8 @@ function captionsByScene(ir: VideoIR): Map<string, SceneCaptionCue[]> {
       .map((cue) => ({
         startMs: Math.max(cue.startMs, span.startMs) - span.startMs,
         endMs: Math.min(cue.endMs, span.endMs) - span.startMs,
-        text: cue.text,
+        // The voice reads an address aloud; the burned caption shows it as written.
+        text: writtenCaptionText(cue.text),
       }));
     result.set(span.sceneId, cues);
   }

@@ -1,3 +1,4 @@
+export { LEANING_WORDS, spokenUrlSpans, writtenCaptionText } from "./caption-written-form.ts";
 export { type AudibleSpan, measureAudibleSpan, parseAudibleSpan } from "./ffmpeg/audible-span.ts";
 export {
   type AudioClip,
@@ -80,6 +81,7 @@ export {
   VIDEO_EXTENSIONS,
   writeComposition,
 } from "./hyperframes/compile-composition.ts";
+export { frameClippingProblems } from "./hyperframes/director/check-frame-clipping.ts";
 export {
   buildDirectorProject,
   DIRECTOR_SHELL_VERSION,

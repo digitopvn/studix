@@ -259,7 +259,7 @@ describe("motion-graphic brand kit", () => {
       assetId: "brand-logo",
       text: "Lá Mây",
       lockup: true,
-      style: { textStyle: "heading" },
+      style: { textStyle: "display", region: "middle" },
     });
   });
 

@@ -195,7 +195,7 @@ const HELPERS = Object.entries(SCENE_FRAGMENT_HELPERS)
 
 export const sceneBuildAgent = createAgentStage({
   name: MG_SCENE_BUILD_AGENT,
-  version: 3,
+  version: 4,
   inputSchema: TaskInput,
   outputSchema: BuildOutput,
   cacheable: false,
@@ -213,11 +213,15 @@ export const sceneBuildAgent = createAgentStage({
     "helper animates: give your own containers their own class names.\n" +
     "- `css`: plain rules without at-rules, animations or transitions; Studix scopes every selector to the " +
     "scene. Colours and fonts only from the theme tokens in `theme.tokens` (var(--bg), var(--ink), " +
-    "var(--accent), var(--primary), var(--mute), var(--hair), var(--surface), var(--font-heading), ...). Text " +
+    "var(--accent), var(--primary), var(--mute), var(--hair), var(--surface), var(--font-heading), ...). The " +
+    "film's accent is `theme.filmAccent.token` (the colour every other scene uses): spend it on this scene's " +
+    "highlights and never accent with another colour token, so the scene matches the film. Text " +
     "is at least `frame.minTextPx` px (a floor for small labels, not a size to aim for). Scale: the main " +
     "visual fills most of the frame (at least 60% of its width or height), the headline is at least " +
     "`frame.headlinePx` px, and nothing important sits in a small box or corner. Keep everything above the caption band (`frame.captionBandPx` from the " +
-    "bottom) and `frame.marginPx` from the other edges. No `filter`, blur, `backdrop-filter` or `will-change` " +
+    "bottom) and `frame.marginPx` from the other edges at every moment, camera moves included: size and place " +
+    "the composition so a push-in, zoom or pan never cuts text or key UI at a frame edge (scale it down or keep " +
+    "the camera move small). No `filter`, blur, `backdrop-filter` or `will-change` " +
     "in css or js: they make the render too slow; draw glows with a transparent radial-gradient.\n" +
     "- `js`: the choreography body, run once while the page builds. Every tween goes on `tl` at an absolute " +
     `time; times come from the timing helpers, never from guesses. In scope: ${HELPERS}.\n` +
@@ -234,7 +238,9 @@ export const sceneBuildAgent = createAgentStage({
     REPAIR_RULE +
     " A `repair.issues` path of html, css or js names the part of the fragment that broke the contract or " +
     "failed the HyperFrames check. An issue from the visual review of the rendered scene is fixed by " +
-    "re-laying out and enlarging what it names, which may change any part of the fragment.",
+    "re-laying out and enlarging what it names, which may change any part of the fragment. An issue that " +
+    "starts `layout:` names text the rendered clip cuts at a frame edge: bring it inside the margin for the " +
+    "whole scene (a smaller composition, a gentler camera move or a re-placed element).",
   taskInput: (input) => input,
   limits: MG_SCENE_BUILD_LIMITS,
 });

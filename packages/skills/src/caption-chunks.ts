@@ -1,3 +1,4 @@
+import { LEANING_WORDS as LEANING, spokenUrlSpans } from "@studix/renderers";
 import type { CaptionCue } from "@studix/video-ir";
 
 /** Longest caption cue, in words: a burned caption on a vertical frame stays one or two short lines. */
@@ -7,38 +8,104 @@ export const MIN_CAPTION_WORDS = 2;
 /** Shortest caption cue on screen: a shorter one flashes past unread, so it joins its neighbour. */
 export const MIN_CAPTION_MS = 600;
 
-const CLAUSE_END = /[.,;:!?…]$/;
+/** A word that ends a sentence: the best place for a cue to end. */
+const SENTENCE_END = /[.!?…]["')\]]*$/u;
+/** A word that ends a clause (comma, semicolon, colon, dash): the next best place. */
+const CLAUSE_END = /[,;:\u2013\u2014]["')\]]*$/u;
+/** A lone dash between words ("fast - and cheap") ends a clause too. */
+const DASH = /^[-\u2013\u2014]$/u;
+
+/** English words a cue may start on when no punctuation is near: a new phrase opens with them. */
+const PHRASE_START = new Set(
+  (
+    "and or but so because while when where which that who if than as with without through via for " +
+    "from to at on in into by over under per about across after before during until"
+  ).split(" "),
+);
+
+const bare = (word: string) => word.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 
 /**
- * Split a spoken line into caption chunks of at most `maxWords` words. A chunk ends at clause punctuation
- * when one falls inside the limit, so a cue never breaks a short clause in two; Vietnamese words (one
- * syllable each, diacritics intact) are counted like any other whitespace-separated word. A phone number
- * starts a new chunk rather than break across two, unless that leaves a one-word chunk. A tail shorter than `MIN_CAPTION_WORDS` stays with the
- * chunk before it, which may then run one word over the limit.
+ * How good a cue end before unit `end` is: 4 after a sentence, 3 after a clause (or before a dash), 2
+ * before a word that opens a phrase, 1 anywhere else, 0 after a word that leans on the next one.
+ */
+function breakScore(units: readonly string[], end: number, english: boolean): number {
+  const last = units[end - 1] as string;
+  const next = units[end] ?? "";
+  if (SENTENCE_END.test(last)) return 4;
+  if (CLAUSE_END.test(last) || DASH.test(next)) return 3;
+  if (!english) return 1;
+  const tail = bare(last.split(" ").at(-1) as string);
+  if (LEANING.has(tail)) return 0;
+  return PHRASE_START.has(bare(next.split(" ")[0] as string)) ? 2 : 1;
+}
+
+/**
+ * Where the cue starting at unit `start` ends, inside a window ending at `limit`: the latest sentence end,
+ * else the latest clause end (either leaving at least `MIN_CAPTION_WORDS`), else in the window's second half
+ * the latest place before a phrase opens, else the latest place not after a leaning word, else the same
+ * anywhere in the window. A window with no good place at all ends where it ends.
+ */
+function phraseEnd(units: readonly string[], start: number, limit: number, english: boolean): number {
+  const min = start + Math.min(MIN_CAPTION_WORDS, limit - start);
+  const half = start + Math.ceil((limit - start) / 2);
+  for (const [floor, score] of [
+    [min, 4],
+    [min, 3],
+    [half, 2],
+    [half, 1],
+    [min, 2],
+    [min, 1],
+  ] as const) {
+    for (let e = limit; e >= Math.max(floor, start + 1); e--) {
+      if (breakScore(units, e, english) >= score) return e;
+    }
+  }
+  return limit;
+}
+
+/**
+ * Split a spoken line into caption chunks of at most `maxWords` words. A chunk ends at a phrase boundary
+ * inside the limit (`phraseEnd`: a sentence end, then a clause end, then before a conjunction or
+ * preposition) and, on an English line, never on a word that leans on the next one ("at", "the", "one").
+ * Vietnamese words (one syllable each, diacritics intact) are counted like any other whitespace-separated
+ * word. A spoken web address ("app dot studix dot ai", `spokenUrlSpans`) is one word that never breaks, as
+ * it is burned in its written form. A phone number starts a new chunk rather than break across two, unless
+ * that leaves a one-word chunk. A tail shorter than `MIN_CAPTION_WORDS` stays with the chunk before it,
+ * which may then run one word over the limit.
  */
 export function chunkCaption(text: string, maxWords = MAX_CAPTION_WORDS): string[] {
   maxWords = Math.max(1, Math.floor(maxWords));
   const words = text.normalize("NFC").trim().split(/\s+/).filter(Boolean);
-  const phones = phoneSpans(words);
+  const english = !VIETNAMESE_MARK.test(text.normalize("NFD"));
+  // Units: one per word, except a spoken address, which is one unit of all its words.
+  const unitOf: number[] = [];
+  const units: string[] = [];
+  const urls = spokenUrlSpans(words);
+  for (let i = 0; i < words.length; ) {
+    const url = urls.find(([a]) => a === i);
+    const to = url ? url[1] : i + 1;
+    for (let k = i; k < to; k++) unitOf.push(units.length);
+    units.push(words.slice(i, to).join(" "));
+    i = to;
+  }
+  const phones = phoneSpans(words).map(([a, b]): [number, number] => [
+    unitOf[a] as number,
+    (unitOf[b - 1] as number) + 1,
+  ]);
   const chunks: string[] = [];
   let start = 0;
-  while (start < words.length) {
-    let end = Math.min(words.length, start + maxWords);
-    if (end < words.length) {
-      // Prefer the last clause boundary in the window, unless it would leave a one-word chunk.
-      for (let i = end - 1; i > start; i--) {
-        if (CLAUSE_END.test(words[i] as string)) {
-          end = i + 1;
-          break;
-        }
-      }
+  while (start < units.length) {
+    let end = Math.min(units.length, start + maxWords);
+    if (end < units.length) {
+      end = phraseEnd(units, start, end, english);
       // Never cut through a phone number ("0901 234 567"): end before it, unless that leaves one word.
       const from = phones.find(([a, b]) => a < end && end < b)?.[0];
       if (from !== undefined && from - start >= Math.min(MIN_CAPTION_WORDS, maxWords)) end = from;
       // Never leave an orphan word behind: the end of the line rides with this chunk instead.
-      if (words.length - end < MIN_CAPTION_WORDS && maxWords >= MIN_CAPTION_WORDS) end = words.length;
+      if (units.length - end < MIN_CAPTION_WORDS && maxWords >= MIN_CAPTION_WORDS) end = units.length;
     }
-    chunks.push(words.slice(start, end).join(" "));
+    chunks.push(units.slice(start, end).join(" "));
     start = end;
   }
   return chunks;
