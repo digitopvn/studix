@@ -8,6 +8,7 @@ import {
   COLOR_ROLES,
   cssColor,
 } from "./brand-tokens.ts";
+import { htmlCardScript } from "./html-card-compile.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
 import { writeLayoutMotion } from "./layout-markup.ts";
 import {
@@ -138,10 +139,20 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   const w = new TimelineWriter();
   writeTransition(w, `#${stageId}`, "in", input.transitions.in, scene.durationMs);
   const html = new Map<string, string>();
+  // HTML cards are full-frame layers above the underlay and the regions, below the captions.
+  const cards: string[] = [];
+  const isCard = (shot: Shot) => shot.type === "composition" && markup.htmlCards?.has(shot.assetId) === true;
   for (const shot of scene.shots) {
     const rendered = renderShotMarkup(ctx, shot);
-    html.set(shot.id, rendered.html);
     css.push(...rendered.css);
+    if (shot.type === "composition" && isCard(shot)) {
+      const id = shotDomId(prefix, shot.id);
+      cards.push(rendered.html);
+      writeShotMotion(w, `#${id}`, shot, scene.durationMs, markup.frame);
+      w.lines.push(...htmlCardScript(id, shot, markup.htmlCards!.get(shot.assetId)!, markup.frame));
+      continue;
+    }
+    html.set(shot.id, rendered.html);
     const align = shot.style?.align ?? "center";
     css.push(cssRule(`#${shotDomId(prefix, shot.id)}`, [`justify-self: ${JUSTIFY[align]};`]));
     // Full-bleed shots sit in the underlay behind the flowing regions.
@@ -151,7 +162,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
   }
 
   const regions = REGIONS.map((region) => {
-    const shots = scene.shots.filter((s) => (s.style?.region ?? "middle") === region);
+    const shots = scene.shots.filter((s) => !isCard(s) && (s.style?.region ?? "middle") === region);
     const lanes = assignLanes(shots).map(
       (lane) => `<div class="lane">${lane.map((s) => html.get(s.id)).join("")}</div>`,
     );
@@ -178,6 +189,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       `    <div id="${stageId}" data-scene-role="${scene.role}">`,
       `      <div class="underlay">${underlay.join("")}</div>`,
       `      <div class="content">${regions.join("")}</div>`,
+      ...cards.map((card) => `      ${card}`),
       captionHtml ? `      ${captionHtml}` : "",
       "    </div>",
       "    <style>",

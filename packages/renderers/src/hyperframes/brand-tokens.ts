@@ -10,7 +10,7 @@ export const COLOR_ROLES: readonly ColorRole[] = [
 ];
 
 /** Neutral palette for IRs without a brand kit. */
-const DEFAULT_PALETTE: Record<ColorRole, string> = {
+export const DEFAULT_PALETTE: Record<ColorRole, string> = {
   primary: "#3b82f6",
   secondary: "#a78bfa",
   accent: "#f59e0b",

@@ -1,12 +1,12 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { toStudixError } from "@studix/shared";
 import {
   HTML_CARD_FORMAT,
   HTML_CARD_MIME,
   type HtmlCardPackage,
   htmlCardProblems,
 } from "@studix/renderers/html-card";
+import { toStudixError } from "@studix/shared";
 import { type AssetRef, type Scene, VideoIR } from "@studix/video-ir";
 import {
   irOf,
@@ -19,7 +19,11 @@ import {
 } from "@studix/workflow";
 import { z } from "zod";
 import { truncateText } from "../vietnamese-safe-text.ts";
-import { MG_STORYBOARD_STAGE, type MotionHeroCard, MotionStoryboardOutput } from "./motion-graphic-storyboard.ts";
+import {
+  MG_STORYBOARD_STAGE,
+  type MotionHeroCard,
+  MotionStoryboardOutput,
+} from "./motion-graphic-storyboard.ts";
 
 export const MG_HEROES_STAGE = "motion-graphic.heroes";
 
@@ -88,7 +92,12 @@ export const motionGraphicHeroesStage: StageDefinition = {
           workDir,
         });
         if (lint.errors.length > 0) {
-          warnings.push(rejected(hero.beat, lint.errors.map((e) => `lint: ${e}`)));
+          warnings.push(
+            rejected(
+              hero.beat,
+              lint.errors.map((e) => `lint: ${e}`),
+            ),
+          );
           continue;
         }
         const file = join(workDir, `${scene.id}.card.json`);
@@ -121,6 +130,8 @@ export const motionGraphicHeroesStage: StageDefinition = {
               durationMs: scene.durationMs,
               assetId: asset.id,
               style: { region: "full" },
+              // The card animates itself; the scene transition already carries it in.
+              animation: { enter: "none", exit: "none" },
             },
           ],
         };

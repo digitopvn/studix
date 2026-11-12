@@ -1,6 +1,6 @@
 import { JobAgentRoles, stageAgentSelection } from "@studix/core";
-import { StudixError, toStudixError } from "@studix/shared";
 import { HTML_CARD_LIMITS } from "@studix/renderers/html-card";
+import { StudixError, toStudixError } from "@studix/shared";
 import { ASPECT_RATIO_SIZES, CreativeBrief, LayoutSpec, MotionPreset } from "@studix/video-ir";
 import {
   createAgentStage,
@@ -84,7 +84,11 @@ export function motionBeatRange(durationMs: number): { target: number; min: numb
  * beat `beat` (0-based, never the call to action). Checked by the heroes stage (safety rules, linter) before use.
  */
 export const MotionHeroCard = z.object({
-  beat: z.number().int().min(0).max(MG_MAX_BEATS - 2),
+  beat: z
+    .number()
+    .int()
+    .min(0)
+    .max(MG_MAX_BEATS - 2),
   html: z.string().min(1).max(HTML_CARD_LIMITS.htmlChars),
   css: z.string().max(HTML_CARD_LIMITS.cssChars),
   script: z.string().max(HTML_CARD_LIMITS.scriptChars),
@@ -187,7 +191,8 @@ const PREMIUM_INSTRUCTIONS =
   "card of `premium.frame` size: `html` is markup only (div, span, p, h1-h3, inline svg; never script, style, " +
   "img, video, link, iframe, form, on* attributes or any URL) and shows the beat's on-screen line; `css` is " +
   "nested under the card root, so write `.title { ... }`, uses var(--c-background), var(--c-foreground), " +
-  "var(--c-primary), var(--c-accent), var(--font-heading) and var(--font-body), sizes in % or vw/vh, and " +
+  "var(--c-primary), var(--c-accent), and only var(--font-heading) or var(--font-body) as font-family, sizes in " +
+  "% or vmin (never px: the card renders at preview and final sizes), and " +
   "keeps the bottom 18% clear for the burned captions (no @import, @font-face or url() but url(#id)); " +
   "`script` is the body of function (tl, root, frame): add tweens only to the paused GSAP timeline `tl`, at " +
   "seconds from the card start (0 to frame.duration), find elements with root.querySelector, and use no " +

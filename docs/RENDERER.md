@@ -16,6 +16,7 @@ records the contract and the measurements behind it.
 | Sound of an unmuted video shot     | Joins the mix at the shot's absolute time, clamped to the shot window                                                                                                                                                                                                                                                                                                                     |
 | Layout shot                        | Built-in layout drawn from typed content (`prompt-box`, `code`, `chips`, `checklist`, `counter`, `cards-row`, `swatches`, `stat`) in palette roles, its parts built in by the same seek-safe GSAP timeline (`hyperframes/layout-markup.ts`); code uses bundled JetBrains Mono. A landscape (wider than tall) frame draws it 1.25x larger, and it is centred above the burned-caption band |
 | Composition shot (film scene)      | Captured first by the ported film engine (`film-engine/film-composition-render.ts`), each scene as its own HyperFrames root composition, then spliced back as a muted video shot                                                                                                                                                                                                          |
+| Composition shot (HTML card)       | Compiled inline as a full-frame card layer above the scene shots and below the captions (`hyperframes/html-card-compile.ts`); see [HTML cards](#html-cards)                                                                                                                                                                                                                               |
 
 Media types: images `png/jpeg/webp/gif/avif/svg`, video `mp4/webm/mov`, audio any
 `audio/*` FFmpeg decodes. `hyperframesSupport()` reports anything else instead of
@@ -37,6 +38,50 @@ Packs author scenes through `@studix/renderers/film-scene`, which has no browser
 `filmPlateScene` builds a one-shot scene that moves a still: a camera push towards a focus point
 and, optionally, particle weather (`petal`, `sakura`, `snow`, `ember`, `leaf`, `ash`). The
 narrative packs use it for T0/T1 shots instead of an image-to-video call.
+
+### HTML cards
+
+A composition shot can also name a code asset of type `application/vnd.studix.html-card+json`:
+`{ format: "studix.html-card", version: 1, html, css, script }` (`hyperframes/html-card.ts`, up to
+16,000 / 12,000 / 12,000 characters). The card is an agent-authored full-frame layer, compiled into
+the scene composition instead of being captured separately:
+
+- `html` goes inside `<div id="…" class="html-card">`, absolutely positioned over the whole frame. The
+  card element fades in and out with the shot like any other shot.
+- `css` is nested under the card id with native CSS nesting, so it cannot style anything else.
+  Palette roles are `var(--c-<role>)`. The bundled brand fonts are `var(--font-heading)` (700 and 800
+  bundled) and `var(--font-body)` (400 and 600 bundled).
+- `script` is the body of `function (tl, root, frame)`. It adds tweens to `tl`, a GSAP sub-timeline that
+  starts at the shot start, with times in seconds from that start. `root` is the card element, so query
+  it with `root.querySelector(…)`. `frame` is `{ width, height, duration }`, where `duration` is the card
+  length in seconds.
+
+`htmlCardProblems()` enforces a deny-list before anything compiles. Each problem names the field and
+the rule:
+
+- `html` rejects `<script>`, `<iframe>`, `<object>`, `<embed>`, `<link>`, `<meta>`, `<base>`, `<form>`,
+  `<img>`, `<video>`, `<audio>`, `<source>`, `<template>` and `<style>`. It also rejects inline `on*`
+  handlers, `javascript:`, `http(s)` and `//` URLs, and `href`, `src` or `url()` targets other than `#id`
+  or `data:`. SVG `xmlns` declarations are allowed.
+- `css` rejects `@import`, `@font-face`, `expression()`, `http(s)` URLs and `url()` targets other than
+  `#id` or `data:`.
+- `script` rejects network and storage APIs, `import`, `require`, `eval` and `Function`. It also rejects
+  timers and `requestAnimationFrame`, `Math.random`, `Date`, `performance`, `navigator`, `location`,
+  `postMessage`, `window.parent`, `window.top`, HTML injection (`innerHTML`, `document.write`, …) and
+  `__timelines`.
+
+The renderer reads each card from `assetFiles` and parses it. A missing file, bad JSON, a schema failure
+or any safety problem stops the render with `VALIDATION`, and `details.problems` lists the reasons.
+Code assets are never copied into the project. When a render has a card, `index.html` carries the same
+CSP as the film engine page (`default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:;
+connect-src 'self' data: blob:; form-action 'none'`), so nothing reaches the network.
+
+Light imports (no browser or filesystem) come from `@studix/renderers/html-card`. The main entry also
+exports `lintHtmlCard(pkg, { width, height, durationMs, palette?, fonts?, workDir })`. It returns the
+safety problems as errors when there are any. Otherwise it builds a one-scene project from the card in a
+temporary directory under `workDir` and runs the HyperFrames linter on it. For example, the linter catches
+script syntax errors and font families that are not bundled. The result is `{ errors, warnings }` as
+agent-readable lines, and the temporary directory is removed afterwards.
 
 ## Finish and deliveries (Implemented)
 

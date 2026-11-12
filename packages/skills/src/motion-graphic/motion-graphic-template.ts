@@ -28,7 +28,7 @@ import {
 } from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
-import { type MotionEnter, MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
+import { MOTION_STYLE_PROFILES, type MotionEnter, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
 export const MOTION_GRAPHIC_TEMPLATE_VERSION = 9;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;

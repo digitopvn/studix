@@ -407,7 +407,11 @@ const SEEDS: readonly Seed[] = [
     bpm: [90, 110],
     palette: { background: "#000000", foreground: "#f2f1ee", accent: "#4a86ff" },
     fonts: fonts(INTER, INTER),
-    pacing: { enters: ["fade", "slide-up", "scale"], exit: "fade", transition: { kind: "fade", durationMs: 600 } },
+    pacing: {
+      enters: ["fade", "slide-up", "scale"],
+      exit: "fade",
+      transition: { kind: "fade", durationMs: 600 },
+    },
     juice: { whoosh: false },
   },
   {
@@ -438,7 +442,11 @@ const SEEDS: readonly Seed[] = [
     bpm: [80, 100],
     palette: { background: "#000000", foreground: "#ffffff", accent: "#f5821f" },
     fonts: fonts(INTER, INTER),
-    pacing: { enters: ["fade", "scale", "slide-up"], exit: "fade", transition: { kind: "fade", durationMs: 500 } },
+    pacing: {
+      enters: ["fade", "scale", "slide-up"],
+      exit: "fade",
+      transition: { kind: "fade", durationMs: 500 },
+    },
     juice: { whoosh: false },
   },
   {
@@ -588,7 +596,11 @@ const SEEDS: readonly Seed[] = [
     bpm: [105, 125],
     palette: { background: "#e8503a", foreground: "#ffffff", accent: "#f5c242" },
     fonts: fonts(SERIF, VN),
-    pacing: { enters: ["pop", "scale", "slide-up"], exit: "scale", transition: { kind: "zoom", durationMs: 300 } },
+    pacing: {
+      enters: ["pop", "scale", "slide-up"],
+      exit: "scale",
+      transition: { kind: "zoom", durationMs: 300 },
+    },
   },
   {
     id: "athletic-impact",

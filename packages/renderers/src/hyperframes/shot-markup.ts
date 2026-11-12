@@ -1,6 +1,8 @@
 import { StudixError } from "@studix/shared";
 import type { BrandKit, ColorRole, Shot, ShotStyle, TextStyleRole } from "@studix/video-ir";
 import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
+import type { HtmlCardPackage } from "./html-card.ts";
+import { htmlCardMarkup } from "./html-card-compile.ts";
 import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
 import { renderLayoutMarkup } from "./layout-markup.ts";
 
@@ -22,6 +24,8 @@ export interface ShotMarkupContext {
   palette?: Record<ColorRole, string>;
   /** IR language (BCP 47), for number formatting in layouts. */
   language?: string;
+  /** HTML card packages (checked by loadHtmlCards) by code asset id; composition shots naming one render it. */
+  htmlCards?: ReadonlyMap<string, HtmlCardPackage>;
 }
 
 export interface ShotMarkup {
@@ -223,7 +227,9 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       }
       return { html: `${open}<div class="cta-pill">${escapeHtml(shot.text)}</div>${url}</div>`, css };
     }
-    case "composition":
+    case "composition": {
+      const card = ctx.htmlCards?.get(shot.assetId);
+      if (card) return htmlCardMarkup(id, card, ctx.fontStacks);
       throw new StudixError(
         "VALIDATION",
         `Composition shot "${shot.id}" is not supported by the HyperFrames renderer`,
@@ -231,6 +237,7 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
           suggestedAction: "Check RendererAdapter.supports() before rendering.",
         },
       );
+    }
     case "layout":
       return renderLayoutMarkup(
         ctx,

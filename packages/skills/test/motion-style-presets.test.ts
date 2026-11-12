@@ -37,7 +37,11 @@ const storyboard = (styleProfile: string, enter = "pop"): MotionStoryboard => ({
   rationale: "test",
 });
 
-const brief = (extra: Record<string, unknown> = {}) => ({ prompt: "Launch film", durationMs: 12_000, ...extra });
+const brief = (extra: Record<string, unknown> = {}) => ({
+  prompt: "Launch film",
+  durationMs: 12_000,
+  ...extra,
+});
 
 describe("motion style presets", () => {
   it("gives every profile bundled fonts, allowed entrances, a cut and juice", () => {
@@ -74,7 +78,9 @@ describe("motion style presets", () => {
   });
 
   it("pins the profile a brief names over the storyboard's pick, and a brand kit keeps its own fonts", () => {
-    const pinned = brief({ directions: [{ id: "a", name: "a", concept: "a", visualStyle: "glass-keynote" }] });
+    const pinned = brief({
+      directions: [{ id: "a", name: "a", concept: "a", visualStyle: "glass-keynote" }],
+    });
     const ir = motionGraphicTemplate(pinned, { storyboard: storyboard("neon-cyberpunk") });
     expect(ir.metadata?.styleProfile).toBe("glass-keynote");
     expect(ir.brand?.fonts.heading).toBe("Plus Jakarta Sans");
@@ -159,7 +165,10 @@ describe("motion-graphic hero cards", () => {
     expect(hook?.shots).toEqual([
       expect.objectContaining({ type: "composition", assetId: "hook-hero", durationMs: hook?.durationMs }),
     ]);
-    expect(out.ir.assets.find((a) => a.id === "hook-hero")).toMatchObject({ kind: "code", mime: HTML_CARD_MIME });
+    expect(out.ir.assets.find((a) => a.id === "hook-hero")).toMatchObject({
+      kind: "code",
+      mime: HTML_CARD_MIME,
+    });
     expect(message?.shots.some((sh) => sh.type === "composition")).toBe(false);
     expect(cta?.shots.some((sh) => sh.type === "composition")).toBe(false);
     expect(out.warning).toMatch(/beat 1: .*fetch/i);
