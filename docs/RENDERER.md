@@ -165,8 +165,10 @@ to the exact same version in `packages/renderers/package.json` (currently
   `<script src>`, and copies host files that markup points to outside the
   project. Studix stages every asset in the project and bundles its fonts, so
   the engine patch makes `downloadToTemp` and `fetchPublicHttpsText` refuse
-  every URL, and the producer patch skips script inlining and never copies a
-  file from outside the project. `engine-launch-options.test.ts` checks that no
+  every URL. The producer patch skips script inlining and gives font embedding a
+  fetch that always fails, because its Google Fonts request carries the page's
+  characters. It also never copies a file from outside the project, and it
+  never converts one as an animated GIF or HEIC image. `engine-launch-options.test.ts` checks that no
   request reaches the download transport, and the same integration test checks
   that such markup leaves the frame black
   ([#457](https://github.com/digitopvn/studix/issues/457)). All of these

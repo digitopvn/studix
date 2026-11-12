@@ -1,8 +1,27 @@
 diff --git a/dist/index.js b/dist/index.js
-index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..876dccefa5c4ad68707316b52d90e17c76155aef 100644
+index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..974a75cd19a964a41cac47d28c4ffee3ddd01032 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -7447,6 +7447,11 @@ async function inlineExternalScripts(html) {
+@@ -6034,14 +6034,16 @@ function resolveLocalImageSourcePath(src, options) {
+   const { basePath } = splitUrlSuffix(trimmed);
+   const normalizedBase = normalizeRelPath(basePath);
+   const mapped = options.sourceAssets?.get(trimmed) ?? options.sourceAssets?.get(basePath) ?? options.sourceAssets?.get(normalizedBase);
+-  if (mapped && existsSync8(mapped)) return mapped;
++  // Studix: read GIF/HEIC sources only from the project or the download directory, never elsewhere on the host.
++  const allowed = (candidate) => [options.projectDir, options.downloadDir].some((dir) => dir && isPathInside2(candidate, dir));
++  if (mapped && existsSync8(mapped) && allowed(mapped)) return mapped;
+   if (isHttpUrl(trimmed)) return null;
+   const projectRelative = basePath.startsWith("/") ? basePath.slice(1) : basePath;
+   const candidates = [
+     isAbsolute2(basePath) ? basePath : resolve5(options.projectDir, projectRelative),
+     resolve5(options.downloadDir, normalizedBase)
+   ];
+-  return candidates.find((candidate) => existsSync8(candidate)) ?? null;
++  return candidates.find((candidate) => allowed(candidate) && existsSync8(candidate)) ?? null;
+ }
+ function isUsableFile(path) {
+   try {
+@@ -7447,6 +7449,11 @@ async function inlineExternalScripts(html) {
        externalScripts.push({ el, src });
      }
    }
@@ -14,7 +33,7 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..876dccefa5c4ad68707316b52d90e17c
    if (externalScripts.length === 0) return html;
    const downloads = await Promise.allSettled(
      externalScripts.map(async ({ el, src }) => {
-@@ -7496,6 +7501,11 @@ function collectExternalAssets(html, projectDir) {
+@@ -7496,6 +7503,11 @@ function collectExternalAssets(html, projectDir) {
      if (isPathInside2(absPath, absProjectDir)) {
        return null;
      }
@@ -26,7 +45,19 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..876dccefa5c4ad68707316b52d90e17c
      if (!existsSync10(absPath)) return null;
      const safeKey = toExternalAssetKey(absPath);
      externalAssets.set(safeKey, absPath);
-@@ -8065,6 +8075,31 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+@@ -7937,6 +7949,11 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+   );
+   const coalescedHtml = await injectDeterministicFontFaces(normalizedFontHtml, {
+     logger: defaultLogger,
++    // Studix: no font download on the worker (the request would carry the page's characters). Studix embeds
++    // its fonts; anything else falls back to the font cache or the browser's own fonts.
++    fetchImpl: async () => {
++      throw new Error("[Security] Font downloads are disabled in Studix renders");
++    },
+     failClosedFontFetch: options.failClosedFontFetch === true,
+     allowSystemFontCapture: options.allowSystemFontCapture,
+     abortSignal: options.abortSignal
+@@ -8065,6 +8082,31 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
      hasAncestorBackgroundImage
    };
  }
@@ -58,7 +89,7 @@ index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..876dccefa5c4ad68707316b52d90e17c
  async function discoverMediaFromBrowser(page) {
    const elements = await page.evaluate(() => {
      const results = [];
-@@ -8944,6 +8979,10 @@ async function runProbeStage(input) {
+@@ -8944,6 +8986,10 @@ async function runProbeStage(input) {
            if (fileServer && src.startsWith(fileServer.url)) {
              src = src.slice(fileServer.url.length).replace(/^\//, "");
            }

@@ -177,6 +177,7 @@ describe.skipIf(skipReason !== "")(
         secret,
       ]);
       execFileSync("ffmpeg", ["-v", "error", "-i", secret, "-frames:v", "1", join(dir, "secret", "red.png")]);
+      execFileSync("ffmpeg", ["-v", "error", "-i", secret, "-frames:v", "3", join(dir, "secret", "red.gif")]);
       const projectDir = join(dir, "a", "b", "project");
       await mkdir(join(projectDir, "assets", "vendor"), { recursive: true });
       await copyFile(
@@ -243,15 +244,24 @@ describe.skipIf(skipReason !== "")(
     });
 
     // The compiler reads the page as a string before any browser starts: user text that looks like CSS
-    // (`background:url(https://…)` in a caption) must not make the worker download it, and markup that points
-    // outside the project must not copy a host file into the render.
+    // (`background:url(https://…)` in a caption) must not make the worker download it, a font family must not
+    // make it ask Google Fonts (the request carries the page's characters), and markup that points outside the
+    // project must not copy or convert a host file (PNG, animated GIF) into the render.
     it("keeps the compiler off the network and the host filesystem", async () => {
       const engine = await loadEngine();
       const requests: string[] = [];
-      engine._setDownloadFetchForTests((async (input: string | URL | Request) => {
+      const recordingFetch = (async (input: string | URL | Request) => {
         requests.push(String(input instanceof Request ? input.url : input));
         return new Response("x", { status: 200, headers: { "content-type": "image/png" } });
-      }) as typeof fetch);
+      }) as typeof fetch;
+      // The engine downloader has its own transport; font embedding uses the global fetch.
+      engine._setDownloadFetchForTests(recordingFetch);
+      const globalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.startsWith("http://localhost:")) return globalFetch(input, init);
+        return recordingFetch(input, init);
+      }) as typeof fetch;
       try {
         const box = "position:absolute;inset:0;width:160px;height:90px";
         const { hits, outputPath } = await capture(
@@ -259,8 +269,9 @@ describe.skipIf(skipReason !== "")(
           [],
           [
             `    <img src="../../../secret/red.png" alt="" style="${box}" />`,
+            `    <img src="../../../secret/red.gif" alt="" style="${box}" />`,
             `    <div style="${box};background-image:url(../../../secret/red.png);background-size:cover"></div>`,
-            `    <p style="color:#000">background:url(https://example.com/bg.png) background-image: url(https://example.com/x.png)</p>`,
+            `    <p style="color:#000;font-family:Roboto">background:url(https://example.com/bg.png) background-image: url(https://example.com/x.png)</p>`,
           ].join("\n"),
         );
         // The host file is red; a missing image may leave a faint grey placeholder.
@@ -270,6 +281,7 @@ describe.skipIf(skipReason !== "")(
         expect(hits).toEqual([]);
       } finally {
         engine._setDownloadFetchForTests(undefined);
+        globalThis.fetch = globalFetch;
       }
       expect(requests).toEqual([]);
     });
