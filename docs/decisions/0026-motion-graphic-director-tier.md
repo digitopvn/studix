@@ -54,3 +54,19 @@ that each write one HTML/GSAP scene against a shared shell of helpers, with the 
   stage does not start: nothing is paid and the graphic is unchanged. Production runs it only after
   it opts in ([ADR-0025](0025-sidecar-skill-runner.md)).
 - Re-rendering a stored version reuses the clip.
+
+## Amendment: film mode
+
+One authored hook among template cards read as a slide deck. The tier now authors every scene:
+
+- The direction adds `system` (one product-UI surface carried through the film, the hook's panel rect that the call
+  to action returns to) and, when the brand kit has no logo, `mark` (an SVG sanitized to plain shapes; otherwise a
+  monogram; recorded as `metadata.generatedMark` with a warning).
+- Shell v2 (`director-shell.v2.html`) adds a chrome layer on absolute film time, the `sx-panel`, `sx-pill`,
+  `sx-chip`, `sx-caret` and `sx-rail` components, the mark as `#sx-mark`, scene-relative `B(n)` and a per-scene
+  `try` that logs `[studix-scene <sid>]`. Shell v1 stays for stored compositions.
+- Builders run in parallel, each on its own budget grant. The sandbox checks the whole film once and attributes
+  findings to scenes, then renders the film once and cuts one clip per scene on exact frame ranges. A scene that
+  fails anywhere keeps its card; cards of a film with authored scenes draw no bokeh.
+- The frames around every cut are measured; a scene that opens or closes on a blank frame is flagged, and the visual
+  review sends it, with the three worst-scoring scenes at most per round, back to its builder.

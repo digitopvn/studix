@@ -13,6 +13,7 @@ import {
 import { planFonts } from "../bundled-fonts.ts";
 import { GSAP_ASSET } from "../compile-composition.ts";
 import { scriptJson } from "../html-utils.ts";
+import { type DirectorMark, monogramSymbol } from "./director-mark.ts";
 import { type CheckedSceneFragment, sceneSectionId } from "./scene-fragment.ts";
 
 /**
@@ -20,18 +21,28 @@ import { type CheckedSceneFragment, sceneSectionId } from "./scene-fragment.ts";
  * ak-motion-video skeleton and its film helpers. It holds the timing lookups (W, WE, B), the animation
  * vocabulary (pop, slam, settleCam, flash, ...), the caption system, the handoff map and the theme tokens;
  * agent-authored scene fragments only fill its scene markers. A new shell version is a new file, so stored
- * compositions keep rendering with the shell they were assembled with.
+ * compositions keep rendering with the shell they were assembled with. Version 2 adds the film system: a
+ * persistent chrome layer on absolute film time, product-UI component classes, the brand mark symbol and
+ * scene blocks that name the scene that threw.
  */
-export const DIRECTOR_SHELL_VERSION = 1;
+export const DIRECTOR_SHELL_VERSION = 2;
+/** Shell versions this build can still assemble (stored compositions name theirs). */
+export const DIRECTOR_SHELL_VERSIONS: readonly number[] = [1, 2];
 
 const require = createRequire(import.meta.url);
-let shellText: string | undefined;
-const shell = () => {
-  shellText ??= readFileSync(
-    new URL(`./director-shell.v${DIRECTOR_SHELL_VERSION}.html`, import.meta.url),
-    "utf8",
-  );
-  return shellText;
+const shellTexts = new Map<number, string>();
+const shell = (version: number) => {
+  if (!DIRECTOR_SHELL_VERSIONS.includes(version)) {
+    throw new StudixError("VALIDATION", `Director shell version ${version} does not exist`, {
+      retryable: false,
+    });
+  }
+  let text = shellTexts.get(version);
+  if (text === undefined) {
+    text = readFileSync(new URL(`./director-shell.v${version}.html`, import.meta.url), "utf8");
+    shellTexts.set(version, text);
+  }
+  return text;
 };
 
 /** A rect in frame pixels: top-left `x`/`y`, or its centre `cx`/`cy`; `r` is the corner radius. */
@@ -73,14 +84,24 @@ export interface DirectorTiming {
   env: number[];
   /** The carried motif's rect where it leaves (`exit`) or enters (`enter`) each scene. */
   handoff: Record<string, { exit?: HandoffRect; enter?: HandoffRect }>;
-  /** A whole film fades in from and out to black; a scene clip cut into a film does not. */
-  options: { fadeIn: boolean; fadeOut: boolean };
+  /**
+   * A whole film fades in from and out to black; a scene clip cut into a film does not. `isolate` (shell v2): a
+   * scene that throws is logged and skipped instead of failing the page, so one check names every broken scene.
+   */
+  options: { fadeIn: boolean; fadeOut: boolean; isolate?: boolean };
+  /**
+   * Shell v2: where this composition sits in the film, in seconds. The chrome layer runs on film time, so a
+   * clip of one scene (`offset` = the scene's start) shows the same chrome as the film at that moment.
+   */
+  film?: { offset: number; duration: number };
 }
 
 /** Brand kit and style colours and fonts the shell exposes as CSS tokens. */
 export interface DirectorTheme {
   palette: Partial<Record<ColorRole, string>>;
   fonts?: { heading: string; body: string };
+  /** The film's one accent hue (hex), `--film-accent`; the palette's accent when omitted. */
+  filmAccent?: string;
 }
 
 export interface DirectorProjectInput {
@@ -90,6 +111,12 @@ export interface DirectorProjectInput {
   theme: DirectorTheme;
   /** Checked fragments in timeline order (`checkSceneFragment`); none with problems. */
   scenes: ReadonlyArray<{ sid: string; fragment: CheckedSceneFragment }>;
+  /** Shell version to assemble with: a stored composition keeps its own. The current one when omitted. */
+  shellVersion?: number;
+  /** Shell v2: the brand mark symbol (`director-mark.ts`); a monogram of `markName` when omitted. */
+  mark?: DirectorMark;
+  /** Name the fallback monogram is drawn from. */
+  markName?: string;
 }
 
 export interface DirectorProject {
@@ -125,7 +152,8 @@ function themeCss(
   h: number,
 ) {
   const p = { ...DEFAULT_PALETTE, ...theme.palette };
-  for (const [role, value] of Object.entries(p)) {
+  const filmAccent = theme.filmAccent ?? p.accent;
+  for (const [role, value] of Object.entries({ ...p, filmAccent })) {
     if (!HEX.test(value)) {
       throw new StudixError("VALIDATION", `Theme colour ${role} must be a hex colour`, {
         retryable: false,
@@ -139,7 +167,8 @@ function themeCss(
     ":root {",
     `  --W: ${w}px; --H: ${h}px;`,
     `  --bg: ${p.background}; --ink: ${p.foreground}; --primary: ${p.primary}; --secondary: ${p.secondary};`,
-    `  --accent: ${p.accent}; --muted: ${p.muted};`,
+    `  --accent: ${p.accent}; --muted: ${p.muted}; --film-accent: ${filmAccent};`,
+    `  --u: ${(Math.min(w, h) / 100).toFixed(2)}px; --frame-inset: ${Math.round(0.035 * Math.min(w, h))}px;`,
     `  --mute: ${mix(56)}; --faint: ${mix(32)}; --hair: ${mix(12)}; --surface: ${mix(5)};`,
     `  --font-heading: ${stacks.heading}; --font-body: ${stacks.body}; --font-mono: ${stacks.mono};`,
     `  --cap-size: ${Math.round(BURNED_CAPTION.sizeAt1080 * scale)}px; --cap-bottom: ${burnedCaptionEdge({ width: w, height: h })}px;`,
@@ -147,9 +176,25 @@ function themeCss(
   ].join("\n");
 }
 
-/** One guarded block per fragment: only runs when its scene is in TIMING, with the scene's names in scope. */
-function sceneBlock(sid: string, sectionId: string, js: string): string {
+/**
+ * One guarded block per fragment: only runs when its scene is in TIMING, with the scene's names in scope. From
+ * shell v2 `B(n)` counts beats from the scene's first beat (the same in a film and in a clip of the scene), and
+ * a throw is logged with the scene id before it fails the page (or, with `options.isolate`, skips the scene).
+ */
+function sceneBlock(sid: string, sectionId: string, js: string, version: number): string {
   const id = JSON.stringify(sid);
+  if (version >= 2) {
+    return [
+      `/* scene ${sid.replace(/\*\//g, "")} */ { const sid = ${id}; const S = ${JSON.stringify(`#${sectionId}`)}; if (SC[sid]) {`,
+      "const t0 = SC[sid].start, t1 = SC[sid].end;",
+      'const $s = (q) => $(S + " " + q), $$s = (q) => $$(S + " " + q);',
+      "const B = ((k) => (n) => T.beat0 + T.beatLen * (k + n))(Math.max(0, Math.ceil((t0 - T.beat0) / T.beatLen - 1e-6)));",
+      "try {",
+      js,
+      '} catch (e) { console.error("[studix-scene " + sid + "] " + String((e && e.message) || e)); if (!T.options.isolate) throw e; const own = $(S); if (own) own.remove(); }',
+      "} }",
+    ].join("\n");
+  }
   return [
     `/* scene ${sid.replace(/\*\//g, "")} */ { const sid = ${id}; const S = ${JSON.stringify(`#${sectionId}`)}; if (SC[sid]) {`,
     "const t0 = SC[sid].start, t1 = SC[sid].end;",
@@ -229,9 +274,12 @@ export function buildDirectorProject(input: DirectorProjectInput): DirectorProje
   }
   const sections = input.scenes.map((s) => s.fragment.section).join("\n");
   const css = input.scenes.map((s) => `/* ${s.sid} */\n${s.fragment.css}`).join("\n");
-  const js = input.scenes.map((s) => sceneBlock(s.sid, sceneSectionId(s.sid), s.fragment.js)).join("\n");
+  const version = input.shellVersion ?? DIRECTOR_SHELL_VERSION;
+  const js = input.scenes
+    .map((s) => sceneBlock(s.sid, sceneSectionId(s.sid), s.fragment.js, version))
+    .join("\n");
 
-  const pristine = shell()
+  const pristine = shell(version)
     .replaceAll("__STUDIX_W__", String(width))
     .replaceAll("__STUDIX_H__", String(height))
     .replaceAll("__STUDIX_RATIO__", RATIO(width, height))
@@ -245,9 +293,19 @@ export function buildDirectorProject(input: DirectorProjectInput): DirectorProje
     ["<!--SCENES:BEGIN-->", "<!--SCENES:END-->", sections],
     ["/*TIMING:BEGIN*/", "/*TIMING:END*/", `window.TIMING=${scriptJson(timing)};`],
     ["/*SCENE-JS:BEGIN*/", "/*SCENE-JS:END*/", js.replace(/<\/script/gi, "<\\/script")],
+    ...(version >= 2
+      ? [
+          [
+            "<!--MARK:BEGIN-->",
+            "<!--MARK:END-->",
+            input.mark?.symbol ?? monogramSymbol(input.markName ?? ""),
+          ] as [string, string, string],
+        ]
+      : []),
   ]);
 
   const copies = new Map<string, string>(fonts.files.map((f) => [f.dest, f.source]));
+  if (version >= 2 && input.mark?.copy) copies.set(input.mark.copy.dest, input.mark.copy.source);
   copies.set(GSAP_ASSET, require.resolve("gsap/dist/gsap.min.js"));
   return { files: new Map([["index.html", page]]), copies, warnings: fonts.warnings };
 }

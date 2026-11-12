@@ -19,7 +19,7 @@ import { motionDesignPack } from "../knowledge/packs/motion-design-pack.ts";
 import { voiceoverWordBudget } from "../marketing-video/marketing-script.ts";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { voiceLines } from "../voice-lines.ts";
-import { directorTierRuns } from "./motion-graphic-director.ts";
+import { DIRECTOR_NOMINAL_FORMAT, directorTierRuns } from "./motion-graphic-director.ts";
 import { motionGraphicTemplate, namedMotionStyle } from "./motion-graphic-template.ts";
 import { MOTION_STYLE_PROFILES } from "./motion-style-profiles.ts";
 
@@ -552,7 +552,7 @@ export const motionGraphicStoryboardStage: StageDefinition = {
     }
     let result: Awaited<ReturnType<StageDefinition["run"]>>;
     try {
-      const hook = premium && directorTierRuns(s, MG_MAX_BEATS);
+      const hook = premium && directorTierRuns(s, MG_MAX_BEATS, DIRECTOR_NOMINAL_FORMAT);
       result = await (premium ? premiumStage : agentStage).run(
         hook ? { ...s, input: { ...(s.input as StoryboardInput), authoredHook: true } } : s,
       );

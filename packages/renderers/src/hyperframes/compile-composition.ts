@@ -197,10 +197,20 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
   // share the order of the scenes array.
   const byId = new Map(ir.scenes.map((s) => [s.id, s]));
   const ordered = ir.timeline.entries.map((e) => byId.get(e.sceneId)).filter((s) => s !== undefined);
+  // A film with authored director scenes (their ids in `metadata.authoredScenes`) on the film-system shell (v2+)
+  // is in film mode; a stored hook-only version (shell v1) keeps rendering exactly as it did.
+  const authored = ir.metadata?.authoredScenes;
+  const director = ir.metadata?.director as { shellVersion?: unknown } | undefined;
+  const filmMode =
+    Array.isArray(authored) &&
+    authored.length > 0 &&
+    typeof director?.shellVersion === "number" &&
+    director.shellVersion >= 2;
   const scenes = ordered.map((scene, index) =>
     compileScene({
       scene,
       sceneIndex: index,
+      filmMode,
       palette,
       transitions: sceneTransitions(ordered, index),
       captions: { position, cues: cues.get(scene.id) ?? [] },

@@ -83,8 +83,39 @@ export {
 } from "./hyperframes/compile-composition.ts";
 export { frameClippingProblems } from "./hyperframes/director/check-frame-clipping.ts";
 export {
+  attributeFilmCheck,
+  BLANK_LUMA,
+  blankCutScenes,
+  CUT_FRAMES,
+  cutFrames,
+  cutLumaCommand,
+  type FilmCheckScene,
+  type FilmCheckVerdict,
+  type FilmFrameRange,
+  type FilmWindow,
+  type FrameLuma,
+  filmFrameRanges,
+  filmSplitCommand,
+  hexLuma,
+  isBlankFrame,
+  parseCutLuma,
+  sceneLineRanges,
+  scenesThrownInLog,
+} from "./hyperframes/director/director-film.ts";
+export { lintDirectorPage } from "./hyperframes/director/director-lint.ts";
+export {
+  type DirectorMark,
+  logoSymbol,
+  MARK_SVG_CHARS,
+  MARK_SYMBOL_ID,
+  markSymbolFromSvg,
+  monogramInitials,
+  monogramSymbol,
+} from "./hyperframes/director/director-mark.ts";
+export {
   buildDirectorProject,
   DIRECTOR_SHELL_VERSION,
+  DIRECTOR_SHELL_VERSIONS,
   type DirectorProject,
   type DirectorProjectInput,
   type DirectorTheme,
@@ -96,6 +127,7 @@ export {
   type CheckedSceneFragment,
   checkSceneFragment,
   parseSceneFragmentFile,
+  SCENE_FRAGMENT_COMPONENTS,
   SCENE_FRAGMENT_HELPERS,
   SCENE_FRAGMENT_LIMITS,
   SceneFragment,

@@ -19,7 +19,7 @@ import {
 import { z } from "zod";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { brandSourceOf, MG_BRAND_STAGE, MotionBrandOutput } from "./motion-graphic-brand.ts";
-import { authoredScenesOf } from "./motion-graphic-director.ts";
+import { authoredScenesOf, directorNotesOf } from "./motion-graphic-director.ts";
 import {
   authoredRepairCents,
   authoredRepairMs,
@@ -116,16 +116,24 @@ const critic = createAgentStage({
   limits: MG_VISUAL_QA_LIMITS,
 });
 
-/** When each card holds still, in card order: past its entrance, before its exit, so the frame shows it settled. */
+/**
+ * When each card holds still, in card order: past its entrance, before its exit, so the frame shows it settled.
+ * An authored scene is a continuous shot with no settled hold: it is judged at its midpoint.
+ */
 export function holdTimesMs(ir: VideoIR): number[] {
   const spans = new Map(resolveSceneSpans(ir.timeline, ir.scenes).map((span) => [span.sceneId, span]));
+  const authored = new Set(authoredScenesOf(ir));
   return ir.scenes.map((scene) => {
     const span = spans.get(scene.id);
     const startMs = span?.startMs ?? 0;
     const length = span ? span.endMs - span.startMs : scene.durationMs;
+    if (authored.has(scene.id)) return Math.round(startMs + length / 2);
     return Math.round(startMs + Math.min(length - 150, Math.max(length * 0.6, 900)));
   });
 }
+
+/** Most authored scenes one review round sends back to their builders: the worst first. */
+export const MG_MAX_SCENE_REPAIRS = 3;
 
 /**
  * Where each card's still may be taken: from its hold time to just before it ends. The capture takes the
@@ -547,7 +555,7 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
   }
   const captureMs = Date.now() - startedAt;
   const rounds: VisualQaReport["rounds"] = [];
-  let sceneRepairTried = false;
+  const sceneRepaired = new Set<string>();
   let sceneRepairNote: string | undefined;
   for (let round = 0; ; round++) {
     const repaired = rounds.at(-1)?.repaired;
@@ -570,10 +578,19 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
     s.activity?.touch();
     if ("failure" in review) return stop("skipped", `Visual review failed: ${review.failure}`);
     // An authored scene is a rendered clip, not a template card: it goes back to its builder, never to the
-    // storyboard agent, and only once per job (each try is a sandbox render).
+    // storyboard agent, and each scene only once per job (each try is a sandbox render). A scene the director
+    // stage found blank at a cut goes back too, even when its still passed.
     const authored = new Set(authoredScenesOf(ir));
-    const isAuthored = (c: VisualCardScore) => authored.has(ir.scenes[c.card - 1]?.id ?? "");
-    const allFailed = failingCards(review.cards, ir.scenes.length);
+    const directorNotes = directorNotesOf(ir);
+    const sceneOf = (c: VisualCardScore) => ir.scenes[c.card - 1]?.id ?? "";
+    const isAuthored = (c: VisualCardScore) => authored.has(sceneOf(c));
+    const blankCut = (c: VisualCardScore) =>
+      isAuthored(c) && !sceneRepaired.has(sceneOf(c)) && directorNotes.get(sceneOf(c))?.blankCut === true;
+    const reviewFailed = failingCards(review.cards, ir.scenes.length);
+    const allFailed = [
+      ...reviewFailed,
+      ...review.cards.filter((c) => blankCut(c) && !reviewFailed.includes(c)),
+    ];
     const failed = allFailed.filter((c) => !isAuthored(c));
     const failedScenes = allFailed.filter(isAuthored);
     rounds.push({ round, cards: review.cards });
@@ -581,9 +598,13 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
     if (round >= MG_VISUAL_QA_ROUNDS) {
       return done({ status: "failed", reason: "Out of repair rounds", rounds });
     }
-    // What this round can repair: failed cards with a storyboard, and failed authored scenes not yet repaired.
+    // What this round can repair: failed cards with a storyboard, and the worst failed authored scenes not yet
+    // repaired (at most MG_MAX_SCENE_REPAIRS, fewer when the deadline or budget cannot hold them).
     let cardPlan = storyboard ? failed : [];
-    let scenePlan = sceneRepairTried ? [] : failedScenes;
+    let scenePlan = failedScenes
+      .filter((c) => !sceneRepaired.has(sceneOf(c)))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, MG_MAX_SCENE_REPAIRS);
     if (cardPlan.length === 0 && scenePlan.length === 0) {
       return done({
         status: "failed",
@@ -615,9 +636,10 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
     const sceneMsOf = (scenesToFix: readonly VisualCardScore[]) =>
       scenesToFix.reduce((sum, c) => sum + authoredRepairMs(ir.scenes[c.card - 1]?.durationMs ?? 0), 0);
     let fits = fitsFor(cardPlan, scenePlan);
-    // When both do not fit, the card redesign (cheaper, quicker) goes first.
-    if (fits !== "fits" && cardPlan.length > 0 && scenePlan.length > 0) {
-      scenePlan = [];
+    // When the plan does not fit, the best-scoring scene repairs drop first, keeping the worst one while it
+    // fits; with cards to redesign too, the card redesign (cheaper, quicker) goes first.
+    while (fits !== "fits" && scenePlan.length > (cardPlan.length > 0 ? 0 : 1)) {
+      scenePlan = scenePlan.slice(0, -1);
       fits = fitsFor(cardPlan, scenePlan);
     }
     if (fits === "no-budget") {
@@ -652,11 +674,11 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
         nextStoryboard = restyled.storyboard;
       }
     }
-    if (scenePlan.length > 0) sceneRepairTried = true;
     const fixedScenes: VisualCardScore[] = [];
     for (const c of scenePlan) {
-      const sceneId = ir.scenes[c.card - 1]?.id ?? "";
-      const issues = [{ path: "fragment", message: sceneReviewIssue(c) }];
+      const sceneId = sceneOf(c);
+      sceneRepaired.add(sceneId);
+      const issues = sceneReviewIssues(c, ir.scenes.length, directorNotes.get(sceneId));
       const fixed = await repairAuthoredScene(booked, next, sceneId, issues, dir, usage);
       if ("failure" in fixed) {
         sceneRepairNote = `Authored scene ${c.card} kept its clip: ${fixed.failure}`;
@@ -695,12 +717,38 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
   }
 }
 
-/** A review finding on an authored scene, as a builder repair issue that asks for a re-layout, not a patch. */
-function sceneReviewIssue(c: VisualCardScore): string {
-  return truncateText(
-    `The visual review of the rendered scene scored it ${c.score}/10 (${c.issues.join(", ") || "weak"})` +
-      `${c.note ? `: ${c.note}` : ""}. Re-lay out the scene at full scale: the main visual fills most of the ` +
-      "frame and the headline is at least `frame.headlinePx`; keep the timing, words and exit pose.",
-    600,
-  );
+/**
+ * A review finding on an authored scene as builder repair issues that ask for a re-layout, not a patch: the
+ * review's score and note (the headline floor only for the hook and the call to action, which set one), the
+ * blank frames the director stage measured at its cuts, and text its film check found cut at the frame edge.
+ */
+export function sceneReviewIssues(
+  c: VisualCardScore,
+  count: number,
+  notes?: { blankCut?: boolean; layout?: string[] },
+): Array<{ path: string; message: string }> {
+  const headline =
+    c.card === 1 || c.card === count
+      ? "the main visual fills most of the frame and the headline is at least `frame.headlinePx`"
+      : "the main product-UI element fills at least 60% of the frame, with no headline";
+  const issues = [
+    {
+      path: "fragment",
+      message: truncateText(
+        `The visual review of the rendered scene scored it ${c.score}/10 (${c.issues.join(", ") || "weak"})` +
+          `${c.note ? `: ${c.note}` : ""}. Re-lay out the scene at full scale: ${headline}; keep the timing, ` +
+          "words and exit pose.",
+        600,
+      ),
+    },
+  ];
+  if (notes?.blankCut)
+    issues.push({
+      path: "fragment",
+      message:
+        "The frames at this scene's cut show only the background: the product surface must be on screen, lit " +
+        "and composed from the scene's first frame (t0) to its last, never entering from nothing or leaving early.",
+    });
+  for (const layout of notes?.layout ?? []) issues.push({ path: "fragment", message: layout });
+  return issues.slice(0, 10);
 }

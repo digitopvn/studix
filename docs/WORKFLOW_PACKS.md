@@ -376,9 +376,14 @@ asset `application/vnd.studix.html-card+json` và thay card dựng sẵn của b
 card CTA, hoặc linter không chạy được) giữ card dựng sẵn và ghi `warning`, nên premium không làm hỏng job mà bản thường render được. Visual
 QA sau đó chấm cả hero card như mọi card khác; card bị chấm hỏng được thiết kế lại thành card dựng sẵn, rồi bản
 render qua cổng QA. Không có `roles.director` thì `heroes` bị bỏ. Trên worker có skill sandbox, director còn viết
-direction cho cả phim và `roles.builder` (mặc định là `agent` của job) dựng scene hook
-(`motion-graphic.scene-build`); `roles.builder` không kèm `roles.director` bị từ chối với `VALIDATION`. Output của
-director và builder lệch schema hay hợp đồng fragment được gửi lại cho chính agent đó một lượt sửa, rồi mới giữ card.
+direction cho cả phim (kèm `system`: một bề mặt UI sản phẩm xuyên suốt phim, một màu nhấn, CTA lặp lại bố cục hook;
+và `mark` SVG khi brand kit không có logo) và `roles.builder` (mặc định là `agent` của job) dựng **mọi** scene song
+song (tối đa 5 cùng lúc, `motion-graphic.scene-build`) trên shell director v2; `roles.builder` không kèm
+`roles.director` bị từ chối với `VALIDATION`. Output của director và builder lệch schema hay hợp đồng fragment được gửi
+lại cho chính agent đó một lượt sửa, rồi scene đó mới giữ card. Sandbox chạy `hyperframes check` một lần trên cả phim
+(lỗi được gán về đúng scene), render cả phim một lần rồi cắt mỗi scene thành một clip; scene nào lỗi giữ card dựng sẵn
+(không bokeh). Mỗi builder được cấp ngân sách riêng (khoảng 15¢ một scene); ngân sách eo hẹp thì ít scene được dựng
+hơn chứ tier không bị từ chối. Stage ghi số giây sandbox (`film.checkSeconds`, `film.renderSeconds`) vào output.
 Trong hero card, `fill`/`stroke` nhận `var(--token)` (chuyển thành thuộc tính `style` do renderer sinh).
 
 Voice-over
@@ -441,7 +446,8 @@ sửa nhưng chưa được chấm lại). Model không nhận ảnh theo metada
 file không còn (job chạy tiếp trên worker khác). Kết quả nằm trong job result ở `visualQa`. Bước này không bao
 giờ làm job fail: không có agent harness, chạy `agentMode: "host"`, model không đọc được ảnh, agent chấm lỗi,
 sửa card lỗi hay render lại lỗi thì dừng kèm `reason` và giữ render tốt cuối cùng; render đầu tiên lỗi thì bỏ
-qua review, stage `render` render sau khi version đã được lưu và báo lỗi thật. Scene authored (director tier) cũng được chấm trên contact sheet; scene lỗi quay về builder một lần với lỗi review
+qua review, stage `render` render sau khi version đã được lưu và báo lỗi thật. Scene authored (director tier) cũng được chấm trên contact sheet (ở giữa scene); tối đa 3 scene tệ nhất mỗi vòng
+(và scene có khung trống ở điểm cắt) quay về builder một lần với lỗi review
 (chỉ khi ngân sách và deadline còn đủ cho builder, render sandbox, chụp lại và render cuối), render lại trong sandbox;
 sửa lỗi thì giữ clip cũ. Storyboard agent cũng bị cấm
 card chỉ có tiêu đề (mọi card message phải có layout) và câu đọc gộp hai ý.
