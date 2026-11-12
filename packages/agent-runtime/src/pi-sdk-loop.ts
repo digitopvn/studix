@@ -217,7 +217,10 @@ export function createPiSdkLoop(options: PiSdkLoopOptions): AgentLoop {
             // Best effort: the run fails either way, and the next pre-check re-tests the key.
             await binding.markRejected().catch(() => undefined);
           }
-          const fallbackAllowed = error instanceof StudixError && FALLBACK_CODES.has(error.code);
+          // A model that cannot read the task's images spent nothing; a consented fallback may.
+          const fallbackAllowed =
+            error instanceof StudixError &&
+            (FALLBACK_CODES.has(error.code) || error.details?.cannotReadImages === true);
           if (!fallbackAllowed || task.signal.aborted) break;
         }
       }
@@ -379,6 +382,7 @@ async function openSession(
     throw new StudixError("UNAVAILABLE", `Model ${binding.provider}/${binding.modelId} cannot read images`, {
       retryable: false,
       suggestedAction: "Choose a vision-capable model for this stage in Settings → AI & Providers.",
+      details: { cannotReadImages: true },
     });
   }
   if (!model) {

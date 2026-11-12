@@ -253,7 +253,8 @@ Behavior notes:
   The job result carries the scores as `visualQa` (`status`: `passed`, `fixed`,
   `failed` or `skipped`, with a `reason`, and `rounds[].cards[]`). The review
   never fails the job: it is skipped with a reason in host mode, without an
-  agent, or when the agent's model cannot read images.
+  agent, when the agent's model cannot read images, or when time before the job
+  deadline runs short; a failed redesign or re-render keeps the last good render.
 - `workflowTemplate: "anime"` and `"long-form-film"` make a narrative film
   (default 15 s and 60 s; 16:9 unless the brief says otherwise). The create job
   pauses twice for a signed-in person, on the approval mechanism: G0 (action

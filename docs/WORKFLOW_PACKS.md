@@ -334,17 +334,20 @@ quá dài mới fail `VALIDATION`. Ước tính chi phí vẫn tính một lần
 FFmpeg) thì cả file được tính, dư tới 250 ms (hơi thở cuối) thì cắt kèm fade.
 
 Visual QA sau render ([`motion-graphic-visual-qa.ts`](../packages/skills/src/motion-graphic/motion-graphic-visual-qa.ts)):
-stage `render` của pack dựng contact sheet (một frame giữ của mỗi card, lấy sau phần vào của card) và gửi cho
-agent của job (stage `motion-graphic.visual-qa`, ảnh đi qua `AgentTask.images`) chấm từng card 0–10 với các
-lỗi `blank`, `too-small`, `illegible`, `repetitive`, `off-brief`, `headline-only` (card đầu và cuối được là
-card chỉ có tiêu đề). Card có lỗi hoặc điểm dưới 6 quay về storyboard agent để thiết kế lại riêng các card
-đó; lời đọc và weight được giữ nên voice, caption, SFX và thời lượng card không đổi, không tốn tiền voice lại.
-Sau đó graphic render lại, tối đa 2 vòng và chỉ khi ngân sách job còn đủ cho một lượt chấm, một lượt sửa và
-một lần render. Version được lưu sau stage này (`validate_ir` chạy sau `render`), nên version luôn là IR đã
-render cuối cùng. Kết quả nằm trong job result ở `visualQa`. Bước này không bao giờ làm job fail: không có
-agent harness, chạy `agentMode: "host"`, model không đọc được ảnh (runtime trả `UNAVAILABLE`) hay agent chấm
-lỗi thì bỏ qua kèm `reason`. Storyboard agent cũng bị cấm card chỉ có tiêu đề (mọi card message phải có
-layout) và câu đọc gộp hai ý.
+stage `motion-graphic.visual-qa` chạy sau music bed và trước `validate_ir`. Stage render graphic, dựng contact
+sheet (một frame giữ của mỗi card, lấy sau phần vào của card) và gửi cho agent của job (ảnh đi qua
+`AgentTask.images`) chấm từng card 0–10 với các lỗi `blank`, `too-small`, `illegible`, `repetitive`,
+`off-brief`, `headline-only` (card đầu và cuối được là card chỉ có tiêu đề). Card có lỗi hoặc điểm dưới 6 quay
+về storyboard agent để thiết kế lại riêng các card đó; lời đọc và weight được giữ nên voice, caption, SFX và
+thời lượng card không đổi, không tốn tiền voice lại. Sau đó graphic render lại, tối đa 2 vòng và chỉ khi ngân
+sách và deadline của job còn đủ cho một lượt chấm, một lượt sửa và một lần render. Checkpoint của stage giữ IR
+đã duyệt, điểm và file render tốt cuối cùng (trong thư mục của job, ngoài thư mục attempt); `validate_ir` lưu
+đúng IR đó, stage `render` dùng lại file đó (không tính tiền render lần nữa) hoặc render lại đúng IR đó khi
+file không còn (job chạy tiếp trên worker khác). Kết quả nằm trong job result ở `visualQa`. Bước này không bao
+giờ làm job fail: không có agent harness, chạy `agentMode: "host"`, model không đọc được ảnh, agent chấm lỗi,
+sửa card lỗi hay render lại lỗi thì dừng kèm `reason` và giữ render tốt cuối cùng; render đầu tiên lỗi thì bỏ
+qua review, stage `render` render sau khi version đã được lưu và báo lỗi thật. Storyboard agent cũng bị cấm
+card chỉ có tiêu đề (mọi card message phải có layout) và câu đọc gộp hai ý.
 
 ```json
 {

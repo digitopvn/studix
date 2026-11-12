@@ -120,7 +120,7 @@ function memoryStorage(): StorageAdapter & { keys(): string[] } {
   };
 }
 
-function fakeRenderer(realVideo = false): RendererAdapter & { rendered: VideoIR[] } {
+function fakeRenderer(realVideo = false, failOn?: number): RendererAdapter & { rendered: VideoIR[] } {
   const rendered: VideoIR[] = [];
   return {
     id: "hyperframes",
@@ -128,6 +128,7 @@ function fakeRenderer(realVideo = false): RendererAdapter & { rendered: VideoIR[
     supports: () => ({ supported: true, reasons: [] }),
     async render(ir, opts) {
       rendered.push(ir);
+      if (rendered.length === failOn) throw new StudixError("INTERNAL", "renderer crashed");
       for (const asset of ir.assets) expect(opts.assetFiles[asset.id]).toBeDefined();
       const filePath = join(opts.workDir, "out.mp4");
       if (realVideo) {
@@ -170,13 +171,15 @@ function harness(
     voiceMs?: (request: { prompt: string; params?: Record<string, unknown> }) => number | undefined;
     /** The fake renderer writes a real video (the visual review reads its frames). */
     realVideo?: boolean;
+    /** The fake renderer throws on this render (1-based). */
+    failRender?: number;
   } = {},
 ) {
   const { jobs } = createInMemoryJobStore(clock);
   const projects = createInMemoryProjectRepository(clock);
   const renders = createInMemoryRenderRepository(clock);
   const storage = memoryStorage();
-  const renderer = fakeRenderer(options.realVideo);
+  const renderer = fakeRenderer(options.realVideo, options.failRender);
   const media = new FakeMediaProvider({ pricing: { estimateCents: (r) => (r.kind === "image" ? 2 : 5) } });
   const real = media.generate.bind(media);
   const listed = media.capabilities.bind(media);
@@ -894,7 +897,8 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
     expect(h.usage.filter((u) => u.kind === "agent.run").map((u) => u.costCents)).toEqual([3]);
   });
 
-  it("reviews the render, redesigns only the failed card and renders it again, keeping voice and timing", async () => {
+  /** A storyboard agent that redesigns card 2, and a reviewer that fails card 2 once, then passes every card. */
+  const reviewedAgent = () => {
     const restyled = {
       ...storyboard,
       beats: storyboard.beats.map((b, i) =>
@@ -926,6 +930,11 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
         return { output, turns: 1, costCents: 3, inputTokens: 4000, outputTokens: 600, model: "mock-model" };
       },
     };
+    return { runtime, tasks };
+  };
+
+  it("reviews the render, redesigns only the failed card and renders it again, keeping voice and timing", async () => {
+    const { runtime, tasks } = reviewedAgent();
     const h = harness({ agent: runtime, realVideo: true });
     const projectId = await newProject(h, "motion-graphic", graphic);
     const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
@@ -963,6 +972,23 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
       rounds: [{ round: 0, repaired: [2] }, { round: 1 }],
     });
     expect(h.usage.filter((u) => u.kind === "render.seconds")).toHaveLength(2);
+  });
+
+  it("keeps the reviewed render and its IR when the re-render fails, and still ships the job", async () => {
+    const h = harness({ agent: reviewedAgent().runtime, realVideo: true, failRender: 2 });
+    const projectId = await newProject(h, "motion-graphic", graphic);
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId);
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    // No third render: the render stage reuses the first one, and the version holds what it drew.
+    expect(h.renderer.rendered).toHaveLength(2);
+    const project = await h.projects.get(ctx, projectId);
+    const version = await h.projects.getVersion(ctx, project?.currentVersionId as string);
+    expect(version?.ir).toEqual(h.renderer.rendered[0]);
+    const result = h.queue.complete.mock.calls.at(-1)?.[2] as { visualQa: Record<string, unknown> };
+    expect(result.visualQa).toMatchObject({
+      status: "failed",
+      reason: expect.stringMatching(/re-render failed/),
+    });
   });
 
   it("adds no music when the storyboard asks for none", async () => {

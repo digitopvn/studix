@@ -39,7 +39,11 @@ import {
   motionGraphicStoryboardStage,
 } from "./motion-graphic-storyboard.ts";
 import { MOTION_GRAPHIC_TEMPLATE_VERSION, motionGraphicTemplate } from "./motion-graphic-template.ts";
-import { motionGraphicRenderStage } from "./motion-graphic-visual-qa.ts";
+import {
+  MG_VISUAL_QA_STAGE,
+  motionGraphicRenderStage,
+  motionGraphicVisualQaStage,
+} from "./motion-graphic-visual-qa.ts";
 import { voiceGraphic } from "./motion-graphic-voice-retime.ts";
 
 export const MOTION_GRAPHIC_PACK = "motion-graphic";
@@ -455,9 +459,9 @@ export const motionGraphicQaStage: StageDefinition = {
 
 /**
  * New project: storyboard (agent, or template fallback) -> compose -> SFX accent -> voice-over -> music bed
- * (when the storyboard asked for one) -> render with the visual QA loop -> store the version -> QA ->
- * upload. The version is stored after the render because the visual review may redesign cards. Re-render of
- * a version: render -> QA -> upload.
+ * (when the storyboard asked for one) -> visual QA (render, review, redesign failed cards, re-render) ->
+ * store the version -> render (reuses the reviewed render) -> QA -> upload. The version is stored after the
+ * review because the review may redesign cards. Re-render of a version: render -> QA -> upload.
  */
 export const motionGraphicPipeline: PackPipeline = {
   renderer: "hyperframes",
@@ -471,15 +475,16 @@ export const motionGraphicPipeline: PackPipeline = {
           motionGraphicAccentStage,
           motionGraphicVoiceStage,
           motionGraphicMusicStage,
-          motionGraphicRenderStage(e.render),
+          motionGraphicVisualQaStage(e.render),
           e.validateIr,
+          motionGraphicRenderStage(e.render),
           motionGraphicQaStage,
           e.upload,
           e.finalize,
         ],
   // The finalize output, with the visual review of the render (card scores per round) when one ran.
   result: (outputs) => {
-    const visualQa = outputs.render?.visualQa;
+    const visualQa = outputs[MG_VISUAL_QA_STAGE]?.visualQa;
     return {
       ...(outputs.finalize ?? outputs.storyboard_ready ?? {}),
       ...(visualQa ? { visualQa } : {}),
