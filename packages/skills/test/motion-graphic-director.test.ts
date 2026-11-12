@@ -313,6 +313,7 @@ describe("motion-graphic film mode", () => {
         shot: i === 0 ? "the pill types" : "the job renders",
         focalWords: ["film"],
         exit: "panel centred",
+        exitRect: { x: 100 + i, y: 400, w: 880, h: 700 },
       })),
       ...extra,
     };
@@ -364,7 +365,8 @@ describe("motion-graphic film mode", () => {
     const tree = `compositions/${runs[0]?.compositionId}/files/`;
     const page = new TextDecoder().decode(objects.get(`${tree}index.html`));
     expect(page).toContain('<div id="chrome" class="layer">');
-    expect(page).toContain('"isolate":true');
+    // The page left in the tree is the render's: a scene that throws there fails the render, not ships.
+    expect(page).toContain('"isolate":false');
     for (const id of ids) {
       expect(page).toContain(`<section id="sc-${id}"`);
       expect(objects.has(`${tree}scenes/${id}.scene.html`)).toBe(true);
@@ -383,6 +385,7 @@ describe("motion-graphic film mode", () => {
       scenes: ids.map(() => ({ status: "authored" })),
     });
     expect(out.film).toEqual({ checkSeconds: 40, renderSeconds: 300, authored: ids.length, cards: 0 });
+    expect(validateVideoIR(out.ir).ok).toBe(true);
     // Only the hook and the call to action carry a line and a headline floor.
     const builds = inputs.slice(2) as Array<{
       scene: { role: string; onScreen?: unknown };
@@ -392,6 +395,11 @@ describe("motion-graphic film mode", () => {
     expect(builds[1]?.scene).not.toHaveProperty("onScreen");
     expect(builds[1]?.frame).not.toHaveProperty("headlinePx");
     expect(builds[0]?.frame).toHaveProperty("headlinePx");
+    // The surface carries across cuts: the hook opens at the system anchor, each scene where the last one left it.
+    const enter = (i: number) => (builds[i]?.scene as { enterRect?: unknown } | undefined)?.enterRect;
+    expect(enter(0)).toEqual({ x: 80, y: 520, w: 920, h: 620 });
+    expect(enter(1)).toEqual({ x: 100, y: 400, w: 880, h: 700 });
+    expect(enter(2)).toEqual({ x: 101, y: 400, w: 880, h: 700 });
     // No brand logo: the film shows a generated mark, recorded and warned about.
     expect(out.ir.metadata?.generatedMark).toEqual({ kind: "monogram" });
     expect(out.warning).toMatch(/monogram because the brand kit has no logo/);
@@ -437,6 +445,7 @@ describe("motion-graphic film mode", () => {
       /1 scene kept the template card: mid-2 \(the fragment breaks the contract: js: network access/,
     );
     expect(out.film).toMatchObject({ authored: ir.scenes.length - 1, cards: 1 });
+    expect(validateVideoIR(out.ir).ok).toBe(true);
   });
 
   it("attributes film check errors to their scene and renders only the scenes that passed", async () => {

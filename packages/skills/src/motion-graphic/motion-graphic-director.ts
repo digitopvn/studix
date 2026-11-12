@@ -59,6 +59,7 @@ import {
   sceneWords,
 } from "./motion-graphic-director-timing.ts";
 import { MG_STORYBOARD_STAGE, MotionStoryboardOutput, premiumDirector } from "./motion-graphic-storyboard.ts";
+import { finalRenderMsEstimate } from "./motion-graphic-visual-qa.ts";
 
 export const MG_DIRECTOR_STAGE = "motion-graphic.authored-scenes";
 
@@ -274,6 +275,8 @@ function buildInput(
       focalWords: shot?.focalWords ?? [],
       exit: shot?.exit ?? null,
       exitRect: shot?.exitRect ?? null,
+      // Where the previous scene left the surface: this scene opens with it there (the hook: the system anchor).
+      enterRect: index === 0 ? (direction.system?.anchor ?? null) : (prev?.exitRect ?? null),
       words,
       beats: beats.slice(0, 64),
       beatLen: timing.beatLen,
@@ -351,8 +354,25 @@ export function withoutMotifCuts(ir: VideoIR, scenes: Scene[], sceneId: string):
   return withFilmCuts(ir, scenes, new Set([sceneId]));
 }
 
-/** Time kept after the film's sandbox runs for the rest of the job: the review and the final render. */
-const FILM_MARGIN_MS = 4 * 60_000;
+/** Where the surface leaves each scene (`exit`) and where it opens the next (`enter`, the previous exit). */
+export function filmHandoff(
+  ir: VideoIR,
+  direction: DirectionBrief,
+): Record<string, { exit?: DirectionRect; enter?: DirectionRect }> {
+  const out: Record<string, { exit?: DirectionRect; enter?: DirectionRect }> = {};
+  for (const d of direction.scenes) {
+    const id = ir.scenes[d.scene - 1]?.id;
+    const next = ir.scenes[d.scene]?.id;
+    if (!id || !d.exitRect) continue;
+    out[id] = { ...out[id], exit: d.exitRect };
+    if (next) out[next] = { ...out[next], enter: d.exitRect };
+  }
+  return out;
+}
+type DirectionRect = NonNullable<DirectionBrief["scenes"][number]["exitRect"]>;
+
+/** Time kept after the film's sandbox runs on top of the final render: slack for the review and the upload. */
+const FILM_MARGIN_MS = 3 * 60_000;
 
 /**
  * Director tier (premium, `roles.director`), film mode: the director (strongest configured model) writes a
@@ -476,12 +496,9 @@ export const motionGraphicDirectorStage: StageDefinition = {
         markName: markNameOf(ir),
         filmAccent: palette[accent],
       };
-      const handoff = Object.fromEntries(
-        direction.scenes.flatMap((d) => {
-          const id = ir.scenes[d.scene - 1]?.id;
-          return id && d.exitRect ? [[id, { exit: d.exitRect }]] : [];
-        }),
-      );
+      // Each scene leaves its surface at its exit rect and the next one opens there: parallel builders share
+      // nothing else, so these rects (and the hook's anchor) are what carry the surface across the cuts.
+      const handoff = filmHandoff(ir, direction);
       const tasks = ir.scenes.map((sc, i) =>
         buildInput(ir, direction, i, sceneClipTiming(ir, sc.id, handoff), accent),
       );
@@ -545,7 +562,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
       const filmMs = sceneWindows(ir).at(-1)?.endMs ?? ir.format.durationMs;
       const secondsLeft = () =>
         s.job.deadlineAt
-          ? (s.job.deadlineAt.getTime() - Date.now() - FILM_MARGIN_MS) / 1000
+          ? (s.job.deadlineAt.getTime() - Date.now() - FILM_MARGIN_MS - finalRenderMsEstimate(ir)) / 1000
           : Number.POSITIVE_INFINITY;
       if (secondsLeft() * 1000 < filmSandboxMsEstimate(filmMs)) {
         return keepCards("not enough time left before the job deadline for the film check and render");

@@ -281,7 +281,9 @@ export const sceneBuildAgent = createAgentStage({
     "- Scale and the first frame: the main product-UI element fills at least 60% of the frame's width or " +
     "height and is visible, lit and composed from the scene's first frame (t0): no empty first second, no " +
     "entrance that starts from nothing; motion happens inside the surface (typing, a rail filling, chips " +
-    "popping, a cursor pressing). Keep everything above the caption band (`frame.captionBandPx` from the " +
+    "popping, a cursor pressing). Continuity: the main panel opens at `scene.enterRect` when given (for the " +
+    "hook that is the system's anchor; otherwise where the previous scene left it) and ends at " +
+    "`scene.exitRect`, so the surface carries across the cut. Keep everything above the caption band (`frame.captionBandPx` from the " +
     "bottom) and `frame.marginPx` from the other edges at every moment, camera moves included.\n" +
     "- By `scene.role`: `hook` sets its line (`scene.onScreen`) once as the headline, fully opaque in " +
     "var(--ink), at least `frame.headlinePx` px, beside the product surface. `cta` returns the surface to " +

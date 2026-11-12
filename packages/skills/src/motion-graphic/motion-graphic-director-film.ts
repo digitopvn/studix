@@ -38,8 +38,11 @@ export const BUILD_CONCURRENCY = 5;
 /** Most wall time of the film check (run 1) and the film render with its split (run 2). */
 export const FILM_CHECK_TIMEOUT_SECONDS = 600;
 export const FILM_RENDER_TIMEOUT_SECONDS = 1200;
-/** Expected wall time of both sandbox runs: start-up plus a share per film second (sidecars run on 1.5 cores). */
-export const filmSandboxMsEstimate = (filmMs: number) => 2 * 60_000 + 25 * filmMs;
+/**
+ * Expected wall time of both sandbox runs: two start-ups plus about 12 s per film second for the check and the
+ * render (the final render runs at about 9 s per film second on prod hardware; sidecars run on 1.5 cores).
+ */
+export const filmSandboxMsEstimate = (filmMs: number) => 2 * 60_000 + 12 * filmMs;
 
 const cpm = (s: StageContext) => s.services.compositions?.centsPerMinute ?? 0;
 /** The most the film check may cost. */
@@ -169,16 +172,21 @@ export interface FilmJob {
 
 const encoder = new TextEncoder();
 
-/** The film composition of `scenes` and the files it needs, as composition tree files. */
+/**
+ * The film composition of `scenes` as composition tree files. The check run isolates scenes (one that throws is
+ * logged and skipped, so every broken scene is named) and stores everything; the render run does not isolate, so
+ * a scene that still throws fails the render instead of shipping half built, and stores only the page.
+ */
 async function filmFiles(
   job: FilmJob,
   scenes: ReadonlyArray<{ sid: string; checked: CheckedSceneFragment }>,
-  withData: boolean,
+  run: "check" | "render",
 ) {
+  const withData = run === "check";
   const project = buildDirectorProject({
     width: job.ir.format.width,
     height: job.ir.format.height,
-    timing: job.timing,
+    timing: { ...job.timing, options: { ...job.timing.options, isolate: withData } },
     theme: directorTheme(job.ir, job.shell.filmAccent),
     scenes: scenes.map((s) => ({ sid: s.sid, fragment: s.checked })),
     shellVersion: job.shell.shellVersion,
@@ -238,7 +246,7 @@ export async function checkFilm(
   scenes: ReadonlyArray<{ sid: string; checked: CheckedSceneFragment }>,
 ): Promise<{ verdict: FilmCheckVerdict; seconds: number }> {
   const s = booked();
-  await storeTree(s, job.compositionId, await filmFiles(job, scenes, true));
+  await storeTree(s, job.compositionId, await filmFiles(job, scenes, "check"));
   const timeoutSeconds = timeoutWithin(FILM_CHECK_TIMEOUT_SECONDS, job.secondsLeft());
   const run = await s.services.compositions!.runner.run(booked(), {
     compositionId: job.compositionId,
@@ -295,7 +303,7 @@ export async function renderFilm(
   scenes: ReadonlyArray<{ sid: string; checked: CheckedSceneFragment }>,
 ): Promise<FilmRender> {
   const s = booked();
-  await storeTree(s, job.compositionId, await filmFiles(job, scenes, false));
+  await storeTree(s, job.compositionId, await filmFiles(job, scenes, "render"));
   const filmMs = sceneWindows(job.ir).at(-1)?.endMs ?? job.ir.format.durationMs;
   const ranges = filmFrameRanges(sceneWindows(job.ir), job.ir.format.fps);
   const wanted = new Set(scenes.map((sc) => sc.sid));

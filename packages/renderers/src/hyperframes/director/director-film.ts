@@ -24,11 +24,12 @@ export interface FilmFrameRange {
 }
 
 /**
- * Frame range of every scene, from cumulative rounded times, so the ranges tile the film exactly: no frame is
- * dropped or shown twice where two clips meet.
+ * Frame range of every scene, so the ranges tile the film exactly: no frame is dropped or shown twice where two
+ * clips meet. Frame n renders at n / fps and a scene turns visible at its start, so a scene's first frame is the
+ * first one at or after its start (ceil): a boundary between frames never hands a scene its neighbour's frame.
  */
 export function filmFrameRanges(windows: readonly FilmWindow[], fps: number): FilmFrameRange[] {
-  const frame = (ms: number) => Math.round((ms * fps) / 1000);
+  const frame = (ms: number) => Math.max(0, Math.ceil((ms * fps) / 1000 - 1e-6));
   return windows.map((w) => ({ sid: w.id, startFrame: frame(w.startMs), endFrame: frame(w.endMs) }));
 }
 
@@ -148,8 +149,12 @@ export function hexLuma(hex: string): number {
   return 16 + 219 * (0.2126 * r + 0.7152 * g + 0.0722 * b);
 }
 
-/** A frame within this much mean luma of the background, with this little spread, shows nothing but the page. */
-export const BLANK_LUMA = { avgDelta: 8, spread: 12 } as const;
+/**
+ * A frame within this much mean luma of the background, with this little spread, shows nothing but the page (and
+ * the faint chrome). Tight on purpose: a flag costs a builder call and a sandbox render, so a frame that holds
+ * even an empty product panel (6% ink over the page) must not read as blank.
+ */
+export const BLANK_LUMA = { avgDelta: 4, spread: 6 } as const;
 
 /** Whether a measured frame is blank: the background (and the faint chrome) with no scene content on it. */
 export const isBlankFrame = (f: FrameLuma, backgroundLuma: number) =>
@@ -192,7 +197,9 @@ const Finding = z
     time: z.number().optional(),
   })
   .passthrough();
-const Section = z.object({ findings: z.array(z.unknown()).default([]) }).passthrough();
+const Section = z
+  .object({ errorCount: z.number().optional(), findings: z.array(z.unknown()).default([]) })
+  .passthrough();
 const Report = z
   .object({ lint: Section.optional(), runtime: Section.optional(), layout: Section.optional() })
   .passthrough();
@@ -237,7 +244,11 @@ export function attributeFilmCheck(
   };
   const push = (map: Map<string, string[]>, sid: string, line: string) =>
     map.set(sid, [...(map.get(sid) ?? []), line]);
-  for (const section of [parsed.data.lint, parsed.data.runtime]) {
+  for (const [name, section] of [
+    ["lint", parsed.data.lint],
+    ["runtime", parsed.data.runtime],
+  ] as const) {
+    const before = verdict.film.length + [...verdict.errors.values()].flat().length;
     for (const raw of section?.findings ?? []) {
       const f = Finding.safeParse(raw);
       if (!f.success || f.data.severity !== "error") continue;
@@ -246,6 +257,10 @@ export function attributeFilmCheck(
       if (sid) push(verdict.errors, sid, line);
       else verdict.film.push(line);
     }
+    // Errors counted but not listed cannot be put on a scene: the whole film falls back, as the scene gate would.
+    const counted = section?.errorCount ?? 0;
+    const listed = verdict.film.length + [...verdict.errors.values()].flat().length - before;
+    if (counted > 0 && listed === 0) verdict.film.push(`${name}: ${counted} error(s) without findings`);
   }
   // Layout problems per scene: the clipping reader runs on each scene's own findings.
   const layoutFindings = parsed.data.layout?.findings ?? [];

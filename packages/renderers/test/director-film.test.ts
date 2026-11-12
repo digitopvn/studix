@@ -24,12 +24,16 @@ const windows = [
 ];
 
 describe("film split", () => {
-  it("tiles the film with frame ranges from cumulative rounded times", () => {
+  it("tiles the film with frame ranges that start on the first frame at or after each cut", () => {
     const ranges = filmFrameRanges(windows, 30);
+    // 2017 ms is frame 60.51 and 4983 ms frame 149.49: both scenes start on the next whole frame.
     expect(ranges).toEqual([
       { sid: "s01", startFrame: 0, endFrame: 61 },
-      { sid: "s02", startFrame: 61, endFrame: 149 },
-      { sid: "s03", startFrame: 149, endFrame: 240 },
+      { sid: "s02", startFrame: 61, endFrame: 150 },
+      { sid: "s03", startFrame: 150, endFrame: 240 },
+    ]);
+    expect(filmFrameRanges([{ id: "a", startMs: 0, endMs: 2000 }], 30)).toEqual([
+      { sid: "a", startFrame: 0, endFrame: 60 },
     ]);
     for (let i = 1; i < ranges.length; i++) expect(ranges[i]?.startFrame).toBe(ranges[i - 1]?.endFrame);
   });
@@ -43,7 +47,7 @@ describe("film split", () => {
     expect(cmd).toBe(
       'ffmpeg -v error -y -i out/film.mp4 -filter_complex "[0:v]split=2[v0][v1];' +
         "[v0]trim=start_frame=0:end_frame=61,setpts=PTS-STARTPTS[o0];" +
-        '[v1]trim=start_frame=149:end_frame=240,setpts=PTS-STARTPTS[o1]" ' +
+        '[v1]trim=start_frame=150:end_frame=240,setpts=PTS-STARTPTS[o1]" ' +
         '-map "[o0]" -an -c:v libx264 -preset veryfast -crf 12 -pix_fmt yuv420p -movflags +faststart out/s01.mp4 ' +
         '-map "[o1]" -an -c:v libx264 -preset veryfast -crf 12 -pix_fmt yuv420p -movflags +faststart out/s03.mp4',
     );
@@ -56,7 +60,7 @@ describe("blank frames at cuts", () => {
   const ranges = filmFrameRanges(windows, 30);
 
   it("measures two frames either side of every cut", () => {
-    expect(cutFrames(ranges)).toEqual([0, 1, 2, 59, 60, 61, 62, 63, 147, 148, 149, 150, 151]);
+    expect(cutFrames(ranges)).toEqual([0, 1, 2, 59, 60, 61, 62, 63, 148, 149, 150, 151, 152]);
     const cmd = cutLumaCommand("out/film.mp4", [0, 1, 60], "out/luma.txt");
     expect(cmd).toContain(
       "select='eq(n,0)+eq(n,1)+eq(n,60)',signalstats,metadata=mode=print:file=out/luma.txt",
@@ -76,13 +80,27 @@ describe("blank frames at cuts", () => {
       frame(62, y + 3, 6),
       frame(63, y + 30, 70),
       frame(148, y + 1, 2), // s02 closes empty, but s02 is the only scene measured below
-      frame(149, y + 50, 120),
+      frame(150, y + 50, 120),
     ].join("");
     const lumas = parseCutLuma(text, 30);
     expect(lumas).toHaveLength(7);
     expect(lumas[2]).toMatchObject({ frame: 61 });
     expect(blankCutScenes(ranges, lumas, bg)).toEqual([{ sid: "s02", frames: [61, 62, 148] }]);
     expect(blankCutScenes(ranges, lumas, bg, new Set(["s03"]))).toEqual([]);
+  });
+
+  it("never takes a frame with an empty product panel for a blank one", () => {
+    // A panel of 6% ink over the page covering 40% of a dark frame: the 90th percentile sits on the panel.
+    const bg = "#0b0b10";
+    const y = hexLuma(bg);
+    const panel = hexLuma("#191a1e");
+    const avg = 0.6 * y + 0.4 * panel;
+    const lumas = parseCutLuma(
+      `frame:61 pts:61 pts_time:${(61 / 30).toFixed(6)}\nlavfi.signalstats.YAVG=${avg}\n` +
+        `lavfi.signalstats.YLOW=${y}\nlavfi.signalstats.YHIGH=${panel}\n`,
+      30,
+    );
+    expect(blankCutScenes(ranges, lumas, bg)).toEqual([]);
   });
 
   it("judges blank against the background, so a light theme's white page is blank too", () => {
@@ -134,6 +152,11 @@ describe("film check attribution", () => {
     expect(verdict.film).toEqual(["page_error shell broke"]);
     expect(verdict.layout.get("s02")?.[0]).toContain('"Your film"');
     expect(verdict.layout.has("s01")).toBe(false);
+  });
+
+  it("fails the whole film on errors the report counts but does not list", () => {
+    const verdict = attributeFilmCheck({ lint: { errorCount: 2, findings: [] }, runtime: section() }, scenes);
+    expect(verdict.film).toEqual(["lint: 2 error(s) without findings"]);
   });
 
   it("reads nothing from a missing or broken report", () => {
