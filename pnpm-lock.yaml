@@ -6,8 +6,11 @@ settings:
 
 patchedDependencies:
   '@hyperframes/engine@0.8.223':
-    hash: 3f8267dc5f2a4c93ab261b68a976a101d088f6349b95414e13eb02c2d3a2ac8b
+    hash: ba7a930e33eb17e5d829dc14d0ecda131414f22355dbece8a9fb15590042f172
     path: patches/@hyperframes__engine@0.8.223.patch
+  '@hyperframes/producer@0.8.223':
+    hash: 9c68746564adfb069ebee81add3da1fde96c141f9046602c22e6b6888e9c3b18
+    path: patches/@hyperframes__producer@0.8.223.patch
 
 importers:
 
@@ -489,7 +492,7 @@ importers:
         version: 0.8.223
       '@hyperframes/producer':
         specifier: 0.8.223
-        version: 0.8.223(@types/node@24.19.2)(yauzl@2.10.0)
+        version: 0.8.223(patch_hash=9c68746564adfb069ebee81add3da1fde96c141f9046602c22e6b6888e9c3b18)(@types/node@24.19.2)(yauzl@2.10.0)
       '@studix/core':
         specifier: workspace:*
         version: link:../core
@@ -4568,7 +4571,7 @@ snapshots:
       - '@types/node'
       - canvas
 
-  '@hyperframes/engine@0.8.223(patch_hash=3f8267dc5f2a4c93ab261b68a976a101d088f6349b95414e13eb02c2d3a2ac8b)(yauzl@2.10.0)':
+  '@hyperframes/engine@0.8.223(patch_hash=ba7a930e33eb17e5d829dc14d0ecda131414f22355dbece8a9fb15590042f172)(yauzl@2.10.0)':
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.14)
       '@hyperframes/core': 0.8.223(@types/node@24.19.2)
@@ -4609,11 +4612,11 @@ snapshots:
     transitivePeerDependencies:
       - canvas
 
-  '@hyperframes/producer@0.8.223(@types/node@24.19.2)(yauzl@2.10.0)':
+  '@hyperframes/producer@0.8.223(patch_hash=9c68746564adfb069ebee81add3da1fde96c141f9046602c22e6b6888e9c3b18)(@types/node@24.19.2)(yauzl@2.10.0)':
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.14)
       '@hyperframes/core': 0.8.223(@types/node@24.19.2)
-      '@hyperframes/engine': 0.8.223(patch_hash=3f8267dc5f2a4c93ab261b68a976a101d088f6349b95414e13eb02c2d3a2ac8b)(yauzl@2.10.0)
+      '@hyperframes/engine': 0.8.223(patch_hash=ba7a930e33eb17e5d829dc14d0ecda131414f22355dbece8a9fb15590042f172)(yauzl@2.10.0)
       '@hyperframes/lint': 0.8.223
       '@hyperframes/parsers': 0.8.223
       '@hyperframes/studio-server': 0.8.223(@types/node@24.19.2)
