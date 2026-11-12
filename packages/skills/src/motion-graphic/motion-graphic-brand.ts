@@ -59,16 +59,58 @@ export function decodeEntities(text: string): string {
 
 const ATTR = /([^\s=/>"']+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+)))?/g;
 
+/** The longest tag whose attributes are read; a longer one is no brand markup. */
+const MAX_TAG_CHARS = 8192;
+
+/**
+ * Every `<name ...>` tag of a page from `from` on: its attribute text and where it ends. A linear `indexOf`
+ * scan, not a backtracking regex: the page is untrusted, and `<(meta|link)\b([^>]*)>` over a page of
+ * unclosed tags costs seconds per 100 KB, blocking the worker. Tags never nest, so the next search starts
+ * past the `>` that closed the last one. `lower` is the page lower-cased, so names match in any case.
+ */
+function* openTags(
+  html: string,
+  lower: string,
+  name: string,
+  from = 0,
+): Generator<{ attrs: string; end: number }> {
+  const needle = `<${name}`;
+  let at = lower.indexOf(needle, from);
+  while (at !== -1) {
+    const close = lower.indexOf(">", at + needle.length);
+    if (close === -1) return;
+    if (!/[\w-]/.test(lower[at + needle.length] ?? "") && close - at <= MAX_TAG_CHARS)
+      yield { attrs: html.slice(at + needle.length, close), end: close + 1 };
+    at = lower.indexOf(needle, close + 1);
+  }
+}
+
+/** The text inside every `<name ...>...</name>` element, with its open tag's attribute text. Linear. */
+function* elementsOf(html: string, lower: string, name: string): Generator<{ attrs: string; text: string }> {
+  const closer = `</${name}`;
+  let from = 0;
+  for (;;) {
+    const open = openTags(html, lower, name, from).next();
+    if (open.done) return;
+    const end = lower.indexOf(closer, open.value.end);
+    if (end === -1) return;
+    yield { attrs: open.value.attrs, text: html.slice(open.value.end, end) };
+    from = end + closer.length;
+  }
+}
+
 /** Every `<meta>` and `<link>` tag of a page, its attribute names lowercased and values decoded. */
-function tagsOf(html: string): Array<{ tag: "meta" | "link"; attrs: Record<string, string> }> {
+function tagsOf(html: string, lower: string): Array<{ tag: "meta" | "link"; attrs: Record<string, string> }> {
   const tags: Array<{ tag: "meta" | "link"; attrs: Record<string, string> }> = [];
-  for (const m of html.matchAll(/<(meta|link)\b([^>]*)>/gi)) {
-    const attrs: Record<string, string> = {};
-    for (const a of (m[2] ?? "").matchAll(ATTR)) {
-      const key = (a[1] ?? "").toLowerCase();
-      if (key && !(key in attrs)) attrs[key] = decodeEntities(a[2] ?? a[3] ?? a[4] ?? "").trim();
+  for (const tag of ["meta", "link"] as const) {
+    for (const t of openTags(html, lower, tag)) {
+      const attrs: Record<string, string> = {};
+      for (const a of t.attrs.matchAll(ATTR)) {
+        const key = (a[1] ?? "").toLowerCase();
+        if (key && !(key in attrs)) attrs[key] = decodeEntities(a[2] ?? a[3] ?? a[4] ?? "").trim();
+      }
+      tags.push({ tag, attrs });
     }
-    tags.push({ tag: (m[1] ?? "").toLowerCase() as "meta" | "link", attrs });
   }
   return tags;
 }
@@ -160,13 +202,13 @@ function titleName(title: string, baseUrl: string): string | undefined {
 }
 
 /**
- * The brand's name, colours and logo candidates read from its home page with a few regular expressions (no
- * DOM): name from `og:site_name`, else `application-name`, else the title's first segment; colours from
+ * The brand's name, colours and logo candidates read from its home page by a linear tag scan (no DOM): name from `og:site_name`, else `application-name`, else the title's first segment; colours from
  * `theme-color`, `msapplication-TileColor` and the mask icon; logos (resolved against `baseUrl`, https only)
  * from an SVG icon, the largest apple-touch-icon, `og:logo`, JSON-LD `logo`, then the other icons (no .ico).
  */
 export function readBrandPage(html: string, baseUrl: string): BrandPage {
-  const tags = tagsOf(html);
+  const lower = html.toLowerCase();
+  const tags = tagsOf(html, lower);
   const meta = (key: string) =>
     tags
       .filter((t) => t.tag === "meta" && (t.attrs.property ?? t.attrs.name ?? "").toLowerCase() === key)
@@ -181,7 +223,7 @@ export function readBrandPage(html: string, baseUrl: string): BrandPage {
       size: sizeOf(t.attrs.sizes),
       color: t.attrs.color,
     }));
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1];
+  const title = elementsOf(html, lower, "title").next().value?.text.slice(0, 1000);
   const name =
     cleanName(meta("og:site_name")[0]) ??
     cleanName(meta("application-name")[0]) ??
@@ -199,11 +241,10 @@ export function readBrandPage(html: string, baseUrl: string): BrandPage {
   const isSvg = (l: (typeof links)[number]) => l.type === "image/svg+xml" || /\.svg(?:[?#]|$)/i.test(l.href);
   const bySize = (a: { size: number }, b: { size: number }) => b.size - a.size;
   const ldLogos: string[] = [];
-  for (const m of html.matchAll(
-    /<script\b[^>]*type\s*=\s*["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script>/gi,
-  )) {
+  for (const script of elementsOf(html, lower, "script")) {
+    if (!/type\s*=\s*["']?application\/ld\+json/i.test(script.attrs)) continue;
     try {
-      jsonLdLogos(JSON.parse(m[1] ?? ""), ldLogos);
+      jsonLdLogos(JSON.parse(script.text), ldLogos);
     } catch {
       // A malformed JSON-LD block is one source fewer, not a failure.
     }
@@ -251,6 +292,60 @@ export function sniffLogo(bytes: Uint8Array): { mime: string; ext: string } | un
   return undefined;
 }
 
+/** Longest edge of a raster logo: a 4096 px square decodes to 64 MB, which every render frame holds. */
+const MAX_LOGO_EDGE = 4096;
+
+/** Pixel size a PNG, JPEG, WebP or GIF declares in its header; undefined when it cannot be read. */
+export function rasterSize(bytes: Uint8Array, mime: string): { width: number; height: number } | undefined {
+  const at = (i: number) => bytes[i] ?? 0;
+  const u16be = (i: number) => (at(i) << 8) | at(i + 1);
+  const u16le = (i: number) => at(i) | (at(i + 1) << 8);
+  const u24le = (i: number) => at(i) | (at(i + 1) << 8) | (at(i + 2) << 16);
+  const u32be = (i: number) => ((at(i) << 24) | (at(i + 1) << 16) | (at(i + 2) << 8) | at(i + 3)) >>> 0;
+  if (mime === "image/png") return { width: u32be(16), height: u32be(20) };
+  if (mime === "image/gif") return { width: u16le(6), height: u16le(8) };
+  if (mime === "image/webp") {
+    const chunk = String.fromCharCode(at(12), at(13), at(14), at(15));
+    if (chunk === "VP8 ") return { width: u16le(26) & 0x3fff, height: u16le(28) & 0x3fff };
+    if (chunk === "VP8L")
+      return {
+        width: 1 + (((at(22) & 0x3f) << 8) | at(21)),
+        height: 1 + (((at(24) & 0xf) << 10) | (at(23) << 2) | (at(22) >> 6)),
+      };
+    if (chunk === "VP8X") return { width: 1 + u24le(24), height: 1 + u24le(27) };
+    return undefined;
+  }
+  if (mime === "image/jpeg") {
+    // Walk the segments to the first start-of-frame marker, which holds the size.
+    for (let i = 2; i + 9 < bytes.length; i += 2 + u16be(i + 2)) {
+      if (at(i) !== 0xff) return undefined;
+      const marker = at(i + 1);
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker))
+        return { width: u16be(i + 7), height: u16be(i + 5) };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Why logo bytes must not be stored, or undefined when they may. An SVG that carries script (also namespaced,
+ * `<x:script>`), `foreignObject`, event handlers or `javascript:`, or loads anything from outside (an href, a
+ * CSS `@import` or `url(...)`), is refused: the stored file must be safe wherever it is served. A raster whose
+ * header declares an edge over 4096 px is refused: a small compressed file can decode to gigabytes.
+ */
+export function logoProblem(bytes: Uint8Array, mime: string): string | undefined {
+  if (mime === "image/svg+xml") {
+    const text = new TextDecoder().decode(bytes);
+    const unsafe =
+      /<(?:[\w-]+:)?(?:script|foreignObject)\b|\son[a-z]+\s*=|javascript:|@import|url\(\s*["']?\s*(?!#|data:image\/)|(?:xlink:)?href\s*=\s*["']\s*(?!#|data:image\/)/i;
+    return unsafe.test(text) ? "the SVG carries scripts or external references" : undefined;
+  }
+  const size = rasterSize(bytes, mime);
+  if (size && Math.max(size.width, size.height) > MAX_LOGO_EDGE)
+    return `it is ${size.width}x${size.height} px; its longest edge may be ${MAX_LOGO_EDGE} px`;
+  return undefined;
+}
+
 /** Rethrows when the job was aborted, so an abort is never swallowed as a warning. */
 function abortedBy(s: StageContext, err: unknown): void {
   if (s.signal.aborted) throw s.signal.reason ?? err;
@@ -295,6 +390,11 @@ async function storeLogo(
     const type = sniffLogo(read.bytes);
     if (!type) {
       error ??= "it is not a PNG, JPEG, WebP, GIF or SVG image";
+      continue;
+    }
+    const problem = logoProblem(read.bytes, type.mime);
+    if (problem) {
+      error ??= problem;
       continue;
     }
     const sha256 = createHash("sha256").update(read.bytes).digest("hex");

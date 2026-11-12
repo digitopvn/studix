@@ -285,7 +285,10 @@ Behavior notes:
   (`theme-color`, tile and mask-icon colours; greys dropped) and logo (SVG icon,
   apple-touch-icon, `og:logo`, JSON-LD `logo`, other icons) through the
   SSRF-guarded fetch, and stores the logo (the uploaded one wins; PNG, JPEG,
-  WebP, GIF or SVG checked by its bytes). The brand's name, else the site's,
+  WebP, GIF or SVG checked by its bytes; an SVG with script, event handlers or
+  outside loads, or a raster over 4096 px on an edge, is refused). The page is
+  read with a linear tag scan, so a hostile page cannot hold the worker, and a
+  base64 logo never reaches any agent's input. The brand's name, else the site's,
   and its logo are drawn as a lockup on the hook and CTA cards. The first
   colour becomes primary and accent, the second secondary; `brandColors` wins
   over `brand.palette`, and site colours are used only when the brief sets

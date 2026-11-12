@@ -5,6 +5,7 @@ import type { AssetRef, CreativeBrief, Shot } from "@studix/video-ir";
 import type { StageContext, StageServices } from "@studix/workflow";
 import { describe, expect, it, vi } from "vitest";
 import {
+  logoProblem,
   motionGraphicBrandStage,
   readBrandPage,
   sniffLogo,
@@ -58,6 +59,42 @@ describe("readBrandPage", () => {
     expect(name("Trang chủ - Lá Mây", "https://lamay.com.vn/")).toBe("Lá Mây");
     expect(name("Welcome · Rockets for all", "https://example.org/")).toBe("Rockets for all");
     expect(name("Fast rockets | Acme Labs", "https://acmelabs.io/")).toBe("Acme Labs");
+  });
+
+  it("reads a hostile page in linear time", () => {
+    // Unclosed tags made the regex reader backtrack quadratically: seconds per 250 KB, minutes at the 1.5 MB cap.
+    const pages = ["<meta ".repeat(250_000), "<title>".repeat(200_000), "<script>".repeat(180_000)];
+    const started = performance.now();
+    for (const page of pages) expect(readBrandPage(page, "https://x.example/").logoUrls).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe("logoProblem", () => {
+  const svg = (body: string) =>
+    new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg">${body}</svg>`);
+  it("refuses SVG script, handlers and outside loads, and keeps a plain mark", () => {
+    expect(logoProblem(svg('<path d="M0 0h10v10z"/>'), "image/svg+xml")).toBeUndefined();
+    for (const body of [
+      "<script>alert(1)</script>",
+      '<x:script xmlns:x="http://www.w3.org/2000/svg"/>',
+      '<rect onload="alert(1)"/>',
+      '<image href="https://evil.example/x.png"/>',
+      "<style>@import url(https://evil.example/a.css)</style>",
+    ])
+      expect(logoProblem(svg(body), "image/svg+xml"), body).toMatch(/scripts or external/);
+  });
+
+  it("refuses a raster that declares a huge canvas", () => {
+    const png = (w: number, h: number) => {
+      const b = new Uint8Array(24);
+      b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+      new DataView(b.buffer).setUint32(16, w);
+      new DataView(b.buffer).setUint32(20, h);
+      return b;
+    };
+    expect(logoProblem(png(512, 512), "image/png")).toBeUndefined();
+    expect(logoProblem(png(30_000, 30_000), "image/png")).toMatch(/30000x30000/);
   });
 });
 
