@@ -302,7 +302,9 @@ export function repairFits(input: {
 }): "fits" | "no-budget" | "no-time" {
   // A redesign may overshoot its cap by a turn: keep a second cap in hand so the job never ends over budget.
   if (input.centsLeft < MG_STORYBOARD_LIMITS.maxCostCents * 2 + input.renderCents) return "no-budget";
-  if (input.timeLeftMs < MG_STORYBOARD_LIMITS.timeoutMs + input.captureMs + input.renderMs) return "no-time";
+  // A re-capture of a redesigned card can take longer than the first: reserve half again, at least the cap.
+  const recaptureMs = Math.max(Math.ceil(1.5 * input.captureMs), MG_STILLS_CAPTURE_BUDGET_MS);
+  if (input.timeLeftMs < MG_STORYBOARD_LIMITS.timeoutMs + recaptureMs + input.renderMs) return "no-time";
   return "fits";
 }
 
@@ -351,9 +353,12 @@ const ACTIVITY_BEAT_MS = 15_000;
  * contact sheet to a vision model that scores each card for blank, too small, illegible,
  * repetitive, off-brief or headline-only. Failed cards go back to the storyboard agent, which redesigns only
  * those cards (voice-over and timing kept), and their stills are captured again: at most
- * MG_VISUAL_QA_ROUNDS times, only while the job budget and deadline hold a review, a redesign and a capture
- * while keeping the final render's cost and time free. The output (a durable checkpoint) carries the IR the version stores and the render stage draws,
- * once, and the scores (`visualQa`, also in the job result).
+ * MG_VISUAL_QA_ROUNDS times. A review runs only while the deadline holds it and the final render; a repair
+ * runs whenever the redesign, a re-capture and the final render fit (`repairFits`), without reserving the
+ * review after it, so the first fix round is applied whenever it fits. When no review is left for a repair,
+ * the repaired IR is kept and `reason` names the cards not reviewed again. The output (a durable checkpoint)
+ * carries the IR the version stores and the render stage draws, once, and the scores (`visualQa`, also in
+ * the job result).
  *
  * The review never fails the job: without an agent or a stills capture, in host mode, with a model that
  * cannot read images, or on any error of the reviewer, the redesign or a capture it ends with a reason and

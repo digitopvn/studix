@@ -433,7 +433,7 @@ sheet (một frame giữ của mỗi card, lấy sau phần vào của card) và
 `off-brief`, `headline-only` (card đầu và cuối được là card chỉ có tiêu đề). Card có lỗi hoặc điểm dưới 6 quay
 về storyboard agent để thiết kế lại riêng các card đó; lời đọc và weight được giữ nên voice, caption, SFX và
 thời lượng card không đổi, không tốn tiền voice lại; headline và layout của card mới vẫn vào đúng lúc stage voice đặt theo lời đọc (layout mới chưa có thì vào giữa card). Sau đó graphic render lại, tối đa 2 vòng và chỉ khi ngân
-sách và deadline của job còn đủ cho một lượt sửa, một lần chụp lại stills và lần render cuối (lượt chấm lại sau đó không được giữ chỗ,
+sách và deadline của job còn đủ cho một lượt sửa, một lần chụp lại stills (giữ 1,5 lần thời gian chụp đầu, ít nhất 60 giây) và lần render cuối (lượt chấm lại sau đó không được giữ chỗ,
 nên vòng sửa đầu tiên luôn được áp dụng khi nó vừa; không còn thời gian chấm lại thì `reason` ghi rõ card nào đã
 sửa nhưng chưa được chấm lại). Model không nhận ảnh theo metadata của nó thì bị từ chối trước khi tốn tiền. Checkpoint của stage giữ IR
 đã duyệt, điểm và file render tốt cuối cùng (trong thư mục của job, ngoài thư mục attempt); `validate_ir` lưu
