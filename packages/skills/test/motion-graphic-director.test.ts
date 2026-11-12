@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { CompositionRunRequest } from "@studix/core";
 import { checkSceneFragment, hexLuma, resolvePalette } from "@studix/renderers";
 import { type Scene, type VideoIR, validateVideoIR } from "@studix/video-ir";
-import type { StageContext } from "@studix/workflow";
+import { type StageContext, StageSuspended } from "@studix/workflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   directorFilmTiming,
@@ -456,6 +456,25 @@ describe("motion-graphic film mode", () => {
     );
     expect(out.film).toMatchObject({ authored: ir.scenes.length - 1, cards: 1 });
     expect(validateVideoIR(out.ir).ok).toBe(true);
+  });
+
+  it("keeps the card of a scene whose builder reaches its cap instead of parking the film", async () => {
+    const { s, ir } = await setup({
+      buildFor: (sid) => {
+        if (sid === "mid-2")
+          throw new StageSuspended({
+            kind: "approval",
+            action: "agent.overrun",
+            scopeKey: "agent:motion-graphic.scene-build",
+            reason: "cap",
+          });
+        return sid.startsWith("mid-") ? uiFragment : fragment;
+      },
+    });
+    const out = (await motionGraphicDirectorStage.run(s)).output as Out;
+    expect(out.ir.metadata?.authoredScenes).not.toContain("mid-2");
+    expect(out.film).toMatchObject({ authored: ir.scenes.length - 1, cards: 1 });
+    expect(out.warning).toMatch(/1 scene kept the template card: mid-2/);
   });
 
   it("attributes film check errors to their scene and renders only the scenes that passed", async () => {
