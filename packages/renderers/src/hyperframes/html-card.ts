@@ -234,8 +234,10 @@ function balanced(value: string): boolean {
 }
 
 /**
- * Text as markup: HTML-escaped, with `(` and `:` as character references too, so no string regex over the
- * compiled page (the producer localizes `url(https://...)` it finds anywhere) can read a URL in it.
+ * Text as markup: HTML-escaped, with `(` and `:` as character references too. This is not what keeps
+ * `url(https://...)` in card text from being fetched: the producer parses and re-serializes the page before its
+ * localizers run, which decodes the references. The pinned engine and producer patches stop every compile-step
+ * download instead (docs/RENDERER.md, "Capture isolation patches").
  */
 const escapeText = (text: string) => escapeHtml(text).replace(/\(/g, "&#40;").replace(/:/g, "&#58;");
 

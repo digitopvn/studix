@@ -170,7 +170,8 @@ to the exact same version in `packages/renderers/package.json` (currently
   downloads a URL for runtime media.
   `capture-isolation.integration.test.ts` renders a page that tries fetch,
   beacon, image, WebSocket, popup, iframe, WebRTC and runtime `<video>` sources
-  (`..%2f`, `..%5c`, double encoding, `file:`, `http:`). A canary server must see
+  (`..%2f`, `..%5c`, double encoding, `file:`, `http:`), against a non-loopback
+  address and another loopback port (`localhost` and `127.0.0.1`). A canary server must see
   nothing and the frame must stay black, while a project clip still renders
   ([#451](https://github.com/digitopvn/studix/issues/451)).
   `capture-isolation-hostile.integration.test.ts` adds probes to other
