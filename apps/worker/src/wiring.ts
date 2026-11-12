@@ -153,6 +153,8 @@ export function createWorkerRuntime(deps: WorkerRuntimeDeps): WorkerRuntime {
       workRoot: settings.workDir,
       executions: repos.usage,
       fetchPublic,
+      // The director tier of the motion graphic renders agent-written scenes only in this sandbox.
+      ...(deps.compositionRun ? { compositions: deps.compositionRun } : {}),
     },
     clock,
     logger,

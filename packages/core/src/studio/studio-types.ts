@@ -125,8 +125,9 @@ export type JobAgentSelection = z.infer<typeof JobAgentSelection>;
  * Optional role agents of a job, each on its own runtime, model and effort. In an agent-authored job
  * (`skill-agent`) the director writes the script and direction, the builder makes the video, QA scores it
  * against a rubric and may send it back to the builder; a role left out runs on `agent` (builder) or is skipped
- * (director, qa). In `motion-graphic` a director turns on the premium tier: it writes the storyboard and may
- * author hero cards in custom HTML.
+ * (director, qa). In `motion-graphic` a director turns on the premium tier: it writes the storyboard, may
+ * author hero cards in custom HTML and, on a worker with a skill sandbox, writes the film's direction brief
+ * while the builder authors the hook scene on the director shell.
  */
 export const AGENT_ROLES = ["director", "builder", "qa"] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
@@ -141,8 +142,8 @@ export type JobAgentRoles = z.infer<typeof JobAgentRoles>;
 
 /** The agent stage names each role runs, across the packs that have role agents. */
 export const ROLE_STAGES: Readonly<Record<AgentRole, readonly string[]>> = {
-  director: ["skill-agent.director", "motion-graphic.storyboard"],
-  builder: ["skill-agent.run"],
+  director: ["skill-agent.director", "motion-graphic.storyboard", "motion-graphic.direction"],
+  builder: ["skill-agent.run", "motion-graphic.scene-build"],
   qa: ["skill-agent.qa"],
 };
 
