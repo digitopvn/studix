@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { StudixError } from "@studix/shared";
+import { scrubbedEnv } from "./run-process.ts";
 
 /** Where the beats of a piece of music fall, on the source's own timeline. */
 export interface BeatGrid {
@@ -204,15 +205,6 @@ export function beatGridOf(samples: Float32Array, sampleRate: number): BeatGrid 
   return { bpm, beatsMs, downbeatsMs, confidence: Math.round(confidence * 1000) / 1000 };
 }
 
-/** Only what ffmpeg needs; credentials in the worker environment never reach it. */
-function childEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const key of ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SystemRoot"]) {
-    if (process.env[key] !== undefined) env[key] = process.env[key];
-  }
-  return env;
-}
-
 /** First audio stream of `file` as mono float samples at `rate` (at most the first 10 minutes). */
 function decodeMono(
   file: string,
@@ -230,7 +222,7 @@ function decodeMono(
       reject(new StudixError("CANCELLED", "beat analysis cancelled before start"));
       return;
     }
-    const child = spawn(bin, args, { env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, args, { env: scrubbedEnv(), stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     let stderr = "";
     let settled = false;
