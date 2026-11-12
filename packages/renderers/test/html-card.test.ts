@@ -57,6 +57,19 @@ describe("htmlCardProblems", () => {
     ])
       expect(html(`<svg><rect mask="${value}" fill="${value}" /></svg>`).length).toBeGreaterThan(0);
     expect(html('<svg><rect fill="url(#g)" transform="rotate(-90 50 50)" /></svg>')).toEqual([]);
+    // A theme token in fill/stroke becomes a generated style; any other var() use stays refused.
+    const token = sanitizeHtmlCard(
+      { ...CLEAN_CARD, html: '<svg><path stroke="var(--c-primary)" fill="var( --c-accent )" /></svg>' },
+      "c",
+    );
+    expect(token.problems).toEqual([]);
+    expect(token.html).toContain('<path style="stroke: var(--c-primary); fill: var(--c-accent)"></path>');
+    for (const markup of [
+      '<svg><rect fill="var(--a, url(#g))" /></svg>',
+      '<svg><rect opacity="var(--a)" /></svg>',
+      '<svg><rect fill="var(a)" /></svg>',
+    ])
+      expect(html(markup).length).toBeGreaterThan(0);
     // Card text never reads as a URL to a string regex over the page.
     const text = sanitizeHtmlCard(
       { ...CLEAN_CARD, html: "<p>background:url(https://x.test/a.png)</p>" },

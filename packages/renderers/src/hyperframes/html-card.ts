@@ -209,6 +209,9 @@ const ATTRIBUTE_FUNCTIONS = new Set([
   "skewy",
 ]);
 const CLASS_VALUE = /^[\w\s-]*$/;
+/** Paint attributes that may name a theme token, and the one value form they accept: `var(--name)`. */
+const TOKEN_PAINT_ATTRIBUTES = new Set(["fill", "stroke"]);
+const TOKEN_REFERENCE = /^\s*var\(\s*(--[A-Za-z][\w-]*)\s*\)\s*$/;
 
 /** Why an attribute value is unsafe, or undefined. */
 function attributeValueProblem(attr: string, value: string): string | undefined {
@@ -288,6 +291,9 @@ function sanitizeHtml(html: string, cardId: string, problems: Set<string>): stri
           problems.add("html: <li> must sit directly inside <ul> or <ol>, and lists hold only <li>");
 
         const attrs: string[] = [];
+        // `fill="var(--c-primary)"`: a custom property reference only, moved into a generated style attribute
+        // because Chrome does not resolve var() in an SVG presentation attribute.
+        const tokenPaint: string[] = [];
         for (const [rawName, rawValue] of Object.entries(node.attribs)) {
           const attr = ATTRIBUTE_NAMES.get(rawName.toLowerCase());
           if (!attr) {
@@ -296,6 +302,11 @@ function sanitizeHtml(html: string, cardId: string, problems: Set<string>): stri
           }
           if (attr === "xmlns") {
             if (rawValue !== SVG_NAMESPACE) problems.add(`html: xmlns must be ${SVG_NAMESPACE}`);
+            continue;
+          }
+          const token = TOKEN_PAINT_ATTRIBUTES.has(attr) ? TOKEN_REFERENCE.exec(rawValue) : null;
+          if (token) {
+            tokenPaint.push(`${attr}: var(${token[1]})`);
             continue;
           }
           let value = rawValue;
@@ -317,6 +328,7 @@ function sanitizeHtml(html: string, cardId: string, problems: Set<string>): stri
           }
           attrs.push(` ${attr}="${escapeHtml(value)}"`);
         }
+        if (tokenPaint.length > 0) attrs.push(` style="${escapeHtml(tokenPaint.join("; "))}"`);
         if (tag === "br") return `<br${attrs.join("")} />`;
         return `<${tag}${attrs.join("")}>${walk(node.children, tag, inSvg || tag === "svg")}</${tag}>`;
       })
