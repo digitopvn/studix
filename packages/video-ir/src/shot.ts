@@ -77,6 +77,11 @@ export const LogoShot = ShotBase.extend({
   /** Logo asset id; when omitted the brand kit logo is used, else `text` is set as a wordmark. */
   assetId: IrId.optional(),
   text: z.string().min(1).max(60).optional(),
+  /**
+   * Draw a lockup: the logo image with `text` (or the brand name) beside it, both sized by the style's text
+   * role. Without a logo image the lockup is the wordmark alone.
+   */
+  lockup: z.boolean().optional(),
 });
 
 export const CtaShot = ShotBase.extend({
@@ -120,7 +125,13 @@ const Label = (max: number) => z.string().trim().min(1).max(max);
  * - `counter`: a number rolling from `from` to `to`, with an optional prefix, suffix and label;
  * - `cards-row`: 2-5 cards side by side, the `highlight` one raised;
  * - `swatches`: 2-6 colour swatches with optional labels;
- * - `stat`: one big `value` and its `label`.
+ * - `stat`: one big `value` and its `label`;
+ * - `chat`: a chat window whose input types `prompt` and sends it, then an optional assistant `reply`;
+ * - `tool-call`: a tool-call card for `name` with up to 4 `args`, its status spinning on "running" and,
+ *   when `done`, settling on a tick and the optional `result`;
+ * - `pipeline`: 2-6 job stages wired left to right, lit in turn up to `active` (all done when absent);
+ * - `player`: a preview player that plays to the end, then an Approve button (`action`) is pressed;
+ * - `usage`: a usage meter filling to `used` of a `cap`, the cap marked on the track.
  */
 export const LayoutSpec = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("prompt-box"), text: Label(160), action: Label(24).optional() }),
@@ -172,6 +183,55 @@ export const LayoutSpec = z.discriminatedUnion("kind", [
       .max(6),
   }),
   z.object({ kind: z.literal("stat"), value: Label(16), label: Label(80) }),
+  z.object({
+    kind: z.literal("chat"),
+    prompt: Label(160),
+    reply: Label(160).optional(),
+    title: Label(40).optional(),
+  }),
+  z.object({
+    kind: z.literal("tool-call"),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(48)
+      .regex(/^[^\r\n]*$/, "one line"),
+    args: z
+      .array(z.object({ key: Label(24), value: Label(48) }))
+      .max(4)
+      .optional(),
+    status: z.enum(["running", "done"]).default("done"),
+    result: Label(60).optional(),
+  }),
+  z
+    .object({
+      kind: z.literal("pipeline"),
+      items: z.array(Label(24)).min(2).max(6),
+      active: z.number().int().min(0).max(5).optional(),
+    })
+    .refine((p) => p.active === undefined || p.active < p.items.length, {
+      message: "`active` must index one of the `items`",
+      path: ["active"],
+    }),
+  z.object({
+    kind: z.literal("player"),
+    title: Label(48).optional(),
+    action: Label(24).optional(),
+  }),
+  z
+    .object({
+      kind: z.literal("usage"),
+      used: z.number().min(0).max(999_999_999),
+      cap: z.number().positive().max(999_999_999),
+      prefix: Label(4).optional(),
+      suffix: Label(12).optional(),
+      label: Label(60).optional(),
+    })
+    .refine((u) => u.used <= u.cap, {
+      message: "a usage meter stops at its cap: `used` must not exceed `cap`",
+      path: ["used"],
+    }),
 ]);
 export type LayoutSpec = z.infer<typeof LayoutSpec>;
 export type LayoutKind = LayoutSpec["kind"];
@@ -184,6 +244,11 @@ export const LAYOUT_KINDS = [
   "cards-row",
   "swatches",
   "stat",
+  "chat",
+  "tool-call",
+  "pipeline",
+  "player",
+  "usage",
 ] as const satisfies readonly LayoutKind[];
 
 /** A built-in layout (`LayoutSpec`) the renderer draws and animates from its typed content. */

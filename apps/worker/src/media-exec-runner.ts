@@ -120,23 +120,43 @@ export function assertPublicHttpsUrl(raw: string): URL {
   return url;
 }
 
+/** A body fetched through the SSRF guard, with its content type and the URL it was finally served from. */
+export interface PublicFetch {
+  body: Buffer;
+  /** The media type of the response, lowercased, without parameters; empty when the server sent none. */
+  contentType: string;
+  /** Final URL after redirects. */
+  url: string;
+}
+
 /**
- * Download a URL input through the SSRF guard: every hop is re-checked, the socket refuses private and
+ * Download a public https URL through the SSRF guard: every hop is re-checked, the socket refuses private and
  * metadata addresses at connect time (DNS rebinding), and the body is capped.
  */
-export async function fetchPublicUrl(raw: string, maxBytes: number, signal: AbortSignal): Promise<Buffer> {
+export async function fetchPublic(
+  raw: string,
+  options: { maxBytes: number },
+  signal: AbortSignal,
+): Promise<PublicFetch> {
+  const { maxBytes } = options;
   let url = assertPublicHttpsUrl(raw);
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const response = await new Promise<{ status: number; location?: string; body?: Buffer }>(
+    const response = await new Promise<{ location?: string; body?: Buffer; contentType?: string }>(
       (resolve, reject) => {
         const req = httpsRequest(
           url,
-          { method: "GET", lookup: guardedLookup(URL_POLICY), signal, timeout: 60_000 },
+          {
+            method: "GET",
+            lookup: guardedLookup(URL_POLICY),
+            signal,
+            timeout: 60_000,
+            headers: { "user-agent": "Mozilla/5.0 (compatible; Studix)", accept: "*/*" },
+          },
           (res) => {
             const status = res.statusCode ?? 0;
             if (status >= 300 && status < 400 && res.headers.location) {
               res.resume();
-              resolve({ status, location: res.headers.location });
+              resolve({ location: res.headers.location });
               return;
             }
             if (status !== 200) {
@@ -150,6 +170,7 @@ export async function fetchPublicUrl(raw: string, maxBytes: number, signal: Abor
               reject(refusedUrl("larger than the input limit"));
               return;
             }
+            const contentType = (res.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
             const chunks: Buffer[] = [];
             let bytes = 0;
             res.on("data", (c: Buffer) => {
@@ -161,7 +182,7 @@ export async function fetchPublicUrl(raw: string, maxBytes: number, signal: Abor
               }
               chunks.push(c);
             });
-            res.once("end", () => resolve({ status, body: Buffer.concat(chunks) }));
+            res.once("end", () => resolve({ body: Buffer.concat(chunks), contentType }));
             res.once("error", reject);
           },
         );
@@ -178,10 +199,16 @@ export async function fetchPublicUrl(raw: string, maxBytes: number, signal: Abor
         req.end();
       },
     );
-    if (response.body) return response.body;
+    if (response.body)
+      return { body: response.body, contentType: response.contentType ?? "", url: url.toString() };
     url = assertPublicHttpsUrl(new URL(response.location as string, url).toString());
   }
   throw refusedUrl("too many redirects");
+}
+
+/** Download a media-exec URL input through the SSRF guard ({@link fetchPublic}); the body only. */
+export async function fetchPublicUrl(raw: string, maxBytes: number, signal: AbortSignal): Promise<Buffer> {
+  return (await fetchPublic(raw, { maxBytes }, signal)).body;
 }
 
 export interface MediaExecRunnerDeps {

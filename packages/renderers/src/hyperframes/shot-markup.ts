@@ -22,6 +22,16 @@ export interface ShotMarkupContext {
   palette?: Record<ColorRole, string>;
   /** IR language (BCP 47), for number formatting in layouts. */
   language?: string;
+  /** Height (px) a logo lockup takes above the content of this scene; layouts leave it free. */
+  reserveTop?: number;
+}
+
+/** Height of a lockup's logo mark as a factor of its text role's size. */
+const LOCKUP_MARK = 1.5;
+
+/** Height (px) of a logo lockup set in `role` at `scale`: its mark, which is taller than its name. */
+export function lockupHeight(role: TextStyleRole, scale: number): number {
+  return Math.round(TEXT_STYLES[role].sizeAt1080 * scale * LOCKUP_MARK);
 }
 
 export interface ShotMarkup {
@@ -170,6 +180,40 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
     case "logo": {
       // IR rule: explicit asset, else the brand logo, else `text` (or the brand name) as a wordmark.
       const assetId = shot.assetId ?? ctx.brand?.logoAssetId;
+      if (shot.lockup) {
+        // The mark and the name side by side, both sized by the text role, so a lockup reads as one unit.
+        const role = shot.style?.textStyle ?? "heading";
+        const name = shot.text ?? ctx.brand?.name ?? "";
+        const mark = assetId
+          ? `<img class="lk-mark" src="${escapeHtml(assetPath(ctx, shot, assetId))}" alt="${escapeHtml(ctx.brand?.name ?? name ?? "logo")}" />`
+          : "";
+        const label = name ? `<span class="lk-name">${escapeHtml(name)}</span>` : "";
+        return {
+          html: `${open}${mark}${label}</div>`,
+          css: [
+            cssRule(sel, [
+              ...base,
+              "display: flex;",
+              "align-items: center;",
+              "justify-content: center;",
+              `gap: ${Math.round(TEXT_STYLES[role].sizeAt1080 * ctx.scale * 0.45)}px;`,
+            ]),
+            cssRule(`${sel} .lk-mark`, [
+              "display: block;",
+              `height: ${lockupHeight(role, ctx.scale)}px;`,
+              "width: auto;",
+              `max-width: ${Math.round(ctx.frame.width * 0.4)}px;`,
+              "object-fit: contain;",
+              "flex: 0 0 auto;",
+            ]),
+            cssRule(`${sel} .lk-name`, [
+              ...textCss(ctx, role, { ...shot.style, emphasis: "none" }),
+              "text-align: left;",
+              "min-width: 0;",
+            ]),
+          ],
+        };
+      }
       if (assetId) {
         const src = assetPath(ctx, shot, assetId);
         const alt = ctx.brand?.name ?? "logo";
