@@ -6,7 +6,8 @@
 
 type Lab = { L: number; a: number; b: number };
 
-const HEX = /^#([0-9a-f]{6})$/i;
+/** `#rrggbb`, or `#rrggbbaa` read by its colour alone: the alpha does not change which colour it is. */
+const HEX = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i;
 
 /** OKLab distance under which two colours read as the same colour. */
 const SAME_COLOUR = 0.08;

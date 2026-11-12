@@ -26,6 +26,11 @@ describe("palette contrast", () => {
   it("returns the colour itself for a zero shift and leaves an unparsable colour alone", () => {
     expect(sameColour(shiftHue(blue, 0), blue)).toBe(true);
     expect(shiftHue("red", 180)).toBe("red");
+    // An 8-digit colour is read by its first six digits.
+    expect(sameColour("#4a86ffcc", blue)).toBe(true);
+    expect(
+      withContrastingRoles({ primary: blue, secondary: "#4a86ff80", accent: "#4a86ffff" }).accent,
+    ).not.toBe("#4a86ffff");
   });
 
   it("drops swatches of palette roles the brand kit does not really give", () => {
