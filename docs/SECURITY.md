@@ -429,6 +429,16 @@ or a path guard as a security boundary:
   that the launching shell reads into the process environment and deletes;
   it never appears on a command line, and the agent's tools reach only the
   container.
+- A HyperFrames capture assumes any page script may be hostile, even though Studix compositions carry no
+  agent JavaScript. Two pinned patches (see [RENDERER.md](RENDERER.md#hyperframes-version)) keep it off the
+  network and the host filesystem. The capture browser sends routable requests to a proxy that does not
+  exist. It resolves no host name or IP literal except the name `localhost`, which also covers the link-local
+  and metadata addresses that Chrome never proxies. WebRTC may use only that proxy. Fetches, navigations,
+  popups, WebSockets and STUN/UDP therefore never leave the worker. Through `localhost`, a page can still
+  reach the producer's file server and other loopback ports of its own pod, but it cannot read cross-origin
+  responses there. Media that a page script adds at runtime is ignored unless its source is a
+  project-relative path that stays inside the project (or an inline `data:image`), so the producer never reads
+  a host file or downloads a URL on its behalf.
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its
@@ -502,4 +512,5 @@ Each item maps to a negative test in the owning package.
 | Zip slip or zip bomb in a skill upload                   | Path checks reject the archive, symlinks skipped, entry/size/ratio caps, capped inflation                  |
 | Expired artifact URL still valid                         | Presign expiry tests                                                                                       |
 | Host header / origin spoofing                            | Host allow-list derived from `STUDIX_*_URL`                                                                |
+| Render page script reaching the network or host files    | Dead-proxy and resolver flags on the capture browser, project-only runtime media                           |
 | Argument injection or file/network access through ffmpeg | Shell-free argv, path and protocol checks, forced `-protocol_whitelist`, offline per-job sandbox           |

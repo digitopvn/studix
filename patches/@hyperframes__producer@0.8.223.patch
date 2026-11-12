@@ -1,0 +1,47 @@
+diff --git a/dist/index.js b/dist/index.js
+index 64f43a8f4ba3026b4e2d8393f9831580e03a56e3..8866120c10b95aa308d15f391343db52ee102445 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -8065,6 +8065,31 @@ async function compileForRender(projectDir, htmlPath, downloadDir, options = {})
+     hasAncestorBackgroundImage
+   };
+ }
++// Studix: page scripts can create media elements at runtime, and the engine reads or downloads their
++// sources on the host. Keep only paths that stay inside the project (or inline data: images).
++function isProjectMediaSrc(src) {
++  if (/^data:image\//i.test(src)) return true;
++  if (/^[a-z][a-z0-9+.-]*:/i.test(src) || /^[\\/]/.test(src)) return false;
++  let path = src.replace(/[?#][\s\S]*$/, "");
++  for (let i = 0; i < 4; i++) {
++    let decoded;
++    try {
++      decoded = decodeURIComponent(path);
++    } catch {
++      return false;
++    }
++    if (decoded === path) break;
++    path = decoded;
++  }
++  if (/%[0-9a-f]{2}/i.test(path) || /[\0:]/.test(path) || /^[\\/]/.test(path)) return false;
++  let depth = 0;
++  for (const segment of path.split(/[\\/]/)) {
++    if (segment === "..") depth--;
++    else if (segment !== "" && segment !== ".") depth++;
++    if (depth < 0) return false;
++  }
++  return path.length > 0;
++}
+ async function discoverMediaFromBrowser(page) {
+   const elements = await page.evaluate(() => {
+     const results = [];
+@@ -8944,6 +8969,10 @@ async function runProbeStage(input) {
+           if (fileServer && src.startsWith(fileServer.url)) {
+             src = src.slice(fileServer.url.length).replace(/^\//, "");
+           }
++          if (!isProjectMediaSrc(src)) {
++            log.warn("[Security] Ignoring browser media outside the project", { id: el.id, src: el.src });
++            continue;
++          }
+           if (el.tagName === "video") {
+             if (existingVideoIds.has(el.id)) {
+               const existing = composition.videos.find((v) => v.id === el.id);

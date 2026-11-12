@@ -140,6 +140,26 @@ to the exact same version in `packages/renderers/package.json` (currently
   quality preset using x264 `fast`
   ([#6640](https://github.com/heygen-com/hyperframes/pull/6640)). Output bytes
   differ from older renders; the contract above (codec, size, loudness) does not.
+- **Capture isolation patches.** `patches/@hyperframes__engine@0.8.223.patch`
+  also adds `CAPTURE_NETWORK_ISOLATION_ARGS` to the Chrome flags. A proxy that
+  does not exist (`socks5://127.0.0.1:9`) fails every routable request without
+  a DIRECT fallback. Chrome skips proxies for loopback and link-local targets
+  (including the `169.254.169.254` metadata address), so
+  `--host-resolver-rules` fails every host name and IP literal except the name
+  `localhost`, which the producer's file server uses
+  (`http://localhost:<port>`). If upstream switches that URL to `127.0.0.1`,
+  every capture breaks. WebRTC is limited to proxied UDP.
+  `patches/@hyperframes__producer@0.8.223.patch` makes the producer ignore
+  media that the page creates at runtime unless its source stays inside the
+  project. The probe stage's `discoverMediaFromBrowser` is the only place that
+  takes a media source from the browser. As a result, the engine never reads a
+  host path or downloads a URL for it.
+  `capture-isolation.integration.test.ts` renders a page that tries fetch,
+  beacon, image, WebSocket, popup, iframe, WebRTC and runtime `<video>` sources
+  (`..%2f`, `..%5c`, double encoding, `file:`, `http:`). A canary server must see
+  nothing and the frame must stay black, while a project clip still renders
+  ([#451](https://github.com/digitopvn/studix/issues/451)). Both patches are
+  keyed to the exact version, like the SIGTERM one below.
 - **`handleSIGTERM` patch.** The engine launches Chrome through
   `ownedLaunchOptions()`, which leaves Puppeteer's `handleSIGTERM` at `true`,
   so a worker SIGTERM closed Chrome mid-render and lost the grace period.
