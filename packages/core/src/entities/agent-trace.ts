@@ -126,7 +126,7 @@ export function summarizeAgentTrace(run: number, events: readonly AgentTraceEven
     if (e.type === "message" && typeof e.delta === "string") {
       message = inMessage ? `${message ?? ""}${e.delta}` : e.delta;
       inMessage = true;
-    } else if (e.type === "reasoning" || e.type === "tool_start" || e.type === "tool_end") inMessage = false;
+    } else if (["reasoning", "tool_start", "tool_end", "turn"].includes(e.type)) inMessage = false;
     summary.startedAt ??= e.ts;
     summary.lastHeartbeatAt = e.ts;
     if (e.type !== "heartbeat") summary.lastActivityAt = e.ts;
