@@ -261,7 +261,9 @@ const agentStageFor = (repair?: Repair, premium = false, timeoutMs?: number) =>
       "same fact (the line over a 5,000 counter speaks of the 5,000, not of the next card). Use the brief's own facts and words in it, vary the layouts " +
       "across the video and put no layout on the last beat (the call to action); every message beat between " +
       "the hook and the call to action shows a layout, never a headline alone on a card. Each beat's voice-over " +
-      "is one idea in one sentence: never join two ideas in one sentence (split them across two beats instead). Give a beat a `camera` move when the card calls for one: `push-in` to " +
+      "is one idea in one sentence: never join two ideas in one sentence (split them across two beats instead). " +
+      "The on-screen headline never repeats the voice-over sentence verbatim: it is a short distilled phrase " +
+      "(at most 6 words) or a number, and the voice-over carries the sentence. Give a beat a `camera` move when the card calls for one: `push-in` to " +
       "build tension on a claim, `pull-back` to reveal the whole, `pan-left`/`pan-right` to travel along a " +
       "list or flow, `parallax` for depth on a hero line, `static` for a dense layout; never give two " +
       "adjacent beats the same move, or set it null to let the style choose. The whole voice-over must " +
@@ -374,6 +376,38 @@ function fitProblem(brief: CreativeBrief, storyboard: MotionStoryboard): string 
   return problems.length > 0 ? problems.join(" ") : undefined;
 }
 
+/** Share of a voice-over's words its headline repeats above which the card reads as captions twice. */
+const ECHO_RATIO = 0.8;
+const wordsOf = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+/**
+ * Beats whose on-screen headline repeats their voice-over nearly word for word (the spoken sentence shown
+ * twice), in words the agent can act on, or undefined. Advisory like the beat count: it earns the repair turn
+ * but never costs the agent's storyboard. A voiceless graphic speaks its headlines by design, so it is exempt.
+ */
+export function echoedHeadlineProblem(
+  brief: CreativeBrief,
+  storyboard: MotionStoryboard,
+): string | undefined {
+  if (brief.voiceover === false) return undefined;
+  const echoed = storyboard.beats.flatMap((beat, i) => {
+    const spoken = wordsOf(beat.voiceover);
+    if (spoken.length < 4) return [];
+    const shown = new Set(wordsOf(beat.onScreen));
+    const shared = spoken.filter((w) => shown.has(w)).length;
+    return shared / spoken.length > ECHO_RATIO ? [i + 1] : [];
+  });
+  if (echoed.length === 0) return undefined;
+  return (
+    `Beats ${echoed.join(", ")} show their voice-over sentence as the headline. Rewrite only those beats' ` +
+    "`onScreen` as a short distilled phrase (at most 6 words) or a number; keep the voice-over as it is."
+  );
+}
+
 const fallback = (fallbackReason: string): { output: MotionStoryboardOutput } => ({
   output: { source: "template", fallbackReason: truncateText(fallbackReason, 500) },
 });
@@ -483,7 +517,9 @@ export const motionGraphicStoryboardStage: StageDefinition = {
     }
     const { brief } = (s.input as StoryboardInput).outputs.brief;
     const storyboard = settledStoryboard(brief, AgentOutput.parse(result.output).storyboard, premium);
-    const problem = fitProblem(brief, storyboard);
+    const problem =
+      [fitProblem(brief, storyboard), echoedHeadlineProblem(brief, storyboard)].filter(Boolean).join(" ") ||
+      undefined;
     if (problem === undefined) return { output: { source: "agent", storyboard }, usage: result.usage };
     const usage = result.usage ?? [];
     const agentOutput = (sb: MotionStoryboard, u: StageUsage[]) => ({

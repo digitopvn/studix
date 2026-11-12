@@ -23,6 +23,7 @@ import {
   wordCount,
 } from "../src/index.ts";
 import { VO_WORDS_PER_SECOND } from "../src/marketing-video/marketing-script.ts";
+import { echoedHeadlineProblem } from "../src/motion-graphic/motion-graphic-storyboard.ts";
 import { voiceLines } from "../src/voice-lines.ts";
 
 const brief = {
@@ -395,6 +396,24 @@ describe("marketing-video IR and variants", () => {
 });
 
 describe("motion graphic", () => {
+  it("flags a headline that repeats its voice-over sentence, not a distilled one", () => {
+    const beat = (onScreen: string, voiceover: string) => ({ onScreen, voiceover, visual: "v", weight: 1 });
+    const storyboard = (beats: ReturnType<typeof beat>[]) => ({ beats }) as never;
+    const echo = storyboard([
+      beat("Ship a film in minutes", "Ship a film in minutes."),
+      beat("5,000 teams", "Five thousand teams already render with Studix every week."),
+      beat("Render every week, on any device", "Render every week on any device."),
+    ]);
+    expect(echoedHeadlineProblem({ prompt: "x" }, echo)).toMatch(/^Beats 1, 3 show their voice-over/);
+    expect(echoedHeadlineProblem({ prompt: "x", voiceover: false }, echo)).toBeUndefined();
+    expect(
+      echoedHeadlineProblem(
+        { prompt: "x" },
+        storyboard([beat("5,000 teams", "Five thousand teams use it daily.")]),
+      ),
+    ).toBeUndefined();
+  });
+
   it("resolves a named profile, a matching one, or kinetic typography", () => {
     expect(
       resolveMotionStyle({

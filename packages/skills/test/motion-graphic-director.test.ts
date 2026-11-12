@@ -17,6 +17,7 @@ import {
   sceneClipTiming,
   withoutMotifCuts,
 } from "../src/index.ts";
+import { CHECK_GATE_JS, checkFailureSummary } from "../src/motion-graphic/motion-graphic-director-clip.ts";
 
 // The contact sheet is drawn with ffmpeg; here it is any file the reviewer is sent.
 vi.mock("@studix/renderers", async (importOriginal) => ({
@@ -64,6 +65,54 @@ const direction = {
     { scene: 1, shot: "the pill types and turns into a frame", focalWords: ["film"], exit: "frame centred" },
   ],
 };
+
+describe("sandbox check gate", () => {
+  const gate = async (report: unknown) => {
+    const { spawnSync } = await import("node:child_process");
+    const d = await mkdtemp(join(tmpdir(), "mg-gate-"));
+    const path = join(d, "check.json");
+    if (report !== undefined)
+      await writeFile(path, typeof report === "string" ? report : JSON.stringify(report));
+    const run = spawnSync(process.execPath, ["-e", CHECK_GATE_JS, path], { encoding: "utf8" });
+    await rm(d, { recursive: true, force: true });
+    return { code: run.status, log: run.stdout };
+  };
+  const section = (findings: unknown[] = []) => ({
+    errorCount: findings.length,
+    findings,
+  });
+  const error = (code: string) => ({
+    code,
+    severity: "error",
+    selector: "div.title",
+    message: `${code} hit`,
+  });
+
+  it("lets layout, motion and contrast errors through to the render and the repair", async () => {
+    const report = {
+      ok: false,
+      lint: section(),
+      runtime: section(),
+      layout: section([error("text_overlap")]),
+      motion: section([error("motion_jump")]),
+      contrast: section([error("contrast_aa_failure")]),
+    };
+    expect((await gate(report)).code).toBe(0);
+  });
+
+  it("blocks a missing, unreadable or failed report and lint or runtime errors, with a summary", async () => {
+    expect((await gate(undefined)).code).toBe(1);
+    expect((await gate("{not json")).code).toBe(1);
+    expect((await gate({ error: "no index.html" })).code).toBe(1);
+    const broken = await gate({ lint: section([error("unclosed_tag")]), runtime: section() });
+    expect(broken.code).toBe(1);
+    expect(checkFailureSummary(`noise\n${broken.log}`)).toBe("unclosed_tag div.title unclosed_tag hit");
+  });
+
+  it("summarises a failure without a gate line by the log's tail, at most 400 chars", () => {
+    expect(checkFailureSummary(`${"x".repeat(500)}render crashed`)).toHaveLength(400);
+  });
+});
 
 describe("motion-graphic authored hook scene", () => {
   let dir: string | undefined;
@@ -206,7 +255,7 @@ describe("motion-graphic authored hook scene", () => {
     const hook = ir.scenes[0]?.id as string;
     expect(tasks).toEqual([MG_DIRECTION_AGENT, MG_SCENE_BUILD_AGENT]);
     expect(runs[0]?.command).toBe(
-      `mkdir -p out && { hyperframes check . --json > out/${hook}-check.json || { cat out/${hook}-check.json; exit 1; }; } && ` +
+      `mkdir -p out && { hyperframes check . --json > out/${hook}-check.json; node -e '${CHECK_GATE_JS}' out/${hook}-check.json; } && ` +
         `hyperframes render . -o out/${hook}.mp4 --quiet`,
     );
     const tree = `compositions/${runs[0]?.compositionId}`;

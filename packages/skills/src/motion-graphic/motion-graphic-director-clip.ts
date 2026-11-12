@@ -146,10 +146,11 @@ export async function attemptSceneClip(
   const report = checkReportPath(a.scene.id);
   const run = await compositions.runner.run(booked(), {
     compositionId: a.compositionId,
-    // The check's JSON report is kept so its frame-edge findings (info only, exit 0) can be read back; a
-    // failing check prints it, so the log still says what failed.
+    // The check exits 1 on any `error` finding, layout, motion and contrast included. Only a missing or
+    // broken report, or lint/runtime errors (broken HTML or JS), block the render; the rest are read back
+    // from the kept report and fed to the one reframe repair, so a fixable scene never costs its clip.
     command:
-      `mkdir -p out && { hyperframes check . --json > ${report} || { cat ${report}; exit 1; }; } && ` +
+      `mkdir -p out && { hyperframes check . --json > ${report}; node -e '${CHECK_GATE_JS}' ${report}; } && ` +
       `hyperframes render . -o ${a.clip} --quiet`,
     timeoutSeconds: sceneRenderTimeoutSeconds(a.scene.durationMs),
     check: {
@@ -256,6 +257,35 @@ export function withAuthoredClip(ir: VideoIR, sceneId: string, asset: AssetRef, 
 
 /** Path of a scene's fragment in the composition tree. */
 export const fragmentPath = (sid: string) => `scenes/${sid}.scene.html`;
+/** Log line prefix of the sandbox check gate's verdict. */
+const CHECK_GATE_PREFIX = "studix-check: ";
+/** Longest check summary carried into a warning or a repair message. */
+const CHECK_SUMMARY_CHARS = 400;
+
+/**
+ * Node script (no single quotes: it sits in a single-quoted shell word) that exits 1, printing a compact
+ * summary, when the check report is missing, unreadable, an error, or has lint or runtime errors.
+ */
+export const CHECK_GATE_JS = [
+  `const p="${CHECK_GATE_PREFIX}";let r;`,
+  `try{r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))}catch(e){console.log(p+"no readable check report: "+String(e&&e.message).slice(0,200));process.exit(1)}`,
+  `if(!r||typeof r!=="object"||r.error||!r.lint){console.log(p+"check failed: "+JSON.stringify(r&&r.error||r).slice(0,300));process.exit(1)}`,
+  `const s=[r.lint,r.runtime].filter(Boolean);`,
+  `if(s.some(x=>x.errorCount>0)){const f=s.flatMap(x=>x.findings||[]).filter(x=>x.severity==="error");`,
+  `console.log(p+(f.map(x=>[x.code,x.selector,x.message].filter(Boolean).join(" ")).join("; ")||"lint or runtime errors").slice(0,${CHECK_SUMMARY_CHARS}));process.exit(1)}`,
+].join("");
+
+/**
+ * The compact error summary the check gate printed into a failed run's log, or the log's tail when the
+ * failure came from elsewhere (the render itself), at most `CHECK_SUMMARY_CHARS`.
+ */
+export function checkFailureSummary(log: string): string {
+  const line = log.split("\n").find((l) => l.startsWith(CHECK_GATE_PREFIX));
+  return line
+    ? line.slice(CHECK_GATE_PREFIX.length, CHECK_GATE_PREFIX.length + CHECK_SUMMARY_CHARS)
+    : log.trim().slice(-CHECK_SUMMARY_CHARS);
+}
+
 /** Path of the `hyperframes check --json` report of a scene's last attempt in the composition tree. */
 export const checkReportPath = (sid: string) => `out/${sid}-check.json`;
 
