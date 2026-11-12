@@ -10,6 +10,7 @@ import {
   saveCompositionManifest,
 } from "@studix/core";
 import {
+  ADVISORY_LINT_CODES,
   buildDirectorProject,
   checkSceneFragment,
   type DirectorProject,
@@ -305,7 +306,9 @@ export const CHECK_GATE_JS = [
   `try{r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))}catch(e){console.log(p+"no readable check report: "+String(e&&e.message).slice(0,200));process.exit(1)}`,
   `if(!r||typeof r!=="object"||r.error||!r.lint){console.log(p+"check failed: "+JSON.stringify(r&&r.error||r).slice(0,300));process.exit(1)}`,
   `const s=[r.lint,r.runtime].filter(Boolean);`,
-  `if(s.some(x=>x.errorCount>0)){const f=s.flatMap(x=>x.findings||[]).filter(x=>x.severity==="error");`,
+  `const A=${JSON.stringify([...ADVISORY_LINT_CODES])},all=s.flatMap(x=>x.findings||[]),adv=x=>A.includes(x.code);`,
+  `const f=all.filter(x=>x.severity==="error"&&!adv(x)),n=s.reduce((t,x)=>t+(x.errorCount||0),0)-all.filter(x=>x.severity==="error"&&adv(x)).length;`,
+  `if(n>0||f.length>0){`,
   `console.log(p+(f.map(x=>[x.code,x.selector,x.message].filter(Boolean).join(" ")).join("; ")||"lint or runtime errors").slice(0,${CHECK_SUMMARY_CHARS}));process.exit(1)}`,
 ].join("");
 
