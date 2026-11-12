@@ -17,7 +17,13 @@ import {
   writeShotMotion,
   writeTransition,
 } from "./scene-timeline.ts";
-import { renderShotMarkup, type ShotMarkupContext, shotDomId, videoClipTag } from "./shot-markup.ts";
+import {
+  lockupHeight,
+  renderShotMarkup,
+  type ShotMarkupContext,
+  shotDomId,
+  videoClipTag,
+} from "./shot-markup.ts";
 
 /** A burned-in caption cue in scene-local milliseconds. */
 export interface SceneCaptionCue {
@@ -70,11 +76,16 @@ export function assignLanes(shots: readonly Shot[]): Shot[][] {
 export function compileScene(input: SceneCompileInput): CompiledScene {
   const { scene, palette, markup } = input;
   const prefix = `s-${scene.id}__`;
-  const ctx: ShotMarkupContext = { ...markup, prefix, palette };
   const { width, height } = markup.frame;
   const stageId = `${prefix}stage`;
   const safe = Math.round(0.07 * Math.min(width, height));
   const gap = Math.round(0.03 * Math.min(width, height));
+  // A logo lockup over the content (a brand mark on the hook) takes its height from what a layout may fill.
+  const lockups = scene.shots.filter((s) => s.type === "logo" && s.lockup && s.style?.region === "top");
+  const reserveTop = lockups.length
+    ? Math.max(...lockups.map((s) => lockupHeight(s.style?.textStyle ?? "heading", markup.scale))) + gap
+    : 0;
+  const ctx: ShotMarkupContext = { ...markup, prefix, palette, ...(reserveTop ? { reserveTop } : {}) };
   const captionClearance =
     input.captions.position === "bottom" &&
     input.captions.cues.length > 0 &&
