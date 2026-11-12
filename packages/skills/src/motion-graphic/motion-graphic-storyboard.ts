@@ -329,11 +329,56 @@ export function settledStoryboard(
   const kept = premium
     ? (heroes ?? []).filter((h) => rest.beats[h.beat]?.onScreen.trim() === h.onScreen.trim())
     : [];
+  const heroBeats = new Set(kept.map((h) => h.beat));
+  // Every message card between the hook and the call to action needs a main visual: a beat the agent left
+  // as a headline alone draws the number it names as a stat, so the card is never a headline over nothing.
+  const beats = rest.beats.map((beat, i) => {
+    if (beat.layout || i === 0 || i === rest.beats.length - 1 || heroBeats.has(i)) return beat;
+    const stat = statOf(beat);
+    return stat ? { ...beat, layout: stat } : beat;
+  });
   return {
     ...rest,
+    beats,
     ...(pinned ? { styleProfile: pinned } : {}),
     ...(kept.length > 0 ? { heroes: kept } : {}),
   };
+}
+
+/**
+ * A figure a beat names: an amount, a percent, a multiple or a number of two digits or more ("$5", "40%",
+ * "3x", "1,200+"). A lone digit ("Step 1") is a counter in the text, not a fact worth a stat.
+ */
+const FIGURE = /[$€£¥]\s?\d[\d.,]*(?:[kKmMbB]\b)?|\d[\d.,]*\s?(?:%|x\b|×|[kKmMbB]\b|\+)|\d[\d.,]*\d/u;
+
+/** A stat layout from the figure a beat's headline (else its voice-over) names, or undefined when it names none. */
+function statOf(beat: MotionStoryboardBeat): LayoutSpec | undefined {
+  const figure = (FIGURE.exec(beat.onScreen) ?? FIGURE.exec(beat.voiceover))?.[0]
+    .trim()
+    .replace(/[.,]+$/, "");
+  if (!figure) return undefined;
+  const stat = LayoutSpec.safeParse({
+    kind: "stat",
+    value: figure.slice(0, 16),
+    label: truncateText(beat.voiceover, 80),
+  });
+  return stat.success ? stat.data : undefined;
+}
+
+/**
+ * Which message cards (between the hook and the call to action) still show a headline alone, in words the
+ * agent can act on, or undefined when every one has a layout or a hero card.
+ */
+export function headlineOnlyProblem(storyboard: MotionStoryboard): string | undefined {
+  const heroBeats = new Set((storyboard.heroes ?? []).map((h) => h.beat));
+  const bare = storyboard.beats.flatMap((beat, i) =>
+    i === 0 || i === storyboard.beats.length - 1 || beat.layout || heroBeats.has(i) ? [] : [i + 1],
+  );
+  if (bare.length === 0) return undefined;
+  return (
+    `Beat ${bare.join(", ")} shows a headline alone. Give each one a \`layout\` that draws its fact ` +
+    "(a stat, counter, checklist, chips, cards-row or product UI), so no card is a headline over an empty frame."
+  );
 }
 
 /**
@@ -518,8 +563,13 @@ export const motionGraphicStoryboardStage: StageDefinition = {
     const { brief } = (s.input as StoryboardInput).outputs.brief;
     const storyboard = settledStoryboard(brief, AgentOutput.parse(result.output).storyboard, premium);
     const problem =
-      [fitProblem(brief, storyboard), echoedHeadlineProblem(brief, storyboard)].filter(Boolean).join(" ") ||
-      undefined;
+      [
+        fitProblem(brief, storyboard),
+        echoedHeadlineProblem(brief, storyboard),
+        headlineOnlyProblem(storyboard),
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined;
     if (problem === undefined) return { output: { source: "agent", storyboard }, usage: result.usage };
     const usage = result.usage ?? [];
     const agentOutput = (sb: MotionStoryboard, u: StageUsage[]) => ({

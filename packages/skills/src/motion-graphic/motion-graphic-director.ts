@@ -401,8 +401,9 @@ export const motionGraphicDirectorStage: StageDefinition = {
         if (
           attempt.ok &&
           attempt.layout.length > 0 &&
-          canRepair &&
-          // The render just spent: the repair must still fit the budget and the deadline after it.
+          !repair &&
+          // A clipped frame is worth a layout repair even when the builder's call used its schema repair turn:
+          // gate it only on what the render just left of the budget and on the deadline.
           repairAffordable(booked()) &&
           layoutRepairFits(s, scene.durationMs)
         ) {

@@ -85,6 +85,9 @@ function severeProblems(kind: "layout" | "contrast", findings: unknown[]): strin
 /** Frame-edge clipping problems, one per element, widest first. */
 function frameEdgeProblems(findings: unknown[]): string[] {
   const worst = new Map<string, { px: number; side: string; time: number; text: string }>();
+  // Per element, the overflow past the left and right frame edges: many elements cut on both sides alike
+  // means the camera scaled the whole frame, so the fix is the camera, not each element's size.
+  const sides = new Map<string, { left: number; right: number }>();
   for (const raw of findings) {
     const f = Finding.safeParse(raw);
     if (!f.success || !FRAME_CODES.has(f.data.code)) continue;
@@ -100,15 +103,36 @@ function frameEdgeProblems(findings: unknown[]): string[] {
     if (rect && containerRect && containerSelector === FRAME_ROOT && offFrame(rect, containerRect)) continue;
     // One entry per element: the shell's `.w` word spans report one by one, so key them by their line.
     const element = selector.replace(/(?:\s*>\s*span:nth-of-type\(\d+\))+$/, "");
+    const lr = sides.get(element) ?? { left: 0, right: 0 };
+    sides.set(element, {
+      left: Math.max(lr.left, overflow.left ?? 0),
+      right: Math.max(lr.right, overflow.right ?? 0),
+    });
     const prev = worst.get(element);
     if (!prev || px > prev.px) worst.set(element, { px, side, time: time ?? 0, text: words });
   }
-  return [...worst.entries()]
-    .sort((a, b) => b[1].px - a[1].px)
-    .slice(0, MAX_PROBLEMS)
-    .map(
-      ([selector, w]) =>
-        `layout: "${w.text.slice(0, 40)}" (${selector}) is cut ${Math.round(w.px)}px past the ${w.side} frame ` +
-        `edge at ${w.time.toFixed(2)}s; keep text and UI inside the frame margin at every moment, camera moves included`,
-    );
+  const both = [...sides.values()].filter(
+    ({ left, right }) =>
+      left > FRAME_TOLERANCE_PX &&
+      right > FRAME_TOLERANCE_PX &&
+      Math.abs(left - right) <= 0.1 * Math.max(left, right),
+  ).length;
+  const camera =
+    both >= 3
+      ? [
+          "layout: the .cam scale pushes everything off both edges; keep settleCam/camTo/drift scale ≤ 1.08 " +
+            "instead of shrinking text",
+        ]
+      : [];
+  return [
+    ...camera,
+    ...[...worst.entries()]
+      .sort((a, b) => b[1].px - a[1].px)
+      .slice(0, MAX_PROBLEMS - camera.length)
+      .map(
+        ([selector, w]) =>
+          `layout: "${w.text.slice(0, 40)}" (${selector}) is cut ${Math.round(w.px)}px past the ${w.side} frame ` +
+          `edge at ${w.time.toFixed(2)}s; keep text and UI inside the frame margin at every moment, camera moves included`,
+      ),
+  ];
 }

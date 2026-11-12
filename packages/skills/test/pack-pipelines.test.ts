@@ -1005,6 +1005,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
         onScreen: "Hái tay mỗi sớm",
         voiceover: "Lá trà hái tay mỗi sớm.",
         visual: "Lưới Swiss, nhấn màu",
+        layout: { kind: "chips", hub: "Lá Mây", items: ["Hái tay", "Mỗi sớm"] },
         enter: "pop",
         weight: 1.5,
       },
@@ -1308,6 +1309,7 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
       onScreen: `Thẻ ${i + 1}`,
       voiceover: `Lá Mây kể câu chuyện số ${i + 1}.`,
       visual: "Chữ lớn trên nền nhấn màu",
+      layout: { kind: "chips", hub: "Lá Mây", items: ["Hái tay", "Mỗi sớm"] },
       enter: "pop",
       weight: 1,
     }));
@@ -1342,7 +1344,10 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
 
   it("keeps a fitting storyboard whose beat count is still off after the repair turn", async () => {
     const long = { ...graphic, durationMs: 60_000 };
-    const beats = Array.from({ length: 8 }, (_, i) => ({ ...storyboard.beats[1], onScreen: `Thẻ ${i + 1}` }));
+    const beats = Array.from({ length: 8 }, (_, i) => ({
+      ...structuredClone(storyboard.beats[1]),
+      onScreen: `Thẻ ${i + 1}`,
+    }));
     const agent = sequenceAgent([{ storyboard: { ...storyboard, music: null, beats } }]);
     const h = harness({ agent: agent.runtime });
     const { outcome } = await h.run(

@@ -438,6 +438,17 @@ describe("motion-graphic authored hook scene", () => {
     },
   };
 
+  it("repairs a clipped frame even when the builder's call used its schema repair turn", async () => {
+    const { s, runs, tasks } = await setup({
+      reports: [cutAtEdge],
+      replies: { [MG_SCENE_BUILD_AGENT]: [{ bad: true }, fragment, fragment] },
+    });
+    const out = (await motionGraphicDirectorStage.run(s)).output as { ir: VideoIR; warning?: string };
+    const hook = out.ir.scenes[0]?.id as string;
+    expect(tasks.filter((t) => t === MG_SCENE_BUILD_AGENT)).toHaveLength(3);
+    expect(runs.map((r) => r.check?.path)).toEqual([`out/${hook}.mp4`, `out/${hook}-reframed.mp4`]);
+  });
+
   it("keeps the first clip when the layout repair's render throws", async () => {
     const { s, runs } = await setup({ reports: [cutAtEdge], throwOnRun: 2 });
     const out = (await motionGraphicDirectorStage.run(s)).output as { ir: VideoIR; warning?: string };
