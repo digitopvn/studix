@@ -88,4 +88,39 @@ describe("frame clipping from the HyperFrames check", () => {
     expect(frameClippingProblems("not json")).toEqual([]);
     expect(frameClippingProblems({ layout: { findings: [{ code: 1 }] } })).toEqual([]);
   });
+
+  it("adds the layout and contrast errors the render no longer blocks on, once per element", () => {
+    const report = {
+      layout: {
+        findings: [
+          {
+            code: "text_overlap",
+            severity: "error",
+            selector: "h1.hl",
+            text: "Ship it",
+            time: 1,
+            message: "overlaps p.sub",
+          },
+          { code: "text_overlap", severity: "error", selector: "h1.hl", time: 2, message: "overlaps p.sub" },
+          { code: "text_overlap", severity: "warning", selector: "p.sub", message: "minor" },
+        ],
+      },
+      contrast: {
+        findings: [
+          {
+            code: "contrast_aa_failure",
+            severity: "error",
+            selector: "p.sub",
+            text: "Faster",
+            message: "Contrast is 2.1:1; WCAG AA requires 4.5:1.",
+            suggestedColor: "rgb(250,250,250)",
+          },
+        ],
+      },
+    };
+    expect(frameClippingProblems(report)).toEqual([
+      'layout: text_overlap "Ship it" (h1.hl) at 1.00s: overlaps p.sub',
+      'contrast: contrast_aa_failure "Faster" (p.sub): Contrast is 2.1:1; WCAG AA requires 4.5:1.; use rgb(250,250,250) or a stronger backdrop',
+    ]);
+  });
 });
