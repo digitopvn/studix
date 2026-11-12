@@ -153,7 +153,7 @@ const CreateVideoInput = z
       "Agent runtime, connection, model and effort (studix_list_agent_runtimes). Default: workspace preference.",
     ),
     roles: AgentRolesInput.optional().describe(
-      "skill-agent only: director (script), builder (makes it; default agent), qa (scores, may send back); each an agent.",
+      "skill-agent: director (script), builder (makes it; default agent), qa (scores, may send back). motion-graphic: director only = premium (storyboard + HTML hero cards). Each an agent.",
     ),
   })
   .refine((v) => v.prompt !== undefined || v.brief !== undefined, {

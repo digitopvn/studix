@@ -166,7 +166,12 @@ Behavior notes:
   brief's aspect ratio, duration within 0.5 s of the brief, audible voice-over, -16 LUFS +/-2 with
   true peak <= -1 dBTP. The server re-checks the file and fails the job with `VALIDATION` (listing
   each problem) on a miss. The agent's visual QA passes land in the version metadata as `qaRounds`.
-- `roles: {director?, builder?, qa?}` (`skill-agent` only, each an `agent` object from any catalogue
+- `motion-graphic` takes `roles.director` only: it turns on the premium tier (the director writes the
+  storyboard under larger caps and may author 2-3 hero cards as custom HTML/GSAP, each kept only when it
+  passes the HTML-card safety rules and the HyperFrames linter, else the built-in card stays and the
+  `motion-graphic.heroes` stage records a `warning`). Other roles with `motion-graphic` are refused with
+  `VALIDATION`.
+- `roles: {director?, builder?, qa?}` (`skill-agent`, each an `agent` object from any catalogue
   runtime and model, e.g. `pi` + `deepseek-v4.1-flash` as builder): the director writes the script and
   direction first; the builder makes the video (default: the job's `agent`); QA watches each render,
   scores taste, motion, brief and audio 0-10 and sends it back with notes below 7, at most 3 rounds.
@@ -250,7 +255,12 @@ Behavior notes:
   for one. Each storyboard beat may name a typed `layout` (a prompt being typed,
   code lines, chips wired to a hub, a checklist, a rolling counter, a row of
   cards, colour swatches or a stat) that the card draws under its headline; the
-  `visual` field stays a description. On a 16:9 frame headlines are set at
+  `visual` field stays a description. The style profile is a preset: it locks
+  the palette and fonts (unless the brief has a `brand`), the entrances a card
+  may use, the cut between cards, whether the CTA card is filled with the
+  accent and whether cuts get a whoosh. `directions[0].visualStyle` set to a
+  profile id (for example `cinematic-product-launch` or `glass-keynote`) pins
+  that profile. On a 16:9 frame headlines are set at
   display size and layouts drawn larger, so a card fills the frame. Burned
   captions are 44 px at a 1080 px short edge, and a layout is centred above
   them. Cards share the style profile's

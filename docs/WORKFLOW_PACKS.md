@@ -339,7 +339,24 @@ storyboard trả `brandName` đúng như brief viết (ví dụ "Studix" trong "
 brand kit, `title` của IR (khi brief không có `title`) và chữ logo ở card CTA. Tên không xuất hiện trong brief
 bị bỏ qua; không có tên nào thì card CTA không hiện tên brand thay vì lặp lại câu hook. Style profile được chọn theo
 `tone`, `objective` và prompt, hoặc theo `directions[0].visualStyle` nếu trùng id một profile trong
-[`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts). Voice-over
+[`motion-style-profiles.ts`](../packages/skills/src/motion-graphic/motion-style-profiles.ts); id do brief
+chỉ định được khoá, agent storyboard không đổi được. Mỗi profile là một preset khoá palette, font (cặp font
+bundle có subset tiếng Việt: Be Vietnam Pro, Inter, Playfair Display, Oswald, Space Grotesk, Plus Jakarta Sans,
+JetBrains Mono), pacing (các kiểu vào card được phép, kiểu ra, transition giữa card) và juice (card CTA tô màu
+accent hay không, whoosh ở mỗi cut hay không). Entrance agent chọn ngoài tập của profile bị thay bằng entrance
+mặc định của profile. `brand` của brief vẫn thắng palette và font. Ngoài họ "aesthetic", thư viện có các
+profile sản phẩm/công nghệ như `cinematic-product-launch` (không whoosh, fade 600 ms), `glass-keynote`,
+`keynote-stage`, `premium-ui-demo`, `precision-dark-product`, `athletic-impact` (cut cứng, CTA tô accent).
+
+**Premium tier.** Job đặt `roles.director` (một agent, thường là model mạnh hơn) thì director viết storyboard
+với cap lớn hơn và có thể viết 2-3 hero card bằng HTML/GSAP tuỳ biến theo định dạng HTML card của HyperFrames
+(`html`, `css` lồng dưới gốc card, `script` thêm tween vào `tl`). Stage `motion-graphic.heroes` (sau music,
+trước render) kiểm từng card bằng luật an toàn của HTML card và HyperFrames linter; card đạt được lưu thành code
+asset `application/vnd.studix.html-card+json` và thay card dựng sẵn của beat đó, card không đạt (hoặc trỏ vào
+card CTA) giữ card dựng sẵn và ghi `warning`, nên premium không làm hỏng job mà bản thường render được. Render
+sau đó qua cổng QA như mọi frame khác. Không có `roles.director` thì `heroes` bị bỏ.
+
+Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message
 từ cuối lên, rồi cắt bớt lời đọc của dòng dài nhất, tới khi mọi card đủ thời gian đọc câu của nó. Card hook, card CTA và chữ trên màn hình vẫn được giữ,
 nhưng lời đọc của chúng có thể bị cắt bớt, CTA sau cùng. Beat do

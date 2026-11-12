@@ -122,9 +122,11 @@ export const JobAgentSelection = z
 export type JobAgentSelection = z.infer<typeof JobAgentSelection>;
 
 /**
- * Optional role agents of an agent-authored job (`skill-agent`), each on its own runtime, model and effort:
- * the director writes the script and direction, the builder makes the video, QA scores it against a rubric
- * and may send it back to the builder. A role left out runs on `agent` (builder) or is skipped (director, qa).
+ * Optional role agents of a job, each on its own runtime, model and effort. In an agent-authored job
+ * (`skill-agent`) the director writes the script and direction, the builder makes the video, QA scores it
+ * against a rubric and may send it back to the builder; a role left out runs on `agent` (builder) or is skipped
+ * (director, qa). In `motion-graphic` a director turns on the premium tier: it writes the storyboard and may
+ * author hero cards in custom HTML.
  */
 export const AGENT_ROLES = ["director", "builder", "qa"] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
@@ -137,17 +139,17 @@ export const JobAgentRoles = z
   .strict();
 export type JobAgentRoles = z.infer<typeof JobAgentRoles>;
 
-/** The agent stage names of each role in the skill-agent pack. */
-export const ROLE_STAGES: Readonly<Record<AgentRole, string>> = {
-  director: "skill-agent.director",
-  builder: "skill-agent.run",
-  qa: "skill-agent.qa",
+/** The agent stage names each role runs, across the packs that have role agents. */
+export const ROLE_STAGES: Readonly<Record<AgentRole, readonly string[]>> = {
+  director: ["skill-agent.director", "motion-graphic.storyboard"],
+  builder: ["skill-agent.run"],
+  qa: ["skill-agent.qa"],
 };
 
 /** The agent one stage runs on: its role's agent when the job names one, else the job's `agent`. */
 export function stageAgentSelection(payload: unknown, stage: string): JobAgentSelection | undefined {
   const p = (payload ?? {}) as { agent?: unknown; roles?: unknown };
-  const role = AGENT_ROLES.find((r) => ROLE_STAGES[r] === stage);
+  const role = AGENT_ROLES.find((r) => ROLE_STAGES[r].includes(stage));
   const roles = JobAgentRoles.safeParse(p.roles ?? {});
   const own = role && roles.success ? roles.data[role] : undefined;
   if (own) return own;
