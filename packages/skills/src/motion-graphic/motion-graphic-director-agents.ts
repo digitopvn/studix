@@ -251,7 +251,7 @@ export type SceneRole = "hook" | "scene" | "cta";
 
 export const sceneBuildAgent = createAgentStage({
   name: MG_SCENE_BUILD_AGENT,
-  version: 6,
+  version: 7,
   inputSchema: TaskInput,
   outputSchema: BuildOutput,
   cacheable: false,
@@ -290,9 +290,18 @@ export const sceneBuildAgent = createAgentStage({
     "bottom) and `frame.marginPx` from the other edges at every moment, camera moves included.\n" +
     "- By `scene.role`: `hook` sets its line (`scene.onScreen`) once as the headline, fully opaque in " +
     "var(--ink), at least `frame.headlinePx` px, beside the product surface. `cta` returns the surface to " +
-    "`direction.system.anchor` (the hook's panel rect) and closes on the brand mark and `scene.onScreen` (the " +
-    "call to action), so the film ends where it began. `scene` sets no headline at all: the burned captions " +
-    "carry the words, and the frame shows the product working (short UI labels only).\n" +
+    "`direction.system.anchor` (the hook's panel rect) and closes on a centred lockup: the brand mark large, " +
+    "the brand name and `scene.onScreen` (the call to action, its URL at least `frame.headlinePx` px), so the " +
+    "film ends where it began. The hook opens on the product already working: a filled prompt and a visible " +
+    "result at t0, never an empty input or an empty preview. `scene` sets no sentence headline (the burned " +
+    "captions carry the words) but gives the frame one hero: a 1-4 word value from `scene.words` (a number, a " +
+    "product term, a state such as Approved) at least `frame.headlinePx` px, fully opaque, as the UI's own big " +
+    "readout.\n" +
+    "- One idea per frame, readable on a phone: at most six small labels per scene, each a real word the " +
+    "story needs; no decorative spec text (tracking values, hex codes, cell counts, file sizes). Vary the " +
+    "framing across the film: in close on one part of the surface (camTo up to 1.12 on the element that " +
+    "matters) or the whole surface, never the same boxed panel every scene. No two text boxes, or a text box " +
+    "and a bar or rail, ever overlap: keep at least `frame.marginPx` / 3 px between them at every moment.\n" +
     "- `js`: the choreography body, run once while the page builds. Every tween goes on `tl` at an absolute " +
     `time from the timing helpers, never a bare number. In scope: ${HELPERS}.\n` +
     "`sid` (this scene's id), `S`, `t0`, `t1`, `$s`, `$$s`, `tl` and every helper above are already defined: " +
