@@ -20,6 +20,7 @@ import { z } from "zod";
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { brandSourceOf, MG_BRAND_STAGE, MotionBrandOutput } from "./motion-graphic-brand.ts";
 import { authoredScenesOf } from "./motion-graphic-director.ts";
+import { HEADLINE_LATEST_MS, LAYOUT_AFTER_HEADLINE_MS, LAYOUT_LATEST_MS } from "./motion-graphic-reveals.ts";
 import {
   MG_STORYBOARD_LIMITS,
   MG_STORYBOARD_STAGE,
@@ -183,9 +184,6 @@ const problemOf = (failed: readonly VisualCardScore[]) =>
 const headlineOf = (shots: readonly Shot[]) =>
   shots.find((sh) => sh.type === "title" || sh.type === "text" || sh.type === "cta");
 const layoutOf = (shots: readonly Shot[]) => shots.find((sh) => sh.type === "layout");
-/** As the voice stage reveals a layout: after its headline, and on screen this long before the card ends. */
-const LAYOUT_AFTER_HEADLINE_MS = 300;
-const LAYOUT_MIN_SHOWN_MS = 1500;
 
 /**
  * The IR with the cards in `cards` (from 1) drawn from `storyboard`, everything else kept: their scene
@@ -204,17 +202,18 @@ export function withRestyledCards(
     const next = fresh.scenes[i];
     if (!cards.includes(i + 1) || !next) return scene;
     const cardMs = scene.durationMs;
-    // The voice line is kept, so the headline and layout enter where the voice stage put them on its words;
-    // a layout the card did not have enters halfway through, after the headline and in time to be seen.
+    // The voice line is kept, so the headline and layout enter where the voice stage put them; a layout the
+    // card did not have enters as the voice stage would place it: just after the headline, by LAYOUT_LATEST_MS.
     const before = { headline: headlineOf(scene.shots), layout: layoutOf(scene.shots) };
     const after = { headline: headlineOf(next.shots), layout: layoutOf(next.shots) };
-    const headlineAt = before.headline?.startMs ?? after.headline?.startMs ?? 0;
-    const layoutAt = Math.max(
-      headlineAt,
-      Math.min(
-        before.layout?.startMs ?? Math.max(headlineAt + LAYOUT_AFTER_HEADLINE_MS, cardMs / 2),
-        cardMs - LAYOUT_MIN_SHOWN_MS,
-      ),
+    const headlineAt = Math.min(
+      before.headline?.startMs ?? after.headline?.startMs ?? 0,
+      HEADLINE_LATEST_MS,
+      cardMs - 1,
+    );
+    const layoutAt = Math.min(
+      before.layout?.startMs ?? Math.min(headlineAt + LAYOUT_AFTER_HEADLINE_MS, LAYOUT_LATEST_MS),
+      cardMs - 1,
     );
     return {
       ...scene,
@@ -287,6 +286,27 @@ async function critique(
   }
 }
 
+/**
+ * Whether a repair round still fits in the time and budget left: redesign the failed cards, capture their
+ * stills, and still leave the final render (`renderMs`, `renderCents`) its time and money. The re-review
+ * after the repair is not reserved: a repaired graphic is better than the reviewed one even when no time is
+ * left to score it again, so the first fix round is applied whenever the repair itself fits.
+ */
+export function repairFits(input: {
+  timeLeftMs: number;
+  captureMs: number;
+  renderMs: number;
+  centsLeft: number;
+  renderCents: number;
+}): "fits" | "no-budget" | "no-time" {
+  // A redesign may overshoot its cap by a turn: keep a second cap in hand so the job never ends over budget.
+  if (input.centsLeft < MG_STORYBOARD_LIMITS.maxCostCents * 2 + input.renderCents) return "no-budget";
+  // A re-capture of a redesigned card can take longer than the first: reserve half again, at least the cap.
+  const recaptureMs = Math.max(Math.ceil(1.5 * input.captureMs), MG_STILLS_CAPTURE_BUDGET_MS);
+  if (input.timeLeftMs < MG_STORYBOARD_LIMITS.timeoutMs + recaptureMs + input.renderMs) return "no-time";
+  return "fits";
+}
+
 const costOf = (usage: readonly StageUsage[]) => usage.reduce((sum, u) => sum + (u.costCents ?? 0), 0);
 
 /** Why no review can run on this job, or undefined when one can. */
@@ -332,9 +352,12 @@ const ACTIVITY_BEAT_MS = 15_000;
  * contact sheet to a vision model that scores each card for blank, too small, illegible,
  * repetitive, off-brief or headline-only. Failed cards go back to the storyboard agent, which redesigns only
  * those cards (voice-over and timing kept), and their stills are captured again: at most
- * MG_VISUAL_QA_ROUNDS times, only while the job budget and deadline hold a review, a redesign and a capture
- * while keeping the final render's cost and time free. The output (a durable checkpoint) carries the IR the version stores and the render stage draws,
- * once, and the scores (`visualQa`, also in the job result).
+ * MG_VISUAL_QA_ROUNDS times. A review runs only while the deadline holds it and the final render; a repair
+ * runs whenever the redesign, a re-capture and the final render fit (`repairFits`), without reserving the
+ * review after it, so the first fix round is applied whenever it fits. When no review is left for a repair,
+ * the repaired IR is kept and `reason` names the cards not reviewed again. The output (a durable checkpoint)
+ * carries the IR the version stores and the render stage draws, once, and the scores (`visualQa`, also in
+ * the job result).
  *
  * The review never fails the job: without an agent or a stills capture, in host mode, with a model that
  * cannot read images, or on any error of the reviewer, the redesign or a capture it ends with a reason and
@@ -462,8 +485,16 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
   const captureMs = Date.now() - startedAt;
   const rounds: VisualQaReport["rounds"] = [];
   for (let round = 0; ; round++) {
+    const repaired = rounds.at(-1)?.repaired;
     const stop = (status: "skipped" | "failed", reason: string) =>
-      done({ status: round === 0 ? status : "failed", reason, rounds });
+      done({
+        status: round === 0 ? status : "failed",
+        // The repaired render is kept even when it cannot be reviewed again.
+        reason: repaired
+          ? `Cards ${repaired.join(", ")} were repaired but not reviewed again: ${reason}`
+          : reason,
+        rounds,
+      });
     if (left() < reviewCents) return stop("skipped", "Not enough job budget left for a visual review");
     if (timeLeft() < MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
       return stop("skipped", "Not enough time left before the job deadline for a visual review");
@@ -486,14 +517,15 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
     if (!storyboard) {
       return done({ status: "failed", reason: "A template graphic has no storyboard to redesign", rounds });
     }
-    if (left() < MG_STORYBOARD_LIMITS.maxCostCents * 2 + renderCents + reviewCents) {
+    const fits = repairFits({ timeLeftMs: timeLeft(), captureMs, renderMs, centsLeft: left(), renderCents });
+    if (fits === "no-budget") {
       return done({
         status: "failed",
         reason: "Not enough job budget left to redesign and re-render",
         rounds,
       });
     }
-    if (timeLeft() < MG_STORYBOARD_LIMITS.timeoutMs + captureMs + MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
+    if (fits === "no-time") {
       return done({ status: "failed", reason: "Not enough time left to redesign and re-render", rounds });
     }
     const cards = failed.map((c) => c.card);

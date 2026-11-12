@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CompositionRunRequest } from "@studix/core";
-import type { VideoIR } from "@studix/video-ir";
+import { type VideoIR, validateVideoIR } from "@studix/video-ir";
 import type { StageContext } from "@studix/workflow";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -12,6 +12,7 @@ import {
   motionGraphicDirectorStage,
   motionGraphicTemplate,
   sceneClipTiming,
+  withoutMotifCuts,
 } from "../src/index.ts";
 
 const brief = { prompt: "Introduce Studix: describe a video, get a finished film", durationMs: 15_000 };
@@ -285,5 +286,26 @@ describe("motion-graphic authored hook scene", () => {
     expect(timing.beatLen).toBe(0.5);
     expect(timing.captions).toEqual([]);
     expect(timing.options).toEqual({ fadeIn: false, fadeOut: false });
+  });
+});
+
+describe("withoutMotifCuts", () => {
+  it("turns a match cut out of an authored hook into a plain cut so the IR stays valid", () => {
+    const ir = motionGraphicTemplate(brief);
+    const [hook, next] = ir.scenes;
+    if (!hook || !next) throw new Error("template needs two scenes");
+    // The authored hook lost its motif, but the storyboard's match cut into the next scene survived.
+    const { motif: _motif, ...bare } = hook;
+    const scenes = ir.scenes.map((sc, i) =>
+      i === 0
+        ? { ...bare, transitionOut: { kind: "match-cut" as const, durationMs: 0 } }
+        : i === 1
+          ? { ...sc, motif: { shape: "circle" as const } }
+          : sc,
+    );
+    expect(validateVideoIR({ ...ir, scenes }).ok).toBe(false);
+    const fixed = withoutMotifCuts(ir, scenes, hook.id);
+    expect(fixed[0]?.transitionOut?.kind).toBe("cut");
+    expect(validateVideoIR({ ...ir, scenes: fixed }).ok).toBe(true);
   });
 });

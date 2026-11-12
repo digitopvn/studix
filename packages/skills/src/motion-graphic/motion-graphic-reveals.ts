@@ -3,12 +3,18 @@ import type { SpokenWord } from "../spoken-words.ts";
 
 /** A reveal starts this long before its word, so the entrance is moving as the word is heard. */
 export const REVEAL_LEAD_MS = 120;
-/** A headline is revealed on a word in the first part of its card only; later, it shows with the first word. */
-const HEADLINE_LATEST = 0.4;
-/** A layout is revealed this long after its headline at the earliest, so the two do not enter as one. */
-const LAYOUT_AFTER_HEADLINE_MS = 300;
-/** A layout is on screen at least this long before its card ends. */
-const LAYOUT_MIN_SHOWN_MS = 1500;
+/**
+ * A headline enters no later than this after its cut, so no card opens on an empty frame while the voice
+ * catches up; it enters earlier when its first shared word is heard earlier.
+ */
+export const HEADLINE_LATEST_MS = 150;
+/** A layout enters this long after its headline, so the two do not enter as one. */
+export const LAYOUT_AFTER_HEADLINE_MS = 300;
+/**
+ * A layout (the card's device) enters no later than this after its cut, so it is on screen within about
+ * 0.6 s and its own motion (a count, a typed line, a pipeline) plays while the voice describes it.
+ */
+export const LAYOUT_LATEST_MS = 450;
 
 const tokens = (text: string) =>
   text
@@ -37,11 +43,10 @@ function reveal(shot: Shot, startMs: number, cardMs: number): Shot {
 
 /**
  * A card whose headline and layout are revealed on its spoken words (`words`: card-local ms, in order).
- * The headline (or the CTA line) enters on the first word it shares with the voice, when that word comes
- * early in the card, else on the first spoken word. The layout enters on the first word after the last one
- * it shares with the headline (the voice moving on to the detail the layout shows), else halfway through
- * the line, and always after the headline and long enough before the card ends to be seen. The opening
- * card's headline stays on from its first frame.
+ * The headline (or the CTA line) enters on the first word it shares with the voice, or on the first spoken
+ * word, but never later than `HEADLINE_LATEST_MS` after the cut. The layout follows it by
+ * `LAYOUT_AFTER_HEADLINE_MS`, never later than `LAYOUT_LATEST_MS`, so a card never holds a bare headline
+ * while its device waits for the voice. The opening card's headline stays on from its first frame.
  */
 function revealCard(scene: Scene, words: readonly SpokenWord[], opening: boolean): Scene {
   const first = words[0];
@@ -50,23 +55,15 @@ function revealCard(scene: Scene, words: readonly SpokenWord[], opening: boolean
   const headline = scene.shots.find((sh) => sh.type === "title" || sh.type === "text" || sh.type === "cta");
   const layout = scene.shots.find((sh) => sh.type === "layout");
   const said = new Set(tokens(headline && "text" in headline ? (headline.text ?? "") : ""));
-  const shared = words.map((w) => tokens(w.text).some((t) => said.has(t)));
-  const firstShared = words.find((_, i) => shared[i]);
-  const keyWord = firstShared && firstShared.startMs <= cardMs * HEADLINE_LATEST ? firstShared : first;
-  const headlineAt = Math.max(0, keyWord.startMs - REVEAL_LEAD_MS);
-  const lastShared = shared.lastIndexOf(true);
-  const detail = (lastShared >= 0 ? words[lastShared + 1] : undefined) ?? words[Math.floor(words.length / 2)];
-  const layoutAt = Math.min(
-    Math.max((detail?.startMs ?? first.startMs) - REVEAL_LEAD_MS, headlineAt + LAYOUT_AFTER_HEADLINE_MS),
-    cardMs - LAYOUT_MIN_SHOWN_MS,
-  );
+  const keyWord = words.find((w) => tokens(w.text).some((t) => said.has(t))) ?? first;
+  const headlineAt = Math.min(Math.max(0, keyWord.startMs - REVEAL_LEAD_MS), HEADLINE_LATEST_MS);
+  const layoutAt = Math.min(headlineAt + LAYOUT_AFTER_HEADLINE_MS, LAYOUT_LATEST_MS);
   return {
     ...scene,
     shots: scene.shots.map((sh) => {
       // The opening frame (a feed's preview and thumbnail) always shows the hook's headline.
       if (sh === headline) return opening ? sh : reveal(sh, headlineAt, cardMs);
-      // A card too short to show its layout after its headline reveals both together.
-      if (sh === layout) return reveal(sh, Math.max(layoutAt, headlineAt), cardMs);
+      if (sh === layout) return reveal(sh, layoutAt, cardMs);
       return sh;
     }),
   };

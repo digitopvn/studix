@@ -1,4 +1,5 @@
-import type { BrandKit, ColorRole, ColorValue, TextStyleRole } from "@studix/video-ir";
+import type { BrandKit, ColorRole, ColorValue, Shot, TextStyleRole } from "@studix/video-ir";
+import { withContrastingRoles } from "./palette-oklch-contrast.ts";
 
 export const COLOR_ROLES: readonly ColorRole[] = [
   "primary",
@@ -21,18 +22,39 @@ export const DEFAULT_PALETTE: Record<ColorRole, string> = {
 
 export const DEFAULT_FONT_FAMILY = "Be Vietnam Pro";
 
-/** Every palette role resolved to a hex value; optional brand roles fall back to required ones. */
+/**
+ * Every palette role resolved to a hex value; optional brand roles fall back to required ones. A secondary or
+ * accent that collapses onto the primary is derived from it by an OKLCH hue shift, so emphasis has contrast.
+ */
 export function resolvePalette(brand: BrandKit | undefined): Record<ColorRole, string> {
   if (!brand) return { ...DEFAULT_PALETTE };
   const p = brand.palette;
-  return {
+  return withContrastingRoles({
     primary: p.primary,
     secondary: p.secondary ?? p.primary,
     accent: p.accent ?? p.primary,
     background: p.background,
     foreground: p.foreground,
     muted: p.muted ?? p.foreground,
-  };
+  });
+}
+
+/**
+ * A layout shot whose `swatches` show only real brand colours: a palette role the brand kit does not give
+ * (a fallback or an OKLCH-derived role) is dropped, so a derived colour is never labelled as a brand colour.
+ * Hex swatches, other shots and IRs without a brand kit pass through; a swatch row is never emptied.
+ */
+export function withBrandSwatches<S extends Shot>(shot: S, brand: BrandKit | undefined): S {
+  if (!brand || shot.type !== "layout" || shot.layout.kind !== "swatches") return shot;
+  const resolved = resolvePalette(brand);
+  const given: Partial<Record<ColorRole, string>> = brand.palette;
+  const items = shot.layout.items.filter((item) => {
+    if (item.color.startsWith("#")) return true;
+    const role = item.color as ColorRole; // a ColorValue that is not hex is a palette role
+    return given[role] !== undefined && given[role] === resolved[role];
+  });
+  if (items.length === 0 || items.length === shot.layout.items.length) return shot;
+  return { ...shot, layout: { ...shot.layout, items } };
 }
 
 /** CSS value for a colour token: palette roles become stage CSS variables, hex passes through. */

@@ -8,6 +8,7 @@ import {
 } from "../src/motion-graphic/motion-graphic-retime.ts";
 import {
   heardWords,
+  LAYOUT_LATEST_MS,
   REVEAL_LEAD_MS,
   withSpokenReveals,
 } from "../src/motion-graphic/motion-graphic-reveals.ts";
@@ -170,7 +171,9 @@ describe("spoken reveals", () => {
     const headline = shots.find((sh) => sh.type === "text");
     const layout = shots.find((sh) => sh.type === "layout");
     expect(headline?.startMs).toBe(200 - REVEAL_LEAD_MS);
-    expect(layout?.startMs).toBe(900 - REVEAL_LEAD_MS);
+    // The device follows the headline at once instead of waiting for its word.
+    expect(layout?.startMs).toBe(200 - REVEAL_LEAD_MS + 300);
+    expect(layout?.startMs).toBeLessThanOrEqual(LAYOUT_LATEST_MS);
     expect((layout?.startMs ?? 0) + (layout?.durationMs ?? 0)).toBe(out.scenes[1]?.durationMs);
     // Cards without a line keep their reveal times.
     expect(out.scenes[0]).toEqual(withLayout.scenes[0]);

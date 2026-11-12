@@ -167,9 +167,10 @@ export function writeTransition(
       else tween({ opacity: 1, scale: 1 }, { opacity: 0, scale: 1.18 }, "power2.in");
       return;
     case "iris":
+      // The circle pinches to 12%, never to nothing, so the cut never lands on a fully blank frame.
       if (inbound)
-        tween({ clipPath: "circle(0% at 50% 50%)" }, { clipPath: "circle(75% at 50% 50%)" }, "power2.out");
-      else tween({ clipPath: "circle(75% at 50% 50%)" }, { clipPath: "circle(0% at 50% 50%)" }, "power2.in");
+        tween({ clipPath: "circle(12% at 50% 50%)" }, { clipPath: "circle(75% at 50% 50%)" }, "power2.out");
+      else tween({ clipPath: "circle(75% at 50% 50%)" }, { clipPath: "circle(12% at 50% 50%)" }, "power2.in");
       return;
     case "whip":
       // Faster and more violent than a slide: a short lateral throw with a lean, fading at the far end.

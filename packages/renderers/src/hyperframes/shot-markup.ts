@@ -261,7 +261,9 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
           ...textCss(ctx, shot.style?.textStyle ?? "heading", shot.style),
           "display: inline-block;",
           `padding: ${Math.round(pad * 0.55)}px ${pad * 1.4}px;`,
-          "border-radius: 999px;",
+          // A fixed corner radius, not a pill: a CTA that wraps to several lines would turn a pill into an
+          // ellipse that cuts through its first and last lines. This radius stays inside the padding.
+          `border-radius: ${pad}px;`,
           `border: ${num(Math.max(2, 5 * ctx.scale))}px solid currentColor;`,
         ]),
       ];
