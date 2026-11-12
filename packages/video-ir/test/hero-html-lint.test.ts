@@ -60,6 +60,11 @@ describe("lintHeroHtml", () => {
       '<style>.a{content:"x\n} body *{display:none}</style><p>a</p>',
       "must close on its line",
     ],
+    [
+      "a string cut by a form feed",
+      '<style>.a{content:"x\f} body *{display:none}</style><p>a</p>',
+      "must close on its line",
+    ],
     ["an unclosed string", "<style>.a{content:'x}</style><p>a</p>", "must close on its line"],
     ["a CSS escape", "<style>a\\{x, body *{display:none}</style><p>a</p>", "backslash"],
     [

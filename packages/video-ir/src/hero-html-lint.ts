@@ -195,9 +195,9 @@ function styleBlockProblems(raw: string): string[] {
   const css = raw.replace(/\/\*[\s\S]*?\*\//g, " ");
   if (css.includes("/*") || (raw.match(/\*\//g)?.length ?? 0) < comments)
     problems.push(`${where}: a CSS comment is not closed with */`);
-  // A CSS string ends at its quote or, unclosed, at the end of the line; the scoper cannot tell the two
+  // A CSS string ends at its quote or, unclosed, at the end of the line (\n, \r or \f); the scoper cannot tell the two
   // apart, so every string must close on its own line.
-  const string = /"[^"\n]*"|'[^'\n]*'/g;
+  const string = /"[^"\n\r\f]*"|'[^'\n\r\f]*'/g;
   const strings = css.match(string) ?? [];
   if (strings.some((str) => /[{}]/.test(str)))
     problems.push(`${where}: "{" and "}" are not allowed in strings`);
