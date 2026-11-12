@@ -284,6 +284,14 @@ Mỗi beat của storyboard agent có thể kèm `layout` có kiểu (`prompt-bo
 dựng dần bên dưới (shot `layout`, renderer tự vẽ). `visual` chỉ là mô tả. Beat cuối luôn là card CTA, bỏ qua
 layout. Mọi card dùng chung nền `background` của style profile; profile năng lượng cao (≥ 4) tô card CTA bằng
 màu `primary`, thay vì xen kẽ nền từng card.
+Beat còn có thể kèm `camera` (`static`, `push-in`, `pull-back`, `pan-left`, `pan-right`, `parallax`) hoặc
+`null` để style tự chọn. Template (từ bản 9) cho mỗi card một camera move, lớp chiều sâu và một motif theo năng
+lượng của style: năng lượng thấp dùng `glow`/`grain`/`vignette`, motif `ring`, chuyển cảnh `fade`/`match-cut`/`wipe`;
+mức 3 thêm `grid` và chấm `dots`, motif `circle`, chuyển cảnh `slide`/`match-cut`/`iris`/`wipe`; mức ≥ 4 thêm góc
+`corners` và vạch `rule`, motif `square`, chuyển cảnh `zoom`/`match-cut`/`whip`/`slide`. Card nền sáng đổi
+`vignette` thành `grain`. Motif đi từ góc này sang góc khác qua mỗi lần cắt, nên `match-cut` luôn có hình để mang
+qua. Hai card liền nhau không bao giờ dùng chung một camera move (trừ `static`): storyboard chọn trùng thì template
+đổi card sau sang move khác của chu kỳ (`cardCameras`).
 Số beat của storyboard agent theo độ dài video (`motionBeatRange`): khoảng một beat mỗi 5 s, từ 3 đến 12
 (60 s là 12, chấp nhận 9 đến 12; dưới khoảng 17,5 s vẫn 3 đến 6), để video dài có nhiều card hơn thay vì
 giữ mỗi card lâu hơn. Storyboard sai số beat được một lượt sửa như dưới (cùng mọi lỗi khác trong một thông

@@ -6,12 +6,15 @@ import {
   type BrandKit,
   type BrandPalette,
   buildSequentialTimeline,
+  type CameraMove,
   type CaptionCue,
   type ColorRole,
   type CreativeBrief,
   type LayoutSpec,
   type MotionPreset,
   type Scene,
+  type SceneDepth,
+  type SceneMotif,
   type SceneTransition,
   type Shot,
   unwrapValidation,
@@ -31,7 +34,7 @@ import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-tex
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 8;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 9;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -72,12 +75,83 @@ export function resolveMotionStyle(brief: CreativeBrief): MotionStyleProfile {
   return best ?? (MOTION_STYLE_PROFILES.find((p) => p.id === DEFAULT_STYLE) as MotionStyleProfile);
 }
 
-/** GSAP presets and the scene transition an energy level calls for (calm fades .. hard pops). */
-function motionFor(energy: number): { enter: MotionPreset; exit: MotionPreset; transition: SceneTransition } {
-  if (energy <= 2) return { enter: "fade", exit: "fade", transition: { kind: "fade", durationMs: 500 } };
+/**
+ * The motion grammar an energy level calls for (calm .. frantic): GSAP entrance and exit presets, the
+ * transitions the cuts cycle through (a match cut among them, carried by the motif), the camera moves the
+ * cards cycle through, the depth layers behind and in front of every card, and the motif's shape.
+ */
+function motionFor(energy: number): {
+  enter: MotionPreset;
+  exit: MotionPreset;
+  transitions: readonly SceneTransition[];
+  cameras: readonly CameraMove[];
+  depth: SceneDepth;
+  motif: SceneMotif["shape"];
+} {
+  if (energy <= 2)
+    return {
+      enter: "fade",
+      exit: "fade",
+      transitions: [
+        { kind: "fade", durationMs: 500 },
+        { kind: "match-cut", durationMs: 0 },
+        { kind: "wipe", durationMs: 500 },
+      ],
+      cameras: ["push-in", "parallax", "pull-back", "pan-left"],
+      depth: { background: ["glow", "grain", "vignette"] },
+      motif: "ring",
+    };
   if (energy === 3)
-    return { enter: "slide-up", exit: "fade", transition: { kind: "slide", durationMs: 350 } };
-  return { enter: "pop", exit: "scale", transition: { kind: "zoom", durationMs: 250 } };
+    return {
+      enter: "slide-up",
+      exit: "fade",
+      transitions: [
+        { kind: "slide", durationMs: 350 },
+        { kind: "match-cut", durationMs: 0 },
+        { kind: "iris", durationMs: 450 },
+        { kind: "wipe", durationMs: 400 },
+      ],
+      cameras: ["push-in", "pan-left", "parallax", "pull-back", "pan-right"],
+      depth: { background: ["grid", "glow", "vignette"], foreground: ["dots"] },
+      motif: "circle",
+    };
+  return {
+    enter: "pop",
+    exit: "scale",
+    transitions: [
+      { kind: "zoom", durationMs: 250 },
+      { kind: "match-cut", durationMs: 0 },
+      { kind: "whip", durationMs: 300 },
+      { kind: "slide", durationMs: 300 },
+    ],
+    cameras: ["push-in", "pan-right", "pull-back", "parallax", "pan-left"],
+    depth: { background: ["grid", "grain", "vignette"], foreground: ["corners", "rule"] },
+    motif: "square",
+  };
+}
+
+/** Corners the motif steps through card by card, so it travels across every cut. */
+const MOTIF_PATH: readonly SceneMotif["anchor"][] = ["top-right", "bottom-left", "top-left", "bottom-right"];
+
+/**
+ * One camera move per card: the storyboard's pick, else the energy's cycle. Adjacent cards never share a
+ * move (other than `static`): a repeat takes the next move of the cycle that differs from both neighbours.
+ */
+export function cardCameras(wanted: ReadonlyArray<CameraMove | undefined>, cycle: readonly CameraMove[]) {
+  const out: CameraMove[] = [];
+  wanted.forEach((pick, i) => {
+    const prev = out[i - 1];
+    const move = pick ?? (cycle[i % cycle.length] as CameraMove);
+    if (move === "static" || move !== prev) {
+      out.push(move);
+      return;
+    }
+    const next = wanted[i + 1];
+    const alt =
+      cycle.find((m) => m !== prev && m !== next) ?? cycle.find((m) => m !== prev) ?? ("static" as const);
+    out.push(alt);
+  });
+  return out;
 }
 
 interface Line {
@@ -89,6 +163,8 @@ interface Line {
   weight?: number;
   /** Built-in layout the storyboard chose to draw under the headline. */
   layout?: LayoutSpec;
+  /** Camera move the storyboard chose for this card. */
+  camera?: CameraMove;
 }
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
@@ -320,6 +396,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         enter: b.enter,
         weight: b.weight,
         ...(b.layout ? { layout: b.layout } : {}),
+        ...(b.camera ? { camera: b.camera } : {}),
       }))
     : linesOf(brief, cta, totalMs, language).slice(0, 8);
   const voiceover = lines
@@ -382,6 +459,22 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     });
   }
   const last = lines.length - 1;
+  // A vignette deepens a dark card but greys the edges of a light one, which gets grain instead.
+  const darkCard = luminance(brand.palette.background) < 0.2;
+  const depth: SceneDepth = {
+    ...motion.depth,
+    background: [
+      ...new Set(
+        (motion.depth.background ?? []).map((layer) =>
+          layer === "vignette" && !darkCard ? ("grain" as const) : layer,
+        ),
+      ),
+    ],
+  };
+  const cameras = cardCameras(
+    lines.map((l) => l.camera),
+    motion.cameras,
+  );
   let cursor = 0;
   const cues: CaptionCue[] = [];
   const scenes: Scene[] = lines.map((line, i): Scene => {
@@ -491,7 +584,16 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       durationMs,
       background: { color: fill },
       shots,
-      ...(i === last ? {} : { transitionOut: motion.transition }),
+      ...(i === last ? {} : { transitionOut: motion.transitions[i % motion.transitions.length] }),
+      camera: { move: cameras[i] as CameraMove },
+      depth,
+      // One shape carried card to card, corner to corner, clear of the centred headlines and captions.
+      motif: {
+        shape: motion.motif,
+        anchor: MOTIF_PATH[i % MOTIF_PATH.length] as SceneMotif["anchor"],
+        size: "medium",
+        color: fill === "primary" ? "foreground" : "accent",
+      },
     };
   });
   const ir: VideoIR = {

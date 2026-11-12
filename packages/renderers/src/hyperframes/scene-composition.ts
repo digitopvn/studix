@@ -1,5 +1,5 @@
 // Adapted from motion-mcp packages/hyperframes-adapter/src/compile.ts @ 408ceccd (MIT, Copyright (c) 2026 Digitop).
-import type { ColorRole, Scene, Shot } from "@studix/video-ir";
+import type { ColorRole, Scene, SceneMotif, Shot } from "@studix/video-ir";
 import {
   BURNED_CAPTION,
   BURNED_CAPTION_PAD,
@@ -10,6 +10,7 @@ import {
 } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, indent, num, scriptJson, seconds } from "./html-utils.ts";
 import { writeLayoutMotion } from "./layout-markup.ts";
+import { backgroundLayers, foregroundAccents, motifLayer, writeCamera } from "./scene-depth.ts";
 import {
   type ResolvedTransition,
   TimelineWriter,
@@ -29,6 +30,8 @@ export interface SceneCompileInput {
   scene: Scene;
   palette: Record<ColorRole, string>;
   transitions: { in?: ResolvedTransition; out?: ResolvedTransition };
+  /** Motifs of the scenes before and after this one, so a shared motif carries across the cut. */
+  motifs?: { prev?: SceneMotif; next?: SceneMotif };
   captions: { position: "top" | "middle" | "bottom"; cues: SceneCaptionCue[] };
   markup: Omit<ShotMarkupContext, "prefix"> & {
     /** Asset ids copied as video files; a background with one of these plays as a clip. */
@@ -92,6 +95,7 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       "color: var(--c-foreground);",
       `font-family: ${markup.fontStacks.body};`,
     ]),
+    cssRule(`#${stageId} .plane`, ["position: absolute;", "inset: 0;"]),
     cssRule(`#${stageId} .underlay, #${stageId} .underlay > *`, ["position: absolute;", "inset: 0;"]),
     cssRule(`#${stageId} .content`, [
       "position: absolute;",
@@ -137,6 +141,11 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
 
   const w = new TimelineWriter();
   writeTransition(w, `#${stageId}`, "in", input.transitions.in, scene.durationMs);
+  writeCamera(w, stageId, scene, markup.frame);
+  const back = backgroundLayers(scene, stageId, markup.frame);
+  const motif = motifLayer(w, stageId, scene, input.motifs ?? {}, markup.frame);
+  const front = foregroundAccents(scene, stageId, markup.frame, w);
+  css.push(...back.css, ...motif.css, ...front.css);
   const html = new Map<string, string>();
   for (const shot of scene.shots) {
     const rendered = renderShotMarkup(ctx, shot);
@@ -176,8 +185,11 @@ export function compileScene(input: SceneCompileInput): CompiledScene {
       `<template id="${prefix}template">`,
       `  <div data-composition-id="${scene.id}" data-width="${width}" data-height="${height}" data-duration="${num(seconds(scene.durationMs))}">`,
       `    <div id="${stageId}" data-scene-role="${scene.role}">`,
-      `      <div class="underlay">${underlay.join("")}</div>`,
-      `      <div class="content">${regions.join("")}</div>`,
+      // Back to front: background (media, full-bleed shots, texture layers), motif, content, accents.
+      `      <div class="plane plane-back"><div class="underlay">${underlay.join("")}</div>${back.html}</div>`,
+      motif.html ? `      <div class="plane plane-motif">${motif.html}</div>` : "",
+      `      <div class="plane plane-mid"><div class="content">${regions.join("")}</div></div>`,
+      front.html ? `      <div class="plane plane-front">${front.html}</div>` : "",
       captionHtml ? `      ${captionHtml}` : "",
       "    </div>",
       "    <style>",

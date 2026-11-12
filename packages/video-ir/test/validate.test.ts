@@ -15,6 +15,30 @@ describe("validateVideoIR semantic checks", () => {
     expect(validateVideoIR("ir").ok).toBe(false);
   });
 
+  it("enforces the camera grammar: no repeated move on adjacent scenes, match cuts need motifs", () => {
+    const ir = base();
+    ir.scenes[0]!.camera = { move: "push-in" };
+    ir.scenes[1]!.camera = { move: "push-in" };
+    ir.scenes[0]!.transitionOut = { kind: "match-cut", durationMs: 0 };
+    const result = validateVideoIR(ir);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ code: "camera", path: "/scenes/1/camera/move" }),
+    );
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ code: "camera", path: "/scenes/0/transitionOut/kind" }),
+    );
+    ir.scenes[1]!.camera = { move: "parallax", intensity: 1.5 };
+    ir.scenes[0]!.motif = { shape: "circle", anchor: "top-right" };
+    ir.scenes[1]!.motif = { shape: "circle", anchor: "bottom-left", size: "large" };
+    ir.scenes[0]!.depth = { background: ["grid", "glow", "grain", "vignette"], foreground: ["corners"] };
+    // Two static scenes in a row are fine: static is no move.
+    ir.scenes[2]!.camera = { move: "static" };
+    ir.scenes[3]!.camera = { move: "static" };
+    expect(validateVideoIR(ir).ok).toBe(true);
+  });
+
   it("detects duplicate scene and shot ids", () => {
     const ir = base();
     ir.scenes[1]!.shots[1]!.id = "intro-logo";

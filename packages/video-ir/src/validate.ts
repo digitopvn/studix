@@ -109,6 +109,30 @@ export function semanticIssues(ir: VideoIR): ValidationIssue[] {
       `timeline ends at ${cursor}ms but format.durationMs is ${total}ms`,
     );
   }
+  // Camera grammar, in timeline order: adjacent scenes never share a move, and a match cut needs a motif
+  // of the same shape on both sides of the cut.
+  ir.timeline.entries.forEach((entry, i) => {
+    const next = ir.timeline.entries[i + 1];
+    const a = scenes.get(entry.sceneId);
+    const b = next ? scenes.get(next.sceneId) : undefined;
+    if (!a || !b) return;
+    const si = ir.scenes.indexOf(a);
+    const move = a.camera?.move;
+    if (move && move !== "static" && b.camera?.move === move) {
+      add(
+        ["scenes", ir.scenes.indexOf(b), "camera", "move"],
+        "camera",
+        `scenes "${a.id}" and "${b.id}" are adjacent and both use the "${move}" camera move`,
+      );
+    }
+    if (a.transitionOut?.kind === "match-cut" && (!a.motif || a.motif.shape !== b.motif?.shape)) {
+      add(
+        ["scenes", si, "transitionOut", "kind"],
+        "camera",
+        `match-cut from "${a.id}" to "${b.id}" needs a motif of the same shape on both scenes`,
+      );
+    }
+  });
   (ir.timeline.markers ?? []).forEach((marker, i) => {
     if (marker.atMs > total)
       add(["timeline", "markers", i, "atMs"], "out_of_bounds", "marker is after the end");

@@ -698,9 +698,58 @@ describe("spoken length", () => {
       "background",
       "background",
     ]);
-    expect(ir.metadata?.templateVersion).toBe(8);
+    expect(ir.metadata?.templateVersion).toBe(9);
     // Landscape has the room: a short headline over a layout is set at display size too.
     expect(hook.shots[0]?.style?.textStyle).toBe("display");
+  });
+
+  it("gives every card a camera, depth and a motif, never repeating a move on adjacent cards", () => {
+    const beat = (onScreen: string, camera?: string | null) => ({
+      onScreen,
+      voiceover: `${onScreen}.`,
+      visual: "A card.",
+      enter: "fade",
+      weight: 1,
+      ...(camera !== undefined ? { camera } : {}),
+    });
+    const ir = motionGraphicTemplate(
+      {
+        prompt: "A launch video introducing Studix",
+        language: "en",
+        durationMs: 20_000,
+        aspectRatio: "16:9",
+      },
+      {
+        storyboard: {
+          styleProfile: "kinetic-typography",
+          // The storyboard asks for the same move three times in a row and leaves one to the style.
+          beats: [
+            beat("One prompt", "pan-left"),
+            beat("Any agent", "pan-left"),
+            beat("Every format", "pan-left"),
+            beat("Ready to ship", null),
+            beat("Start free", "static"),
+          ],
+          music: null,
+        } as never,
+      },
+    );
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const moves = ir.scenes.map((s) => s.camera?.move);
+    expect(moves[0]).toBe("pan-left");
+    expect(moves[2]).toBe("pan-left");
+    expect(moves[4]).toBe("static");
+    moves.forEach((m, i) => {
+      if (i > 0 && m !== "static") expect(m).not.toBe(moves[i - 1]);
+    });
+    expect(ir.scenes.every((s) => (s.depth?.background ?? []).length > 0)).toBe(true);
+    // One motif shape across every card, stepping corner to corner, so a match cut has something to carry.
+    expect(new Set(ir.scenes.map((s) => s.motif?.shape)).size).toBe(1);
+    expect(ir.scenes[0]!.motif?.anchor).not.toBe(ir.scenes[1]!.motif?.anchor);
+    const kinds = ir.scenes.slice(0, -1).map((s) => s.transitionOut?.kind);
+    expect(kinds).toContain("match-cut");
+    expect(new Set(kinds).size).toBeGreaterThan(1);
+    expect(ir.metadata?.templateVersion).toBe(9);
   });
 
   it("rejects a storyboard layout outside its typed shape", () => {

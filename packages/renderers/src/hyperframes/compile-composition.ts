@@ -179,6 +179,7 @@ export function buildComposition(ir: VideoIR, options: BuildCompositionOptions):
       scene,
       palette,
       transitions: sceneTransitions(ir.scenes, index),
+      motifs: { prev: ir.scenes[index - 1]?.motif, next: ir.scenes[index + 1]?.motif },
       captions: { position, cues: cues.get(scene.id) ?? [] },
       markup: { ...markup, videoAssetIds },
     }),

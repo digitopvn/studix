@@ -312,6 +312,98 @@ describe("buildComposition layouts", () => {
   });
 });
 
+describe("buildComposition camera, depth and motif", () => {
+  const ir = structuredClone(brandIntro);
+  const [hook, intro, feature] = ir.scenes as [
+    VideoIR["scenes"][0],
+    VideoIR["scenes"][0],
+    VideoIR["scenes"][0],
+  ];
+  hook.camera = { move: "push-in" };
+  hook.depth = { background: ["grid", "glow", "grain", "vignette"], foreground: ["corners", "rule", "dots"] };
+  hook.motif = { shape: "circle", anchor: "top-right" };
+  hook.transitionOut = { kind: "match-cut", durationMs: 0 };
+  intro.camera = { move: "pan-left" };
+  intro.motif = { shape: "circle", anchor: "bottom-left" };
+  intro.transitionOut = { kind: "whip", durationMs: 300 };
+  feature.camera = { move: "parallax" };
+  feature.transitionOut = { kind: "iris", durationMs: 400 };
+  const build = buildComposition(ir, previewSize);
+  const scene = (id: string) => build.files.get(`compositions/${id}.html`)!;
+
+  it("stacks texture layers behind the content and accents in front, as CSS only", () => {
+    const html = scene("hook");
+    const order = [
+      "plane-back",
+      "bg-grid",
+      "bg-vignette",
+      "plane-motif",
+      "plane-mid",
+      "plane-front",
+      "fg-dots",
+    ];
+    const at = order.map((c) =>
+      html.indexOf(
+        `class="${c === "plane-back" ? "plane plane-back" : c.startsWith("plane") ? `plane ${c}` : c}"`,
+      ),
+    );
+    expect(at.every((i) => i > 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(html).toContain("background-size: 43px 43px;");
+    expect(html).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
+    expect(scene("intro")).not.toContain("bg-grid");
+  });
+
+  it("plays each camera move as one seek-safe tween per plane over the whole scene", () => {
+    expect(scene("hook")).toContain(
+      'tl.fromTo("#s-hook__stage .plane-mid", {"scale":1}, {"scale":1.06,"duration":3,"ease":"sine.inOut"}, 0);',
+    );
+    // pan-left: content drifts left, 2% of the 540px width.
+    expect(scene("intro")).toContain(
+      'tl.fromTo("#s-intro__stage .plane-mid", {"x":11}, {"x":-11,"duration":4,"ease":"sine.inOut"}, 0);',
+    );
+    // parallax: the content travels further than the back plane; no front plane without accents.
+    expect(scene("feature")).toContain('tl.fromTo("#s-feature__stage .plane-mid", {"x":8}, {"x":-8');
+    expect(scene("feature")).toContain('tl.fromTo("#s-feature__stage .plane-back", {"x":2,"scale":1.06}');
+    expect(scene("feature")).not.toContain(".plane-front");
+    expect(scene("hook")).toContain('tl.fromTo("#s-hook__stage .plane-front", {"scale":1}, {"scale":1.09');
+    expect(scene("cta")).not.toContain('.plane-mid", {');
+  });
+
+  it("carries the motif across a match cut and cuts the stage hard", () => {
+    // The hook's motif pops in; the next scene's motif starts where the hook's sat and travels on.
+    expect(scene("hook")).toContain('tl.fromTo("#s-hook__stage .motif", {"scale":0}');
+    expect(scene("intro")).toMatch(/tl\.fromTo\("#s-intro__stage \.motif", \{"x":\d+,"y":-\d+,"scale":1\}/);
+    // The feature scene has no motif, so the intro's leaves at the end of its scene.
+    expect(scene("intro")).toContain('tl.fromTo("#s-intro__stage .motif", {"scale":1}, {"scale":0');
+    expect(scene("hook")).not.toContain('tl.fromTo("#s-hook__stage", {"opacity"');
+    expect(scene("intro")).not.toContain('tl.fromTo("#s-intro__stage", {"opacity":0}');
+  });
+
+  it("plays the whip and iris transitions as two halves on the stage", () => {
+    expect(scene("intro")).toContain('tl.fromTo("#s-intro__stage", {"opacity":1,"xPercent":0,"skewX":0}');
+    expect(scene("feature")).toContain(
+      'tl.fromTo("#s-feature__stage", {"opacity":0,"xPercent":45,"skewX":-12}',
+    );
+    expect(scene("feature")).toContain(
+      '{"clipPath":"circle(75% at 50% 50%)"}, {"clipPath":"circle(0% at 50% 50%)"',
+    );
+    expect(scene("cta")).toContain(
+      '{"clipPath":"circle(0% at 50% 50%)"}, {"clipPath":"circle(75% at 50% 50%)"',
+    );
+  });
+
+  it("is a valid IR and passes the HyperFrames linter with no errors", async () => {
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const { dir, cleanup } = await tempDir("compile-depth-lint");
+    cleanups.push(cleanup);
+    await writeComposition(build, dir);
+    const result = await lintProject(dir);
+    const errors = result.results.flatMap((r) => r.result.findings.filter((f) => f.severity === "error"));
+    expect(errors).toEqual([]);
+  });
+});
+
 describe("buildComposition without text shots", () => {
   it("still bundles a face for the family the stage CSS names, so no font is fetched", () => {
     const ir = structuredClone(brandIntro);

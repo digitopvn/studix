@@ -1614,7 +1614,10 @@
             "fade",
             "slide",
             "wipe",
-            "zoom"
+            "zoom",
+            "whip",
+            "iris",
+            "match-cut"
           ]
         },
         "durationMs": {
@@ -1626,6 +1629,119 @@
       "required": [
         "kind",
         "durationMs"
+      ]
+    },
+    "camera": {
+      "type": "object",
+      "properties": {
+        "move": {
+          "type": "string",
+          "enum": [
+            "static",
+            "push-in",
+            "pull-back",
+            "pan-left",
+            "pan-right",
+            "parallax"
+          ]
+        },
+        "intensity": {
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 2
+        }
+      },
+      "required": [
+        "move"
+      ]
+    },
+    "depth": {
+      "type": "object",
+      "properties": {
+        "background": {
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "grid",
+              "glow",
+              "grain",
+              "vignette"
+            ]
+          }
+        },
+        "foreground": {
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "corners",
+              "rule",
+              "dots"
+            ]
+          }
+        }
+      }
+    },
+    "motif": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string",
+          "enum": [
+            "circle",
+            "ring",
+            "square",
+            "bar"
+          ]
+        },
+        "anchor": {
+          "type": "string",
+          "enum": [
+            "top-left",
+            "top",
+            "top-right",
+            "left",
+            "center",
+            "right",
+            "bottom-left",
+            "bottom",
+            "bottom-right"
+          ]
+        },
+        "size": {
+          "type": "string",
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ]
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "primary",
+                "secondary",
+                "accent",
+                "background",
+                "foreground",
+                "muted"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+            }
+          ]
+        }
+      },
+      "required": [
+        "shape",
+        "anchor"
       ]
     },
     "notes": {
