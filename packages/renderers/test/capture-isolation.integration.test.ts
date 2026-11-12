@@ -69,6 +69,7 @@ describe.skipIf(!toolchain.ok)(
     });
     let dir = "";
     let secret = "";
+    // Without a non-loopback address the LAN probes fall back to loopback, which the browser must block too.
     const host = lanAddress() ?? "127.0.0.1";
 
     beforeAll(async () => {
@@ -127,34 +128,48 @@ describe.skipIf(!toolchain.ok)(
       return { output, logs: lines.join("\n") };
     }
 
-    /** Creates a runtime audio element the producer would mix, as page scripts could. */
-    const runtimeAudio = (id: string, src: string) =>
-      `{const a=document.createElement("audio");a.id=${JSON.stringify(id)};a.setAttribute("data-start","0");a.setAttribute("data-duration","3");a.setAttribute("data-has-audio","true");a.src=${JSON.stringify(src)};document.body.appendChild(a);}`;
+    /**
+     * Creates a runtime audio element the producer would mix, as page scripts could. With `spoof`, the element
+     * reports that src through an overridden `currentSrc`, which is what the producer reads.
+     */
+    const runtimeAudio = (id: string, src: string, spoof = false) =>
+      `{const a=document.createElement("audio");a.id=${JSON.stringify(id)};a.setAttribute("data-start","0");a.setAttribute("data-duration","3");a.setAttribute("data-has-audio","true");${
+        spoof
+          ? `Object.defineProperty(a,"currentSrc",{get:()=>${JSON.stringify(src)}});a.src="inside.wav";`
+          : `a.src=${JSON.stringify(src)};`
+      }document.body.appendChild(a);}`;
 
     it("keeps runtime media that lives inside the project", async () => {
       const { output } = await capture("control", runtimeAudio("inside", "inside.wav"));
       expect(maxVolumeDb(output)).toBeGreaterThan(-20);
     });
 
-    it("blocks page requests, navigation, popups and WebRTC, and never reads media outside the project", async () => {
+    it("blocks requests, popups, WebSockets and WebRTC to the LAN and other loopback ports, and never reads media outside the project", async () => {
       const port = (server.address() as AddressInfo).port;
       const udpPort = (udp.address() as AddressInfo).port;
       const lan = `http://${host}:${port}`;
-      const loopback = `http://127.0.0.1:${port}`;
+      // Other loopback ports, as the producer's file server is on localhost too.
+      const local = `http://localhost:${port}`;
       const script = [
         `fetch("${lan}/fetch").catch(()=>{});`,
-        `fetch("${loopback}/fetch-loopback").catch(()=>{});`,
+        `fetch("${local}/fetch-localhost").catch(()=>{});`,
+        `fetch("http://127.0.0.1:${port}/fetch-loopback-ip").catch(()=>{});`,
         `new Image().src="${lan}/image";`,
         `navigator.sendBeacon("${lan}/beacon");`,
         `try{new WebSocket("ws://${host}:${port}/socket")}catch{}`,
-        `try{new Worker(URL.createObjectURL(new Blob(['fetch("${loopback}/worker").catch(()=>{})'])))}catch{}`,
-        `{const f=document.createElement("iframe");f.src="${loopback}/iframe";document.body.appendChild(f);}`,
+        `try{new WebSocket("ws://localhost:${port}/socket-localhost")}catch{}`,
+        `try{new Worker(URL.createObjectURL(new Blob(['fetch("${local}/worker").catch(()=>{})'])))}catch{}`,
+        `{const f=document.createElement("iframe");f.src="${local}/iframe";document.body.appendChild(f);}`,
         `window.open("${lan}/popup");`,
+        `window.open("${local}/popup-localhost","_blank","noopener");`,
+        `{const l=document.createElement("a");l.href="${local}/link-localhost";l.target="_blank";document.body.appendChild(l);l.click();}`,
         `{const pc=new RTCPeerConnection({iceServers:[{urls:"stun:${host}:${udpPort}"}]});pc.createDataChannel("x");pc.createOffer().then((o)=>pc.setLocalDescription(o)).catch(()=>{});}`,
         `setTimeout(()=>{location.href="${lan}/navigate"},20);`,
         runtimeAudio("by-url", `${lan}/secret.wav`),
         runtimeAudio("by-file-url", `file://${secret}`),
         runtimeAudio("by-encoded-dots", "..%2fsecret.wav"),
+        runtimeAudio("by-spaced-path", ` ${secret}`, true),
+        runtimeAudio("by-spaced-dots", " ../secret.wav", true),
       ].join("\n");
 
       const { output, logs } = await capture("hostile", script);
@@ -166,7 +181,7 @@ describe.skipIf(!toolchain.ok)(
       // The host file was never mixed in.
       expect(maxVolumeDb(output)).toBe(Number.NEGATIVE_INFINITY);
       // The page script ran: the producer saw and dropped each element it created.
-      for (const id of ["by-url", "by-file-url", "by-encoded-dots"]) {
+      for (const id of ["by-url", "by-file-url", "by-encoded-dots", "by-spaced-path", "by-spaced-dots"]) {
         expect(logs).toContain(`"id":"${id}"`);
       }
     });

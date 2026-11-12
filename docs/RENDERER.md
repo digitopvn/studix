@@ -101,19 +101,25 @@ to the exact same version in `packages/renderers/package.json` (currently
   scene modules, the HyperFrames runtime), so the same engine patch and
   `patches/@hyperframes__producer@0.8.223.patch` keep a capture inside its
   project ([SECURITY.md](SECURITY.md#render-capture-isolation)):
-  - `buildChromeArgs` adds `CAPTURE_NETWORK_ISOLATION_ARGS`: a proxy that
-    cannot resolve for every non-loopback request, resolver rules that fail
-    every lookup except `localhost`, and WebRTC limited to that dead proxy. It
-    also drops `--disable-popup-blocking`.
+  - `buildChromeArgs` adds `captureNetworkIsolationArgs(serverUrl)`. Every
+    request goes to a proxy that cannot resolve, and only the file server's
+    `localhost:<port>` bypasses it. `<-loopback>` removes Chrome's implicit
+    loopback bypass, so popups, workers and WebSockets cannot reach other
+    loopback ports either. Resolver rules fail every lookup except `localhost`,
+    IP literals included, and WebRTC is limited to the dead proxy. A
+    browser's flags now name its file server's port, so a browser is never
+    reused for another capture's server.
   - `confinePageToFileServer` turns on request interception for the capture
-    and static-verification pages. Requests to any origin other than the
-    producer's file server, such as another loopback port or a navigation away,
-    are aborted. Popups are closed.
+    and static-verification pages. It aborts requests to any other origin, so a
+    navigation away cannot replace the composition, and it closes popups.
   - `keepProjectMedia` filters the media the producer discovers in the live DOM.
-    Only file-server URLs and relative paths that stay inside the project under
-    every percent-decoding are kept. URLs, `file:` and absolute or `../` paths
-    are dropped with a `Ignoring runtime media outside the project` warning, so
-    the worker never downloads or reads them.
+    Page scripts control those values, even `currentSrc`. A src is kept only
+    when it is exactly a file-server URL whose path is plain segments of
+    `[A-Za-z0-9._~-]`, and the file it names resolves (symlinks included)
+    inside the compiled or project directory. Everything else is dropped with an
+    `Ignoring runtime media outside the project` warning before the worker
+    downloads or reads it. This covers URLs, `file:`, absolute paths, `../`,
+    percent-encoding and leading whitespace.
 
   `engine-launch-options.test.ts` fails when a bump drops one of these, and
   `capture-isolation.integration.test.ts` renders a hostile page on hosts with

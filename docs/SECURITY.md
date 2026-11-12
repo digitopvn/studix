@@ -476,21 +476,22 @@ the producer reads the media that the live DOM names. Studix patches HyperFrames
 so that a capture cannot reach anything outside its project
 ([RENDERER.md](RENDERER.md#hyperframes-version)):
 
-- The browser sends every non-loopback request, WebSockets and WebRTC included,
-  to a proxy that cannot resolve. Nothing falls back to a direct connection, and
-  DNS lookups fail for every host except `localhost`.
-- Request interception aborts every page request whose origin is not the
-  producer's file server, including other loopback ports and navigations.
-  Popup blocking stays on, and popups are closed.
-- Runtime media must be a file-server URL or a relative path inside the project.
-  The producer drops every other value before it downloads or reads anything on
-  the host.
+- The browser sends every request to a proxy that cannot resolve, and only the
+  producer's file server (`localhost:<port>`) bypasses it. This covers
+  WebSockets, WebRTC, workers, popups, other loopback ports and IP literals.
+  Nothing falls back to a direct connection, and DNS lookups fail for every host
+  except `localhost`.
+- Request interception also aborts every page request to another origin, so a
+  navigation away cannot replace the composition. Popups are closed.
+- Runtime media must be a file-server URL with a plain path that resolves inside
+  the project. The producer drops every other value before it downloads or reads
+  anything on the host. Page scripts cannot change this by overriding
+  `currentSrc`, by adding whitespace or by percent-encoding.
 
-Residual risk: requests from a dedicated worker to another loopback port pass
-only through request interception, and the render process itself has no egress
-policy. Its own downloads are limited to authored HTTPS media, which Studix
-compositions do not use. A network policy on the worker pod that denies egress
-except to its database, storage and providers closes the remaining gap.
+Residual risk: the render process itself has no egress policy. Its own downloads
+are limited to authored HTTPS media, which Studix compositions do not use. A
+network policy on the worker pod that denies egress except to its database,
+storage and providers closes that gap.
 
 ## Threat list
 

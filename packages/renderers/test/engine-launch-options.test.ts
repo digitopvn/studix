@@ -12,8 +12,10 @@ const engineModule = <T>(file: string): Promise<T> =>
 
 interface BrowserManager {
   ownedLaunchOptions: () => Record<string, unknown>;
-  buildChromeArgs: (options: { width: number; height: number }, config?: Record<string, unknown>) => string[];
-  CAPTURE_NETWORK_ISOLATION_ARGS: readonly string[];
+  buildChromeArgs: (
+    options: { width: number; height: number; serverUrl?: string },
+    config?: Record<string, unknown>,
+  ) => string[];
 }
 
 /**
@@ -27,28 +29,28 @@ describe("@hyperframes/engine launch options", () => {
     expect(browserManager.ownedLaunchOptions()).toMatchObject({ handleSIGTERM: false });
   });
 
-  it("keep the capture browser off the network", async () => {
-    const { buildChromeArgs, CAPTURE_NETWORK_ISOLATION_ARGS } =
-      await engineModule<BrowserManager>("browserManager.js");
-    const args = buildChromeArgs({ width: 640, height: 360 });
-    expect(CAPTURE_NETWORK_ISOLATION_ARGS).toEqual(
+  it("keep the capture browser off the network except for the file server", async () => {
+    const { buildChromeArgs } = await engineModule<BrowserManager>("browserManager.js");
+    const args = buildChromeArgs({ width: 640, height: 360, serverUrl: "http://localhost:4123" });
+    expect(args).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^--proxy-server=/),
-        expect.stringMatching(/^--host-resolver-rules=MAP \* ~NOTFOUND/),
+        expect.stringMatching(/^--proxy-server=http:\/\/[^ ]+\.invalid:/),
+        "--proxy-bypass-list=<-loopback>;localhost:4123",
+        "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
       ]),
     );
-    expect(args).toEqual(expect.arrayContaining([...CAPTURE_NETWORK_ISOLATION_ARGS]));
-    expect(args).not.toContain("--disable-popup-blocking");
   });
 
-  it("confine capture pages to the file server", async () => {
-    const frameCapture = await engineModule<{ confinePageToFileServer?: unknown }>("frameCapture.js");
-    expect(frameCapture.confinePageToFileServer).toBeTypeOf("function");
+  it("pass the file server to the launch flags and confine capture pages to it", () => {
+    const source = readFileSync(join(engineDir, "dist", "services", "frameCapture.js"), "utf8");
+    expect(source).toContain("requiresWebGpu, serverUrl }, gpuConfig)");
+    expect(source).toContain("await confinePageToFileServer(page, serverUrl);");
+    expect(source).toContain("await confinePageToFileServer(page, session.serverUrl);");
   });
 
   it("drop runtime media outside the project", () => {
     const source = readFileSync(fileURLToPath(producer), "utf8");
-    expect(source).toContain("keepProjectMedia(await discoverMediaFromBrowser(session.page)");
+    expect(source).toMatch(/keepProjectMedia\(\s*await discoverMediaFromBrowser\(session\.page\)/);
   });
 });

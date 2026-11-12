@@ -1,5 +1,5 @@
 diff --git a/dist/services/browserManager.js b/dist/services/browserManager.js
-index e63332ce62774085282c0565b30d140b9e2a4d2f..c7b5828989cc8a4e030363f0a1b7b964e55347c1 100644
+index e63332ce62774085282c0565b30d140b9e2a4d2f..102062099827aba960514bd0e1c6617f25af9fa5 100644
 --- a/dist/services/browserManager.js
 +++ b/dist/services/browserManager.js
 @@ -25,7 +25,7 @@ let hostHandlesSigint = false;
@@ -11,55 +11,63 @@ index e63332ce62774085282c0565b30d140b9e2a4d2f..c7b5828989cc8a4e030363f0a1b7b964
  function isSoftwareWebGlRenderer(rendererInfo) {
      const renderer = rendererInfo.trim().toLowerCase();
      return (renderer.includes("swiftshader") ||
-@@ -847,6 +847,19 @@ export function usesSoftwareWebGpu(requiresWebGpu, config) {
+@@ -847,6 +847,27 @@ export function usesSoftwareWebGpu(requiresWebGpu, config) {
          !(config.disableGpu ?? DEFAULT_CONFIG.disableGpu) &&
          (config.browserGpuMode ?? DEFAULT_CONFIG.browserGpuMode) === "software");
  }
 +/**
-+ * Studix: a capture browser reaches only loopback, where the producer's file server listens.
-+ * Every non-loopback request goes to a proxy that cannot resolve, and nothing falls back to a
-+ * direct connection. Chrome bypasses the proxy for loopback on its own. The resolver rules stop
-+ * DNS lookups (and DNS-based exfiltration) for any other host, and WebRTC may not send UDP
-+ * outside the dead proxy. Per-page request interception then confines loopback to the file
-+ * server. Popup blocking stays on.
++ * Studix: a capture browser reaches only the producer's file server. Every request goes to a
++ * proxy that cannot resolve, and nothing falls back to a direct connection; only the file
++ * server's `localhost:<port>` bypasses it. `<-loopback>` removes Chrome's implicit loopback
++ * bypass, so popups, workers and WebSockets cannot reach other loopback ports either. The
++ * resolver rules fail every lookup, IP literals included, except `localhost`, and WebRTC may
++ * not send UDP outside the dead proxy.
 + */
-+export const CAPTURE_NETWORK_ISOLATION_ARGS = Object.freeze([
-+    "--proxy-server=http://studix-capture-offline.invalid:9",
-+    "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
-+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-+]);
++export function captureNetworkIsolationArgs(serverUrl) {
++    const bypass = ["<-loopback>"];
++    if (serverUrl) {
++        const { hostname, port } = new URL(serverUrl);
++        bypass.push(`${hostname}:${port}`);
++    }
++    return [
++        "--proxy-server=http://studix-capture-offline.invalid:9",
++        `--proxy-bypass-list=${bypass.join(";")}`,
++        "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
++        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
++    ];
++}
  export function buildChromeArgs(options, config) {
      const platform = options.platform ?? process.platform;
      const gpuDisabled = config?.disableGpu ?? DEFAULT_CONFIG.disableGpu;
-@@ -885,7 +898,6 @@ export function buildChromeArgs(options, config) {
-         "--disable-extensions",
-         "--disable-hang-monitor",
-         "--disable-ipc-flooding-protection",
--        "--disable-popup-blocking",
-         "--disable-sync",
-         "--disable-component-update",
-         "--disable-domain-reliability",
-@@ -904,6 +916,7 @@ export function buildChromeArgs(options, config) {
+@@ -904,6 +925,7 @@ export function buildChromeArgs(options, config) {
          // autoplay policy and causes the AudioContext to stay suspended. The
          // frame-capture loop then blocks waiting for it, deadlocking the render.
          "--autoplay-policy=no-user-gesture-required",
-+        ...CAPTURE_NETWORK_ISOLATION_ARGS,
++        ...captureNetworkIsolationArgs(options.serverUrl),
      ];
      if (browserGpuMode !== "software" || options.requiresWebGpu) {
          chromeArgs.push(WEBGPU_FLAG);
 diff --git a/dist/services/frameCapture.js b/dist/services/frameCapture.js
-index b6395efe8dfb2899e06f7d42232526945b90a6f7..57a10cfde127dab1dc5ef0f3cef9de21a25dc0a6 100644
+index b6395efe8dfb2899e06f7d42232526945b90a6f7..23af550ad94ecce93c2e254150601c7f334efdb4 100644
 --- a/dist/services/frameCapture.js
 +++ b/dist/services/frameCapture.js
-@@ -952,11 +952,41 @@ async function constructCaptureSessionWithRollback(input) {
+@@ -903,7 +903,7 @@ export async function createCaptureSession(serverUrl, outputDir, options, onBefo
+             .then(compositionRequiresWebGpu)
+             .catch(() => false));
+     const gpuConfig = { ...config, browserGpuMode: resolvedGpuMode };
+-    const chromeArgs = buildChromeArgs({ width: options.width, height: options.height, captureMode: preMode, requiresWebGpu }, gpuConfig);
++    const chromeArgs = buildChromeArgs({ width: options.width, height: options.height, captureMode: preMode, requiresWebGpu, serverUrl }, gpuConfig);
+     const withoutWaylandDisplay = await captureWithoutWaylandDisplay(resolvedGpuMode);
+     const browserLease = await acquireBrowser(chromeArgs, { ...config, withoutWaylandDisplay });
+     return constructCaptureSessionWithRollback({
+@@ -952,11 +952,40 @@ async function constructCaptureSessionWithRollback(input) {
          throw error;
      }
  }
 +/**
-+ * Studix: a capture page may only load from the producer's file server. Anything else, such as
-+ * another loopback port, a navigation away or a request a page script builds, is aborted before
-+ * it leaves the browser. The launch flags already keep non-loopback traffic off the network.
-+ * `aborted` keeps a blocked navigation from committing an error page over the composition.
++ * Studix: a capture page may only load from the producer's file server. The launch flags already
++ * keep every other request off the network; aborting it here as well keeps a navigation away from
++ * replacing the composition (`aborted` commits no error page), and stray popups are closed.
 + */
 +export async function confinePageToFileServer(page, serverUrl) {
 +    const origin = new URL(serverUrl).origin;
@@ -93,7 +101,7 @@ index b6395efe8dfb2899e06f7d42232526945b90a6f7..57a10cfde127dab1dc5ef0f3cef9de21
      // Cap the existing session's inspection buffer; new sessions have separate buffers.
      const frame = page.mainFrame();
      // Frame.client is runtime-only, so keep capture working when it is absent.
-@@ -2754,6 +2784,7 @@ export async function createStaticVerificationPage(session) {
+@@ -2754,6 +2783,7 @@ export async function createStaticVerificationPage(session) {
      const pageNavigationTimeout = session.config?.pageNavigationTimeout ?? DEFAULT_CONFIG.pageNavigationTimeout;
      const pageReadyTimeout = session.config?.playerReadyTimeout ?? DEFAULT_CONFIG.playerReadyTimeout;
      try {

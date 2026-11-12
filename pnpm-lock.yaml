@@ -6,10 +6,10 @@ settings:
 
 patchedDependencies:
   '@hyperframes/engine@0.8.223':
-    hash: f7f86ba2decdf01fc3c2b56ca0d2f2122c16df6ebe4459e71f7c50ac01d8b413
+    hash: 4a8fbe6914005963b532fb36e95b78c16d87b389313813634fc17787a11161ba
     path: patches/@hyperframes__engine@0.8.223.patch
   '@hyperframes/producer@0.8.223':
-    hash: deedbf1915c502378ee5f41b6b5e662eaddd7f2cd43f96eb3e86853b98d3eea1
+    hash: 64b3df69cb1e19a7a36a3d9698c43ffda9985922155ba8eef1730c4eca9cc61b
     path: patches/@hyperframes__producer@0.8.223.patch
 
 importers:
@@ -492,7 +492,7 @@ importers:
         version: 0.8.223
       '@hyperframes/producer':
         specifier: 0.8.223
-        version: 0.8.223(patch_hash=deedbf1915c502378ee5f41b6b5e662eaddd7f2cd43f96eb3e86853b98d3eea1)(@types/node@24.19.2)(yauzl@2.10.0)
+        version: 0.8.223(patch_hash=64b3df69cb1e19a7a36a3d9698c43ffda9985922155ba8eef1730c4eca9cc61b)(@types/node@24.19.2)(yauzl@2.10.0)
       '@studix/core':
         specifier: workspace:*
         version: link:../core
@@ -4571,7 +4571,7 @@ snapshots:
       - '@types/node'
       - canvas
 
-  '@hyperframes/engine@0.8.223(patch_hash=f7f86ba2decdf01fc3c2b56ca0d2f2122c16df6ebe4459e71f7c50ac01d8b413)(yauzl@2.10.0)':
+  '@hyperframes/engine@0.8.223(patch_hash=4a8fbe6914005963b532fb36e95b78c16d87b389313813634fc17787a11161ba)(yauzl@2.10.0)':
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.14)
       '@hyperframes/core': 0.8.223(@types/node@24.19.2)
@@ -4612,11 +4612,11 @@ snapshots:
     transitivePeerDependencies:
       - canvas
 
-  '@hyperframes/producer@0.8.223(patch_hash=deedbf1915c502378ee5f41b6b5e662eaddd7f2cd43f96eb3e86853b98d3eea1)(@types/node@24.19.2)(yauzl@2.10.0)':
+  '@hyperframes/producer@0.8.223(patch_hash=64b3df69cb1e19a7a36a3d9698c43ffda9985922155ba8eef1730c4eca9cc61b)(@types/node@24.19.2)(yauzl@2.10.0)':
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.14)
       '@hyperframes/core': 0.8.223(@types/node@24.19.2)
-      '@hyperframes/engine': 0.8.223(patch_hash=f7f86ba2decdf01fc3c2b56ca0d2f2122c16df6ebe4459e71f7c50ac01d8b413)(yauzl@2.10.0)
+      '@hyperframes/engine': 0.8.223(patch_hash=4a8fbe6914005963b532fb36e95b78c16d87b389313813634fc17787a11161ba)(yauzl@2.10.0)
       '@hyperframes/lint': 0.8.223
       '@hyperframes/parsers': 0.8.223
       '@hyperframes/studio-server': 0.8.223(@types/node@24.19.2)
