@@ -14,9 +14,9 @@ describe("createVideoProject roles", () => {
       workflowTemplate: "motion-graphic",
       roles: { director: agent },
     });
-    const job = await env.repos.jobs.get(ctx, out.job.id);
-    expect((job?.payload as { roles?: unknown }).roles).toEqual({ director: agent });
-    expect(stageAgentSelection(job?.payload, "motion-graphic.storyboard")).toEqual(agent);
+    const payload = (await env.repos.jobs.get(ctx, out.job.id))?.payload ?? {};
+    expect((payload as { roles?: unknown }).roles).toEqual({ director: agent });
+    expect(stageAgentSelection(payload, "motion-graphic.storyboard")).toEqual(agent);
   });
 
   it("refuses builder or qa roles on motion-graphic", async () => {
