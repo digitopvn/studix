@@ -6,13 +6,13 @@ import {
   type BrandKit,
   type BrandPalette,
   buildSequentialTimeline,
+  type CameraMove,
   type CaptionCue,
   type ColorRole,
   type CreativeBrief,
   type LayoutSpec,
   type MotionPreset,
   type Scene,
-  type SceneTransition,
   type Shot,
   unwrapValidation,
   type VideoIR,
@@ -29,10 +29,11 @@ import {
 } from "../marketing-video/marketing-script.ts";
 import { breakLines, detectLanguage, truncateText } from "../vietnamese-safe-text.ts";
 import type { BrandSource } from "./motion-graphic-brand.ts";
+import { luminance, motionDepthFor, planCameras, planTransitions } from "./motion-graphic-camera.ts";
 import type { MotionStoryboard } from "./motion-graphic-storyboard.ts";
 import { MOTION_STYLE_PROFILES, type MotionStyleProfile } from "./motion-style-profiles.ts";
 
-export const MOTION_GRAPHIC_TEMPLATE_VERSION = 9;
+export const MOTION_GRAPHIC_TEMPLATE_VERSION = 10;
 export const MOTION_GRAPHIC_DEFAULT_MS = 15_000;
 export const MOTION_GRAPHIC_MIN_MS = 6_000;
 export const MOTION_GRAPHIC_MAX_MS = 60_000;
@@ -73,12 +74,11 @@ export function resolveMotionStyle(brief: CreativeBrief): MotionStyleProfile {
   return best ?? (MOTION_STYLE_PROFILES.find((p) => p.id === DEFAULT_STYLE) as MotionStyleProfile);
 }
 
-/** GSAP presets and the scene transition an energy level calls for (calm fades .. hard pops). */
-function motionFor(energy: number): { enter: MotionPreset; exit: MotionPreset; transition: SceneTransition } {
-  if (energy <= 2) return { enter: "fade", exit: "fade", transition: { kind: "fade", durationMs: 500 } };
-  if (energy === 3)
-    return { enter: "slide-up", exit: "fade", transition: { kind: "slide", durationMs: 350 } };
-  return { enter: "pop", exit: "scale", transition: { kind: "zoom", durationMs: 250 } };
+/** GSAP presets an energy level calls for (calm fades .. hard pops). */
+function motionFor(energy: number): { enter: MotionPreset; exit: MotionPreset } {
+  if (energy <= 2) return { enter: "fade", exit: "fade" };
+  if (energy === 3) return { enter: "slide-up", exit: "fade" };
+  return { enter: "pop", exit: "scale" };
 }
 
 interface Line {
@@ -90,6 +90,8 @@ interface Line {
   weight?: number;
   /** Built-in layout the storyboard chose to draw under the headline. */
   layout?: LayoutSpec;
+  /** Camera move the storyboard chose for this card. */
+  camera?: CameraMove | null;
 }
 
 /** Shortest card a voiceless graphic shows: time to read a headline. */
@@ -158,15 +160,6 @@ function linesOf(brief: CreativeBrief, cta: string, totalMs: number, language: s
     ...(voiced ? { voiceover: text } : {}),
   }));
   return fitDerived(lines, totalMs, voiced, language);
-}
-
-/** WCAG relative luminance of a `#rrggbb[aa]` colour (alpha ignored). */
-function luminance(hex: string): number {
-  const channel = (i: number) => {
-    const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
 }
 
 function contrast(a: string, b: string): number {
@@ -327,6 +320,7 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
         enter: b.enter,
         weight: b.weight,
         ...(b.layout ? { layout: b.layout } : {}),
+        ...(b.camera ? { camera: b.camera } : {}),
       }))
     : linesOf(brief, cta, totalMs, language).slice(0, 8);
   const voiceover = lines
@@ -397,6 +391,14 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
     });
   }
   const last = lines.length - 1;
+  // Camera, depth and cuts: adjacent cards never share a camera move, every card shares the style's depth
+  // planes, and the motif carries across the cuts.
+  const cameras = planCameras(
+    lines.map((l) => l.camera),
+    style,
+  );
+  const transitions = planTransitions(lines.length, style);
+  const { depth, motif } = motionDepthFor(style, brand.palette.background);
   let cursor = 0;
   const cues: CaptionCue[] = [];
   const scenes: Scene[] = lines.map((line, i): Scene => {
@@ -541,7 +543,10 @@ export function motionGraphicTemplate(input: unknown, options: MotionGraphicOpti
       durationMs,
       background: { color: fill },
       shots,
-      ...(i === last ? {} : { transitionOut: motion.transition }),
+      ...(transitions[i] ? { transitionOut: transitions[i] } : {}),
+      camera: cameras[i] as CameraMove,
+      depth,
+      motif: { ...motif, color: inkOn(brand.palette, fill, "accent") },
     };
   });
   const ir: VideoIR = {

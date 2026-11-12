@@ -21,6 +21,7 @@ import {
   mapClaudeError,
 } from "./claude-agent-runtime.ts";
 import { sandboxTaskPrompt } from "./codex-agent-runtime.ts";
+import { parseModelJson } from "./model-json-repair.ts";
 import type { PiTaskWorkspaceProvider } from "./pi-task-workspace.ts";
 import { SANDBOX_OUTPUT_DIR, SANDBOX_WORK_DIR } from "./sandbox-docker.ts";
 
@@ -221,7 +222,7 @@ export function createClaudeCodeSandboxRuntime(options: ClaudeCodeSandboxRuntime
         let output: unknown = result.structured_output ?? String(result.result ?? "").trim();
         if (task.outputSchema && result.structured_output === undefined) {
           try {
-            output = JSON.parse(String(result.result ?? ""));
+            output = parseModelJson(String(result.result ?? ""));
           } catch {
             throw withSpend(
               new StudixError("PROVIDER_ERROR", "Claude Code did not return JSON for the output schema"),

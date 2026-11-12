@@ -1,5 +1,12 @@
-import type { ColorRole, LayoutSpec } from "@studix/video-ir";
-import { burnedCaptionBand, cssColor, frameScale, TEXT_STYLES, type TextStyleToken } from "./brand-tokens.ts";
+import type { LayoutSpec } from "@studix/video-ir";
+import {
+  burnedCaptionBand,
+  cssColor,
+  frameScale,
+  TEXT_STYLES,
+  type TextStyleToken,
+  tint,
+} from "./brand-tokens.ts";
 import { cssRule, escapeHtml, seconds } from "./html-utils.ts";
 import type { TimelineWriter } from "./scene-timeline.ts";
 import type { ShotMarkup, ShotMarkupContext } from "./shot-markup.ts";
@@ -10,9 +17,6 @@ import type { ShotMarkup, ShotMarkupContext } from "./shot-markup.ts";
  * size scales with the short frame edge like the text styles do. Motion follows the timeline rules in
  * scene-timeline.ts: absolute positions, opacity, transforms and clip-path only.
  */
-
-/** A tint of a palette role over the scene fill. */
-const tint = (role: ColorRole, pct: number) => `color-mix(in srgb, var(--c-${role}) ${pct}%, transparent)`;
 
 /** WCAG relative luminance of a `#rrggbb` colour. */
 function luminance(hex: string): number {
