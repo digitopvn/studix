@@ -1,4 +1,5 @@
 import type { BrandKit, ColorRole, ColorValue, TextStyleRole } from "@studix/video-ir";
+import { withContrastingRoles } from "./palette-oklch-contrast.ts";
 
 export const COLOR_ROLES: readonly ColorRole[] = [
   "primary",
@@ -21,18 +22,21 @@ export const DEFAULT_PALETTE: Record<ColorRole, string> = {
 
 export const DEFAULT_FONT_FAMILY = "Be Vietnam Pro";
 
-/** Every palette role resolved to a hex value; optional brand roles fall back to required ones. */
+/**
+ * Every palette role resolved to a hex value; optional brand roles fall back to required ones. A secondary or
+ * accent that collapses onto the primary is derived from it by an OKLCH hue shift, so emphasis has contrast.
+ */
 export function resolvePalette(brand: BrandKit | undefined): Record<ColorRole, string> {
   if (!brand) return { ...DEFAULT_PALETTE };
   const p = brand.palette;
-  return {
+  return withContrastingRoles({
     primary: p.primary,
     secondary: p.secondary ?? p.primary,
     accent: p.accent ?? p.primary,
     background: p.background,
     foreground: p.foreground,
     muted: p.muted ?? p.foreground,
-  };
+  });
 }
 
 /** CSS value for a colour token: palette roles become stage CSS variables, hex passes through. */
