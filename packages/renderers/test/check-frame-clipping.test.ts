@@ -123,4 +123,22 @@ describe("frame clipping from the HyperFrames check", () => {
       'contrast: contrast_aa_failure "Faster" (p.sub): Contrast is 2.1:1; WCAG AA requires 4.5:1.; use rgb(250,250,250) or a stronger backdrop',
     ]);
   });
+
+  it("blames the camera when many elements are cut past both edges alike", () => {
+    const cut = (selector: string, px: number) => ({
+      code: "canvas_overflow",
+      time: 1,
+      selector,
+      containerSelector: "#root",
+      text: "Big push",
+      overflow: { left: px, right: px * 1.05 },
+    });
+    const problems = frameClippingProblems({
+      layout: { findings: [cut("h1.a", 400), cut("p.b", 300), cut("div.c", 200)] },
+    });
+    expect(problems[0]).toMatch(/^layout: the \.cam scale pushes everything off both edges/);
+    expect(problems).toHaveLength(4);
+    const two = frameClippingProblems({ layout: { findings: [cut("h1.a", 400), cut("p.b", 300)] } });
+    expect(two.some((p) => p.includes(".cam scale"))).toBe(false);
+  });
 });

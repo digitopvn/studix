@@ -428,6 +428,34 @@ describe("buildComposition camera, depth and match cuts", () => {
     }
   });
 
+  it("keeps bokeh dots 8% inside the frame at the front plane's widest camera pose", () => {
+    const { width, height } = previewSize;
+    const bleed = Math.round(0.08 * Math.max(width, height));
+    for (const i of [0, 1, 2]) {
+      const html = scene(i);
+      const pose = new RegExp(`"#s-c${i}__plane-front", (\\{[^}]*\\}), (\\{[^}]*\\})`).exec(html);
+      const keys = [pose?.[1], pose?.[2]].map((k) => JSON.parse(k ?? "{}") as { x?: number; scale?: number });
+      const bokeh = /<div class="bokeh">(.*?)<\/div>/.exec(html)?.[1] ?? "";
+      const dots = [...bokeh.matchAll(/left:(-?\d+)px;top:(-?\d+)px;width:(\d+)px/g)].map((m) =>
+        m.slice(1).map(Number),
+      );
+      for (const { x: pan = 0, scale = 1 } of keys) {
+        // A plane pose maps a point about the frame centre: scaled, then shifted by the pan.
+        const at = (v: number, c: number, shift: number) => c + (v - c) * scale + shift;
+        for (const [left = 0, top = 0, size = 0] of dots) {
+          const x = left - bleed;
+          const y = top - bleed;
+          expect(at(x, width / 2, pan)).toBeGreaterThanOrEqual(0.08 * width - 1);
+          expect(at(x + size, width / 2, pan)).toBeLessThanOrEqual(0.92 * width + 1);
+          expect(at(y, height / 2, 0)).toBeGreaterThanOrEqual(0.08 * height - 1);
+          expect(at(y + size, height / 2, 0)).toBeLessThanOrEqual(
+            height - burnedCaptionBand(previewSize) + 1,
+          );
+        }
+      }
+    }
+  });
+
   it("moves each plane by its depth over the whole scene", () => {
     const push = scene(0);
     expect(push).toContain('tl.fromTo("#s-c0__plane-content", {"scale":1}, {"scale":1.06,"duration":3');
