@@ -2100,7 +2100,10 @@
                   "fade",
                   "slide",
                   "wipe",
-                  "zoom"
+                  "zoom",
+                  "iris",
+                  "whip",
+                  "match-cut"
                 ]
               },
               "durationMs": {
@@ -2112,6 +2115,82 @@
             "required": [
               "kind",
               "durationMs"
+            ]
+          },
+          "camera": {
+            "type": "string",
+            "enum": [
+              "static",
+              "push-in",
+              "pull-back",
+              "pan-left",
+              "pan-right",
+              "parallax"
+            ]
+          },
+          "depth": {
+            "type": "object",
+            "properties": {
+              "background": {
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "grid",
+                    "glow",
+                    "grain",
+                    "vignette"
+                  ]
+                }
+              },
+              "foreground": {
+                "maxItems": 2,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "corners",
+                    "bokeh"
+                  ]
+                }
+              }
+            }
+          },
+          "motif": {
+            "type": "object",
+            "properties": {
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "circle",
+                  "ring",
+                  "square",
+                  "bar"
+                ]
+              },
+              "color": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "primary",
+                      "secondary",
+                      "accent",
+                      "background",
+                      "foreground",
+                      "muted"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "shape"
             ]
           },
           "notes": {
