@@ -698,7 +698,7 @@ describe("spoken length", () => {
       "background",
       "background",
     ]);
-    expect(ir.metadata?.templateVersion).toBe(8);
+    expect(ir.metadata?.templateVersion).toBe(9);
     // Landscape has the room: a short headline over a layout is set at display size too.
     expect(hook.shots[0]?.style?.textStyle).toBe("display");
   });
