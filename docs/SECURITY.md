@@ -442,7 +442,9 @@ or a path guard as a security boundary:
   `currentSrc`, leading whitespace or percent-encoding cannot change that, so the producer never reads a host
   file, writes outside its work directory or downloads a URL on its behalf. The compile step before the capture downloads nothing (no
   media, stylesheet, script or Google Fonts request) and reads or copies no file from outside the project,
-  even when composition text looks like `background:url(https://…)` or markup points to `../` paths.
+  even when composition text looks like `background:url(https://…)` or markup points to `../` paths. It never
+  embeds a host system font for a family a page names. The media type check may still read the header of a
+  local `src` outside the project; Studix markup has none, and no bytes reach the render.
 - A host agent's output is untrusted input: it is validated against the stage's
   output schema before it is stored, it is accepted only for the attempt that
   handed the stage off (fenced in one transaction with the parked job), and its
