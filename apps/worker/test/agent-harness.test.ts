@@ -14,12 +14,19 @@ import {
   type ModelPreference,
   parseAgentTrace,
   type ResolvedModelSnapshot,
+  summarizeAgentTrace,
   type TenantContext,
 } from "@studix/core";
 import { createInMemoryUsageRepository, testTenant } from "@studix/core/testing";
 import type { ModelSnapshotRepository } from "@studix/database";
 import { createLogger, StudixError, systemClock } from "@studix/shared";
-import { createAgentStage, type StageContext, StageSuspended, type StageUsage } from "@studix/workflow";
+import {
+  createAgentStage,
+  type StageContext,
+  type StageDefinition,
+  StageSuspended,
+  type StageUsage,
+} from "@studix/workflow";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createWorkerAgentHarness, type WorkerAgentHarnessDeps } from "../src/agent-harness.ts";
@@ -126,6 +133,7 @@ function createWorld(
     executionsDown?: boolean;
     tools?: boolean;
     createdBy?: ActorRef;
+    stage?: StageDefinition;
   } = {},
 ) {
   const ctx: TenantContext = testTenant();
@@ -289,7 +297,7 @@ function createWorld(
       grantedOverruns: async () => 0,
       consumeOverrun: async () => {},
     };
-    return (options.tools ? toolStage : stage).run(sctx);
+    return (options.stage ?? (options.tools ? toolStage : stage)).run(sctx);
   };
   const executions = async () => (await usage.listProviderExecutions(ctx, { jobId: job.id })).items;
   return {
@@ -396,6 +404,28 @@ describe("worker agent harness", () => {
     // Run again under the same attempt (a restart): the stored trace is kept, the new run gets the next slot.
     await world.run();
     expect(world.traces.has(agentTraceKey("job_harness", STAGE, 1, 1))).toBe(true);
+  });
+
+  it("records an output that fails its schema as a trace error naming the stage and the issue paths", async () => {
+    const strict = createAgentStage({
+      name: STAGE,
+      version: 1,
+      inputSchema: z.object({ topic: z.string() }),
+      outputSchema: z.object({ title: z.string().max(3) }),
+      instructions: "Write a title for the topic.",
+      taskInput: (input) => ({ topic: input.topic }),
+      limits: { maxTurns: 4, maxTokens: 400_000, maxCostCents: 80, timeoutMs: 30_000 },
+    });
+    const world = createWorld({ preferences: [preference({})], stage: strict });
+    await expect(world.run()).rejects.toBeDefined();
+    const trace = parseAgentTrace(world.traces.get(agentTraceKey("job_harness", STAGE, 1, 0)) ?? "");
+    expect(trace.find((e) => e.type === "error")).toMatchObject({
+      code: "VALIDATION",
+      stage: STAGE,
+      message: expect.stringMatching(/fails its schema \(title: /),
+      issues: [expect.objectContaining({ path: "title" })],
+    });
+    expect(summarizeAgentTrace(0, trace).errors[0]?.message).toMatch(/title: /);
   });
 
   it("tags a run on the requester's personal key as member-funded", async () => {

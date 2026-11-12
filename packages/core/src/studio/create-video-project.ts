@@ -81,17 +81,30 @@ export async function createVideoProject(
   // the first claim so time spent queued behind other jobs does not eat it.
   const agentAuthored = workflowTemplate === "skill-agent" && input.deadlineAt === undefined;
   const roles = input.roles && Object.keys(input.roles).length > 0 ? input.roles : undefined;
-  // skill-agent takes every role; motion-graphic takes a director only (its premium tier).
+  // skill-agent takes every role; motion-graphic takes a director (its premium tier) and the builder that
+  // authors its scenes, which only runs under a director.
   const premiumMotion =
-    workflowTemplate === "motion-graphic" && roles && Object.keys(roles).every((r) => r === "director");
+    workflowTemplate === "motion-graphic" &&
+    roles &&
+    Object.keys(roles).every((r) => r === "director" || r === "builder");
   if (roles && workflowTemplate !== "skill-agent" && !premiumMotion) {
     throw new StudixError(
       "VALIDATION",
-      "roles need workflowTemplate skill-agent (motion-graphic takes roles.director only)",
+      "roles need workflowTemplate skill-agent (motion-graphic takes roles.director and roles.builder only)",
       {
         retryable: false,
         suggestedAction:
-          "Set workflowTemplate to skill-agent, use only roles.director with motion-graphic, or drop roles.",
+          "Set workflowTemplate to skill-agent, use roles.director (and roles.builder) with motion-graphic, or drop roles.",
+      },
+    );
+  }
+  if (premiumMotion && roles.builder && !roles.director) {
+    throw new StudixError(
+      "VALIDATION",
+      "motion-graphic roles.builder needs roles.director (the premium tier)",
+      {
+        retryable: false,
+        suggestedAction: "Add roles.director, or drop roles.builder.",
       },
     );
   }

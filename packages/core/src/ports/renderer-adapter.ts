@@ -55,4 +55,23 @@ export interface RendererAdapter {
   readonly id: string;
   supports(ir: VideoIR, spec: RenderSpec): RendererSupport;
   render(ir: VideoIR, options: RenderOptions): Promise<RenderOutput>;
+  /**
+   * Captures a few stills for a visual review, far cheaper than `render`: the picture only (no sound, no
+   * deliveries), on a coarse frame grid, at the preview size. Optional: an adapter without it has no review.
+   */
+  stills?(ir: VideoIR, options: StillsOptions): Promise<StillsOutput>;
+}
+
+/** Where to take each still: one window per still, in film time (ms). */
+export interface StillsOptions extends Omit<RenderOptions, "spec"> {
+  windows: readonly { fromMs: number; toMs: number }[];
+}
+
+export interface StillsOutput {
+  /** A silent video holding the stills (and the coarse frames around them). */
+  filePath: string;
+  /** Per window, where to seek in `filePath` so the first frame decoded there is its still. */
+  seekMs: number[];
+  /** Frames captured, for logs and tests. */
+  frames: number;
 }

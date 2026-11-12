@@ -91,8 +91,8 @@ export const motionGraphicSkill: Skill = {
     "the agent's storyboard has about one card every five seconds (3–12); a music bed is composed to drop where the CTA card starts, " +
     "dips under the voice and the cuts land on its beats; headlines and layouts enter on their spoken words; " +
     "the whoosh, accent and music bed " +
-    "are skipped with a warning when their provider is not set. After the render a vision review scores each card and the " +
-    "failed cards are redesigned and re-rendered (at most 2 rounds, under budget; scores in the job result as `visualQa`). Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
+    "are skipped with a warning when their provider is not set. Before the render a vision review scores a still of each card and the " +
+    "failed cards are redesigned (at most 2 rounds, under budget; scores in the job result as `visualQa`). Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). Brand kit: `brief.brandUrl` (the brand's site: name, logo, " +
     "colours), `brief.brandLogo` (https or base64 image data URL) and `brief.brandColors` (first = primary) put " +
     "a logo lockup on the hook and CTA cards; an unreadable site or logo only warns. No image-to-video.",
@@ -857,8 +857,8 @@ export const motionGraphicQaStage: StageDefinition = {
  * New project: brand (from `brandUrl` / `brandLogo`, when given) -> storyboard (agent, or template fallback)
  * -> compose -> SFX accent -> music bed (when the storyboard asked for one) -> voice-over (cuts on the bed's
  * beats, reveals on the spoken words) -> hero cards (premium tier) -> authored hook scene (premium tier with
- * a skill sandbox) -> visual QA (render, review, redesign
- * failed cards, re-render) -> store the version -> render (reuses the reviewed render) -> QA -> upload. The
+ * a skill sandbox) -> visual QA (capture a still per card, review, redesign
+ * failed cards, capture again) -> store the version -> render -> QA -> upload. The
  * version is stored after the review because the review may redesign cards. Re-render of a version: render ->
  * QA -> upload.
  */
@@ -877,7 +877,7 @@ export const motionGraphicPipeline: PackPipeline = {
           motionGraphicVoiceStage,
           motionGraphicHeroesStage,
           motionGraphicDirectorStage,
-          motionGraphicVisualQaStage(e.render),
+          motionGraphicVisualQaStage(e),
           e.validateIr,
           motionGraphicRenderStage(e.render),
           motionGraphicQaStage,

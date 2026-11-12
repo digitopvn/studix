@@ -94,7 +94,12 @@ export interface AgentTraceSummary {
   errors: { at: string; message: string }[];
   /** Set when the trace hit its size cap and later events were dropped. */
   truncated?: boolean;
+  /** The run's last contiguous assistant text (its answer, for a structured stage), cut to 4,000 chars. */
+  finalMessage?: string;
 }
+
+/** Longest final assistant message a summary carries. */
+const FINAL_MESSAGE_CHARS = 4_000;
 
 const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 const str = (value: unknown) => (typeof value === "string" ? value : undefined);
@@ -114,7 +119,14 @@ export function summarizeAgentTrace(run: number, events: readonly AgentTraceEven
     errors: [],
   };
   const steps: AgentTraceStep[] = [];
+  // Text deltas of one block may be split across lines; a tool call or reasoning starts a new block.
+  let message: string | undefined;
+  let inMessage = false;
   for (const e of events) {
+    if (e.type === "message" && typeof e.delta === "string") {
+      message = inMessage ? `${message ?? ""}${e.delta}` : e.delta;
+      inMessage = true;
+    } else if (["reasoning", "tool_start", "tool_end", "turn"].includes(e.type)) inMessage = false;
     summary.startedAt ??= e.ts;
     summary.lastHeartbeatAt = e.ts;
     if (e.type !== "heartbeat") summary.lastActivityAt = e.ts;
@@ -168,6 +180,10 @@ export function summarizeAgentTrace(run: number, events: readonly AgentTraceEven
     }
   }
   summary.costCents = Math.round(summary.costCents * 100) / 100;
+  if (message?.trim()) {
+    summary.finalMessage =
+      message.length > FINAL_MESSAGE_CHARS ? `${message.slice(0, FINAL_MESSAGE_CHARS)}…` : message;
+  }
   summary.slowest = steps.sort((a, b) => b.durationMs - a.durationMs).slice(0, SLOWEST);
   return summary;
 }

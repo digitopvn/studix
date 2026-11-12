@@ -375,7 +375,11 @@ trước visual QA) kiểm từng card bằng luật an toàn của HTML card v�
 asset `application/vnd.studix.html-card+json` và thay card dựng sẵn của beat đó, card không đạt (hoặc trỏ vào
 card CTA, hoặc linter không chạy được) giữ card dựng sẵn và ghi `warning`, nên premium không làm hỏng job mà bản thường render được. Visual
 QA sau đó chấm cả hero card như mọi card khác; card bị chấm hỏng được thiết kế lại thành card dựng sẵn, rồi bản
-render qua cổng QA. Không có `roles.director` thì `heroes` bị bỏ.
+render qua cổng QA. Không có `roles.director` thì `heroes` bị bỏ. Trên worker có skill sandbox, director còn viết
+direction cho cả phim và `roles.builder` (mặc định là `agent` của job) dựng scene hook
+(`motion-graphic.scene-build`); `roles.builder` không kèm `roles.director` bị từ chối với `VALIDATION`. Output của
+director và builder lệch schema hay hợp đồng fragment được gửi lại cho chính agent đó một lượt sửa, rồi mới giữ card.
+Trong hero card, `fill`/`stroke` nhận `var(--token)` (chuyển thành thuộc tính `style` do renderer sinh).
 
 Voice-over
 template tự lấy từ brief (hook, tối đa bốn message, CTA) được co cho vừa ngân sách từ của độ dài: bỏ message

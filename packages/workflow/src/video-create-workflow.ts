@@ -308,7 +308,34 @@ export function createVideoCreateStages(deps: VideoCreateWorkflowDeps): EngineSt
     },
   };
 
-  return { brief, plan, validateIr, render, upload, finalize, storyboardReady };
+  const capture = deps.renderer.stills?.bind(deps.renderer);
+  const stills: EngineStages["stills"] = capture
+    ? async (s, ir, windows) => {
+        const workDir = join(jobDir(s.job.id), `stills-${s.attempt}`);
+        await rm(workDir, { recursive: true, force: true });
+        await mkdir(workDir, { recursive: true });
+        const assetFiles = await downloadIrAssets(deps.storage, s.ctx, ir, join(workDir, "assets"));
+        return capture(ir, {
+          windows,
+          workDir,
+          assetFiles,
+          signal: s.signal,
+          deadlineAt: s.job.deadlineAt,
+          onProgress: (p) => s.reportProgress(p.progress),
+        });
+      }
+    : undefined;
+
+  return {
+    brief,
+    plan,
+    validateIr,
+    render,
+    upload,
+    finalize,
+    storyboardReady,
+    ...(stills ? { stills } : {}),
+  };
 }
 
 /**

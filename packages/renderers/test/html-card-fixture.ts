@@ -14,6 +14,7 @@ export const CLEAN_CARD: HtmlCardPackage = {
     '  <svg class="ring" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">',
     '    <defs><linearGradient id="g"><stop offset="0" stop-color="#f59e0b" /><stop offset="1" stop-color="#ef4444" /></linearGradient></defs>',
     '    <circle id="arc" cx="50" cy="50" r="40" fill="none" stroke="url(#g)" stroke-width="8" stroke-dasharray="252" />',
+    '    <circle cx="50" cy="50" r="47" fill="none" stroke="var(--c-accent)" stroke-width="1" />',
     "  </svg>",
     '  <h1 class="title">Ra mắt Studix 2.0</h1>',
     '  <p class="sub">Video AI, nhanh gấp đôi</p>',

@@ -13,7 +13,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentRunResult } from "@studix/core";
-import { registerSecret, StudixError } from "@studix/shared";
+import { parseModelJson, registerSecret, StudixError } from "@studix/shared";
 import {
   type AgentLoop,
   abortReason,
@@ -23,7 +23,6 @@ import {
   shellExitCode,
   toolResultText,
 } from "./bounded-agent-runtime.ts";
-import { parseModelJson } from "./model-json-repair.ts";
 import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
 import type { PiBindingResolver, PiRunBinding, ReasoningEffort } from "./pi-binding.ts";
 import { estimatePiModel, findLivePiModel } from "./pi-live-models.ts";
