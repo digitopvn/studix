@@ -373,6 +373,40 @@ describe("motion-graphic authored hook scene", () => {
     expect(out.ir.metadata?.authoredScenes).toEqual([hook]);
   });
 
+  const cutAtEdge = {
+    layout: {
+      findings: [
+        {
+          code: "canvas_overflow",
+          severity: "info",
+          time: 0.59,
+          selector: "div.pill > span:nth-of-type(1)",
+          containerSelector: "#root",
+          text: "A 15s film",
+          overflow: { left: 126 },
+        },
+      ],
+    },
+  };
+
+  it("keeps the first clip when the layout repair's render throws", async () => {
+    const { s, runs } = await setup({ reports: [cutAtEdge], throwOnRun: 2 });
+    const out = (await motionGraphicDirectorStage.run(s)).output as { ir: VideoIR; warning?: string };
+    const hook = out.ir.scenes[0]?.id as string;
+    expect(runs).toHaveLength(2);
+    expect(out.warning).toBeUndefined();
+    expect(out.ir.metadata?.authoredScenes).toEqual([hook]);
+  });
+
+  it("keeps the first clip without a layout repair when the deadline cannot hold one", async () => {
+    const { s, runs, tasks } = await setup({ reports: [cutAtEdge] });
+    (s.job as { deadlineAt?: Date }).deadlineAt = new Date(Date.now() + 60_000);
+    const out = (await motionGraphicDirectorStage.run(s)).output as { ir: VideoIR; warning?: string };
+    expect(tasks).toEqual([MG_DIRECTION_AGENT, MG_SCENE_BUILD_AGENT]);
+    expect(runs).toHaveLength(1);
+    expect(out.ir.metadata?.authoredScenes).toEqual([out.ir.scenes[0]?.id]);
+  });
+
   it("falls back to the card when the sandbox check or render fails", async () => {
     const { s, ir } = await setup({ exitCode: 1 });
     const result = await motionGraphicDirectorStage.run(s);

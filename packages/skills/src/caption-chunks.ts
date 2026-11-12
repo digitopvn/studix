@@ -1,4 +1,4 @@
-import { spokenUrlSpans } from "@studix/renderers";
+import { LEANING_WORDS as LEANING, spokenUrlSpans } from "@studix/renderers";
 import type { CaptionCue } from "@studix/video-ir";
 
 /** Longest caption cue, in words: a burned caption on a vertical frame stays one or two short lines. */
@@ -15,20 +15,6 @@ const CLAUSE_END = /[,;:\u2013\u2014]["')\]]*$/u;
 /** A lone dash between words ("fast - and cheap") ends a clause too. */
 const DASH = /^[-\u2013\u2014]$/u;
 
-/**
- * English words that never end a cue: articles, determiners, prepositions, conjunctions, auxiliaries and
- * pronouns that lean on the word after them ("at one" / "US cent per credit."). Checked on English lines
- * only: many of them ("to", "an", "do") are whole Vietnamese words.
- */
-const LEANING = new Set(
-  (
-    "a an the this that these those my your our their its his her one each every any some no " +
-    "at on in of to for from with by into onto over under about as per via through across after before " +
-    "during until without within between than and or but nor so if when while because whether " +
-    "is are was were be been will would can could should may might must do does did has have had " +
-    "i we you they he she it not just very more most such"
-  ).split(" "),
-);
 /** English words a cue may start on when no punctuation is near: a new phrase opens with them. */
 const PHRASE_START = new Set(
   (

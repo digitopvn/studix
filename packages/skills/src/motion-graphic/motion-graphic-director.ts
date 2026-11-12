@@ -36,6 +36,7 @@ import {
   storeFragment,
   withAuthoredClip,
 } from "./motion-graphic-director-clip.ts";
+import { authoredRepairMs } from "./motion-graphic-director-repair.ts";
 import { sceneClipTiming, sceneWindows, sceneWords } from "./motion-graphic-director-timing.ts";
 import { MG_STORYBOARD_STAGE, MotionStoryboardOutput, premiumDirector } from "./motion-graphic-storyboard.ts";
 
@@ -92,6 +93,15 @@ function repairAffordable(s: StageContext, extraCents = 0): boolean {
 }
 
 /** Scene numbers whose direction has no focal word left once unspoken words are dropped. */
+/** Time kept after a layout repair for the rest of the job: the review's capture and the final render. */
+const LAYOUT_REPAIR_MARGIN_MS = 60_000;
+/** Whether a layout repair (builder run and sandbox render) still fits before the job's deadline. */
+function layoutRepairFits(s: StageContext, durationMs: number): boolean {
+  if (!s.job.deadlineAt) return true;
+  const left = s.job.deadlineAt.getTime() - Date.now();
+  return left >= authoredRepairMs(durationMs) + LAYOUT_REPAIR_MARGIN_MS;
+}
+
 const unfocused = (direction: DirectionBrief) =>
   direction.scenes.filter((d) => d.focalWords.length === 0).map((d) => d.scene);
 
@@ -371,8 +381,6 @@ export const motionGraphicDirectorStage: StageDefinition = {
       // One repair turn in all: a fragment that breaks the contract or fails the sandbox check goes back to the
       // builder with what is wrong once, before the card is kept.
       let repair: { issues: Array<{ path: string; message: string }>; output: BuildOutput } | undefined;
-      // A clip that rendered but cuts text at the frame edge: kept while its repair turn tries a better one.
-      let clipped: { built: BuildOutput; clip: string } | undefined;
       for (;;) {
         const built = (await call(sceneBuildAgent, repair ? { ...task, repair } : task)) as BuildOutput;
         // At most two builder runs in all: none here when the call already used its own schema repair turn.
@@ -390,20 +398,42 @@ export const motionGraphicDirectorStage: StageDefinition = {
           usage,
         });
         if (attempt.ok || attempt.kind === "render") record.compositionId = compositionId;
-        if (attempt.ok && attempt.layout.length > 0 && canRepair) {
+        if (
+          attempt.ok &&
+          attempt.layout.length > 0 &&
+          canRepair &&
+          // The render just spent: the repair must still fit the budget and the deadline after it.
+          repairAffordable(booked()) &&
+          layoutRepairFits(s, scene.durationMs)
+        ) {
           // The repair renders beside this clip, so a repair that fails still leaves this one to show.
-          clipped = { built, clip };
+          const first = { built, clip };
           clip = clipPath(`${scene.id}-reframed`);
           repair = { issues: attempt.layout.map(problemIssue), output: built };
-          continue;
-        }
-        if (attempt.ok) break;
-        if (clipped) {
+          try {
+            const reframed = (await call(sceneBuildAgent, { ...task, repair })) as BuildOutput;
+            const again = await attemptSceneClip(booked, {
+              ir,
+              scene,
+              built: reframed,
+              timing,
+              compositionId,
+              clip,
+              extra: { timing, direction, task },
+              usageItem: `render-${scene.id}-repair`,
+              usage,
+            });
+            if (again.ok) break;
+          } catch (err) {
+            // The first clip rendered: a repair that throws keeps it, unless the job stops or parks.
+            if (s.signal.aborted || err instanceof StageSuspended) throw err;
+          }
           // The clipped clip beats the card: put its fragment back in the tree and show it.
-          await storeFragment(booked(), compositionId, scene.id, clipped.built);
-          clip = clipped.clip;
+          await storeFragment(booked(), compositionId, scene.id, first.built);
+          clip = first.clip;
           break;
         }
+        if (attempt.ok) break;
         if (attempt.kind === "budget") {
           return keepCard(
             "the job budget left cannot hold the sandbox render after the agents' repair turns",

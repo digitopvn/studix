@@ -17,9 +17,23 @@ const TRAILING = /[.,;:!?…"')\]]+$/u;
  * make an address on their own, so this list only has to cover the short forms.
  */
 const TLDS = new Set(
-  "ai app co com dev io me net org so tv vn xyz gg sh us uk de jp info biz tech studio design cloud link site online store page".split(
-    " ",
-  ),
+  "ai app co com dev io net org tv vn xyz gg sh uk de jp info biz tech studio cloud".split(" "),
+);
+
+/**
+ * English words that never end a cue: articles, determiners, prepositions, conjunctions, auxiliaries and
+ * pronouns that lean on the word after them ("at one" / "US cent per credit."). Checked on English text
+ * only: many of them ("to", "an", "do") are whole Vietnamese words. A spoken address never starts on one
+ * ("add a dot so", "the dot com bubble").
+ */
+export const LEANING_WORDS: ReadonlySet<string> = new Set(
+  (
+    "a an the this that these those my your our their its his her one each every any some no " +
+    "at on in of to for from with by into onto over under about as per via through across after before " +
+    "during until without within between than and or but nor so if when while because whether " +
+    "is are was were be been will would can could should may might must do does did has have had " +
+    "i we you they he she it not just very more most such"
+  ).split(" "),
 );
 
 const bare = (word: string) => word.normalize("NFC").replace(TRAILING, "");
@@ -64,7 +78,12 @@ function addressEnd(words: readonly string[], start: number): number | undefined
   }
   if (dots === 0) return undefined;
   const tld = bare(words[k - 1] as string).toLowerCase();
-  if (dots < 2 && !TLDS.has(tld)) return undefined;
+  if (dots < 2) {
+    if (!TLDS.has(tld)) return undefined;
+    // "the dot com bubble", "add a dot so": an English function word is prose, not a host label.
+    const lead = bare(words[start] as string).toLowerCase();
+    if (/^dot$/i.test(words[start + 1] as string) && LEANING_WORDS.has(lead)) return undefined;
+  }
   // Path: (slash label)*, unless the host already ended a clause.
   if (!TRAILING.test(words[k - 1] as string)) {
     while (SLASH.test(words[k] ?? "") && label(k + 1, true)) {
@@ -80,27 +99,35 @@ function writtenAddress(words: readonly string[]): string {
   const last = words.at(-1) as string;
   const tail = TRAILING.exec(last)?.[0] ?? "";
   let out = "";
+  let inPath = false;
   for (const [k, word] of words.entries()) {
-    if (k % 2 === 1) out += DOT.test(word) ? "." : "/";
-    else out += bare(word).toLowerCase();
+    if (k % 2 === 1) {
+      inPath ||= SLASH.test(word);
+      out += inPath ? "/" : ".";
+    } else {
+      // Host names are case-insensitive; a path is not, so it keeps the case it was written in.
+      out += inPath ? bare(word) : bare(word).toLowerCase();
+    }
   }
   return out + tail;
 }
 
 /**
  * A caption cue as it is burned: every spoken address in `text` in its written form, everything else
- * (spacing included) untouched.
+ * (spacing and line breaks included) untouched.
  */
 export function writtenCaptionText(text: string): string {
-  const words = text.split(/\s+/).filter(Boolean);
+  const matches = [...text.matchAll(/\S+/g)];
+  const words = matches.map((m) => m[0]);
   const spans = spokenUrlSpans(words);
   if (spans.length === 0) return text;
-  const out: string[] = [];
+  let out = "";
   let at = 0;
   for (const [from, to] of spans) {
-    out.push(...words.slice(at, from), writtenAddress(words.slice(from, to)));
-    at = to;
+    const first = matches[from] as RegExpExecArray;
+    const lastWord = matches[to - 1] as RegExpExecArray;
+    out += text.slice(at, first.index) + writtenAddress(words.slice(from, to));
+    at = lastWord.index + lastWord[0].length;
   }
-  out.push(...words.slice(at));
-  return out.join(" ");
+  return out + text.slice(at);
 }

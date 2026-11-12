@@ -65,6 +65,24 @@ describe("frame clipping from the HyperFrames check", () => {
     ]);
   });
 
+  it("ignores an element wholly outside the frame, mid entrance or exit", () => {
+    const frame = { left: 0, top: 0, right: 1080, bottom: 1920, width: 1080, height: 1920 };
+    const finding = (left: number, right: number) => ({
+      code: "canvas_overflow",
+      time: 0.2,
+      selector: "div.title",
+      containerSelector: "#root",
+      text: "Launch day",
+      overflow: { left: -left },
+      rect: { left, top: 800, right, bottom: 900, width: right - left, height: 100 },
+      containerRect: frame,
+    });
+    expect(frameClippingProblems({ layout: { findings: [finding(-600, -40)] } })).toEqual([]);
+    expect(frameClippingProblems({ layout: { findings: [finding(-300, 260)] } })).toEqual([
+      expect.stringMatching(/^layout: "Launch day" \(div\.title\) is cut 300px past the left/),
+    ]);
+  });
+
   it("gives nothing for a clean or unreadable report", () => {
     expect(frameClippingProblems({ ok: true, layout: { findings: [] } })).toEqual([]);
     expect(frameClippingProblems("not json")).toEqual([]);

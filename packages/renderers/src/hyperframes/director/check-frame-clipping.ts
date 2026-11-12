@@ -13,6 +13,8 @@ const FRAME_TOLERANCE_PX = 8;
 /** Most problems reported back: the builder fixes a cause, not every sampled word. */
 const MAX_PROBLEMS = 6;
 
+/** An element box as the check reports it, in canvas pixels. */
+const Rect = z.object({ left: z.number(), top: z.number(), right: z.number(), bottom: z.number() });
 const Finding = z.object({
   code: z.string(),
   time: z.number().optional(),
@@ -20,6 +22,8 @@ const Finding = z.object({
   containerSelector: z.string().optional(),
   text: z.string().optional(),
   overflow: z.record(z.string(), z.number()).optional(),
+  rect: Rect.optional(),
+  containerRect: Rect.optional(),
 });
 const Report = z.object({
   layout: z.object({ findings: z.array(z.unknown()) }).optional(),
@@ -27,6 +31,13 @@ const Report = z.object({
 
 /** The frame root the shell renders every scene in. */
 const FRAME_ROOT = "#root";
+
+/** Whether `rect` lies wholly outside `frame`: off-frame before an entrance or after an exit, never cut. */
+const offFrame = (rect: z.infer<typeof Rect>, frame: z.infer<typeof Rect>) =>
+  rect.right <= frame.left ||
+  rect.left >= frame.right ||
+  rect.bottom <= frame.top ||
+  rect.top >= frame.bottom;
 
 /**
  * Problems for every element with text that the check found cut by the frame edge, one per element (the
@@ -47,6 +58,9 @@ export function frameClippingProblems(report: unknown): string[] {
     if (!selector || words === "" || !overflow) continue;
     const [side, px] = Object.entries(overflow).reduce((a, b) => (b[1] > a[1] ? b : a), ["", 0]);
     if (px <= FRAME_TOLERANCE_PX) continue;
+    // Only a partly visible element reads as cut; one wholly off the frame is mid entrance or exit.
+    const { rect, containerRect } = f.data;
+    if (rect && containerRect && containerSelector === FRAME_ROOT && offFrame(rect, containerRect)) continue;
     // One entry per element: the shell's `.w` word spans report one by one, so key them by their line.
     const element = selector.replace(/(?:\s*>\s*span:nth-of-type\(\d+\))+$/, "");
     const prev = worst.get(element);

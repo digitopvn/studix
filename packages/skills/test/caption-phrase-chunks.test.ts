@@ -61,4 +61,13 @@ describe("written caption text", () => {
     expect(writtenCaptionText("version two dot five ships today")).toBe("version two dot five ships today");
     expect(writtenCaptionText("one HTTPS slash MCP endpoint")).toBe("one HTTPS slash MCP endpoint");
   });
+
+  it("leaves prose with a spoken dot alone", () => {
+    expect(writtenCaptionText("Add a dot so the line")).toBe("Add a dot so the line");
+    expect(writtenCaptionText("the dot com bubble")).toBe("the dot com bubble");
+  });
+
+  it("lowercases only the host and keeps the line's own breaks", () => {
+    expect(writtenCaptionText("Go to Studix dot ai slash Pricing\nnow")).toBe("Go to studix.ai/Pricing\nnow");
+  });
 });

@@ -1,4 +1,4 @@
-export { spokenUrlSpans, writtenCaptionText } from "./caption-written-form.ts";
+export { LEANING_WORDS, spokenUrlSpans, writtenCaptionText } from "./caption-written-form.ts";
 export { type AudibleSpan, measureAudibleSpan, parseAudibleSpan } from "./ffmpeg/audible-span.ts";
 export {
   type AudioClip,
