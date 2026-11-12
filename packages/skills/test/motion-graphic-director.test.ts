@@ -367,7 +367,7 @@ describe("motion-graphic authored hook scene", () => {
         2,
       );
       const hook = authored.scenes[0]?.id as string;
-      expect((out.ir.scenes[0]?.shots[0] as { assetId: string }).assetId).toBe(`${hook}-authored-fix`);
+      expect(out.ir.scenes[0]?.shots[0]).toMatchObject({ assetId: `${hook}-authored-fix` });
       expect(out.visualQa.status).toBe("failed");
       expect(out.visualQa.reason).toMatch(/repaired but not reviewed again: the review capture failed/);
     });
