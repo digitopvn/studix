@@ -38,6 +38,43 @@ describe("validateVideoIR semantic checks", () => {
     expect(validateVideoIR(ir).ok).toBe(true);
   });
 
+  it("walks the timeline, not the scenes array, for camera neighbours", () => {
+    const ir = base();
+    const [a, b, c] = ir.scenes as [
+      VideoIR["scenes"][number],
+      VideoIR["scenes"][number],
+      VideoIR["scenes"][number],
+    ];
+    // Timeline a, c, b, ...: a and b sit side by side in the array but not on screen.
+    ir.timeline = buildSequentialTimeline([a, c, b, ...ir.scenes.slice(3)]);
+    a.camera = "push-in";
+    b.camera = "push-in";
+    expect(validateVideoIR(ir).ok).toBe(true);
+    c.camera = "push-in";
+    const result = validateVideoIR(ir);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.filter((i) => i.code === "camera").map((i) => i.path)).toEqual([
+      "/scenes/2/camera",
+      "/scenes/1/camera",
+    ]);
+  });
+
+  it("checks match-cut motifs by shape and ignores a match cut out of the last scene", () => {
+    const ir = base();
+    const last = ir.scenes.find((s) => s.id === ir.timeline.entries.at(-1)!.sceneId)!;
+    last.transitionOut = { kind: "match-cut", durationMs: 0 };
+    expect(validateVideoIR(ir).ok).toBe(true);
+    const [a, b] = ir.scenes as [VideoIR["scenes"][number], VideoIR["scenes"][number]];
+    a.transitionOut = { kind: "match-cut", durationMs: 0 };
+    b.motif = { shape: "circle" };
+    expect(validateVideoIR(ir).ok).toBe(false);
+    a.motif = { shape: "square" };
+    expect(validateVideoIR(ir).ok).toBe(false);
+    a.motif = { shape: "circle", color: "accent" };
+    expect(validateVideoIR(ir).ok).toBe(true);
+  });
+
   it("detects duplicate scene and shot ids", () => {
     const ir = base();
     ir.scenes[1]!.shots[1]!.id = "intro-logo";
