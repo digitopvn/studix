@@ -57,6 +57,16 @@ describe("scene fragment contract", () => {
     expect(sceneFragmentProblems({ ...HOOK_FRAGMENT, js }, { sid: "s01-hook" })).toEqual([]);
   });
 
+  it("rejects js that redeclares a name the shell provides, and allows shadowing-free locals", () => {
+    const problems = problemsOf({ js: 'const sid = "hook";\nlet { t0, end } = {};\nfunction lineIn() {}' });
+    expect(problems).toEqual([
+      "js: `sid` is already provided by the Studix shell; do not declare it, use it as is",
+      "js: `t0` is already provided by the Studix shell; do not declare it, use it as is",
+      "js: `lineIn` is already provided by the Studix shell; do not declare it, use it as is",
+    ]);
+    expect(problemsOf({ js: 'const sidebar = $s(".a"); const $t = 1; pop(sidebar, t0 + $t);' })).toEqual([]);
+  });
+
   it("round-trips through the stored scene file", () => {
     const file = sceneFragmentFile("s01-hook", HOOK_FRAGMENT);
     expect(parseSceneFragmentFile(file)).toEqual({ sid: "s01-hook", fragment: HOOK_FRAGMENT });

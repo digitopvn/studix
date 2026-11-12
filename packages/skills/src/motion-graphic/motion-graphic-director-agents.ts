@@ -215,6 +215,8 @@ export const sceneBuildAgent = createAgentStage({
     "bottom) and `frame.marginPx` from the other edges.\n" +
     "- `js`: the choreography body, run once while the page builds. Every tween goes on `tl` at an absolute " +
     `time; times come from the timing helpers, never from guesses. In scope: ${HELPERS}.\n` +
+    "`sid` (this scene's id), `S`, `t0`, `t1`, `$s`, `$$s`, `tl` and every helper above are already defined: " +
+    "use them as they are and never declare a variable or function with one of those names.\n" +
     "Rules: key the big moves to `scene.focalWords` with W(sid, word) (only words listed in `scene.words`, " +
     "lower-case) and the rest to beats with B(n) (`scene.beats` lists the beat times inside the scene); frame 0 " +
     "of the scene already shows a lit, composed picture (the hook is a feed's thumbnail); something moves in " +

@@ -154,8 +154,10 @@ function sceneBlock(sid: string, sectionId: string, js: string): string {
     `/* scene ${sid.replace(/\*\//g, "")} */ { const sid = ${id}; const S = ${JSON.stringify(`#${sectionId}`)}; if (SC[sid]) {`,
     "const t0 = SC[sid].start, t1 = SC[sid].end;",
     'const $s = (q) => $(S + " " + q), $$s = (q) => $$(S + " " + q);',
+    // The fragment gets its own block, so a name it redeclares shadows the shell's instead of hitting its TDZ.
+    "{",
     js,
-    "} }",
+    "} } }",
   ].join("\n");
 }
 
