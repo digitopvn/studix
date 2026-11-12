@@ -34,6 +34,7 @@ import {
 } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  finalRenderMsEstimate,
   MG_STAGES,
   MG_STORYBOARD_LIMITS,
   MG_VISUAL_QA_STAGE,
@@ -332,7 +333,7 @@ function harness(
   });
 
   let seq = 0;
-  async function run(payload: Record<string, unknown>, projectId: string) {
+  async function run(payload: Record<string, unknown>, projectId: string, extra: Partial<Job> = {}) {
     const job = {
       id: `job_${++seq}`,
       organizationId: ctx.organizationId,
@@ -347,6 +348,7 @@ function harness(
       spentCents: 0,
       cancelRequested: false,
       createdBy: actor,
+      ...extra,
     } as unknown as Job;
     const outcome = await executor.execute(job, "worker-1", new AbortController().signal);
     return { job, outcome };
@@ -1158,6 +1160,26 @@ describe("motion-graphic storyboard agent (mock agent)", () => {
       rounds: [{ round: 0, repaired: [2] }, { round: 1 }],
     });
     expect(h.usage.filter((u) => u.kind === "render.seconds")).toHaveLength(1);
+  });
+
+  it("skips the review when the deadline leaves only time for the final render, and still renders", async () => {
+    const { runtime, tasks } = reviewedAgent();
+    const h = harness({ agent: runtime, realVideo: true });
+    const projectId = await newProject(h, "motion-graphic", graphic);
+    // Enough for the final render of a 10 s film, not for a capture and a critique on top of it.
+    const deadlineAt = new Date(Date.now() + 120_000);
+    const { outcome } = await h.run({ workflowTemplate: "motion-graphic" }, projectId, { deadlineAt });
+    expect(h.failureOf(outcome)).toEqual({ outcome: "succeeded", failure: undefined });
+    const ir = h.renderer.rendered[0] as VideoIR;
+    expect(finalRenderMsEstimate(ir)).toBeLessThan(120_000);
+    expect(tasks.filter((t) => t.skill === MG_VISUAL_QA_STAGE)).toHaveLength(0);
+    expect(h.renderer.stilled).toHaveLength(0);
+    expect(h.renderer.rendered).toHaveLength(1);
+    const result = h.queue.complete.mock.calls.at(-1)?.[2] as { visualQa: Record<string, unknown> };
+    expect(result.visualQa).toMatchObject({
+      status: "skipped",
+      reason: expect.stringMatching(/final render/),
+    });
   });
 
   it("keeps the reviewed IR when the second capture fails, and still ships the job", async () => {

@@ -133,6 +133,20 @@ export function stillWindowsMs(ir: VideoIR): { fromMs: number; toMs: number }[] 
   });
 }
 
+/** Final render wall time per second of film at 1080p 30 fps: prod rendered 60 s in about 500 s. */
+export const MG_RENDER_MS_PER_FILM_SECOND = 9000;
+/** Time kept for one stills capture before the first one is measured (the target for a 60 s film). */
+export const MG_STILLS_CAPTURE_BUDGET_MS = 60_000;
+
+/**
+ * How long the final render of `ir` is expected to take, scaled from prod by film length, frame size and
+ * rate. The review keeps this time free before the deadline: the render stage runs after it, always.
+ */
+export function finalRenderMsEstimate(ir: VideoIR): number {
+  const pixels = (ir.format.width * ir.format.height) / (1920 * 1080);
+  return (ir.format.durationMs / 1000) * MG_RENDER_MS_PER_FILM_SECOND * pixels * (ir.format.fps / 30);
+}
+
 /** What each card was meant to show, for the reviewer. */
 function cardBriefs(ir: VideoIR) {
   return ir.scenes.map((scene, i) => {
@@ -319,7 +333,7 @@ const ACTIVITY_BEAT_MS = 15_000;
  * repetitive, off-brief or headline-only. Failed cards go back to the storyboard agent, which redesigns only
  * those cards (voice-over and timing kept), and their stills are captured again: at most
  * MG_VISUAL_QA_ROUNDS times, only while the job budget and deadline hold a review, a redesign and a capture
- * (the budget also keeps the final render). The output (a durable checkpoint) carries the IR the version stores and the render stage draws,
+ * while keeping the final render's cost and time free. The output (a durable checkpoint) carries the IR the version stores and the render stage draws,
  * once, and the scores (`visualQa`, also in the job result).
  *
  * The review never fails the job: without an agent or a stills capture, in host mode, with a model that
@@ -414,6 +428,15 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
   if (left() < renderCents + reviewCents) {
     return done({ status: "skipped", reason: "Not enough job budget left for a visual review", rounds: [] });
   }
+  // The final render runs after the review, whatever it finds: its time is never spent here.
+  const renderMs = finalRenderMsEstimate(ir);
+  if (timeLeft() < MG_STILLS_CAPTURE_BUDGET_MS + MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
+    return done({
+      status: "skipped",
+      reason: "Not enough time left before the job deadline for a visual review and the final render",
+      rounds: [],
+    });
+  }
   const dir = await reviewDir(s);
   // Every capture progress marks the stage active; the stage's heartbeat stores it.
   const capture = (next: VideoIR) =>
@@ -442,7 +465,7 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
     const stop = (status: "skipped" | "failed", reason: string) =>
       done({ status: round === 0 ? status : "failed", reason, rounds });
     if (left() < reviewCents) return stop("skipped", "Not enough job budget left for a visual review");
-    if (timeLeft() < MG_VISUAL_QA_LIMITS.timeoutMs + captureMs) {
+    if (timeLeft() < MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
       return stop("skipped", "Not enough time left before the job deadline for a visual review");
     }
     s.activity?.touch();
@@ -470,7 +493,7 @@ async function reviewLoop(s: StageContext, engine: ReviewEngine, usage: StageUsa
         rounds,
       });
     }
-    if (timeLeft() < MG_STORYBOARD_LIMITS.timeoutMs + captureMs + MG_VISUAL_QA_LIMITS.timeoutMs) {
+    if (timeLeft() < MG_STORYBOARD_LIMITS.timeoutMs + captureMs + MG_VISUAL_QA_LIMITS.timeoutMs + renderMs) {
       return done({ status: "failed", reason: "Not enough time left to redesign and re-render", rounds });
     }
     const cards = failed.map((c) => c.card);
