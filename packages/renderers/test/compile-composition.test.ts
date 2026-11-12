@@ -372,7 +372,8 @@ describe("buildComposition camera, depth and match cuts", () => {
     shots: [{ id: `c${i}-text`, type: "text", startMs: 0, durationMs: 3000, text: `Card ${i}` }],
     camera,
     depth: { background: ["glow", "grid", "grain", "vignette"], foreground: ["corners", "bokeh"] },
-    motif: { shape: "ring", color: "accent" },
+    // The last card takes a bar after the iris, so every motif shape is checked against the gutter.
+    motif: { shape: i === 2 ? "bar" : "ring", color: "accent" },
     ...(i === 0 ? { transitionOut: { kind: "match-cut", durationMs: 0 } } : {}),
     ...(i === 1 ? { transitionOut: { kind: "iris", durationMs: 400 } } : {}),
   }));
@@ -396,13 +397,13 @@ describe("buildComposition camera, depth and match cuts", () => {
   it("draws the depth planes back to front, with captions and the lens unmoved by the camera", () => {
     const html = scene(0);
     const order = ["plane-back", "plane-underlay", "__motif", "plane-content", "plane-front", 'class="lens"'];
-    // Corner brackets sit on the fixed lens, so no camera move pushes them out of the frame.
-    expect(html.indexOf('class="corners"')).toBeGreaterThan(html.indexOf('class="lens"'));
     const at = order.map((id) => html.indexOf(id));
     expect(at.every((n) => n > 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
-    for (const layer of ["glow", "grid", "corners", "bokeh", "vignette", "grain"])
+    for (const layer of ["glow", "grid", "bokeh", "vignette", "grain"])
       expect(html).toContain(`class="${layer}"`);
+    // The motif travels the gutter corners, so a scene with one draws no corner brackets over it.
+    expect(html).not.toContain('class="corners"');
     expect(html).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
   });
 
@@ -422,11 +423,39 @@ describe("buildComposition camera, depth and match cuts", () => {
   });
 
   it("hands the motif over at every cut and plays no stage tween on a match cut", () => {
-    for (let i = 0; i < 2; i++) expect(motifTween(scene(i + 1)).from).toEqual(motifTween(scene(i)).to);
+    expect(motifTween(scene(1)).from).toEqual(motifTween(scene(0)).to);
+    // A bar after the iris is a new shape: it starts where the ring left off, turned the same way.
+    expect(motifTween(scene(2)).from.rotation).toBe(motifTween(scene(1)).to.rotation);
     expect(scene(0)).not.toMatch(/tl\.fromTo\("#s-c0__stage"/);
     expect(scene(1)).not.toMatch(/tl\.fromTo\("#s-c1__stage", [^\n]*, 0\);/);
-    expect(scene(1)).toContain('{"clipPath":"circle(0% at 50% 50%)"');
-    expect(scene(2)).toContain('{"clipPath":"circle(0% at 50% 50%)"');
+    expect(scene(1)).toContain('{"clipPath":"circle(12% at 50% 50%)"');
+    expect(scene(2)).toContain('{"clipPath":"circle(12% at 50% 50%)"');
+  });
+
+  it("draws corner brackets on the fixed lens when the scene has no motif", () => {
+    const plain = structuredClone(ir);
+    for (const sc of plain.scenes) {
+      delete sc.motif;
+      if (sc.transitionOut?.kind === "match-cut") delete sc.transitionOut;
+    }
+    const html = buildComposition(plain, previewSize).files.get("compositions/c0.html")!;
+    // Corner brackets sit on the fixed lens, so no camera move pushes them out of the frame.
+    expect(html.indexOf('class="corners"')).toBeGreaterThan(html.indexOf('class="lens"'));
+  });
+
+  it("keeps the motif in the safe-area gutter, outside every text box", () => {
+    const gutter = Math.round(0.07 * Math.min(previewSize.width, previewSize.height));
+    for (let i = 0; i < 3; i++) {
+      const box = /#s-c\d__motif \{[^}]*width: (\d+)px;[^}]*height: (\d+)px/.exec(scene(i));
+      const [width, height] = [Number(box?.[1]), Number(box?.[2])];
+      expect(width).toBeGreaterThan(0);
+      for (const pose of Object.values(motifTween(scene(i)))) {
+        const cx = pose.x! + width / 2;
+        const cy = pose.y! + height / 2;
+        expect(Math.min(cx, previewSize.width - cx)).toBeLessThanOrEqual(gutter / 2 + 1);
+        expect(Math.min(cy, previewSize.height - cy)).toBeLessThanOrEqual(gutter / 2 + 1);
+      }
+    }
   });
 
   it("passes the HyperFrames linter with no errors", async () => {
