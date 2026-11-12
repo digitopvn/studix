@@ -228,7 +228,13 @@ Behavior notes:
   seconds, a generated voice-over, a whoosh on every cut, one SFX accent where
   the CTA card lands and burned captions, then renders, QA-gates and uploads it in one job. It has no
   image-to-video; a music bed is added only when the agent's storyboard asks
-  for one. Each storyboard beat may pick a `layout` with short `items` (a typed
+  for one. The bed is composed to the cards (intro, build, and a drop where the
+  call to action starts), its beats are found with FFmpeg (no paid call), each
+  cut moves to the nearest downbeat when every line still fits its card, and
+  the bed ducks under the voice-over. Headlines enter on their first spoken
+  word, layout devices start when the line names what they show, and captions
+  follow the words (ElevenLabs word timings, else an estimate over the measured
+  speech). Each storyboard beat may pick a `layout` with short `items` (a typed
   prompt, code lines, wired chips, a ticking checklist, a rolling counter, a
   row of cards, brand swatches or a big stat) drawn under its headline; items
   that do not fit drop that beat back to a headline card. Cards share the

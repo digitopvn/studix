@@ -1,6 +1,7 @@
 import { lintProject } from "@hyperframes/lint";
 import { buildSequentialTimeline, type ShotLayout, type VideoIR, validateVideoIR } from "@studix/video-ir";
 import { afterAll, describe, expect, it } from "vitest";
+import { layoutTiming } from "../src/hyperframes/shot-layout-kit.ts";
 import { buildComposition, writeComposition } from "../src/index.ts";
 import { tempDir } from "./render-test-helpers.ts";
 
@@ -86,5 +87,17 @@ describe("layout devices", () => {
     // Swatches grow with the frame's aspect rather than staying at their 1080-edge size.
     expect(px(html(6), /\.sw-dot \{[^}]*?width: (\d+)px/)).toBeGreaterThan(200);
     expect(px(html(0), /\.cue \{[^}]*?font-size: (\d+)px/)).toBeGreaterThanOrEqual(36);
+  });
+
+  it("starts the device at the cue the shot names, keeping the shortest choreography before the exit", () => {
+    // Default lead: 10% of a 4 s shot.
+    expect(layoutTiming(1000, 4000, 300).t0).toBe(1.35);
+    // A cue 1.2 s in starts the device there.
+    expect(layoutTiming(1000, 4000, 300, 1200)).toMatchObject({ t0: 2.2, holdEnd: 4.7 });
+    // A late cue moves earlier so 0.5 s still fits before the exit; a cue past a tiny shot starts at the shot.
+    const late = layoutTiming(1000, 4000, 300, 3900);
+    expect(late.t0).toBe(4.2);
+    expect(late.holdStart).toBeLessThanOrEqual(late.holdEnd);
+    expect(layoutTiming(1000, 400, 0, 300).t0).toBe(1);
   });
 });

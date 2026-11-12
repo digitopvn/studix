@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { MediaGenerationRequest, MediaKind } from "@studix/core";
 import { StudixError } from "@studix/shared";
 import type { MediaBillingUnit } from "./media-price-book.ts";
@@ -546,7 +549,7 @@ export async function planMultixRequest(
         priced: false,
         outputExt: ".mp3",
         waitTimeoutMs: wait(600_000),
-        argv: musicArgv(model, request.prompt, params),
+        argv: await musicArgv(model, request.prompt, params, workDir),
       };
     case "sfx": {
       const ms = numberParam(params, "durationMs", 500, 30_000);
@@ -629,6 +632,8 @@ function voiceArgv(
         "tts",
         `--text=${prompt}`,
         `--model=${model.model}`,
+        // Character timings come at the same price; Studix turns them into word timings.
+        "--timestamps",
         ...flag("voice", voice),
         // Models without `language_code` refuse it; they detect the language from the text.
         ...flag(
@@ -661,7 +666,12 @@ function voiceArgv(
 
 const DEFAULT_MUSIC_MS = 30_000;
 
-function musicArgv(model: QualifiedModel, prompt: string, params: Record<string, unknown>): string[] {
+async function musicArgv(
+  model: QualifiedModel,
+  prompt: string,
+  params: Record<string, unknown>,
+  workDir: string | undefined,
+): Promise<string[]> {
   if (model.vendor === "minimax") {
     const lyrics = params.lyrics;
     if (lyrics !== undefined && (typeof lyrics !== "string" || lyrics.length > 4000)) {
@@ -677,8 +687,107 @@ function musicArgv(model: QualifiedModel, prompt: string, params: Record<string,
     ];
   }
   // A stated length keeps the price bounded; the model would otherwise choose one.
-  const ms = numberParam(params, "durationMs", 3_000, 300_000, true) ?? DEFAULT_MUSIC_MS;
-  return ["elevenlabs", "music", `--prompt=${prompt}`, `--model=${model.model}`, `--music-length-ms=${ms}`];
+  const ms = numberParam(params, "durationMs", 3_000, 300_000, true);
+  const plan = compositionPlan(params, ms);
+  if (!plan) {
+    return [
+      "elevenlabs",
+      "music",
+      `--prompt=${prompt}`,
+      `--model=${model.model}`,
+      `--music-length-ms=${ms ?? DEFAULT_MUSIC_MS}`,
+    ];
+  }
+  // The plan sets the sections and their lengths, so it replaces the prompt and the total length.
+  const json = `${JSON.stringify(plan)}\n`;
+  const name = `music-plan-${createHash("sha256").update(json).digest("hex").slice(0, 16)}.json`;
+  // Estimates write nothing: the name only stands in for the file a run writes.
+  const path = workDir === undefined ? name : join(workDir, name);
+  if (workDir !== undefined) await writeFile(path, json);
+  return ["elevenlabs", "music", `--plan=${path}`, `--model=${model.model}`];
+}
+
+const MAX_PLAN_SECTIONS = 8;
+const MAX_SECTION_NAME = 100;
+const MAX_STYLES = 10;
+const MAX_STYLE = 200;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is refused.
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/** ElevenLabs composition plan, as the music API takes it (instrumental: no lines). */
+interface ElevenLabsCompositionPlan {
+  positive_global_styles: string[];
+  negative_global_styles: string[];
+  sections: {
+    section_name: string;
+    positive_local_styles: string[];
+    negative_local_styles: string[];
+    duration_ms: number;
+    lines: string[];
+  }[];
+}
+
+const planError = (message: string) => new StudixError("VALIDATION", `params.compositionPlan ${message}`);
+
+function planText(value: unknown, what: string, max: number): string {
+  if (typeof value !== "string" || value.trim() === "" || value.length > max || CONTROL.test(value)) {
+    throw planError(`${what} must be plain text of at most ${max} characters`);
+  }
+  return value;
+}
+
+function planStyles(value: unknown, what: string, required: boolean): string[] {
+  if (value === undefined && !required) return [];
+  if (!Array.isArray(value) || value.length > MAX_STYLES) {
+    throw planError(`${what} must be a list of at most ${MAX_STYLES} styles`);
+  }
+  return value.map((style) => planText(style, `${what} entries`, MAX_STYLE));
+}
+
+/**
+ * The ElevenLabs plan for `params.compositionPlan` (undefined when the request has none): 1 to 8 sections
+ * of 3 to 120 seconds each. Their lengths must add up to `params.durationMs`, which the price is bounded by.
+ */
+function compositionPlan(
+  params: Record<string, unknown>,
+  durationMs: number | undefined,
+): ElevenLabsCompositionPlan | undefined {
+  const value = params.compositionPlan;
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw planError("must be an object");
+  }
+  const plan = value as Record<string, unknown>;
+  const sections = plan.sections;
+  if (!Array.isArray(sections) || sections.length < 1 || sections.length > MAX_PLAN_SECTIONS) {
+    throw planError(`sections must list 1 to ${MAX_PLAN_SECTIONS} sections`);
+  }
+  const result: ElevenLabsCompositionPlan = {
+    positive_global_styles: planStyles(plan.positiveGlobalStyles, "positiveGlobalStyles", true),
+    negative_global_styles: planStyles(plan.negativeGlobalStyles, "negativeGlobalStyles", false),
+    sections: sections.map((section: unknown, i) => {
+      if (typeof section !== "object" || section === null || Array.isArray(section)) {
+        throw planError(`sections[${i}] must be an object`);
+      }
+      const s = section as Record<string, unknown>;
+      const ms = s.durationMs;
+      if (typeof ms !== "number" || !Number.isInteger(ms) || ms < 3_000 || ms > 120_000) {
+        throw planError(`sections[${i}].durationMs must be an integer in 3000..120000`);
+      }
+      return {
+        section_name: planText(s.name, `sections[${i}].name`, MAX_SECTION_NAME),
+        positive_local_styles: planStyles(s.positiveStyles, `sections[${i}].positiveStyles`, true),
+        negative_local_styles: planStyles(s.negativeStyles, `sections[${i}].negativeStyles`, false),
+        duration_ms: ms,
+        lines: [],
+      };
+    }),
+  };
+  const total = result.sections.reduce((sum, s) => sum + s.duration_ms, 0);
+  if (durationMs !== total) {
+    throw planError(`sections must add up to params.durationMs (${durationMs ?? "missing"}), not ${total}`);
+  }
+  return result;
 }
 
 /** For estimates no file is read: local inputs are checked for shape only and stand in as their path. */

@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MULTIX_MODELS, parseVoiceLanguageRoutes, planMultixRequest } from "../src/multix-routes.ts";
 
@@ -235,5 +238,85 @@ describe("multix cost policy for Sume jobs", () => {
     );
     expect(image.costPolicy).toBe("estimate");
     expect((await plan("sume:seedance-2-mini", { durationMs: 5000 })).costPolicy).toBeUndefined();
+  });
+});
+
+describe("ElevenLabs music", () => {
+  const compositionPlan = {
+    positiveGlobalStyles: ["cinematic synthwave", "120 bpm"],
+    sections: [
+      { name: "intro", positiveStyles: ["soft pads"], durationMs: 8_000 },
+      { name: "drop", positiveStyles: ["punchy drums"], negativeStyles: ["vocals"], durationMs: 12_000 },
+    ],
+  };
+  const music = (params: Record<string, unknown>, workDir?: string, model?: string) =>
+    planMultixRequest(
+      { kind: "music", prompt: "upbeat synthwave", params, ...(model ? { model } : {}) },
+      workDir,
+      context,
+    );
+
+  it("asks for the prompt at the stated length without a plan", async () => {
+    expect((await music({ durationMs: 20_000 })).argv).toEqual([
+      "elevenlabs",
+      "music",
+      "--prompt=upbeat synthwave",
+      "--model=music_v1",
+      "--music-length-ms=20000",
+    ]);
+  });
+
+  it("writes a composition plan into the work directory and passes it instead of prompt and length", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "studix-music-plan-"));
+    try {
+      const { argv } = await music({ durationMs: 20_000, compositionPlan }, dir);
+      expect(argv.slice(0, 2)).toEqual(["elevenlabs", "music"]);
+      expect(argv.some((a) => a.startsWith("--prompt=") || a.startsWith("--music-length-ms="))).toBe(false);
+      const path = argv.find((a) => a.startsWith("--plan="))!.slice("--plan=".length);
+      expect(path.startsWith(join(dir, "music-plan-"))).toBe(true);
+      expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+        positive_global_styles: ["cinematic synthwave", "120 bpm"],
+        negative_global_styles: [],
+        sections: [
+          {
+            section_name: "intro",
+            positive_local_styles: ["soft pads"],
+            negative_local_styles: [],
+            duration_ms: 8_000,
+            lines: [],
+          },
+          {
+            section_name: "drop",
+            positive_local_styles: ["punchy drums"],
+            negative_local_styles: ["vocals"],
+            duration_ms: 12_000,
+            lines: [],
+          },
+        ],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a plan that does not add up to the priced length or breaks a bound", async () => {
+    await expect(music({ compositionPlan })).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(music({ durationMs: 30_000, compositionPlan })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+    const short = { ...compositionPlan, sections: [{ name: "x", positiveStyles: [], durationMs: 2_000 }] };
+    await expect(music({ durationMs: 2_000 * 2, compositionPlan: short })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+    const control = { ...compositionPlan, positiveGlobalStyles: ["a\u0007b"] };
+    await expect(music({ durationMs: 20_000, compositionPlan: control })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+  });
+
+  it("keeps MiniMax on its prompt", async () => {
+    const { argv } = await music({ compositionPlan }, undefined, "minimax:music-2.0");
+    expect(argv).toContain("--prompt=upbeat synthwave");
+    expect(argv.some((a) => a.startsWith("--plan="))).toBe(false);
   });
 });

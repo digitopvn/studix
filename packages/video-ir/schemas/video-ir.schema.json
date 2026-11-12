@@ -740,6 +740,11 @@
                           ]
                         }
                       ]
+                    },
+                    "layoutAtMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 3600000
                     }
                   },
                   "required": [
@@ -1137,6 +1142,11 @@
                           ]
                         }
                       ]
+                    },
+                    "layoutAtMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 3600000
                     }
                   },
                   "required": [
@@ -2130,6 +2140,11 @@
             "type": "number",
             "minimum": 0.5,
             "maximum": 2
+          },
+          "duckDb": {
+            "type": "number",
+            "minimum": -30,
+            "maximum": 0
           }
         },
         "required": [

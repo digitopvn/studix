@@ -47,6 +47,7 @@ export {
   parseLoudnormJson,
   truePeakSafeFilter,
 } from "./ffmpeg/loudness.ts";
+export { analyseMusicBeats, detectBeats, type MusicBeats } from "./ffmpeg/music-beats.ts";
 export {
   type FilmCompositionRenderInput,
   type FilmCompositionRenderResult,

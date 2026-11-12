@@ -32,6 +32,11 @@ export const AudioTrack = z.object({
    * `durationMs × playbackRate` of its source. Lets a slightly long voice-over take fit its beat.
    */
   playbackRate: z.number().min(0.5).max(2).optional(),
+  /**
+   * Lowered by this many dB (ramped) wherever a voice-over or dialogue track plays: a music bed ducks
+   * under speech.
+   */
+  duckDb: z.number().min(-30).max(0).optional(),
 });
 export type AudioTrack = z.infer<typeof AudioTrack>;
 

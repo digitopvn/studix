@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -71,5 +71,47 @@ describe.skipIf(!hasFfmpeg)("sped-up audio in the FFmpeg mix", () => {
     expect(spans[0]![1]).toBeCloseTo(3.9, 1);
     expect(spans[1]![0]).toBeCloseTo(5, 1);
     expect(spans[1]![1]).toBeCloseTo(6, 1);
+  }, 60_000);
+});
+
+describe.skipIf(!hasFfmpeg)("music ducking in the FFmpeg mix", () => {
+  const dir = mkdtempSync(join(tmpdir(), "studix-duck-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("lowers a delayed music bed by its duckDb while a voice-over plays, then recovers", async () => {
+    const bed = join(dir, "bed.wav");
+    const quiet = join(dir, "quiet.wav");
+    spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=6", bed]);
+    // A silent voice-over, so the mix carries only the bed and its level reads the ducking directly.
+    spawnSync("ffmpeg", [
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=48000:cl=mono",
+      "-t",
+      "2",
+      quiet,
+    ]);
+    const base = { trimStartMs: 0, volume: 1, fadeInMs: 0, fadeOutMs: 0 };
+    const clips: AudioClip[] = [
+      { ...base, id: "bed", kind: "music", file: bed, startMs: 500, durationMs: 5500, duckDb: -12 },
+      { ...base, id: "vo", kind: "voiceover", file: quiet, startMs: 2500, durationMs: 2000 },
+    ];
+    const out = join(dir, "mix.wav");
+    await mixAudio(clips, 6000, out, {});
+    const pcm = join(dir, "mix.f32");
+    spawnSync("ffmpeg", ["-v", "error", "-y", "-i", out, "-ac", "1", "-ar", "8000", "-f", "f32le", pcm]);
+    const raw = readFileSync(pcm);
+    const samples = new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4);
+    const db = (fromS: number, toS: number) => {
+      const part = samples.subarray(fromS * 8000, toS * 8000);
+      return 10 * Math.log10(part.reduce((sum, x) => sum + x * x, 0) / part.length);
+    };
+    const open = db(1, 2);
+    expect(db(3, 4) - open).toBeCloseTo(-12, 0);
+    expect(db(5.2, 5.8) - open).toBeCloseTo(0, 0);
   }, 60_000);
 });

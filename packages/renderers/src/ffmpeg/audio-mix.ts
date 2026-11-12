@@ -24,6 +24,8 @@ export interface AudioClip {
   fadeOutMs: number;
   /** Source speed-up (pitch kept); the clip reads `durationMs × rate` of its source. Absent plays as is. */
   rate?: number;
+  /** Lowered by this many dB (ramped) wherever a voice-over or dialogue clip plays. */
+  duckDb?: number;
 }
 
 /** What the planner needs to know about a source file. */
@@ -71,6 +73,7 @@ export function planAudioClips(
         fadeInMs: track.fadeInMs ?? 0,
         fadeOutMs: track.fadeOutMs ?? 0,
         rate: track.playbackRate ?? 1,
+        ...(track.duckDb !== undefined && track.duckDb < 0 ? { duckDb: track.duckDb } : {}),
       },
       track.assetId,
       track.durationMs ?? total - track.startMs,
@@ -102,14 +105,70 @@ export function planAudioClips(
 
 const sec = (ms: number) => (ms / 1000).toFixed(3);
 
+/** Ducking ramps: the bed starts dipping just before speech and recovers a little after it. */
+const DUCK_ATTACK_MS = 150;
+const DUCK_RELEASE_MS = 300;
+/** Speech windows closer than this stay ducked across the gap, so the bed does not pump between phrases. */
+const DUCK_BRIDGE_MS = 400;
+/** Most windows one ducking envelope carries; beyond that the closest are bridged to bound the expression. */
+const DUCK_MAX_WINDOWS = 64;
+
+type Window = [startMs: number, endMs: number];
+
+/** Absolute spans of every speech clip except `self`, merged where they overlap or nearly touch. */
+function speechWindows(clips: readonly AudioClip[], self: number): Window[] {
+  const spans = clips
+    .filter((c, i) => i !== self && (c.kind === "voiceover" || c.kind === "dialogue"))
+    .map((c): Window => [c.startMs, c.startMs + c.durationMs])
+    .sort((a, b) => a[0] - b[0]);
+  const merged: Window[] = [];
+  for (const span of spans) {
+    const last = merged.at(-1);
+    if (last && span[0] - last[1] < DUCK_BRIDGE_MS) last[1] = Math.max(last[1], span[1]);
+    else merged.push([...span]);
+  }
+  while (merged.length > DUCK_MAX_WINDOWS) {
+    let best = 0;
+    for (let i = 1; i < merged.length - 1; i++) {
+      if (merged[i + 1]![0] - merged[i]![1] < merged[best + 1]![0] - merged[best]![1]) best = i;
+    }
+    merged[best]![1] = Math.max(merged[best]![1], merged[best + 1]![1]);
+    merged.splice(best + 1, 1);
+  }
+  return merged;
+}
+
+/**
+ * `volume` filter that lowers a clip by `duckDb` inside the speech windows, ramping down over the attack
+ * before each window and back up over the release after it. Its `t` is clip-local timeline time (the
+ * chain resets timestamps and any tempo change comes before it), so the windows are shifted by the clip
+ * start. Undefined when no window touches the clip.
+ */
+function duckFilter(clip: AudioClip, windows: readonly Window[]): string | undefined {
+  if (!clip.duckDb) return undefined;
+  const offset = (ms: number) => (ms < 0 ? `+${sec(-ms)}` : `-${sec(ms)}`);
+  const terms = windows
+    .map(([a, b]): Window => [a - clip.startMs, b - clip.startMs])
+    .filter(([a, b]) => b + DUCK_RELEASE_MS > 0 && a - DUCK_ATTACK_MS < clip.durationMs)
+    .map(
+      ([a, b]) =>
+        `clip((t${offset(a - DUCK_ATTACK_MS)})/${sec(DUCK_ATTACK_MS)},0,1)*clip((${sec(b + DUCK_RELEASE_MS)}-t)/${sec(DUCK_RELEASE_MS)},0,1)`,
+    );
+  if (terms.length === 0) return undefined;
+  // Bridged windows never overlap by more than their ramps, so the clamped sum is the deepest dip.
+  return `volume=eval=frame:volume='pow(10,${(clip.duckDb / 20).toFixed(4)}*min(1,${terms.join("+")}))'`;
+}
+
 /**
  * filter_complex that places every clip (input i = clips[i]) and sums them without normalisation, so a
  * track's volume is its real gain; the sum is padded or cut to exactly `totalMs`. Loudness is set later.
+ * A clip with `duckDb` dips under every voice-over and dialogue clip it overlaps.
  */
 export function audioMixGraph(clips: readonly AudioClip[], totalMs: number): string {
   if (clips.length === 0) throw new StudixError("INTERNAL", "audio mix needs at least one clip");
   const chains = clips.map((clip, i) => {
     const rate = clip.rate ?? 1;
+    const duck = duckFilter(clip, speechWindows(clips, i));
     const filters = [
       `atrim=start=${sec(clip.trimStartMs)}:duration=${sec(clip.durationMs * rate)}`,
       "asetpts=PTS-STARTPTS",
@@ -117,6 +176,7 @@ export function audioMixGraph(clips: readonly AudioClip[], totalMs: number): str
       ...(rate !== 1 ? [`atempo=${rate.toFixed(4)}`] : []),
       `aformat=sample_fmts=fltp:sample_rates=${MIX_SAMPLE_RATE}:channel_layouts=stereo`,
       `volume=${clip.volume.toFixed(4)}`,
+      ...(duck ? [duck] : []),
     ];
     if (clip.fadeInMs > 0) filters.push(`afade=t=in:st=0:d=${sec(clip.fadeInMs)}`);
     if (clip.fadeOutMs > 0)

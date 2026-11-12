@@ -1,4 +1,6 @@
 import { rm } from "node:fs/promises";
+import { extname, join } from "node:path";
+import { analyseMusicBeats, type MusicBeats } from "@studix/renderers";
 import { StudixError, toStudixError } from "@studix/shared";
 import { AssetRef, CreativeBrief, exportJsonSchemas, VideoIR } from "@studix/video-ir";
 import {
@@ -24,6 +26,7 @@ import {
 import { truncateText } from "../vietnamese-safe-text.ts";
 import { type VoiceLine, voiceLines } from "../voice-lines.ts";
 import { voiceTakeScope } from "../voice-takes.ts";
+import { bpmSearchRange, musicCompositionPlan, snapCutsToBeats } from "./motion-graphic-beat-sync.ts";
 import {
   ACCENT_TRACK_ID,
   accentAt,
@@ -63,7 +66,8 @@ export const motionGraphicSkill: Skill = {
     "HTML/GSAP-first motion graphic (6–60s, default 15s 9:16; a length or ratio stated in the prompt wins): the workspace's agent writes the script and " +
     "storyboard from the motion knowledge packs (style profile, beats, entrances, optional music bed), " +
     "falling back to brief-derived kinetic cards without an agent (never when the job names its `agent`); a " +
-    "generated voice-over with burned captions, a whoosh on each cut and one SFX accent on the CTA card; the accent and music bed " +
+    "generated voice-over with burned captions, a whoosh on each cut and one SFX accent on the CTA card; headlines, layout devices and " +
+    "captions land on the spoken words, and with a music bed the cuts snap to its downbeats and it ducks under the voice; the accent and music bed " +
     "are skipped with a warning when their provider is not set. Needs a speech provider only with a voice-over: `brief.voiceover: false` " +
     "makes a voiceless graphic (on-screen text only). No image-to-video.",
   version: 1,
@@ -352,7 +356,8 @@ async function musicRequests(s: StageContext): Promise<StoredMediaRequest[]> {
       assetId: "music-bed",
       kind: "music",
       prompt: `Instrumental music bed, ${mood}, no vocals`,
-      params: { durationMs: ir.format.durationMs },
+      // Composed to the cards (intro, build, drop on the call to action) where the music model takes a plan.
+      params: { durationMs: ir.format.durationMs, compositionPlan: musicCompositionPlan(ir, mood) },
       keyPrefix: `generated/${s.job.id}/music-bed`,
       maxCostCents: 0,
       reuse: {},
@@ -360,8 +365,38 @@ async function musicRequests(s: StageContext): Promise<StoredMediaRequest[]> {
   ];
 }
 
-/** Music level under the voice-over: a bed, not a lead. */
-const MUSIC_VOLUME = 0.18;
+/** Music level between the lines; it ducks by `MUSIC_DUCK_DB` under the voice-over: a bed, not a lead. */
+const MUSIC_VOLUME = 0.3;
+const MUSIC_DUCK_DB = -9;
+
+/**
+ * The beats of the music bed, from its file (FFmpeg, free). Undefined when it cannot be read or has no
+ * clear pulse: the cuts then stay where the cards put them.
+ */
+async function musicBeats(
+  s: StageContext,
+  music: StoredMedia,
+  ir: VideoIR,
+  workDir: string,
+): Promise<MusicBeats | undefined> {
+  let file = music.filePath;
+  try {
+    if (!file && music.asset.storageKey) {
+      file = join(workDir, `music-bed${extname(music.asset.storageKey)}`);
+      await requireService(s, "storage").download(s.ctx, music.asset.storageKey, file);
+    }
+    if (!file) return undefined;
+    const range = bpmSearchRange(ir);
+    return await analyseMusicBeats(file, {
+      ffmpegPath: process.env.FFMPEG_PATH,
+      signal: s.signal,
+      ...(range ? { bpmRange: range } : {}),
+    });
+  } catch (err) {
+    if (s.signal.aborted) throw err;
+    return undefined;
+  }
+}
 
 /** The graphic without its music bed, and why: the bed is decoration, so a missing provider never fails the job. */
 const withoutMusic = (ir: VideoIR, reason: string) => ({
@@ -370,7 +405,8 @@ const withoutMusic = (ir: VideoIR, reason: string) => ({
 
 /**
  * An instrumental bed under the whole graphic, only when the agent's storyboard asked for one (a template
- * graphic has none). Its own stage, so a re-voice does not pay for the music again. A call that cannot be
+ * graphic has none). Its own stage, so a re-voice does not pay for the music again while the cards keep
+ * their timing to the composition plan's 500 ms grid. A call that cannot be
  * made (UNAVAILABLE: no key, no price, no music model) skips the bed with a warning instead of failing the
  * job; the runner never caches a warned output, so the bed is retried next run.
  */
@@ -378,7 +414,7 @@ export const motionGraphicMusicStage: StageDefinition = {
   name: MG_STAGES.music,
   knowledge: ["sound"],
   outputSchema: AccentOutput,
-  cacheKey: (s) => stageCacheKey(MG_STAGES.music, 1, { ir: irOf(s), media: s.services.media?.id ?? null }),
+  cacheKey: (s) => stageCacheKey(MG_STAGES.music, 2, { ir: irOf(s), media: s.services.media?.id ?? null }),
   estimateCostCents: async (s) => {
     try {
       return await estimateMediaCents(s, await musicRequests(s));
@@ -406,26 +442,38 @@ export const motionGraphicMusicStage: StageDefinition = {
       await rm(workDir, { recursive: true, force: true });
       return withoutMusic(ir, toStudixError(err).message);
     }
-    const next = {
-      ...ir,
-      assets: [...ir.assets.filter((a) => a.id !== music.asset.id), music.asset],
-      audio: [
-        ...(ir.audio ?? []).filter((t) => t.id !== "music-bed-track"),
-        {
-          id: "music-bed-track",
-          kind: "music" as const,
-          assetId: music.asset.id,
-          startMs: 0,
-          durationMs: Math.min(ir.format.durationMs, music.asset.durationMs ?? ir.format.durationMs),
-          volume: MUSIC_VOLUME,
-        },
-      ],
-    };
-    await rm(workDir, { recursive: true, force: true });
-    return {
-      output: { ir: await billedOnFailure([music.usage], () => VideoIR.parse(next)) },
-      usage: [music.usage],
-    };
+    // The music is paid for from here on: whatever fails next still bills it, and the scratch copy goes.
+    try {
+      // The cards' cuts move onto the music's downbeats (only where every line still fits its card).
+      const beats = await musicBeats(s, music, ir, workDir);
+      const ready = await billedOnFailure([music.usage], () => {
+        const synced = beats ? snapCutsToBeats(ir, beats) : { ir, cuts: [] };
+        const base = synced.ir;
+        return VideoIR.parse({
+          ...base,
+          assets: [...base.assets.filter((a) => a.id !== music.asset.id), music.asset],
+          audio: [
+            ...(base.audio ?? []).filter((t) => t.id !== "music-bed-track"),
+            {
+              id: "music-bed-track",
+              kind: "music" as const,
+              assetId: music.asset.id,
+              startMs: 0,
+              durationMs: Math.min(base.format.durationMs, music.asset.durationMs ?? base.format.durationMs),
+              volume: MUSIC_VOLUME,
+              duckDb: MUSIC_DUCK_DB,
+            },
+          ],
+          metadata: {
+            ...(base.metadata ?? {}),
+            ...(beats ? { musicBeats: { bpm: beats.bpm, snappedCuts: synced.cuts.length } } : {}),
+          },
+        });
+      });
+      return { output: { ir: ready }, usage: [music.usage] };
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
   },
 };
 
