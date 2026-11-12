@@ -53,7 +53,6 @@ describe("buildComposition (brand-intro 9:16)", () => {
     const copies = [...build.copies.keys()];
     expect(copies).toContain(GSAP_ASSET);
     expect(copies).toContain("assets/fonts/be-vietnam-pro-vietnamese-800-normal.woff2");
-    expect(copies).toContain("assets/fonts/inter-vietnamese-500-normal.woff2");
     expect(build.warnings).toEqual([]);
   });
 
@@ -335,10 +334,10 @@ describe("buildComposition layouts", () => {
     // The middle region keeps clear of the caption band: edge 97 + a 79 px cue (one line and its padding) + gap 32 - safe 76.
     expect(first).toMatch(/\.region-middle \{[^}]*padding-bottom: 132px;/);
     expect(landscape.files.get("compositions/l1.html")).not.toContain("padding-bottom");
-    // Landscape draws a layout larger than its short edge alone would: the prompt is 1.25x its portrait size (44 px body x 1.1 x 1.25, rounded once).
+    // Landscape draws a layout larger than its short edge alone would: the prompt is 1.6x its portrait size (44 px body x 1.1 x 1.6, rounded once).
     const promptPx = (html: string) => Number(/\.lo-field \{[^}]*font-size: (\d+)px;/.exec(html)?.[1]);
     const tall = buildComposition(wide, { width: 1080, height: 1920 }).files.get("compositions/l0.html")!;
-    expect(promptPx(first)).toBe(61);
+    expect(promptPx(first)).toBe(77);
     expect(promptPx(tall)).toBe(48);
     // A square frame is not landscape: no boost, and chip labels never drop below the 26 px floor.
     const square = buildComposition(wide, { width: 1080, height: 1080 });

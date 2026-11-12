@@ -4,6 +4,7 @@ import { cssColor, type FontSlot, TEXT_STYLES } from "./brand-tokens.ts";
 import type { HtmlCardPackage } from "./html-card.ts";
 import { htmlCardMarkup } from "./html-card-compile.ts";
 import { cssRule, escapeHtml, num, seconds } from "./html-utils.ts";
+import { AA_LARGE, contrastRatio } from "./ink-contrast.ts";
 import { renderLayoutMarkup } from "./layout-markup.ts";
 
 /** What a shot renderer needs to know about the scene being compiled. */
@@ -139,6 +140,50 @@ export function videoClipTag(clip: {
   return `<video ${attrs.filter(Boolean).join(" ")}></video>`;
 }
 
+/**
+ * A call to action with a URL, set as an end-card lockup rather than a button: the line, one accent rule and
+ * the URL large and clear under it. The rule is the accent when it reads (3:1) on both fills a closing card
+ * can have (the background or the primary), else the text's own ink.
+ */
+function ctaEndCard(
+  ctx: ShotMarkupContext,
+  sel: string,
+  open: string,
+  base: string[],
+  shot: Extract<Shot, { type: "cta" }>,
+): ShotMarkup {
+  const p = ctx.palette;
+  const rule =
+    p && contrastRatio(p.accent, p.background) >= AA_LARGE && contrastRatio(p.accent, p.primary) >= AA_LARGE
+      ? "var(--c-accent)"
+      : "currentColor";
+  const css = [
+    cssRule(sel, [
+      ...base,
+      "display: flex;",
+      "flex-direction: column;",
+      "align-items: center;",
+      `gap: ${Math.round(28 * ctx.scale)}px;`,
+    ]),
+    cssRule(`${sel} .cta-line`, textCss(ctx, shot.style?.textStyle ?? "heading", shot.style)),
+    cssRule(`${sel} .cta-rule`, [
+      `width: ${Math.round(220 * ctx.scale)}px;`,
+      `height: ${Math.max(3, Math.round(10 * ctx.scale))}px;`,
+      "border-radius: 999px;",
+      `background: ${rule};`,
+    ]),
+    cssRule(`${sel} .cta-url`, [
+      ...textCss(ctx, "heading", { ...shot.style, emphasis: "none" }),
+      "letter-spacing: 0.01em;",
+      "overflow-wrap: anywhere;",
+    ]),
+  ];
+  return {
+    html: `${open}<div class="cta-line">${escapeHtml(shot.text)}</div><div class="cta-rule"></div><div class="cta-url">${escapeHtml(shot.url ?? "")}</div></div>`,
+    css,
+  };
+}
+
 /** HTML and CSS for one shot. The outer element carries the DOM id the timeline animates. */
 export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup {
   const id = shotDomId(ctx.prefix, shot.id);
@@ -248,6 +293,7 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
       };
     }
     case "cta": {
+      if (shot.url) return ctaEndCard(ctx, sel, open, base, shot);
       const pad = Math.round(30 * ctx.scale);
       const css = [
         cssRule(sel, [
@@ -267,12 +313,7 @@ export function renderShotMarkup(ctx: ShotMarkupContext, shot: Shot): ShotMarkup
           `border: ${num(Math.max(2, 5 * ctx.scale))}px solid currentColor;`,
         ]),
       ];
-      let url = "";
-      if (shot.url) {
-        css.push(cssRule(`${sel} .cta-url`, textCss(ctx, "caption", { ...shot.style, emphasis: "none" })));
-        url = `<div class="cta-url">${escapeHtml(shot.url)}</div>`;
-      }
-      return { html: `${open}<div class="cta-pill">${escapeHtml(shot.text)}</div>${url}</div>`, css };
+      return { html: `${open}<div class="cta-pill">${escapeHtml(shot.text)}</div></div>`, css };
     }
     case "composition": {
       const card = ctx.htmlCards?.get(shot.assetId);

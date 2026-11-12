@@ -1,4 +1,4 @@
-import type { LayoutSpec } from "@studix/video-ir";
+import type { ColorRole, LayoutSpec } from "@studix/video-ir";
 import {
   burnedCaptionBand,
   cssColor,
@@ -8,6 +8,7 @@ import {
   tint,
 } from "./brand-tokens.ts";
 import { cssRule, escapeHtml, seconds } from "./html-utils.ts";
+import { AA_LARGE, AA_TEXT, contrastRatio, readableInk } from "./ink-contrast.ts";
 import type { TimelineWriter } from "./scene-timeline.ts";
 import type { ShotMarkup, ShotMarkupContext } from "./shot-markup.ts";
 
@@ -18,27 +19,19 @@ import type { ShotMarkup, ShotMarkupContext } from "./shot-markup.ts";
  * scene-timeline.ts: absolute positions, opacity, transforms and clip-path only.
  */
 
-/** WCAG relative luminance of a `#rrggbb` colour. */
-function luminance(hex: string): number {
-  const channel = (i: number) => {
-    const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
-}
-
-const contrast = (a: string, b: string) => {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
-  return (hi + 0.05) / (lo + 0.05);
-};
-
-/** The palette role (foreground or background) that reads best on an accent fill. */
-function inkOnAccent(ctx: ShotMarkupContext): string {
+/**
+ * The ink for words on an accent fill (a hub, a pill, a button): the palette's foreground or background,
+ * whichever reads better, when it meets WCAG AA (4.5:1); else pure black or white, whichever reads better.
+ */
+export function inkOnAccent(ctx: { palette?: Record<ColorRole, string> | undefined }): string {
   const p = ctx.palette;
   if (!p) return "var(--c-background)";
-  return contrast(p.foreground, p.accent) > contrast(p.background, p.accent)
-    ? "var(--c-foreground)"
-    : "var(--c-background)";
+  const roles: Array<readonly [string, string]> = [
+    ["var(--c-foreground)", p.foreground],
+    ["var(--c-background)", p.background],
+  ];
+  roles.sort((a, b) => contrastRatio(b[1], p.accent) - contrastRatio(a[1], p.accent));
+  return readableInk(p.accent, roles, AA_TEXT);
 }
 
 /**
@@ -47,7 +40,7 @@ function inkOnAccent(ctx: ShotMarkupContext): string {
  */
 function accentInk(ctx: ShotMarkupContext): string {
   const p = ctx.palette;
-  if (!p || contrast(p.accent, p.background) >= 3) return "var(--c-accent)";
+  if (!p || contrastRatio(p.accent, p.background) >= AA_LARGE) return "var(--c-accent)";
   return "var(--c-foreground)";
 }
 
@@ -64,6 +57,20 @@ function fitFactor(
 ) {
   const fits = (width * 0.95) / (Math.max(1, chars) * 0.62 * token.sizeAt1080 * ctx.scale);
   return Math.min(factor, fits);
+}
+
+/**
+ * Largest display-size factor whose one line (`lineHeight`) plus `restAt1080` px of other parts (at the
+ * layout scale) fits `height`.
+ */
+export function displayFactorFor(
+  height: number,
+  restAt1080: number,
+  lineHeight: number,
+  scale: number,
+): number {
+  const room = height - restAt1080 * scale;
+  return Math.max(0.1, room / (TEXT_STYLES.display.sizeAt1080 * lineHeight * scale));
 }
 
 /** Font declarations of a text style token at this frame's scale, `factor` times its size. */
@@ -88,25 +95,44 @@ const landscape = (frame: { width: number; height: number }) => frame.width > fr
  * Height a layout may take: what the content area leaves under a headline of up to two lines and above
  * the burned captions, so a tall layout never runs into either.
  */
-const layoutHeight = (ctx: ShotMarkupContext) => {
-  const { width, height } = ctx.frame;
+export function layoutRoomHeight(frame: { width: number; height: number }, reserveTop = 0): number {
+  const { width, height } = frame;
   const short = Math.min(width, height);
   const safe = Math.round(0.07 * short);
   const gap = Math.round(0.03 * short);
-  const captions = Math.max(0, burnedCaptionBand(ctx.frame) + gap - safe);
-  const reserve = ctx.reserveTop ?? 0;
-  if (!landscape(ctx.frame)) return (height - 2 * safe - captions - reserve) * (portrait(ctx) ? 0.7 : 0.55);
+  const captions = Math.max(0, burnedCaptionBand(frame) + gap - safe);
+  if (!landscape(frame)) return (height - 2 * safe - captions - reserveTop) * (height > width ? 0.7 : 0.55);
   // Landscape: the content area less a two-line display headline, the gaps around it and the band the
   // captions keep at the bottom (see scene-composition.ts).
-  const headline =
-    2 * TEXT_STYLES.display.sizeAt1080 * TEXT_STYLES.display.lineHeight * frameScale(ctx.frame);
-  return height - 2 * safe - headline - 2 * gap - captions - reserve;
-};
+  const headline = 2 * TEXT_STYLES.display.sizeAt1080 * TEXT_STYLES.display.lineHeight * frameScale(frame);
+  return height - 2 * safe - headline - 2 * gap - captions - reserveTop;
+}
+const layoutHeight = (ctx: ShotMarkupContext) => layoutRoomHeight(ctx.frame, ctx.reserveTop ?? 0);
 
-/** How much larger a layout is drawn in a landscape frame than its short edge alone would make it. */
-const LANDSCAPE_LAYOUT_BOOST = 1.25;
+/**
+ * How much larger a layout is drawn in a landscape frame than its short edge alone would make it: a 16:9
+ * frame is almost twice as wide as its short edge, so a layout sized by that edge alone floats small under its
+ * headline. Every layout still shrinks to the width and height its card leaves it.
+ */
+export const LANDSCAPE_LAYOUT_BOOST = 1.6;
 
-/** The smallest chip label, as a factor of the body size: 26 px at 1080, 33 px on a 16:9 frame. */
+/** The layout scale of a frame: its short-edge scale, boosted in landscape. */
+export const layoutScale = (frame: { width: number; height: number }) =>
+  frameScale(frame) * (landscape(frame) ? LANDSCAPE_LAYOUT_BOOST : 1);
+
+/**
+ * Side (px) of each swatch square: up to 220 px at the layout scale, shrunk so `cols` squares and their gaps
+ * fit 90% of `width` and every row, its label and the gaps between rows fit `height`.
+ */
+export function swatchSize(n: number, cols: number, width: number, height: number, scale: number): number {
+  const rows = Math.ceil(n / Math.max(1, cols));
+  const label = (TEXT_STYLES.caption.sizeAt1080 * 0.9 * TEXT_STYLES.caption.lineHeight + 14) * scale;
+  const byWidth = (width * 0.9 - (cols - 1) * 36 * scale) / cols;
+  const byHeight = (height - rows * label - (rows - 1) * 28 * scale) / rows;
+  return Math.max(1, Math.floor(Math.min(220 * scale, byWidth, byHeight)));
+}
+
+/** The smallest chip label, as a factor of the body size: 26 px at 1080, 42 px on a 16:9 frame. */
 const MIN_CHIP_FACTOR = 0.6;
 
 /**
@@ -117,7 +143,7 @@ const MIN_CHIP_FACTOR = 0.6;
  */
 function chipsPlan(items: readonly string[], frame: { width: number; height: number }) {
   const n = items.length;
-  const scale = frameScale(frame) * (landscape(frame) ? LANDSCAPE_LAYOUT_BOOST : 1);
+  const scale = layoutScale(frame);
   const width = frame.width - 2 * Math.round(0.07 * Math.min(frame.width, frame.height));
   const track = (Math.round(width * 0.94) - (n - 1) * 20 * scale) / n - 2 * 33 * scale;
   const longest = Math.max(...items.map((l) => Array.from(l).length));
@@ -353,7 +379,9 @@ export function renderLayoutMarkup(
       const { column, factor: chipFactor } = chipsPlan(layout.items, frameCtx.frame);
       // A spine of chips is about 155 px (hub and stem) plus 94 px a chip and 18 px between at 1080: it
       // shrinks to the height the card leaves it, like a checklist.
-      const k = column ? Math.min(1, layoutHeight(ctx) / ((155 + n * 94 + (n - 1) * 18) * ctx.scale)) : 1;
+      // A row is the hub (about 100 px), the stem and drops (100 px) and one line of chip at 1080.
+      const rowH = 200 + chipFactor * body.sizeAt1080 * body.lineHeight + 38;
+      const k = Math.min(1, layoutHeight(ctx) / ((column ? 155 + n * 94 + (n - 1) * 18 : rowH) * ctx.scale));
       const c = k < 1 ? { ...ctx, scale: ctx.scale * k } : ctx;
       const line = tint("foreground", 45);
       const stroke = px(c, 4);
@@ -522,7 +550,15 @@ export function renderLayoutMarkup(
       rule(".lo-counter", ["display: flex;", "flex-direction: column;", "align-items: center;"]);
       const chars = target.length + (layout.prefix?.length ?? 0) + (layout.suffix?.length ?? 0);
       rule(".lo-num", [
-        ...fontCss(ctx, TEXT_STYLES.display, fitFactor(ctx, TEXT_STYLES.display, 1.5, chars, width)),
+        ...fontCss(
+          ctx,
+          TEXT_STYLES.display,
+          // The label takes about 73 px at 1080 under the number.
+          Math.min(
+            fitFactor(ctx, TEXT_STYLES.display, 1.5, chars, width),
+            displayFactorFor(layoutHeight(ctx), layout.label ? 73 : 0, 1.15, ctx.scale),
+          ),
+        ),
         "line-height: 1.15;",
         "display: flex;",
         "align-items: flex-end;",
@@ -581,7 +617,7 @@ export function renderLayoutMarkup(
         "flex-direction: column;",
         "justify-content: space-between;",
         `gap: ${px(ctx, 20)};`,
-        `min-height: ${px(ctx, portrait(ctx) ? 200 : 260)};`,
+        `min-height: ${Math.round(Math.min((portrait(ctx) ? 200 : 260) * ctx.scale, layoutHeight(ctx) * 0.8))}px;`,
         `padding: ${px(ctx, 26)};`,
         `border-radius: ${px(ctx, 24)};`,
         `border: ${px(ctx, 3)} solid ${tint("foreground", 16)};`,
@@ -611,7 +647,7 @@ export function renderLayoutMarkup(
     case "swatches": {
       const n = layout.items.length;
       const cols = portrait(ctx) && n > 3 ? 3 : n;
-      const size = Math.min(Math.round(220 * ctx.scale), Math.floor((width * 0.9) / cols - 24 * ctx.scale));
+      const size = swatchSize(n, cols, width, layoutHeight(ctx), ctx.scale);
       rule(".lo-swatches", [
         "display: grid;",
         `grid-template-columns: repeat(${cols}, auto);`,
@@ -645,7 +681,11 @@ export function renderLayoutMarkup(
         ...fontCss(
           ctx,
           TEXT_STYLES.display,
-          fitFactor(ctx, TEXT_STYLES.display, 1.6, layout.value.length, width),
+          // The rule and the label take about 118 px at 1080 under the value.
+          Math.min(
+            fitFactor(ctx, TEXT_STYLES.display, 1.6, layout.value.length, width),
+            displayFactorFor(layoutHeight(ctx), 118, 1.1, ctx.scale),
+          ),
         ),
         "line-height: 1.1;",
         "white-space: nowrap;",
@@ -1154,7 +1194,7 @@ export function renderLayoutMarkup(
     }
     case "usage": {
       const words = uiWords(ctx.language);
-      const w = Math.round(width * (portrait(ctx) ? 0.94 : 0.7));
+      const w = Math.round(width * (portrait(ctx) ? 0.94 : 0.86));
       // The count steps keep the used amount's decimals, so its width holds still as it counts.
       const amount = (v: number, decimals = decimalsOf(layout.used)) =>
         `${layout.prefix ?? ""}${formatAmount(v, decimals, ctx.language)}${layout.suffix ? `\u200a${layout.suffix}` : ""}`;

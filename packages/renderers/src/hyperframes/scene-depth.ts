@@ -57,7 +57,19 @@ function cameraKeys(move: CameraMove, depth: number, width: number): [Vars, Vars
 export const cameraScales = (move: CameraMove | undefined) =>
   move === "push-in" || move === "pull-back" || move === "parallax";
 
-/** The camera move over the whole scene: every plane from its start to its end pose, eased in and out. */
+/** How long the closing call-to-action card holds still at its end, so the brand and URL can be read. */
+export const CTA_HOLD_MS = 1500;
+
+/**
+ * How long the scene's ambient motion (camera, motif) runs: the whole scene, except on the CTA card, which
+ * settles `CTA_HOLD_MS` before its end (never sooner than half way through).
+ */
+export const ambientMs = (scene: Pick<Scene, "role" | "durationMs">): number =>
+  scene.role === "cta"
+    ? Math.max(Math.floor(scene.durationMs / 2), scene.durationMs - CTA_HOLD_MS)
+    : scene.durationMs;
+
+/** The camera move over the whole scene (see `ambientMs`): every plane from its start to its end pose, eased in and out. */
 export function writeCamera(
   w: TimelineWriter,
   prefix: string,
@@ -67,7 +79,7 @@ export function writeCamera(
 ): void {
   const move = scene.camera ?? "static";
   const depth = DEPTH[move === "parallax" ? "parallax" : "normal"];
-  const d = seconds(scene.durationMs);
+  const d = seconds(ambientMs(scene));
   for (const plane of ["back", "underlay", "content", "front"] as const) {
     if (!planes.has(plane)) continue;
     const keys = cameraKeys(move, depth[plane], frame.width);
@@ -279,7 +291,7 @@ export function compileDepth(
     };
     const from = pose(input.sceneIndex);
     const to = pose(input.sceneIndex + 1);
-    w.fromTo(`#${id}`, from, { ...to, duration: seconds(scene.durationMs), ease: "sine.inOut" }, 0);
+    w.fromTo(`#${id}`, from, { ...to, duration: seconds(ambientMs(scene)), ease: "sine.inOut" }, 0);
     motif = `<div id="${id}" class="motif"></div>`;
   }
 
