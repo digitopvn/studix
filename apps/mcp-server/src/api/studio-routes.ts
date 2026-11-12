@@ -1,6 +1,7 @@
 import {
   assertPermission,
   FeedbackInput,
+  JobTraceInput,
   jobAgent,
   PlannerSelection,
   PROJECT_STATUSES,
@@ -245,6 +246,27 @@ export function studioRoutes(deps: AppDeps, artifacts: ArtifactUrlDeps): Router 
       deps.repos.activity.list(ctx, { jobId: job.id, limit: 100 }),
     ]);
     res.json({ job: view, activity: activity.items });
+  });
+
+  // Same input and output as the studix_job_trace tool; query values are strings, so numbers are coerced.
+  router.get("/jobs/:jobId/trace", async (req, res) => {
+    const { ctx } = sessionOf(res);
+    const q = req.query;
+    const text = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
+    const int = (v: unknown) => (text(v) !== undefined ? Number(v) : undefined);
+    const input = parseBody(
+      JobTraceInput,
+      {
+        jobId: idParam(req, "jobId"),
+        stage: text(q.stage),
+        attempt: int(q.attempt),
+        view: text(q.view),
+        cursor: text(q.cursor),
+        limit: int(q.limit),
+      },
+      "trace query",
+    );
+    res.json(await deps.studio.getJobTrace(ctx, input));
   });
 
   router.post("/jobs/:jobId/cancel", async (req, res) => {

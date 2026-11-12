@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<!--
+  Studix director shell, version 1 (HyperFrames + GSAP).
+  Extracted from the ak-motion-video index skeleton and its film helpers, kept generic. Studix fills every
+  marker below (director-shell.ts); agent-written scene fragments only ever land between the SCENE markers.
+  Timing comes from window.TIMING: no wall clock, no requestAnimationFrame, no CSS animation.
+-->
+<html lang="en" data-ratio="__STUDIX_RATIO__">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=__STUDIX_W__, height=__STUDIX_H__">
+    <title>Studix scene</title>
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      /*FONTS:BEGIN*/ /*FONTS:END*/
+      /*THEME:BEGIN*/ /*THEME:END*/
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: var(--bg); }
+      #root { position: relative; width: var(--W); height: var(--H); overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-weight: 500; }
+      .layer { position: absolute; left: 0; top: 0; width: var(--W); height: var(--H); }
+      .abs { position: absolute; }
+      .cam { position: absolute; left: 0; top: 0; width: var(--W); height: var(--H); transform-origin: 50% 50%; }
+      .scene { opacity: 0; visibility: hidden; }
+      .hl, .split { font-family: var(--font-heading); }
+      .hl .w, .split .w { display: inline-block; }
+      .mask { overflow: hidden; }
+      .sweep { position: absolute; top: 0; bottom: 0; left: 0; width: 120px; opacity: 0; background: linear-gradient(90deg, transparent, var(--ink), transparent); pointer-events: none; }
+      .ripple { position: absolute; left: 50%; top: 50%; width: 96px; height: 96px; border-radius: 50%; border: 2px solid var(--ink); opacity: 0; pointer-events: none; }
+      .draw { stroke-dasharray: 1; stroke-dashoffset: 1; }
+      .odo { display: inline-flex; font-variant-numeric: tabular-nums; }
+      .odo-d { display: inline-block; height: 1em; line-height: 1; overflow: hidden; }
+      .odo-s { display: block; }
+      .odo-s i { display: block; height: 1em; font-style: normal; }
+      #flash { background: var(--ink); opacity: 0; pointer-events: none; }
+      #fade { background: #000; opacity: 0; pointer-events: none; }
+      /* captions: the bottom band is theirs alone, nothing else may live there */
+      .cap { position: absolute; left: 0; width: var(--W); bottom: var(--cap-bottom); display: flex; justify-content: center; }
+      .cap-box { max-width: calc(var(--W) - 160px); padding: 10px 26px; border-radius: 16px; background: color-mix(in srgb, var(--bg) 72%, transparent); font: 600 var(--cap-size)/1.3 var(--font-body); text-align: center; }
+      .cw { color: var(--mute); }
+      .cw.on { color: var(--ink); }
+      /*SCENE-CSS:BEGIN*/ /*SCENE-CSS:END*/
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="__STUDIX_DURATION__" data-fps="__STUDIX_FPS__" data-width="__STUDIX_W__" data-height="__STUDIX_H__">
+      <div id="bg" class="layer"></div>
+      <div id="pulse" class="layer">
+        <div id="stage" class="layer">
+          <!--SCENES:BEGIN--><!--SCENES:END-->
+        </div>
+      </div>
+      <div id="flash" class="layer"></div>
+      <div id="captions" class="layer"></div>
+      <div id="fade" class="layer"></div>
+    </div>
+
+    <script>/*TIMING:BEGIN*/window.TIMING=null;/*TIMING:END*/</script>
+    <script>
+      (() => {
+        const T = window.TIMING;
+        const tl = gsap.timeline({ paused: true });
+        // Registered last: a scene that throws leaves no timeline, so the render fails instead of shipping a blank scene.
+        const register = () => {
+          window.__timelines = window.__timelines || {};
+          window.__timelines["main"] = tl;
+        };
+
+        // ---------- lookups: every time comes from TIMING, never from the wall clock ----------
+        const $ = (s, r = document) => r.querySelector(s);
+        const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+        const SC = T.scenes;
+        const FR = 1 / T.fps; // one frame
+        const B = (n) => T.beat0 + T.beatLen * n; // time of quarter note n
+        const isKick = (n) => T.kick.some(([a, b]) => n >= a && n < b);
+        const hit = (sid, word, nth) => {
+          const h = SC[sid].lines.flatMap((l) => l.words).filter((w) => w[0] === word)[nth - 1];
+          if (!h) console.warn(`[timing] "${word}" #${nth} missing in ${sid}`);
+          return h;
+        };
+        const W = (sid, word, nth = 1) => (hit(sid, word, nth) || [0, SC[sid].start])[1]; // word onset
+        const WE = (sid, word, nth = 1) => (hit(sid, word, nth) || [0, 0, SC[sid].start])[2]; // word end
+        // handoff: the rect the carried motif leaves a scene at (`exit`) or enters it at (`enter`), from the director
+        const handoff = (sid, side = "exit") => (T.handoff && T.handoff[sid] && T.handoff[sid][side]) || null;
+        // seeded PRNG: Math.random would make every render different
+        const rng = (seed) => () => {
+          seed = (seed + 0x6d2b79f5) | 0;
+          let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+
+        // ---------- build the DOM before any tween ----------
+        // headline words become .w spans for staggered entrances; inline accents (<em>, <b>) keep their tag
+        const splitWords = (el) =>
+          Array.from(el.childNodes).forEach((n) => {
+            if (n.nodeType === 1) return n.namespaceURI === "http://www.w3.org/2000/svg" ? undefined : splitWords(n);
+            if (n.nodeType !== 3) return;
+            const frag = document.createDocumentFragment();
+            n.textContent.split(/([ \t\r\n]+)/).forEach((p) => {
+              if (!p) return;
+              if (/^[ \t\r\n]+$/.test(p)) return frag.append(" ");
+              const s = document.createElement("span");
+              s.className = "w";
+              s.textContent = p;
+              frag.append(s);
+            });
+            n.replaceWith(frag);
+          });
+        $$(".hl, .split").forEach(splitWords);
+        // odometer: <span class="odo" data-value="40%"></span> gets one 0-9 reel per digit
+        $$(".odo").forEach((o) => {
+          o.setAttribute("data-layout-allow-overflow", ""); // reels clip on purpose
+          const reel = Array.from({ length: 20 }, (_, i) => `<i>${i % 10}</i>`).join("");
+          o.innerHTML = Array.from(o.dataset.value ?? "").map((ch) => (/\d/.test(ch) ? `<span class="odo-d"><span class="odo-s">${reel}</span></span>` : `<span>${ch}</span>`)).join("");
+        });
+
+        // ---------- animation vocabulary ----------
+        const pop = (e, t, o = {}) => tl.fromTo(e, { autoAlpha: 0, scale: o.from ?? 0.4 }, { autoAlpha: 1, scale: 1, duration: o.d ?? 0.45, ease: o.ease ?? "back.out(2.2)", stagger: o.stagger ?? 0 }, Math.max(0, t));
+        const rise = (e, t, o = {}) => tl.fromTo(e, { autoAlpha: 0, y: o.y ?? 40 }, { autoAlpha: 1, y: 0, duration: o.d ?? 0.5, ease: o.ease ?? "power3.out", stagger: o.stagger ?? 0 }, Math.max(0, t));
+        const draw = (e, t, d = 0.6, ease = "power2.inOut") => tl.fromTo(e, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: d, ease, autoRound: false }, Math.max(0, t));
+        const slideX = (e, t, o = {}) => tl.fromTo(e, { autoAlpha: 0, x: o.x ?? -80 }, { autoAlpha: 1, x: 0, duration: o.d ?? 0.5, ease: o.ease ?? "expo.out", stagger: o.stagger ?? 0 }, Math.max(0, t));
+        const flipIn = (e, t, o = {}) => tl.fromTo(e, { autoAlpha: 0, rotationX: o.rot ?? -80, transformPerspective: 1200, transformOrigin: "50% 100%" }, { autoAlpha: 1, rotationX: 0, duration: o.d ?? 0.6, ease: o.ease ?? "back.out(1.4)", stagger: o.stagger ?? 0 }, Math.max(0, t));
+        const fadeOut = (e, t, o = {}) => tl.to(e, { autoAlpha: 0, y: o.y ?? 0, duration: o.d ?? 0.3, ease: "power2.in" }, Math.max(0, t));
+        // bump: a quick scale accent on a word or a beat
+        const bump = (e, t, o = {}) => {
+          tl.to(e, { scale: o.s ?? 1.08, duration: 0.08, ease: "power2.out" }, Math.max(0, t));
+          tl.to(e, { scale: 1, duration: 0.3, ease: "power2.out" }, Math.max(0, t) + 0.08);
+        };
+        // typeIn: stepped clip reveal, one step per character
+        const typeIn = (e, t, o = {}) => {
+          const el = typeof e === "string" ? $(e) : e;
+          const n = Math.max(1, el.textContent.replace(/\s+/g, " ").trim().length), d = o.d ?? n * 0.035;
+          tl.fromTo(el, { clipPath: "inset(-20% 100% -20% 0%)" }, { clipPath: "inset(-20% 0% -20% 0%)", duration: d, ease: `steps(${n})` }, Math.max(0, t));
+          tl.set(el, { clipPath: "none" }, Math.max(0, t) + d);
+        };
+        // typeWords: reveal the .w spans of a .split element one by one, `each` seconds apart (a 16th note is T.beatLen / 4)
+        const typeWords = (e, t, each) => {
+          const el = typeof e === "string" ? $(e) : e, ws = $$(".w", el);
+          ws.forEach((w, i) => tl.fromTo(w, { autoAlpha: 0, y: 6 }, { autoAlpha: 1, y: 0, duration: 0.12, ease: "power3.out" }, Math.max(0, t) + i * each));
+        };
+        // odo: reels roll into the value from data-value; the last digit spins one extra turn
+        const odo = (e, t, o = {}) => {
+          const el = typeof e === "string" ? $(e) : e;
+          const digits = Array.from(el.dataset.value ?? "").filter((c) => /\d/.test(c)).map(Number);
+          $$(".odo-s", el).forEach((s, i) => {
+            const idx = digits[i] + (i === digits.length - 1 ? 10 : 0);
+            tl.fromTo(s, { yPercent: 0 }, { yPercent: -idx * 5, duration: (o.d ?? 1.1) + i * 0.08, ease: o.ease ?? "power3.out" }, Math.max(0, t));
+          });
+        };
+        // envKeys: keyframes from the voice envelope (0..1 per frame); flat when the job has no envelope
+        const envKeys = (e, t0, t1, step, map) => {
+          for (let t = t0; t < t1; t += step) {
+            const v = T.env[Math.min(T.env.length - 1, Math.round(t * T.fps))] ?? 0;
+            tl.to(e, { ...map(v), duration: step, ease: "none" }, t);
+          }
+        };
+        // slam: lands oversized and blurred on t, squashes, settles. { soft: true } for calmer styles
+        const slam = (e, t, o = {}) => {
+          const q = o.soft ? 0.5 : 1, t0 = Math.max(0, t - (o.d ?? 0.22)); // a tween before 0 would shift the whole timeline
+          tl.fromTo(e, { autoAlpha: 0, scale: o.from ?? (o.soft ? 1.25 : 1.6), filter: `blur(${12 * q}px)` }, { autoAlpha: 1, scale: 1 - 0.06 * q, filter: "blur(0px)", duration: Math.max(FR, t - t0), ease: "expo.in" }, t0);
+          tl.to(e, { scaleX: 1 + 0.06 * q, scaleY: 1 - 0.08 * q, duration: 3 * FR, ease: "power2.out" }, Math.max(t0 + FR, t));
+          tl.to(e, { scaleX: 1, scaleY: 1, duration: 0.5, ease: o.soft ? "back.out(1.4)" : "elastic.out(1, 0.45)" }, Math.max(t0 + FR, t) + 3 * FR);
+          tl.set(e, { filter: "none" }, Math.max(t0 + FR, t) + 4 * FR);
+        };
+        // smear: fast travel with skew (motion blur without a filter), then a damped settle
+        const smear = (e, t, o = {}) => {
+          const dx = o.dx ?? -260;
+          tl.fromTo(e, { autoAlpha: 0, x: dx, skewX: dx < 0 ? -18 : 18 }, { autoAlpha: 1, x: 0, skewX: 0, duration: o.d ?? 0.34, ease: "expo.out", stagger: o.stagger ?? 0 }, Math.max(0, t));
+        };
+        // lineIn: words rise out of an overflow:hidden .mask line with overlap
+        const lineIn = (e, t, o = {}) => tl.fromTo(e, { yPercent: 110, rotate: o.rot ?? 4 }, { yPercent: 0, rotate: 0, duration: o.d ?? 0.6, ease: "expo.out", stagger: { each: o.each ?? 0.06, ease: "power1.in" } }, Math.max(0, t));
+        // settleCam: slow camera push over a hold so no frame is dead (finite, seek-safe)
+        const settleCam = (e, t0, t1, amt = 0.035) => tl.fromTo(e, { scale: 1 }, { scale: 1 + amt, duration: Math.max(0.1, t1 - t0), ease: "none" }, Math.max(0, t0));
+        // shake: seeded and decaying; x/y only so layout never reflows. High-energy styles only
+        const shake = (e, t, o = {}) => {
+          const r = rng(o.seed ?? 7), n = o.n ?? 6, amp = o.amp ?? 14;
+          for (let i = 0; i < n; i++) {
+            const k = amp * (1 - i / n);
+            tl.to(e, { x: (r() - 0.5) * 2 * k, y: (r() - 0.5) * 2 * k, duration: FR, ease: "none" }, Math.max(0, t) + i * FR);
+          }
+          tl.to(e, { x: 0, y: 0, duration: 2 * FR, ease: "power2.out" }, Math.max(0, t) + n * FR);
+        };
+        // flash: ink flash on the shared #flash layer, stepped per frame; explicit values so any seek order renders the same
+        const flash = (t, vals = [0.3, 0.18, 0.1, 0.05]) => {
+          const f0 = Math.ceil(t / FR - 1e-6) * FR, seq = [...vals, 0];
+          seq.forEach((v, k) => {
+            const at = Math.max(0, k === 0 ? t : f0 + (k - 0.5) * FR);
+            tl.fromTo("#flash", { opacity: k === 0 ? 0 : seq[k - 1] }, { opacity: v, duration: 0.001, ease: "none", immediateRender: false }, at);
+          });
+        };
+        // press: scales 0.96 for 3 frames, then back
+        const press = (e, t, o = {}) => {
+          const dn = o.y != null ? { y: o.y } : { scale: 0.96 }, up = o.y != null ? { y: 0 } : { scale: 1 };
+          tl.fromTo(e, up, { ...dn, duration: 0.04, ease: "power2.out", immediateRender: false }, Math.max(0, t));
+          tl.fromTo(e, dn, { ...up, duration: 0.14, ease: "power2.out", immediateRender: false }, Math.max(0, t) + 3 * FR);
+        };
+        // ripple: a hairline circle inside el grows and fades in 0.25 s (the .ripple child is made here, before playback)
+        const ripple = (e, t) => {
+          const el = typeof e === "string" ? $(e) : e;
+          let r = $(".ripple", el);
+          if (!r) { r = document.createElement("div"); r.className = "ripple"; el.append(r); gsap.set(r, { xPercent: -50, yPercent: -50 }); }
+          tl.fromTo(r, { scale: 0, opacity: 0.9 }, { scale: 1, opacity: 0, duration: 0.25, ease: "power2.out", immediateRender: false }, Math.max(0, t));
+        };
+        // sweep: a light bar crosses the masked parent of a .sweep child in d s
+        const sweep = (e, t, d = 0.45) => {
+          const el = typeof e === "string" ? $(e) : e, sw = el.classList.contains("sweep") ? el : $(".sweep", el);
+          const w = (sw.parentElement && sw.parentElement.offsetWidth) || 600;
+          tl.fromTo(sw, { x: -160 }, { x: w + 40, duration: d, ease: "power2.inOut", immediateRender: false }, Math.max(0, t));
+          tl.fromTo(sw, { opacity: 0 }, { opacity: 0.22, duration: d * 0.3, ease: "power1.out", immediateRender: false }, Math.max(0, t));
+          tl.fromTo(sw, { opacity: 0.22 }, { opacity: 0, duration: d * 0.4, ease: "power1.in", immediateRender: false }, Math.max(0, t) + d * 0.6);
+        };
+        // morphRect: tween left/top/width/height/borderRadius between {x,y,w,h,r} rects (px; or {cx,cy,w,h,r} by centre)
+        const norm = (r) => ({ left: r.cx != null ? r.cx - r.w / 2 : r.x, top: r.cy != null ? r.cy - r.h / 2 : r.y, width: r.w, height: r.h, borderRadius: r.r ?? 0 });
+        const morphRect = (e, from, to, t, d = 0.4, ease = "expo.inOut") => tl.fromTo(e, norm(from), { ...norm(to), duration: d, ease, immediateRender: false }, Math.max(0, t));
+        // camTo: reframe a .cam group (x, y, s = scale); call it in time order per camera
+        const camState = new Map();
+        const camTo = (cam, t, o = {}) => {
+          const el = typeof cam === "string" ? $(cam) : cam, prev = o.from ?? camState.get(el) ?? { x: 0, y: 0, s: 1 };
+          const next = { x: o.x ?? prev.x, y: o.y ?? prev.y, s: o.s ?? prev.s };
+          camState.set(el, next);
+          return tl.fromTo(el, { x: prev.x, y: prev.y, scale: prev.s }, { x: next.x, y: next.y, scale: next.s, duration: o.d ?? 0.4, ease: o.ease ?? "expo.inOut", immediateRender: false }, Math.max(0, t));
+        };
+        // drift: finite eased hold drift for parallax layers
+        const drift = (e, t0, t1, o = {}) => tl.fromTo(e, { x: o.from?.x ?? 0, y: o.from?.y ?? 0, scale: o.from?.s ?? 1 }, { x: o.x ?? 0, y: o.y ?? 0, scale: o.s ?? 1, duration: Math.max(0.1, t1 - t0), ease: "power1.inOut", immediateRender: false }, Math.max(0, t0));
+
+        // ---------- beat reaction: the stage breathes on kick downbeats ----------
+        for (let n = 0; B(n) < T.duration && n < T.outroBeat; n++) {
+          if (B(n) < 0 || !isKick(n) || n % 4) continue;
+          tl.to("#pulse", { scale: 1.01, duration: 0.05, ease: "power1.out" }, B(n));
+          tl.to("#pulse", { scale: 1, duration: 0.33, ease: "power2.out" }, B(n) + 0.05);
+        }
+
+        // ---------- scene windows: each section is visible from its start to the next one's; fragments own their handoff motion ----------
+        const WIN = $$("#stage > section.scene[data-sid]").map((sc) => [sc, sc.dataset.sid]).filter(([, sid]) => SC[sid]);
+        WIN.forEach(([sc, sid], i) => {
+          tl.set(sc, { autoAlpha: 1 }, Math.max(0, SC[sid].start));
+          if (i < WIN.length - 1) tl.set(sc, { autoAlpha: 0 }, SC[WIN[i + 1][1]].start);
+        });
+        T.drops.forEach((n) => { if (B(n) > 0 && B(n) < T.duration) flash(B(n)); });
+
+        // ---------- per-scene choreography: Studix splices one guarded block per fragment ----------
+        /*SCENE-JS:BEGIN*/ /*SCENE-JS:END*/
+
+        // ---------- karaoke captions: one chunk at a time, read words in ink ----------
+        const capLayer = $("#captions");
+        T.captions.forEach((c) => {
+          const cap = document.createElement("div");
+          cap.className = "cap";
+          const box = document.createElement("div");
+          box.className = "cap-box";
+          const spans = c.words.map(([txt], j) => {
+            if (j) box.append(" ");
+            const s = document.createElement("span");
+            s.className = "cw";
+            s.textContent = txt;
+            box.append(s);
+            return s;
+          });
+          cap.append(box);
+          capLayer.append(cap);
+          tl.fromTo(cap, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.14, ease: "power2.out" }, Math.max(0, c.start));
+          tl.to(cap, { autoAlpha: 0, duration: 0.12, ease: "power1.in" }, Math.max(c.start + 0.3, c.end - 0.12));
+          c.words.forEach(([, s], j) => tl.set(spans[j], { className: "cw on" }, Math.max(0, s)));
+        });
+
+        // ---------- film edges: only a whole film fades in from and out to black ----------
+        if (T.options.fadeIn) tl.fromTo("#fade", { opacity: 1 }, { opacity: 0, duration: 0.3 }, 0);
+        if (T.options.fadeOut) tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: 1.0, ease: "power1.in", immediateRender: false }, Math.max(0, T.duration - 1.0));
+        tl.set({}, {}, T.duration); // pin the timeline length to the video duration
+        register();
+      })();
+    </script>
+  </body>
+</html>

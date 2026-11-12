@@ -11,7 +11,7 @@ import {
   abortReason,
   createBoundedAgentRuntime,
   emitAgentEvent,
-  eventText,
+  toolResultText,
   withSpend,
 } from "./bounded-agent-runtime.ts";
 import {
@@ -124,7 +124,7 @@ export function claudeStreamEventsOf(line: string, names: Map<string, string>): 
         id: b.tool_use_id,
         name: names.get(b.tool_use_id) ?? "tool",
         ok: b.is_error !== true,
-        result: eventText(content),
+        result: toolResultText(content),
       });
     }
   }

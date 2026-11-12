@@ -1,4 +1,5 @@
 export * from "./agent-handoff.ts";
+export * from "./agent-trace.ts";
 export * from "./asset.ts";
 export * from "./common.ts";
 export * from "./external-skill.ts";

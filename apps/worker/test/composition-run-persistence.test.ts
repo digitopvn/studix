@@ -39,6 +39,7 @@ class FakeFs {
 function fakeSandbox(scripts: Map<string, Script>): SkillSandbox {
   return {
     status: () => ({}) as never,
+    allows: () => true,
     forStage: () =>
       ({
         async open() {

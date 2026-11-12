@@ -8,6 +8,7 @@ import {
   VideoIRPatch,
 } from "@studix/video-ir";
 import { z } from "zod";
+import type { AgentTraceReader } from "../entities/agent-trace.ts";
 import type { Job, JobStatus, StageStatus } from "../entities/job.ts";
 import type { JobAgentView } from "../entities/job-agent.ts";
 import { AGENT_RUNTIMES, REASONING_EFFORTS } from "../entities/model-preference.ts";
@@ -34,6 +35,7 @@ export const STUDIX_TOOLS = {
   inspect: "studix_inspect",
   createVideo: "studix_create_video",
   getJob: "studix_get_job",
+  jobTrace: "studix_job_trace",
   retryJob: "studix_retry_job",
   getProject: "studix_get_project",
   approve: "studix_approve",
@@ -75,6 +77,8 @@ export interface StudioServiceDeps {
   providerConnections?: { get(ctx: TenantContext, id: string): Promise<{ label: string } | undefined> };
   /** Checks an upstream job before `attachMediaJob` records it; without one, attaching is refused. */
   providerJobs?: ProviderJobInspector;
+  /** Stored agent session traces (`readJobTrace`); without it the trace tool answers UNAVAILABLE. */
+  traces?: AgentTraceReader;
   approvalPolicy: ApprovalPolicy;
   clock: Clock;
   logger?: Logger;
@@ -125,8 +129,9 @@ export type JobAgentSelection = z.infer<typeof JobAgentSelection>;
  * Optional role agents of a job, each on its own runtime, model and effort. In an agent-authored job
  * (`skill-agent`) the director writes the script and direction, the builder makes the video, QA scores it
  * against a rubric and may send it back to the builder; a role left out runs on `agent` (builder) or is skipped
- * (director, qa). In `motion-graphic` a director turns on the premium tier: it writes the storyboard and may
- * author hero cards in custom HTML.
+ * (director, qa). In `motion-graphic` a director turns on the premium tier: it writes the storyboard, may
+ * author hero cards in custom HTML and, on a worker with a skill sandbox, writes the film's direction brief
+ * while the builder authors the hook scene on the director shell.
  */
 export const AGENT_ROLES = ["director", "builder", "qa"] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
@@ -141,8 +146,8 @@ export type JobAgentRoles = z.infer<typeof JobAgentRoles>;
 
 /** The agent stage names each role runs, across the packs that have role agents. */
 export const ROLE_STAGES: Readonly<Record<AgentRole, readonly string[]>> = {
-  director: ["skill-agent.director", "motion-graphic.storyboard"],
-  builder: ["skill-agent.run"],
+  director: ["skill-agent.director", "motion-graphic.storyboard", "motion-graphic.direction"],
+  builder: ["skill-agent.run", "motion-graphic.scene-build"],
   qa: ["skill-agent.qa"],
 };
 
@@ -363,6 +368,10 @@ export interface StageView {
   review?: StageReviewView;
   /** What the attempt ran on and spent; absent while a stage runs and has booked nothing yet. */
   run?: StageRunView;
+  /** Last real work of a running agent stage (its heartbeat writes it); absent for stages that report none. */
+  lastActivityAt?: Date;
+  /** Set on a running stage with no activity for `STAGE_STALL_MS`: it may be hung. Read its trace. */
+  stalled?: boolean;
 }
 
 export interface ApprovalView {
