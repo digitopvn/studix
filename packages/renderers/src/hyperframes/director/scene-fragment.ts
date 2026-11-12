@@ -55,7 +55,8 @@ export const SCENE_FRAGMENT_HELPERS: Readonly<Record<string, string>> = {
   "bump / press / ripple / sweep (e, t)":
     "accents: scale pulse, press, hairline ripple, light bar over a .sweep",
   "settleCam(e, t0, t1, amt) / camTo(e, t, {x,y,s}) / drift(e, t0, t1, {x,y,s})":
-    "camera moves on .cam groups",
+    "camera moves on .cam groups. settleCam amt is a scale fraction 0.02-0.06 (0.035 = +3.5%, never a " +
+    "percent); camTo/drift s is a scale where 1 = no zoom, at most 1.12",
   "morphRect(e, from, to, t, d)": "tween left/top/width/height/radius between {x,y,w,h,r} rects",
   "fadeOut(e, t) / flash(t) / shake(e, t)": "exits and punctuation (flash and shake for drops only)",
   "rng(seed)": "seeded random numbers; Math.random is not allowed",

@@ -8,6 +8,7 @@ import type { StageContext } from "@studix/workflow";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { motionGraphicHeroesStage } from "../src/motion-graphic/motion-graphic-heroes.ts";
 import {
+  headlineOnlyProblem,
   MG_STORYBOARD_STAGE,
   type MotionStoryboard,
   premiumDirector,
@@ -206,5 +207,31 @@ describe("motion-graphic hero cards", () => {
     const { s } = stage(ir, []);
     const result = await motionGraphicHeroesStage.run(s);
     expect((result.output as { ir: VideoIR }).ir).toEqual(ir);
+  });
+
+  it("gives a headline-only message card a stat from its figure, and asks again when it names none", () => {
+    const sb = storyboard("glass-keynote");
+    const withFigure: MotionStoryboard = {
+      ...sb,
+      beats: sb.beats.map((b, i) =>
+        i === 1
+          ? { ...b, onScreen: "Predictable budget", voiceover: "Every job costs under $5, every time." }
+          : b,
+      ),
+    };
+    const settled = settledStoryboard(brief(), withFigure, false);
+    expect(settled.beats[1]?.layout).toEqual({
+      kind: "stat",
+      value: "$5",
+      label: "Every job costs under $5, every time.",
+    });
+    // The hook and the call to action stay as the agent wrote them.
+    expect(settled.beats[0]?.layout).toBeUndefined();
+    expect(settled.beats[2]?.layout).toBeUndefined();
+    expect(headlineOnlyProblem(settled)).toBeUndefined();
+    // A lone digit is not a fact: the card stays bare and the agent is asked for a layout.
+    const bare = settledStoryboard(brief(), sb, false);
+    expect(bare.beats[1]?.layout).toBeUndefined();
+    expect(headlineOnlyProblem(bare)).toMatch(/^Beat 2 shows a headline alone/);
   });
 });

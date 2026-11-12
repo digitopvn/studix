@@ -53,6 +53,15 @@ function cameraKeys(move: CameraMove, depth: number, width: number): [Vars, Vars
   }
 }
 
+/** The front plane's largest scale and sideways travel (px) over a camera move. */
+function frontReach(move: CameraMove, width: number): { scale: number; pan: number } {
+  const keys = cameraKeys(move, DEPTH[move === "parallax" ? "parallax" : "normal"].front, width) ?? [];
+  return {
+    scale: Math.max(1, ...keys.map((k) => Number(k.scale ?? 1))),
+    pan: Math.max(0, ...keys.map((k) => Math.abs(Number(k.x ?? 0)))),
+  };
+}
+
 /** Whether a camera move scales the shots (and so how far it can push them toward the frame edge). */
 export const cameraScales = (move: CameraMove | undefined) =>
   move === "push-in" || move === "pull-back" || move === "parallax";
@@ -188,9 +197,15 @@ export function compileDepth(
     // Bokeh keeps to a ring just inside the visible frame: at least `BOKEH_INSET` from every edge (a dot on
     // the edge reads as a mistake), clear of the burned-caption band at the bottom, and away from the centre
     // where the headline sits. Positions are frame pixels, offset by the plane's overhang (`bleed`).
-    const top = BOKEH_INSET * frame.height;
-    const bottom = frame.height - Math.max(top, burnedCaptionBand(frame) + 0.02 * short);
-    const side = BOKEH_INSET * frame.width;
+    // The camera scales the front plane about the frame centre and pans it, so each visible bound is mapped
+    // back through the plane's widest pose: a dot that clears the margin there clears it at every moment.
+    const { scale, pan } = frontReach(scene.camera ?? "static", frame.width);
+    const unpush = (v: number, c: number) => c + (v - c) / scale;
+    const [cx, cy] = [frame.width / 2, frame.height / 2];
+    const inY = BOKEH_INSET * frame.height;
+    const top = unpush(inY, cy);
+    const bottom = unpush(frame.height - Math.max(inY, burnedCaptionBand(frame) + 0.02 * short), cy);
+    const side = unpush(BOKEH_INSET * frame.width + pan, cx);
     for (let i = 0; i < 5; i++) {
       const size = Math.round((0.06 + 0.08 * next()) * short);
       const span = (lo: number, hi: number) =>
