@@ -15,7 +15,7 @@ export interface ProcessResult {
 }
 
 /** Only what media binaries need; credentials in the worker environment never reach child processes. */
-function scrubbedEnv(): NodeJS.ProcessEnv {
+export function scrubbedEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SystemRoot"]) {
     if (process.env[key] !== undefined) env[key] = process.env[key];

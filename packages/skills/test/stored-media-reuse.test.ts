@@ -181,6 +181,15 @@ describe("reuse of paid media outputs", () => {
     expect(mediaOutputKey(t.stage("job_4"), named)).toBe(mediaOutputKey(unrouted.stage("job_4"), named));
   });
 
+  it("keeps a take reusable when a request also asks for its word timings", async () => {
+    const t = tenant();
+    const timed = line("job_2", { params: { language: "vi", instructions: "whisper", timestamps: true } });
+    expect(mediaOutputKey(t.stage("job_2"), timed)).toBe(mediaOutputKey(t.stage("job_2"), line("job_2")));
+    await generateStoredMedia(t.stage("job_1"), "dialogue", line("job_1"));
+    await generateStoredMedia(t.stage("job_2"), "dialogue", timed);
+    expect(t.calls).toHaveLength(1);
+  });
+
   it("neither looks up nor records a request that does not opt in", async () => {
     const t = tenant();
     const { reuse: _, ...plain } = line("job_1");

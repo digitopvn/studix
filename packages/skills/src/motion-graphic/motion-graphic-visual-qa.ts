@@ -2,7 +2,7 @@ import { access, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { writeContactSheet } from "@studix/renderers";
 import { toStudixError } from "@studix/shared";
-import { type AssetRef, CreativeBrief, resolveSceneSpans, VideoIR } from "@studix/video-ir";
+import { type AssetRef, CreativeBrief, resolveSceneSpans, type Shot, VideoIR } from "@studix/video-ir";
 import {
   createAgentStage,
   irOf,
@@ -152,6 +152,13 @@ const problemOf = (failed: readonly VisualCardScore[]) =>
     )
     .join("; ");
 
+const headlineOf = (shots: readonly Shot[]) =>
+  shots.find((sh) => sh.type === "title" || sh.type === "text" || sh.type === "cta");
+const layoutOf = (shots: readonly Shot[]) => shots.find((sh) => sh.type === "layout");
+/** As the voice stage reveals a layout: after its headline, and on screen this long before the card ends. */
+const LAYOUT_AFTER_HEADLINE_MS = 300;
+const LAYOUT_MIN_SHOWN_MS = 1500;
+
 /**
  * The IR with the cards in `cards` (from 1) drawn from `storyboard`, everything else kept: their scene
  * keeps its length, so the voice-over, captions, sound and every other card stay where they are. `options`
@@ -168,14 +175,28 @@ export function withRestyledCards(
   const scenes = ir.scenes.map((scene, i) => {
     const next = fresh.scenes[i];
     if (!cards.includes(i + 1) || !next) return scene;
+    const cardMs = scene.durationMs;
+    // The voice line is kept, so the headline and layout enter where the voice stage put them on its words;
+    // a layout the card did not have enters halfway through, after the headline and in time to be seen.
+    const before = { headline: headlineOf(scene.shots), layout: layoutOf(scene.shots) };
+    const after = { headline: headlineOf(next.shots), layout: layoutOf(next.shots) };
+    const headlineAt = before.headline?.startMs ?? after.headline?.startMs ?? 0;
+    const layoutAt = Math.max(
+      headlineAt,
+      Math.min(
+        before.layout?.startMs ?? Math.max(headlineAt + LAYOUT_AFTER_HEADLINE_MS, cardMs / 2),
+        cardMs - LAYOUT_MIN_SHOWN_MS,
+      ),
+    );
     return {
       ...scene,
       // The redesigned card's camera move (planned against its unchanged neighbours) goes with its shots.
       ...(next.camera ? { camera: next.camera } : {}),
-      shots: next.shots.map((shot) => ({
-        ...shot,
-        durationMs: Math.max(1, scene.durationMs - shot.startMs),
-      })),
+      shots: next.shots.map((shot) => {
+        const wanted = shot === after.headline ? headlineAt : shot === after.layout ? layoutAt : shot.startMs;
+        const startMs = Math.max(0, Math.min(Math.round(wanted), cardMs - 1));
+        return { ...shot, startMs, durationMs: cardMs - startMs };
+      }),
     };
   });
   return VideoIR.parse({ ...ir, scenes });

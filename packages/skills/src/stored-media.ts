@@ -11,6 +11,7 @@ import {
   type MediaKind,
   mediaExecutionRecord,
   type ProviderJobRef,
+  type SpokenWord,
 } from "@studix/core";
 import { StudixError, toStudixError } from "@studix/shared";
 import { type AssetMediaKind, type AssetRef, contentDigest, type VideoIR } from "@studix/video-ir";
@@ -23,6 +24,7 @@ import {
   sha256File,
   stageMediaDir,
 } from "@studix/workflow";
+import { storeWords } from "./spoken-words.ts";
 
 /** One media asset a pack stage generates and keeps in tenant storage. */
 export interface StoredMediaRequest {
@@ -76,6 +78,11 @@ export interface StoredMedia {
   filePath?: string;
   /** Set when an earlier job's stored output was reused: nothing was generated or charged. */
   reusedFrom?: { jobId?: string };
+  /**
+   * Word timings of a speech output, as the provider reported them for this call; kept next to the stored
+   * object (`storeWords`), so a take served from storage reads them back with `readStoredWords`.
+   */
+  words?: SpokenWord[];
 }
 
 /**
@@ -144,11 +151,21 @@ export function mediaRequest(
  * voice a speech route adds, and input files count by their digest. Undefined when the request does not opt
  * into reuse.
  */
+/**
+ * Parameters that ask the provider for something about the output (word timings) without changing the output
+ * itself: left out of reuse keys and fingerprints, so asking for them never pays again for a stored output.
+ */
+const UNKEYED_PARAMS: ReadonlySet<string> = new Set(["timestamps"]);
+const keyedParams = (params: Record<string, unknown> | undefined) =>
+  Object.fromEntries(Object.entries(params ?? {}).filter(([k]) => !UNKEYED_PARAMS.has(k)));
+
 export function mediaOutputKey(s: StageContext, request: ReuseRequest): string | undefined {
   if (!request.reuse) return undefined;
   const media = requireService(s, "media");
   const inputs = request.reuse.inputs ?? {};
-  const params = Object.fromEntries(Object.entries(request.params ?? {}).filter(([k]) => !(k in inputs)));
+  const params = Object.fromEntries(
+    Object.entries(keyedParams(request.params)).filter(([k]) => !(k in inputs)),
+  );
   const routed = {
     kind: request.kind,
     ...(request.model ? { model: request.model } : {}),
@@ -212,7 +229,7 @@ function requestFingerprint(s: StageContext, request: StoredMediaRequest): strin
     kind: request.kind,
     model,
     prompt: request.prompt,
-    params: request.params ?? {},
+    params: keyedParams(request.params),
   });
 }
 
@@ -551,8 +568,11 @@ export async function generateStoredMedia(
         });
       }
     }
+    // The timings stay with this take even when keeping a copy for later reuse fails.
+    const words = output.words ?? [];
+    if (words.length > 0) await storeWords(s, stored.key, output.filePath, words);
     if (reuseKey !== undefined) await s.mediaOutputs?.put(reuseKey, asset);
-    return { asset, filePath: output.filePath, usage };
+    return { asset, filePath: output.filePath, usage, ...(words.length > 0 ? { words } : {}) };
   } catch (err) {
     throw new StageFailedAfterSpend(toStudixError(err), [usage]);
   }

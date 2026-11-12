@@ -4,6 +4,7 @@ import { measureAudibleSpan } from "@studix/renderers";
 import { toStudixError } from "@studix/shared";
 import type { AssetRef, AudioTrack } from "@studix/video-ir";
 import { requireService, type StageContext, StageFailedAfterSpend, type StageUsage } from "@studix/workflow";
+import { readStoredWords, type SpokenWord } from "./spoken-words.ts";
 import { generateStoredMedia, hasStoredOutput, type StoredMediaRequest } from "./stored-media.ts";
 import {
   MAX_VOICE_DIRECTION_CHARS,
@@ -176,6 +177,8 @@ export interface MeasuredVoiceTake {
   usage: StageUsage[];
   /** The take is already the line's brisker re-take: reading it again would serve the same take. */
   retaken?: true;
+  /** Word timings on the take's own timeline, when the speech provider reported them. */
+  words?: SpokenWord[];
 }
 
 /** A take turned down by `accept`: billed, never stored or reused. */
@@ -206,8 +209,13 @@ async function voiceAndMeasure(
     return accept(lengthMs, probe.measured);
   });
   if ("rejected" in made) return { rejected: true, usage: [made.usage] };
+  let words = made.words;
   try {
-    if (!probe.checked) probe.measured = await measureStored(s, made.asset, workDir, measure);
+    if (!probe.checked) {
+      probe.measured = await measureStored(s, made.asset, workDir, measure);
+      // A take served from storage carries the timings its first call reported, kept next to it.
+      if (made.asset.storageKey) words = await readStoredWords(s, made.asset.storageKey, workDir);
+    }
   } catch (err) {
     throw new StageFailedAfterSpend(toStudixError(err), [made.usage]);
   }
@@ -216,6 +224,7 @@ async function voiceAndMeasure(
     asset: made.asset,
     lengthMs: made.asset.durationMs ?? measured?.durationMs,
     ...(measured ? { measured } : {}),
+    ...(words?.length ? { words } : {}),
     usage: [made.usage],
   };
 }
