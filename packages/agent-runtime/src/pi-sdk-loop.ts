@@ -22,6 +22,7 @@ import {
   emitAgentEvent,
   eventText,
 } from "./bounded-agent-runtime.ts";
+import { parseModelJson } from "./model-json-repair.ts";
 import { pinnedPiEndpoint } from "./opencode-go-catalog.ts";
 import type { PiBindingResolver, PiRunBinding, ReasoningEffort } from "./pi-binding.ts";
 import { estimatePiModel, findLivePiModel } from "./pi-live-models.ts";
@@ -82,11 +83,17 @@ function buildPrompt(task: BoundedAgentTask): string {
   return parts.join("\n\n");
 }
 
-/** Pull a JSON value out of a model reply, tolerating a markdown code fence around it. */
-export function parseModelJson(text: string): unknown {
-  const trimmed = text.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
-  return JSON.parse(fenced ? fenced[1]! : trimmed);
+/** Follow-up turns that ask the model to fix a reply that held no parseable JSON, before the run fails. */
+const JSON_REPAIR_RETRIES = 2;
+
+function jsonRetryPrompt(error: unknown, truncated: boolean): string {
+  const reason = error instanceof Error ? error.message : String(error);
+  return (
+    `Your last reply was not valid JSON (${reason.slice(0, 300)}). ` +
+    (truncated ? "It was cut off at the output limit, so keep the values shorter. " : "") +
+    "Reply again with exactly one complete JSON value that satisfies the schema, with no code fence, " +
+    "comments or text around it."
+  );
 }
 
 function throwIfAborted(task: BoundedAgentTask): void {
@@ -510,27 +517,46 @@ async function runAttempt(
       }
     });
 
-    await active.prompt(buildPrompt(task));
-    if (sandboxCap) throw sandboxCap;
-    throwIfAborted(task);
-    const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
-    if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");
-    if (reply.stopReason === "error" || reply.stopReason === "aborted") {
-      throw mapProviderFailure(reply.errorMessage, binding, retriedMs);
-    }
-    const text = reply.content
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => part.text)
-      .join("");
-    if (!task.outputSchema) return text;
-    try {
-      return parseModelJson(text);
-    } catch {
-      // A model answering badly is not a provider outage, so it must not move to a fallback.
-      throw new StudixError("VALIDATION", "The model did not return valid JSON", {
-        retryable: false,
-        details: { provider: binding.provider, modelId: binding.modelId },
-      });
+    let prompt = buildPrompt(task);
+    for (let retry = 0; ; retry++) {
+      await active.prompt(prompt);
+      if (sandboxCap) throw sandboxCap;
+      throwIfAborted(task);
+      const reply = [...active.messages].reverse().find((m) => m.role === "assistant");
+      if (reply?.role !== "assistant") throw new StudixError("PROVIDER_ERROR", "The model returned no reply");
+      if (reply.stopReason === "error" || reply.stopReason === "aborted") {
+        throw mapProviderFailure(reply.errorMessage, binding, retriedMs);
+      }
+      const text = reply.content
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+      if (!task.outputSchema) return text;
+      try {
+        return parseModelJson(text);
+      } catch (error) {
+        // Malformed JSON is transient: ask the same session again; every turn's spend is already counted.
+        if (retry < JSON_REPAIR_RETRIES) {
+          prompt = jsonRetryPrompt(error, reply.stopReason === "length");
+          continue;
+        }
+        // A model answering badly is not a provider outage, so it must not move to a fallback.
+        throw new StudixError(
+          "VALIDATION",
+          `The model did not return valid JSON after ${JSON_REPAIR_RETRIES + 1} attempts`,
+          {
+            retryable: true,
+            suggestedAction: "Retry the job, or pick a stronger model for this stage.",
+            details: {
+              // The paid run still stays retryable: a fresh run usually answers well-formed JSON.
+              retryableAfterSpend: true,
+              provider: binding.provider,
+              modelId: binding.modelId,
+              reason: error instanceof Error ? error.message.slice(0, 300) : String(error),
+            },
+          },
+        );
+      }
     }
   } finally {
     unsubscribe?.();
