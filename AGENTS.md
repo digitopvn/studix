@@ -32,6 +32,10 @@ labelled `ai-handle`.
   (merged). Before you start an issue, read its labels, assignees, comments and linked PRs. If it already
   has `in progress` or a later label, or an open PR, another session owns it: leave it alone, or comment
   there if you found something it needs.
+- While you work an issue, keep it current: when you start, assign the GitHub user you run as
+  (`gh issue edit <n> --add-assignee @me`) and add `in progress`. At each change of state, swap in the
+  matching label (`blocked`, `in review`, `done`, `shipped`) and remove the one it replaces, so the issue
+  always carries exactly one status label.
 - A new issue that you label `ai-handle` starts its own session. Either let that session fix it, or leave
   the label off and fix it yourself. Never do both.
 - A hotfix merged straight into `main` goes back into `dev` in the same session: merge `origin/main` into a
