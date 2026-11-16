@@ -437,7 +437,7 @@ describe("motion-graphic film mode", () => {
     expect(page).not.toContain("onload");
   });
 
-  it("keeps the card of a scene whose fragment still breaks the contract after one repair", async () => {
+  it("keeps the card of a scene whose fragment still breaks the contract after a repair and a fresh build", async () => {
     const { s, ir, tasks, inputs, runs } = await setup({
       buildFor: (sid) =>
         sid === "mid-2"
@@ -447,8 +447,8 @@ describe("motion-graphic film mode", () => {
             : fragment,
     });
     const out = (await motionGraphicDirectorStage.run(s)).output as Out;
-    // One builder call per scene, and one repair for the scene that broke the contract.
-    expect(tasks.filter((t) => t === MG_SCENE_BUILD_AGENT)).toHaveLength(ir.scenes.length + 1);
+    // One builder call per scene, then a repair and a fresh build for the scene that broke the contract.
+    expect(tasks.filter((t) => t === MG_SCENE_BUILD_AGENT)).toHaveLength(ir.scenes.length + 2);
     const repair = inputs.find((i) => "repair" in i && "scene" in i)?.repair as {
       issues: Array<{ message: string }>;
     };
@@ -462,6 +462,48 @@ describe("motion-graphic film mode", () => {
     );
     expect(out.film).toMatchObject({ authored: ir.scenes.length - 1, cards: 1 });
     expect(validateVideoIR(out.ir).ok).toBe(true);
+  });
+
+  it("hands each builder its verbatim copy and resolved props, and sends missing copy back", async () => {
+    const thread = "A film for our app";
+    const base = filmDirection(4);
+    const scripted = {
+      ...base,
+      thread,
+      props: [{ id: "bar", kind: "prompt", lines: [thread] }],
+      scenes: base.scenes.map((d, i) => ({
+        ...d,
+        copy: i === 2 ? ["Rendering", "Approved", "00:42"] : [],
+        props: ["bar"],
+        framing: i % 2 ? "wide" : "close",
+        carry: "bar",
+      })),
+    };
+    const { s, inputs } = await setup({
+      replies: { [MG_DIRECTION_AGENT]: [{ direction: scripted }, { direction: scripted }] },
+    });
+    const out = (await motionGraphicDirectorStage.run(s)).output as Out;
+    type Build = {
+      direction: { thread: unknown };
+      scene: { id: string; copy: unknown; props: unknown; framing: unknown; carry: unknown };
+      repair?: { issues: Array<{ path: string; message: string }> };
+    };
+    const builds = inputs.filter((i) => "scene" in i && "frame" in i) as Build[];
+    const mid = builds.find((b) => b.scene.id === "mid-2" && !b.repair);
+    expect(mid?.direction.thread).toBe(thread);
+    expect(mid?.scene).toMatchObject({
+      copy: ["Rendering", "Approved", "00:42"],
+      props: [{ id: "bar", kind: "prompt", lines: [thread] }],
+      framing: "close",
+      carry: "bar",
+    });
+    // The UI fragment shows "Rendering" only: the rest goes back to the builder as an html issue.
+    const repair = builds.find((b) => b.scene.id === "mid-2" && b.repair)?.repair;
+    expect(repair?.issues[0]).toMatchObject({ path: "html" });
+    expect(repair?.issues[0]?.message).toContain('"Approved", "00:42"');
+    expect(out.ir.metadata?.authoredScenes).not.toContain("mid-2");
+    // The script is incomplete (no hero, too little copy): built as written, with a warning.
+    expect(out.warning).toMatch(/artifact script is off/);
   });
 
   it("keeps the card of a scene whose builder reaches its cap instead of parking the film", async () => {
@@ -569,16 +611,16 @@ describe("motion-graphic film mode", () => {
   });
 
   it("admits the tier on the director, one scene and both sandbox runs, and estimates every scene", async () => {
-    // 30¢ director + 15¢ scene + both sandbox runs at their bounds.
+    // 120¢ director + 15¢ scene + both sandbox runs at their bounds.
     const probe = await setup();
     const sandbox = filmSandboxCents(probe.s, probe.ir.format);
     expect(sandbox).toBeGreaterThan(0);
-    const tight = await setup({ budgetCents: 44 + sandbox });
+    const tight = await setup({ budgetCents: 134 + sandbox });
     expect(directorTierRuns(tight.s, tight.ir.scenes.length, tight.ir.format)).toBe(false);
-    const enough = await setup({ budgetCents: 45 + sandbox });
+    const enough = await setup({ budgetCents: 135 + sandbox });
     expect(directorTierRuns(enough.s, enough.ir.scenes.length, enough.ir.format)).toBe(true);
-    expect(await motionGraphicDirectorStage.estimateCostCents?.(enough.s)).toBe(45 + sandbox);
-    expect(await motionGraphicDirectorStage.estimateCostCents?.(probe.s)).toBe(30 + 6 * 15 + sandbox);
+    expect(await motionGraphicDirectorStage.estimateCostCents?.(enough.s)).toBe(135 + sandbox);
+    expect(await motionGraphicDirectorStage.estimateCostCents?.(probe.s)).toBe(120 + 6 * 15 + sandbox);
   });
 
   it("scales the sandbox bounds with film length, frame size and rate, and refuses films past the cap", () => {
@@ -712,7 +754,7 @@ describe("motion-graphic film mode", () => {
 describe("film mode helpers", () => {
   const ok = { html: "<i></i>", css: "", js: "pop(S, t0);" };
 
-  it("fans out at most `concurrency` builders and repairs each contract failure once, in parallel", async () => {
+  it("fans out at most `concurrency` builders, repairs each contract failure once and rebuilds what stays broken", async () => {
     let inFlight = 0;
     let max = 0;
     const calls: Array<{ index: number; repair: boolean }> = [];
@@ -726,26 +768,27 @@ describe("film mode helpers", () => {
         inFlight--;
         calls.push({ index, repair: Boolean(repair) });
         if (index === 7) return { failure: "the agent reached its cap", runs: 1 };
-        // Scene 2 is fixed by its repair, scene 4 stays broken, scene 5 used its own schema repair turn.
-        const bad = (index === 2 && !repair) || index === 4 || index === 5;
+        // Scene 2 is fixed by its repair, scene 4 stays broken through its fresh build, scene 5 used its own
+        // schema repair turn and is fixed by its fresh build.
+        const fives = calls.filter((c) => c.index === 5).length;
+        const bad = (index === 2 && !repair) || index === 4 || (index === 5 && fives === 1);
         return { built: bad ? { ...ok, js: 'fetch("/x");' } : ok, runs: index === 5 ? 2 : 1 };
       },
       check: (index, built) => checkSceneFragment(built, { sid: `s${index}` }),
     });
     expect(max).toBe(3);
-    expect(
-      calls
-        .filter((c) => c.repair)
-        .map((c) => c.index)
-        .sort(),
-    ).toEqual([2, 4]);
+    const of = (index: number) => calls.filter((c) => c.index === index).map((c) => c.repair);
+    expect(of(2)).toEqual([false, true]);
+    expect(of(4)).toEqual([false, true, false]);
+    expect(of(5)).toEqual([false, false]);
+    expect(of(7)).toEqual([false]);
     expect(result.map((r) => ("failure" in r ? r.failure.slice(0, 30) : "ok"))).toEqual([
       "ok",
       "ok",
       "ok",
       "ok",
       "the fragment breaks the contra",
-      "the fragment breaks the contra",
+      "ok",
       "ok",
       "the agent reached its cap",
     ]);
@@ -767,7 +810,9 @@ describe("film mode helpers", () => {
 
   it("ships exemplar fragments that pass the contract", () => {
     for (const e of FILM_EXEMPLARS)
-      expect(checkSceneFragment({ html: e.html, css: e.css, js: e.js }, { sid: "s01" }).problems).toEqual([]);
+      expect(
+        checkSceneFragment({ html: e.html, css: e.css, js: e.js }, { sid: "s01", copy: e.copy }).problems,
+      ).toEqual([]);
   });
 });
 

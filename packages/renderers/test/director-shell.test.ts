@@ -24,6 +24,19 @@ describe("scene fragment contract", () => {
     expect(checked.css).not.toMatch(/^\.pill/m);
   });
 
+  it("finds every copy string in the html text, across spans, entities and odometer values", () => {
+    const html =
+      '<div class="p"><span>studix.ai/</span><b>mcp</b></div><p>Fish &amp; chips</p>' +
+      '<span class="odo" data-value="40%"></span><span> faster</span><div title="Hidden copy"></div>';
+    const copyProblems = (copy: string[]) =>
+      sceneFragmentProblems({ html, css: "", js: "pop(S, t0);" }, { sid: "s01", copy });
+    expect(copyProblems(["studix.ai/mcp", "Fish & chips", "40% faster"])).toEqual([]);
+    const [problem, ...rest] = copyProblems(["Hidden copy", "Fish & chips", "Approved"]);
+    expect(rest).toEqual([]);
+    expect(problem).toMatch(/^html: the scene's copy is missing/);
+    expect(problem).toContain('"Hidden copy", "Approved"');
+  });
+
   it("rejects network, media, handlers and anything that loads a URL", () => {
     expect(problemsOf({ html: '<img src="https://x.test/a.png">' }).join()).toContain("<img>");
     expect(problemsOf({ html: '<div onclick="x()">a</div>' }).join()).toContain("event handler");

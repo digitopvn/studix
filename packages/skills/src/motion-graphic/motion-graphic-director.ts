@@ -30,6 +30,7 @@ import {
   type SceneRole,
   sceneBuildAgent,
 } from "./motion-graphic-director-agents.ts";
+import { directionIssues, sceneProps } from "./motion-graphic-director-brief.ts";
 import {
   type FilmShell,
   fragmentPath,
@@ -182,16 +183,20 @@ export function directorTierRuns(s: StageContext, sceneCount: number, format: Fi
   return budgetLeft(s) >= tierAdmissionCents(s, format);
 }
 
-/** Expected wall time of the director's call and of one wave of builders (a repair wave counts as one). */
-export const DIRECTOR_CALL_MS_ESTIMATE = 3 * 60_000;
+/**
+ * Wall time planned for the director's call and for one wave of builders (a repair wave counts as one). The
+ * director writes every scene's verbatim copy in one long answer, so its call is planned at its time cap.
+ */
+export const DIRECTOR_CALL_MS_ESTIMATE = MG_DIRECTION_LIMITS.timeoutMs;
 export const BUILD_WAVE_MS_ESTIMATE = 150_000;
 
 /**
  * Wall time the tier needs from its start to a delivered film: the director, the builder waves (plus one for
- * repairs), both sandbox runs, the final render and the margin for the review and upload.
+ * repairs and one for the fresh builds of scenes still broken), both sandbox runs, the final render and the
+ * margin for the review and upload.
  */
 export function directorTierMsEstimate(ir: VideoIR): number {
-  const waves = Math.ceil(ir.scenes.length / BUILD_CONCURRENCY) + 1;
+  const waves = Math.ceil(ir.scenes.length / BUILD_CONCURRENCY) + 2;
   return (
     DIRECTOR_CALL_MS_ESTIMATE +
     waves * BUILD_WAVE_MS_ESTIMATE +
@@ -274,6 +279,12 @@ export function filmAccentRole(ir: VideoIR, sceneId: string): AccentRole {
 export const sceneRole = (index: number, count: number): SceneRole =>
   index === 0 ? "hook" : index === count - 1 ? "cta" : "scene";
 
+/** What scene `index` (from 0) must show verbatim: its copy and its hero line. */
+export function sceneCopy(direction: DirectionBrief, index: number): string[] {
+  const d = direction.scenes.find((x) => x.scene === index + 1);
+  return [...new Set([...(d?.copy ?? []), ...(d?.hero ? [d.hero] : [])])];
+}
+
 /**
  * Task input of one scene's builder: the direction (with the film system), its scene with word and beat times
  * relative to the scene's start, its neighbours' shots, the frame and the theme with the film's one accent.
@@ -303,6 +314,7 @@ function buildInput(
       motif: direction.motif,
       rhythm: direction.rhythm,
       system: direction.system ?? null,
+      thread: direction.thread ?? null,
     },
     scene: {
       id: scene.id,
@@ -314,6 +326,12 @@ function buildInput(
       // Only the hook and the call to action set their line; every other scene leaves the words to captions.
       ...(role === "scene" ? {} : { onScreen: line }),
       shot: shot?.shot ?? null,
+      copy: shot?.copy ?? [],
+      hero: shot?.hero ?? null,
+      // The props on screen, resolved from the film's props: each with its kind and verbatim lines.
+      props: shot ? sceneProps(direction, shot) : [],
+      framing: shot?.framing ?? null,
+      carry: shot?.carry ?? null,
       focalWords: shot?.focalWords ?? [],
       exit: shot?.exit ?? null,
       exitRect: shot?.exitRect ?? null,
@@ -323,8 +341,16 @@ function buildInput(
       beats: beats.slice(0, 64),
       beatLen: timing.beatLen,
     },
-    prev: prev ? { shot: prev.shot, exit: prev.exit, exitRect: prev.exitRect ?? null } : null,
-    next: next ? { shot: next.shot } : null,
+    prev: prev
+      ? {
+          shot: prev.shot,
+          framing: prev.framing ?? null,
+          carry: prev.carry ?? null,
+          exit: prev.exit,
+          exitRect: prev.exitRect ?? null,
+        }
+      : null,
+    next: next ? { shot: next.shot, framing: next.framing ?? null } : null,
     frame: {
       ...frame,
       captionBandPx: burnedCaptionBand(frame),
@@ -425,7 +451,7 @@ const FILM_MARGIN_MS = 3 * 60_000;
  * to their scene), rendered together on the film's timing and cut into one silent clip per scene, which
  * replaces that scene's card as a full-frame video shot; agent-written scripts never reach the in-worker
  * renderer. Any scene that fails (a builder cap or budget, a fragment that breaks the contract after its one
- * repair, a check error) keeps its template card with a warning, so a premium job never fails where a standard
+ * repair and one fresh build, a check error) keeps its template card with a warning, so a premium job never fails where a standard
  * one renders. Spend is booked either way.
  */
 export const motionGraphicDirectorStage: StageDefinition = {
@@ -505,33 +531,50 @@ export const motionGraphicDirectorStage: StageDefinition = {
       const authoredDirection = Direction.parse(first.output).direction;
       let direction = spokenFocalWords(ir, authoredDirection);
       let missing = unfocused(direction);
-      // A scene left without a spoken focal word goes back to the director once, unless its call already
-      // used its repair turn or the budget cannot hold the repair and the tier's admission.
+      let script = directionIssues(direction);
+      // A scene left without a spoken focal word, or an artifact script that is incomplete or over its limits,
+      // goes back to the director once, unless its call already used its repair turn or the budget or the
+      // deadline cannot hold the repair on top of the rest of the tier.
       if (
-        missing.length > 0 &&
+        missing.length + script.length > 0 &&
         first.runs < 2 &&
-        budgetLeft(booked()) >= MG_DIRECTION_LIMITS.maxCostCents + tierAdmissionCents(s, ir.format)
+        budgetLeft(booked()) >= MG_DIRECTION_LIMITS.maxCostCents + tierAdmissionCents(s, ir.format) &&
+        !directorTierTimeShort(s, ir)
       ) {
-        const issues = missing.slice(0, 10).map((n) => ({
-          path: `direction.scenes.${direction.scenes.findIndex((d) => d.scene === n)}.focalWords`,
-          message: `none of these words is spoken in scene ${n}; pick one to three from that scene's words`,
-        }));
+        const issues = [
+          ...missing.map((n) => ({
+            path: `direction.scenes.${direction.scenes.findIndex((d) => d.scene === n)}.focalWords`,
+            message: `none of these words is spoken in scene ${n}; pick one to three from that scene's words`,
+          })),
+          ...script,
+        ].slice(0, 20);
         try {
           const repair = { issues, output: { direction: authoredDirection } };
           const again = Direction.parse(
             (await call(directionAgent, { ...directionInput(s, ir), repair })).output,
           );
           const next = spokenFocalWords(ir, again.direction);
-          if (unfocused(next).length < missing.length) direction = next;
+          if (unfocused(next).length + directionIssues(next).length < missing.length + script.length)
+            direction = next;
         } catch (err) {
           // The first direction is still sound: a failed repair keeps it, unless the job stops or parks.
           if (s.signal.aborted || err instanceof StageSuspended) throw err;
         }
         missing = unfocused(direction);
+        script = directionIssues(direction);
       }
       if (missing.length > 0)
         warnings.push(
           `Scene ${missing.join(", ")} of the direction has no spoken focal word; its moves key to beats only`,
+        );
+      // What is left is built as written: copy is never cut, so the builders get the text whole.
+      if (script.length > 0)
+        warnings.push(
+          `The direction's artifact script is off in ${script.length} place${script.length > 1 ? "s" : ""}: ` +
+            script
+              .slice(0, 2)
+              .map((i) => `${i.path}: ${i.message}`)
+              .join("; "),
         );
 
       const accent = filmAccentRole(ir, "");
@@ -595,6 +638,7 @@ export const motionGraphicDirectorStage: StageDefinition = {
             words: words(sid),
             shellVersion: DIRECTOR_SHELL_VERSION,
             headlinePx,
+            copy: sceneCopy(direction, index),
           });
         },
       });
