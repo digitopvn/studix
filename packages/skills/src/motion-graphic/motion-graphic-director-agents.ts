@@ -138,8 +138,9 @@ export const sceneBuildAgent = createAgentStage({
     "scene before (`prev`) into the next (`next`). Return `html`, `css` and `js`.\n" +
     "- Copy: every string on screen comes verbatim from `scene.copy` and the lines of `scene.props`; add " +
     "none, drop none of `scene.copy`, change no word (copy is exempt from any label count). The only other " +
-    "text: the brand name in the call to action's lockup. Copy lives in text nodes of `html` (a split may " +
-    "wrap it in spans), never in attributes or `js`.\n" +
+    "text: `scene.onScreen` and, in the call to action's lockup, the brand name. Copy lives in text nodes of " +
+    "`html` (a split may wrap it in spans), never in attributes or `js`; the one exception is a number an " +
+    '<span class="odo" data-value=".."> rolls to.\n' +
     "- `html`: the scene's content only (Studix wraps it in the scene's <section>). Elements are absolutely " +
     'placed in frame pixels (`frame.width` x `frame.height`); wrap the composition in <div class="cam"> so it ' +
     "can move as one. Inline SVG is fine. No <script>, <style>, <img>, media, iframes, forms, links or event " +

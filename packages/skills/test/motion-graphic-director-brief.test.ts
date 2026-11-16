@@ -6,7 +6,12 @@ import {
 } from "../src/motion-graphic/motion-graphic-director-brief.ts";
 
 const thread = "A 30 second launch film for our app";
-const scene = (n: number, framing: string, copy: string[], extra: Record<string, unknown> = {}) => ({
+const scene = (
+  n: number,
+  framing: string,
+  copy: Array<string | number>,
+  extra: Record<string, unknown> = {},
+) => ({
   scene: n,
   shot: "the prompt bar types the thread",
   focal_words: ["film"],
@@ -82,6 +87,34 @@ describe("direction artifact script", () => {
     // Scene 1 shows the thread through its prompt bar prop; scenes 3 and 4 show neither.
     const messages = directionIssues(d).map((i) => i.message);
     expect(messages).toEqual(["the thread comes back verbatim in at least 2 middle scenes"]);
+  });
+
+  it("reads nulls, numbers and a malformed prop as drift, not as a broken brief", () => {
+    const d = script(
+      [
+        scene(1, "close", ["Save", 40, "now"], { hero: null, props: null, carry: null }),
+        scene(2, "wide", withThread, { copy: null, props: ["bar", "ghost"] }),
+      ],
+      {
+        props: [
+          { id: "bar", kind: "prompt", lines: [thread] },
+          { id: "ghost", kind: "stat", lines: {} },
+        ],
+      },
+    );
+    expect(d.scenes[0]?.copy).toEqual(["Save", "40", "now"]);
+    expect(d.scenes[0]?.hero).toBeUndefined();
+    expect(d.scenes[1]?.copy).toBeUndefined();
+    expect(d.props?.map((p) => p.id)).toEqual(["bar"]);
+    expect(directionIssues(d).map((i) => i.path)).toEqual(
+      expect.arrayContaining([
+        "direction.scenes.0.hero",
+        "direction.scenes.1.copy",
+        "direction.scenes.1.props",
+      ]),
+    );
+    // A carried prop reaches the builder even when the scene does not list it.
+    expect(sceneProps(d, d.scenes[0]!, ["bar"]).map((p) => p.id)).toEqual(["bar"]);
   });
 
   it("still reads a brief from before the artifact script", () => {

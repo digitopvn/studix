@@ -328,8 +328,8 @@ function buildInput(
       shot: shot?.shot ?? null,
       copy: shot?.copy ?? [],
       hero: shot?.hero ?? null,
-      // The props on screen, resolved from the film's props: each with its kind and verbatim lines.
-      props: shot ? sceneProps(direction, shot) : [],
+      // The props on screen (with the ones carried in and out), each with its kind and verbatim lines.
+      props: shot ? sceneProps(direction, shot, [shot.carry, prev?.carry]) : [],
       framing: shot?.framing ?? null,
       carry: shot?.carry ?? null,
       focalWords: shot?.focalWords ?? [],

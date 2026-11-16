@@ -63,13 +63,18 @@ export const softText = (max: number) =>
     const cut = truncateText(v.trim(), max);
     return cut.length > max ? cut.slice(0, max) : cut;
   }, z.string().trim().min(1).max(max));
-/** Verbatim on-screen text: trimmed, never cut. */
-const verbatim = z.string().trim().min(1).max(VERBATIM_HARD_CHARS);
-/** A list of verbatim strings; one string reads as a list of one, blank entries are dropped. */
+/** `null` or "" for a field the model left out. */
+const none = (v: unknown) => (v === null || v === "" ? undefined : v);
+/** Verbatim on-screen text: trimmed, never cut; a number reads as its text. */
+const verbatim = z.preprocess(
+  (v) => (typeof v === "number" ? String(v) : v),
+  z.string().trim().min(1).max(VERBATIM_HARD_CHARS),
+);
+/** A list of verbatim strings; one string reads as a list of one, null as none, blank entries are dropped. */
 const verbatimList = (hardMax: number) =>
   z.preprocess((v) => {
-    const list = typeof v === "string" ? [v] : unstring(v);
-    return Array.isArray(list) ? list.filter((s) => !(typeof s === "string" && s.trim() === "")) : list;
+    const list = v == null ? [] : typeof v === "string" || typeof v === "number" ? [v] : unstring(v);
+    return Array.isArray(list) ? list.filter((s) => s != null && String(s).trim() !== "") : list;
   }, z.array(verbatim).max(hardMax));
 /** A number a model may send as a numeric string. */
 export const looseNumber = <T extends z.ZodType>(schema: T) =>
@@ -176,14 +181,17 @@ const DirectionScene = z.preprocess(
     /** Where the carried prop sits at this scene's last frame, in px; null when it is not on screen. */
     exitRect: optionalRect,
     /** Every string the scene shows, verbatim. Optional at parse (older briefs); the director must write it. */
-    copy: verbatimList(30).optional(),
+    copy: z.preprocess(none, verbatimList(30).optional()),
     /** The artifact's main line, shown at headline size. */
-    hero: verbatim.optional(),
+    hero: z.preprocess(none, verbatim.optional()),
     /** Ids of the props on screen in this scene. */
-    props: z.preprocess((v) => (typeof v === "string" ? [v] : v), z.array(propId).max(20)).optional(),
+    props: z.preprocess(
+      (v) => (v == null ? undefined : typeof v === "string" ? [v] : v),
+      z.array(propId).max(20).optional(),
+    ),
     framing: looseEnum(FRAMINGS),
     /** Id of the prop that crosses the cut into the next scene. */
-    carry: z.preprocess((v) => (v === null || v === "" ? undefined : v), propId.optional()),
+    carry: z.preprocess(none, propId.optional()),
   }),
 );
 export type DirectionScene = z.infer<typeof DirectionScene>;
@@ -216,10 +224,14 @@ export const DirectionBrief = z.preprocess(
     /** The film system; a system that does not read as one is dropped (the scenes then share only the theme). */
     system: z.preprocess((v) => (FilmSystem.safeParse(v).success ? v : undefined), FilmSystem.optional()),
     /** The sample prompt a user types, verbatim: in the hook, in middle scenes and back in the call to action. */
-    thread: z.preprocess((v) => (v === null || v === "" ? undefined : v), verbatim.optional()),
+    thread: z.preprocess(none, verbatim.optional()),
     /** The film's reusable artifacts. */
     props: z.preprocess(
-      (v) => (v === null ? undefined : unstring(v)),
+      // A prop that does not read as one is dropped; a scene that lists its id is then sent back for repair.
+      (v) => {
+        const list = v === null ? undefined : unstring(v);
+        return Array.isArray(list) ? list.filter((p) => DirectionProp.safeParse(p).success) : list;
+      },
       z.array(DirectionProp).max(20).optional(),
     ),
     /**
@@ -252,10 +264,18 @@ export const DirectionOutput = z.preprocess(
 /** Text compared the way the fragment check compares it: every whitespace removed. */
 export const squeeze = (text: string) => text.replace(/\s+/g, "");
 
-/** The props a scene lists, resolved in the order it lists them; unknown ids are skipped. */
-export function sceneProps(direction: DirectionBrief, scene: DirectionScene): DirectionProp[] {
+/**
+ * The props a scene lists, resolved in the order it lists them, then any of `also` (the props it carries in and
+ * out) it does not list; unknown ids are skipped.
+ */
+export function sceneProps(
+  direction: DirectionBrief,
+  scene: DirectionScene,
+  also: ReadonlyArray<string | undefined> = [],
+): DirectionProp[] {
   const byId = new Map((direction.props ?? []).map((p) => [p.id, p]));
-  return (scene.props ?? []).flatMap((id) => byId.get(id) ?? []);
+  const ids = new Set([...(scene.props ?? []), ...also.filter((id) => id !== undefined)]);
+  return [...ids].flatMap((id) => byId.get(id) ?? []);
 }
 
 type Issue = { path: string; message: string };
