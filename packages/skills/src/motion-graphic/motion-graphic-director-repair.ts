@@ -99,6 +99,11 @@ export async function repairAuthoredScene(
       JSON.parse(await readText(s, compositionId, FILM_SHELL_PATH).catch(() => "null")),
     ).data;
     const role = z.object({ scene: z.object({ role: z.string() }) }).safeParse(task).data?.scene.role;
+    // The fix must still show the scene's verbatim copy and hero line (a task from before copy has neither).
+    const script = z
+      .object({ scene: z.object({ copy: z.array(z.string()).optional(), hero: z.string().nullish() }) })
+      .safeParse(task).data?.scene;
+    const copy = [...new Set([...(script?.copy ?? []), ...(script?.hero ? [script.hero] : [])])];
     // Only the hand-off rects are read back: the stored direction keeps scenes whose focal words were all
     // unspoken (empty), which the director's own schema would reject.
     const directionJson: unknown = JSON.parse(await readText(s, compositionId, "data/direction.json"));
@@ -133,6 +138,7 @@ export async function repairAuthoredScene(
       usageItem: `render-${sceneId}-review`,
       usage,
       ...(shell ? { shell, headline: role !== "scene" } : {}),
+      ...(copy.length > 0 ? { copy } : {}),
     });
     s.activity?.touch();
     if (!attempt.ok) {

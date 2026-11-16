@@ -181,6 +181,33 @@ function htmlProblems(html: string, problems: string[], shellVersion: number): v
   walk(doc.children);
 }
 
+/**
+ * The text a fragment shows, in document order: every text node (entities decoded) and, where an `.odo`
+ * stands, the value its reels roll to (`data-value`).
+ */
+function fragmentText(html: string): string {
+  const doc = parseDocument(html, { lowerCaseTags: true, lowerCaseAttributeNames: true });
+  const parts: string[] = [];
+  const walk = (nodes: typeof doc.children) => {
+    for (const node of nodes) {
+      if (node.type === "text") parts.push(node.data);
+      if (node.type !== "tag") continue;
+      if ((node.attribs.class ?? "").split(/\s+/).includes("odo"))
+        parts.push(node.attribs["data-value"] ?? "");
+      walk(node.children);
+    }
+  };
+  walk(doc.children);
+  return parts.join("");
+}
+
+/** Copy strings the fragment does not show, compared with all whitespace removed (a line may span spans). */
+function missingCopy(html: string, copy: readonly string[]): string[] {
+  const squeeze = (t: string) => t.replace(/\s+/g, "");
+  const text = squeeze(fragmentText(html));
+  return copy.filter((c) => squeeze(c) !== "" && !text.includes(squeeze(c)));
+}
+
 /** Properties that would run time outside the timeline or bind behaviour. */
 const BANNED_PROPERTIES = /^(?:-[a-z]+-)?(?:animation|transition)(?:-|$)|^(?:behavior|-moz-binding)$/i;
 
@@ -379,6 +406,8 @@ export interface SceneFragmentCheck {
   headlinePx?: number;
   /** Director shell version the fragment is assembled with; the current one (2) when omitted. */
   shellVersion?: number;
+  /** Strings the scene must show verbatim, as text of the html. Omitted: not checked. */
+  copy?: readonly string[];
 }
 
 export interface CheckedSceneFragment {
@@ -444,6 +473,16 @@ export function checkSceneFragment(fragment: SceneFragment, check: SceneFragment
           .join(", ")}` + " (use the lower-case spoken words listed for the scene)",
       );
     }
+  }
+  if (check.copy && check.copy.length > 0) {
+    const missing = missingCopy(html, check.copy);
+    if (missing.length > 0)
+      problems.push(
+        `html: the scene's copy is missing from the text of the html: ${missing
+          .slice(0, 6)
+          .map((c) => JSON.stringify(c))
+          .join(", ")} (put each string verbatim in a text node, not in an attribute or js)`,
+      );
   }
   const section = `<section id="${sectionId}" class="scene layer" data-sid="${check.sid}">\n${html}\n</section>`;
   return { section, css: scoped, js, problems };
