@@ -149,7 +149,8 @@ export type AuthoredScene =
 /**
  * Authors every scene: all builders run (at most `concurrency` at once), each fragment is checked against the
  * contract, and every scene that broke it goes back to its builder once, in parallel, with what is wrong,
- * unless its call already used its own schema repair turn.
+ * unless its call already used its own schema repair turn. A scene that is still broken then gets one fresh
+ * builder call before it falls back to its card.
  */
 export async function authorScenes(a: {
   count: number;
@@ -173,16 +174,24 @@ export async function authorScenes(a: {
     if (checked.problems.length === 0) return { index, built: attempt.built, checked };
     return { index, broken: { built: attempt.built, runs: attempt.runs, problems: checked.problems } };
   });
+  // A scene still broken after its repair gets one fresh builder call (no repair input) before its card.
+  const fresh = async (index: number): Promise<AuthoredScene> => {
+    const attempt = await a.build(index);
+    if ("failure" in attempt) return { index, failure: attempt.failure };
+    const checked = a.check(index, attempt.built);
+    if (checked.problems.length === 0) return { index, built: attempt.built, checked };
+    return { index, failure: contract(checked.problems) };
+  };
   return mapLimit(first, a.concurrency, async (scene): Promise<AuthoredScene> => {
     if (!("broken" in scene)) return scene;
     const { index, broken } = scene;
-    if (broken.runs >= 2) return { index, failure: contract(broken.problems) };
+    if (broken.runs >= 2) return fresh(index);
     const issues = broken.problems.slice(0, 10).map(problemIssue);
     const again = await a.build(index, { issues, output: broken.built });
     if ("failure" in again) return { index, failure: again.failure };
     const checked = a.check(index, again.built);
     if (checked.problems.length === 0) return { index, built: again.built, checked };
-    return { index, failure: contract(checked.problems) };
+    return fresh(index);
   });
 }
 

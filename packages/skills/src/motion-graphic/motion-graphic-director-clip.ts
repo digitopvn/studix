@@ -150,6 +150,8 @@ export async function attemptSceneClip(
     shell?: FilmShell;
     /** Whether the scene sets a headline (the hook, the call to action); every scene of a v1 composition does. */
     headline?: boolean;
+    /** Strings the scene must show verbatim (its copy and hero line); none for a scene built before copy. */
+    copy?: readonly string[];
   },
 ): Promise<ClipAttempt> {
   const s = booked();
@@ -161,6 +163,7 @@ export async function attemptSceneClip(
     words,
     shellVersion,
     ...(a.headline !== false ? { headlinePx: headlinePxOf(a.ir) } : {}),
+    ...(a.copy ? { copy: a.copy } : {}),
   });
   if (checked.problems.length > 0) return { ok: false, kind: "contract", problems: checked.problems };
   const project = buildDirectorProject({
