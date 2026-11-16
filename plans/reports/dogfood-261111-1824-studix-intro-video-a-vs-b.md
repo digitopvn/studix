@@ -170,3 +170,21 @@ Kết luận: film mode đã gỡ được bài toán "slide deck có bokeh", nh
 - cấm chữ và thanh đè nhau;
 - hook mở khi sản phẩm đã chạy;
 - CTA kết bằng lockup có logo.
+
+## Vòng 17 (16/11/2026): builder v7
+
+| Vòng | Job | Scene authored | Chi phí | Thời gian | B | A v2 |
+|---|---|---|---|---|---|---|
+| 17 | job_01m7a3gr243ph5psvnnn3e0nzw | 10/12 | 307¢ | 49 phút | 5,2 (5,0 / 5,2 / 5,6) | 7,3 (7,3 / 7,7 / 7,1) |
+
+Hai scene vẫn rơi về card:
+- message-5: lỗi khi chạy trong lúc render film.
+- message-8: builder viết JS sai cú pháp và không sửa được.
+
+Chữ hero đã có tác dụng: judge chấm khả năng đọc trên điện thoại của B là 7, cao hơn A (6). Ba judge vẫn cùng chê những điểm sau:
+- Mỗi beat là một card tối giống nhau, không có camera hay một vật thể nối các cảnh.
+- UI chỉ là placeholder (ô xám, viên thuốc trống). A thì cho thấy artifact thật: `mcp.json`, lệnh `studix_create_video`, pipeline, "Scene 3 rebuilt · 2 credits" và một prompt cụ thể về thương hiệu cà phê.
+- Frame gần trống ở chỗ cắt (0:17).
+- Scene màu thương hiệu dùng xanh/tím trên nền phim vàng, và logo cũng màu xanh.
+
+Kết luận: chỉnh prompt builder đã không còn tăng điểm (vòng 13–17: 5,6 / 5,2 / 5,2). Khoảng cách với A nằm ở nội dung và câu chuyện liền mạch, không nằm ở cỡ chữ.
